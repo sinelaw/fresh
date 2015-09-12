@@ -1,0 +1,45 @@
+name:                fresh
+version:             0.1.0.0
+-- synopsis:
+-- description:
+-- license:
+license-file:        LICENSE
+author:              Noam Lewis
+maintainer:          jones.noamle@gmail.com
+-- copyright:
+-- category:
+build-type:          Simple
+-- extra-source-files:
+cabal-version:       >=1.16
+
+flag QC
+  description: Enable QuickCheck
+  default: False
+
+library
+  exposed-modules:     Fresh.Kind
+                     , Fresh.Type
+                     -- , Fresh.Subst
+  -- other-modules:
+  -- other-extensions:
+  build-depends:       base >=4.7 && <5
+                     , containers >= 0.5.6.2
+                     , either
+                     , mtl >= 2.2.1
+                     , transformers
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+  default-extensions:  CPP
+  if flag(QC)
+    cpp-options:       -DQC
+    build-depends:     QuickCheck >= 2.8
+
+executable fresh
+  main-is: Main.hs
+  default-language:    Haskell2010
+  build-depends: base >= 4.7 && <5
+               , fresh
+  if flag(QC)
+    cpp-options:       -DQC
+
