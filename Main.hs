@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, StandaloneDeriving, UndecidableInstances #-}
+{-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, StandaloneDeriving, UndecidableInstances, RecordWildCards #-}
 module Main where
 
 import Control.Applicative ((<$>), (<*>), pure, Applicative)
@@ -23,9 +23,10 @@ data Expr
 
 type TVName = Int
 type QName = TVName
+type Level = Int
 
 data CTV t
-    = Unbound TVName
+    = Unbound TVName Level
     | Link t
     deriving (Show, Eq)
 
@@ -67,7 +68,7 @@ toFake (Fix (TVar stTV)) = do
     val <- readSTRef stTV
     res <-
         case val of
-        Unbound s -> return $ Unbound s
+        Unbound n l -> return $ Unbound n l
         Link t -> Link <$> toFake t
 
     return . Fix . TVar $ FakeCell res
@@ -83,13 +84,18 @@ runType f = runST $ do
     toFake t
 
 
-data Env s = Env { freshCounter :: Cell s TVName }
+data Env s =
+    Env
+    { freshCounter :: Cell s TVName
+    , level :: Cell s Level
+    }
 
 
 envEmpty :: ST s (Env s)
 envEmpty = do
     fc <- newSTRef 0
-    return Env { freshCounter = fc }
+    l <- newSTRef 0
+    return Env { freshCounter = fc, level = l }
 
 data TypeError
     = OccursError TVName -- Type
@@ -106,6 +112,23 @@ writeCell :: Cell s a -> a -> Infer s ()
 writeCell c x = lift . lift $ writeSTRef c x
 modifyCell :: Cell s a -> (a -> a) -> Infer s a
 modifyCell c f = lift . lift $ (modifySTRef c f >> readSTRef c)
+
+enterLevel :: Infer s ()
+enterLevel = do
+    env <- lift ask
+    lift . lift $ modifySTRef (level env) (+1)
+    return ()
+
+leaveLevel :: Infer s ()
+leaveLevel = do
+    env <- lift ask
+    lift . lift $ modifySTRef (level env) ((-) 1)
+    return ()
+
+currentLevel :: Infer s Level
+currentLevel = do
+    env <- lift ask
+    lift . lift $ readSTRef $ level env
 
 runInfer :: (forall s. Infer s (Type s)) -> Either TypeError PureType
 runInfer x = runST $ do
@@ -142,7 +165,7 @@ unifyTVar :: Cell s (TV s) -> Type s -> Infer s ()
 unifyTVar ioTV t2 = do
     tv <- readCell ioTV
     case tv of
-        Unbound name -> do
+        Unbound name level -> do
             occurs name ioTV t2
             writeCell ioTV $ Link t2
         Link t1 -> unify t1 t2
@@ -153,7 +176,12 @@ occurs name ioTV (Fix (TVar ioTV2))
     | otherwise = do
           tv2 <- readCell ioTV2
           case tv2 of
-              Unbound _ -> return ()
+              (Unbound name l2) -> do
+                  tv <- readCell ioTV
+                  case tv of
+                      Unbound _ l1 ->
+                          writeCell ioTV $ Unbound name $ min l1 l2
+                      _ -> return ()
               Link t2 -> occurs name ioTV t2
 occurs name tv (Fix (TArrow t2 t3)) =
     let check = occurs name tv
@@ -162,10 +190,14 @@ occurs _ _ (Fix (QVar _)) = return ()
 
 
 gen :: Type s -> Infer s (Type s)
-gen (Fix (TVar ioTV)) = do
+gen t@(Fix (TVar ioTV)) = do
     tv <- readCell ioTV
     case tv of
-        Unbound name -> return $ Fix $ QVar name
+        Unbound name level -> do
+            curLevel <- currentLevel
+            return $ if curLevel < level
+                     then Fix $ QVar name
+                     else t
         Link t -> gen t
 gen (Fix (TArrow ta tb)) = do
     gta <- gen ta
@@ -178,7 +210,8 @@ gen t = return t
 newTVar :: Infer s (Type s)
 newTVar = do
     tvName <- fresh
-    Fix . TVar <$> newCell (Unbound tvName)
+    level <- currentLevel
+    Fix . TVar <$> newCell (Unbound tvName level)
 
 type TEnv s = [(QName, Type s)]
 
@@ -195,7 +228,7 @@ inst' env (Fix (QVar name)) =
 inst' env t@(Fix (TVar ioTV)) = do
     tv <- readCell ioTV
     case tv of
-        Unbound _ -> return (t, env)
+        Unbound _ _ -> return (t, env)
         Link tLink -> inst' env tLink
 inst' env (Fix (TArrow ta tb)) = do
     (ta', envA) <- inst' env ta
@@ -210,7 +243,7 @@ type VEnv s = [(VarName, Type s)]
 typeOf :: VEnv s -> Expr -> Infer s (Type s)
 typeOf env (Var name) =
     case lookup name env of
-    Just t -> return t
+    Just t -> inst t
     Nothing -> typeError $ UnboundVar name
 typeOf env (App e1 e2) = do
     tFun <- typeOf env e1
@@ -223,7 +256,9 @@ typeOf env (Lam name e) = do
     tBody <- typeOf ((name,tArg) : env) e
     return $ Fix $ TArrow tArg tBody
 typeOf env (Let name e1 e2) = do
+    enterLevel
     tDef <- typeOf env e1 -- non-recursive let
+    leaveLevel
     tVar <- gen tDef
     typeOf ((name,tVar) : env) e2
 
@@ -231,5 +266,19 @@ typeOf env (Let name e1 e2) = do
 --infer :: Expr -> Either TypeError PureType
 --infer = runInfer . typeOf []
 
-test_id = Lam "x" $ Var "x"
+test_id_inner = (Lam "x" $ Var "x")
+test_id = Let "id" test_id_inner (Var "id")
+tid = runInfer $ typeOf [] test_id
+
+test_id2 = (Lam "x" (Let "y" (Var "x") (Var "y")))
+tid2 = runInfer $ typeOf [] test_id2
+
+test_id3 = Let "id" (Lam "y" $ (Lam "x" $ Var "y")) (Var "id")
+tid3 = runInfer $ typeOf [] test_id3
+
+
+main = do
+    print tid
+    print tid2
+    print tid3
 
