@@ -20,7 +20,7 @@ executable fresh
 --  exposed-modules:     Main
   -- other-modules:
   -- other-extensions:
-  build-depends:       base >=4.7 && <4.8, either, transformers
+  build-depends:       base >=4.7 && <5, either, transformers
   -- hs-source-dirs:
   default-language:    Haskell2010
   ghc-options: -Wall
