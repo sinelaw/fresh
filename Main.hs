@@ -4,6 +4,7 @@
 module Main where
 
 
+import Control.Monad (foldM)
 import Control.Monad (when)
 import Control.Monad.ST
 import Control.Monad.Trans.Class (lift)
@@ -294,6 +295,55 @@ updateLevel l t@(Fix (TArrow _ _ levels)) = do
         return ()
 
 updateLevel _ _ = updateLevelErrorHack
+
+----------------------------------------------------------------------
+
+loop :: [Type s] -> Level -> Type s -> Infer s [Type s]
+loop acc level ty = do
+    ty' <- repr ty
+    case ty' of
+        Fix (TVar iotv) -> do
+            tv <- readCell iotv
+            case tv of
+                Unbound name l -> do
+                    when (l > level) $
+                        writeCell iotv $ Unbound name level
+                    return acc
+                _ -> return acc
+        Fix (TArrow t1 t2 levels) -> do
+            lNew <- readCell (levelNew levels)
+            when (lNew == markedLevel) $ typeError OccursError
+            when (lNew > level) $ writeCell (levelNew levels) level
+            adjustOne acc ty'
+        _ -> return acc
+
+adjustOne :: [Type s] -> Type s -> Infer s [Type s]
+adjustOne acc t@(Fix (TArrow t1 t2 levels)) = do
+    lOld <- readCell (levelOld levels)
+    lCur <- currentLevel
+    if (lOld <= lCur)
+        then return $ t : acc
+        else do
+        lNew <- readCell (levelNew levels)
+        if (lNew == lOld)
+            then return acc
+            else do
+            writeCell (levelNew levels) markedLevel
+            acc1 <- loop acc lNew t1
+            acc2 <- loop acc1 lNew t2
+            writeCell (levelNew levels) lNew
+            writeCell (levelOld levels) lNew
+            return acc2
+adjustOne _ _ = error $ "Unexpected type" -- ++ show t
+
+forceDelayedAdj :: Infer s ()
+forceDelayedAdj = do
+    env <- lift ask
+    tbla <- lift . lift $ readSTRef (toBeLevelAdjusted env)
+    tbla' <- foldM adjustOne [] tbla
+    lift . lift $ writeSTRef (toBeLevelAdjusted env) tbla'
+
+----------------------------------------------------------------------
 
 gen :: Type s -> Infer s (Type s)
 gen t@(Fix (TVar ioTV)) = do
