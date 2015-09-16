@@ -25,6 +25,20 @@ type TVName = Int
 type QName = TVName
 type Level = Int
 
+genericLevel = maxBound :: Int
+markedLevel = -1 :: Int
+
+data Levels c =
+    Levels
+    { levelOld :: c Level
+    , levelNew :: c Level
+    }
+instance (Show (c Level)) => Show (Levels c)
+instance (Eq (c Level)) => Eq (Levels c)
+
+
+fmapLevelCell f (Levels old new) = Levels <*> (f old) <$> (f new)
+
 data CTV t
     = Unbound TVName Level
     | Link t
@@ -33,19 +47,21 @@ data CTV t
 data CType c t
     = TVar (c (CTV t))
     | QVar QName
-    | TArrow t t
+    | TArrow t t (Levels c)
 --    deriving (Eq)
 --instance (Eq t, Eq (c (CTV t))) => Eq (CType c t)
+
 
 -- fmapCell
 --     :: (Applicative f, Functor f)
 --     => (a (CTV t) -> f (b (CTV u))) -> CType a t -> f (CType b u)
 fmapCell f (TVar c) = TVar <$> f c
 fmapCell _ (QVar q) = pure $ QVar q
-fmapCell f (TArrow (Fix t1) (Fix t2)) =
+fmapCell f (TArrow (Fix t1) (Fix t2) level) =
     TArrow
     <*> (Fix <$> fmapCell f t1)
-    <$> (Fix <$> fmapCell f t2)
+    <*> (Fix <$> fmapCell f t2)
+    <$> (fmapLevelCell f level)
 
 data Fix f = Fix { unFix :: f (Fix f) }
 deriving instance Eq (f (Fix f)) => Eq (Fix f)
