@@ -1,7 +1,7 @@
 {-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, StandaloneDeriving, UndecidableInstances, RecordWildCards #-}
 module Main where
 
-import Control.Applicative ((<$>), (<*>), pure, Applicative)
+
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader (ReaderT, ask, runReaderT)
 import Control.Monad.Trans.Either (EitherT, runEitherT, left)
@@ -25,19 +25,21 @@ type TVName = Int
 type QName = TVName
 type Level = Int
 
-genericLevel = maxBound :: Int
-markedLevel = -1 :: Int
+genericLevel :: Int
+genericLevel = maxBound
 
-data Levels c =
+markedLevel :: Int
+markedLevel = -1
+
+data Levels a =
     Levels
-    { levelOld :: c Level
-    , levelNew :: c Level
+    { levelOld :: a
+    , levelNew :: a
     }
-instance (Show (c Level)) => Show (Levels c)
-instance (Eq (c Level)) => Eq (Levels c)
+    deriving (Show, Eq)
 
-
-fmapLevelCell f (Levels old new) = Levels <*> (f old) <$> (f new)
+fmapLevelCell :: Applicative f => (a -> f b) -> Levels a -> f (Levels b)
+fmapLevelCell f (Levels old new) = Levels <$> (f old) <*> (f new)
 
 data CTV t
     = Unbound TVName Level
@@ -47,21 +49,21 @@ data CTV t
 data CType c t
     = TVar (c (CTV t))
     | QVar QName
-    | TArrow t t (Levels c)
+    | TArrow t t (Levels (c Level))
 --    deriving (Eq)
 --instance (Eq t, Eq (c (CTV t))) => Eq (CType c t)
 
 
--- fmapCell
---     :: (Applicative f, Functor f)
---     => (a (CTV t) -> f (b (CTV u))) -> CType a t -> f (CType b u)
-fmapCell f (TVar c) = TVar <$> f c
-fmapCell _ (QVar q) = pure $ QVar q
-fmapCell f (TArrow (Fix t1) (Fix t2) level) =
-    TArrow
-    <*> (Fix <$> fmapCell f t1)
-    <*> (Fix <$> fmapCell f t2)
-    <$> (fmapLevelCell f level)
+fmapCell ::
+    Applicative f =>
+    (c (CTV (Fix (CType c))) -> f (c' (CTV (Fix (CType c')))))
+    -> (c Level -> f (c' Level))
+    -> Fix (CType c) -> f (Fix (CType c'))
+fmapCell f _ (Fix (TVar c)) = Fix . TVar <$> f c
+fmapCell _ _ (Fix (QVar q)) = pure . Fix $ QVar q
+fmapCell f g (Fix (TArrow t1 t2 level)) =
+    fmap Fix $ TArrow <$> (fmapCell f g t1) <*> (fmapCell f g t2) <*> (fmapLevelCell g level)
+
 
 data Fix f = Fix { unFix :: f (Fix f) }
 deriving instance Eq (f (Fix f)) => Eq (Fix f)
@@ -79,20 +81,17 @@ deriving instance Eq t => Eq (CType (STRef s) t)
     -- (QVar n1) == (QVar n2) = n1 == n2
     -- (TArrow t1 t2) == (TArrow u1 u2) = (t1 == u1) && (t2 == u2)
 
-toFake :: Type s -> ST s PureType
-toFake (Fix (TVar stTV)) = do
-    val <- readSTRef stTV
-    res <-
-        case val of
-        Unbound n l -> return $ Unbound n l
-        Link t -> Link <$> toFake t
 
-    return . Fix . TVar $ FakeCell res
-toFake (Fix (QVar q)) = return $ Fix $ QVar q
-toFake (Fix (TArrow t1 t2)) = do
-    t1' <- toFake t1
-    t2' <- toFake t2
-    return . Fix $ TArrow t1' t2'
+toFake :: Type s -> ST s PureType
+toFake t = fmapCell stToFake (\x -> FakeCell <$> readSTRef x) t
+    where
+        stToFake stTV = do
+            val <- readSTRef stTV
+            res <-
+                case val of
+                Unbound n l -> return $ Unbound n l
+                Link t' -> Link <$> toFake t'
+            return $ FakeCell res
 
 runType :: (forall s. ST s (Type s)) -> PureType
 runType f = runST $ do
@@ -171,7 +170,7 @@ unify t1 t2
 unifyNeq :: Type s -> Type s -> Infer s ()
 unifyNeq (Fix (TVar rtv1)) t2 = unifyTVar rtv1 t2
 unifyNeq t1 (Fix (TVar rtv2)) = unifyTVar rtv2 t1
-unifyNeq (Fix (TArrow a1 b1)) (Fix (TArrow a2 b2)) = do
+unifyNeq (Fix (TArrow a1 b1 l1)) (Fix (TArrow a2 b2 l2)) = do
     unify a1 a2
     unify b1 b2
 unifyNeq (Fix (QVar _)) _ = error "Escaped qvar"
@@ -199,7 +198,7 @@ occurs name ioTV (Fix (TVar ioTV2))
                           writeCell ioTV $ Unbound name $ min l1 l2
                       _ -> return ()
               Link t2 -> occurs name ioTV t2
-occurs name tv (Fix (TArrow t2 t3)) =
+occurs name tv (Fix (TArrow t2 t3 l)) =
     let check = occurs name tv
     in check t2 >> check t3
 occurs _ _ (Fix (QVar _)) = return ()
@@ -215,10 +214,10 @@ gen t@(Fix (TVar ioTV)) = do
                      then Fix $ QVar name
                      else t
         Link t -> gen t
-gen (Fix (TArrow ta tb)) = do
+gen (Fix (TArrow ta tb l)) = do
     gta <- gen ta
     gtb <- gen tb
-    return $ Fix $ TArrow gta gtb
+    return $ Fix $ TArrow gta gtb l
 gen t = return t
 
 ----------------------------------------------------------------------
@@ -246,10 +245,10 @@ inst' env t@(Fix (TVar ioTV)) = do
     case tv of
         Unbound _ _ -> return (t, env)
         Link tLink -> inst' env tLink
-inst' env (Fix (TArrow ta tb)) = do
+inst' env (Fix (TArrow ta tb l)) = do
     (ta', envA) <- inst' env ta
     (tb', envB) <- inst' envA tb
-    return (Fix $ TArrow ta' tb', envB)
+    return (Fix $ TArrow ta' tb' l, envB)
 
 inst :: Type s -> Infer s (Type s)
 inst t = fst <$> inst' tenvEmpty t
@@ -265,12 +264,16 @@ typeOf env (App e1 e2) = do
     tFun <- typeOf env e1
     tArg <- typeOf env e2
     tRes <- newTVar
-    unify tFun $ Fix $ TArrow tArg tRes
+    old <- newCell 0
+    new <- newCell 0
+    unify tFun $ Fix $ TArrow tArg tRes (Levels old new) -- hack
     return tRes
 typeOf env (Lam name e) = do
     tArg <- newTVar
     tBody <- typeOf ((name,tArg) : env) e
-    return $ Fix $ TArrow tArg tBody
+    old <- newCell 0
+    new <- newCell 0
+    return $ Fix $ TArrow tArg tBody (Levels old new) -- hack
 typeOf env (Let name e1 e2) = do
     enterLevel
     tDef <- typeOf env e1 -- non-recursive let
