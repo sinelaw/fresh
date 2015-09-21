@@ -64,13 +64,17 @@ envEmpty = Env { typeEnv = Map.empty }
 type InferT s m a = ReaderT (Env s) (EitherT (UFailure Type (STVar s Type)) m) a
 type Infer s a = InferT s (STBinding s) a
 
+gen :: TTerm s -> Infer s (TTerm s)
+gen t = do
+    frees <- lift . lift $ Unification.getFreeVars t
+    lift . lift $ mapM_ (\v -> Unification.bindVar v $ UTerm $ QVar (QName (show $ Unification.getVarID v))) frees
+    lift . lift $ Unification.semiprune t
+
 -- runInfer :: Traversable t => (forall s. Infer s (UTerm t v)) -> Either String (Maybe (Fix t))
 runInfer :: (forall s. Infer s (TTerm s)) -> Either String (Maybe (Fix Type))
 runInfer act = runSTBinding $ do
     t <- runEitherT . flip runReaderT envEmpty $ do
         withFrees <- act
-        frees <- lift . lift $ Unification.getFreeVars withFrees
-        lift . lift $ mapM_ (\v -> Unification.bindVar v $ UTerm $ QVar (QName (show $ Unification.getVarID v))) frees
         lift $ Unification.applyBindings withFrees
     case t of
         Left e -> return . Left . show $ e
@@ -95,7 +99,7 @@ typeOf (FExpr e) = case e of
         tenv <- typeEnv <$> getEnv
         case Map.lookup n tenv of
             Nothing -> error $ "Unbound var: " ++ show n
-            Just t -> return t
+            Just t -> lift $ Unification.freshen t
     App eFun eArg -> do
         tFun <- typeOf eFun
         tArg <- typeOf eArg
@@ -110,7 +114,8 @@ typeOf (FExpr e) = case e of
         --tArg <- UVar <$> fresh
         --tDef <- withVar n tArg $ typeOf e1
         tDef <- typeOf e1
-        withVar n tDef $ typeOf e2
+        tDefGen <- gen tDef
+        withVar n tDefGen $ typeOf e2
 -- ----------------------------------------------------------------------
 
 -- gen :: Type s -> Infer s (Type s)
