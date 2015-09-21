@@ -22,7 +22,7 @@ import Data.Map (Map)
 -- import Control.Monad (when)
 -- import Control.Monad.ST
 import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.Either (EitherT, runEitherT, left)
+import Control.Monad.Trans.Either (EitherT, runEitherT, left, bimapEitherT)
 import Control.Monad.Trans.Reader (ReaderT, ask, local, runReaderT)
 -- import Data.STRef
 
@@ -58,6 +58,7 @@ data Env s =
         typeEnv :: Map VarName (TTerm s)
     }
 
+envEmpty :: Env s
 envEmpty = Env { typeEnv = Map.empty }
 
 type InferT s m a = ReaderT (Env s) (EitherT (UFailure Type (STVar s Type)) m) a
@@ -66,10 +67,13 @@ type Infer s a = InferT s (STBinding s) a
 eitherToMaybe (Right x) = Just x
 eitherToMaybe (Left _) = Nothing
 
-runInfer :: Traversable t => (forall s. Infer s (UTerm t v)) -> Maybe (Fix t)
-runInfer act = runReaderT envEmpty . eitherToMaybe . runEitherT $ do
-    t <- act
-    lift . Unification.freeze $ t
+-- runInfer :: Traversable t => (forall s. Infer s (UTerm t v)) -> Either String (Maybe (Fix t))
+runInfer :: (forall s. Infer s (TTerm s)) -> Either String (Maybe (Fix Type))
+runInfer act = runSTBinding $ do
+    t <- runEitherT $ runReaderT act envEmpty
+    case t of
+        Left e -> return . Left . show $ e
+        Right t' -> return . Right $ Unification.freeze t'
 
 
 getEnv :: Infer s (Env s)
