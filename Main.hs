@@ -7,8 +7,8 @@ module Main where
 import           Control.Unification (Unifiable(..), UTerm(..), BindingMonad(..))
 import qualified Control.Unification as Unification
 import           Control.Unification.Types (UFailure(..))
-import           Control.Unification.STVar (STVar, STBinding)
-
+import           Control.Unification.STVar (STVar, STBinding, runSTBinding)
+import Data.Functor.Fixedpoint (Fix(..))
 import qualified Data.Map as Map
 import Data.Map (Map)
 
@@ -23,7 +23,7 @@ import Data.Map (Map)
 -- import Control.Monad.ST
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Either (EitherT, runEitherT, left)
-import Control.Monad.Trans.Reader (ReaderT, ask, runReaderT)
+import Control.Monad.Trans.Reader (ReaderT, ask, local, runReaderT)
 -- import Data.STRef
 
 type VarName = String
@@ -55,19 +55,33 @@ type TTerm s = UTerm Type (STVar s Type)
 
 data Env s =
     Env {
-        typeEnv :: Map String (TTerm s)
+        typeEnv :: Map VarName (TTerm s)
     }
 
-type InferT s m a = EitherT (UFailure Type (STVar s Type)) (ReaderT (Env s) m) a
+envEmpty = Env { typeEnv = Map.empty }
+
+type InferT s m a = ReaderT (Env s) (EitherT (UFailure Type (STVar s Type)) m) a
 type Infer s a = InferT s (STBinding s) a
 
+eitherToMaybe (Right x) = Just x
+eitherToMaybe (Left _) = Nothing
+
+runInfer :: Traversable t => (forall s. Infer s (UTerm t v)) -> Maybe (Fix t)
+runInfer act = runReaderT envEmpty . eitherToMaybe . runEitherT $ do
+    t <- act
+    lift . Unification.freeze $ t
+
+
 getEnv :: Infer s (Env s)
-getEnv = lift ask
+getEnv = ask
+
+withVar :: VarName -> TTerm s -> Infer s a -> Infer s a
+withVar n t = local (\env -> env { typeEnv = Map.insert n t $ typeEnv env })
 
 fresh :: Infer s (STVar s Type)
 fresh = lift $ lift freeVar
 
---unify :: TTerm s -> TTerm s -> Infer s (TTerm s)
+unify :: TTerm s -> TTerm s -> Infer s (TTerm s)
 unify x y = lift $ Unification.unify x y
 
 typeOf :: FExpr -> Infer s (TTerm s)
@@ -81,10 +95,17 @@ typeOf (FExpr e) = case e of
         tFun <- typeOf eFun
         tArg <- typeOf eArg
         tRes <- UVar <$> fresh
-        unify tFun $ UTerm $ TArrow tArg tRes
-        return tRes
-
-
+        UTerm (TArrow _ tRes') <- unify tFun $ UTerm $ TArrow tArg tRes
+        return tRes'
+    Lam n e -> do
+        tArg <- UVar <$> fresh
+        tBody <- withVar n tArg $ typeOf e
+        return $ UTerm $ TArrow tArg tBody
+    Let n e1 e2 -> do
+        --tArg <- UVar <$> fresh
+        --tDef <- withVar n tArg $ typeOf e1
+        tDef <- typeOf e1
+        withVar n tDef $ typeOf e2
 -- ----------------------------------------------------------------------
 
 -- gen :: Type s -> Infer s (Type s)
@@ -174,21 +195,21 @@ typeOf (FExpr e) = case e of
 -- --infer :: Expr -> Either TypeError PureType
 -- --infer = runInfer . typeOf []
 
--- test_id_inner = (Lam "x" $ Var "x")
--- test_id = Let "id" test_id_inner (Var "id")
--- tid = runInfer $ typeOf [] test_id
+test_id_inner = FExpr (Lam "x" $ FExpr $ Var "x")
+test_id = FExpr $ Let "id" test_id_inner (FExpr $ Var "id")
+tid = runInfer $ typeOf test_id
 
--- test_id2 = (Lam "x" (Let "y" (Var "x") (Var "y")))
--- tid2 = runInfer $ typeOf [] test_id2
+test_id2 = FExpr (Lam "x" (FExpr $ Let "y" (FExpr $ Var "x") (FExpr $ Var "y")))
+tid2 = runInfer $ typeOf test_id2
 
--- test_id3 = Let "id" (Lam "y" $ (Lam "x" $ Var "y")) (Var "id")
--- tid3 = runInfer $ typeOf [] test_id3
+test_id3 = FExpr $ Let "id" (FExpr $ Lam "y" $ (FExpr $ Lam "x" (FExpr $ Var "y"))) (FExpr $ Var "id")
+tid3 = runInfer $ typeOf test_id3
 
 
 main :: IO ()
-main = return ()
-  -- do
-  --   print tid
-  --   print tid2
-  --   print tid3
+main = --return ()
+  do
+    print tid
+    print tid2
+    print tid3
 
