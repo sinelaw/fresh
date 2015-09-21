@@ -64,13 +64,14 @@ envEmpty = Env { typeEnv = Map.empty }
 type InferT s m a = ReaderT (Env s) (EitherT (UFailure Type (STVar s Type)) m) a
 type Infer s a = InferT s (STBinding s) a
 
-eitherToMaybe (Right x) = Just x
-eitherToMaybe (Left _) = Nothing
-
 -- runInfer :: Traversable t => (forall s. Infer s (UTerm t v)) -> Either String (Maybe (Fix t))
 runInfer :: (forall s. Infer s (TTerm s)) -> Either String (Maybe (Fix Type))
 runInfer act = runSTBinding $ do
-    t <- runEitherT $ runReaderT act envEmpty
+    t <- runEitherT . flip runReaderT envEmpty $ do
+        withFrees <- act
+        frees <- lift . lift $ Unification.getFreeVars withFrees
+        lift . lift $ mapM_ (\v -> Unification.bindVar v $ UTerm $ QVar (QName (show $ Unification.getVarID v))) frees
+        lift $ Unification.applyBindings withFrees
     case t of
         Left e -> return . Left . show $ e
         Right t' -> return . Right $ Unification.freeze t'
