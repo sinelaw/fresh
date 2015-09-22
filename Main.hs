@@ -1,9 +1,9 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, StandaloneDeriving, UndecidableInstances, RecordWildCards #-}
+{-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, StandaloneDeriving, UndecidableInstances, RecordWildCards, LambdaCase #-}
 module Main where
 
-
+import Control.Monad ((>=>))
 import           Control.Unification (Unifiable(..), UTerm(..), BindingMonad(..))
 import qualified Control.Unification as Unification
 import           Control.Unification.Types (UFailure(..))
@@ -24,6 +24,7 @@ import Data.Map (Map)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Either (EitherT, runEitherT, left, bimapEitherT)
 import Control.Monad.Trans.Reader (ReaderT, ask, local, runReaderT)
+import Control.Monad.Trans.State (evalStateT, get, put)
 -- import Data.STRef
 
 type VarName = String
@@ -39,7 +40,7 @@ newtype FExpr = FExpr (Expr FExpr)
               deriving (Show, Eq)
 
 newtype QName = QName String
-              deriving (Show, Eq)
+              deriving (Show, Eq, Ord)
 
 data Type t
     = QVar QName
@@ -68,7 +69,26 @@ gen :: TTerm s -> Infer s (TTerm s)
 gen t = do
     frees <- lift . lift $ Unification.getFreeVars t
     lift . lift $ mapM_ (\v -> Unification.bindVar v $ UTerm $ QVar (QName (show $ Unification.getVarID v))) frees
-    lift . lift $ Unification.semiprune t
+    return t
+--    lift . lift $ Unification.semiprune t
+
+inst :: TTerm s -> Infer s (TTerm s)
+inst ts0 = lift $ evalStateT (loop ts0) Map.empty
+    where
+    loop = (lift . lift . Unification.semiprune) >=>
+        \case
+            UTerm t ->
+                case t of
+                QVar n -> do
+                    qvars <- get
+                    UVar <$> case Map.lookup n qvars of
+                         Nothing -> do
+                             qvarT <- lift (lift Unification.freeVar)
+                             put $ Map.insert n qvarT qvars
+                             return qvarT
+                         Just t' -> return t'
+                _      -> UTerm <$> mapM loop t
+            UVar  v -> return $ UVar v
 
 -- runInfer :: Traversable t => (forall s. Infer s (UTerm t v)) -> Either String (Maybe (Fix t))
 runInfer :: (forall s. Infer s (TTerm s)) -> Either String (Maybe (Fix Type))
@@ -94,12 +114,12 @@ unify :: TTerm s -> TTerm s -> Infer s (TTerm s)
 unify x y = lift $ Unification.unify x y
 
 typeOf :: FExpr -> Infer s (TTerm s)
-typeOf (FExpr e) = case e of
+typeOf (FExpr e') = case e' of
     Var n -> do
         tenv <- typeEnv <$> getEnv
         case Map.lookup n tenv of
             Nothing -> error $ "Unbound var: " ++ show n
-            Just t -> lift $ Unification.freshen t
+            Just t -> inst t -- lift $ Unification.freshen t
     App eFun eArg -> do
         tFun <- typeOf eFun
         tArg <- typeOf eArg
