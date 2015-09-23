@@ -126,6 +126,7 @@ runInfer :: (forall s. Infer s (TTerm s)) -> Either String (Maybe (Fix Type))
 runInfer act = runSTBinding $ do
     t <- runEitherT . flip runReaderT envEmpty $ do
         withFrees <- act
+        gen withFrees -- HACK, so freeze won't return Nothing
         lift $ Unification.applyBindings withFrees
     case t of
         Left e -> return . Left . show $ e
