@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, StandaloneDeriving, UndecidableInstances, RecordWildCards, LambdaCase #-}
-module Main where
+module Main (main) where
 
 import Control.Monad ((>=>))
 import           Control.Unification (Unifiable(..), UTerm(..), BindingMonad(..))
@@ -11,6 +11,8 @@ import           Control.Unification.STVar (STVar, STBinding, runSTBinding)
 import Data.Functor.Fixedpoint (Fix(..))
 import qualified Data.Map as Map
 import Data.Map (Map)
+import qualified Data.Set as Set
+import Data.Set (Set)
 
 -- import Control.Monad.Identity
 -- import Control.Monad.Trans
@@ -52,11 +54,17 @@ instance Unifiable Type where
     zipMatch (TArrow l1 l2) (TArrow r1 r2) = Just $ TArrow (Right (l1, r1)) (Right (l2, r2))
     zipMatch _ _ = Nothing
 
+newtype TVar s = TVar { stVar :: STVar s Type }
+               deriving (Show, Eq)
+
+instance Ord (TVar s) where
+    x `compare` y = Unification.getVarID (stVar x) `compare` Unification.getVarID (stVar y)
+
 type TTerm s = UTerm Type (STVar s Type)
 
 data Env s =
-    Env {
-        typeEnv :: Map VarName (TTerm s)
+    Env
+    { typeEnv :: Map VarName (TTerm s)
     }
 
 envEmpty :: Env s
@@ -65,12 +73,28 @@ envEmpty = Env { typeEnv = Map.empty }
 type InferT s m a = ReaderT (Env s) (EitherT (UFailure Type (STVar s Type)) m) a
 type Infer s a = InferT s (STBinding s) a
 
-gen :: TTerm s -> Infer s (TTerm s)
+liftUnify :: Monad (m s) => m s a -> InferT s (m s) a
+liftUnify = lift . lift
+
+getEnv :: Infer s (Env s)
+getEnv = ask
+
+withVar :: VarName -> TTerm s -> Infer s a -> Infer s a
+withVar n t = local (\env -> env { typeEnv = Map.insert n t $ typeEnv env })
+
+liveTVars :: Infer s (Set (TVar s))
+liveTVars = do
+    mappedTypes <- Map.elems . typeEnv <$> ask
+    Set.fromList . map TVar . mconcat <$> mapM (liftUnify . Unification.getFreeVars) mappedTypes
+
+
+gen :: TTerm s -> Infer s () -- TTerm s)
 gen t = do
-    frees <- lift . lift $ Unification.getFreeVars t
-    lift . lift $ mapM_ (\v -> Unification.bindVar v $ UTerm $ QVar (QName (show $ Unification.getVarID v))) frees
-    return t
---    lift . lift $ Unification.semiprune t
+    lives <- liveTVars
+    frees <- (`Set.difference` lives) . Set.fromList . fmap TVar <$> (liftUnify $ Unification.getFreeVars t)
+    liftUnify $ mapM_ (\(TVar v) -> Unification.bindVar v $ mkQVar v) frees
+    where
+        mkQVar v = UTerm . QVar . QName . show $ Unification.getVarID v
 
 inst :: TTerm s -> Infer s (TTerm s)
 inst ts0 = lift $ evalStateT (loop ts0) Map.empty
@@ -87,8 +111,15 @@ inst ts0 = lift $ evalStateT (loop ts0) Map.empty
                              put $ Map.insert n qvarT qvars
                              return qvarT
                          Just t' -> return t'
-                _      -> UTerm <$> mapM loop t
-            UVar  v -> return $ UVar v
+                TArrow t1 t2 -> do
+                    t1' <- loop t1
+                    t2' <- loop t2
+                    return . UTerm $ TArrow t1' t2'
+            UVar  v -> do
+                tv <- lift . lift $ Unification.lookupVar v
+                case tv of
+                    Nothing -> return $ UVar v
+                    Just t' -> loop t'
 
 -- runInfer :: Traversable t => (forall s. Infer s (UTerm t v)) -> Either String (Maybe (Fix t))
 runInfer :: (forall s. Infer s (TTerm s)) -> Either String (Maybe (Fix Type))
@@ -99,13 +130,6 @@ runInfer act = runSTBinding $ do
     case t of
         Left e -> return . Left . show $ e
         Right t' -> return . Right $ Unification.freeze t'
-
-
-getEnv :: Infer s (Env s)
-getEnv = ask
-
-withVar :: VarName -> TTerm s -> Infer s a -> Infer s a
-withVar n t = local (\env -> env { typeEnv = Map.insert n t $ typeEnv env })
 
 fresh :: Infer s (STVar s Type)
 fresh = lift $ lift freeVar
@@ -134,8 +158,8 @@ typeOf (FExpr e') = case e' of
         --tArg <- UVar <$> fresh
         --tDef <- withVar n tArg $ typeOf e1
         tDef <- typeOf e1
-        tDefGen <- gen tDef
-        withVar n tDefGen $ typeOf e2
+        gen tDef
+        withVar n tDef $ typeOf e2
 -- ----------------------------------------------------------------------
 
 -- gen :: Type s -> Infer s (Type s)
@@ -226,13 +250,13 @@ typeOf (FExpr e') = case e' of
 -- --infer = runInfer . typeOf []
 
 test_id_inner = FExpr (Lam "x" $ FExpr $ Var "x")
-test_id = FExpr $ Let "id" test_id_inner (FExpr $ Var "id")
+test_id = FExpr $ Let "id" test_id_inner (FExpr $ Var "id") -- (FExpr $ App (FExpr $ Var "id") (FExpr $ Var "id")) -- (FExpr $ Var "id")
 tid = runInfer $ typeOf test_id
 
 test_id2 = FExpr (Lam "x" (FExpr $ Let "y" (FExpr $ Var "x") (FExpr $ Var "y")))
 tid2 = runInfer $ typeOf test_id2
 
-test_id3 = FExpr $ Let "id" (FExpr $ Lam "y" $ (FExpr $ Lam "x" (FExpr $ Var "y"))) (FExpr $ Var "id")
+test_id3 = FExpr $ Let "id" (FExpr $ Lam "y" $ (FExpr $ Lam "x" (FExpr $ Var "y"))) (FExpr $ App (FExpr $ Var "id") (FExpr $ Var "id"))
 tid3 = runInfer $ typeOf test_id3
 
 
