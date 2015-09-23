@@ -1,3 +1,9 @@
+-- | Simple Damas-Hindley-Milner type inference using the unification-fd package.
+--
+-- Currently implemented with expensive generalization/instantiation,
+-- i.e. doesn't use level/depth-based tricks
+
+
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, StandaloneDeriving, UndecidableInstances, RecordWildCards, LambdaCase #-}
