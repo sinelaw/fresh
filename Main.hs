@@ -3,7 +3,6 @@
 {-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, StandaloneDeriving, UndecidableInstances, RecordWildCards #-}
 module Main where
 
-
 import Control.Monad (foldM)
 import Control.Monad (when)
 import Control.Monad.ST
@@ -12,9 +11,15 @@ import Control.Monad.Trans.Either (EitherT, runEitherT, left)
 import Control.Monad.Trans.Reader (ReaderT, ask, runReaderT)
 import Data.STRef
 
+class Render a where
+    render :: a -> String
 
 data FakeCell x = FakeCell x
                 deriving (Eq, Show)
+
+instance Render x => Render (FakeCell x) where
+    render (FakeCell x) = render x
+
 type Cell s a = STRef s a
 type VarName = String
 
@@ -24,6 +29,18 @@ data Expr
     | Lam VarName Expr
     | Let VarName Expr Expr
     deriving (Show)
+
+instance Render Expr where
+    render (Var name) = name
+    render (App e1 e2) = render e1 ++ " " ++ render e2
+    render (Lam name e) = "(\\" ++ name ++ " -> " ++ render e ++ ")"
+    render (Let name e1 e2) = "let " ++ name ++ " = " ++ render e1 ++ " in " ++ render e2
+
+instance Render Int where
+    render = show
+
+instance Render String where
+    render = show
 
 type TVName = Int
 type QName = TVName
@@ -50,9 +67,12 @@ data CTV t
     | Link t
     deriving (Show, Eq)
 
+instance (Render t) => Render (CTV t) where
+    render (Unbound tv l) = "t" ++ show tv  -- ++ "-" ++ show l
+    render (Link t) = render t
+
 data CType c t
     = TVar (c (CTV t))
-    | QVar QName
     | TArrow t t (Levels (c Level))
 
 
@@ -62,14 +82,18 @@ fmapCell ::
     -> (c Level -> f (c' Level))
     -> Fix (CType c) -> f (Fix (CType c'))
 fmapCell f _ (Fix (TVar c)) = Fix . TVar <$> f c
-fmapCell _ _ (Fix (QVar q)) = pure . Fix $ QVar q
 fmapCell f g (Fix (TArrow t1 t2 level)) =
     fmap Fix $ TArrow <$> (fmapCell f g t1) <*> (fmapCell f g t2) <*> (fmapLevelCell g level)
 
+instance (Render (c (CTV t)), Render t) => Render (CType c t) where
+    render (TVar c) = render c
+    render (TArrow t1 t2 _l) = render t1 ++ " -> " ++ render t2
 
 data Fix f = Fix { unFix :: f (Fix f) }
 deriving instance Eq (f (Fix f)) => Eq (Fix f)
 deriving instance Show (f (Fix f)) => Show (Fix f)
+instance Render (f (Fix f)) => Render (Fix f) where
+    render (Fix x) = render x
 
 type Type s = Fix (CType (STRef s))
 type TV s = CTV (Type s)
@@ -124,6 +148,9 @@ data TypeError t
     | UnificationError t t
     deriving (Show, Eq, Functor, Foldable, Traversable)
 
+instance Render t => Render (TypeError t) where
+    render = show . fmap render
+
 type Infer s a = EitherT (TypeError (Type s)) (ReaderT (Env s) (ST s)) a
 
 newCell :: a -> Infer s (Cell s a)
@@ -167,6 +194,10 @@ runInfer x = runST $ do
             e' <- traverse toFake e
             return $ Left e'
         Right st -> Right <$> toFake st
+
+instance (Render a, Render b) => Render (Either a b) where
+    render (Left x) = "Error: " ++ render x
+    render (Right y) = render y
 
 typeError :: TypeError (Type s) -> Infer s a
 typeError = left
@@ -344,22 +375,33 @@ forceDelayedAdj = do
     lift . lift $ writeSTRef (toBeLevelAdjusted env) tbla'
 
 ----------------------------------------------------------------------
-
-gen :: Type s -> Infer s (Type s)
-gen t@(Fix (TVar ioTV)) = do
-    tv <- readCell ioTV
-    case tv of
-        Unbound name level -> do
+gen :: Type s -> Infer s ()
+gen t = do
+    forceDelayedAdj
+    loop t
+    where
+        loop t = repr t >>= gen'
+        gen' :: Type s -> Infer s ()
+        gen' t@(Fix (TVar ioTV)) = do
+            tv <- readCell ioTV
+            case tv of
+                Unbound name level -> do
+                    curLevel <- currentLevel
+                    when (level > curLevel) $ do
+                        writeCell ioTV $ Unbound name genericLevel
+                Link t' -> loop t'
+        gen' (Fix (TArrow ta tb ls)) = do
+            lNew <- readCell $ levelNew ls
             curLevel <- currentLevel
-            return $ if curLevel < level
-                     then Fix $ QVar name
-                     else t
-        Link t' -> gen t'
-gen (Fix (TArrow ta tb l)) = do
-    gta <- gen ta
-    gtb <- gen tb
-    return $ Fix $ TArrow gta gtb l
-gen t = return t
+            when (lNew > curLevel) $ do
+                loop ta
+                loop tb
+                gtaLevel <- getLevel ta
+                gtbLevel <- getLevel tb
+                let l = max gtaLevel gtbLevel
+                writeCell (levelOld ls) l
+                writeCell (levelNew ls) l
+        gen' _ = return ()
 
 ----------------------------------------------------------------------
 
@@ -381,16 +423,18 @@ tenvEmpty :: TEnv s
 tenvEmpty = []
 
 inst' :: TEnv s -> Type s -> Infer s (Type s, TEnv s)
-inst' env (Fix (QVar name)) =
-    case lookup name env of
-    Just t -> return (t, env)
-    Nothing -> do
-        tv <- newTVar
-        return (tv, (name, tv) : env)
 inst' env t@(Fix (TVar ioTV)) = do
     tv <- readCell ioTV
     case tv of
-        Unbound _ _ -> return (t, env)
+        Unbound n l -> do
+            if (l == genericLevel)
+                then do
+                case lookup n env of
+                    Nothing -> do
+                        freshTV <- newTVar
+                        return (freshTV, (n,freshTV):env)
+                    Just t' -> return (t', env)
+                else return (t, env)
         Link tLink -> inst' env tLink
 inst' env (Fix (TArrow ta tb l)) = do
     (ta', envA) <- inst' env ta
@@ -411,29 +455,26 @@ typeOf env (App e1 e2) = do
     tFun <- typeOf env e1
     tArg <- typeOf env e2
     tRes <- newTVar
-    old <- newCell 0
-    new <- newCell 0
-    unify tFun $ Fix $ TArrow tArg tRes (Levels old new) -- hack
+    tArr <- newArrow tArg tRes
+    unify tFun tArr
     return tRes
 typeOf env (Lam name e) = do
     tArg <- newTVar
     tBody <- typeOf ((name,tArg) : env) e
-    old <- newCell 0
-    new <- newCell 0
-    return $ Fix $ TArrow tArg tBody (Levels old new) -- hack
+    newArrow tArg tBody
 typeOf env (Let name e1 e2) = do
     enterLevel
     tDef <- typeOf env e1 -- non-recursive let
     leaveLevel
-    tVar <- gen tDef
-    typeOf ((name,tVar) : env) e2
+    gen tDef
+    typeOf ((name,tDef) : env) e2
 
 
 --infer :: Expr -> Either TypeError PureType
 --infer = runInfer . typeOf []
 
 test_id_inner = (Lam "x" $ Var "x")
-test_id = Let "id" test_id_inner (Var "id")
+test_id = Let "id" test_id_inner (App (Var "id") (Var "id"))
 tid = runInfer $ typeOf [] test_id
 
 test_id2 = (Lam "x" (Let "y" (Var "x") (Var "y")))
@@ -445,7 +486,7 @@ tid3 = runInfer $ typeOf [] test_id3
 
 main :: IO ()
 main = do
-    print tid
-    print tid2
-    print tid3
+    putStrLn $ render tid
+    putStrLn $ render tid2
+    putStrLn $ render tid3
 
