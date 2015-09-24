@@ -28,6 +28,7 @@ data Expr
     | App Expr Expr
     | Lam VarName Expr
     | Let VarName Expr Expr
+    | Pair Expr Expr
     deriving (Show)
 
 instance Render Expr where
@@ -35,6 +36,7 @@ instance Render Expr where
     render (App e1 e2) = render e1 ++ " " ++ render e2
     render (Lam name e) = "(\\" ++ name ++ " -> " ++ render e ++ ")"
     render (Let name e1 e2) = "let " ++ name ++ " = " ++ render e1 ++ " in " ++ render e2
+    render (Pair e1 e2) = "(" ++ render e1 ++ ", " ++ render e2 ++ ")"
 
 instance Render Int where
     render = show
@@ -74,7 +76,7 @@ instance (Render t) => Render (CTV t) where
 data CType c t
     = TVar (c (CTV t))
     | TArrow t t (Levels (c Level))
-
+    | TPair t t (Levels (c Level))
 
 fmapCell ::
     Applicative f =>
@@ -84,10 +86,13 @@ fmapCell ::
 fmapCell f _ (Fix (TVar c)) = Fix . TVar <$> f c
 fmapCell f g (Fix (TArrow t1 t2 level)) =
     fmap Fix $ TArrow <$> (fmapCell f g t1) <*> (fmapCell f g t2) <*> (fmapLevelCell g level)
+fmapCell f g (Fix (TPair t1 t2 level)) =
+    fmap Fix $ TPair <$> (fmapCell f g t1) <*> (fmapCell f g t2) <*> (fmapLevelCell g level)
 
 instance (Render (c (CTV t)), Render t) => Render (CType c t) where
     render (TVar c) = render c
     render (TArrow t1 t2 _l) = render t1 ++ " -> " ++ render t2
+    render (TPair t1 t2 _l) = "(" ++ render t1 ++ ", " ++ render t2 ++ ")"
 
 data Fix f = Fix { unFix :: f (Fix f) }
 deriving instance Eq (f (Fix f)) => Eq (Fix f)
@@ -202,19 +207,23 @@ instance (Render a, Render b) => Render (Either a b) where
 typeError :: TypeError (Type s) -> Infer s a
 typeError = left
 
-cycleFree :: Type s -> Infer s ()
-cycleFree (Fix (TVar iotv)) = do
-    tv <- readCell iotv
-    case tv of
-        Unbound{} -> return ()
-        Link t -> cycleFree t
-cycleFree (Fix (TArrow t1 t2 ls)) = do
+--cycleFree2 :: Type s -> Type s -> Levels -> Infer s ()
+cycleFree2 t1 t2 ls = do
     lNew <- readCell $ levelNew ls
     when (lNew == markedLevel) $ typeError OccursError
     writeCell (levelNew ls) markedLevel
     cycleFree t1
     cycleFree t2
     writeCell (levelNew ls) lNew
+
+cycleFree :: Type s -> Infer s ()
+cycleFree (Fix (TVar iotv)) = do
+    tv <- readCell iotv
+    case tv of
+        Unbound{} -> return ()
+        Link t -> cycleFree t
+cycleFree (Fix (TArrow t1 t2 ls)) = cycleFree2 t1 t2 ls
+cycleFree (Fix (TPair t1 t2 ls)) = cycleFree2 t1 t2 ls
 cycleFree _ = return ()
 
 repr :: Type s -> Infer s (Type s)
@@ -235,6 +244,7 @@ getLevel (Fix (TVar iotv)) = do
         Unbound _ l -> return l
         _ -> error "getLevel only works for unbound tvars, and composites"
 getLevel (Fix (TArrow _ _ levels)) = readCell $ levelNew levels
+getLevel (Fix (TPair _ _ levels)) = readCell $ levelNew levels
 getLevel _ = error "getLevel only works for unbound tvars, and composites"
 
 fresh :: Infer s TVName
@@ -248,11 +258,7 @@ unify t1 t2
     | otherwise = unifyNeq t1 t2
 
 
-unifyNeq :: Type s -> Type s -> Infer s ()
-unifyNeq (Fix (TVar rtv1)) (Fix (TVar rtv2)) = unifyTVars rtv1 rtv2
-unifyNeq (Fix (TVar rtv1)) t2 = unifyTVar rtv1 t2
-unifyNeq t1 (Fix (TVar rtv2)) = unifyTVar rtv2 t1
-unifyNeq (Fix (TArrow a1 b1 l1)) (Fix (TArrow a2 b2 l2)) = do
+unifyTConstr ts1 l1 ts2 l2 = do
     lNew1 <- readCell $ levelNew l1
     lNew2 <- readCell $ levelNew l2
     when ((lNew1 == markedLevel) || (lNew2 == markedLevel)) $
@@ -260,12 +266,18 @@ unifyNeq (Fix (TArrow a1 b1 l1)) (Fix (TArrow a2 b2 l2)) = do
     let minLevel = min lNew1 lNew2
     writeCell (levelNew l1) markedLevel
     writeCell (levelNew l2) markedLevel
-    unifyLev minLevel a1 a2
-    unifyLev minLevel b1 b2
+    mapM_ (uncurry $ unifyLev minLevel) $ zip ts1 ts2
     writeCell (levelNew l1) minLevel
     writeCell (levelNew l2) minLevel
-unifyNeq (Fix (QVar _)) _ = error "Escaped qvar"
-unifyNeq _ (Fix (QVar _)) = error "Escaped qvar"
+
+
+unifyNeq :: Type s -> Type s -> Infer s ()
+unifyNeq (Fix (TVar rtv1)) (Fix (TVar rtv2)) = unifyTVars rtv1 rtv2
+unifyNeq (Fix (TVar rtv1)) t2 = unifyTVar rtv1 t2
+unifyNeq t1 (Fix (TVar rtv2)) = unifyTVar rtv2 t1
+unifyNeq (Fix (TArrow a1 b1 l1)) (Fix (TArrow a2 b2 l2)) = unifyTConstr [a1,b1] l1 [a2,b2] l2
+unifyNeq (Fix (TPair a1 b1 l1)) (Fix (TPair a2 b2 l2)) = unifyTConstr [a1,b1] l1 [a2,b2] l2
+unifyNeq _ _ = error "Unification failed"
 
 
 unifyTVars :: Cell s (TV s) -> Cell s (TV s) -> Infer s ()
@@ -440,6 +452,10 @@ inst' env (Fix (TArrow ta tb l)) = do
     (ta', envA) <- inst' env ta
     (tb', envB) <- inst' envA tb
     return (Fix $ TArrow ta' tb' l, envB)
+inst' env (Fix (TPair ta tb l)) = do
+    (ta', envA) <- inst' env ta
+    (tb', envB) <- inst' envA tb
+    return (Fix $ TPair ta' tb' l, envB)
 
 inst :: Type s -> Infer s (Type s)
 inst t = fst <$> inst' tenvEmpty t
@@ -468,6 +484,12 @@ typeOf env (Let name e1 e2) = do
     leaveLevel
     gen tDef
     typeOf ((name,tDef) : env) e2
+typeOf env (Pair e1 e2) = do
+    t1 <- typeOf env e1
+    t2 <- typeOf env e2
+    old <- newCell 0
+    new <- newCell 0
+    return $ Fix $ TPair t1 t2 (Levels old new)
 
 
 --infer :: Expr -> Either TypeError PureType
