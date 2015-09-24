@@ -144,13 +144,13 @@ enqueueAdj t = do
 enterLevel :: Infer s ()
 enterLevel = do
     env <- lift ask
-    lift . lift $ modifySTRef (level env) (+1)
+    lift . lift $ modifySTRef (level env) (1 +)
     return ()
 
 leaveLevel :: Infer s ()
 leaveLevel = do
     env <- lift ask
-    lift . lift $ modifySTRef (level env) ((-) 1)
+    lift . lift $ modifySTRef (level env) (subtract 1)
     return ()
 
 currentLevel :: Infer s Level
