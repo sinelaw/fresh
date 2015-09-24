@@ -11,6 +11,9 @@ import Control.Monad.Trans.Either (EitherT, runEitherT, left)
 import Control.Monad.Trans.Reader (ReaderT, ask, runReaderT)
 import Data.STRef
 
+--import Debug.Trace (traceShowId, traceM)
+traceM x = return ()
+
 class Render a where
     render :: a -> String
 
@@ -20,8 +23,12 @@ data FakeCell x = FakeCell x
 instance Render x => Render (FakeCell x) where
     render (FakeCell x) = render x
 
-type Cell s a = STRef s a
+data Cell s a = Cell { cellId :: Int, cellRef :: STRef s a }
+    deriving (Eq)
 type VarName = String
+
+instance Show (Cell s a) where
+    show cell = "<cell " ++ show (cellId cell) ++ ">"
 
 data Expr
     = Var VarName
@@ -100,17 +107,18 @@ deriving instance Show (f (Fix f)) => Show (Fix f)
 instance Render (f (Fix f)) => Render (Fix f) where
     render (Fix x) = render x
 
-type Type s = Fix (CType (STRef s))
+type Type s = Fix (CType (Cell s))
 type TV s = CTV (Type s)
 
 type PureType = Fix (CType FakeCell)
 
 deriving instance Eq t => Eq (CType FakeCell t)
 deriving instance Show t => Show (CType FakeCell t)
-deriving instance Eq t => Eq (CType (STRef s) t)
+deriving instance (Show (Cell s t), Show t) => Show (CType (Cell s) t)
+deriving instance Eq t => Eq (CType (Cell s) t)
 
 toFake :: Type s -> ST s PureType
-toFake t = fmapCell stToFake (\x -> FakeCell <$> readSTRef x) t
+toFake t = fmapCell (stToFake . cellRef) (\x -> FakeCell <$> readSTRef (cellRef x)) t
     where
         stToFake stTV = do
             val <- readSTRef stTV
@@ -128,9 +136,9 @@ runType f = runST $ do
 
 data Env s =
     Env
-    { freshCounter :: Cell s TVName
-    , level :: Cell s Level
-    , toBeLevelAdjusted :: Cell s [Type s]
+    { freshCounter :: STRef s TVName
+    , level :: STRef s Level
+    , toBeLevelAdjusted :: STRef s [Type s]
     }
 
 
@@ -147,7 +155,7 @@ envEmpty = do
         }
 
 data TypeError t
-    = OccursError
+    = OccursError String
     | UnboundVar VarName
     | EscapedGenericLevel
     | UnificationError t t
@@ -158,14 +166,23 @@ instance Render t => Render (TypeError t) where
 
 type Infer s a = EitherT (TypeError (Type s)) (ReaderT (Env s) (ST s)) a
 
+fresh :: Infer s TVName
+fresh = do
+    fc <- freshCounter <$> lift ask
+    lift . lift $ modifySTRef fc (+1)
+    lift . lift $ readSTRef fc
+
 newCell :: a -> Infer s (Cell s a)
-newCell = lift . lift . newSTRef
+newCell x = do
+    level <- fresh
+    stRef <- lift . lift $ newSTRef x
+    return $ Cell { cellId = level, cellRef = stRef }
 readCell :: Cell s a -> Infer s a
-readCell = lift . lift . readSTRef
+readCell = lift . lift . readSTRef . cellRef
 writeCell :: Cell s a -> a -> Infer s ()
-writeCell c x = lift . lift $ writeSTRef c x
+writeCell c x = lift . lift $ writeSTRef (cellRef c) x
 modifyCell :: Cell s a -> (a -> a) -> Infer s a
-modifyCell c f = lift . lift $ (modifySTRef c f >> readSTRef c)
+modifyCell c f = lift . lift $ (modifySTRef (cellRef c) f >> readSTRef (cellRef c))
 
 enqueueAdj :: Type s -> Infer s ()
 enqueueAdj t = do
@@ -177,12 +194,14 @@ enterLevel :: Infer s ()
 enterLevel = do
     env <- lift ask
     lift . lift $ modifySTRef (level env) (1 +)
+    currentLevel >>= traceM . ("++level = " ++) . show
     return ()
 
 leaveLevel :: Infer s ()
 leaveLevel = do
     env <- lift ask
     lift . lift $ modifySTRef (level env) (subtract 1)
+    currentLevel >>= traceM . ("--level = " ++) . show
     return ()
 
 currentLevel :: Infer s Level
@@ -210,7 +229,7 @@ typeError = left
 --cycleFree2 :: Type s -> Type s -> Levels -> Infer s ()
 cycleFree2 t1 t2 ls = do
     lNew <- readCell $ levelNew ls
-    when (lNew == markedLevel) $ typeError OccursError
+    when (lNew == markedLevel) $ typeError $ OccursError "cycleFree2"
     writeCell (levelNew ls) markedLevel
     cycleFree t1
     cycleFree t2
@@ -247,13 +266,15 @@ getLevel (Fix (TArrow _ _ levels)) = readCell $ levelNew levels
 getLevel (Fix (TPair _ _ levels)) = readCell $ levelNew levels
 getLevel _ = error "getLevel only works for unbound tvars, and composites"
 
-fresh :: Infer s TVName
-fresh = do
-    fc <- freshCounter <$> lift ask
-    modifyCell fc (+1)
+unify  :: Type s -> Type s -> Infer s ()
+unify t1 t2 = do
+    traceM $ "unify: " ++ show t1 ++ "\n   === " ++ show t2
+    t1' <- repr t1
+    t2' <- repr t2
+    unify' t1' t2'
 
-unify :: Type s -> Type s -> Infer s ()
-unify t1 t2
+unify' :: Type s -> Type s -> Infer s ()
+unify' t1 t2
     | t1 == t2  = return ()
     | otherwise = unifyNeq t1 t2
 
@@ -262,10 +283,11 @@ unifyTConstr ts1 l1 ts2 l2 = do
     lNew1 <- readCell $ levelNew l1
     lNew2 <- readCell $ levelNew l2
     when ((lNew1 == markedLevel) || (lNew2 == markedLevel)) $
-        typeError OccursError
+        typeError $ OccursError "unifyTConstr"
     let minLevel = min lNew1 lNew2
     writeCell (levelNew l1) markedLevel
     writeCell (levelNew l2) markedLevel
+    traceM $ "unifyTConstr: " ++ show ts1 ++ ": level = " ++ show lNew1 ++ "\n   === " ++ show ts2 ++ ": level = " ++ show lNew2
     mapM_ (uncurry $ unifyLev minLevel) $ zip ts1 ts2
     writeCell (levelNew l1) minLevel
     writeCell (levelNew l2) minLevel
@@ -296,6 +318,7 @@ unifyTVars ioTV1 ioTV2 = do
         (Link t1, Link t2) -> unify t1 t2
     where
         update' l dest updateT = do
+            traceM $ "unifyTVars: calling updateLevel " ++ show l ++ " on " ++ show updateT
             updateLevel l . Fix . TVar $ updateT
             writeCell dest $ Link . Fix . TVar $ updateT
 
@@ -304,6 +327,7 @@ unifyTVar ioTV t2 = do
     tv <- readCell ioTV
     case tv of
         Unbound _ level -> do
+            traceM $ "unifyTVar: calling updateLevel " ++ show level ++ " on " ++ show t2
             updateLevel level t2
             writeCell ioTV $ Link t2
         Link t1 -> unify t1 t2
@@ -320,6 +344,7 @@ updateLevelErrorHack = error "Update level works only for unbound tvars, and com
 updateLevel :: Level -> Type s -> Infer s ()
 updateLevel l (Fix (TVar iotv)) = do
     tv <- readCell iotv
+    traceM $ "updateLevel: " ++ show l ++ " - " ++ show tv
     case tv of
         Unbound n l' -> do
             when (l' == genericLevel) $ typeError EscapedGenericLevel
@@ -329,8 +354,9 @@ updateLevel l (Fix (TVar iotv)) = do
         Link _ -> updateLevelErrorHack
 updateLevel l t@(Fix (TArrow _ _ levels)) = do
     lNew <- readCell $ levelNew levels
+    traceM $ "updateLevel: " ++ show l ++ " - " ++ show t ++ ", new = " ++ show lNew
     when (lNew == genericLevel) $ typeError EscapedGenericLevel
-    when (lNew == markedLevel) $ typeError OccursError
+    when (lNew == markedLevel) $ typeError $ OccursError "updateLevel"
     when (l < lNew) $ do
         lOld <- readCell $ levelOld levels
         when (lNew == lOld) $ enqueueAdj t
@@ -355,7 +381,7 @@ loop acc level ty = do
                 _ -> return acc
         Fix (TArrow t1 t2 levels) -> do
             lNew <- readCell (levelNew levels)
-            when (lNew == markedLevel) $ typeError OccursError
+            when (lNew == markedLevel) $ typeError $ OccursError "loop"
             when (lNew > level) $ writeCell (levelNew levels) level
             adjustOne acc ty'
         _ -> return acc
@@ -425,8 +451,10 @@ newTVar = do
 
 newArrow :: Type s -> Type s -> Infer s (Type s)
 newArrow t1 t2 = do
-    lOld <- newCell 0
-    lNew <- newCell 0
+    level <- currentLevel
+    lOld <- newCell level
+    lNew <- newCell level
+    traceM $ "newArrow: " ++ show t1 ++ " -> " ++ show t2 ++ " level = " ++ show level
     return . Fix . TArrow t1 t2 $ Levels lOld lNew
 
 type TEnv s = [(QName, Type s)]
@@ -448,10 +476,15 @@ inst' env t@(Fix (TVar ioTV)) = do
                     Just t' -> return (t', env)
                 else return (t, env)
         Link tLink -> inst' env tLink
-inst' env (Fix (TArrow ta tb l)) = do
-    (ta', envA) <- inst' env ta
-    (tb', envB) <- inst' envA tb
-    return (Fix $ TArrow ta' tb' l, envB)
+inst' env t@(Fix (TArrow ta tb l)) = do
+    lNew <- readCell (levelNew l)
+    if (lNew == genericLevel)
+        then do
+        (ta', envA) <- inst' env ta
+        (tb', envB) <- inst' envA tb
+        tArrow <- newArrow ta' tb'
+        return (tArrow, envB)
+        else return (t, env)
 inst' env (Fix (TPair ta tb l)) = do
     (ta', envA) <- inst' env ta
     (tb', envB) <- inst' envA tb
@@ -462,29 +495,36 @@ inst t = fst <$> inst' tenvEmpty t
 
 type VEnv s = [(VarName, Type s)]
 
-typeOf :: VEnv s -> Expr -> Infer s (Type s)
-typeOf env (Var name) =
+typeOf  :: VEnv s -> Expr -> Infer s (Type s)
+typeOf env expr = do
+    traceM $ "typeOf: " ++ show expr
+    res <- typeOf' env expr
+    traceM $ "        " ++ show expr ++ " :: " ++ show res
+    return res
+
+typeOf' :: VEnv s -> Expr -> Infer s (Type s)
+typeOf' env (Var name) =
     case lookup name env of
     Just t -> inst t
     Nothing -> typeError $ UnboundVar name
-typeOf env (App e1 e2) = do
+typeOf' env (App e1 e2) = do
     tFun <- typeOf env e1
     tArg <- typeOf env e2
     tRes <- newTVar
     tArr <- newArrow tArg tRes
     unify tFun tArr
     return tRes
-typeOf env (Lam name e) = do
+typeOf' env (Lam name e) = do
     tArg <- newTVar
     tBody <- typeOf ((name,tArg) : env) e
     newArrow tArg tBody
-typeOf env (Let name e1 e2) = do
+typeOf' env (Let name e1 e2) = do
     enterLevel
     tDef <- typeOf env e1 -- non-recursive let
     leaveLevel
     gen tDef
     typeOf ((name,tDef) : env) e2
-typeOf env (Pair e1 e2) = do
+typeOf' env (Pair e1 e2) = do
     t1 <- typeOf env e1
     t2 <- typeOf env e2
     old <- newCell 0
