@@ -510,20 +510,19 @@ typeOf' env (Let name e1 e2) = do
 --infer :: Expr -> Either TypeError PureType
 --infer = runInfer . typeOf []
 
+test expr = do
+    let t = runInfer $ typeOf [] expr
+    putStrLn $ render expr ++ " :: " ++ render t
+
 test_id_inner = (Lam "x" $ Var "x")
 test_id = Let "id" test_id_inner (App (Var "id") (Var "id"))
-tid = runInfer $ typeOf [] test_id
-
 test_id2 = (Lam "x" (Let "y" (Var "x") (Var "y")))
-tid2 = runInfer $ typeOf [] test_id2
-
 test_id3 = Let "id" (Lam "y" $ (Lam "x" $ Var "y")) (Var "id")
-tid3 = runInfer $ typeOf [] test_id3
 
 
 main :: IO ()
 main = do
-    putStrLn $ render tid
-    putStrLn $ render tid2
-    putStrLn $ render tid3
+    test test_id
+    test test_id2
+    test test_id3
 
