@@ -279,6 +279,12 @@ unify' t1 t2
     | otherwise = unifyNeq t1 t2
 
 
+unifyTConstr ::
+  [Type s]
+  -> Levels (Cell s Int)
+  -> [Type s]
+  -> Levels (Cell s Int)
+  -> Infer s ()
 unifyTConstr ts1 l1 ts2 l2 = do
     lNew1 <- readCell $ levelNew l1
     lNew2 <- readCell $ levelNew l2
