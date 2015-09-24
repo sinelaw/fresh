@@ -1,16 +1,22 @@
 {-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, StandaloneDeriving, UndecidableInstances, RecordWildCards #-}
 module Main where
 
-import Control.Applicative ((<$>), (<*>), pure, Applicative)
+
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader (ReaderT, ask, runReaderT)
 import Control.Monad.Trans.Either (EitherT, runEitherT, left)
 import Data.STRef
 import Control.Monad.ST
 
+class Render a where
+    render :: a -> String
 
 data FakeCell x = FakeCell x
                 deriving (Eq, Show)
+
+instance Render x => Render (FakeCell x) where
+    render (FakeCell x) = render x
+
 type Cell s a = STRef s a
 type VarName = String
 
@@ -21,6 +27,18 @@ data Expr
     | Let VarName Expr Expr
     deriving (Show)
 
+instance Render Expr where
+    render (Var name) = name
+    render (App e1 e2) = render e1 ++ " " ++ render e2
+    render (Lam name e) = "(\\" ++ name ++ " -> " ++ render e ++ ")"
+    render (Let name e1 e2) = "let " ++ name ++ " = " ++ render e1 ++ " in " ++ render e2
+
+instance Render Int where
+    render = show
+
+instance Render String where
+    render = show
+
 type TVName = Int
 type QName = TVName
 type Level = Int
@@ -30,12 +48,21 @@ data CTV t
     | Link t
     deriving (Show, Eq)
 
+instance (Render t) => Render (CTV t) where
+    render (Unbound tv l) = "t" ++ show tv ++ "-" ++ show l
+    render (Link t) = render t
+
 data CType c t
     = TVar (c (CTV t))
     | QVar QName
     | TArrow t t
 --    deriving (Eq)
 --instance (Eq t, Eq (c (CTV t))) => Eq (CType c t)
+instance (Render (c (CTV t)), Render t) => Render (CType c t) where
+    render (TVar c) = render c
+    render (QVar n) = render n
+    render (TArrow t1 t2) = render t1 ++ " -> " ++ render t2
+
 
 -- fmapCell
 --     :: (Applicative f, Functor f)
@@ -50,6 +77,8 @@ fmapCell f (TArrow (Fix t1) (Fix t2)) =
 data Fix f = Fix { unFix :: f (Fix f) }
 deriving instance Eq (f (Fix f)) => Eq (Fix f)
 deriving instance Show (f (Fix f)) => Show (Fix f)
+instance Render (f (Fix f)) => Render (Fix f) where
+    render (Fix x) = render x
 
 type Type s = Fix (CType (STRef s))
 type TV s = CTV (Type s)
@@ -102,6 +131,9 @@ data TypeError
     | UnboundVar VarName
     deriving (Show, Eq)
 
+instance Render TypeError where
+    render = show
+
 type Infer s a = EitherT TypeError (ReaderT (Env s) (ST s)) a
 
 newCell :: a -> Infer s (Cell s a)
@@ -137,6 +169,10 @@ runInfer x = runST $ do
     case t of
         Left e -> return $ Left e
         Right st -> Right <$> toFake st
+
+instance (Render a, Render b) => Render (Either a b) where
+    render (Left x) = "Error: " ++ render x
+    render (Right y) = render y
 
 typeError :: TypeError -> Infer s a
 typeError = left
@@ -267,7 +303,7 @@ typeOf env (Let name e1 e2) = do
 --infer = runInfer . typeOf []
 
 test_id_inner = (Lam "x" $ Var "x")
-test_id = Let "id" test_id_inner (Var "id")
+test_id = Let "id" test_id_inner (App (Var "id") (Var "id"))
 tid = runInfer $ typeOf [] test_id
 
 test_id2 = (Lam "x" (Let "y" (Var "x") (Var "y")))
@@ -278,7 +314,7 @@ tid3 = runInfer $ typeOf [] test_id3
 
 
 main = do
-    print tid
-    print tid2
-    print tid3
+    putStrLn $ render tid
+    putStrLn $ render tid2
+    putStrLn $ render tid3
 
