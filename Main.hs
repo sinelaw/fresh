@@ -1,451 +1,368 @@
-{-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, StandaloneDeriving, UndecidableInstances, RecordWildCards #-}
+-- | Typing Haskell in Haskell, https://web.cecs.pdx.edu/~mpj/thih/thih.pdf
 module Main where
 
+import           Control.Monad (msum)
+import           Data.List     (intersect, nub, partition, union, (\\))
 
-import Control.Monad (foldM)
-import Control.Monad (when)
-import Control.Monad.ST
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.Either (EitherT, runEitherT, left)
-import Control.Monad.Trans.Reader (ReaderT, ask, runReaderT)
-import Data.STRef
+type Id = String
 
+enumId :: Int -> Id
+enumId n = "v" ++ show n
 
-data FakeCell x = FakeCell x
-                deriving (Eq, Show)
-type Cell s a = STRef s a
-type VarName = String
+data Kind = Star | Kfun Kind Kind
+    deriving Eq
 
-data Expr
-    = Var VarName
-    | App Expr Expr
-    | Lam VarName Expr
-    | Let VarName Expr Expr
-    deriving (Show)
+data Type
+    = TVar Tyvar
+    | TCon Tycon
+    | TAp Type Type
+    | TGen Int -- quantified type variable, int is index into kinds list
+               -- in Scheme
+    deriving Eq
 
-type TVName = Int
-type QName = TVName
-type Level = Int
+data Tyvar = Tyvar Id Kind
+    deriving Eq
 
-genericLevel :: Int
-genericLevel = maxBound
+data Tycon = Tycon Id Kind
+    deriving Eq
 
-markedLevel :: Int
-markedLevel = -1
+-- Example built-in types
+tUnit = TCon (Tycon "()" Star )
+tInt = TCon (Tycon "Int" Star )
+tChar = TCon (Tycon "Char" Star )
+tDouble = TCon (Tycon "Double" Star )
+tInteger = TCon (Tycon "Integer" Star )
+tList = TCon (Tycon "[]" (Kfun Star Star ))
+tArrow = TCon (Tycon "(->)" (Kfun Star (Kfun Star Star )))
+tTuple2 = TCon (Tycon "(,)" (Kfun Star (Kfun Star Star )))
 
-data Levels a =
-    Levels
-    { levelOld :: a
-    , levelNew :: a
-    }
-    deriving (Show, Eq)
+-- Type synonyms expanded:
+tString :: Type
+tString = list tChar
 
-fmapLevelCell :: Applicative f => (a -> f b) -> Levels a -> f (Levels b)
-fmapLevelCell f (Levels old new) = Levels <$> (f old) <*> (f new)
-
-data CTV t
-    = Unbound TVName Level
-    | Link t
-    deriving (Show, Eq)
-
-data CType c t
-    = TVar (c (CTV t))
-    | QVar QName
-    | TArrow t t (Levels (c Level))
+infixr 4 `fn`
+fn :: Type -> Type -> Type
+a `fn` b = TAp (TAp tArrow a) b
+list :: Type -> Type
+list t = TAp tList t
 
 
-fmapCell ::
-    Applicative f =>
-    (c (CTV (Fix (CType c))) -> f (c' (CTV (Fix (CType c')))))
-    -> (c Level -> f (c' Level))
-    -> Fix (CType c) -> f (Fix (CType c'))
-fmapCell f _ (Fix (TVar c)) = Fix . TVar <$> f c
-fmapCell _ _ (Fix (QVar q)) = pure . Fix $ QVar q
-fmapCell f g (Fix (TArrow t1 t2 level)) =
-    fmap Fix $ TArrow <$> (fmapCell f g t1) <*> (fmapCell f g t2) <*> (fmapLevelCell g level)
+pair :: Type -> Type -> Type
+pair a b = TAp (TAp tTuple2 a) b
+
+class HasKind t where
+    kind :: t -> Kind
+
+instance HasKind Tyvar where
+    kind (Tyvar v k) = k
+
+instance HasKind Tycon where
+    kind (Tycon v k) = k
+
+instance HasKind Type where
+    kind (TCon tc) = kind tc
+    kind (TVar u) = kind u
+    kind (TAp t _) = case (kind t) of (Kfun _ k) -> k
 
 
-data Fix f = Fix { unFix :: f (Fix f) }
-deriving instance Eq (f (Fix f)) => Eq (Fix f)
-deriving instance Show (f (Fix f)) => Show (Fix f)
+type Subst = [(Tyvar , Type)]
 
-type Type s = Fix (CType (STRef s))
-type TV s = CTV (Type s)
+nullSubst :: Subst
+nullSubst = []
 
-type PureType = Fix (CType FakeCell)
+-- map a single tyvar to a type
+-- TODO: assert kinds match
+(+->) :: Tyvar -> Type -> Subst
+u +-> t = [(u, t)]
 
-deriving instance Eq t => Eq (CType FakeCell t)
-deriving instance Show t => Show (CType FakeCell t)
-deriving instance Eq t => Eq (CType (STRef s) t)
+class Types t where
+    apply :: Subst -> t -> t
+    tv :: t -> [Tyvar]
 
-toFake :: Type s -> ST s PureType
-toFake t = fmapCell stToFake (\x -> FakeCell <$> readSTRef x) t
+instance Types Type where
+    apply s (TVar u) = case lookup u s of
+        Just t -> t
+        Nothing -> TVar u
+    apply s (TAp l r ) = TAp (apply s l) (apply s r )
+    apply s t = t
+
+    tv (TVar u) = [u]
+    tv (TAp l r ) = tv l `union` tv r
+    tv t = []
+
+instance Types a => Types [a] where
+    apply s = map (apply s)
+    tv = nub . concat . map tv
+
+-- left-biased substition composition
+infixr 4 @@
+(@@) :: Subst -> Subst -> Subst
+s1@@s2 = [(u, apply s1 t) | (u, t) <- s2] ++ s1
+
+merge :: Monad m => Subst -> Subst -> m Subst
+merge s1 s2 = if agree then return (s1 ++ s2) else fail "merge fails"
+    where agree = all (\v -> apply s1 (TVar v) == apply s2 (TVar v))
+                      (map fst s1 `intersect` map fst s2)
+
+mgu :: Monad m => Type -> Type -> m Subst
+varBind :: Monad m => Tyvar -> Type -> m Subst
+
+mgu (TAp l r) (TAp l' r') = do
+    s1 <- mgu l l'
+    s2 <- mgu (apply s1 r) (apply s1 r')
+    return (s2@@s1)
+mgu (TVar u) t = varBind u t
+mgu t (TVar u) = varBind u t
+mgu (TCon tc1) (TCon tc2)
+    | tc1 == tc2 = return nullSubst
+mgu t1 t2 = fail "types do not unify"
+
+varBind u t
+    | t == TVar u = return nullSubst
+    | u `elem` tv t = fail "occurs check fails"
+    | kind u /= kind t = fail "kinds do not match"
+    | otherwise = return (u +-> t)
+
+-- match t1 t2 finds a substitution s such that: apply s t1 = t2
+match :: Monad m => Type -> Type -> m Subst
+match (TAp l r ) (TAp l' r') = do
+    sl <- match l l'
+    sr <- match r r'
+    merge sl sr
+match (TVar u) t
+    | kind u == kind t = return (u +-> t)
+match (TCon tc1) (TCon tc2)
+    | tc1 == tc2 = return nullSubst
+match t1 t2 = fail "types do not match"
+
+-----------------------------------------------------------------
+--- Type Classes ---
+
+data Qual t = [Pred] :=> t
+    deriving Eq
+
+data Pred = IsIn Id Type
+    deriving Eq
+
+instance Types t => Types (Qual t) where
+    apply s (ps :=> t) = apply s ps :=> apply s t
+    tv (ps :=> t) = tv ps `union` tv t
+
+instance Types Pred where
+    apply s (IsIn i t) = IsIn i (apply s t)
+    tv (IsIn i t) = tv t
+
+mguPred, matchPred :: Pred -> Pred -> Maybe Subst
+mguPred = lift mgu
+matchPred = lift match
+
+lift m (IsIn i t) (IsIn i' t')
+    | i == i' = m t t'
+    | otherwise = fail "classes differ"
+
+-- Type classes: list of super classes + list of instances
+-- TODO (missing): list of methods per class + method implementations per instance
+type Class = ([Id], [Inst])
+type Inst = Qual Pred
+
+
+-- Note: "The Haskell report imposes some further restrictions on class
+-- and instance declarations that are not enforced by the definitions of
+-- addClass and addInst. For example, the superclasses of a class should
+-- have the same kind as the class itself; the parameters of any
+-- predicates in an instance context should be type variables, each of
+-- which should appear in the head of the instance; and the type
+-- appearing in the head of an instance should consist of a type
+-- constructor applied to a sequence of distinct type variable
+-- arguments."
+
+data ClassEnv =
+    ClassEnv
+    { classes  :: Id -> Maybe Class
+    , defaults :: [Type] }
+
+-- Extract superclass/instance info from a class env given class Id.
+-- "These functions are intended to be used only in cases where it is
+-- known that the class i is defined in the environment ce"
+super :: ClassEnv -> Id -> [Id]
+super ce i = case classes ce i of Just (is, its) -> is
+insts :: ClassEnv -> Id -> [Inst]
+insts ce i = case classes ce i of Just (is, its) -> its
+
+defined :: Maybe a -> Bool
+defined (Just x ) = True
+defined Nothing = False
+
+-- Building up class environments:
+
+modify :: ClassEnv -> Id -> Class -> ClassEnv
+modify ce i c = ce { classes = \j -> if i == j then Just c else classes ce j }
+
+initialEnv :: ClassEnv
+initialEnv =
+    ClassEnv
+    { classes = \i -> fail "class not defined"
+    , defaults = [tInteger , tDouble] }
+
+type EnvTransformer = ClassEnv -> Maybe ClassEnv
+
+-- EnvTransformer composition
+infixr 5 <:>
+(<:>) :: EnvTransformer -> EnvTransformer -> EnvTransformer
+(f <:> g) ce = do ce' <- f ce
+                  g ce'
+
+addClass :: Id -> [Id] -> EnvTransformer
+addClass i is ce
+    | defined (classes ce i) = fail "class already defined"
+    | any (not . defined . classes ce) is = fail "superclass not defined"
+    | otherwise = return (modify ce i (is, []))
+
+addPreludeClasses :: EnvTransformer
+addPreludeClasses = addCoreClasses <:> addNumClasses
+
+addCoreClasses :: EnvTransformer
+addCoreClasses =
+    addClass "Eq" [ ]
+    <:> addClass "Ord" ["Eq"]
+    <:> addClass "Show" [ ]
+    <:> addClass "Read" [ ]
+    <:> addClass "Bounded" [ ]
+    <:> addClass "Enum" [ ]
+    <:> addClass "Functor" [ ]
+    <:> addClass "Monad" [ ]
+
+addNumClasses :: EnvTransformer
+addNumClasses =
+    addClass "Num" ["Eq", "Show"]
+    <:> addClass "Real" ["Num", "Ord"]
+    <:> addClass "Fractional" ["Num"]
+    <:> addClass "Integral" ["Real", "Enum"]
+    <:> addClass "RealFrac" ["Real", "Fractional"]
+    <:> addClass "Floating" ["Fractional"]
+    <:> addClass "RealFloat" ["RealFrac", "Floating"]
+
+
+-- add new instance to existing class
+addInst :: [Pred] -> Pred -> EnvTransformer
+addInst ps p@(IsIn i _) ce
+    | not (defined (classes ce i)) = fail "no class for instance"
+    | any (overlap p) qs = fail "overlapping instance"
+    | otherwise = return (modify ce i c)
     where
-        stToFake stTV = do
-            val <- readSTRef stTV
-            res <-
-                case val of
-                Unbound n l -> return $ Unbound n l
-                Link t' -> Link <$> toFake t'
-            return $ FakeCell res
+        its = insts ce i
+        qs = [q | (_ :=> q) <- its]
+        c = (super ce i, (ps :=> p) : its)
 
-runType :: (forall s. ST s (Type s)) -> PureType
-runType f = runST $ do
-    t <- f
-    toFake t
+-- "Two instances for a class are said to overlap if there is some
+-- predicate that is a substitution instance of the heads of both
+-- instance declarations."
+overlap :: Pred -> Pred -> Bool
+overlap p q = defined (mguPred p q)
 
 
-data Env s =
-    Env
-    { freshCounter :: Cell s TVName
-    , level :: Cell s Level
-    , toBeLevelAdjusted :: Cell s [Type s]
-    }
+exampleInsts :: EnvTransformer
+exampleInsts =
+    addPreludeClasses
+    <:> addInst [ ] (IsIn "Ord" tUnit)
+    <:> addInst [ ] (IsIn "Ord" tChar )
+    <:> addInst [ ] (IsIn "Ord" tInt)
+    <:> addInst [IsIn "Ord" (TVar (Tyvar "a" Star )),
+    IsIn "Ord" (TVar (Tyvar "b" Star ))]
+    (IsIn "Ord" (pair (TVar (Tyvar "a" Star ))
+    (TVar (Tyvar "b" Star ))))
+
+-- if a class predicate is true about a type, also all super-class
+-- predicates are true about it
+bySuper :: ClassEnv -> Pred -> [Pred]
+bySuper ce p@(IsIn i t)
+    = p : concat [ bySuper ce (IsIn i' t) | i' <- super ce i ]
+
+-- find an instance that matches given pred (using matchPred) and return
+-- the (substituted) super-class predicates as the next goals to check
+byInst :: ClassEnv -> Pred -> Maybe [Pred]
+byInst ce p@(IsIn i t) = msum [ tryInst it | it <- insts ce i ]
+    where tryInst (ps :=> h) = do
+            u <- matchPred h p
+            Just (map (apply u) ps)
+
+-- True if, and only if, the predicate p will hold whenever all of the
+-- predicates in ps are satisfied:
+entail  :: ClassEnv -> [Pred] -> Pred -> Bool
+entail ce ps p = any (p `elem`) (map (bySuper ce) ps) ||
+                   case byInst ce p of
+                     Nothing -> False
+                     Just qs -> all (entail ce ps) qs
+
+-- predicate "head normal form"
+inHnf :: Pred -> Bool
+inHnf (IsIn c t) = hnf t
+    where hnf (TVar v)  = True
+          hnf (TCon tc) = False
+          hnf (TAp t _) = hnf t
 
 
-envEmpty :: ST s (Env s)
-envEmpty = do
-    fc <- newSTRef 0
-    l <- newSTRef 0
-    tbla <- newSTRef []
-    return
-        Env
-        { freshCounter = fc
-        , level = l
-        , toBeLevelAdjusted = tbla
-        }
+toHnfs :: Monad m => ClassEnv -> [Pred] -> m [Pred]
+toHnfs ce ps = do pss <- mapM (toHnf ce) ps
+                  return (concat pss)
 
-data TypeError t
-    = OccursError
-    | UnboundVar VarName
-    | EscapedGenericLevel
-    | UnificationError t t
-    deriving (Show, Eq, Functor, Foldable, Traversable)
+toHnf :: Monad m => ClassEnv -> Pred -> m [Pred]
+toHnf ce p | inHnf p   = return [p]
+           | otherwise = case byInst ce p of
+                           Nothing -> fail "context reduction"
+                           Just ps -> toHnfs ce ps
 
-type Infer s a = EitherT (TypeError (Type s)) (ReaderT (Env s) (ST s)) a
+-- Context reduction:
+simplify   :: ClassEnv -> [Pred] -> [Pred]
+simplify ce = loop []
+    where loop rs []                            = rs
+          loop rs (p:ps) | entail ce (rs++ps) p = loop rs ps
+                         | otherwise            = loop (p:rs) ps
 
-newCell :: a -> Infer s (Cell s a)
-newCell = lift . lift . newSTRef
-readCell :: Cell s a -> Infer s a
-readCell = lift . lift . readSTRef
-writeCell :: Cell s a -> a -> Infer s ()
-writeCell c x = lift . lift $ writeSTRef c x
-modifyCell :: Cell s a -> (a -> a) -> Infer s a
-modifyCell c f = lift . lift $ (modifySTRef c f >> readSTRef c)
+reduce      :: Monad m => ClassEnv -> [Pred] -> m [Pred]
+reduce ce ps = do qs <- toHnfs ce ps
+                  return (simplify ce qs)
 
-enqueueAdj :: Type s -> Infer s ()
-enqueueAdj t = do
-    env <- lift ask
-    lift . lift $ modifySTRef (toBeLevelAdjusted env) (t:)
-    return ()
+-- Entailment only bySuper (according to THIH, 'reduce' could be using this instead of the full 'simplify')
+scEntail        :: ClassEnv -> [Pred] -> Pred -> Bool
+scEntail ce ps p = any (p `elem`) (map (bySuper ce) ps)
 
-enterLevel :: Infer s ()
-enterLevel = do
-    env <- lift ask
-    lift . lift $ modifySTRef (level env) (+1)
-    return ()
+--------------------------------------------------------
+-- Type Schemes (section 8)
 
-leaveLevel :: Infer s ()
-leaveLevel = do
-    env <- lift ask
-    lift . lift $ modifySTRef (level env) ((-) 1)
-    return ()
+data Scheme = Forall [Kind] (Qual Type)
+    deriving Eq
 
-currentLevel :: Infer s Level
-currentLevel = do
-    env <- lift ask
-    lift . lift $ readSTRef $ level env
+instance Types Scheme where
+    apply s (Forall ks qt) = Forall ks (apply s qt)
+    tv (Forall ks qt)      = tv qt
 
-runInfer :: (forall s. Infer s (Type s)) -> Either (TypeError PureType) PureType
-runInfer x = runST $ do
-    env <- envEmpty
-    t <- runReaderT (runEitherT x) env
-    case t of
-        Left e -> do
-            e' <- traverse toFake e
-            return $ Left e'
-        Right st -> Right <$> toFake st
+-- quanitfy always constructs schemes in the same form: kinds are
+-- ordered by where each tvar appears in the type, left-most first.
+-- Allows easy comparison for alpha-equivalence.
+quantify      :: [Tyvar] -> Qual Type -> Scheme
+quantify vs qt = Forall ks (apply s qt)
+    where vs' = [ v | v <- tv qt, v `elem` vs ]
+          ks  = map kind vs'
+          s   = zip vs' (map TGen [0..])
 
-typeError :: TypeError (Type s) -> Infer s a
-typeError = left
+toScheme      :: Type -> Scheme
+toScheme t     = Forall [] ([] :=> t)
 
-cycleFree :: Type s -> Infer s ()
-cycleFree (Fix (TVar iotv)) = do
-    tv <- readCell iotv
-    case tv of
-        Unbound{} -> return ()
-        Link t -> cycleFree t
-cycleFree (Fix (TArrow t1 t2 ls)) = do
-    lNew <- readCell $ levelNew ls
-    when (lNew == markedLevel) $ typeError OccursError
-    writeCell (levelNew ls) markedLevel
-    cycleFree t1
-    cycleFree t2
-    writeCell (levelNew ls) lNew
-cycleFree _ = return ()
+---------------------------------------------------------
+-- Assumptions (section 9)
 
-repr :: Type s -> Infer s (Type s)
-repr t@(Fix (TVar iotv)) = do
-    tv <- readCell iotv
-    case tv of
-        Link t' -> do
-            reprT <- repr t'
-            writeCell iotv $ Link reprT
-            return reprT
-        _ -> return t
-repr t = return t
+data Assump = Id :>: Scheme
 
-getLevel :: Type s -> Infer s Level
-getLevel (Fix (TVar iotv)) = do
-    tv <- readCell iotv
-    case tv of
-        Unbound _ l -> return l
-        _ -> error "getLevel only works for unbound tvars, and composites"
-getLevel (Fix (TArrow _ _ levels)) = readCell $ levelNew levels
-getLevel _ = error "getLevel only works for unbound tvars, and composites"
-
-fresh :: Infer s TVName
-fresh = do
-    fc <- freshCounter <$> lift ask
-    modifyCell fc (+1)
-
-unify :: Type s -> Type s -> Infer s ()
-unify t1 t2
-    | t1 == t2  = return ()
-    | otherwise = unifyNeq t1 t2
+instance Types Assump where
+    apply s (i :>: sc) = i :>: (apply s sc)
+    tv (i :>: sc)      = tv sc
 
 
-unifyNeq :: Type s -> Type s -> Infer s ()
-unifyNeq (Fix (TVar rtv1)) (Fix (TVar rtv2)) = unifyTVars rtv1 rtv2
-unifyNeq (Fix (TVar rtv1)) t2 = unifyTVar rtv1 t2
-unifyNeq t1 (Fix (TVar rtv2)) = unifyTVar rtv2 t1
-unifyNeq (Fix (TArrow a1 b1 l1)) (Fix (TArrow a2 b2 l2)) = do
-    lNew1 <- readCell $ levelNew l1
-    lNew2 <- readCell $ levelNew l2
-    when ((lNew1 == markedLevel) || (lNew2 == markedLevel)) $
-        typeError OccursError
-    let minLevel = min lNew1 lNew2
-    writeCell (levelNew l1) markedLevel
-    writeCell (levelNew l2) markedLevel
-    unifyLev minLevel a1 a2
-    unifyLev minLevel b1 b2
-    writeCell (levelNew l1) minLevel
-    writeCell (levelNew l2) minLevel
-unifyNeq (Fix (QVar _)) _ = error "Escaped qvar"
-unifyNeq _ (Fix (QVar _)) = error "Escaped qvar"
 
-
-unifyTVars :: Cell s (TV s) -> Cell s (TV s) -> Infer s ()
-unifyTVars ioTV1 ioTV2 = do
-    tv1 <- readCell ioTV1
-    tv2 <- readCell ioTV2
-    case (tv1, tv2) of
-        (Unbound _ l1, Unbound _ l2) ->
-            if l1 > l2
-                then link ioTV1 ioTV2
-                else link ioTV2 ioTV1
-            where
-                link iotv dest = writeCell iotv . Link . Fix . TVar $ dest
-        (Unbound _ l1, _) -> update' l1 ioTV1 ioTV2
-        (_, Unbound _ l2) -> update' l2 ioTV2 ioTV1
-        (Link t1, Link t2) -> unify t1 t2
-    where
-        update' l dest updateT = do
-            updateLevel l . Fix . TVar $ updateT
-            writeCell dest $ Link . Fix . TVar $ updateT
-
-unifyTVar :: Cell s (TV s) -> Type s -> Infer s ()
-unifyTVar ioTV t2 = do
-    tv <- readCell ioTV
-    case tv of
-        Unbound _ level -> do
-            updateLevel level t2
-            writeCell ioTV $ Link t2
-        Link t1 -> unify t1 t2
-
-unifyLev :: Level -> Type s -> Type s -> Infer s ()
-unifyLev l t1 t2 = do
-    t1' <- repr t1
-    updateLevel l t1'
-    unify t1' t2
-
-updateLevelErrorHack :: Infer s ()
-updateLevelErrorHack = error "Update level works only for unbound tvars, and composites"
-
-updateLevel :: Level -> Type s -> Infer s ()
-updateLevel l (Fix (TVar iotv)) = do
-    tv <- readCell iotv
-    case tv of
-        Unbound n l' -> do
-            when (l' == genericLevel) $ typeError EscapedGenericLevel
-            if l < l'
-                then writeCell iotv $ Unbound n l
-                else return ()
-        Link _ -> updateLevelErrorHack
-updateLevel l t@(Fix (TArrow _ _ levels)) = do
-    lNew <- readCell $ levelNew levels
-    when (lNew == genericLevel) $ typeError EscapedGenericLevel
-    when (lNew == markedLevel) $ typeError OccursError
-    when (l < lNew) $ do
-        lOld <- readCell $ levelOld levels
-        when (lNew == lOld) $ enqueueAdj t
-        writeCell (levelNew levels) l
-        return ()
-
-updateLevel _ _ = updateLevelErrorHack
-
-----------------------------------------------------------------------
-
-loop :: [Type s] -> Level -> Type s -> Infer s [Type s]
-loop acc level ty = do
-    ty' <- repr ty
-    case ty' of
-        Fix (TVar iotv) -> do
-            tv <- readCell iotv
-            case tv of
-                Unbound name l -> do
-                    when (l > level) $
-                        writeCell iotv $ Unbound name level
-                    return acc
-                _ -> return acc
-        Fix (TArrow t1 t2 levels) -> do
-            lNew <- readCell (levelNew levels)
-            when (lNew == markedLevel) $ typeError OccursError
-            when (lNew > level) $ writeCell (levelNew levels) level
-            adjustOne acc ty'
-        _ -> return acc
-
-adjustOne :: [Type s] -> Type s -> Infer s [Type s]
-adjustOne acc t@(Fix (TArrow t1 t2 levels)) = do
-    lOld <- readCell (levelOld levels)
-    lCur <- currentLevel
-    if (lOld <= lCur)
-        then return $ t : acc
-        else do
-        lNew <- readCell (levelNew levels)
-        if (lNew == lOld)
-            then return acc
-            else do
-            writeCell (levelNew levels) markedLevel
-            acc1 <- loop acc lNew t1
-            acc2 <- loop acc1 lNew t2
-            writeCell (levelNew levels) lNew
-            writeCell (levelOld levels) lNew
-            return acc2
-adjustOne _ _ = error $ "Unexpected type" -- ++ show t
-
-forceDelayedAdj :: Infer s ()
-forceDelayedAdj = do
-    env <- lift ask
-    tbla <- lift . lift $ readSTRef (toBeLevelAdjusted env)
-    tbla' <- foldM adjustOne [] tbla
-    lift . lift $ writeSTRef (toBeLevelAdjusted env) tbla'
-
-----------------------------------------------------------------------
-
-gen :: Type s -> Infer s (Type s)
-gen t@(Fix (TVar ioTV)) = do
-    tv <- readCell ioTV
-    case tv of
-        Unbound name level -> do
-            curLevel <- currentLevel
-            return $ if curLevel < level
-                     then Fix $ QVar name
-                     else t
-        Link t' -> gen t'
-gen (Fix (TArrow ta tb l)) = do
-    gta <- gen ta
-    gtb <- gen tb
-    return $ Fix $ TArrow gta gtb l
-gen t = return t
-
-----------------------------------------------------------------------
-
-newTVar :: Infer s (Type s)
-newTVar = do
-    tvName <- fresh
-    level <- currentLevel
-    Fix . TVar <$> newCell (Unbound tvName level)
-
-newArrow :: Type s -> Type s -> Infer s (Type s)
-newArrow t1 t2 = do
-    lOld <- newCell 0
-    lNew <- newCell 0
-    return . Fix . TArrow t1 t2 $ Levels lOld lNew
-
-type TEnv s = [(QName, Type s)]
-
-tenvEmpty :: TEnv s
-tenvEmpty = []
-
-inst' :: TEnv s -> Type s -> Infer s (Type s, TEnv s)
-inst' env (Fix (QVar name)) =
-    case lookup name env of
-    Just t -> return (t, env)
-    Nothing -> do
-        tv <- newTVar
-        return (tv, (name, tv) : env)
-inst' env t@(Fix (TVar ioTV)) = do
-    tv <- readCell ioTV
-    case tv of
-        Unbound _ _ -> return (t, env)
-        Link tLink -> inst' env tLink
-inst' env (Fix (TArrow ta tb l)) = do
-    (ta', envA) <- inst' env ta
-    (tb', envB) <- inst' envA tb
-    return (Fix $ TArrow ta' tb' l, envB)
-
-inst :: Type s -> Infer s (Type s)
-inst t = fst <$> inst' tenvEmpty t
-
-type VEnv s = [(VarName, Type s)]
-
-typeOf :: VEnv s -> Expr -> Infer s (Type s)
-typeOf env (Var name) =
-    case lookup name env of
-    Just t -> inst t
-    Nothing -> typeError $ UnboundVar name
-typeOf env (App e1 e2) = do
-    tFun <- typeOf env e1
-    tArg <- typeOf env e2
-    tRes <- newTVar
-    old <- newCell 0
-    new <- newCell 0
-    unify tFun $ Fix $ TArrow tArg tRes (Levels old new) -- hack
-    return tRes
-typeOf env (Lam name e) = do
-    tArg <- newTVar
-    tBody <- typeOf ((name,tArg) : env) e
-    old <- newCell 0
-    new <- newCell 0
-    return $ Fix $ TArrow tArg tBody (Levels old new) -- hack
-typeOf env (Let name e1 e2) = do
-    enterLevel
-    tDef <- typeOf env e1 -- non-recursive let
-    leaveLevel
-    tVar <- gen tDef
-    typeOf ((name,tVar) : env) e2
-
-
---infer :: Expr -> Either TypeError PureType
---infer = runInfer . typeOf []
-
-test_id_inner = (Lam "x" $ Var "x")
-test_id = Let "id" test_id_inner (Var "id")
-tid = runInfer $ typeOf [] test_id
-
-test_id2 = (Lam "x" (Let "y" (Var "x") (Var "y")))
-tid2 = runInfer $ typeOf [] test_id2
-
-test_id3 = Let "id" (Lam "y" $ (Lam "x" $ Var "y")) (Var "id")
-tid3 = runInfer $ typeOf [] test_id3
-
-
+-- | The main entry point.
 main :: IO ()
 main = do
-    print tid
-    print tid2
-    print tid3
+    putStrLn "Welcome to FP Haskell Center!"
+    putStrLn "Have a good day!"
 
