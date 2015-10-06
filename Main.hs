@@ -1,8 +1,9 @@
 -- | Typing Haskell in Haskell, https://web.cecs.pdx.edu/~mpj/thih/thih.pdf
 module Main where
 
-import           Control.Monad (msum)
-import           Data.List     (intersect, nub, partition, union, (\\))
+import Control.Monad (msum, ap)
+
+import Data.List (intersect, nub, partition, union, (\\))
 
 type Id = String
 
@@ -357,6 +358,104 @@ data Assump = Id :>: Scheme
 instance Types Assump where
     apply s (i :>: sc) = i :>: (apply s sc)
     tv (i :>: sc)      = tv sc
+
+-- lookup variable in list of assumptions
+find                 :: Monad m => Id -> [Assump] -> m Scheme
+find i []             = fail ("unbound identifier: " ++ i)
+find i ((i':>:sc):as) = if i==i' then return sc else find i as
+
+---------------------------------------------------------
+-- Type Inference Monad
+
+newtype TI a = TI (Subst -> Int -> (Subst, Int, a))
+
+instance Monad TI where
+    return x   = TI (\s n -> (s,n,x))
+    TI f >>= g = TI (\s n -> case f s n of
+                              (s',m,x) -> let TI gx = g x
+                                          in  gx s' m)
+
+instance Applicative TI where
+    pure = return
+    (<*>) = ap
+
+instance Functor TI where
+    fmap f x = pure f <*> x
+
+runTI       :: TI a -> a
+runTI (TI f) = x where (s,n,x) = f nullSubst 0
+
+getSubst   :: TI Subst
+getSubst    = TI (\s n -> (s,n,s))
+
+unify      :: Type -> Type -> TI ()
+unify t1 t2 = do s <- getSubst
+                 u <- mgu (apply s t1) (apply s t2)
+                 extSubst u
+
+extSubst   :: Subst -> TI ()
+extSubst s' = TI (\s n -> (s'@@s, n, ()))
+
+newTVar    :: Kind -> TI Type
+newTVar k   = TI (\s n -> let v = Tyvar (enumId n) k
+                          in  (s, n+1, TVar v))
+
+freshInst               :: Scheme -> TI (Qual Type)
+freshInst (Forall ks qt) = do ts <- mapM newTVar ks
+                              return (inst ts qt)
+
+class Instantiate t where
+  inst  :: [Type] -> t -> t
+instance Instantiate Type where
+  inst ts (TAp l r) = TAp (inst ts l) (inst ts r)
+  inst ts (TGen n)  = ts !! n
+  inst ts t         = t
+instance Instantiate a => Instantiate [a] where
+  inst ts = map (inst ts)
+instance Instantiate t => Instantiate (Qual t) where
+  inst ts (ps :=> t) = inst ts ps :=> inst ts t
+instance Instantiate Pred where
+  inst ts (IsIn c t) = IsIn c (inst ts t)
+
+type Infer e t = ClassEnv -> [Assump] -> e -> TI ([Pred], t)
+
+data Literal = LitInt  Integer
+             | LitChar Char
+             | LitRat  Rational
+             | LitStr  String
+
+tiLit            :: Literal -> TI ([Pred],Type)
+tiLit (LitChar _) = return ([], tChar)
+tiLit (LitInt _)  = do v <- newTVar Star
+                       return ([IsIn "Num" v], v)
+tiLit (LitStr _)  = return ([], tString)
+tiLit (LitRat _)  = do v <- newTVar Star
+                       return ([IsIn "Fractional" v], v)
+
+data Pat        = PVar Id
+                | PWildcard
+                | PAs  Id Pat -- x@Pat...
+                | PLit Literal
+                | PNpk Id Integer
+                | PCon Assump [Pat]
+
+tiPat :: Pat -> TI ([Pred], [Assump], Type)
+-- assumes each name 'i' appears exactly once per pattern
+tiPat (PVar i) = do v <- newTVar Star
+                    return ([], [i :>: toScheme v], v)
+tiPat PWildcard   = do v <- newTVar Star
+                       return ([], [], v)
+tiPat (PAs i pat) = do (ps, as, t) <- tiPat pat
+                       return (ps, (i:>:toScheme t):as, t)
+tiPat (PLit l) = do (ps, t) <- tiLit l
+                    return (ps, [], t)
+tiPat (PNpk i k)  = do t <- newTVar Star
+                       return ([IsIn "Integral" t], [i:>:toScheme t], t)
+tiPat (PCon (i:>:sc) pats) = do (ps,as,ts) <- tiPats pats
+                                t'         <- newTVar Star
+                                (qs :=> t) <- freshInst sc
+                                unify t (foldr fn t' ts)
+                                return (ps++qs, as, t')
 
 
 
