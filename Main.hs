@@ -457,7 +457,99 @@ tiPat (PCon (i:>:sc) pats) = do (ps,as,ts) <- tiPats pats
                                 unify t (foldr fn t' ts)
                                 return (ps++qs, as, t')
 
+tiPats     :: [Pat] -> TI ([Pred], [Assump], [Type])
+tiPats pats = do psasts <- mapM tiPat pats
+                 let ps = concat [ ps' | (ps',_,_) <- psasts ]
+                     as = concat [ as' | (_,as',_) <- psasts ]
+                     ts = [ t | (_,_,t) <- psasts ]
+                 return (ps, as, ts)
 
+----------------------------------------------------------------------
+
+data Expr = Var   Id
+          | Lit   Literal
+          | Const Assump
+          | Ap    Expr Expr
+          | Let   BindGroup Expr
+
+
+----------------------------------------------------------------------
+
+tiExpr                       :: Infer Expr Type
+tiExpr ce as (Var i)          = do sc         <- find i as
+                                   (ps :=> t) <- freshInst sc
+                                   return (ps, t)
+tiExpr ce as (Const (i:>:sc)) = do (ps :=> t) <- freshInst sc
+                                   return (ps, t)
+tiExpr ce as (Lit l)          = do (ps,t) <- tiLit l
+                                   return (ps, t)
+tiExpr ce as (Ap e f)         = do (ps,te) <- tiExpr ce as e
+                                   (qs,tf) <- tiExpr ce as f
+                                   t       <- newTVar Star
+                                   unify (tf `fn` t) te
+                                   return (ps++qs, t)
+tiExpr ce as (Let bg e)       = do (ps, as') <- tiBindGroup ce as bg
+                                   (qs, t)   <- tiExpr ce (as' ++ as) e
+                                   return (ps ++ qs, t)
+
+----------------------------------------------------------------------
+-- Alternatives (function definitions by equations)
+
+type Alt = ([Pat], Expr)
+
+tiAlt                :: Infer Alt Type
+tiAlt ce as (pats, e) = do (ps, as', ts) <- tiPats pats
+                           (qs,t)  <- tiExpr ce (as'++as) e
+                           return (ps++qs, foldr fn t ts)
+
+tiAlts             :: ClassEnv -> [Assump] -> [Alt] -> Type -> TI [Pred]
+tiAlts ce as alts t = do psts <- mapM (tiAlt ce as) alts
+                         mapM (unify t) (map snd psts)
+                         return (concat (map fst psts))
+
+----------------------------------------------------------------------
+-- 11.5
+
+split :: Monad m => ClassEnv -> [Tyvar] -> [Tyvar] -> [Pred]
+         -> m ([Pred], [Pred])
+split ce fs gs ps = do ps' <- reduce ce ps
+                       let (ds, rs) = partition (all (`elem` fs) . tv) ps'
+                       rs' <- defaultedPreds ce (fs++gs) rs
+                       return (ds, rs \\ rs')
+
+
+type Ambiguity       = (Tyvar, [Pred])
+ambiguities         :: ClassEnv -> [Tyvar] -> [Pred] -> [Ambiguity]
+ambiguities ce vs ps = [ (v, filter (elem v . tv) ps) | v <- tv ps \\ vs ]
+
+
+numClasses :: [Id]
+numClasses  = ["Num", "Integral", "Floating", "Fractional",
+               "Real", "RealFloat", "RealFrac"]
+
+stdClasses :: [Id]
+stdClasses  = ["Eq", "Ord", "Show", "Read", "Bounded", "Enum", "Ix",
+               "Functor", "Monad", "MonadPlus"] ++ numClasses
+
+-- candidates for defaulting
+candidates           :: ClassEnv -> Ambiguity -> [Type]
+candidates ce (v, qs) = [ t' | let is = [ i | IsIn i t <- qs ]
+                                   ts = [ t | IsIn i t <- qs ],
+                                   all ((TVar v)==) ts,
+                                   any (`elem` numClasses) is,
+                                   all (`elem` stdClasses) is,
+                                   t' <- defaults ce,
+                                   all (entail ce []) [ IsIn i t' | i <- is ] ]
+
+withDefaults :: Monad m => ([Ambiguity] -> [Type] -> a)
+                -> ClassEnv -> [Tyvar] -> [Pred] -> m a
+withDefaults f ce vs ps
+    | any null tss  = fail "cannot resolve ambiguity"
+    | otherwise     = return (f vps (map head tss))
+    where vps = ambiguities ce vs ps
+          tss = map (candidates ce) vps
+
+----------------------------------------------------------------------
 
 -- | The main entry point.
 main :: IO ()
