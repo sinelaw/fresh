@@ -510,6 +510,24 @@ tiAlts ce as alts t = do psts <- mapM (tiAlt ce as) alts
 ----------------------------------------------------------------------
 -- 11.5
 
+
+-- Split - partitions a list of predicates into those that can be
+-- deferred to an outer scope, and those that apply on the currently
+-- quantified type.
+--
+-- "... where we have inferred a type t and a list of predicates ps
+-- for a function h, we can use split to rewrite and break ps into a
+-- pair (ds, rs) of deferred predicates ds and `retained' predicates
+-- rs. The predicates in rs will be used to form an inferred type (rs
+-- :=> t) for h, while the predicates in ds will be passed out as
+-- constraints to the enclosing scope"
+--
+-- "In addition to a list of predicates ps, the split function is
+-- parameterized by two lists of type variables. The first, fs,
+-- specifies the set of `fixed' variables, which are just the
+-- variables appearing free in the assumptions. The second, gs,
+-- specifies the set of variables over which we would like to
+-- quantify."
 split :: Monad m => ClassEnv -> [Tyvar] -> [Tyvar] -> [Pred]
          -> m ([Pred], [Pred])
 split ce fs gs ps = do ps' <- reduce ce ps
@@ -517,8 +535,18 @@ split ce fs gs ps = do ps' <- reduce ce ps
                        rs' <- defaultedPreds ce (fs++gs) rs
                        return (ds, rs \\ rs')
 
+-- a type scheme ps => t is ambiguous if ps contains generic variables
+-- that do not also appear in t.
 
+-- A type variable that was found to be ambiguous, paired with the
+-- list of predicates that must be satisfied in order for a type to
+-- server as an appropriate default
 type Ambiguity       = (Tyvar, [Pred])
+
+-- "...a type with a list of predicates ps and that vs lists all known
+-- variables, both fixed and generic. An ambiguity occurs precisely if
+-- there is a type variable that appears in ps but not in vs (i.e., in
+-- tv ps \\ vs)"
 ambiguities         :: ClassEnv -> [Tyvar] -> [Pred] -> [Ambiguity]
 ambiguities ce vs ps = [ (v, filter (elem v . tv) ps) | v <- tv ps \\ vs ]
 
@@ -541,6 +569,11 @@ candidates ce (v, qs) = [ t' | let is = [ i | IsIn i t <- qs ]
                                    t' <- defaults ce,
                                    all (entail ce []) [ IsIn i t' | i <- is ] ]
 
+-- "...takes care of picking suitable defaults, and of checking
+-- whether there are any ambiguities that cannot be eliminated. If
+-- defaulting succeeds, then the list of predicates that can be
+-- eliminated is obtained by concatenating the predicates in each
+-- Ambiguity pair:"
 withDefaults :: Monad m => ([Ambiguity] -> [Type] -> a)
                 -> ClassEnv -> [Tyvar] -> [Pred] -> m a
 withDefaults f ce vs ps
@@ -548,6 +581,102 @@ withDefaults f ce vs ps
     | otherwise     = return (f vps (map head tss))
     where vps = ambiguities ce vs ps
           tss = map (candidates ce) vps
+
+defaultedPreds :: Monad m => ClassEnv -> [Tyvar] -> [Pred] -> m [Pred]
+defaultedPreds  = withDefaults (\vps ts -> concat (map snd vps))
+
+defaultSubst   :: Monad m => ClassEnv -> [Tyvar] -> [Pred] -> m Subst
+defaultSubst    = withDefaults (\vps ts -> zip (map fst vps) ts)
+
+----------------------------------------------------------------------
+-- Binding groups
+
+-- Explicitly typed binding
+type Expl = (Id, Scheme, [Alt])
+
+
+tiExpl :: ClassEnv -> [Assump] -> Expl -> TI [Pred]
+tiExpl ce as (i, sc, alts)
+    = do (qs :=> t) <- freshInst sc
+         ps         <- tiAlts ce as alts t
+         s          <- getSubst
+         let qs'     = apply s qs
+             t'      = apply s t
+             fs      = tv (apply s as)
+             gs      = tv t' \\ fs
+             sc'     = quantify gs (qs':=>t')
+             ps'     = filter (not . entail ce qs') (apply s ps)
+         (ds,rs)    <- split ce fs gs ps'
+         if sc /= sc'
+             then fail "signature too general"
+             else if not (null rs)
+                  then fail "context too weak"
+                  else return ds
+
+-- Implicit bindings
+type Impl   = (Id, [Alt])
+
+-- monomorphic restriction applies?
+restricted   :: [Impl] -> Bool
+restricted bs = any simple bs
+    where simple (i,alts) = any (null . fst) alts
+
+tiImpls         :: Infer [Impl] [Assump]
+tiImpls ce as bs = do ts <- mapM (\_ -> newTVar Star) bs
+                      let is    = map fst bs
+                          scs   = map toScheme ts
+                          as'   = zipWith (:>:) is scs ++ as
+                          altss = map snd bs
+                      pss <- sequence (zipWith (tiAlts ce as') altss ts)
+                      s   <- getSubst
+                      let ps'     = apply s (concat pss)
+                          ts'     = apply s ts
+                          fs      = tv (apply s as)
+                          vss     = map tv ts'
+                          gs      = foldr1 union vss \\ fs
+                      (ds,rs) <- split ce fs (foldr1 intersect vss) ps'
+                      if restricted bs then
+                          let gs'  = gs \\ tv rs
+                              scs' = map (quantify gs' . ([]:=>)) ts'
+                          in return (ds++rs, zipWith (:>:) is scs')
+                        else
+                          let scs' = map (quantify gs . (rs:=>)) ts'
+                          in return (ds, zipWith (:>:) is scs')
+
+----------------------------------------------------------------------
+
+type BindGroup  = ([Expl], [[Impl]])
+
+
+tiBindGroup :: Infer BindGroup [Assump]
+tiBindGroup ce as (es,iss) =
+  do let as' = [ v:>:sc | (v,sc,alts) <- es ]
+     (ps, as'') <- tiSeq tiImpls ce (as'++as) iss
+     qss        <- mapM (tiExpl ce (as''++as'++as)) es
+     return (ps++concat qss, as''++as')
+
+-- "...typechecks a list of binding groups and accumulates assumptions
+-- as it runs through the list:"
+tiSeq                  :: Infer bg [Assump] -> Infer [bg] [Assump]
+tiSeq ti ce as []       = return ([],[])
+tiSeq ti ce as (bs:bss) = do (ps,as')  <- ti ce as bs
+                             (qs,as'') <- tiSeq ti ce (as'++as) bss
+                             return (ps++qs, as''++as')
+
+----------------------------------------------------------------------
+-- Top level program
+
+type Program = [BindGroup]
+
+
+tiProgram :: ClassEnv -> [Assump] -> Program -> [Assump]
+tiProgram ce as bgs = runTI $
+                      do (ps, as') <- tiSeq tiBindGroup ce as bgs
+                         s         <- getSubst
+                         rs        <- reduce ce (apply s ps)
+                         s'        <- defaultSubst ce [] rs
+                         return (apply (s'@@s) as')
+
 
 ----------------------------------------------------------------------
 
