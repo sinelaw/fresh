@@ -680,6 +680,12 @@ tiProgram ce as bgs = runTI $
 
 ----------------------------------------------------------------------
 
+idAlt = ([PVar "x"], Var "x")
+testImplBinding = ("id", [idAlt])
+testProg =
+    [ ([], [[testImplBinding]]) ]
+----------------------------------------------------------------------
+
 -- | The main entry point.
 main :: IO ()
 main = do
