@@ -11,7 +11,11 @@ enumId :: Int -> Id
 enumId n = "v" ++ show n
 
 data Kind = Star | Kfun Kind Kind
-    deriving (Show, Eq)
+    deriving (Eq)
+
+instance Show Kind where
+    show Star = "*"
+    show (Kfun k1 k2) = show k1 ++ " -> " ++ show k2
 
 data Type
     = TVar Tyvar
@@ -19,13 +23,22 @@ data Type
     | TAp Type Type
     | TGen Int -- quantified type variable, int is index into kinds list
                -- in Scheme
-    deriving (Show, Eq)
+    deriving (Eq)
+
+instance Show Type where
+    show (TVar t1) = show t1
+    show (TCon tc) = "TCon " ++ show tc
+    show (TAp t1 t2) = show t1 ++ " -> " ++ show t2
+    show (TGen n) = 't' : show n
 
 data Tyvar = Tyvar Id Kind
     deriving (Show, Eq)
 
 data Tycon = Tycon Id Kind
-    deriving (Show, Eq)
+    deriving (Eq)
+
+instance Show Tycon where
+    show (Tycon i k) = "(" ++ show i ++ " :: " ++ show k ++ ")"
 
 -- Example built-in types
 tUnit = TCon (Tycon "()" Star )
@@ -140,7 +153,10 @@ match t1 t2 = fail "types do not match"
 --- Type Classes ---
 
 data Qual t = [Pred] :=> t
-    deriving (Show, Eq)
+    deriving (Eq)
+
+instance Show t => Show (Qual t) where
+    show (p :=> t) = show p ++ " => " ++ show t
 
 data Pred = IsIn Id Type
     deriving (Show, Eq)
@@ -332,7 +348,10 @@ scEntail ce ps p = any (p `elem`) (map (bySuper ce) ps)
 -- Type Schemes (section 8)
 
 data Scheme = Forall [Kind] (Qual Type)
-    deriving (Show, Eq)
+    deriving (Eq)
+
+instance Show Scheme where
+    show (Forall ks qt) = "forall " ++ (concatMap (\(i,k) -> ('t':show i) ++ " :: " ++ show k) $ zip [0..] ks) ++ ". " ++ show qt
 
 instance Types Scheme where
     apply s (Forall ks qt) = Forall ks (apply s qt)
