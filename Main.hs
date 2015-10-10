@@ -11,7 +11,7 @@ enumId :: Int -> Id
 enumId n = "v" ++ show n
 
 data Kind = Star | Kfun Kind Kind
-    deriving Eq
+    deriving (Show, Eq)
 
 data Type
     = TVar Tyvar
@@ -19,13 +19,13 @@ data Type
     | TAp Type Type
     | TGen Int -- quantified type variable, int is index into kinds list
                -- in Scheme
-    deriving Eq
+    deriving (Show, Eq)
 
 data Tyvar = Tyvar Id Kind
-    deriving Eq
+    deriving (Show, Eq)
 
 data Tycon = Tycon Id Kind
-    deriving Eq
+    deriving (Show, Eq)
 
 -- Example built-in types
 tUnit = TCon (Tycon "()" Star )
@@ -140,10 +140,10 @@ match t1 t2 = fail "types do not match"
 --- Type Classes ---
 
 data Qual t = [Pred] :=> t
-    deriving Eq
+    deriving (Show, Eq)
 
 data Pred = IsIn Id Type
-    deriving Eq
+    deriving (Show, Eq)
 
 instance Types t => Types (Qual t) where
     apply s (ps :=> t) = apply s ps :=> apply s t
@@ -332,7 +332,7 @@ scEntail ce ps p = any (p `elem`) (map (bySuper ce) ps)
 -- Type Schemes (section 8)
 
 data Scheme = Forall [Kind] (Qual Type)
-    deriving Eq
+    deriving (Show, Eq)
 
 instance Types Scheme where
     apply s (Forall ks qt) = Forall ks (apply s qt)
@@ -354,7 +354,7 @@ toScheme t     = Forall [] ([] :=> t)
 -- Assumptions (section 9)
 
 data Assump = Id :>: Scheme
-
+            deriving (Show)
 instance Types Assump where
     apply s (i :>: sc) = i :>: (apply s sc)
     tv (i :>: sc)      = tv sc
