@@ -1,6 +1,7 @@
 -- | Typing Haskell in Haskell, https://web.cecs.pdx.edu/~mpj/thih/thih.pdf
 module Main where
 
+--import Control.Applicative (Applicative(..))
 import Control.Monad (msum, ap)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -42,13 +43,21 @@ instance Show Tycon where
     show (Tycon i k) = "(" ++ show i ++ " :: " ++ show k ++ ")"
 
 -- Example built-in types
+tUnit :: Type
 tUnit = TCon (Tycon "()" Star )
+tInt :: Type
 tInt = TCon (Tycon "Int" Star )
+tChar :: Type
 tChar = TCon (Tycon "Char" Star )
+tDouble :: Type
 tDouble = TCon (Tycon "Double" Star )
+tInteger :: Type
 tInteger = TCon (Tycon "Integer" Star )
+tList :: Type
 tList = TCon (Tycon "[]" (Kfun Star Star ))
+tArrow :: Type
 tArrow = TCon (Tycon "(->)" (Kfun Star (Kfun Star Star )))
+tTuple2 :: Type
 tTuple2 = TCon (Tycon "(,)" (Kfun Star (Kfun Star Star )))
 
 -- Type synonyms expanded:
@@ -69,10 +78,10 @@ class HasKind t where
     kind :: t -> Kind
 
 instance HasKind Tyvar where
-    kind (Tyvar v k) = k
+    kind (Tyvar _v k) = k
 
 instance HasKind Tycon where
-    kind (Tycon v k) = k
+    kind (Tycon _v k) = k
 
 instance HasKind Type where
     kind (TCon tc) = kind tc
@@ -99,11 +108,11 @@ instance Types Type where
         Just t -> t
         Nothing -> TVar u
     apply s (TAp l r ) = TAp (apply s l) (apply s r )
-    apply s t = t
+    apply _s t = t
 
     tv (TVar u) = [u]
     tv (TAp l r ) = tv l `union` tv r
-    tv t = []
+    tv _t = []
 
 instance Types a => Types [a] where
     apply s = map (apply s)
@@ -131,7 +140,7 @@ mgu (TVar u) t = varBind u t
 mgu t (TVar u) = varBind u t
 mgu (TCon tc1) (TCon tc2)
     | tc1 == tc2 = return nullSubst
-mgu t1 t2 = fail "types do not unify"
+mgu _t1 _t2 = fail "types do not unify"
 
 varBind u t
     | t == TVar u = return nullSubst
@@ -149,7 +158,7 @@ match (TVar u) t
     | kind u == kind t = return (u +-> t)
 match (TCon tc1) (TCon tc2)
     | tc1 == tc2 = return nullSubst
-match t1 t2 = fail "types do not match"
+match _t1 _t2 = fail "types do not match"
 
 -----------------------------------------------------------------
 --- Type Classes ---
@@ -169,12 +178,14 @@ instance Types t => Types (Qual t) where
 
 instance Types Pred where
     apply s (IsIn i t) = IsIn i (apply s t)
-    tv (IsIn i t) = tv t
+    tv (IsIn _i t) = tv t
 
 mguPred, matchPred :: Pred -> Pred -> Maybe Subst
 mguPred = lift mgu
 matchPred = lift match
 
+lift :: Monad m =>
+        (Type -> Type -> m a) -> Pred -> Pred -> m a
 lift m (IsIn i t) (IsIn i' t')
     | i == i' = m t t'
     | otherwise = fail "classes differ"
@@ -204,12 +215,12 @@ data ClassEnv =
 -- "These functions are intended to be used only in cases where it is
 -- known that the class i is defined in the environment ce"
 super :: ClassEnv -> Id -> [Id]
-super ce i = case classes ce i of Just (is, its) -> is
+super ce i = case classes ce i of Just (is, _its) -> is
 insts :: ClassEnv -> Id -> [Inst]
-insts ce i = case classes ce i of Just (is, its) -> its
+insts ce i = case classes ce i of Just (_is, its) -> its
 
 defined :: Maybe a -> Bool
-defined (Just x ) = True
+defined (Just _x ) = True
 defined Nothing = False
 
 -- Building up class environments:
@@ -220,7 +231,7 @@ modify ce i c = ce { classes = \j -> if i == j then Just c else classes ce j }
 initialEnv :: ClassEnv
 initialEnv =
     ClassEnv
-    { classes = \i -> fail "class not defined"
+    { classes = \_ -> fail "class not defined"
     , defaults = [tInteger , tDouble] }
 
 type EnvTransformer = ClassEnv -> Maybe ClassEnv
@@ -300,7 +311,7 @@ bySuper ce p@(IsIn i t)
 -- find an instance that matches given pred (using matchPred) and return
 -- the (substituted) super-class predicates as the next goals to check
 byInst :: ClassEnv -> Pred -> Maybe [Pred]
-byInst ce p@(IsIn i t) = msum [ tryInst it | it <- insts ce i ]
+byInst ce p@(IsIn i _t) = msum [ tryInst it | it <- insts ce i ]
     where tryInst (ps :=> h) = do
             u <- matchPred h p
             Just (map (apply u) ps)
@@ -315,10 +326,10 @@ entail ce ps p = any (p `elem`) (map (bySuper ce) ps) ||
 
 -- predicate "head normal form"
 inHnf :: Pred -> Bool
-inHnf (IsIn c t) = hnf t
-    where hnf (TVar v)  = True
-          hnf (TCon tc) = False
-          hnf (TAp t _) = hnf t
+inHnf (IsIn _c t) = hnf t
+    where hnf (TVar _v)  = True
+          hnf (TCon _tc) = False
+          hnf (TAp t' _) = hnf t'
 
 
 toHnfs :: Monad m => ClassEnv -> [Pred] -> m [Pred]
@@ -353,11 +364,11 @@ data Scheme = Forall [Kind] (Qual Type)
     deriving (Eq)
 
 instance Show Scheme where
-    show (Forall ks qt) = "forall " ++ (concatMap (\(i,k) -> ('t':show i) ++ " :: " ++ show k) $ zip [0..] ks) ++ ". " ++ show qt
+    show (Forall ks qt) = "forall " ++ (concatMap (\(i,k) -> ('t':show i) ++ " :: " ++ show k) $ zip ([0..] :: [Integer]) ks) ++ ". " ++ show qt
 
 instance Types Scheme where
     apply s (Forall ks qt) = Forall ks (apply s qt)
-    tv (Forall ks qt)      = tv qt
+    tv (Forall _ks qt)      = tv qt
 
 -- quanitfy always constructs schemes in the same form: kinds are
 -- ordered by where each tvar appears in the type, left-most first.
@@ -378,7 +389,7 @@ data Assump = Id :>: Scheme
             deriving (Show)
 instance Types Assump where
     apply s (i :>: sc) = i :>: (apply s sc)
-    tv (i :>: sc)      = tv sc
+    tv (_i :>: sc)      = tv sc
 
 -- lookup variable in list of assumptions
 find                 :: Monad m => Id -> [Assump] -> m Scheme
@@ -404,7 +415,7 @@ instance Functor TI where
     fmap f x = pure f <*> x
 
 runTI       :: TI a -> a
-runTI (TI f) = x where (s,n,x) = f nullSubst 0
+runTI (TI f) = x where (_s,_n,x) = f nullSubst 0
 
 getSubst   :: TI Subst
 getSubst    = TI (\s n -> (s,n,s))
@@ -430,7 +441,7 @@ class Instantiate t where
 instance Instantiate Type where
   inst ts (TAp l r) = TAp (inst ts l) (inst ts r)
   inst ts (TGen n)  = ts !! n
-  inst ts t         = t
+  inst _ts t         = t
 instance Instantiate a => Instantiate [a] where
   inst ts = map (inst ts)
 instance Instantiate t => Instantiate (Qual t) where
@@ -470,13 +481,13 @@ tiPat (PAs i pat) = do (ps, as, t) <- tiPat pat
                        return (ps, (i:>:toScheme t):as, t)
 tiPat (PLit l) = do (ps, t) <- tiLit l
                     return (ps, [], t)
-tiPat (PNpk i k)  = do t <- newTVar Star
-                       return ([IsIn "Integral" t], [i:>:toScheme t], t)
-tiPat (PCon (i:>:sc) pats) = do (ps,as,ts) <- tiPats pats
-                                t'         <- newTVar Star
-                                (qs :=> t) <- freshInst sc
-                                unify t (foldr fn t' ts)
-                                return (ps++qs, as, t')
+tiPat (PNpk i _k)  = do t <- newTVar Star
+                        return ([IsIn "Integral" t], [i:>:toScheme t], t)
+tiPat (PCon (_i:>:sc) pats) = do (ps,as,ts) <- tiPats pats
+                                 t'         <- newTVar Star
+                                 (qs :=> t) <- freshInst sc
+                                 unify t (foldr fn t' ts)
+                                 return (ps++qs, as, t')
 
 tiPats     :: [Pat] -> TI ([Pred], [Assump], [Type])
 tiPats pats = do psasts <- mapM tiPat pats
@@ -497,13 +508,13 @@ data Expr = Var   Id
 ----------------------------------------------------------------------
 
 tiExpr                       :: Infer Expr Type
-tiExpr ce as (Var i)          = do sc         <- find i as
-                                   (ps :=> t) <- freshInst sc
-                                   return (ps, t)
-tiExpr ce as (Const (i:>:sc)) = do (ps :=> t) <- freshInst sc
-                                   return (ps, t)
-tiExpr ce as (Lit l)          = do (ps,t) <- tiLit l
-                                   return (ps, t)
+tiExpr _ce as (Var i)          = do sc         <- find i as
+                                    (ps :=> t) <- freshInst sc
+                                    return (ps, t)
+tiExpr _ce _as (Const (_i:>:sc)) = do (ps :=> t) <- freshInst sc
+                                      return (ps, t)
+tiExpr _ce _as (Lit l)          = do (ps,t) <- tiLit l
+                                     return (ps, t)
 tiExpr ce as (Ap e f)         = do (ps,te) <- tiExpr ce as e
                                    (qs,tf) <- tiExpr ce as f
                                    t       <- newTVar Star
@@ -525,7 +536,7 @@ tiAlt ce as (pats, e) = do (ps, as', ts) <- tiPats pats
 
 tiAlts             :: ClassEnv -> [Assump] -> [Alt] -> Type -> TI [Pred]
 tiAlts ce as alts t = do psts <- mapM (tiAlt ce as) alts
-                         mapM (unify t) (map snd psts)
+                         mapM_ (unify t) (map snd psts)
                          return (concat (map fst psts))
 
 ----------------------------------------------------------------------
@@ -569,7 +580,7 @@ type Ambiguity       = (Tyvar, [Pred])
 -- there is a type variable that appears in ps but not in vs (i.e., in
 -- tv ps \\ vs)"
 ambiguities         :: ClassEnv -> [Tyvar] -> [Pred] -> [Ambiguity]
-ambiguities ce vs ps = [ (v, filter (elem v . tv) ps) | v <- tv ps \\ vs ]
+ambiguities _ce vs ps = [ (v, filter (elem v . tv) ps) | v <- tv ps \\ vs ]
 
 
 numClasses :: [Id]
@@ -582,8 +593,8 @@ stdClasses  = ["Eq", "Ord", "Show", "Read", "Bounded", "Enum", "Ix",
 
 -- candidates for defaulting
 candidates           :: ClassEnv -> Ambiguity -> [Type]
-candidates ce (v, qs) = [ t' | let is = [ i | IsIn i t <- qs ]
-                                   ts = [ t | IsIn i t <- qs ],
+candidates ce (v, qs) = [ t' | let is = [ i | IsIn i _t <- qs ]
+                                   ts = [ t | IsIn _i t <- qs ],
                                    all ((TVar v)==) ts,
                                    any (`elem` numClasses) is,
                                    all (`elem` stdClasses) is,
@@ -604,7 +615,7 @@ withDefaults f ce vs ps
           tss = map (candidates ce) vps
 
 defaultedPreds :: Monad m => ClassEnv -> [Tyvar] -> [Pred] -> m [Pred]
-defaultedPreds  = withDefaults (\vps ts -> concat (map snd vps))
+defaultedPreds  = withDefaults (\vps _ts -> concat (map snd vps))
 
 defaultSubst   :: Monad m => ClassEnv -> [Tyvar] -> [Pred] -> m Subst
 defaultSubst    = withDefaults (\vps ts -> Subst . Map.fromList $ zip (map fst vps) ts)
@@ -617,7 +628,7 @@ type Expl = (Id, Scheme, [Alt])
 
 
 tiExpl :: ClassEnv -> [Assump] -> Expl -> TI [Pred]
-tiExpl ce as (i, sc, alts)
+tiExpl ce as (_i, sc, alts)
     = do (qs :=> t) <- freshInst sc
          ps         <- tiAlts ce as alts t
          s          <- getSubst
@@ -640,7 +651,7 @@ type Impl   = (Id, [Alt])
 -- monomorphic restriction applies?
 restricted   :: [Impl] -> Bool
 restricted bs = any simple bs
-    where simple (i,alts) = any (null . fst) alts
+    where simple (_i,alts) = any (null . fst) alts
 
 tiImpls         :: Infer [Impl] [Assump]
 tiImpls ce as bs = do ts <- mapM (\_ -> newTVar Star) bs
@@ -671,7 +682,7 @@ type BindGroup  = ([Expl], [[Impl]])
 
 tiBindGroup :: Infer BindGroup [Assump]
 tiBindGroup ce as (es,iss) =
-  do let as' = [ v:>:sc | (v,sc,alts) <- es ]
+  do let as' = [ v:>:sc | (v,sc,_alts) <- es ]
      (ps, as'') <- tiSeq tiImpls ce (as'++as) iss
      qss        <- mapM (tiExpl ce (as''++as'++as)) es
      return (ps++concat qss, as''++as')
@@ -679,7 +690,7 @@ tiBindGroup ce as (es,iss) =
 -- "...typechecks a list of binding groups and accumulates assumptions
 -- as it runs through the list:"
 tiSeq                  :: Infer bg [Assump] -> Infer [bg] [Assump]
-tiSeq ti ce as []       = return ([],[])
+tiSeq _ti _ce _as []       = return ([],[])
 tiSeq ti ce as (bs:bss) = do (ps,as')  <- ti ce as bs
                              (qs,as'') <- tiSeq ti ce (as'++as) bss
                              return (ps++qs, as''++as')
@@ -700,16 +711,15 @@ tiProgram ce as bgs = runTI $
 
 
 ----------------------------------------------------------------------
-
+idAlt :: Alt
 idAlt = ([PVar "x"], Var "x")
+testImplBinding :: Impl
 testImplBinding = ("id", [idAlt])
-testProg =
-    [ ([], [[testImplBinding]]) ]
+testProg :: Program
+testProg = [ ([], [[testImplBinding]]) ]
 ----------------------------------------------------------------------
 
 -- | The main entry point.
 main :: IO ()
-main = do
-    putStrLn "Welcome to FP Haskell Center!"
-    putStrLn "Have a good day!"
+main = print $ tiProgram initialEnv [] testProg
 
