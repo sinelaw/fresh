@@ -527,12 +527,13 @@ tiExpr ce as (Let bg e)       = do (ps, as') <- tiBindGroup ce as bg
 ----------------------------------------------------------------------
 -- Alternatives (function definitions by equations)
 
-type Alt = ([Pat], Expr)
+data Alt = Alt { altPats :: [Pat], altExpr :: Expr }
 
 tiAlt                :: Infer Alt Type
-tiAlt ce as (pats, e) = do (ps, as', ts) <- tiPats pats
-                           (qs,t)  <- tiExpr ce (as'++as) e
-                           return (ps++qs, foldr fn t ts)
+tiAlt ce as (Alt pats e) =
+    do (ps, as', ts) <- tiPats pats
+       (qs,t)  <- tiExpr ce (as'++as) e
+       return (ps++qs, foldr fn t ts)
 
 tiAlts             :: ClassEnv -> [Assump] -> [Alt] -> Type -> TI [Pred]
 tiAlts ce as alts t = do psts <- mapM (tiAlt ce as) alts
@@ -573,14 +574,14 @@ split ce fs gs ps = do ps' <- reduce ce ps
 -- A type variable that was found to be ambiguous, paired with the
 -- list of predicates that must be satisfied in order for a type to
 -- server as an appropriate default
-type Ambiguity       = (Tyvar, [Pred])
+data Ambiguity       = Ambiguity { ambTyvar :: Tyvar, ambPreds :: [Pred] }
 
 -- "...a type with a list of predicates ps and that vs lists all known
 -- variables, both fixed and generic. An ambiguity occurs precisely if
 -- there is a type variable that appears in ps but not in vs (i.e., in
 -- tv ps \\ vs)"
 ambiguities         :: ClassEnv -> [Tyvar] -> [Pred] -> [Ambiguity]
-ambiguities _ce vs ps = [ (v, filter (elem v . tv) ps) | v <- tv ps \\ vs ]
+ambiguities _ce vs ps = [ (Ambiguity v $ filter (elem v . tv) ps) | v <- tv ps \\ vs ]
 
 
 numClasses :: [Id]
@@ -593,13 +594,14 @@ stdClasses  = ["Eq", "Ord", "Show", "Read", "Bounded", "Enum", "Ix",
 
 -- candidates for defaulting
 candidates           :: ClassEnv -> Ambiguity -> [Type]
-candidates ce (v, qs) = [ t' | let is = [ i | IsIn i _t <- qs ]
-                                   ts = [ t | IsIn _i t <- qs ],
-                                   all ((TVar v)==) ts,
-                                   any (`elem` numClasses) is,
-                                   all (`elem` stdClasses) is,
-                                   t' <- defaults ce,
-                                   all (entail ce []) [ IsIn i t' | i <- is ] ]
+candidates ce (Ambiguity v qs) =
+    [ t' | let is = [ i | IsIn i _t <- qs ]
+               ts = [ t | IsIn _i t <- qs ],
+               all ((TVar v)==) ts,
+               any (`elem` numClasses) is,
+               all (`elem` stdClasses) is,
+               t' <- defaults ce,
+               all (entail ce []) [ IsIn i t' | i <- is ] ]
 
 -- "...takes care of picking suitable defaults, and of checking
 -- whether there are any ambiguities that cannot be eliminated. If
@@ -615,20 +617,20 @@ withDefaults f ce vs ps
           tss = map (candidates ce) vps
 
 defaultedPreds :: Monad m => ClassEnv -> [Tyvar] -> [Pred] -> m [Pred]
-defaultedPreds  = withDefaults (\vps _ts -> concat (map snd vps))
+defaultedPreds  = withDefaults (\vps _ts -> concat (map ambPreds vps))
 
 defaultSubst   :: Monad m => ClassEnv -> [Tyvar] -> [Pred] -> m Subst
-defaultSubst    = withDefaults (\vps ts -> Subst . Map.fromList $ zip (map fst vps) ts)
+defaultSubst    = withDefaults (\vps ts -> Subst . Map.fromList $ zip (map ambTyvar vps) ts)
 
 ----------------------------------------------------------------------
 -- Binding groups
 
 -- Explicitly typed binding
-type Expl = (Id, Scheme, [Alt])
+data Expl = Expl { explId :: Id, explScheme :: Scheme, explAlts :: [Alt] }
 
 
 tiExpl :: ClassEnv -> [Assump] -> Expl -> TI [Pred]
-tiExpl ce as (_i, sc, alts)
+tiExpl ce as (Expl _ sc alts)
     = do (qs :=> t) <- freshInst sc
          ps         <- tiAlts ce as alts t
          s          <- getSubst
@@ -646,19 +648,19 @@ tiExpl ce as (_i, sc, alts)
                   else return ds
 
 -- Implicit bindings
-type Impl   = (Id, [Alt])
+data Impl = Impl { implId :: Id, implAlts :: [Alt] }
 
 -- monomorphic restriction applies?
 restricted   :: [Impl] -> Bool
 restricted bs = any simple bs
-    where simple (_i,alts) = any (null . fst) alts
+    where simple (Impl _ alts) = any (null . altPats) alts
 
 tiImpls         :: Infer [Impl] [Assump]
 tiImpls ce as bs = do ts <- mapM (\_ -> newTVar Star) bs
-                      let is    = map fst bs
+                      let is    = map implId bs
                           scs   = map toScheme ts
                           as'   = zipWith (:>:) is scs ++ as
-                          altss = map snd bs
+                          altss = map implAlts bs
                       pss <- sequence (zipWith (tiAlts ce as') altss ts)
                       s   <- getSubst
                       let ps'     = apply s (concat pss)
@@ -677,14 +679,14 @@ tiImpls ce as bs = do ts <- mapM (\_ -> newTVar Star) bs
 
 ----------------------------------------------------------------------
 
-type BindGroup  = ([Expl], [[Impl]])
+data BindGroup = BindGroup { bgExpl :: [Expl], bgImpls :: [[Impl]] }
 
 
 tiBindGroup :: Infer BindGroup [Assump]
-tiBindGroup ce as (es,iss) =
-  do let as' = [ v:>:sc | (v,sc,_alts) <- es ]
-     (ps, as'') <- tiSeq tiImpls ce (as'++as) iss
-     qss        <- mapM (tiExpl ce (as''++as'++as)) es
+tiBindGroup ce as bg =
+  do let as' = [ v:>:sc | (Expl v sc _) <- bgExpl bg ]
+     (ps, as'') <- tiSeq tiImpls ce (as'++as) (bgImpls bg)
+     qss        <- mapM (tiExpl ce (as''++as'++as)) (bgExpl bg)
      return (ps++concat qss, as''++as')
 
 -- "...typechecks a list of binding groups and accumulates assumptions
@@ -698,11 +700,11 @@ tiSeq ti ce as (bs:bss) = do (ps,as')  <- ti ce as bs
 ----------------------------------------------------------------------
 -- Top level program
 
-type Program = [BindGroup]
+newtype Program = Program [BindGroup]
 
 
 tiProgram :: ClassEnv -> [Assump] -> Program -> [Assump]
-tiProgram ce as bgs = runTI $
+tiProgram ce as (Program bgs) = runTI $
                       do (ps, as') <- tiSeq tiBindGroup ce as bgs
                          s         <- getSubst
                          rs        <- reduce ce (apply s ps)
@@ -712,11 +714,11 @@ tiProgram ce as bgs = runTI $
 
 ----------------------------------------------------------------------
 idAlt :: Alt
-idAlt = ([PVar "x"], Var "x")
+idAlt = Alt { altPats = [PVar "x"], altExpr = Var "x" }
 testImplBinding :: Impl
-testImplBinding = ("id", [idAlt])
+testImplBinding = Impl { implId = "id", implAlts = [idAlt] }
 testProg :: Program
-testProg = [ ([], [[testImplBinding]]) ]
+testProg = Program [BindGroup { bgExpl = [], bgImpls = [[testImplBinding]] }]
 ----------------------------------------------------------------------
 
 -- | The main entry point.
