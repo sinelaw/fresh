@@ -2,7 +2,8 @@
 module Main where
 
 import Control.Monad (msum, ap)
-
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.List (intersect, nub, partition, union, (\\))
 
 type Id = String
@@ -11,7 +12,7 @@ enumId :: Int -> Id
 enumId n = "v" ++ show n
 
 data Kind = Star | Kfun Kind Kind
-    deriving (Eq)
+    deriving (Eq, Ord)
 
 instance Show Kind where
     show Star = "*"
@@ -32,7 +33,7 @@ instance Show Type where
     show (TGen n) = 't' : show n
 
 data Tyvar = Tyvar Id Kind
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 data Tycon = Tycon Id Kind
     deriving (Eq)
@@ -79,22 +80,22 @@ instance HasKind Type where
     kind (TAp t _) = case (kind t) of (Kfun _ k) -> k
 
 
-type Subst = [(Tyvar , Type)]
+newtype Subst = Subst { unSubst :: Map Tyvar Type }
 
 nullSubst :: Subst
-nullSubst = []
+nullSubst = Subst Map.empty
 
 -- map a single tyvar to a type
 -- TODO: assert kinds match
 (+->) :: Tyvar -> Type -> Subst
-u +-> t = [(u, t)]
+u +-> t = Subst $ Map.singleton u t
 
 class Types t where
     apply :: Subst -> t -> t
     tv :: t -> [Tyvar]
 
 instance Types Type where
-    apply s (TVar u) = case lookup u s of
+    apply (Subst sm) (TVar u) = case Map.lookup u sm of
         Just t -> t
         Nothing -> TVar u
     apply s (TAp l r ) = TAp (apply s l) (apply s r )
@@ -111,12 +112,13 @@ instance Types a => Types [a] where
 -- left-biased substition composition
 infixr 4 @@
 (@@) :: Subst -> Subst -> Subst
-s1@@s2 = [(u, apply s1 t) | (u, t) <- s2] ++ s1
+(Subst s1)@@(Subst s2) = Subst $ Map.map (apply $ Subst s1) s2 `Map.union` s1
 
 merge :: Monad m => Subst -> Subst -> m Subst
-merge s1 s2 = if agree then return (s1 ++ s2) else fail "merge fails"
-    where agree = all (\v -> apply s1 (TVar v) == apply s2 (TVar v))
-                      (map fst s1 `intersect` map fst s2)
+merge (Subst s1) (Subst s2) = if agree then return (Subst $ Map.union s1 s2) else fail "merge fails"
+    where agree = all
+                  (\v -> apply (Subst s1) (TVar v) == apply (Subst s2) (TVar v))
+                  (Map.keys $ Map.intersection s1 s2)
 
 mgu :: Monad m => Type -> Type -> m Subst
 varBind :: Monad m => Tyvar -> Type -> m Subst
@@ -364,7 +366,7 @@ quantify      :: [Tyvar] -> Qual Type -> Scheme
 quantify vs qt = Forall ks (apply s qt)
     where vs' = [ v | v <- tv qt, v `elem` vs ]
           ks  = map kind vs'
-          s   = zip vs' (map TGen [0..])
+          s   = Subst . Map.fromList $ zip vs' (map TGen [0..])
 
 toScheme      :: Type -> Scheme
 toScheme t     = Forall [] ([] :=> t)
@@ -605,7 +607,7 @@ defaultedPreds :: Monad m => ClassEnv -> [Tyvar] -> [Pred] -> m [Pred]
 defaultedPreds  = withDefaults (\vps ts -> concat (map snd vps))
 
 defaultSubst   :: Monad m => ClassEnv -> [Tyvar] -> [Pred] -> m Subst
-defaultSubst    = withDefaults (\vps ts -> zip (map fst vps) ts)
+defaultSubst    = withDefaults (\vps ts -> Subst . Map.fromList $ zip (map fst vps) ts)
 
 ----------------------------------------------------------------------
 -- Binding groups
