@@ -210,19 +210,19 @@ type Inst = Qual Pred
 
 data ClassEnv =
     ClassEnv
-    { classes  :: Id -> Maybe Class
+    { classes  :: Map Id Class
     , defaults :: [Type] }
 
 -- Extract superclass/instance info from a class env given class Id.
 -- "These functions are intended to be used only in cases where it is
 -- known that the class i is defined in the environment ce"
 super :: ClassEnv -> Id -> [Id]
-super ce i = case classes ce i of
+super ce i = case Map.lookup i (classes ce) of
     Just c -> classSupers c
     Nothing -> error $ "Class " ++ (show i) ++ " not found."
 
 insts :: ClassEnv -> Id -> [Inst]
-insts ce i = case classes ce i of
+insts ce i = case Map.lookup i (classes ce) of
     Just c -> classInstances c
     Nothing -> error $ "Class " ++ (show i) ++ " not found."
 
@@ -233,12 +233,12 @@ defined Nothing = False
 -- Building up class environments:
 
 modify :: ClassEnv -> Id -> Class -> ClassEnv
-modify ce i c = ce { classes = \j -> if i == j then Just c else classes ce j }
+modify ce i c = ce { classes = Map.insert i c $ classes ce }
 
 initialEnv :: ClassEnv
 initialEnv =
     ClassEnv
-    { classes = \_ -> fail "class not defined"
+    { classes = Map.empty
     , defaults = [tInteger , tDouble] }
 
 type EnvTransformer = ClassEnv -> Maybe ClassEnv
@@ -251,8 +251,8 @@ infixr 5 <:>
 
 addClass :: Id -> [Id] -> EnvTransformer
 addClass i is ce
-    | defined (classes ce i) = fail "class already defined"
-    | any (not . defined . classes ce) is = fail "superclass not defined"
+    | defined (Map.lookup i $ classes ce) = fail "class already defined"
+    | any (not . defined . (\i' -> Map.lookup i' $ classes ce)) is = fail "superclass not defined"
     | otherwise = return (modify ce i (Class { classSupers = is, classInstances = [] }))
 
 addPreludeClasses :: EnvTransformer
@@ -283,7 +283,7 @@ addNumClasses =
 -- add new instance to existing class
 addInst :: [Pred] -> Pred -> EnvTransformer
 addInst ps p@(IsIn i _) ce
-    | not (defined (classes ce i)) = fail "no class for instance"
+    | not (defined (Map.lookup i $ classes ce)) = fail "no class for instance"
     | any (overlap p) qs = fail "overlapping instance"
     | otherwise = return (modify ce i c)
     where
