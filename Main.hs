@@ -471,7 +471,6 @@ data Pat        = PVar Id
                 | PWildcard
                 | PAs  Id Pat -- x@Pat...
                 | PLit Literal
-                | PNpk Id Integer
                 | PCon Assump [Pat]
 
 tiPat :: Pat -> TI ([Pred], [Assump], Type)
@@ -484,8 +483,6 @@ tiPat (PAs i pat) = do (ps, as, t) <- tiPat pat
                        return (ps, (i:>:toScheme t):as, t)
 tiPat (PLit l) = do (ps, t) <- tiLit l
                     return (ps, [], t)
-tiPat (PNpk i _k)  = do t <- newTVar Star
-                        return ([IsIn "Integral" t], [i:>:toScheme t], t)
 tiPat (PCon (_i:>:sc) pats) = do (ps,as,ts) <- tiPats pats
                                  t'         <- newTVar Star
                                  (qs :=> t) <- freshInst sc
@@ -653,11 +650,6 @@ tiExpl ce as (Expl _ sc alts)
 -- Implicit bindings
 data Impl = Impl { implId :: Id, implAlts :: [Alt] }
 
--- monomorphic restriction applies?
-restricted   :: [Impl] -> Bool
-restricted bs = any simple bs
-    where simple (Impl _ alts) = any (null . altPats) alts
-
 tiImpls         :: Infer [Impl] [Assump]
 tiImpls ce as bs = do ts <- mapM (\_ -> newTVar Star) bs
                       let is    = map implId bs
@@ -672,13 +664,8 @@ tiImpls ce as bs = do ts <- mapM (\_ -> newTVar Star) bs
                           vss     = map tv ts'
                           gs      = foldr1 union vss \\ fs
                       (ds,rs) <- split ce fs (foldr1 intersect vss) ps'
-                      if restricted bs then
-                          let gs'  = gs \\ tv rs
-                              scs' = map (quantify gs' . ([]:=>)) ts'
-                          in return (ds++rs, zipWith (:>:) is scs')
-                        else
-                          let scs' = map (quantify gs . (rs:=>)) ts'
-                          in return (ds, zipWith (:>:) is scs')
+                      let scs' = map (quantify gs . (rs:=>)) ts'
+                       in return (ds, zipWith (:>:) is scs')
 
 ----------------------------------------------------------------------
 
