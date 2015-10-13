@@ -2,7 +2,8 @@
 module Main where
 
 --import Control.Applicative (Applicative(..))
-import Control.Monad (msum, ap)
+import Control.Monad (msum)
+import Control.Monad.State (State, runState, get, modify)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.List (intersect, nub, partition, union, (\\))
@@ -232,8 +233,8 @@ defined Nothing = False
 
 -- Building up class environments:
 
-modify :: ClassEnv -> Id -> Class -> ClassEnv
-modify ce i c = ce { classes = Map.insert i c $ classes ce }
+modifyCE :: ClassEnv -> Id -> Class -> ClassEnv
+modifyCE ce i c = ce { classes = Map.insert i c $ classes ce }
 
 initialEnv :: ClassEnv
 initialEnv =
@@ -253,7 +254,7 @@ addClass :: Id -> [Id] -> EnvTransformer
 addClass i is ce
     | defined (Map.lookup i $ classes ce) = fail "class already defined"
     | any (not . defined . (\i' -> Map.lookup i' $ classes ce)) is = fail "superclass not defined"
-    | otherwise = return (modify ce i (Class { classSupers = is, classInstances = [] }))
+    | otherwise = return (modifyCE ce i (Class { classSupers = is, classInstances = [] }))
 
 addPreludeClasses :: EnvTransformer
 addPreludeClasses = addCoreClasses <:> addNumClasses
@@ -285,7 +286,7 @@ addInst :: [Pred] -> Pred -> EnvTransformer
 addInst ps p@(IsIn i _) ce
     | not (defined (Map.lookup i $ classes ce)) = fail "no class for instance"
     | any (overlap p) qs = fail "overlapping instance"
-    | otherwise = return (modify ce i c)
+    | otherwise = return (modifyCE ce i c)
     where
         its = insts ce i
         qs = [q | (_ :=> q) <- its]
@@ -406,26 +407,15 @@ find i ((i':>:sc):as) = if i==i' then return sc else find i as
 ---------------------------------------------------------
 -- Type Inference Monad
 
-newtype TI a = TI (Subst -> Int -> (Subst, Int, a))
+data TIState = TIState { tiSubst :: Subst, tiFresh :: Int }
 
-instance Monad TI where
-    return x   = TI (\s n -> (s,n,x))
-    TI f >>= g = TI (\s n -> case f s n of
-                              (s',m,x) -> let TI gx = g x
-                                          in  gx s' m)
-
-instance Applicative TI where
-    pure = return
-    (<*>) = ap
-
-instance Functor TI where
-    fmap f x = pure f <*> x
+type TI a = State TIState a
 
 runTI       :: TI a -> a
-runTI (TI f) = x where (_s,_n,x) = f nullSubst 0
+runTI t = fst $ runState t $ TIState { tiSubst = nullSubst, tiFresh = 0 }
 
 getSubst   :: TI Subst
-getSubst    = TI (\s n -> (s,n,s))
+getSubst    = tiSubst <$> get
 
 unify      :: Type -> Type -> TI ()
 unify t1 t2 = do s <- getSubst
@@ -433,11 +423,13 @@ unify t1 t2 = do s <- getSubst
                  extSubst u
 
 extSubst   :: Subst -> TI ()
-extSubst s' = TI (\s n -> (s'@@s, n, ()))
+extSubst s' = modify (\s -> s { tiSubst = s'@@(tiSubst s) })
 
 newTVar    :: Kind -> TI Type
-newTVar k   = TI (\s n -> let v = Tyvar (enumId n) k
-                          in  (s, n+1, TVar v))
+newTVar k = do
+    n <- tiFresh <$> get
+    modify (\s -> s { tiFresh = 1 + tiFresh s })
+    return $ TVar (Tyvar (enumId n) k)
 
 freshInst               :: Scheme -> TI (Qual Type)
 freshInst (Forall ks qt) = do ts <- mapM newTVar ks

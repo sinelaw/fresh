@@ -23,6 +23,7 @@ executable fresh
   build-depends:       base >=4.7 && <5
                      , containers >= 0.5.6.2
                      , either
+                     , mtl >= 2.2.1
                      , transformers
   -- hs-source-dirs:
   default-language:    Haskell2010
