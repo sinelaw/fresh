@@ -130,8 +130,6 @@ merge (Subst s1) (Subst s2) = if agree then return (Subst $ Map.union s1 s2) els
                   (Map.keys $ Map.intersection s1 s2)
 
 mgu :: Monad m => Type -> Type -> m Subst
-varBind :: Monad m => Tyvar -> Type -> m Subst
-
 mgu (TAp l r) (TAp l' r') = do
     s1 <- mgu l l'
     s2 <- mgu (apply s1 r) (apply s1 r')
@@ -142,6 +140,7 @@ mgu (TCon tc1) (TCon tc2)
     | tc1 == tc2 = return nullSubst
 mgu _t1 _t2 = fail "types do not unify"
 
+varBind :: Monad m => Tyvar -> Type -> m Subst
 varBind u t
     | t == TVar u = return nullSubst
     | u `elem` tv t = fail "occurs check fails"
@@ -192,7 +191,7 @@ lift m (IsIn i t) (IsIn i' t')
 
 -- Type classes: list of super classes + list of instances
 -- TODO (missing): list of methods per class + method implementations per instance
-type Class = ([Id], [Inst])
+data Class = Class { classSupers :: [Id], classInstances :: [Inst] }
 type Inst = Qual Pred
 
 
@@ -215,9 +214,10 @@ data ClassEnv =
 -- "These functions are intended to be used only in cases where it is
 -- known that the class i is defined in the environment ce"
 super :: ClassEnv -> Id -> [Id]
-super ce i = case classes ce i of Just (is, _its) -> is
+super ce i = case classes ce i of Just c -> classSupers c
+
 insts :: ClassEnv -> Id -> [Inst]
-insts ce i = case classes ce i of Just (_is, its) -> its
+insts ce i = case classes ce i of Just c -> classInstances c
 
 defined :: Maybe a -> Bool
 defined (Just _x ) = True
@@ -246,7 +246,7 @@ addClass :: Id -> [Id] -> EnvTransformer
 addClass i is ce
     | defined (classes ce i) = fail "class already defined"
     | any (not . defined . classes ce) is = fail "superclass not defined"
-    | otherwise = return (modify ce i (is, []))
+    | otherwise = return (modify ce i (Class { classSupers = is, classInstances = [] }))
 
 addPreludeClasses :: EnvTransformer
 addPreludeClasses = addCoreClasses <:> addNumClasses
@@ -282,7 +282,7 @@ addInst ps p@(IsIn i _) ce
     where
         its = insts ce i
         qs = [q | (_ :=> q) <- its]
-        c = (super ce i, (ps :=> p) : its)
+        c = Class { classSupers = super ce i, classInstances = (ps :=> p) : its }
 
 -- "Two instances for a class are said to overlap if there is some
 -- predicate that is a substitution instance of the heads of both
