@@ -23,15 +23,15 @@ data Type
     = TVar Tyvar
     | TCon Tycon
     | TAp Type Type
-    | TGen Int -- quantified type variable, int is index into kinds list
-               -- in Scheme
+    | TGen Int Kind -- quantified type variable, int is index into kinds list
+                    -- in Scheme, must match the kind here
     deriving (Eq)
 
 instance Show Type where
     show (TVar t1) = show t1
     show (TCon tc) = "TCon " ++ show tc
     show (TAp t1 t2) = show t1 ++ " -> " ++ show t2
-    show (TGen n) = 't' : show n
+    show (TGen n k) = ('t' : show n) ++ " :: " ++ (show k)
 
 data Tyvar = Tyvar Id Kind
     deriving (Show, Eq, Ord)
@@ -86,8 +86,11 @@ instance HasKind Tycon where
 instance HasKind Type where
     kind (TCon tc) = kind tc
     kind (TVar u) = kind u
-    kind (TAp t _) = case (kind t) of (Kfun _ k) -> k
-
+    kind (TAp t _) =
+        case (kind t) of
+        (Kfun _ k) -> k
+        _          -> error $ "Kinding error: Type constructor has kind: " ++ (show $ kind t)
+    kind (TGen _ k) = k
 
 newtype Subst = Subst { unSubst :: Map Tyvar Type }
 
@@ -214,10 +217,14 @@ data ClassEnv =
 -- "These functions are intended to be used only in cases where it is
 -- known that the class i is defined in the environment ce"
 super :: ClassEnv -> Id -> [Id]
-super ce i = case classes ce i of Just c -> classSupers c
+super ce i = case classes ce i of
+    Just c -> classSupers c
+    Nothing -> error $ "Class " ++ (show i) ++ " not found."
 
 insts :: ClassEnv -> Id -> [Inst]
-insts ce i = case classes ce i of Just c -> classInstances c
+insts ce i = case classes ce i of
+    Just c -> classInstances c
+    Nothing -> error $ "Class " ++ (show i) ++ " not found."
 
 defined :: Maybe a -> Bool
 defined (Just _x ) = True
@@ -377,7 +384,7 @@ quantify      :: [Tyvar] -> Qual Type -> Scheme
 quantify vs qt = Forall ks (apply s qt)
     where vs' = [ v | v <- tv qt, v `elem` vs ]
           ks  = map kind vs'
-          s   = Subst . Map.fromList $ zip vs' (map TGen [0..])
+          s   = Subst . Map.fromList $ zip vs' (map (uncurry TGen) $ zip [0..] ks)
 
 toScheme      :: Type -> Scheme
 toScheme t     = Forall [] ([] :=> t)
@@ -440,7 +447,11 @@ class Instantiate t where
   inst  :: [Type] -> t -> t
 instance Instantiate Type where
   inst ts (TAp l r) = TAp (inst ts l) (inst ts r)
-  inst ts (TGen n)  = ts !! n
+  inst ts (TGen n k) =
+      if kind t == k
+      then t
+      else error "Unexpected kind!"
+      where t = (ts !! n)
   inst _ts t         = t
 instance Instantiate a => Instantiate [a] where
   inst ts = map (inst ts)
