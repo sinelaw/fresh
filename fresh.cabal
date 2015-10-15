@@ -1,0 +1,31 @@
+name:                fresh
+version:             0.1.0.0
+-- synopsis:
+-- description:
+-- license:
+license-file:        LICENSE
+author:              Noam Lewis
+maintainer:          jones.noamle@gmail.com
+-- copyright:
+-- category:
+build-type:          Simple
+-- extra-source-files:
+cabal-version:       >=1.16
+
+library
+  exposed-modules:     Fresh.Kind
+  -- other-modules:
+  -- other-extensions:
+  build-depends:       base >=4.7 && <5
+                     , containers >= 0.5.6.2
+                     , either
+                     , mtl >= 2.2.1
+                     , transformers
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+  ghc-options: -Wall
+
+executable fresh
+  main-is: Main.hs
+  build-depends: base >= 4.7 && <5
+               , fresh
