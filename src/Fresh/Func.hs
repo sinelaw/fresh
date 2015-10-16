@@ -3,7 +3,9 @@ module Fresh.Func
        ( Func(..)
        , app
        , compose
+#ifdef QC
        , runTests
+#endif
        ) where
 
 import Control.Monad (join)
@@ -13,6 +15,8 @@ import Control.Applicative (liftA2)
 import Test.QuickCheck
 #endif
 
+-- | Functions from some domain to some range. Polymorphic in the type of the domain and range.
+-- Values of type 'a' are domains, value of type 'b' are codomains.
 data Func a b = Func a b
     deriving (Eq, Ord, Show)
 
