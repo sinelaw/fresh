@@ -1,13 +1,15 @@
 {-# LANGUAGE CPP #-}
 module Main where
 
-import Fresh.Kind
+import qualified Fresh.Kind as Kind
+import qualified Fresh.Func as Func
 
 #ifdef QC
 
 main = do
     putStrLn "Running tests."
-    Fresh.Kind.runTests
+    Kind.runTests
+    Func.runTests
 
 #else
 
