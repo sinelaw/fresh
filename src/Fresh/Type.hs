@@ -4,6 +4,8 @@ module Fresh.Type where
 
 --import qualified Fresh.Kind as Kind
 import           Fresh.Kind (Kind)
+import           Fresh.Subst (SubstTV(..), Subst)
+import qualified Fresh.Subst as Subst
 
 import qualified Data.Map as Map
 import           Data.Map (Map)
@@ -51,30 +53,18 @@ instance FreeTV t => FreeTV (Type t) where
     ftv (TQuant q) = ftv q
 
 ----------------------------------------------------------------------
-newtype Subst t = Subst (Map TyVar t)
-                deriving (Ord, Eq, Show)
-
--- substLift :: (Map TyVar t -> Map TyVar u) -> (Subst t) -> (Subst u)
--- substLift fm (Subst m) = Subst (fm m)
-
-substEmpty :: Subst t
-substEmpty = Subst Map.empty
-
-substDelete :: Subst t -> [TyVar] -> Subst t
-substDelete (Subst m) tvs =
-    Subst $ foldr (\tv m' -> Map.delete tv m') m tvs
-
-class SubstTV t where
-    subst :: Subst t -> t -> t
-
-instance SubstTV TyVar where
-    subst (Subst m) v =
-        case Map.lookup v m of
-        Nothing -> v
-        Just v' -> v'
+-- instance SubstTV TyVar TyVar TyVar where
+--     subst (Subst m) v =
+--         case Map.lookup v m of
+--         Nothing -> v
+--         Just v' -> v'
 
 -- instance Subst t => Subst (TyQuant t) where
 --     subst (Subst m) (TyQuant vs t) =
+
+instance SubstTV TyVar t t => SubstTV TyVar (Type t) (Type t) where
+    subst s t@(TVar v) = Subst.lookup s v t
+
 ----------------------------------------------------------------------
 
 newtype TypeEnv e t = TypeEnv (Map e t)

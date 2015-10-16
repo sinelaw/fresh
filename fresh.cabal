@@ -20,6 +20,7 @@ library
   exposed-modules:     Fresh.Kind
                      , Fresh.Func
                      , Fresh.Type
+                     , Fresh.Subst
   -- other-modules:
   -- other-extensions:
   build-depends:       base >=4.7 && <5
