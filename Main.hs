@@ -3,8 +3,7 @@
 {-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, StandaloneDeriving, UndecidableInstances, RecordWildCards #-}
 module Main where
 
-import Control.Monad (foldM)
-import Control.Monad (when)
+import Control.Monad (foldM, when, unless)
 import Control.Monad.ST
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Either (EitherT, runEitherT, left)
@@ -185,9 +184,13 @@ enqueueAdj t = do
     lift . lift $ modifySTRef (toBeLevelAdjusted env) (t:)
     return ()
 
+assertLevel :: (Num a, Ord a, Applicative f) => a -> f ()
+assertLevel l = unless (l >= 0) $ error "assetion failed! level >= 0"
+
 enterLevel :: Infer s ()
 enterLevel = do
     env <- lift ask
+    currentLevel >>= assertLevel
     lift . lift $ modifySTRef (level env) (1 +)
     currentLevel >>= traceM . ("++level = " ++) . show
     return ()
@@ -196,7 +199,9 @@ leaveLevel :: Infer s ()
 leaveLevel = do
     env <- lift ask
     lift . lift $ modifySTRef (level env) (subtract 1)
-    currentLevel >>= traceM . ("--level = " ++) . show
+    currentLevel >>= \l -> do
+        assertLevel l
+        traceM . ("--level = " ++) $ show l
     return ()
 
 currentLevel :: Infer s Level
