@@ -13,10 +13,13 @@ data Id = Id String
 data TCon = TCon Id Kind
     deriving (Eq, Ord, Show)
 
+data GenVar = GenVar { _genVarId :: Id, _genVarKind :: Kind }
+    deriving (Eq, Ord, Show)
+
 data TypeAST t
     = TyAp { _tyApFun :: t, _tyApArg :: t }
     | TyCon { _tyCon :: TCon }
-    | TyGenVar { _tyGenVarId :: Id, _tyGenVarKind :: Kind }
+    | TyGenVar { _tyGenVar :: GenVar }
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 data TypeABT v t
@@ -36,6 +39,26 @@ resolve (SType (TyVar ref)) = do
 resolve (SType (TyAST t)) = do
     mt <- traverse resolve t
     return . fmap Fix $ sequenceA mt
+
+varBind :: STRef s (Maybe (SType s)) -> SType s -> ST s ()
+varBind ref t = do
+    vt <- readSTRef ref
+    case vt of
+        Nothing -> writeSTRef ref (Just t)
+        Just t' -> unify t' t
+
+unify :: SType s -> SType s -> ST s ()
+unify (SType (TyVar ref)) t = varBind ref t
+unify t (SType (TyVar ref)) = varBind ref t
+unify (SType (TyAST t1)) (SType (TyAST t2)) = unifyAST t1 t2
+
+unifyAST :: TypeAST (SType s) -> TypeAST (SType s) -> ST s ()
+unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
+    unify t1 t1'
+    unify t2 t2'
+unifyAST (TyCon tc1) (TyCon tc2) | tc1 == tc2 = return ()
+unifyAST (TyGenVar g1) (TyGenVar g2) | g1 == g2 = return ()
+unifyAST _ _ = fail "oh no."
 
 ----------------------------------------------------------------------
 
