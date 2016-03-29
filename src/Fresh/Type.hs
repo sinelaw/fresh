@@ -1,11 +1,19 @@
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 module Fresh.Type where
 
-import           Fresh.Kind (Kind)
+import           Fresh.Kind (Kind(..))
 --import qualified Fresh.Kind as Kind
 import Data.STRef
-import Control.Monad.ST (ST)
+import Control.Monad.ST (ST, runST)
+import Data.Map (Map)
+import qualified Data.Map as Map
+import Control.Monad.Trans.State (StateT(..), runStateT, modify, get, put, evalStateT)
 
 data Id = Id String
     deriving (Eq, Ord, Show)
@@ -22,6 +30,9 @@ data TypeAST t
     | TyGenVar { _tyGenVar :: GenVar }
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
+tyFunc :: TypeAST t
+tyFunc = TyCon (TCon (Id "->") (KArrow Star Star))
+
 data TypeABT v t
     = TyVar v
     | TyAST (TypeAST t)
@@ -29,8 +40,16 @@ data TypeABT v t
 
 newtype Fix f = Fix { unFix :: f (Fix f) }
 
+deriving instance Show (f (Fix f)) => Show (Fix f)
+
 data SType s = SType (TypeABT (STRef s (Maybe (SType s))) (SType s))
+
 type Type = Fix TypeAST
+
+funT :: SType s -> SType s -> SType s
+funT targ tres =
+    SType . TyAST
+    $ TyAp (SType . TyAST . TyAp (SType $ TyAST tyFunc) $ targ) tres
 
 resolve :: SType s -> ST s (Maybe Type)
 resolve (SType (TyVar ref)) = do
@@ -62,7 +81,7 @@ unifyAST _ _ = fail "oh no."
 
 ----------------------------------------------------------------------
 
-data EVar = EVar String
+data EVarName = EVarName String
     deriving (Eq, Ord, Show)
 
 data Lit
@@ -71,11 +90,76 @@ data Lit
     | LitBool Bool
     deriving (Eq, Ord, Show)
 
-data Expr e
-    = ELit Lit
-    | ELam EVar e
-    | EApp e e
-    deriving (Eq, Ord, Show)
+data Expr a
+    = ELit a Lit
+    | EVar a EVarName
+    | ELam a EVarName (Expr a)
+    | EApp a (Expr a) (Expr a)
+    deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+-- type FExpr = Fix Expr
+--     deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------
+tcon :: String -> Kind -> SType s
+tcon name k = SType (TyAST (TyCon (TCon (Id name) k)))
 
+inferLit :: Lit -> SType s
+inferLit LitNum{} = tcon "Number" Star
+inferLit LitString{} = tcon "String" Star
+inferLit LitBool{} = tcon "Bool" Star
+
+data InferState s
+    = InferState
+      { isContext :: Map EVarName (STRef s (Maybe (SType s)))
+      }
+
+type Infer s = StateT (InferState s) (ST s)
+
+lift :: ST s a -> Infer s a
+lift act = StateT (\s -> (,s) <$> act)
+
+fresh :: Infer s (STRef s (Maybe a))
+fresh = lift $ newSTRef Nothing
+
+infer :: Expr a -> Infer s (Expr (a, SType s), SType s)
+
+infer (ELit a lit) = return (ELit (a, t) lit, t)
+    where t = inferLit lit
+
+infer (ELam a var expr) = do
+    varRef <- fresh
+    is <- get
+    let varT = SType $ TyVar varRef
+        newContext = Map.insert var varRef (isContext is)
+    (expr', exprT) <- lift $ evalStateT (infer expr) (is { isContext = newContext })
+    let t = funT varT exprT
+    return $ (ELam (a, t) var expr', t)
+
+infer (EVar a var) = do
+    is <- get
+    case Map.lookup var (isContext is) of
+        Nothing -> error $ "bad var " ++ (show var)
+        Just ref -> return (EVar (a, t) var, t)
+            where t = SType $ TyVar ref
+
+infer (EApp a efun earg) = do
+    (efun', efunT) <- infer efun
+    (earg', eargT) <- infer earg
+    resT <- SType . TyVar <$> fresh
+    lift $ unify efunT (funT eargT resT)
+    return (EApp (a, resT) efun' earg', resT)
+
+runInfer :: (forall s. Infer s a) -> a
+runInfer act =
+    runST $ evalStateT act (InferState { isContext = Map.empty })
+
+inferExpr :: Expr a -> Expr (Maybe Type)
+inferExpr expr = runInfer $ do
+    (expr', _t) <- infer expr
+    lift $ traverse (resolve . snd) expr'
+
+-- Example:
+
+exampleNumber :: Expr (Maybe Type)
+exampleNumber = inferExpr (EApp () (ELam () (EVarName "x") (EVar () (EVarName "x"))) (ELit () (LitNum 2)))
