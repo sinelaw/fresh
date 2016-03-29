@@ -113,6 +113,7 @@ inferLit LitBool{} = tcon "Bool" Star
 data InferState s
     = InferState
       { isContext :: Map EVarName (STRef s (Maybe (SType s)))
+      , isGenFresh :: Int
       }
 
 type Infer s = StateT (InferState s) (ST s)
@@ -122,6 +123,12 @@ lift act = StateT (\s -> (,s) <$> act)
 
 fresh :: Infer s (STRef s (Maybe a))
 fresh = lift $ newSTRef Nothing
+
+subInfer :: InferState s -> Infer s a -> Infer s a
+subInfer state act = do
+    (x, is') <- lift $ runStateT act state
+    modify $ \is -> is { isGenFresh = isGenFresh is' }
+    return x
 
 infer :: Expr a -> Infer s (Expr (a, SType s), SType s)
 
@@ -133,7 +140,7 @@ infer (ELam a var expr) = do
     is <- get
     let varT = SType $ TyVar varRef
         newContext = Map.insert var varRef (isContext is)
-    (expr', exprT) <- lift $ evalStateT (infer expr) (is { isContext = newContext })
+    (expr', exprT) <- subInfer (is { isContext = newContext }) $ infer expr
     let t = funT varT exprT
     return $ (ELam (a, t) var expr', t)
 
@@ -156,9 +163,9 @@ infer (ELet a var edef expr) = do
     is <- get
     let varT = SType $ TyVar varRef
         newContext = Map.insert var varRef (isContext is)
-    (edef', edefT) <- lift $ evalStateT (infer edef) (is { isContext = newContext })
+    (edef', edefT) <- subInfer (is { isContext = newContext }) (infer edef)
     lift $ unify varT edefT
-    (expr', exprT) <- lift $ evalStateT (infer expr) (is { isContext = newContext })
+    (expr', exprT) <- subInfer (is { isContext = newContext }) (infer expr)
     -- TODO: Generalize varRef
     return (ELet (a, exprT) var edef' expr', exprT)
 
