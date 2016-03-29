@@ -95,6 +95,7 @@ data Expr a
     | EVar a EVarName
     | ELam a EVarName (Expr a)
     | EApp a (Expr a) (Expr a)
+    | ELet a EVarName (Expr a) (Expr a)
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 -- type FExpr = Fix Expr
@@ -150,6 +151,17 @@ infer (EApp a efun earg) = do
     lift $ unify efunT (funT eargT resT)
     return (EApp (a, resT) efun' earg', resT)
 
+infer (ELet a var edef expr) = do
+    varRef <- fresh
+    is <- get
+    let varT = SType $ TyVar varRef
+        newContext = Map.insert var varRef (isContext is)
+    (edef', edefT) <- lift $ evalStateT (infer edef) (is { isContext = newContext })
+    lift $ unify varT edefT
+    (expr', exprT) <- lift $ evalStateT (infer expr) (is { isContext = newContext })
+    -- TODO: Generalize varRef
+    return (ELet (a, exprT) var edef' expr', exprT)
+
 runInfer :: (forall s. Infer s a) -> a
 runInfer act =
     runST $ evalStateT act (InferState { isContext = Map.empty })
@@ -163,3 +175,6 @@ inferExpr expr = runInfer $ do
 
 exampleNumber :: Expr (Maybe Type)
 exampleNumber = inferExpr (EApp () (ELam () (EVarName "x") (EVar () (EVarName "x"))) (ELit () (LitNum 2)))
+
+exampleLet :: Expr (Maybe Type)
+exampleLet = inferExpr (ELet () (EVarName "id") (ELam () (EVarName "x") (EVar () (EVarName "x"))) (EVar () (EVarName "id")))
