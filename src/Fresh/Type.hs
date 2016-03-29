@@ -13,6 +13,8 @@ import Data.STRef
 import Control.Monad.ST (ST, runST)
 import Data.Map (Map)
 import qualified Data.Map as Map
+-- import Data.Set (Set)
+import qualified Data.Set as Set
 import Control.Monad.Trans.State (StateT(..), runStateT, modify, get, put, evalStateT)
 
 data Id = Id String
@@ -21,13 +23,14 @@ data Id = Id String
 data TCon = TCon Id Kind
     deriving (Eq, Ord, Show)
 
-data GenVar = GenVar { _genVarId :: Id, _genVarKind :: Kind }
+data GenVar = GenVar { _genVarId :: Int } --, _genVarKind :: Kind }
     deriving (Eq, Ord, Show)
 
 data TypeAST t
     = TyAp { _tyApFun :: t, _tyApArg :: t }
     | TyCon { _tyCon :: TCon }
     | TyGenVar { _tyGenVar :: GenVar }
+    | TyGen { _tyGenVars :: [GenVar], _tyGenScheme :: t }
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 tyFunc :: TypeAST t
@@ -77,6 +80,7 @@ unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
     unify t2 t2'
 unifyAST (TyCon tc1) (TyCon tc2) | tc1 == tc2 = return ()
 unifyAST (TyGenVar g1) (TyGenVar g2) | g1 == g2 = return ()
+unifyAST (TyGen vs1 t1) (TyGen vs2 t2) | vs1 == vs2 = unify t1 t2
 unifyAST _ _ = fail "oh no."
 
 ----------------------------------------------------------------------
@@ -117,6 +121,45 @@ data InferState s
       }
 
 type Infer s = StateT (InferState s) (ST s)
+
+[] `listUnion` y = y
+x `listUnion` [] = x
+x `listUnion` y = Set.toList $ (Set.fromList x) `Set.union` (Set.fromList y)
+
+generalizeVars :: SType s -> Infer s ([GenVar], (SType s))
+generalizeVars tvar@(SType (TyVar ref)) = do
+    t <- lift $ readSTRef ref
+    case t of
+        Just t' -> generalizeVars t'
+        Nothing -> do
+            is <- get
+            let genId = isGenFresh is
+            put $ is { isGenFresh = genId + 1 }
+            let tgenvar = SType (TyAST $ TyGenVar (GenVar genId))
+            lift $ writeSTRef ref (Just tgenvar)
+            return ([GenVar genId], tvar)
+generalizeVars t@(SType (TyAST (TyGenVar genVar))) =
+    return ([genVar], t)
+generalizeVars (SType (TyAST (TyGen genvars t))) = do
+    -- erase rank > 1
+    -- TODO consider failing if rank > 1 found
+    (rank2Vars, t') <- generalizeVars t
+    -- TODO check for collisions in genvar ids
+    return (genvars `listUnion` rank2Vars, t')
+generalizeVars (SType (TyAST (TyAp t1 t2))) = do
+    (vs1, t1') <- generalizeVars t1
+    (vs2, t2') <- generalizeVars t2
+    return (vs1 `listUnion` vs2
+           , SType (TyAST (TyAp t1' t2')))
+generalizeVars (SType (TyAST (TyCon{..}))) =
+    return ([], SType (TyAST (TyCon{..})))
+
+generalize :: SType s -> Infer s (SType s)
+generalize t = do
+    (genvars, t') <- generalizeVars t
+    return $ case genvars of
+        [] -> t'
+        vs -> SType (TyAST (TyGen vs t'))
 
 lift :: ST s a -> Infer s a
 lift act = StateT (\s -> (,s) <$> act)
@@ -162,16 +205,19 @@ infer (ELet a var edef expr) = do
     varRef <- fresh
     is <- get
     let varT = SType $ TyVar varRef
-        newContext = Map.insert var varRef (isContext is)
-    (edef', edefT) <- subInfer (is { isContext = newContext }) (infer edef)
+    (edef', edefT) <- subInfer (is { isContext = Map.insert var varRef (isContext is) }) (infer edef)
     lift $ unify varT edefT
-    (expr', exprT) <- subInfer (is { isContext = newContext }) (infer expr)
-    -- TODO: Generalize varRef
+    genVarT <- generalize varT
+    genVarRef <- fresh
+    lift $ varBind genVarRef genVarT
+    is' <- get
+    (expr', exprT) <- subInfer (is { isContext = Map.insert var genVarRef (isContext is') }) (infer expr)
     return (ELet (a, exprT) var edef' expr', exprT)
 
 runInfer :: (forall s. Infer s a) -> a
 runInfer act =
-    runST $ evalStateT act (InferState { isContext = Map.empty })
+    runST $ evalStateT act (InferState { isContext = Map.empty
+                                       , isGenFresh = 0 })
 
 inferExpr :: Expr a -> Expr (Maybe Type)
 inferExpr expr = runInfer $ do
