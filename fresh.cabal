@@ -19,6 +19,7 @@ flag QC
 library
   exposed-modules:     Fresh.Kind
                      , Fresh.Type
+                     , Fresh.Pretty
                      -- , Fresh.Subst
   -- other-modules:
   -- other-extensions:
