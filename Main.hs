@@ -212,11 +212,11 @@ occurs name ioTV (Fix (TVar ioTV2))
     | otherwise = do
           tv2 <- readCell ioTV2
           case tv2 of
-              (Unbound name l2) -> do
+              (Unbound name' l2) -> do
                   tv <- readCell ioTV
                   case tv of
                       Unbound _ l1 ->
-                          writeCell ioTV $ Unbound name $ min l1 l2
+                          writeCell ioTV $ Unbound name' $ min l1 l2
                       _ -> return ()
               Link t2 -> occurs name ioTV t2
 occurs name tv (Fix (TArrow t2 t3)) =
@@ -234,7 +234,7 @@ gen t@(Fix (TVar ioTV)) = do
             return $ if curLevel < level
                      then Fix $ QVar name
                      else t
-        Link t -> gen t
+        Link t' -> gen t'
 gen (Fix (TArrow ta tb)) = do
     gta <- gen ta
     gtb <- gen tb
@@ -302,19 +302,24 @@ typeOf env (Let name e1 e2) = do
 --infer :: Expr -> Either TypeError PureType
 --infer = runInfer . typeOf []
 
-test_id_inner = (Lam "x" $ Var "x")
+test :: Expr -> IO ()
+test expr = do
+    let t = runInfer $ typeOf [] expr
+    putStrLn $ render expr ++ " :: " ++ render t
+
+test_id_inner :: Expr
+test_id_inner = Lam "x" $ Var "x"
+test_id :: Expr
 test_id = Let "id" test_id_inner (App (Var "id") (Var "id"))
-tid = runInfer $ typeOf [] test_id
-
-test_id2 = (Lam "x" (Let "y" (Var "x") (Var "y")))
-tid2 = runInfer $ typeOf [] test_id2
-
-test_id3 = Let "id" (Lam "y" $ (Lam "x" $ Var "y")) (Var "id")
-tid3 = runInfer $ typeOf [] test_id3
+test_id2 :: Expr
+test_id2 = Lam "x" (Let "y" (Var "x") (Var "y"))
+test_id3 :: Expr
+test_id3 = Let "id" (Lam "y" (Lam "x" $ Var "y")) (Var "id")
 
 
+main :: IO ()
 main = do
-    putStrLn $ render tid
-    putStrLn $ render tid2
-    putStrLn $ render tid3
+    test test_id
+    test test_id2
+    test test_id3
 
