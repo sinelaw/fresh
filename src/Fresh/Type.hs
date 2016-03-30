@@ -84,7 +84,7 @@ writeVar :: TypeVar (STRef s) t -> TVarLink t -> ST s ()
 writeVar (TypeVar ref) link = writeSTRef ref link
 
 resolve :: SType s -> ST s (Maybe Type)
-resolve t@(SType (TyVar tvar)) = do
+resolve (SType (TyVar tvar)) = do
     link <- readVar tvar
     case link of
         Unbound _name level -> return Nothing -- TODO perhaps generalize?
@@ -100,10 +100,34 @@ varBind tvar t = do
         Unbound _name level -> writeVar tvar (Link t)
         Link t' -> unify t' t
 
+unchain :: SType s -> ST s (SType s)
+unchain t@(SType (TyVar tvar)) = do
+    vt <- readVar tvar
+    case vt of
+        Unbound{} -> return t
+        Link t' -> unchain t'
+unchain t = return t
+
 unify :: SType s -> SType s -> ST s ()
-unify (SType (TyVar tvar)) t = varBind tvar t
-unify t (SType (TyVar tvar)) = varBind tvar t
-unify (SType (TyAST t1)) (SType (TyAST t2)) = unifyAST t1 t2
+unify t1 t2 = do
+    t1' <- unchain t1
+    t2' <- unchain t2
+    unify' t1' t2'
+
+unify' :: SType s -> SType s -> ST s ()
+unify' (SType (TyVar tvar1)) t2@(SType (TyVar tvar2)) = do
+    vt1 <- readVar tvar1
+    vt2 <- readVar tvar2
+    case (vt1, vt2) of
+        (Unbound _n1 l1, Unbound _n2 l2) ->
+            if l1 < l2
+            then writeVar tvar2 vt1
+            else writeVar tvar1 vt2
+        _ -> varBind tvar1 t2
+
+unify' (SType (TyVar tvar)) t = varBind tvar t
+unify' t (SType (TyVar tvar)) = varBind tvar t
+unify' (SType (TyAST t1)) (SType (TyAST t2)) = unifyAST t1 t2
 
 unifyAST :: TypeAST (SType s) -> TypeAST (SType s) -> ST s ()
 unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
