@@ -11,7 +11,8 @@ import Control.Monad.Trans.Reader (ReaderT, ask, runReaderT)
 import Data.STRef
 
 --import Debug.Trace (traceShowId, traceM)
-traceM x = return ()
+traceM :: Monad m => t -> m ()
+traceM _ = return ()
 
 class Render a where
     render :: a -> String
@@ -74,7 +75,7 @@ data CTV t
     deriving (Show, Eq)
 
 instance (Render t) => Render (CTV t) where
-    render (Unbound tv l) = "t" ++ show tv  -- ++ "-" ++ show l
+    render (Unbound tv _l) = "t" ++ show tv  -- ++ "-" ++ show l
     render (Link t) = render t
 
 data CType c t
@@ -239,7 +240,6 @@ cycleFree (Fix (TArrow t1 t2 ls)) = do
     cycleFree t1
     cycleFree t2
     writeCell (levelNew ls) lNew
-cycleFree _ = return ()
 
 repr :: Type s -> Infer s (Type s)
 repr t@(Fix (TVar iotv)) = do
@@ -259,7 +259,6 @@ getLevel (Fix (TVar iotv)) = do
         Unbound _ l -> return l
         _ -> error "getLevel only works for unbound tvars, and composites"
 getLevel (Fix (TArrow _ _ levels)) = readCell $ levelNew levels
-getLevel _ = error "getLevel only works for unbound tvars, and composites"
 
 unify  :: Type s -> Type s -> Infer s ()
 unify t1 t2 = do
@@ -352,8 +351,7 @@ updateLevel l t@(Fix (TArrow _ _ levels)) = do
         when (lNew == lOld) $ enqueueAdj t
         writeCell (levelNew levels) l
         return ()
-
-updateLevel _ _ = updateLevelErrorHack
+-- updateLevel _ _ = updateLevelErrorHack
 
 ----------------------------------------------------------------------
 
@@ -374,7 +372,7 @@ loop acc level ty = do
             when (lNew == markedLevel) $ typeError $ OccursError "loop"
             when (lNew > level) $ writeCell (levelNew levels) level
             adjustOne acc ty'
-        _ -> return acc
+        -- _ -> return acc
 
 adjustOne :: [Type s] -> Type s -> Infer s [Type s]
 adjustOne acc t@(Fix (TArrow t1 t2 levels)) = do
@@ -406,30 +404,30 @@ forceDelayedAdj = do
 gen :: Type s -> Infer s ()
 gen t = do
     forceDelayedAdj
-    loop t
+    loop' t
     where
-        loop t = repr t >>= gen'
+        loop' t' = repr t' >>= gen'
         gen' :: Type s -> Infer s ()
-        gen' t@(Fix (TVar ioTV)) = do
+        gen' (Fix (TVar ioTV)) = do
             tv <- readCell ioTV
             case tv of
                 Unbound name level -> do
                     curLevel <- currentLevel
                     when (level > curLevel) $ do
                         writeCell ioTV $ Unbound name genericLevel
-                Link t' -> loop t'
+                Link t' -> loop' t'
         gen' (Fix (TArrow ta tb ls)) = do
             lNew <- readCell $ levelNew ls
             curLevel <- currentLevel
             when (lNew > curLevel) $ do
-                loop ta
-                loop tb
+                loop' ta
+                loop' tb
                 gtaLevel <- getLevel ta
                 gtbLevel <- getLevel tb
                 let l = max gtaLevel gtbLevel
                 writeCell (levelOld ls) l
                 writeCell (levelNew ls) l
-        gen' _ = return ()
+        -- gen' _ = return ()
 
 ----------------------------------------------------------------------
 
@@ -515,13 +513,18 @@ typeOf' env (Let name e1 e2) = do
 --infer :: Expr -> Either TypeError PureType
 --infer = runInfer . typeOf []
 
+test :: Expr -> IO ()
 test expr = do
     let t = runInfer $ typeOf [] expr
     putStrLn $ render expr ++ " :: " ++ render t
 
+test_id_inner :: Expr
 test_id_inner = (Lam "x" $ Var "x")
+test_id :: Expr
 test_id = Let "id" test_id_inner (App (Var "id") (Var "id"))
+test_id2 :: Expr
 test_id2 = (Lam "x" (Let "y" (Var "x") (Var "y")))
+test_id3 :: Expr
 test_id3 = Let "id" (Lam "y" $ (Lam "x" $ Var "y")) (Var "id")
 
 
