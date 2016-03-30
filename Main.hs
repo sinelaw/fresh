@@ -63,17 +63,6 @@ instance (Render (c (CTV t)), Render t) => Render (CType c t) where
     render (QVar n) = render n
     render (TArrow t1 t2) = render t1 ++ " -> " ++ render t2
 
-
--- fmapCell
---     :: (Applicative f, Functor f)
---     => (a (CTV t) -> f (b (CTV u))) -> CType a t -> f (CType b u)
-fmapCell f (TVar c) = TVar <$> f c
-fmapCell _ (QVar q) = pure $ QVar q
-fmapCell f (TArrow (Fix t1) (Fix t2)) =
-    TArrow
-    <*> (Fix <$> fmapCell f t1)
-    <$> (Fix <$> fmapCell f t2)
-
 data Fix f = Fix { unFix :: f (Fix f) }
 deriving instance Eq (f (Fix f)) => Eq (Fix f)
 deriving instance Show (f (Fix f)) => Show (Fix f)
