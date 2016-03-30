@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, StandaloneDeriving, UndecidableInstances, RecordWildCards #-}
+{-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts,
+  StandaloneDeriving, UndecidableInstances #-}
 module Main where
 
 import Control.Monad (foldM, when, unless)
@@ -67,7 +68,7 @@ data Levels a =
     deriving (Show, Eq)
 
 fmapLevelCell :: Applicative f => (a -> f b) -> Levels a -> f (Levels b)
-fmapLevelCell f (Levels old new) = Levels <$> (f old) <*> (f new)
+fmapLevelCell f (Levels old new) = Levels <$> f old <*> f new
 
 data CTV t
     = Unbound TVName Level
@@ -90,7 +91,7 @@ fmapCell ::
     -> Fix (CType c) -> f (Fix (CType c'))
 fmapCell f _ (Fix (TVar c)) = Fix . TVar <$> f c
 fmapCell f g (Fix (TArrow t1 t2 level)) =
-    fmap Fix $ TArrow <$> (fmapCell f g t1) <*> (fmapCell f g t2) <*> (fmapLevelCell g level)
+    fmap Fix $ TArrow <$> fmapCell f g t1 <*> fmapCell f g t2 <*> fmapLevelCell g level
 
 instance (Render (c (CTV t)), Render t) => Render (CType c t) where
     render (TVar c) = render c
@@ -132,7 +133,7 @@ runType f = runST $ do
 data Env s =
     Env
     { freshCounter :: STRef s TVName
-    , level :: STRef s Level
+    , envLevel :: STRef s Level
     , toBeLevelAdjusted :: STRef s [Type s]
     }
 
@@ -145,7 +146,7 @@ envEmpty = do
     return
         Env
         { freshCounter = fc
-        , level = l
+        , envLevel = l
         , toBeLevelAdjusted = tbla
         }
 
@@ -171,7 +172,7 @@ newCell :: a -> Infer s (Cell s a)
 newCell x = do
     level <- fresh
     stRef <- lift . lift $ newSTRef x
-    return $ Cell { cellId = level, cellRef = stRef }
+    return Cell { cellId = level, cellRef = stRef }
 readCell :: Cell s a -> Infer s a
 readCell = lift . lift . readSTRef . cellRef
 writeCell :: Cell s a -> a -> Infer s ()
@@ -192,14 +193,14 @@ enterLevel :: Infer s ()
 enterLevel = do
     env <- lift ask
     currentLevel >>= assertLevel
-    lift . lift $ modifySTRef (level env) (1 +)
+    lift . lift $ modifySTRef (envLevel env) (1 +)
     currentLevel >>= traceM . ("++level = " ++) . show
     return ()
 
 leaveLevel :: Infer s ()
 leaveLevel = do
     env <- lift ask
-    lift . lift $ modifySTRef (level env) (subtract 1)
+    lift . lift $ modifySTRef (envLevel env) (subtract 1)
     currentLevel >>= \l -> do
         assertLevel l
         traceM . ("--level = " ++) $ show l
@@ -208,7 +209,7 @@ leaveLevel = do
 currentLevel :: Infer s Level
 currentLevel = do
     env <- lift ask
-    lift . lift $ readSTRef $ level env
+    lift . lift $ readSTRef $ envLevel env
 
 runInfer :: (forall s. Infer s (Type s)) -> Either (TypeError PureType) PureType
 runInfer x = runST $ do
@@ -337,9 +338,7 @@ updateLevel l (Fix (TVar iotv)) = do
     case tv of
         Unbound n l' -> do
             when (l' == genericLevel) $ typeError EscapedGenericLevel
-            if l < l'
-                then writeCell iotv $ Unbound n l
-                else return ()
+            when (l < l') $ writeCell iotv $ Unbound n l
         Link _ -> updateLevelErrorHack
 updateLevel l t@(Fix (TArrow _ _ levels)) = do
     lNew <- readCell $ levelNew levels
@@ -378,11 +377,11 @@ adjustOne :: [Type s] -> Type s -> Infer s [Type s]
 adjustOne acc t@(Fix (TArrow t1 t2 levels)) = do
     lOld <- readCell (levelOld levels)
     lCur <- currentLevel
-    if (lOld <= lCur)
+    if lOld <= lCur
         then return $ t : acc
         else do
         lNew <- readCell (levelNew levels)
-        if (lNew == lOld)
+        if lNew == lOld
             then return acc
             else do
             writeCell (levelNew levels) markedLevel
@@ -391,7 +390,7 @@ adjustOne acc t@(Fix (TArrow t1 t2 levels)) = do
             writeCell (levelNew levels) lNew
             writeCell (levelOld levels) lNew
             return acc2
-adjustOne _ _ = error $ "Unexpected type" -- ++ show t
+adjustOne _ _ = error "Unexpected type" -- ++ show t
 
 forceDelayedAdj :: Infer s ()
 forceDelayedAdj = do
@@ -413,7 +412,7 @@ gen t = do
             case tv of
                 Unbound name level -> do
                     curLevel <- currentLevel
-                    when (level > curLevel) $ do
+                    when (level > curLevel) $
                         writeCell ioTV $ Unbound name genericLevel
                 Link t' -> loop' t'
         gen' (Fix (TArrow ta tb ls)) = do
@@ -454,7 +453,7 @@ inst' :: TEnv s -> Type s -> Infer s (Type s, TEnv s)
 inst' env t@(Fix (TVar ioTV)) = do
     tv <- readCell ioTV
     case tv of
-        Unbound n l -> do
+        Unbound n l ->
             if (l == genericLevel)
                 then do
                 case lookup n env of
@@ -466,7 +465,7 @@ inst' env t@(Fix (TVar ioTV)) = do
         Link tLink -> inst' env tLink
 inst' env t@(Fix (TArrow ta tb l)) = do
     lNew <- readCell (levelNew l)
-    if (lNew == genericLevel)
+    if lNew == genericLevel
         then do
         (ta', envA) <- inst' env ta
         (tb', envB) <- inst' envA tb
@@ -519,13 +518,13 @@ test expr = do
     putStrLn $ render expr ++ " :: " ++ render t
 
 test_id_inner :: Expr
-test_id_inner = (Lam "x" $ Var "x")
+test_id_inner = Lam "x" $ Var "x"
 test_id :: Expr
 test_id = Let "id" test_id_inner (App (Var "id") (Var "id"))
 test_id2 :: Expr
-test_id2 = (Lam "x" (Let "y" (Var "x") (Var "y")))
+test_id2 = Lam "x" (Let "y" (Var "x") (Var "y"))
 test_id3 :: Expr
-test_id3 = Let "id" (Lam "y" $ (Lam "x" $ Var "y")) (Var "id")
+test_id3 = Let "id" (Lam "y" (Lam "x" $ Var "y")) (Var "id")
 
 
 main :: IO ()
