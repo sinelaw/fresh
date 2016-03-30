@@ -287,8 +287,17 @@ inferExpr expr = runInfer $ do
 
 -- Example:
 
+wrapFooLet x = (ELet () (EVarName "foo") x (EVar () (EVarName "foo")))
+
 exampleNumber :: Expr (Maybe Type)
 exampleNumber = inferExpr (EApp () (ELam () (EVarName "x") (EVar () (EVarName "x"))) (ELit () (LitNum 2)))
 
 exampleLet :: Expr (Maybe Type)
 exampleLet = inferExpr (ELet () (EVarName "id") (ELam () (EVarName "x") (EVar () (EVarName "x"))) (EVar () (EVarName "id")))
+
+exampleLet2 :: Expr (Maybe Type)
+exampleLet2 = inferExpr $ wrapFooLet (ELam () (EVarName "y")
+                                      (ELet () (EVarName "id") (ELam () (EVarName "x") (EVar () (EVarName "y"))) (EVar () (EVarName "id"))))
+
+exampleLam2 :: Expr (Maybe Type)
+exampleLam2 = inferExpr $ wrapFooLet (ELam () (EVarName "y") (ELam () (EVarName "x") (EVar () (EVarName "y"))))
