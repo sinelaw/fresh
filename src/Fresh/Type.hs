@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -36,16 +37,38 @@ data TypeAST t
 tyFunc :: TypeAST t
 tyFunc = TyCon (TCon (Id "->") (KArrow Star Star))
 
+newtype Level = Level Int
+    deriving (Eq, Ord, Show)
+
+levelInc :: Level -> Level
+levelInc (Level i) = Level $ i + 1
+levelDec :: Level -> Level
+levelDec (Level i) = Level $ i - 1 -- TODO assert > 0
+
+data TVarLink t
+    = Unbound Int Level
+    | Link t
+    deriving (Eq, Ord, Show)
+
+data TypeVar v t
+    = TypeVar { tyVarCell :: v (TVarLink t) }
+
+-- deriving instance Eq t => Eq (TypeVar Identity t)
+-- deriving instance Show t => Show (TypeVar Identity t)
+deriving instance Eq t => Eq (TypeVar (STRef s) t)
+
 data TypeABT v t
-    = TyVar v
+    = TyVar (TypeVar v t)
     | TyAST (TypeAST t)
-    deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+    -- deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+deriving instance Eq t => Eq (TypeABT (STRef s) t)
 
 newtype Fix f = Fix { unFix :: f (Fix f) }
 
 deriving instance Show (f (Fix f)) => Show (Fix f)
 
-data SType s = SType (TypeABT (STRef s (Maybe (SType s))) (SType s))
+data SType s = SType (TypeABT (STRef s) (SType s))
 
 type Type = Fix TypeAST
 
@@ -54,24 +77,32 @@ funT targ tres =
     SType . TyAST
     $ TyAp (SType . TyAST . TyAp (SType $ TyAST tyFunc) $ targ) tres
 
+readVar :: TypeVar (STRef s) t -> ST s (TVarLink t)
+readVar (TypeVar ref) = readSTRef ref
+
+writeVar :: TypeVar (STRef s) t -> TVarLink t -> ST s ()
+writeVar (TypeVar ref) link = writeSTRef ref link
+
 resolve :: SType s -> ST s (Maybe Type)
-resolve (SType (TyVar ref)) = do
-    mt <- readSTRef ref
-    maybe (return Nothing) resolve mt
+resolve t@(SType (TyVar tvar)) = do
+    link <- readVar tvar
+    case link of
+        Unbound _name level -> return Nothing -- TODO perhaps generalize?
+        Link t' -> resolve t'
 resolve (SType (TyAST t)) = do
     mt <- traverse resolve t
     return . fmap Fix $ sequenceA mt
 
-varBind :: STRef s (Maybe (SType s)) -> SType s -> ST s ()
-varBind ref t = do
-    vt <- readSTRef ref
+varBind :: TypeVar (STRef s) (SType s) -> SType s -> ST s ()
+varBind tvar t = do
+    vt <- readVar tvar
     case vt of
-        Nothing -> writeSTRef ref (Just t)
-        Just t' -> unify t' t
+        Unbound _name level -> writeVar tvar (Link t)
+        Link t' -> unify t' t
 
 unify :: SType s -> SType s -> ST s ()
-unify (SType (TyVar ref)) t = varBind ref t
-unify t (SType (TyVar ref)) = varBind ref t
+unify (SType (TyVar tvar)) t = varBind tvar t
+unify t (SType (TyVar tvar)) = varBind tvar t
 unify (SType (TyAST t1)) (SType (TyAST t2)) = unifyAST t1 t2
 
 unifyAST :: TypeAST (SType s) -> TypeAST (SType s) -> ST s ()
@@ -116,28 +147,45 @@ inferLit LitBool{} = tcon "Bool" Star
 
 data InferState s
     = InferState
-      { isContext :: Map EVarName (STRef s (Maybe (SType s)))
+      { isContext :: Map EVarName (TypeVar (STRef s) (SType s))
       , isGenFresh :: Int
+      , isLevel :: Level
       }
 
 type Infer s = StateT (InferState s) (ST s)
+
+getCurrentLevel :: Infer s Level
+getCurrentLevel = isLevel <$> get
+
+enterLevel :: Infer s ()
+enterLevel = modify (\is -> is { isLevel = levelInc $ isLevel is })
+
+leaveLevel :: Infer s ()
+leaveLevel = modify (\is -> is { isLevel = levelDec $ isLevel is })
 
 [] `listUnion` y = y
 x `listUnion` [] = x
 x `listUnion` y = Set.toList $ (Set.fromList x) `Set.union` (Set.fromList y)
 
+freshName :: Infer s Int
+freshName = do
+    is <- get
+    let genId = isGenFresh is
+    put $ is { isGenFresh = genId + 1 }
+    return genId
+
 generalizeVars :: SType s -> Infer s ([GenVar], (SType s))
-generalizeVars tvar@(SType (TyVar ref)) = do
-    t <- lift $ readSTRef ref
-    case t of
-        Just t' -> generalizeVars t'
-        Nothing -> do
-            is <- get
-            let genId = isGenFresh is
-            put $ is { isGenFresh = genId + 1 }
-            let tgenvar = SType (TyAST $ TyGenVar (GenVar genId))
-            lift $ writeSTRef ref (Just tgenvar)
-            return ([GenVar genId], tvar)
+generalizeVars t@(SType (TyVar tvar)) = do
+    link <- lift $ readVar tvar
+    case link of
+        Link t' -> generalizeVars t'
+        Unbound name level -> do
+            curLevel <- getCurrentLevel
+            if curLevel < level
+            then do
+                let tgenvar = SType (TyAST $ TyGenVar (GenVar name))
+                return ([GenVar name], tgenvar)
+            else return ([], t)
 generalizeVars t@(SType (TyAST (TyGenVar genVar))) =
     return ([genVar], t)
 generalizeVars (SType (TyAST (TyGen genvars t))) = do
@@ -164,8 +212,16 @@ generalize t = do
 lift :: ST s a -> Infer s a
 lift act = StateT (\s -> (,s) <$> act)
 
-fresh :: Infer s (STRef s (Maybe a))
-fresh = lift $ newSTRef Nothing
+fresh :: Infer s (STRef s (TVarLink t))
+fresh = do
+    curLevel <- getCurrentLevel
+    name <- freshName
+    lift $ newSTRef $ Unbound name curLevel
+
+freshTVar :: Infer s (TypeVar (STRef s) a)
+freshTVar = do
+    ref <- fresh
+    return $ TypeVar ref
 
 subInfer :: InferState s -> Infer s a -> Infer s a
 subInfer state act = do
@@ -179,10 +235,10 @@ infer (ELit a lit) = return (ELit (a, t) lit, t)
     where t = inferLit lit
 
 infer (ELam a var expr) = do
-    varRef <- fresh
+    tvar <- freshTVar
     is <- get
-    let varT = SType $ TyVar varRef
-        newContext = Map.insert var varRef (isContext is)
+    let varT = SType $ TyVar tvar
+        newContext = Map.insert var tvar (isContext is)
     (expr', exprT) <- subInfer (is { isContext = newContext }) $ infer expr
     let t = funT varT exprT
     return $ (ELam (a, t) var expr', t)
@@ -197,27 +253,32 @@ infer (EVar a var) = do
 infer (EApp a efun earg) = do
     (efun', efunT) <- infer efun
     (earg', eargT) <- infer earg
-    resT <- SType . TyVar <$> fresh
+    tvar <- freshTVar
+    let resT = SType $ TyVar tvar
     lift $ unify efunT (funT eargT resT)
     return (EApp (a, resT) efun' earg', resT)
 
 infer (ELet a var edef expr) = do
-    varRef <- fresh
+    enterLevel
+    tvar <- freshTVar
     is <- get
-    let varT = SType $ TyVar varRef
-    (edef', edefT) <- subInfer (is { isContext = Map.insert var varRef (isContext is) }) (infer edef)
+    let varT = SType $ TyVar tvar
+    (edef', edefT) <- subInfer (is { isContext = Map.insert var tvar (isContext is) }) (infer edef)
     lift $ unify varT edefT
+    leaveLevel
+
     genVarT <- generalize varT
-    genVarRef <- fresh
-    lift $ varBind genVarRef genVarT
+    tvarGen <- freshTVar
+    lift $ varBind tvarGen genVarT
     is' <- get
-    (expr', exprT) <- subInfer (is { isContext = Map.insert var genVarRef (isContext is') }) (infer expr)
+    (expr', exprT) <- subInfer (is { isContext = Map.insert var tvarGen (isContext is') }) (infer expr)
     return (ELet (a, exprT) var edef' expr', exprT)
 
 runInfer :: (forall s. Infer s a) -> a
 runInfer act =
     runST $ evalStateT act (InferState { isContext = Map.empty
-                                       , isGenFresh = 0 })
+                                       , isGenFresh = 0
+                                       , isLevel = Level 0 })
 
 inferExpr :: Expr a -> Expr (Maybe Type)
 inferExpr expr = runInfer $ do
