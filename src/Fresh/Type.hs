@@ -271,7 +271,7 @@ infer (ELet a var edef expr) = do
     tvarGen <- freshTVar
     lift $ varBind tvarGen genVarT
     is' <- get
-    (expr', exprT) <- subInfer (is { isContext = Map.insert var tvarGen (isContext is') }) (infer expr)
+    (expr', exprT) <- subInfer (is' { isContext = Map.insert var tvarGen (isContext is') }) (infer expr)
     return (ELet (a, exprT) var edef' expr', exprT)
 
 runInfer :: (forall s. Infer s a) -> a
