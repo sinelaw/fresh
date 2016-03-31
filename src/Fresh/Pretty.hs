@@ -7,15 +7,23 @@ module Fresh.Pretty
 
 import Text.PrettyPrint.ANSI.Leijen
 import Fresh.Type
-
+import Fresh.Kind (Kind(..))
 
 instance Pretty TCon where
     pretty (TCon (Id name) k) = text name
 
+instance Pretty Kind where
+    pretty (KArrow k1 k2) = pretty k1 <+> "->" <+> pretty k2
+    pretty Star = "*"
+
 instance Pretty GenVar where
-    pretty (GenVar idx) = if idx < length ['a'..'z']
-                          then char $ ['a'..'z'] !! idx
-                          else "t" <> int idx
+    pretty (GenVar idx k) = pk name
+        where name = if idx < length ['a'..'z']
+                     then char $ ['a'..'z'] !! idx
+                     else "t" <> int idx
+              pk = if k == Star
+                   then id
+                   else \x -> x <+> "::" <+> pretty k
 
 instance Pretty t => Pretty (TypeAST t) where
     pretty (TyAp fun arg) = parens $ pretty fun <+> pretty arg
