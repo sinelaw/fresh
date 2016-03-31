@@ -9,8 +9,9 @@
 module Fresh.Type where
 
 import           Fresh.Kind (Kind(..))
---import qualified Fresh.Kind as Kind
+import qualified Fresh.Kind as Kind
 import Data.STRef
+import Control.Monad (when)
 import Control.Monad.ST (ST, runST)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -21,10 +22,10 @@ import Control.Monad.Trans.State (StateT(..), runStateT, modify, get, put, evalS
 data Id = Id String
     deriving (Eq, Ord, Show)
 
-data TCon = TCon Id Kind
+data TCon = TCon { tcId ::  Id, tcKind :: Kind }
     deriving (Eq, Ord, Show)
 
-data GenVar = GenVar { _genVarId :: Int } --, _genVarKind :: Kind }
+data GenVar = GenVar { genVarId :: Int, genVarKind :: Kind }
     deriving (Eq, Ord, Show)
 
 data TypeAST t
@@ -34,8 +35,25 @@ data TypeAST t
     | TyGen { _tyGenVars :: [GenVar], _tyGenScheme :: t }
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
+class HasKind t where
+    kind :: t -> Kind
+
+instance HasKind TCon where
+    kind = tcKind
+instance HasKind GenVar where
+    kind = genVarKind
+instance HasKind t => HasKind (TypeAST t) where
+    kind (TyAp f x) =
+        case Kind.app (kind f) (kind x) of
+            Nothing -> error $ "Can't apply type function, kinding mismatch! " ++ show (kind f) ++ " on " ++ show (kind x)
+            Just k -> k
+    kind (TyCon tc) = kind tc
+    kind (TyGenVar gv) = kind gv
+    kind (TyGen vs s) = kind s
+
+
 tyFunc :: TypeAST t
-tyFunc = TyCon (TCon (Id "->") (KArrow Star Star))
+tyFunc = TyCon (TCon (Id "->") (KArrow Star (KArrow Star Star)))
 
 newtype Level = Level Int
     deriving (Eq, Ord, Show)
@@ -51,7 +69,10 @@ data TVarLink t
     deriving (Eq, Ord, Show)
 
 data TypeVar v t
-    = TypeVar { tyVarCell :: v (TVarLink t) }
+    = TypeVar { tyVarCell :: v (TVarLink t), tyVarKind :: Kind }
+
+instance HasKind (TypeVar v t) where
+    kind (TypeVar c k) = k
 
 -- deriving instance Eq t => Eq (TypeVar Identity t)
 -- deriving instance Show t => Show (TypeVar Identity t)
@@ -64,11 +85,18 @@ data TypeABT v t
 
 deriving instance Eq t => Eq (TypeABT (STRef s) t)
 
+instance (HasKind t) => HasKind (TypeABT v t) where
+    kind (TyVar tv) = kind tv
+    kind (TyAST ast) = kind ast
+
 newtype Fix f = Fix { unFix :: f (Fix f) }
 
 deriving instance Show (f (Fix f)) => Show (Fix f)
 
 data SType s = SType (TypeABT (STRef s) (SType s))
+
+instance HasKind (SType s) where
+    kind (SType t) = kind t
 
 type Type = Fix TypeAST
 
@@ -78,10 +106,10 @@ funT targ tres =
     $ TyAp (SType . TyAST . TyAp (SType $ TyAST tyFunc) $ targ) tres
 
 readVar :: TypeVar (STRef s) t -> ST s (TVarLink t)
-readVar (TypeVar ref) = readSTRef ref
+readVar (TypeVar ref k) = readSTRef ref
 
 writeVar :: TypeVar (STRef s) t -> TVarLink t -> ST s ()
-writeVar (TypeVar ref) link = writeSTRef ref link
+writeVar (TypeVar ref k) link = writeSTRef ref link
 
 resolve :: SType s -> ST s (Maybe Type)
 resolve (SType (TyVar tvar)) = do
@@ -112,6 +140,7 @@ unify :: SType s -> SType s -> ST s ()
 unify t1 t2 = do
     t1' <- unchain t1
     t2' <- unchain t2
+    when (kind t1 /= kind t2) $ error $ "Kind mismatch: " ++ show (kind t1) ++ ", " ++ show (kind t2)
     unify' t1' t2'
 
 unify' :: SType s -> SType s -> ST s ()
@@ -207,8 +236,9 @@ generalizeVars t@(SType (TyVar tvar)) = do
             curLevel <- getCurrentLevel
             if curLevel < level
             then do
-                let tgenvar = SType (TyAST $ TyGenVar (GenVar name))
-                return ([GenVar name], tgenvar)
+                let gv = GenVar name Star
+                    tgenvar = SType (TyAST $ TyGenVar gv)
+                return ([gv], tgenvar)
             else return ([], t)
 generalizeVars t@(SType (TyAST (TyGenVar genVar))) =
     return ([genVar], t)
@@ -245,7 +275,7 @@ fresh = do
 freshTVar :: Infer s (TypeVar (STRef s) a)
 freshTVar = do
     ref <- fresh
-    return $ TypeVar ref
+    return $ TypeVar ref Star
 
 subInfer :: InferState s -> Infer s a -> Infer s a
 subInfer state act = do
