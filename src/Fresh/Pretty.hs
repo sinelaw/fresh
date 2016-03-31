@@ -8,6 +8,7 @@ module Fresh.Pretty
 import Text.PrettyPrint.ANSI.Leijen
 import Fresh.Type
 import Fresh.Kind (Kind(..))
+import qualified Data.Char as Char
 
 instance Pretty TCon where
     pretty (TCon (Id name) k) = text name
@@ -26,7 +27,11 @@ instance Pretty GenVar where
                    else \x -> x <+> "::" <+> pretty k
 
 instance Pretty t => Pretty (TypeAST t) where
-    pretty (TyAp fun arg) = parens $ pretty fun <+> pretty arg
+    pretty (TyAp fun arg) =
+        case show (pretty fun) of
+            (n:ame) | Char.isAlpha n ->
+                          parens $ pretty fun <+> pretty arg
+            _ -> pretty arg <+> pretty fun
     pretty (TyCon con) = pretty con
     pretty (TyGenVar genVar) = pretty genVar
     pretty (TyGen genVars t) = "forall" <+> (foldr (<+>) "" $ map pretty genVars) <> "." <+> pretty t
