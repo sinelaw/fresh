@@ -71,12 +71,16 @@ data TVarLink t
 data TypeVar v t
     = TypeVar { tyVarCell :: v (TVarLink t), tyVarKind :: Kind }
 
+instance Show (STRef s t) where
+    show v = "<stref>"
+
 instance HasKind (TypeVar v t) where
     kind (TypeVar c k) = k
 
 -- deriving instance Eq t => Eq (TypeVar Identity t)
 -- deriving instance Show t => Show (TypeVar Identity t)
 deriving instance Eq t => Eq (TypeVar (STRef s) t)
+deriving instance Show t => Show (TypeVar (STRef s) t)
 
 data TypeABT v t
     = TyVar (TypeVar v t)
@@ -84,6 +88,7 @@ data TypeABT v t
     -- deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 deriving instance Eq t => Eq (TypeABT (STRef s) t)
+deriving instance Show t => Show (TypeABT (STRef s) t)
 
 instance (HasKind t) => HasKind (TypeABT v t) where
     kind (TyVar tv) = kind tv
@@ -94,6 +99,8 @@ newtype Fix f = Fix { unFix :: f (Fix f) }
 deriving instance Show (f (Fix f)) => Show (Fix f)
 
 data SType s = SType (TypeABT (STRef s) (SType s))
+
+deriving instance Show (TypeABT (STRef s) (SType s)) => Show (SType s)
 
 instance HasKind (SType s) where
     kind (SType t) = kind t
