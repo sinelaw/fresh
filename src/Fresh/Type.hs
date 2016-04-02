@@ -117,6 +117,9 @@ type QType s = QualType (SType s)
 
 type Type = Fix TypeAST
 
+deriving instance Eq (Fix TypeAST)
+deriving instance Ord (Fix TypeAST)
+
 funT :: SType s -> SType s -> SType s
 funT targ tres =
     SType . TyAST
@@ -205,6 +208,7 @@ data Expr a
     | ELam a EVarName (Expr a)
     | EApp a (Expr a) (Expr a)
     | ELet a EVarName (Expr a) (Expr a)
+    | EAsc a (QualType Type) (Expr a)
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 -- type FExpr = Fix Expr
@@ -356,6 +360,14 @@ infer (ELet a var edef expr) = do
     is' <- get
     (expr', exprT) <- subInfer (is' { isContext = Map.insert var tvarGen (isContext is') }) (infer expr)
     return (ELet (a, exprT) var edef' expr', exprT)
+
+infer (EAsc a asc@(QualType ps t) expr) = do
+    let st = unresolve t
+        sps = map (fmap unresolve) ps
+    (expr', QualType exprP exprT) <- infer expr
+    lift $ unify exprT st
+    let resT = QualType (sps ++ exprP) exprT
+    return (EAsc (a, resT) asc expr', resT)
 
 runInfer :: (forall s. Infer s a) -> a
 runInfer act =
