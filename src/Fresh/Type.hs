@@ -98,6 +98,23 @@ data SType s = SType (TypeABT (STRef s) (SType s))
 instance HasKind (SType s) where
     kind (SType t) = kind t
 
+data Class = Class Id Kind
+    deriving (Eq, Ord, Show)
+
+data Pred t = PredIs Class t
+    deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+data QualType t = QualType { qualPred :: [Pred t], qualType :: t }
+    deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+instance HasKind t => HasKind (QualType t) where
+    kind (QualType _ t) = kind t
+
+emptyQual :: t -> QualType t
+emptyQual t = QualType [] t
+
+type QType s = QualType (SType s)
+
 type Type = Fix TypeAST
 
 funT :: SType s -> SType s -> SType s
@@ -217,6 +234,13 @@ enterLevel = modify (\is -> is { isLevel = levelInc $ isLevel is })
 leaveLevel :: Infer s ()
 leaveLevel = modify (\is -> is { isLevel = levelDec $ isLevel is })
 
+inLevel :: Infer s a -> Infer s a
+inLevel act = do
+    enterLevel
+    res <- act
+    leaveLevel
+    return res
+
 [] `listUnion` y = y
 x `listUnion` [] = x
 x `listUnion` y = Set.toList $ (Set.fromList x) `Set.union` (Set.fromList y)
@@ -284,18 +308,18 @@ subInfer state act = do
     modify $ \is -> is { isGenFresh = isGenFresh is' }
     return x
 
-infer :: Expr a -> Infer s (Expr (a, SType s), SType s)
+infer :: Expr a -> Infer s (Expr (a, QType s), QType s)
 
 infer (ELit a lit) = return (ELit (a, t) lit, t)
-    where t = inferLit lit
+    where t = emptyQual $ inferLit lit
 
 infer (ELam a var expr) = do
     tvar <- freshTVar
     is <- get
     let varT = SType $ TyVar tvar
         newContext = Map.insert var tvar (isContext is)
-    (expr', exprT) <- subInfer (is { isContext = newContext }) $ infer expr
-    let t = funT varT exprT
+    (expr', QualType ps exprT) <- subInfer (is { isContext = newContext }) $ infer expr
+    let t = QualType ps $ funT varT exprT
     return $ (ELam (a, t) var expr', t)
 
 infer (EVar a var) = do
@@ -303,26 +327,27 @@ infer (EVar a var) = do
     case Map.lookup var (isContext is) of
         Nothing -> error $ "bad var " ++ (show var)
         Just ref -> return (EVar (a, t) var, t)
-            where t = SType $ TyVar ref
+            where t = emptyQual $ SType $ TyVar ref
 
 infer (EApp a efun earg) = do
-    (efun', efunT) <- infer efun
-    (earg', eargT) <- infer earg
+    (efun', QualType efunP efunT) <- infer efun
+    (earg', QualType eargP eargT) <- infer earg
     tvar <- freshTVar
     let resT = SType $ TyVar tvar
     lift $ unify efunT (funT eargT resT)
-    return (EApp (a, resT) efun' earg', resT)
+    let resQ = QualType (efunP ++ eargP) $ resT
+    return (EApp (a, resQ) efun' earg', resQ)
 
 infer (ELet a var edef expr) = do
-    enterLevel
-    tvar <- freshTVar
-    is <- get
-    let varT = SType $ TyVar tvar
-    (edef', edefT) <- subInfer (is { isContext = Map.insert var tvar (isContext is) }) (infer edef)
-    lift $ unify varT edefT
-    leaveLevel
+    (edef', edefT) <- inLevel $ do
+        tvar <- freshTVar
+        is <- get
+        (edef', QualType edefP edefT) <- subInfer (is { isContext = Map.insert var tvar (isContext is) }) (infer edef)
+        let varT = SType $ TyVar tvar
+        lift $ unify varT edefT
+        return (edef', edefT)
 
-    genVarT <- generalize varT
+    genVarT <- generalize edefT
     tvarGen <- freshTVar
     lift $ varBind tvarGen genVarT
     is' <- get
@@ -335,24 +360,34 @@ runInfer act =
                                        , isGenFresh = 0
                                        , isLevel = Level 0 })
 
-inferExpr :: Expr a -> Expr (Maybe Type)
+qresolve :: QType s -> ST s (Maybe (QualType Type))
+qresolve (QualType ps t) = do
+    mt' <- resolve t
+    pms' <- traverse (traverse resolve) ps
+    let mps' = sequenceA $ map sequenceA $ pms'
+    case mps' of
+        Nothing -> return Nothing
+        Just ps' -> return $ QualType ps' <$> mt'
+
+inferExpr :: Expr a -> Expr (Maybe (QualType Type))
 inferExpr expr = runInfer $ do
     (expr', _t) <- infer expr
-    lift $ traverse (resolve . snd) expr'
+    lift $ traverse (qresolve . snd) expr'
 
 -- Example:
 
 wrapFooLet x = (ELet () (EVarName "foo") x (EVar () (EVarName "foo")))
 
-exampleNumber :: Expr (Maybe Type)
+exampleNumber :: Expr (Maybe (QualType Type))
 exampleNumber = inferExpr (EApp () (ELam () (EVarName "x") (EVar () (EVarName "x"))) (ELit () (LitNum 2)))
 
-exampleLet :: Expr (Maybe Type)
-exampleLet = inferExpr (ELet () (EVarName "id") (ELam () (EVarName "x") (EVar () (EVarName "x"))) (EVar () (EVarName "id")))
+exampleLet :: Expr (Maybe (QualType Type))
+exampleLet = inferExpr (ELet () (EVarName "id") (ELam () (EVarName "x") (EVar () (EVarName "x")))
+                        (EVar () (EVarName "id")))
 
-exampleLet2 :: Expr (Maybe Type)
+exampleLet2 :: Expr (Maybe (QualType Type))
 exampleLet2 = inferExpr $ wrapFooLet (ELam () (EVarName "y")
                                       (ELet () (EVarName "id") (ELam () (EVarName "x") (EVar () (EVarName "y"))) (EVar () (EVarName "id"))))
 
-exampleLam2 :: Expr (Maybe Type)
+exampleLam2 :: Expr (Maybe (QualType Type))
 exampleLam2 = inferExpr $ wrapFooLet (ELam () (EVarName "y") (ELam () (EVarName "x") (EVar () (EVarName "y"))))

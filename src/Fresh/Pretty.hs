@@ -55,3 +55,13 @@ instance Pretty (Expr a) where
 
 instance Pretty (f (Fix f)) => Pretty (Fix f) where
     pretty (Fix f) = pretty f
+
+instance Pretty Class where
+    pretty (Class (Id name) k) = pretty name
+
+instance Pretty t => Pretty (Pred t) where
+    pretty (PredIs c t) = pretty c <+> pretty t
+
+instance Pretty t => Pretty (QualType t) where
+    pretty (QualType [] t) = pretty t
+    pretty (QualType ps t) = pretty ps <+> "=>" <+> pretty t
