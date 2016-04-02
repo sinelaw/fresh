@@ -138,6 +138,9 @@ resolve (SType (TyAST t)) = do
     mt <- traverse resolve t
     return . fmap Fix $ sequenceA mt
 
+unresolve :: Type -> SType s
+unresolve (Fix t) = SType . TyAST $ fmap unresolve t
+
 varBind :: TypeVar (STRef s) (SType s) -> SType s -> ST s ()
 varBind tvar t = do
     when (kind tvar /= kind t) $ error "Kind mismatch"
