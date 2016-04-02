@@ -196,7 +196,7 @@ unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
 unifyAST (TyCon tc1) (TyCon tc2) | tc1 == tc2 = return ()
 unifyAST (TyGenVar g1) (TyGenVar g2) | g1 == g2 = return ()
 unifyAST (TyGen vs1 t1) (TyGen vs2 t2) | vs1 == vs2 = unify t1 t2
-unifyAST _ _ = fail "oh no."
+unifyAST t1 t2 = fail $ "Failed unifying: " ++ show t1 ++ " with " ++ show t2
 
 ----------------------------------------------------------------------
 
@@ -400,8 +400,13 @@ inferExpr expr = runInfer $ do
 
 wrapFooLet x = (ELet () (EVarName "foo") x (EVar () (EVarName "foo")))
 
+exampleApIdNum = (EApp () (ELam () (EVarName "x") (EVar () (EVarName "x"))) (ELit () (LitNum 2)))
+
 exampleNumber :: Expr (Maybe (QualType Type))
-exampleNumber = inferExpr (EApp () (ELam () (EVarName "x") (EVar () (EVarName "x"))) (ELit () (LitNum 2)))
+exampleNumber = inferExpr exampleApIdNum
+
+exampleBadNumber :: Expr (Maybe (QualType Type))
+exampleBadNumber = inferExpr (EAsc () (QualType [] $ Fix $ TyCon $ TCon (Id "Bool") Star) exampleApIdNum)
 
 exampleLet :: Expr (Maybe (QualType Type))
 exampleLet = inferExpr (ELet () (EVarName "id") (ELam () (EVarName "x") (EVar () (EVarName "x")))
