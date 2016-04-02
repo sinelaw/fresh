@@ -123,6 +123,7 @@ resolve (SType (TyAST t)) = do
 
 varBind :: TypeVar (STRef s) (SType s) -> SType s -> ST s ()
 varBind tvar t = do
+    when (kind tvar /= kind t) $ error "Kind mismatch"
     vt <- readVar tvar
     case vt of
         Unbound _name level -> writeVar tvar (Link t)
