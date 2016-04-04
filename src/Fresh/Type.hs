@@ -254,6 +254,7 @@ data TypeError
     = UnificationError
     | EscapedSkolemError String
     | KindMismatchError Kind Kind
+    | InvalidVarError String
     deriving (Eq, Show)
 
 type Infer s a = StateT (InferState s) (EitherT TypeError (ST s)) a
@@ -359,7 +360,7 @@ infer e@(ELam a var expr) = do
 infer e@(EVar a var) = do
     is <- get
     case Map.lookup var (isContext is) of
-        Nothing -> error $ "bad var " ++ (show var)
+        Nothing -> throwError $ InvalidVarError (show var)
         Just ref -> return (EVar (a, t) var, t)
             where t = emptyQual $ SType $ TyVar ref
 
