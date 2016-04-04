@@ -17,7 +17,13 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 -- import Data.Set (Set)
 import qualified Data.Set as Set
-import Control.Monad.Trans.State (StateT(..), runStateT, modify, get, put, evalStateT)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.State (StateT(..), runStateT, evalStateT)
+import Control.Monad.State.Class (MonadState(..), modify)
+import Control.Monad.Trans.Either (EitherT(..), runEitherT, left)
+import Control.Monad.Error.Class (MonadError(..))
+import qualified Data.Foldable
+import           Debug.Trace                (traceM)
 
 data Id = Id String
     deriving (Eq, Ord, Show)
@@ -132,17 +138,17 @@ funT targ tres =
     SType . TyAST
     $ TyAp (SType . TyAST . TyAp (SType $ TyAST tyFunc) $ targ) tres
 
-readVar :: TypeVar (STRef s) t -> ST s (TVarLink t)
-readVar (TypeVar ref k) = readSTRef ref
+readVar :: TypeVar (STRef s) t -> Infer s (TVarLink t)
+readVar (TypeVar ref k) = lift . lift $ readSTRef ref
 
-writeVar :: TypeVar (STRef s) t -> TVarLink t -> ST s ()
-writeVar (TypeVar ref k) link = writeSTRef ref link
+writeVar :: TypeVar (STRef s) t -> TVarLink t -> Infer s ()
+writeVar (TypeVar ref k) link = lift . lift $ writeSTRef ref link
 
-resolve :: SType s -> ST s (Maybe Type)
+resolve :: SType s -> Infer s (Maybe Type)
 resolve (SType (TyVar tvar)) = do
     link <- readVar tvar
     case link of
-        Unbound _name level -> return Nothing -- TODO perhaps generalize?
+        Unbound _name level -> throwError EscapedSkolemError -- TODO perhaps generalize?
         Link t' -> resolve t'
 resolve (SType (TyAST t)) = do
     mt <- traverse resolve t
@@ -151,15 +157,15 @@ resolve (SType (TyAST t)) = do
 unresolve :: Type -> SType s
 unresolve (Fix t) = SType . TyAST $ fmap unresolve t
 
-varBind :: TypeVar (STRef s) (SType s) -> SType s -> ST s ()
+varBind :: TypeVar (STRef s) (SType s) -> SType s -> Infer s ()
 varBind tvar t = do
-    when (kind tvar /= kind t) $ error "Kind mismatch"
+    when (kind tvar /= kind t) $ throwError $ KindMismatchError (kind tvar) (kind t)
     vt <- readVar tvar
     case vt of
         Unbound _name level -> writeVar tvar (Link t)
         Link t' -> unify t' t
 
-unchain :: SType s -> ST s (SType s)
+unchain :: SType s -> Infer s (SType s)
 unchain t@(SType (TyVar tvar)) = do
     vt <- readVar tvar
     case vt of
@@ -167,14 +173,14 @@ unchain t@(SType (TyVar tvar)) = do
         Link t' -> unchain t'
 unchain t = return t
 
-unify :: SType s -> SType s -> ST s ()
+unify :: SType s -> SType s -> Infer s ()
 unify t1 t2 = do
     t1' <- unchain t1
     t2' <- unchain t2
-    when (kind t1 /= kind t2) $ error $ "Kind mismatch: " ++ show (kind t1) ++ ", " ++ show (kind t2)
+    when (kind t1 /= kind t2) $ throwError $ KindMismatchError (kind t1) (kind t2)
     unify' t1' t2'
 
-unify' :: SType s -> SType s -> ST s ()
+unify' :: SType s -> SType s -> Infer s ()
 unify' (SType (TyVar tvar1)) t2@(SType (TyVar tvar2)) = do
     vt1 <- readVar tvar1
     vt2 <- readVar tvar2
@@ -189,7 +195,7 @@ unify' (SType (TyVar tvar)) t = varBind tvar t
 unify' t (SType (TyVar tvar)) = varBind tvar t
 unify' (SType (TyAST t1)) (SType (TyAST t2)) = unifyAST t1 t2
 
-unifyAST :: TypeAST (SType s) -> TypeAST (SType s) -> ST s ()
+unifyAST :: TypeAST (SType s) -> TypeAST (SType s) -> Infer s ()
 unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
     unify t1 t1'
     unify t2 t2'
@@ -218,6 +224,10 @@ data Expr a
     | EAsc a (QualType Type) (Expr a)
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
+
+getAnnotation :: Expr a -> a
+getAnnotation = head . Data.Foldable.toList
+
 -- type FExpr = Fix Expr
 --     deriving (Eq, Ord, Show)
 
@@ -236,8 +246,15 @@ data InferState s
       , isGenFresh :: Int
       , isLevel :: Level
       }
+    deriving Show
 
-type Infer s = StateT (InferState s) (ST s)
+data TypeError
+    = UnificationError
+    | EscapedSkolemError
+    | KindMismatchError Kind Kind
+    deriving (Eq, Show)
+
+type Infer s a = StateT (InferState s) (EitherT TypeError (ST s)) a
 
 getCurrentLevel :: Infer s Level
 getCurrentLevel = isLevel <$> get
@@ -261,6 +278,7 @@ x `listUnion` y = Set.toList $ (Set.fromList x) `Set.union` (Set.fromList y)
 
 freshName :: Infer s Int
 freshName = do
+    traceM "freshName"
     is <- get
     let genId = isGenFresh is
     put $ is { isGenFresh = genId + 1 }
@@ -268,7 +286,7 @@ freshName = do
 
 generalizeVars :: SType s -> Infer s ([GenVar], (SType s))
 generalizeVars t@(SType (TyVar tvar)) = do
-    link <- lift $ readVar tvar
+    link <- readVar tvar
     case link of
         Link t' -> generalizeVars t'
         Unbound name level -> do
@@ -302,33 +320,40 @@ generalize t = do
         [] -> t'
         vs -> SType (TyAST (TyGen vs t'))
 
-lift :: ST s a -> Infer s a
-lift act = StateT (\s -> (,s) <$> act)
-
 fresh :: Infer s (STRef s (TVarLink t))
 fresh = do
+    traceM "fresh"
     curLevel <- getCurrentLevel
     name <- freshName
-    lift $ newSTRef $ Unbound name curLevel
+    lift . lift $ newSTRef $ Unbound name curLevel
 
 freshTVar :: Infer s (TypeVar (STRef s) a)
 freshTVar = do
+    traceM "freshTVar"
     ref <- fresh
+    traceM "...freshTVar"
     return $ TypeVar ref Star
 
 subInfer :: InferState s -> Infer s a -> Infer s a
 subInfer state act = do
-    (x, is') <- lift $ runStateT act state
-    modify $ \is -> is { isGenFresh = isGenFresh is' }
-    return x
+    traceM $ "subInfer, state=" ++ show state
+    res <- lift . lift $ runEitherT $ runStateT act state
+    case res of
+        Left err -> throwError err
+        Right (x, is') -> do
+            modify $ \is -> is { isGenFresh = isGenFresh is' }
+            return x
 
-infer :: Expr a -> Infer s (Expr (a, QType s), QType s)
+infer :: Show a => Expr a -> Infer s (Expr (a, QType s), QType s)
 
 infer (ELit a lit) = return (ELit (a, t) lit, t)
     where t = emptyQual $ inferLit lit
 
-infer (ELam a var expr) = do
+infer e@(ELam a var expr) = do
+    traceM $ show e
+    traceM "fresh.."
     tvar <- freshTVar
+    traceM "get..."
     is <- get
     let varT = SType $ TyVar tvar
         newContext = Map.insert var tvar (isContext is)
@@ -336,63 +361,68 @@ infer (ELam a var expr) = do
     let t = QualType ps $ funT varT exprT
     return $ (ELam (a, t) var expr', t)
 
-infer (EVar a var) = do
+infer e@(EVar a var) = do
+    traceM $ show e
     is <- get
     case Map.lookup var (isContext is) of
         Nothing -> error $ "bad var " ++ (show var)
         Just ref -> return (EVar (a, t) var, t)
             where t = emptyQual $ SType $ TyVar ref
 
-infer (EApp a efun earg) = do
+infer e@(EApp a efun earg) = do
+    traceM $ show e
     (efun', QualType efunP efunT) <- infer efun
     (earg', QualType eargP eargT) <- infer earg
     tvar <- freshTVar
     let resT = SType $ TyVar tvar
-    lift $ unify efunT (funT eargT resT)
+    unify efunT (funT eargT resT)
     let resQ = QualType (efunP ++ eargP) $ resT
     return (EApp (a, resQ) efun' earg', resQ)
 
-infer (ELet a var edef expr) = do
+infer e@(ELet a var edef expr) = do
+    traceM $ show e
     (edef', edefT) <- inLevel $ do
         tvar <- freshTVar
         is <- get
         (edef', QualType edefP edefT) <- subInfer (is { isContext = Map.insert var tvar (isContext is) }) (infer edef)
         let varT = SType $ TyVar tvar
-        lift $ unify varT edefT
+        unify varT edefT
         return (edef', edefT)
 
     genVarT <- generalize edefT
     tvarGen <- freshTVar
-    lift $ varBind tvarGen genVarT
+    varBind tvarGen genVarT
     is' <- get
     (expr', exprT) <- subInfer (is' { isContext = Map.insert var tvarGen (isContext is') }) (infer expr)
     return (ELet (a, exprT) var edef' expr', exprT)
 
-infer (EAsc a asc@(QualType ps t) expr) = do
+infer e@(EAsc a asc@(QualType ps t) expr) = do
+    traceM $ show e
     let st = unresolve t
         sps = map (fmap unresolve) ps
     (expr', QualType exprP exprT) <- infer expr
-    lift $ unify exprT st
+    unify exprT st
     let resT = QualType (sps ++ exprP) exprT
     return (EAsc (a, resT) asc expr', resT)
 
-runInfer :: (forall s. Infer s a) -> a
+runInfer :: (forall s. Infer s a) -> Either TypeError a
 runInfer act =
-    runST $ evalStateT act (InferState { isContext = Map.empty
-                                       , isGenFresh = 0
-                                       , isLevel = Level 0 })
+    runST $ runEitherT $ evalStateT act (InferState { isContext = Map.empty
+                                                    , isGenFresh = 0
+                                                    , isLevel = Level 0 })
 
-qresolve :: QType s -> ST s (Maybe (QualType Type))
+qresolve :: QType s -> Infer s (QualType Type)
 qresolve (QualType ps t) = do
+    traceM $ "qresolve: " ++ show ps ++ " => " ++ show t
     mt' <- resolve t
     pms' <- traverse (traverse resolve) ps
     let mps' = sequenceA $ map sequenceA $ pms'
-    case mps' of
-        Nothing -> return Nothing
-        Just ps' -> return $ QualType ps' <$> mt'
+    case (mps', mt') of
+        (Just ps', Just t') -> return $ QualType ps' t'
+        _ -> throwError EscapedSkolemError
 
-inferExpr :: Expr a -> Expr (Maybe (QualType Type))
+inferExpr :: Show a => Expr a -> Either TypeError (Expr (QualType Type))
 inferExpr expr = runInfer $ do
     (expr', _t) <- infer expr
-    lift $ traverse (qresolve . snd) expr'
+    traverse (qresolve . snd) expr'
 

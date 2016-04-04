@@ -1,14 +1,17 @@
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 import           Test.QuickCheck
 
+import           Data.DeriveTH
 
 import           Control.Monad   (void)
 import Data.String (IsString(..))
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..))
+import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..))
 
 instance IsString EVarName where
     fromString = EVarName
@@ -51,25 +54,44 @@ wrapFooLet x = let_ "foo" x $ var "foo"
 
 exampleApIdNum = "x" ~> (var "x") ~$ num 2
 
-exampleNumber :: Expr (Maybe (QualType Type))
+exampleNumber :: Either TypeError (Expr (QualType Type))
 exampleNumber = inferExpr exampleApIdNum
 
-exampleBadAsc :: Expr (Maybe (QualType Type))
+exampleBadAsc :: Either TypeError (Expr (QualType Type))
 exampleBadAsc = inferExpr $ exampleApIdNum ~:: ([] ~=> _Bool)
 
-exampleAsc :: Expr (Maybe (QualType Type))
+exampleAsc :: Either TypeError (Expr (QualType Type))
 exampleAsc = inferExpr $ exampleApIdNum ~:: ([] ~=> _Number)
 
-exampleLet :: Expr (Maybe (QualType Type))
+exampleLet :: Either TypeError (Expr (QualType Type))
 exampleLet = inferExpr $ let_ "id" ("x" ~> var "x") $ var "id"
 
-exampleLet2 :: Expr (Maybe (QualType Type))
+exampleLet2 :: Either TypeError (Expr (QualType Type))
 exampleLet2 = inferExpr $ wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))
 
-exampleLam2 :: Expr (Maybe (QualType Type))
+exampleLam2 :: Either TypeError (Expr (QualType Type))
 exampleLam2 = inferExpr $ wrapFooLet ("y" ~> ("x" ~> var "y"))
 
 -- ----------------------------------------------------------------------
+
+instance Arbitrary (t (Fix t)) => Arbitrary (Fix t) where
+    arbitrary = Fix <$> arbitrary
+
+derive makeArbitrary ''GenVar
+derive makeArbitrary ''Id
+derive makeArbitrary ''Kind
+derive makeArbitrary ''TCon
+derive makeArbitrary ''TypeAST
+derive makeArbitrary ''Pred
+derive makeArbitrary ''QualType
+derive makeArbitrary ''Class
+
+derive makeArbitrary ''Lit
+derive makeArbitrary ''EVarName
+derive makeArbitrary ''Expr
+
+prop_constExpand :: Expr () -> Bool
+prop_constExpand expr = inferExpr expr == inferExpr (("x" ~> expr) ~$ num 0)
 
 return []
 
