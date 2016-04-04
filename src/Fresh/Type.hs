@@ -294,6 +294,7 @@ generalizeVars t@(SType (TyVar tvar)) = do
             then do
                 let gv = GenVar name Star
                     tgenvar = SType (TyAST $ TyGenVar gv)
+                writeVar tvar $ Link tgenvar
                 return ([gv], tgenvar)
             else return ([], t)
 generalizeVars t@(SType (TyAST (TyGenVar genVar))) =
