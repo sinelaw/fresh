@@ -396,25 +396,3 @@ inferExpr expr = runInfer $ do
     (expr', _t) <- infer expr
     lift $ traverse (qresolve . snd) expr'
 
--- Example:
-
-wrapFooLet x = (ELet () (EVarName "foo") x (EVar () (EVarName "foo")))
-
-exampleApIdNum = (EApp () (ELam () (EVarName "x") (EVar () (EVarName "x"))) (ELit () (LitNum 2)))
-
-exampleNumber :: Expr (Maybe (QualType Type))
-exampleNumber = inferExpr exampleApIdNum
-
-exampleBadNumber :: Expr (Maybe (QualType Type))
-exampleBadNumber = inferExpr (EAsc () (QualType [] $ Fix $ TyCon $ TCon (Id "Bool") Star) exampleApIdNum)
-
-exampleLet :: Expr (Maybe (QualType Type))
-exampleLet = inferExpr (ELet () (EVarName "id") (ELam () (EVarName "x") (EVar () (EVarName "x")))
-                        (EVar () (EVarName "id")))
-
-exampleLet2 :: Expr (Maybe (QualType Type))
-exampleLet2 = inferExpr $ wrapFooLet (ELam () (EVarName "y")
-                                      (ELet () (EVarName "id") (ELam () (EVarName "x") (EVar () (EVarName "y"))) (EVar () (EVarName "id"))))
-
-exampleLam2 :: Expr (Maybe (QualType Type))
-exampleLam2 = inferExpr $ wrapFooLet (ELam () (EVarName "y") (ELam () (EVarName "x") (EVar () (EVarName "y"))))
