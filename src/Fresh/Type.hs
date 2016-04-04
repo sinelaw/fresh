@@ -131,7 +131,9 @@ type QType s = QualType (SType s)
 
 type Type = Fix TypeAST
 
-deriving instance Eq (Fix TypeAST)
+instance Eq (Fix TypeAST) where
+    (Fix x) == (Fix y) = x == y
+
 deriving instance Ord (Fix TypeAST)
 
 funT :: SType s -> SType s -> SType s

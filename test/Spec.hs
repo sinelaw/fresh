@@ -11,7 +11,7 @@ import           Control.Monad   (void, forM_)
 import Data.String (IsString(..))
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..))
+import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation)
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
 
 instance IsString EVarName where
@@ -58,6 +58,7 @@ exampleApIdNum = "x" ~> (var "x") ~$ num 2
 examples = [ exampleApIdNum
            -- , exampleApIdNum ~:: ([] ~=> _Bool)
            , exampleApIdNum ~:: ([] ~=> _Number)
+           , ELit () (LitBool False)
            , let_ "id" ("x" ~> var "x") $ var "id"
            , wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))
            , wrapFooLet ("y" ~> ("x" ~> var "y"))
@@ -81,19 +82,24 @@ derive makeArbitrary ''Lit
 derive makeArbitrary ''EVarName
 derive makeArbitrary ''Expr
 
+constWrap expr = (("x" ~> expr) ~$ num 0)
+
 prop_constExpand :: Expr () -> Bool
-prop_constExpand expr = inferExpr expr == inferExpr (("x" ~> expr) ~$ num 0)
+prop_constExpand expr = (getAnnotation <$> inferExpr expr) == (getAnnotation <$> inferExpr (constWrap expr))
 
 return []
 
 runTests :: IO Bool
-runTests = $verboseCheckAll
+runTests = $quickCheckAll
 
 main :: IO ()
 main = do
     forM_ examples $ \x -> do
         print $ pretty x
-        print . pretty $ inferExpr x
-    -- void runTests
+        print . pretty $ getAnnotation <$> inferExpr x
+        -- print . show $ getAnnotation <$> inferExpr x
+        -- print . show $ getAnnotation <$> inferExpr (constWrap x)
+        putStrLn "------------------------------------------------------------"
+    void runTests
 
 
