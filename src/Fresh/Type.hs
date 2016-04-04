@@ -24,6 +24,7 @@ import Control.Monad.Trans.Either (EitherT(..), runEitherT, left)
 import Control.Monad.Error.Class (MonadError(..))
 import qualified Data.Foldable
 
+import Debug.Trace (traceM)
 
 data Id = Id String
     deriving (Eq, Ord, Show)
@@ -148,7 +149,8 @@ resolve :: SType s -> Infer s (Maybe Type)
 resolve (SType (TyVar tvar)) = do
     link <- readVar tvar
     case link of
-        Unbound _name level -> throwError EscapedSkolemError -- TODO perhaps generalize?
+        Unbound _name level -> throwError
+            $ EscapedSkolemError $ "resolve" ++ show tvar ++ ", level: " ++ show level -- TODO perhaps generalize?
         Link t' -> resolve t'
 resolve (SType (TyAST t)) = do
     mt <- traverse resolve t
@@ -250,7 +252,7 @@ data InferState s
 
 data TypeError
     = UnificationError
-    | EscapedSkolemError
+    | EscapedSkolemError String
     | KindMismatchError Kind Kind
     deriving (Eq, Show)
 
@@ -332,8 +334,8 @@ freshTVar = do
     return $ TypeVar ref Star
 
 subInfer :: InferState s -> Infer s a -> Infer s a
-subInfer state act = do
-    res <- lift . lift $ runEitherT $ runStateT act state
+subInfer state' act = do
+    res <- lift . lift $ runEitherT $ runStateT act state'
     case res of
         Left err -> throwError err
         Right (x, is') -> do
@@ -407,7 +409,7 @@ qresolve (QualType ps t) = do
     let mps' = sequenceA $ map sequenceA $ pms'
     case (mps', mt') of
         (Just ps', Just t') -> return $ QualType ps' t'
-        _ -> throwError EscapedSkolemError
+        _ -> throwError $ EscapedSkolemError $ "qresolve:" ++ show mps' ++ " - " ++ show mt'
 
 inferExpr :: Show a => Expr a -> Either TypeError (Expr (QualType Type))
 inferExpr expr = runInfer $ do
