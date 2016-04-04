@@ -23,7 +23,7 @@ import Control.Monad.State.Class (MonadState(..), modify)
 import Control.Monad.Trans.Either (EitherT(..), runEitherT, left)
 import Control.Monad.Error.Class (MonadError(..))
 import qualified Data.Foldable
-import           Debug.Trace                (traceM)
+
 
 data Id = Id String
     deriving (Eq, Ord, Show)
@@ -278,7 +278,6 @@ x `listUnion` y = Set.toList $ (Set.fromList x) `Set.union` (Set.fromList y)
 
 freshName :: Infer s Int
 freshName = do
-    traceM "freshName"
     is <- get
     let genId = isGenFresh is
     put $ is { isGenFresh = genId + 1 }
@@ -322,21 +321,17 @@ generalize t = do
 
 fresh :: Infer s (STRef s (TVarLink t))
 fresh = do
-    traceM "fresh"
     curLevel <- getCurrentLevel
     name <- freshName
     lift . lift $ newSTRef $ Unbound name curLevel
 
 freshTVar :: Infer s (TypeVar (STRef s) a)
 freshTVar = do
-    traceM "freshTVar"
     ref <- fresh
-    traceM "...freshTVar"
     return $ TypeVar ref Star
 
 subInfer :: InferState s -> Infer s a -> Infer s a
 subInfer state act = do
-    traceM $ "subInfer, state=" ++ show state
     res <- lift . lift $ runEitherT $ runStateT act state
     case res of
         Left err -> throwError err
@@ -350,10 +345,7 @@ infer (ELit a lit) = return (ELit (a, t) lit, t)
     where t = emptyQual $ inferLit lit
 
 infer e@(ELam a var expr) = do
-    traceM $ show e
-    traceM "fresh.."
     tvar <- freshTVar
-    traceM "get..."
     is <- get
     let varT = SType $ TyVar tvar
         newContext = Map.insert var tvar (isContext is)
@@ -362,7 +354,6 @@ infer e@(ELam a var expr) = do
     return $ (ELam (a, t) var expr', t)
 
 infer e@(EVar a var) = do
-    traceM $ show e
     is <- get
     case Map.lookup var (isContext is) of
         Nothing -> error $ "bad var " ++ (show var)
@@ -370,7 +361,6 @@ infer e@(EVar a var) = do
             where t = emptyQual $ SType $ TyVar ref
 
 infer e@(EApp a efun earg) = do
-    traceM $ show e
     (efun', QualType efunP efunT) <- infer efun
     (earg', QualType eargP eargT) <- infer earg
     tvar <- freshTVar
@@ -380,7 +370,6 @@ infer e@(EApp a efun earg) = do
     return (EApp (a, resQ) efun' earg', resQ)
 
 infer e@(ELet a var edef expr) = do
-    traceM $ show e
     (edef', edefT) <- inLevel $ do
         tvar <- freshTVar
         is <- get
@@ -397,7 +386,6 @@ infer e@(ELet a var edef expr) = do
     return (ELet (a, exprT) var edef' expr', exprT)
 
 infer e@(EAsc a asc@(QualType ps t) expr) = do
-    traceM $ show e
     let st = unresolve t
         sps = map (fmap unresolve) ps
     (expr', QualType exprP exprT) <- infer expr
@@ -413,7 +401,6 @@ runInfer act =
 
 qresolve :: QType s -> Infer s (QualType Type)
 qresolve (QualType ps t) = do
-    traceM $ "qresolve: " ++ show ps ++ " => " ++ show t
     mt' <- resolve t
     pms' <- traverse (traverse resolve) ps
     let mps' = sequenceA $ map sequenceA $ pms'
