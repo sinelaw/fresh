@@ -65,3 +65,11 @@ instance Pretty t => Pretty (Pred t) where
 instance Pretty t => Pretty (QualType t) where
     pretty (QualType [] t) = pretty t
     pretty (QualType ps t) = pretty ps <+> "=>" <+> pretty t
+
+instance Pretty TypeError where
+    pretty = text . show
+
+instance (Pretty e, Pretty a) => Pretty (Either e a) where
+    pretty (Left e) = "Error:" <+> pretty e
+    pretty (Right a) = pretty a
+

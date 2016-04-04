@@ -7,11 +7,12 @@ import           Test.QuickCheck
 
 import           Data.DeriveTH
 
-import           Control.Monad   (void)
+import           Control.Monad   (void, forM_)
 import Data.String (IsString(..))
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
 import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..))
+import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
 
 instance IsString EVarName where
     fromString = EVarName
@@ -54,23 +55,13 @@ wrapFooLet x = let_ "foo" x $ var "foo"
 
 exampleApIdNum = "x" ~> (var "x") ~$ num 2
 
-exampleNumber :: Either TypeError (Expr (QualType Type))
-exampleNumber = inferExpr exampleApIdNum
-
-exampleBadAsc :: Either TypeError (Expr (QualType Type))
-exampleBadAsc = inferExpr $ exampleApIdNum ~:: ([] ~=> _Bool)
-
-exampleAsc :: Either TypeError (Expr (QualType Type))
-exampleAsc = inferExpr $ exampleApIdNum ~:: ([] ~=> _Number)
-
-exampleLet :: Either TypeError (Expr (QualType Type))
-exampleLet = inferExpr $ let_ "id" ("x" ~> var "x") $ var "id"
-
-exampleLet2 :: Either TypeError (Expr (QualType Type))
-exampleLet2 = inferExpr $ wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))
-
-exampleLam2 :: Either TypeError (Expr (QualType Type))
-exampleLam2 = inferExpr $ wrapFooLet ("y" ~> ("x" ~> var "y"))
+examples = [ exampleApIdNum
+           -- , exampleApIdNum ~:: ([] ~=> _Bool)
+           , exampleApIdNum ~:: ([] ~=> _Number)
+           , let_ "id" ("x" ~> var "x") $ var "id"
+           , wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))
+           , wrapFooLet ("y" ~> ("x" ~> var "y"))
+           ]
 
 -- ----------------------------------------------------------------------
 
@@ -99,6 +90,10 @@ runTests :: IO Bool
 runTests = $verboseCheckAll
 
 main :: IO ()
-main = void runTests
+main = do
+    forM_ examples $ \x -> do
+        print $ pretty x
+        print . pretty $ inferExpr x
+    -- void runTests
 
 
