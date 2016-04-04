@@ -24,7 +24,7 @@ import Control.Monad.Trans.Either (EitherT(..), runEitherT, left)
 import Control.Monad.Error.Class (MonadError(..))
 import qualified Data.Foldable
 
-import Debug.Trace (traceM)
+-- import Debug.Trace (traceM)
 
 data Id = Id String
     deriving (Eq, Ord, Show)
