@@ -10,7 +10,7 @@ import           Control.Monad   (void, forM_)
 import Data.String (IsString(..))
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..))
+import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation)
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
 
 instance IsString EVarName where
@@ -57,6 +57,7 @@ exampleApIdNum = "x" ~> (var "x") ~$ num 2
 examples = [ exampleApIdNum
            -- , exampleApIdNum ~:: ([] ~=> _Bool)
            , exampleApIdNum ~:: ([] ~=> _Number)
+           , let_ "x" (num 3) $ var "x"
            , let_ "id" ("x" ~> var "x") $ var "id"
            , wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))
            , wrapFooLet ("y" ~> ("x" ~> var "y"))
@@ -92,7 +93,7 @@ main :: IO ()
 main = do
     forM_ examples $ \x -> do
         print $ pretty x
-        print . pretty $ inferExpr x
+        print . pretty $ getAnnotation <$> inferExpr x
     -- void runTests
 
 
