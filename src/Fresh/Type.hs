@@ -509,6 +509,7 @@ qresolve (QualType ps t) = do
 
 inferExpr :: Show a => Expr a -> Either TypeError (Expr (QualType Type))
 inferExpr expr = runInfer $ do
-    (expr', _t) <- infer expr
+    (expr', t) <- infer expr
+    when (kind t /= Star) $ throwError $ KindMismatchError (kind t) Star
     traverse (qresolve . snd) expr'
 
