@@ -59,9 +59,17 @@ _Func = Fix Type.tyFunc
 (^$) :: Type -> Type -> Type
 f ^$ x = Fix $ TyAp f x
 
-(^->) :: Fix TypeAST -> Fix TypeAST -> Fix TypeAST
+(^->) :: Type -> Type -> Type
 targ ^-> tres = Fix $ TyAp (Fix $ TyAp _Func targ) tres
 
+forall :: [Int] -> Type -> Type
+forall gvs t = Fix $ TyGen (map gv gvs) t
+
+gv :: Int -> GenVar
+gv x = GenVar x Star
+
+tv :: Int -> Type
+tv x = Fix $ TyGenVar $ gv x
 
 -- Tests
 
@@ -74,9 +82,15 @@ examples = [ (exampleApIdNum,                      Right $ [] ~=> _Number)
            , (exampleApIdNum ~:: ([] ~=> _Bool),   Left Type.UnificationError)
            , (exampleApIdNum ~:: ([] ~=> _Number), Right $ [] ~=> _Number)
            , (ELit () (LitBool False),             Right $ [] ~=> _Bool)
-           -- , let_ "id" ("x" ~> var "x") $ var "id"
-           -- , wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))
-           -- , wrapFooLet ("y" ~> ("x" ~> var "y"))
+             -- TODO deal with alpha equivalence, preferrably by
+             -- making generalization produce ids like GHC
+           , (let_ "id" ("x" ~> var "x") $ var "id", Right $ [] ~=> (forall [1] $ (tv 1 ^-> tv 1)))
+
+           , ( wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))
+             , Right $ [] ~=> (forall [1, 3] $ (tv 1 ^-> (tv 3 ^-> tv 1))))
+
+           , ( wrapFooLet ("y" ~> ("x" ~> var "y"))
+             , Right $ [] ~=> (forall [1, 2] $ (tv 1 ^-> (tv 2 ^-> tv 1))))
            ]
 
 -- ----------------------------------------------------------------------
@@ -113,10 +127,10 @@ main = do
         print $ pretty x
         let inferredType = getAnnotation <$> inferExpr x
         print . pretty $ inferredType
-        when (inferredType /= t) $ error "Wrong type"
+        when (inferredType /= t) $ error $ "Wrong type. Expected: " ++ (show $ pretty t) ++ " inferred: " ++ (show $ pretty inferredType)
         -- print . show $ getAnnotation <$> inferExpr x
         -- print . show $ getAnnotation <$> inferExpr (constWrap x)
         putStrLn "------------------------------------------------------------"
-    void runTests
+    -- void runTests
 
 
