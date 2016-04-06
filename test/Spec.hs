@@ -59,6 +59,7 @@ _Func = Fix Type.tyFunc
 (^$) :: Type -> Type -> Type
 f ^$ x = Fix $ TyAp f x
 
+infixr 5 ^->
 (^->) :: Type -> Type -> Type
 targ ^-> tres = Fix $ TyAp (Fix $ TyAp _Func targ) tres
 
@@ -84,13 +85,13 @@ examples = [ (exampleApIdNum,                      Right $ [] ~=> _Number)
            , (ELit () (LitBool False),             Right $ [] ~=> _Bool)
              -- TODO deal with alpha equivalence, preferrably by
              -- making generalization produce ids like GHC
-           , (let_ "id" ("x" ~> var "x") $ var "id", Right $ [] ~=> (forall [1] $ (tv 1 ^-> tv 1)))
+           , (let_ "id" ("x" ~> var "x") $ var "id", Right $ [] ~=> (forall [1] $ tv 1 ^-> tv 1))
 
            , ( wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))
-             , Right $ [] ~=> (forall [1, 3] $ (tv 1 ^-> (tv 3 ^-> tv 1))))
+             , Right $ [] ~=> (forall [1, 3] $ tv 1 ^-> tv 3 ^-> tv 1))
 
            , ( wrapFooLet ("y" ~> ("x" ~> var "y"))
-             , Right $ [] ~=> (forall [1, 2] $ (tv 1 ^-> (tv 2 ^-> tv 1))))
+             , Right $ [] ~=> (forall [1, 2] $ tv 1 ^-> tv 2 ^-> tv 1))
            ]
 
 -- ----------------------------------------------------------------------
