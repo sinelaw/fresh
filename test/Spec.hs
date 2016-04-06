@@ -19,6 +19,8 @@ import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
 instance IsString EVarName where
     fromString = EVarName
 
+instance IsString CompositeLabelName where
+    fromString = CompositeLabelName
 
 -- Example:
 
@@ -80,10 +82,10 @@ a, b, c, d, e :: Type
 a',b',c',d',e' :: GenVar
 [a',b',c',d',e'] = map gv [0,1,2,3,4]
 
-record :: [(CompositeLabelName, Type)] -> Type
-record fs = (Fix Type.tyRec) ^$ (Fix $ TyComp c)
+record :: [(CompositeLabelName, Type)] -> Maybe Type -> Type
+record fs rest = (Fix Type.tyRec) ^$ (Fix $ TyComp c)
     where
-        c = Type.unflattenComposite (FlatComposite (Map.fromList fs) Nothing)
+        c = Type.unflattenComposite (FlatComposite (Map.fromList fs) rest)
 
 -- Tests
 
@@ -109,7 +111,7 @@ examples = [ (exampleApIdNum,                      Right $ [] ~=> _Number)
              , Right $ [] ~=> (forall [b', c'] $ b ^-> c ^-> b))
 
            , (let_ "id" ("x" ~> ((var "x") ## "fieldName")) $ var "id",
-              Right $ [] ~=> (forall [c'] $ record [("fieldName", c)] ^-> c))
+              Right $ [] ~=> (forall [c', d'] $ (record [("fieldName", c)] $ Just d) ^-> c))
            ]
 
 -- ----------------------------------------------------------------------
@@ -135,27 +137,39 @@ derive makeArbitrary ''Expr
 constWrap :: Expr () -> Expr ()
 constWrap expr = (("x" ~> expr) ~$ num 0)
 
-prop_constExpand :: Expr () -> Bool
-prop_constExpand expr = (getAnnotation <$> inferExpr expr) == (getAnnotation <$> inferExpr (constWrap expr))
+-- prop_constExpand :: Expr () -> Bool
+-- prop_constExpand expr = (getAnnotation <$> inferExpr expr) == (getAnnotation <$> inferExpr (constWrap expr))
+
+testUnify :: Type -> Type -> Either TypeError ()
+testUnify t1 t2 = Type.runInfer $ Type.unify (Type.unresolve t1) (Type.unresolve t2)
+
+-- prop_unifySame :: Type -> Bool
+-- prop_unifySame t = Right () == testUnify t t
 
 return []
 
 runTests :: IO Bool
 runTests = $quickCheckAll
 
-testUnify :: Type -> Type -> Either TypeError ()
-testUnify t1 t2 = Type.runInfer $ Type.unify (Type.unresolve t1) (Type.unresolve t2)
 
 shouldUnify b t1 t2 = do
     putStrLn $ "Unifying: " ++ show (pretty t1) ++ " with " ++ show (pretty t2) ++ " - should succeed: " ++ show b
     when (b == (Right () /= testUnify t1 t2)) $ error "Unify failed"
 
+erecord x = record x Nothing
+
 main :: IO ()
 main = do
-    when (Right () /= testUnify (record []) (record [])) $ error "Unify bad"
+    putStrLn "Testing..."
+    shouldUnify True  (erecord []) (erecord [])
+    shouldUnify True  (erecord [("x", _Bool)]) (erecord [("x", _Bool)])
+    shouldUnify False (erecord [("x", _Bool)]) (erecord [("x", _Number)])
+    shouldUnify False (erecord [("x", _Bool)]) (erecord [("y", _Bool)])
 
     forM_ examples $ \(x, t) -> do
-        print $ pretty x
+        putStrLn "------------------------------------------------------------"
+        putStr $ rightPad ' ' 40 $ show $ pretty x
+        putStr " :: "
         let inferredType = getAnnotation <$> inferExpr x
         putStrLn . show . pretty $ inferredType
         when (inferredType /= t)
@@ -166,6 +180,6 @@ main = do
         -- print . show $ getAnnotation <$> inferExpr x
         -- print . show $ getAnnotation <$> inferExpr (constWrap x)
         putStrLn "------------------------------------------------------------"
-    -- void runTests
+    void runTests
 
 
