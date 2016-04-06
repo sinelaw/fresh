@@ -141,6 +141,10 @@ runTests = $quickCheckAll
 testUnify :: Type -> Type -> Either TypeError ()
 testUnify t1 t2 = Type.runInfer $ Type.unify (Type.unresolve t1) (Type.unresolve t2)
 
+shouldUnify b t1 t2 = do
+    putStrLn $ "Unifying: " ++ show (pretty t1) ++ " with " ++ show (pretty t2) ++ " - should succeed: " ++ show b
+    when (b == (Right () /= testUnify t1 t2)) $ error "Unify failed"
+
 main :: IO ()
 main = do
     when (Right () /= testUnify (record []) (record [])) $ error "Unify bad"
