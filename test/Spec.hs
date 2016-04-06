@@ -63,14 +63,19 @@ infixr 5 ^->
 (^->) :: Type -> Type -> Type
 targ ^-> tres = Fix $ TyAp (Fix $ TyAp _Func targ) tres
 
-forall :: [Int] -> Type -> Type
-forall gvs t = Fix $ TyGen (map gv gvs) t
+forall :: [GenVar] -> Type -> Type
+forall gvs t = Fix $ TyGen gvs t
 
 gv :: Int -> GenVar
 gv x = GenVar x Star
 
 tv :: Int -> Type
 tv x = Fix $ TyGenVar $ gv x
+
+a, b, c, d, e :: Type
+[a, b, c, d, e] = map tv [0,1,2,3,4]
+a',b',c',d',e' :: GenVar
+[a',b',c',d',e'] = map gv [0,1,2,3,4]
 
 -- Tests
 
@@ -85,13 +90,13 @@ examples = [ (exampleApIdNum,                      Right $ [] ~=> _Number)
            , (ELit () (LitBool False),             Right $ [] ~=> _Bool)
              -- TODO deal with alpha equivalence, preferrably by
              -- making generalization produce ids like GHC
-           , (let_ "id" ("x" ~> var "x") $ var "id", Right $ [] ~=> (forall [1] $ tv 1 ^-> tv 1))
+           , (let_ "id" ("x" ~> var "x") $ var "id", Right $ [] ~=> (forall [b'] $ b ^-> b))
 
            , ( wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))
-             , Right $ [] ~=> (forall [1, 3] $ tv 1 ^-> tv 3 ^-> tv 1))
+             , Right $ [] ~=> (forall [b', d'] $ b ^-> d ^-> b))
 
            , ( wrapFooLet ("y" ~> ("x" ~> var "y"))
-             , Right $ [] ~=> (forall [1, 2] $ tv 1 ^-> tv 2 ^-> tv 1))
+             , Right $ [] ~=> (forall [b', c'] $ b ^-> c ^-> b))
            ]
 
 -- ----------------------------------------------------------------------
