@@ -9,6 +9,7 @@ module Fresh.Pretty
 import Text.PrettyPrint.ANSI.Leijen
 import Fresh.Type
 import Fresh.Kind (Kind(..))
+
 import qualified Data.Char as Char
 
 instance Pretty TCon where
@@ -17,6 +18,7 @@ instance Pretty TCon where
 instance Pretty Kind where
     pretty (KArrow k1 k2) = pretty k1 <+> "->" <+> pretty k2
     pretty Star = "*"
+    pretty Composite = "@"
 
 instance Pretty GenVar where
     pretty (GenVar idx k) = pk name
@@ -27,6 +29,19 @@ instance Pretty GenVar where
                    then id
                    else \x -> x <+> "::" <+> pretty k
 
+instance Pretty CompositeLabelName where
+    pretty (CompositeLabelName x) = dquotes $ pretty x
+
+instance Pretty t => Pretty (Composite t) where
+    pretty (CompositeLabel name t c) =
+        pretty name <> ":" <+> pretty t <> rest
+        where rest = case c of
+                  CompositeLabel{} -> comma <+> pretty c
+                  _ -> pretty c
+        -- TODO trailing comma
+    pretty (CompositeTerminal) = empty
+    pretty (CompositeRemainder t) = " |" <+> pretty t
+
 instance Pretty t => Pretty (TypeAST t) where
     pretty (TyAp fun arg) =
         case show (pretty fun) of
@@ -35,7 +50,9 @@ instance Pretty t => Pretty (TypeAST t) where
             _ -> pretty arg <+> pretty fun
     pretty (TyCon con) = pretty con
     pretty (TyGenVar genVar) = pretty genVar
-    pretty (TyGen genVars t) = "forall" <+> foldr (<+>) "" (map pretty genVars) <> "." <+> pretty t
+    pretty (TyGen genVars t) = "forall" <+> foldr (<+>) empty (map pretty genVars) <> "." <+> pretty t
+    -- TODO
+    pretty (TyComp c) = "{" <+> pretty c <+> "}"
 
 instance Pretty EVarName where
     pretty (EVarName s) = text s
