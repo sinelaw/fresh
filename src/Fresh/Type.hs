@@ -6,6 +6,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 module Fresh.Type where
 
 import           Fresh.Kind (Kind(..))
@@ -20,7 +21,7 @@ import qualified Data.Set as Set
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..), runStateT, evalStateT)
 import Control.Monad.State.Class (MonadState(..), modify)
-import Control.Monad.Trans.Either (EitherT(..), runEitherT, left)
+import Control.Monad.Trans.Either (EitherT(..), runEitherT)
 import Control.Monad.Error.Class (MonadError(..))
 import qualified Data.Foldable
 
@@ -277,6 +278,7 @@ inLevel act = do
     leaveLevel
     return res
 
+listUnion :: Ord a => [a] -> [a] -> [a]
 [] `listUnion` y = y
 x `listUnion` [] = x
 x `listUnion` y = Set.toList $ (Set.fromList x) `Set.union` (Set.fromList y)
@@ -350,7 +352,7 @@ infer :: Show a => Expr a -> Infer s (Expr (a, QType s), QType s)
 infer (ELit a lit) = return (ELit (a, t) lit, t)
     where t = emptyQual $ inferLit lit
 
-infer e@(ELam a var expr) = do
+infer (ELam a var expr) = do
     tvar <- freshTVar
     is <- get
     let varT = SType $ TyVar tvar
@@ -359,14 +361,14 @@ infer e@(ELam a var expr) = do
     let t = QualType ps $ funT varT exprT
     return $ (ELam (a, t) var expr', t)
 
-infer e@(EVar a var) = do
+infer (EVar a var) = do
     is <- get
     case Map.lookup var (isContext is) of
         Nothing -> throwError $ InvalidVarError (show var)
         Just ref -> return (EVar (a, t) var, t)
             where t = emptyQual $ SType $ TyVar ref
 
-infer e@(EApp a efun earg) = do
+infer (EApp a efun earg) = do
     (efun', QualType efunP efunT) <- infer efun
     (earg', QualType eargP eargT) <- infer earg
     tvar <- freshTVar
@@ -375,7 +377,7 @@ infer e@(EApp a efun earg) = do
     let resQ = QualType (efunP ++ eargP) $ resT
     return (EApp (a, resQ) efun' earg', resQ)
 
-infer e@(ELet a var edef expr) = do
+infer (ELet a var edef expr) = do
     (edef', edefT) <- inLevel $ do
         tvar <- freshTVar
         is <- get
@@ -391,7 +393,7 @@ infer e@(ELet a var edef expr) = do
     (expr', exprT) <- subInfer (is' { isContext = Map.insert var tvarGen (isContext is') }) (infer expr)
     return (ELet (a, exprT) var edef' expr', exprT)
 
-infer e@(EAsc a asc@(QualType ps t) expr) = do
+infer (EAsc a asc@(QualType ps t) expr) = do
     let st = unresolve t
         sps = map (fmap unresolve) ps
     (expr', QualType exprP exprT) <- infer expr

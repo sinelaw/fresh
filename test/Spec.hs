@@ -82,8 +82,10 @@ a',b',c',d',e' :: GenVar
 wrapFooLet :: Expr () -> Expr ()
 wrapFooLet x = let_ "foo" x $ var "foo"
 
+exampleApIdNum :: Expr ()
 exampleApIdNum = "x" ~> (var "x") ~$ num 2
 
+examples :: [(Expr (), Either TypeError (QualType Type))]
 examples = [ (exampleApIdNum,                      Right $ [] ~=> _Number)
            , (exampleApIdNum ~:: ([] ~=> _Bool),   Left Type.UnificationError)
            , (exampleApIdNum ~:: ([] ~=> _Number), Right $ [] ~=> _Number)
@@ -117,6 +119,7 @@ derive makeArbitrary ''Lit
 derive makeArbitrary ''EVarName
 derive makeArbitrary ''Expr
 
+constWrap :: Expr () -> Expr ()
 constWrap expr = (("x" ~> expr) ~$ num 0)
 
 prop_constExpand :: Expr () -> Bool

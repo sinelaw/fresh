@@ -1,8 +1,9 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 module Fresh.Pretty
-       ( Pretty(..), pretty )
+       ( Pretty(..) )
        where
 
 import Text.PrettyPrint.ANSI.Leijen
