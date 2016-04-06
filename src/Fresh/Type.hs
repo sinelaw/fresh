@@ -207,7 +207,7 @@ unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
 unifyAST (TyCon tc1) (TyCon tc2) | tc1 == tc2 = return ()
 unifyAST (TyGenVar g1) (TyGenVar g2) | g1 == g2 = return ()
 unifyAST (TyGen vs1 t1) (TyGen vs2 t2) | vs1 == vs2 = unify t1 t2
-unifyAST t1 t2 = throwError $ UnificationError --t1 t2
+unifyAST t1 t2 = throwError UnificationError --t1 t2
 
 ----------------------------------------------------------------------
 
@@ -281,7 +281,7 @@ inLevel act = do
 listUnion :: Ord a => [a] -> [a] -> [a]
 [] `listUnion` y = y
 x `listUnion` [] = x
-x `listUnion` y = Set.toList $ (Set.fromList x) `Set.union` (Set.fromList y)
+x `listUnion` y = Set.toList $ Set.fromList x `Set.union` Set.fromList y
 
 freshName :: Infer s Int
 freshName = do
@@ -290,7 +290,7 @@ freshName = do
     put $ is { isGenFresh = genId + 1 }
     return genId
 
-generalizeVars :: SType s -> Infer s ([GenVar], (SType s))
+generalizeVars :: SType s -> Infer s ([GenVar], SType s)
 generalizeVars t@(SType (TyVar tvar)) = do
     link <- readVar tvar
     case link of
@@ -317,8 +317,8 @@ generalizeVars (SType (TyAST (TyAp t1 t2))) = do
     (vs2, t2') <- generalizeVars t2
     return (vs1 `listUnion` vs2
            , SType (TyAST (TyAp t1' t2')))
-generalizeVars (SType (TyAST (TyCon{..}))) =
-    return ([], SType (TyAST (TyCon{..})))
+generalizeVars (SType (TyAST TyCon{..})) =
+    return ([], SType (TyAST TyCon{..}))
 
 generalize :: SType s -> Infer s (SType s)
 generalize t = do
@@ -359,7 +359,7 @@ infer (ELam a var expr) = do
         newContext = Map.insert var tvar (isContext is)
     (expr', QualType ps exprT) <- subInfer (is { isContext = newContext }) $ infer expr
     let t = QualType ps $ funT varT exprT
-    return $ (ELam (a, t) var expr', t)
+    return (ELam (a, t) var expr', t)
 
 infer (EVar a var) = do
     is <- get
@@ -374,7 +374,7 @@ infer (EApp a efun earg) = do
     tvar <- freshTVar
     let resT = SType $ TyVar tvar
     unify efunT (funT eargT resT)
-    let resQ = QualType (efunP ++ eargP) $ resT
+    let resQ = QualType (efunP ++ eargP) resT
     return (EApp (a, resQ) efun' earg', resQ)
 
 infer (ELet a var edef expr) = do
@@ -403,15 +403,15 @@ infer (EAsc a asc@(QualType ps t) expr) = do
 
 runInfer :: (forall s. Infer s a) -> Either TypeError a
 runInfer act =
-    runST $ runEitherT $ evalStateT act (InferState { isContext = Map.empty
+    runST $ runEitherT $ evalStateT act InferState { isContext = Map.empty
                                                     , isGenFresh = 0
-                                                    , isLevel = Level 0 })
+                                                    , isLevel = Level 0 }
 
 qresolve :: QType s -> Infer s (QualType Type)
 qresolve (QualType ps t) = do
     mt' <- resolve t
     pms' <- traverse (traverse resolve) ps
-    let mps' = sequenceA $ map sequenceA $ pms'
+    let mps' = sequenceA $ map sequenceA pms'
     case (mps', mt') of
         (Just ps', Just t') -> return $ QualType ps' t'
         _ -> throwError $ EscapedSkolemError $ "qresolve:" ++ show mps' ++ " - " ++ show mt'

@@ -35,7 +35,7 @@ instance Pretty t => Pretty (TypeAST t) where
             _ -> pretty arg <+> pretty fun
     pretty (TyCon con) = pretty con
     pretty (TyGenVar genVar) = pretty genVar
-    pretty (TyGen genVars t) = "forall" <+> (foldr (<+>) "" $ map pretty genVars) <> "." <+> pretty t
+    pretty (TyGen genVars t) = "forall" <+> foldr (<+>) "" (map pretty genVars) <> "." <+> pretty t
 
 instance Pretty EVarName where
     pretty (EVarName s) = text s
