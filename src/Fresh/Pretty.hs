@@ -71,6 +71,7 @@ instance Pretty (Expr a) where
         "let" <+> pretty varName <+> "="
         <+> pretty def <+> "in" <+> pretty expr
     pretty (EAsc a t e) = parens $ pretty e <+> "::" <+> pretty t
+    pretty (EGetField a e name) = pretty e <> "#" <> pretty name
 
 instance Pretty (f (Fix f)) => Pretty (Fix f) where
     pretty (Fix f) = pretty f

@@ -40,6 +40,8 @@ num = ELit () . LitNum
 (~>) :: EVarName -> Expr () -> Expr ()
 (~>) = ELam ()
 
+(##) = EGetField ()
+
 -- Types
 
 tcon :: String -> Type
@@ -105,6 +107,9 @@ examples = [ (exampleApIdNum,                      Right $ [] ~=> _Number)
 
            , ( wrapFooLet ("y" ~> ("x" ~> var "y"))
              , Right $ [] ~=> (forall [b', c'] $ b ^-> c ^-> b))
+
+           , (let_ "id" ("x" ~> ((var "x") ## "fieldName")) $ var "id",
+              Right $ [] ~=> (forall [c'] $ record [("fieldName", c)] ^-> c))
            ]
 
 -- ----------------------------------------------------------------------
@@ -152,8 +157,12 @@ main = do
     forM_ examples $ \(x, t) -> do
         print $ pretty x
         let inferredType = getAnnotation <$> inferExpr x
-        print . pretty $ inferredType
-        when (inferredType /= t) $ error $ "Wrong type. Expected: " ++ (show $ pretty t) ++ " inferred: " ++ (show $ pretty inferredType)
+        putStrLn . show . pretty $ inferredType
+        when (inferredType /= t)
+            $ error
+            $ "Wrong type."
+            ++ "\t" ++ "Expected: " ++ (show $ pretty t) -- ++ " = " ++ (show t) ++ "\n"
+            ++ "\t" ++ "Inferred: " ++ (show $ pretty inferredType) -- ++ " = " ++ (show inferredType) ++ "\n"
         -- print . show $ getAnnotation <$> inferExpr x
         -- print . show $ getAnnotation <$> inferExpr (constWrap x)
         putStrLn "------------------------------------------------------------"

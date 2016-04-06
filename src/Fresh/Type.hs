@@ -176,6 +176,13 @@ funT targ tres =
     SType . TyAST
     $ TyAp (SType . TyAST . TyAp (SType $ TyAST tyFunc) $ targ) tres
 
+recT :: [(CompositeLabelName, SType s)] -> Maybe (SType s) -> SType s
+recT fs rest =
+    SType . TyAST
+    $ TyAp (SType $ TyAST tyRec) (SType . TyAST $ TyComp $ tcomp)
+    where
+        tcomp = unflattenComposite (FlatComposite (Map.fromList fs) rest)
+
 readVar :: TypeVar (STRef s) t -> Infer s (TVarLink t)
 readVar (TypeVar ref k) = lift . lift $ readSTRef ref
 
@@ -283,6 +290,7 @@ data Expr a
     | EApp a (Expr a) (Expr a)
     | ELet a EVarName (Expr a) (Expr a)
     | EAsc a (QualType Type) (Expr a)
+    | EGetField a (Expr a) CompositeLabelName
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 
@@ -475,6 +483,14 @@ infer (EAsc a asc@(QualType ps t) expr) = do
     unify exprT st
     let resT = QualType (sps ++ exprP) exprT
     return (EAsc (a, resT) asc expr', resT)
+
+infer (EGetField a expr name) = do
+    (expr', QualType exprP exprT) <- infer expr
+    tvar <- SType . TyVar <$> freshTVar
+    rvar <- SType . TyVar <$> freshRVar
+    unify exprT (recT [(name, tvar)] $ Just rvar)
+    let resT = QualType exprP tvar
+    return (EGetField (a, resT) expr' name, resT)
 
 runInfer :: (forall s. Infer s a) -> Either TypeError a
 runInfer act =
