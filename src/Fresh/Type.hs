@@ -12,11 +12,12 @@ module Fresh.Type where
 import           Fresh.Kind (Kind(..))
 import qualified Fresh.Kind as Kind
 import Data.STRef
-import Control.Monad (when)
+import Control.Monad (when, forM_)
 import Control.Monad.ST (ST, runST)
 import Data.Map (Map)
 import qualified Data.Map as Map
 -- import Data.Set (Set)
+
 import qualified Data.Set as Set
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..), runStateT, evalStateT)
@@ -36,11 +37,38 @@ data TCon = TCon { tcId ::  Id, tcKind :: Kind }
 data GenVar = GenVar { genVarId :: Int, genVarKind :: Kind }
     deriving (Eq, Ord, Show)
 
+newtype CompositeLabelName = CompositeLabelName String
+    deriving (Eq, Ord, Show)
+
+data Composite t
+    = CompositeLabel CompositeLabelName t (Composite t)
+    | CompositeTerminal
+    | CompositeRemainder t
+    deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+data FlatComposite t
+    = FlatComposite { fcLabels :: (Map CompositeLabelName t)
+                    , fcRemainder :: Maybe t }
+    deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+flattenComposite :: Composite t -> FlatComposite t
+flattenComposite CompositeTerminal = FlatComposite Map.empty Nothing
+flattenComposite (CompositeRemainder t) = FlatComposite Map.empty $ Just t
+flattenComposite (CompositeLabel n t c) = FlatComposite (Map.insert n t m) end
+    where
+        (FlatComposite m end) = flattenComposite c
+
+unflattenComposite :: FlatComposite t -> Composite t
+unflattenComposite (FlatComposite m mRem) =
+    foldr (\(n, t) rest -> CompositeLabel n t rest) rem' $ Map.toList m
+    where rem' = maybe CompositeTerminal CompositeRemainder mRem
+
 data TypeAST t
     = TyAp { _tyApFun :: t, _tyApArg :: t }
     | TyCon { _tyCon :: TCon }
     | TyGenVar { _tyGenVar :: GenVar }
     | TyGen { _tyGenVars :: [GenVar], _tyGenScheme :: t }
+    | TyComp { _tyComp :: Composite t }
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 class HasKind t where
@@ -58,7 +86,13 @@ instance HasKind t => HasKind (TypeAST t) where
     kind (TyCon tc) = kind tc
     kind (TyGenVar gv) = kind gv
     kind (TyGen vs s) = kind s
+    kind (TyComp fs) = Composite
 
+tyRec :: TypeAST t
+tyRec = TyCon (TCon (Id "Rec") (KArrow Composite Star))
+
+tySum :: TypeAST t
+tySum = TyCon (TCon (Id "Sum") (KArrow Composite Star))
 
 tyFunc :: TypeAST t
 tyFunc = TyCon (TCon (Id "->") (KArrow Star (KArrow Star Star)))
@@ -207,6 +241,28 @@ unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
 unifyAST (TyCon tc1) (TyCon tc2) | tc1 == tc2 = return ()
 unifyAST (TyGenVar g1) (TyGenVar g2) | g1 == g2 = return ()
 unifyAST (TyGen vs1 t1) (TyGen vs2 t2) | vs1 == vs2 = unify t1 t2
+unifyAST (TyComp c1) (TyComp c2) = do
+    let FlatComposite labels1 mEnd1 = flattenComposite c1
+        FlatComposite labels2 mEnd2 = flattenComposite c2
+        common = Map.intersectionWith (,) labels1 labels2
+        in1only = Map.difference labels1 labels2
+        in2only = Map.difference labels2 labels1
+    -- TODO: wrap errors to say which field failed
+    forM_ (Map.elems common) $ uncurry unify
+    remainderVar <- freshRVar
+    let remainderVarT = SType $ TyVar remainderVar
+        fromEnd = TyComp . unflattenComposite . FlatComposite Map.empty . Just
+        unifyRemainder rem mEnd =
+            if Map.null rem
+            then case mEnd of
+                 Nothing -> return ()
+                 Just t -> throwError UnificationError -- TODO really?
+            else case mEnd of
+                Nothing -> throwError UnificationError
+                Just end -> unifyAST (TyComp $ unflattenComposite $ FlatComposite rem $ Just remainderVarT) $ fromEnd end
+    unifyRemainder in1only mEnd2
+    unifyRemainder in2only mEnd1
+
 unifyAST t1 t2 = throwError UnificationError --t1 t2
 
 ----------------------------------------------------------------------
@@ -319,6 +375,22 @@ generalizeVars (SType (TyAST (TyAp t1 t2))) = do
            , SType (TyAST (TyAp t1' t2')))
 generalizeVars (SType (TyAST TyCon{..})) =
     return ([], SType (TyAST TyCon{..}))
+generalizeVars (SType (TyAST (TyComp c))) = do
+    let FlatComposite labels mEnd = flattenComposite c
+    fc' <- mapM (\(name, t) -> (name,) <$> generalizeVars t) $ Map.toList labels
+    (endGVs, mEnd') <- case mEnd of
+        Nothing -> return ([], Nothing)
+        Just end -> do
+            (endGV, endT) <- generalizeVars end
+            return (endGV, Just endT)
+    let genRes = map snd fc'
+        c' = unflattenComposite
+            $ FlatComposite ( Map.fromList
+                              $ map (\(name, (_, tField)) -> (name, tField))
+                              $ fc' )
+            $ mEnd'
+    return ( foldr listUnion [] (endGVs : map fst genRes)
+           , SType (TyAST $ TyComp c'))
 
 generalize :: SType s -> Infer s (SType s)
 generalize t = do
@@ -333,10 +405,13 @@ fresh = do
     name <- freshName
     lift . lift $ newSTRef $ Unbound name curLevel
 
-freshTVar :: Infer s (TypeVar (STRef s) a)
-freshTVar = do
+freshTVarK :: Kind -> Infer s (TypeVar (STRef s) a)
+freshTVarK k = do
     ref <- fresh
-    return $ TypeVar ref Star
+    return $ TypeVar ref k
+
+freshTVar = freshTVarK Star
+freshRVar = freshTVarK Composite
 
 subInfer :: InferState s -> Infer s a -> Infer s a
 subInfer state' act = do

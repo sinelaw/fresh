@@ -6,6 +6,7 @@ import Test.QuickCheck
 #endif
 
 data Kind = Star
+          | Composite
           | KArrow Kind Kind
     deriving (Eq, Ord, Show)
 

@@ -9,9 +9,10 @@ import           Data.DeriveTH
 
 import           Control.Monad   (void, forM_, when)
 import Data.String (IsString(..))
+import qualified Data.Map as Map
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation)
+import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..))
 import qualified Fresh.Type as Type
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
 
@@ -77,6 +78,11 @@ a, b, c, d, e :: Type
 a',b',c',d',e' :: GenVar
 [a',b',c',d',e'] = map gv [0,1,2,3,4]
 
+record :: [(CompositeLabelName, Type)] -> Type
+record fs = (Fix Type.tyRec) ^$ (Fix $ TyComp c)
+    where
+        c = Type.unflattenComposite (FlatComposite (Map.fromList fs) Nothing)
+
 -- Tests
 
 wrapFooLet :: Expr () -> Expr ()
@@ -110,6 +116,8 @@ derive makeArbitrary ''GenVar
 derive makeArbitrary ''Id
 derive makeArbitrary ''Kind
 derive makeArbitrary ''TCon
+derive makeArbitrary ''CompositeLabelName
+derive makeArbitrary ''Composite
 derive makeArbitrary ''TypeAST
 derive makeArbitrary ''Pred
 derive makeArbitrary ''QualType
@@ -130,8 +138,13 @@ return []
 runTests :: IO Bool
 runTests = $quickCheckAll
 
+testUnify :: Type -> Type -> Either TypeError ()
+testUnify t1 t2 = Type.runInfer $ Type.unify (Type.unresolve t1) (Type.unresolve t2)
+
 main :: IO ()
 main = do
+    when (Right () /= testUnify (record []) (record [])) $ error "Unify bad"
+
     forM_ examples $ \(x, t) -> do
         print $ pretty x
         let inferredType = getAnnotation <$> inferExpr x
