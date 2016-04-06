@@ -13,7 +13,9 @@ import Fresh.Kind (Kind(..))
 import qualified Data.Char as Char
 
 instance Pretty TCon where
-    pretty (TCon (Id name) k) = text name
+    pretty (TCon (Id s@(c:_)) k)
+        | Char.isAlpha c = text s
+        | otherwise      = parens $ text s
 
 instance Pretty Kind where
     pretty (KArrow k1 k2) = pretty k1 <+> "->" <+> pretty k2
@@ -42,12 +44,8 @@ instance Pretty t => Pretty (Composite t) where
     pretty (CompositeTerminal) = empty
     pretty (CompositeRemainder t) = " |" <+> pretty t
 
-instance Pretty t => Pretty (TypeAST t) where
-    pretty (TyAp fun arg) =
-        case show (pretty fun) of
-            (n:ame) | Char.isAlpha n ->
-                          parens $ pretty fun <+> pretty arg
-            _ -> pretty arg <+> pretty fun
+instance (Pretty t) => Pretty (TypeAST t) where
+    pretty (TyAp fun arg) = parens $ pretty fun <+> pretty arg
     pretty (TyCon con) = pretty con
     pretty (TyGenVar genVar) = pretty genVar
     pretty (TyGen genVars t) = "forall" <+> foldr (<+>) empty (map pretty genVars) <> "." <+> pretty t
