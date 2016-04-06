@@ -7,11 +7,12 @@ import           Test.QuickCheck
 
 import           Data.DeriveTH
 
-import           Control.Monad   (void, forM_)
+import           Control.Monad   (void, forM_, when)
 import Data.String (IsString(..))
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
 import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation)
+import qualified Fresh.Type as Type
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
 
 instance IsString EVarName where
@@ -38,30 +39,44 @@ num = ELit () . LitNum
 (~>) :: EVarName -> Expr () -> Expr ()
 (~>) = ELam ()
 
-tcon :: String -> Fix TypeAST
+-- Types
+
+tcon :: String -> Type
 tcon x = Fix $ TyCon $ TCon (Id x) Star
 
-_Bool :: Fix TypeAST
+_Bool :: Type
 _Bool = tcon "Bool"
 
-_Number :: Fix TypeAST
+_Number :: Type
 _Number =  tcon "Number"
+
+_Func :: Type
+_Func = Fix Type.tyFunc
 
 (~=>) :: [Pred t] -> t -> QualType t
 (~=>) = QualType
+
+(^$) :: Type -> Type -> Type
+f ^$ x = Fix $ TyAp f x
+
+(^->) :: Fix TypeAST -> Fix TypeAST -> Fix TypeAST
+targ ^-> tres = Fix $ TyAp (Fix $ TyAp _Func targ) tres
+
+
+-- Tests
 
 wrapFooLet :: Expr () -> Expr ()
 wrapFooLet x = let_ "foo" x $ var "foo"
 
 exampleApIdNum = "x" ~> (var "x") ~$ num 2
 
-examples = [ exampleApIdNum
-           -- , exampleApIdNum ~:: ([] ~=> _Bool)
-           , exampleApIdNum ~:: ([] ~=> _Number)
-           , ELit () (LitBool False)
-           , let_ "id" ("x" ~> var "x") $ var "id"
-           , wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))
-           , wrapFooLet ("y" ~> ("x" ~> var "y"))
+examples = [ (exampleApIdNum,                      Right $ [] ~=> _Number)
+           , (exampleApIdNum ~:: ([] ~=> _Bool),   Left Type.UnificationError)
+           , (exampleApIdNum ~:: ([] ~=> _Number), Right $ [] ~=> _Number)
+           , (ELit () (LitBool False),             Right $ [] ~=> _Bool)
+           -- , let_ "id" ("x" ~> var "x") $ var "id"
+           -- , wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))
+           -- , wrapFooLet ("y" ~> ("x" ~> var "y"))
            ]
 
 -- ----------------------------------------------------------------------
@@ -94,9 +109,11 @@ runTests = $quickCheckAll
 
 main :: IO ()
 main = do
-    forM_ examples $ \x -> do
+    forM_ examples $ \(x, t) -> do
         print $ pretty x
-        print . pretty $ getAnnotation <$> inferExpr x
+        let inferredType = getAnnotation <$> inferExpr x
+        print . pretty $ inferredType
+        when (inferredType /= t) $ error "Wrong type"
         -- print . show $ getAnnotation <$> inferExpr x
         -- print . show $ getAnnotation <$> inferExpr (constWrap x)
         putStrLn "------------------------------------------------------------"
