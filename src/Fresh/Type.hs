@@ -206,7 +206,7 @@ unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
 unifyAST (TyCon tc1) (TyCon tc2) | tc1 == tc2 = return ()
 unifyAST (TyGenVar g1) (TyGenVar g2) | g1 == g2 = return ()
 unifyAST (TyGen vs1 t1) (TyGen vs2 t2) | vs1 == vs2 = unify t1 t2
-unifyAST t1 t2 = throwError $ UnificationError (show t1) (show t2)
+unifyAST t1 t2 = throwError $ UnificationError --t1 t2
 
 ----------------------------------------------------------------------
 
@@ -253,7 +253,7 @@ data InferState s
     deriving Show
 
 data TypeError
-    = UnificationError String String
+    = UnificationError --String String
     | EscapedSkolemError String
     | KindMismatchError Kind Kind
     | InvalidVarError String
