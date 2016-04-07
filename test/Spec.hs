@@ -189,6 +189,13 @@ shouldUnify b t1 t2 = do
 
 erecord x = record x Nothing
 
+rightPad c n []
+    | n > 0     = take n $ repeat c
+    | otherwise = []
+rightPad c n (x:xs)
+    | n > 0     = x : rightPad c (n-1) xs
+    | otherwise = (x:xs)
+
 main :: IO ()
 main = do
     putStrLn "Testing..."
@@ -205,12 +212,16 @@ main = do
         print . pretty $ inferredType
         when (inferredType /= t)
             $ error
-            $ "Wrong type."
-            ++ "\t" ++ "Expected: " ++ show (pretty t) -- ++ " = " ++ (show t) ++ "\n"
-            ++ "\t" ++ "Inferred: " ++ show (pretty inferredType) -- ++ " = " ++ (show inferredType) ++ "\n"
+            $ concat
+            [ "Wrong type."
+            , "\n"
+            , "\t" , "Expected: " , show (pretty t) -- , " = " , (show t) , "\n"
+            , "\n"
+            , "\t" , "Inferred: " , show (pretty inferredType) -- , " = " , (show inferredType) , "\n"
+            ]
         -- print . show $ getAnnotation <$> inferExpr x
         -- print . show $ getAnnotation <$> inferExpr (constWrap x)
-        putStrLn "------------------------------------------------------------"
+    putStrLn "------------------------------------------------------------"
     void runTests
 
 
