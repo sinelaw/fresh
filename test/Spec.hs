@@ -12,7 +12,7 @@ import Data.String (IsString(..))
 import qualified Data.Map as Map
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..))
+import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..))
 import qualified Fresh.Type as Type
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
 
@@ -145,8 +145,11 @@ constWrap expr = (("x" ~> expr) ~$ num 0)
 testUnify :: Type -> Type -> Either TypeError ()
 testUnify t1 t2 = Type.runInfer $ Type.unify (Type.unresolve t1) (Type.unresolve t2)
 
--- prop_unifySame :: Type -> Bool
--- prop_unifySame t = Right () == testUnify t t
+prop_unifySame :: Type -> Bool
+prop_unifySame t =
+    case kind t of
+        Just Star -> Right () == testUnify t t
+        _ -> True -- don't test
 
 return []
 
