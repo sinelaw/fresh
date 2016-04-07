@@ -12,7 +12,7 @@ module Fresh.Type where
 import           Fresh.Kind (Kind(..))
 import qualified Fresh.Kind as Kind
 import Data.STRef
-import Control.Monad (when, forM_)
+import Control.Monad (when, forM_, join)
 import Control.Monad.ST (ST, runST)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -72,21 +72,18 @@ data TypeAST t
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 class HasKind t where
-    kind :: t -> Kind
+    kind :: t -> Maybe Kind -- Should really be just Kind, but hard to generate arbitrary for TyAp
 
 instance HasKind TCon where
-    kind = tcKind
+    kind = Just . tcKind
 instance HasKind GenVar where
-    kind = genVarKind
+    kind = Just . genVarKind
 instance HasKind t => HasKind (TypeAST t) where
-    kind (TyAp f x) =
-        case Kind.app (kind f) (kind x) of
-            Nothing -> error $ "Can't apply type function, kinding mismatch! " ++ show (kind f) ++ " on " ++ show (kind x)
-            Just k -> k
+    kind (TyAp f x) = join $ Kind.app <$> kind f <*> kind x
     kind (TyCon tc) = kind tc
     kind (TyGenVar gv) = kind gv
     kind (TyGen vs s) = kind s
-    kind (TyComp fs) = Composite
+    kind (TyComp fs) = Just Composite
 
 tyRec :: TypeAST t
 tyRec = TyCon (TCon (Id "Rec") (KArrow Composite Star))
@@ -117,7 +114,7 @@ instance Show (STRef s t) where
     show v = "<stref>"
 
 instance HasKind (TypeVar v t) where
-    kind (TypeVar c k) = k
+    kind (TypeVar c k) = Just k
 
 -- deriving instance Eq t => Eq (TypeVar Identity t)
 -- deriving instance Show t => Show (TypeVar Identity t)
@@ -203,9 +200,18 @@ resolve (SType (TyAST t)) = do
 unresolve :: Type -> SType s
 unresolve (Fix t) = SType . TyAST $ fmap unresolve t
 
+checkKind :: Maybe Kind -> Infer s Kind
+checkKind Nothing  = throwError InvalidKind
+checkKind (Just k) = return k
+
+getKind :: HasKind t => t -> Infer s Kind
+getKind = checkKind . kind
+
 varBind :: TypeVar (STRef s) (SType s) -> SType s -> Infer s ()
 varBind tvar t = do
-    when (kind tvar /= kind t) $ throwError $ KindMismatchError (kind tvar) (kind t)
+    tvarK <- getKind tvar
+    tK <- getKind t
+    when (tvarK /= tK) $ throwError $ KindMismatchError tvarK tK
     vt <- readVar tvar
     case vt of
         Unbound _name level -> writeVar tvar (Link t)
@@ -221,9 +227,11 @@ unchain t = return t
 
 unify :: SType s -> SType s -> Infer s ()
 unify t1 t2 = do
+    k1 <- getKind t1
+    k2 <- getKind t2
+    when (k1 /= k2) $ throwError $ KindMismatchError k1 k2
     t1' <- unchain t1
     t2' <- unchain t2
-    when (kind t1 /= kind t2) $ throwError $ KindMismatchError (kind t1) (kind t2)
     unify' t1' t2'
 
 unify' :: SType s -> SType s -> Infer s ()
@@ -320,6 +328,7 @@ data InferState s
 data TypeError
     = UnificationError --String String
     | EscapedSkolemError String
+    | InvalidKind
     | KindMismatchError Kind Kind
     | InvalidVarError String
     deriving (Eq, Show)
@@ -510,6 +519,7 @@ qresolve (QualType ps t) = do
 inferExpr :: Show a => Expr a -> Either TypeError (Expr (QualType Type))
 inferExpr expr = runInfer $ do
     (expr', t) <- infer expr
-    when (kind t /= Star) $ throwError $ KindMismatchError (kind t) Star
+    k <- getKind t
+    when (k /= Star) $ throwError $ KindMismatchError k Star
     traverse (qresolve . snd) expr'
 
