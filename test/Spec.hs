@@ -123,6 +123,9 @@ examples = [ ( exampleApIdNum,                      Right $ [] ~=> _Number)
            , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
              , Right $ [] ~=> forall [b', d'] (b ^-> d ^-> b))
 
+           , ( let_ "zero" ("x" ~> var "x" ~$ num 0) (var "zero")
+             , Right $ [] ~=> forall [c'] ((_Number ^-> c) ^-> c))
+
            , ( wrapFooLet ("y" ~> "x" ~> var "y")
              , Right $ [] ~=> forall [b', c'] (b ^-> c ^-> b))
 
