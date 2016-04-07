@@ -95,14 +95,25 @@ wrapFooLet x = let_ "foo" x $ var "foo"
 exampleApIdNum :: Expr ()
 exampleApIdNum = "x" ~> (var "x") ~$ num 2
 
+testClass :: Class
+testClass = Class (Id "TestClass") Star
+
+idFunction = let_ "id" ("x" ~> var "x") $ var "id"
+
 examples :: [(Expr (), Either TypeError (QualType Type))]
-examples = [ (exampleApIdNum,                      Right $ [] ~=> _Number)
-           , (exampleApIdNum ~:: ([] ~=> _Bool),   Left Type.UnificationError)
-           , (exampleApIdNum ~:: ([] ~=> _Number), Right $ [] ~=> _Number)
-           , (ELit () (LitBool False),             Right $ [] ~=> _Bool)
+examples = [ ( exampleApIdNum,                      Right $ [] ~=> _Number)
+           , ( exampleApIdNum ~:: ([] ~=> _Bool),   Left Type.UnificationError)
+           , ( exampleApIdNum ~:: ([] ~=> _Number), Right $ [] ~=> _Number)
+           , ( ELit () (LitBool False),             Right $ [] ~=> _Bool)
              -- TODO deal with alpha equivalence, preferrably by
              -- making generalization produce ids like GHC
-           , (let_ "id" ("x" ~> var "x") $ var "id", Right $ [] ~=> (forall [b'] $ b ^-> b))
+           , ( idFunction, Right $ [] ~=> (forall [b'] $ b ^-> b))
+
+           , ( let_ "id" ("x" ~> ((var "x") ~:: ([] ~=> _Number))) $ var "id",
+               Right $ [] ~=> (_Number ^-> _Number))
+
+           , ( idFunction ~:: ([PredIs testClass b] ~=> (forall [b'] $ b ^-> b)),
+               Right $ [PredIs testClass b] ~=> (forall [b'] $ b ^-> b))
 
            , ( wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))
              , Right $ [] ~=> (forall [b', d'] $ b ^-> d ^-> b))
@@ -110,8 +121,11 @@ examples = [ (exampleApIdNum,                      Right $ [] ~=> _Number)
            , ( wrapFooLet ("y" ~> ("x" ~> var "y"))
              , Right $ [] ~=> (forall [b', c'] $ b ^-> c ^-> b))
 
-           , (let_ "id" ("x" ~> ((var "x") ## "fieldName")) $ var "id",
-              Right $ [] ~=> (forall [c', d'] $ (record [("fieldName", c)] $ Just d) ^-> c))
+           , ( let_ "id" ("x" ~> ((var "x") ## "fieldName")) $ var "id",
+               Right $ [] ~=> (forall [c', d'] $ (record [("fieldName", c)] $ Just d) ^-> c))
+
+           , ( let_ "id" ("x" ~> (((var "x") ## "fieldName") ~:: ([] ~=> _Number))) $ var "id",
+               Right $ [] ~=> ((record [("fieldName", _Number)] $ Just d) ^-> _Number))
            ]
 
 -- ----------------------------------------------------------------------
