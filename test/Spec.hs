@@ -119,7 +119,9 @@ examples = [ (exampleApIdNum,                      Right $ [] ~=> _Number)
 instance Arbitrary (t (Fix t)) => Arbitrary (Fix t) where
     arbitrary = Fix <$> arbitrary
 
-derive makeArbitrary ''GenVar
+instance Arbitrary GenVar where
+    arbitrary = GenVar <$> (getPositive <$> arbitrary) <*> arbitrary
+
 derive makeArbitrary ''Id
 derive makeArbitrary ''Kind
 derive makeArbitrary ''TCon
