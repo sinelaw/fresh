@@ -473,20 +473,21 @@ infer (EApp a efun earg) = do
     return (EApp (a, resQ) efun' earg', resQ)
 
 infer (ELet a var edef expr) = do
-    (edef', edefT) <- inLevel $ do
+    (edef', edefP, edefT) <- inLevel $ do
         tvar <- freshTVar
         is <- get
         (edef', QualType edefP edefT) <- subInfer (is { isContext = Map.insert var tvar (isContext is) }) (infer edef)
         let varT = SType $ TyVar tvar
         unify varT edefT
-        return (edef', edefT)
+        return (edef', edefP, edefT)
 
     genVarT <- generalize edefT
     tvarGen <- freshTVar
     varBind tvarGen genVarT
     is' <- get
-    (expr', exprT) <- subInfer (is' { isContext = Map.insert var tvarGen (isContext is') }) (infer expr)
-    return (ELet (a, exprT) var edef' expr', exprT)
+    (expr', QualType exprP exprT) <- subInfer (is' { isContext = Map.insert var tvarGen (isContext is') }) (infer expr)
+    let resT = QualType (exprP ++ edefP) exprT
+    return (ELet (a, resT) var edef' expr', resT)
 
 infer (EAsc a asc@(QualType ps t) expr) = do
     let st = unresolve t
