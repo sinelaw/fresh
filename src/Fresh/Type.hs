@@ -137,6 +137,9 @@ newtype Fix f = Fix { unFix :: f (Fix f) }
 
 deriving instance Show (f (Fix f)) => Show (Fix f)
 
+instance HasKind (f (Fix f)) => HasKind (Fix f) where
+    kind (Fix t) = kind t
+
 data SType s = SType (TypeABT (STRef s) (SType s))
 
 deriving instance Show (TypeABT (STRef s) (SType s)) => Show (SType s)
