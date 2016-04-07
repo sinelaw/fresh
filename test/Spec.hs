@@ -136,7 +136,7 @@ examples = [ ( exampleApIdNum,                      Right $ [] ~=> _Number)
                ("x" ~>
                 (((var "x") ## "fieldName") ~:: [] ~=> _Number))
                $ var "id"
-             , Right $ [] ~=> (record [("fieldName", _Number)] (Just d) ^-> _Number))
+             , Right $ [] ~=> forall [d'] (record [("fieldName", _Number)] (Just d) ^-> _Number))
            ]
 
 -- ----------------------------------------------------------------------
