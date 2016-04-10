@@ -28,13 +28,35 @@ import qualified Data.Foldable
 
 -- import Debug.Trace (traceM)
 
+data Level = Level Int | LevelAny
+    deriving (Eq, Show)
+
+instance Ord Level where
+    (Level x) `compare` (Level y) = x `compare` y
+    l `compare` LevelAny = LT
+    LevelAny `compare` l = GT
+
+mapLevel :: (Int -> Int) -> Level -> Level
+mapLevel  f (Level x) = Level (f x)
+mapLevel _f l         = l
+
+levelInc :: Level -> Level
+levelInc = mapLevel (+1)
+levelDec :: Level -> Level
+levelDec = mapLevel (\x -> x - 1) -- TODO assert > 0
+
 data Id = Id String
     deriving (Eq, Ord, Show)
 
 data TCon = TCon { tcId ::  Id, tcKind :: Kind }
     deriving (Eq, Ord, Show)
 
-data GenVar = GenVar { genVarId :: Int, genVarKind :: Kind }
+data GenVar
+    = GenVar
+      { genVarId :: Int
+      , genVarKind :: Kind
+      , genVarLevel :: Level
+      }
     deriving (Eq, Ord, Show)
 
 newtype CompositeLabelName = CompositeLabelName String
@@ -67,9 +89,28 @@ data TypeAST t
     = TyAp { _tyApFun :: t, _tyApArg :: t }
     | TyCon { _tyCon :: TCon }
     | TyGenVar { _tyGenVar :: GenVar }
-    | TyGen { _tyGenVars :: [GenVar], _tyGenScheme :: t }
+    | TyGen { _tyGenVars :: GenVar, _tyGenScheme :: t }
     | TyComp { _tyComp :: Composite t }
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+class SubstGen t where
+    substGen :: (GenVar -> GenVar) -> t -> t
+
+instance SubstGen t => SubstGen (TypeAST t) where
+    substGen f (TyGenVar g) = TyGenVar (f g)
+    substGen f t = fmap (substGen f) t
+
+singleSubstGen :: GenVar -> GenVar -> GenVar -> GenVar
+singleSubstGen v u gv | gv == v = u
+singleSubstGen _ _ gv = gv
+
+class HasLevel t where
+    level :: t -> Level
+
+instance HasLevel GenVar where
+    level = genVarLevel
+instance HasLevel t => HasLevel (TypeAST t) where
+    level = foldr (min . level) LevelAny
 
 class HasKind t where
     kind :: t -> Maybe Kind -- Should really be just Kind, but hard to generate arbitrary for TyAp
@@ -94,21 +135,14 @@ tySum = TyCon (TCon (Id "Sum") (KArrow Composite Star))
 tyFunc :: TypeAST t
 tyFunc = TyCon (TCon (Id "->") (KArrow Star (KArrow Star Star)))
 
-newtype Level = Level Int
-    deriving (Eq, Ord, Show)
-
-levelInc :: Level -> Level
-levelInc (Level i) = Level $ i + 1
-levelDec :: Level -> Level
-levelDec (Level i) = Level $ i - 1 -- TODO assert > 0
-
 data TVarLink t
     = Unbound Int Level
     | Link t
-    deriving (Eq, Ord, Show)
+    deriving (Eq, Ord, Show, Functor)
 
 data TypeVar v t
     = TypeVar { tyVarCell :: v (TVarLink t), tyVarKind :: Kind }
+    deriving (Functor)
 
 instance Show (STRef s t) where
     show v = "<stref>"
@@ -124,7 +158,7 @@ deriving instance Show t => Show (TypeVar (STRef s) t)
 data TypeABT v t
     = TyVar (TypeVar v t)
     | TyAST (TypeAST t)
-    -- deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+    deriving (Functor)
 
 deriving instance Eq t => Eq (TypeABT (STRef s) t)
 deriving instance Show t => Show (TypeABT (STRef s) t)
@@ -132,6 +166,10 @@ deriving instance Show t => Show (TypeABT (STRef s) t)
 instance (HasKind t) => HasKind (TypeABT v t) where
     kind (TyVar tv) = kind tv
     kind (TyAST ast) = kind ast
+
+instance (SubstGen t) => SubstGen (TypeABT v t) where
+    substGen s t@TyVar{} = t
+    substGen s (TyAST ast) = TyAST $ substGen s ast
 
 newtype Fix f = Fix { unFix :: f (Fix f) }
 
@@ -143,6 +181,9 @@ instance HasKind (f (Fix f)) => HasKind (Fix f) where
 data SType s = SType (TypeABT (STRef s) (SType s))
 
 deriving instance Show (TypeABT (STRef s) (SType s)) => Show (SType s)
+
+instance SubstGen (SType s) where
+    substGen s (SType abt) = SType $ substGen s abt
 
 instance HasKind (SType s) where
     kind (SType t) = kind t
@@ -196,6 +237,16 @@ resolve (SType (TyVar tvar)) = do
         Unbound _name level -> throwError
             $ EscapedSkolemError $ "resolve" ++ show tvar ++ ", level: " ++ show level -- TODO perhaps generalize?
         Link t' -> resolve t'
+resolve (SType (TyAST (TyGen gv t))) = do
+    inLevel $ do
+        t' <- resolve t
+        return $ Fix . TyGen gv <$> t'
+resolve (SType (TyAST (TyGenVar gv))) = do
+    curGenLevel <- levelDec <$> getCurrentLevel
+    if genVarLevel gv < curGenLevel
+        then throwError $ EscapedSkolemError
+             $ "genVar : " ++ (show $ genVarLevel gv) ++ " in generalize of " ++ show curGenLevel
+        else return $ Just $ Fix (TyGenVar gv)
 resolve (SType (TyAST t)) = do
     mt <- traverse resolve t
     return . fmap Fix $ sequenceA mt
@@ -217,7 +268,7 @@ varBind tvar t = do
     when (tvarK /= tK) $ throwError $ KindMismatchError tvarK tK
     vt <- readVar tvar
     case vt of
-        Unbound _name level -> writeVar tvar (Link t)
+        Unbound _name l -> writeVar tvar (Link t)
         Link t' -> unify t' t -- TODO occurs
 
 unchain :: SType s -> Infer s (SType s)
@@ -258,9 +309,15 @@ unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
     unify t2 t2'
 unifyAST (TyCon tc1) (TyCon tc2) | tc1 == tc2 = return ()
 unifyAST (TyGenVar g1) (TyGenVar g2) | g1 == g2 = return ()
-unifyAST (TyGen vs1 t1) (TyGen vs2 t2) -- = do
-    -- skolem <- fresh
-    | vs1 == vs2 = unify t1 t2
+unifyAST (TyGen v1 t1) (TyGen v2 t2) = do
+    k1 <- getKind v1
+    k2 <- getKind v2
+    when (k1 /= k2) $ throwError $ KindMismatchError k1 k2
+    skolem <- GenVar <$> freshName <*> pure k1 <*> getCurrentLevel
+    let t1' = substGen (singleSubstGen v1 skolem) t1
+        t2' = substGen (singleSubstGen v2 skolem) t2
+    unify t1' t2'
+
 unifyAST (TyComp c1) (TyComp c2) = do
     let FlatComposite labels1 mEnd1 = flattenComposite c1
         FlatComposite labels2 mEnd2 = flattenComposite c2
@@ -377,19 +434,19 @@ generalizeVars t@(SType (TyVar tvar)) = do
             curLevel <- getCurrentLevel
             if curLevel < level
             then do
-                let gv = GenVar name Star
+                let gv = GenVar name Star curLevel
                     tgenvar = SType (TyAST $ TyGenVar gv)
                 writeVar tvar $ Link tgenvar
                 return ([gv], tgenvar)
             else return ([], t)
 generalizeVars t@(SType (TyAST (TyGenVar genVar))) =
-    return ([genVar], t)
-generalizeVars (SType (TyAST (TyGen genvar  t))) = do
+    return ([], t)
+generalizeVars (SType (TyAST (TyGen genvar t))) = do
     -- erase rank > 1
     -- TODO consider failing if rank > 1 found
     (rank2Vars, t') <- generalizeVars t
     -- TODO check for collisions in genvar ids
-    return (genvar:rank2Vars, t')
+    return (rank2Vars, SType (TyAST (TyGen genvar t')))
 generalizeVars (SType (TyAST (TyAp t1 t2))) = do
     (vs1, t1') <- generalizeVars t1
     (vs2, t2') <- generalizeVars t2
@@ -416,8 +473,10 @@ generalizeVars (SType (TyAST (TyComp c))) = do
 
 generalize :: SType s -> Infer s (SType s)
 generalize t = do
+    curLevel <- getCurrentLevel
+    let isCurLevel gv = genVarLevel gv == curLevel
     (genvars, t') <- generalizeVars t
-    return $ foldr (\gv u -> SType $ TyAST $ TyGen gv u) t' genvars
+    return $ foldr (\gv u -> SType $ TyAST $ TyGen gv u) t' $ filter (isCurLevel) genvars
 
 fresh :: Infer s (STRef s (TVarLink t))
 fresh = do

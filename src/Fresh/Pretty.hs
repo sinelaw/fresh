@@ -22,8 +22,12 @@ instance Pretty Kind where
     pretty Star = "*"
     pretty Composite = "@"
 
+instance Pretty Level where
+    pretty (LevelAny) = "^^"
+    pretty (Level x) = "^" <> pretty x
+
 instance Pretty GenVar where
-    pretty (GenVar idx k) = pk name
+    pretty (GenVar idx k l) = pk name <> pretty l
         where name = if idx < length ['a'..'z']
                      then char $ ['a'..'z'] !! idx
                      else "t" <> int idx

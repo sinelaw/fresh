@@ -12,7 +12,7 @@ import Data.String (IsString(..))
 import qualified Data.Map as Map
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..))
+import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..))
 import qualified Fresh.Type as Type
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
 
@@ -76,15 +76,15 @@ targ ^-> tres = Fix $ TyAp (Fix $ TyAp _Func targ) tres
 forall :: GenVar -> Type -> Type
 forall gv t = Fix $ TyGen gv t
 
-gv :: Int -> GenVar
-gv x = GenVar x Star
+gv :: Int -> Int -> GenVar
+gv x l = GenVar x Star (Level l)
 
-tv :: Int -> Type
-tv x = Fix $ TyGenVar $ gv x
+tv :: Int -> Int -> Type
+tv x l = Fix $ TyGenVar $ gv x l
 
-a, b, c, d, e :: Type
+a, b, c, d, e :: Int -> Type
 [a, b, c, d, e] = map tv [0,1,2,3,4]
-a',b',c',d',e' :: GenVar
+a',b',c',d',e' :: Int -> GenVar
 [a',b',c',d',e'] = map gv [0,1,2,3,4]
 
 record :: [(CompositeLabelName, Type)] -> Maybe Type -> Type
@@ -112,31 +112,34 @@ examples = [ ( exampleApIdNum,                      Right $ [] ~=> _Number)
            , ( ELit () (LitBool False),             Right $ [] ~=> _Bool)
              -- TODO deal with alpha equivalence, preferrably by
              -- making generalization produce ids like GHC
-           , ( idFunction, Right $ [] ~=> forall b' (b ^-> b))
+           , ( idFunction, Right $ [] ~=> forall (b' 0) (b 0 ^-> b 0))
 
            , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> _Number))) $ var "id",
                Right $ [] ~=> (_Number ^-> _Number))
 
-           , ( idFunction ~:: ([PredIs testClass b] ~=> forall b' (b ^-> b)),
-               Right $ [PredIs testClass b] ~=> forall b' (b ^-> b))
+           , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> forall (d' 0) (d 0 ^-> d 0)))) $ var "id",
+               Right $ [] ~=> ((forall (d' 0) (d 0 ^-> d 0)) ^-> (forall (d' 0) (d 0 ^-> d 0))))
 
-           , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
-             , Right $ [] ~=> forall b' (forall d' (b ^-> d ^-> b)))
+           , ( idFunction ~:: ([PredIs testClass $ b 0] ~=> forall (b' 0) (b 0 ^-> b 0)),
+               Right $ [PredIs testClass $ b 0] ~=> forall (b' 0) (b 0 ^-> b 0))
 
-           , ( let_ "zero" ("x" ~> var "x" ~$ num 0) (var "zero")
-             , Right $ [] ~=> forall c' ((_Number ^-> c) ^-> c))
+           -- , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
+           --   , Right $ [] ~=> forall b' (forall d' (b ^-> d ^-> b)))
 
-           , ( wrapFooLet ("y" ~> "x" ~> var "y")
-             , Right $ [] ~=> forall b' (forall c' (b ^-> c ^-> b)))
+           -- , ( let_ "zero" ("x" ~> var "x" ~$ num 0) (var "zero")
+           --   , Right $ [] ~=> forall c' ((_Number ^-> c) ^-> c))
 
-           , ( let_ "id" ("x" ~> var "x" ## "fieldName") $ var "id"
-             , Right $ [] ~=> forall c' (forall d' (record [("fieldName", c)] (Just d) ^-> c)))
+           -- , ( wrapFooLet ("y" ~> "x" ~> var "y")
+           --   , Right $ [] ~=> forall b' (forall c' (b ^-> c ^-> b)))
 
-           , ( let_ "id"
-               ("x" ~>
-                (((var "x") ## "fieldName") ~:: [] ~=> _Number))
-               $ var "id"
-             , Right $ [] ~=> forall d' (record [("fieldName", _Number)] (Just d) ^-> _Number))
+           -- , ( let_ "id" ("x" ~> var "x" ## "fieldName") $ var "id"
+           --   , Right $ [] ~=> forall c' (forall d' (record [("fieldName", c)] (Just d) ^-> c)))
+
+           -- , ( let_ "id"
+           --     ("x" ~>
+           --      (((var "x") ## "fieldName") ~:: [] ~=> _Number))
+           --     $ var "id"
+           --   , Right $ [] ~=> forall d' (record [("fieldName", _Number)] (Just d) ^-> _Number))
            ]
 
 -- ----------------------------------------------------------------------
@@ -145,8 +148,9 @@ instance Arbitrary (t (Fix t)) => Arbitrary (Fix t) where
     arbitrary = Fix <$> arbitrary
 
 instance Arbitrary GenVar where
-    arbitrary = GenVar <$> (getPositive <$> arbitrary) <*> arbitrary
+    arbitrary = GenVar <$> (getPositive <$> arbitrary) <*> arbitrary <*> arbitrary
 
+derive makeArbitrary ''Level
 derive makeArbitrary ''Id
 derive makeArbitrary ''Kind
 derive makeArbitrary ''TCon
