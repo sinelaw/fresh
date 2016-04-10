@@ -82,7 +82,7 @@ instance HasKind t => HasKind (TypeAST t) where
     kind (TyAp f x) = join $ Kind.app <$> kind f <*> kind x
     kind (TyCon tc) = kind tc
     kind (TyGenVar gv) = kind gv
-    kind (TyGen vs s) = kind s
+    kind (TyGen v s) = kind s
     kind (TyComp fs) = Just Composite
 
 tyRec :: TypeAST t
@@ -150,7 +150,7 @@ instance HasKind (SType s) where
 data Class = Class Id Kind
     deriving (Eq, Ord, Show)
 
-data Pred t = PredIs Class t
+data Pred t = PredIs Class t | PredNoLabel CompositeLabelName t
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 data QualType t = QualType { qualPred :: [Pred t], qualType :: t }
@@ -218,7 +218,7 @@ varBind tvar t = do
     vt <- readVar tvar
     case vt of
         Unbound _name level -> writeVar tvar (Link t)
-        Link t' -> unify t' t
+        Link t' -> unify t' t -- TODO occurs
 
 unchain :: SType s -> Infer s (SType s)
 unchain t@(SType (TyVar tvar)) = do
@@ -258,7 +258,9 @@ unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
     unify t2 t2'
 unifyAST (TyCon tc1) (TyCon tc2) | tc1 == tc2 = return ()
 unifyAST (TyGenVar g1) (TyGenVar g2) | g1 == g2 = return ()
-unifyAST (TyGen vs1 t1) (TyGen vs2 t2) | vs1 == vs2 = unify t1 t2
+unifyAST (TyGen vs1 t1) (TyGen vs2 t2) -- = do
+    -- skolem <- fresh
+    | vs1 == vs2 = unify t1 t2
 unifyAST (TyComp c1) (TyComp c2) = do
     let FlatComposite labels1 mEnd1 = flattenComposite c1
         FlatComposite labels2 mEnd2 = flattenComposite c2
@@ -382,12 +384,12 @@ generalizeVars t@(SType (TyVar tvar)) = do
             else return ([], t)
 generalizeVars t@(SType (TyAST (TyGenVar genVar))) =
     return ([genVar], t)
-generalizeVars (SType (TyAST (TyGen genvars t))) = do
+generalizeVars (SType (TyAST (TyGen genvar  t))) = do
     -- erase rank > 1
     -- TODO consider failing if rank > 1 found
     (rank2Vars, t') <- generalizeVars t
     -- TODO check for collisions in genvar ids
-    return (genvars `listUnion` rank2Vars, t')
+    return (genvar:rank2Vars, t')
 generalizeVars (SType (TyAST (TyAp t1 t2))) = do
     (vs1, t1') <- generalizeVars t1
     (vs2, t2') <- generalizeVars t2
@@ -415,9 +417,7 @@ generalizeVars (SType (TyAST (TyComp c))) = do
 generalize :: SType s -> Infer s (SType s)
 generalize t = do
     (genvars, t') <- generalizeVars t
-    return $ case genvars of
-        [] -> t'
-        vs -> SType (TyAST (TyGen vs t'))
+    return $ foldr (\gv u -> SType $ TyAST $ TyGen gv u) t' genvars
 
 fresh :: Infer s (STRef s (TVarLink t))
 fresh = do

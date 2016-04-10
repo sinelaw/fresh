@@ -48,7 +48,7 @@ instance (Pretty t) => Pretty (TypeAST t) where
     pretty (TyAp fun arg) = parens $ pretty fun <+> pretty arg
     pretty (TyCon con) = pretty con
     pretty (TyGenVar genVar) = pretty genVar
-    pretty (TyGen genVars t) = "forall" <+> foldr (<+>) empty (map pretty genVars) <> "." <+> pretty t
+    pretty (TyGen genVar t) = "forall" <+> pretty genVar <> "." <+> pretty t
     -- TODO
     pretty (TyComp c) = "{" <+> pretty c <+> "}"
 

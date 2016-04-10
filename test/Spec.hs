@@ -73,8 +73,8 @@ infixr 5 ^->
 (^->) :: Type -> Type -> Type
 targ ^-> tres = Fix $ TyAp (Fix $ TyAp _Func targ) tres
 
-forall :: [GenVar] -> Type -> Type
-forall gvs t = Fix $ TyGen gvs t
+forall :: GenVar -> Type -> Type
+forall gv t = Fix $ TyGen gv t
 
 gv :: Int -> GenVar
 gv x = GenVar x Star
@@ -112,31 +112,31 @@ examples = [ ( exampleApIdNum,                      Right $ [] ~=> _Number)
            , ( ELit () (LitBool False),             Right $ [] ~=> _Bool)
              -- TODO deal with alpha equivalence, preferrably by
              -- making generalization produce ids like GHC
-           , ( idFunction, Right $ [] ~=> forall [b'] (b ^-> b))
+           , ( idFunction, Right $ [] ~=> forall b' (b ^-> b))
 
            , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> _Number))) $ var "id",
                Right $ [] ~=> (_Number ^-> _Number))
 
-           , ( idFunction ~:: ([PredIs testClass b] ~=> forall [b'] (b ^-> b)),
-               Right $ [PredIs testClass b] ~=> forall [b'] (b ^-> b))
+           , ( idFunction ~:: ([PredIs testClass b] ~=> forall b' (b ^-> b)),
+               Right $ [PredIs testClass b] ~=> forall b' (b ^-> b))
 
            , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
-             , Right $ [] ~=> forall [b', d'] (b ^-> d ^-> b))
+             , Right $ [] ~=> forall b' (forall d' (b ^-> d ^-> b)))
 
            , ( let_ "zero" ("x" ~> var "x" ~$ num 0) (var "zero")
-             , Right $ [] ~=> forall [c'] ((_Number ^-> c) ^-> c))
+             , Right $ [] ~=> forall c' ((_Number ^-> c) ^-> c))
 
            , ( wrapFooLet ("y" ~> "x" ~> var "y")
-             , Right $ [] ~=> forall [b', c'] (b ^-> c ^-> b))
+             , Right $ [] ~=> forall b' (forall c' (b ^-> c ^-> b)))
 
            , ( let_ "id" ("x" ~> var "x" ## "fieldName") $ var "id"
-             , Right $ [] ~=> forall [c', d'] (record [("fieldName", c)] (Just d) ^-> c))
+             , Right $ [] ~=> forall c' (forall d' (record [("fieldName", c)] (Just d) ^-> c)))
 
            , ( let_ "id"
                ("x" ~>
                 (((var "x") ## "fieldName") ~:: [] ~=> _Number))
                $ var "id"
-             , Right $ [] ~=> forall [d'] (record [("fieldName", _Number)] (Just d) ^-> _Number))
+             , Right $ [] ~=> forall d' (record [("fieldName", _Number)] (Just d) ^-> _Number))
            ]
 
 -- ----------------------------------------------------------------------
