@@ -52,10 +52,13 @@ instance Unifiable Type where
     zipMatch _ _ = Nothing
 
 newtype TVar s = TVar { stVar :: STVar s Type }
-               deriving (Show, Eq)
+               deriving (Show)
 
 instance Ord (TVar s) where
     x `compare` y = Unification.getVarID (stVar x) `compare` Unification.getVarID (stVar y)
+
+instance Eq (TVar s) where
+    x == y = EQ == (x `compare` y)
 
 type TTerm s = UTerm Type (STVar s Type)
 
