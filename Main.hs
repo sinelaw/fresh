@@ -6,7 +6,8 @@
 
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts, StandaloneDeriving, UndecidableInstances, RecordWildCards, LambdaCase #-}
+{-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts,
+  UndecidableInstances, LambdaCase #-}
 module Main (main) where
 
 import Control.Monad ((>=>))
@@ -87,7 +88,7 @@ liveTVars = do
 gen :: TTerm s -> Infer s () -- TTerm s)
 gen t = do
     lives <- liveTVars
-    frees <- (`Set.difference` lives) . Set.fromList . fmap TVar <$> (liftUnify $ Unification.getFreeVars t)
+    frees <- (`Set.difference` lives) . Set.fromList . fmap TVar <$> liftUnify (Unification.getFreeVars t)
     liftUnify $ mapM_ (\(TVar v) -> Unification.bindVar v $ mkQVar v) frees
     where
         mkQVar v = UTerm . QVar . QName . show $ Unification.getVarID v
@@ -159,15 +160,25 @@ typeOf (FExpr e') = case e' of
         withVar n tDef $ typeOf e2
 -- ----------------------------------------------------------------------
 
-
+test_id_inner :: FExpr
 test_id_inner = FExpr (Lam "x" $ FExpr $ Var "x")
+
+test_id :: FExpr
 test_id = FExpr $ Let "id" test_id_inner (FExpr $ Var "id") -- (FExpr $ App (FExpr $ Var "id") (FExpr $ Var "id")) -- (FExpr $ Var "id")
+
+tid :: Either String (Maybe (Fix Type))
 tid = runInfer $ typeOf test_id
 
+test_id2 :: FExpr
 test_id2 = FExpr (Lam "x" (FExpr $ Let "y" (FExpr $ Var "x") (FExpr $ Var "y")))
+
+tid2 :: Either String (Maybe (Fix Type))
 tid2 = runInfer $ typeOf test_id2
 
-test_id3 = FExpr $ Let "id" (FExpr $ Lam "y" $ (FExpr $ Lam "x" (FExpr $ Var "y"))) (FExpr $ App (FExpr $ Var "id") (FExpr $ Var "id"))
+test_id3 :: FExpr
+test_id3 = FExpr $ Let "id" (FExpr $ Lam "y" (FExpr $ Lam "x" (FExpr $ Var "y"))) (FExpr $ App (FExpr $ Var "id") (FExpr $ Var "id"))
+
+tid3 :: Either String (Maybe (Fix Type))
 tid3 = runInfer $ typeOf test_id3
 
 
