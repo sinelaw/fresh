@@ -3,28 +3,31 @@
 -- Currently implemented with expensive generalization/instantiation,
 -- i.e. doesn't use level/depth-based tricks
 
-
-{-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE RankNTypes, FlexibleInstances, FlexibleContexts,
-  UndecidableInstances, LambdaCase #-}
+{-# LANGUAGE DeriveFunctor        #-}
+{-# LANGUAGE DeriveTraversable    #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE RankNTypes           #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Main (main) where
 
-import Control.Monad ((>=>))
-import           Control.Unification (Unifiable(..), UTerm(..), BindingMonad(..))
-import qualified Control.Unification as Unification
-import           Control.Unification.Types (UFailure(..))
-import           Control.Unification.STVar (STVar, STBinding, runSTBinding)
-import Data.Functor.Fixedpoint (Fix(..))
-import qualified Data.Map as Map
-import Data.Map (Map)
-import qualified Data.Set as Set
-import Data.Set (Set)
+import           Control.Monad              ((>=>))
+import           Control.Unification        (BindingMonad (..), UTerm (..),
+                                             Unifiable (..))
+import qualified Control.Unification        as Unification
+import           Control.Unification.STVar  (STBinding, STVar, runSTBinding)
+import           Control.Unification.Types  (UFailure (..))
+import           Data.Functor.Fixedpoint    (Fix (..))
+import           Data.Map                   (Map)
+import qualified Data.Map                   as Map
+import           Data.Set                   (Set)
+import qualified Data.Set                   as Set
 
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.Either (EitherT, runEitherT)
-import Control.Monad.Trans.Reader (ReaderT, ask, local, runReaderT)
-import Control.Monad.Trans.State (evalStateT, get, put)
+import           Control.Monad.Trans.Class  (lift)
+import           Control.Monad.Trans.Either (EitherT, runEitherT)
+import           Control.Monad.Trans.Reader (ReaderT, ask, local, runReaderT)
+import           Control.Monad.Trans.State  (evalStateT, get, put)
 
 type VarName = String
 
@@ -62,10 +65,7 @@ instance Eq (TVar s) where
 
 type TTerm s = UTerm Type (STVar s Type)
 
-data Env s =
-    Env
-    { typeEnv :: Map VarName (TTerm s)
-    }
+data Env s = Env { typeEnv :: Map VarName (TTerm s) }
 
 envEmpty :: Env s
 envEmpty = Env { typeEnv = Map.empty }
@@ -88,7 +88,7 @@ liveTVars = do
     Set.fromList . map TVar . mconcat <$> mapM (liftUnify . Unification.getFreeVars) mappedTypes
 
 
-gen :: TTerm s -> Infer s () -- TTerm s)
+gen :: TTerm s -> Infer s ()
 gen t = do
     lives <- liveTVars
     frees <- (`Set.difference` lives) . Set.fromList . fmap TVar <$> liftUnify (Unification.getFreeVars t)
@@ -121,7 +121,6 @@ inst ts0 = lift $ evalStateT (loop ts0) Map.empty
                     Nothing -> return $ UVar v
                     Just t' -> loop t'
 
--- runInfer :: Traversable t => (forall s. Infer s (UTerm t v)) -> Either String (Maybe (Fix t))
 runInfer :: (forall s. Infer s (TTerm s)) -> Either String (Maybe (Fix Type))
 runInfer act = runSTBinding $ do
     t <- runEitherT . flip runReaderT envEmpty $ do
@@ -144,7 +143,7 @@ typeOf (FExpr e') = case e' of
         tenv <- typeEnv <$> getEnv
         case Map.lookup n tenv of
             Nothing -> error $ "Unbound var: " ++ show n
-            Just t -> inst t -- lift $ Unification.freshen t
+            Just t -> inst t
     App eFun eArg -> do
         tFun <- typeOf eFun
         tArg <- typeOf eArg
@@ -156,8 +155,6 @@ typeOf (FExpr e') = case e' of
         tBody <- withVar n tArg $ typeOf e
         return $ UTerm $ TArrow tArg tBody
     Let n e1 e2 -> do
-        --tArg <- UVar <$> fresh
-        --tDef <- withVar n tArg $ typeOf e1
         tDef <- typeOf e1
         gen tDef
         withVar n tDef $ typeOf e2
@@ -167,7 +164,7 @@ test_id_inner :: FExpr
 test_id_inner = FExpr (Lam "x" $ FExpr $ Var "x")
 
 test_id :: FExpr
-test_id = FExpr $ Let "id" test_id_inner (FExpr $ Var "id") -- (FExpr $ App (FExpr $ Var "id") (FExpr $ Var "id")) -- (FExpr $ Var "id")
+test_id = FExpr $ Let "id" test_id_inner (FExpr $ Var "id")
 
 tid :: Either String (Maybe (Fix Type))
 tid = runInfer $ typeOf test_id
@@ -184,10 +181,8 @@ test_id3 = FExpr $ Let "id" (FExpr $ Lam "y" (FExpr $ Lam "x" (FExpr $ Var "y"))
 tid3 :: Either String (Maybe (Fix Type))
 tid3 = runInfer $ typeOf test_id3
 
-
 main :: IO ()
-main = --return ()
-  do
+main = do
     print tid
     print tid2
     print tid3
