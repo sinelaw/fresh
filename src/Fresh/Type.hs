@@ -16,9 +16,10 @@ import Control.Monad (when, forM_, join)
 import Control.Monad.ST (ST, runST)
 import Data.Map (Map)
 import qualified Data.Map as Map
--- import Data.Set (Set)
-
+import Data.Set (Set)
 import qualified Data.Set as Set
+
+
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..), runStateT, evalStateT)
 import Control.Monad.State.Class (MonadState(..), modify)
@@ -93,12 +94,20 @@ data TypeAST t
     | TyComp { _tyComp :: Composite t }
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
+class HasGen t where
+    freeGenVars :: Applicative f => t -> f (Set GenVar)
+
 class SubstGen t where
     substGen :: (GenVar -> GenVar) -> t -> t
 
 instance SubstGen t => SubstGen (TypeAST t) where
     substGen f (TyGenVar g) = TyGenVar (f g)
     substGen f t = fmap (substGen f) t
+
+instance HasGen t => HasGen (TypeAST t) where
+    freeGenVars (TyGenVar g) = pure $ Set.singleton g
+    freeGenVars (TyGen gv t) = Set.difference <$> freeGenVars t <*> pure (Set.singleton gv)
+    freeGenVars t = foldr Set.union Set.empty <$> traverse freeGenVars t
 
 singleSubstGen :: GenVar -> GenVar -> GenVar -> GenVar
 singleSubstGen v u gv | gv == v = u
@@ -147,6 +156,8 @@ data TypeVar v t
 instance Show (STRef s t) where
     show v = "<stref>"
 
+instance HasGen (TypeVar v t) where
+
 instance HasKind (TypeVar v t) where
     kind (TypeVar c k) = Just k
 
@@ -167,6 +178,10 @@ instance (HasKind t) => HasKind (TypeABT v t) where
     kind (TyVar tv) = kind tv
     kind (TyAST ast) = kind ast
 
+instance (HasGen t) => HasGen (TypeABT v t) where
+    freeGenVars (TyVar tv)  = freeGenVars tv
+    freeGenVars (TyAST ast) = freeGenVars ast
+
 instance (SubstGen t) => SubstGen (TypeABT v t) where
     substGen s t@TyVar{} = t
     substGen s (TyAST ast) = TyAST $ substGen s ast
@@ -178,6 +193,9 @@ deriving instance Show (f (Fix f)) => Show (Fix f)
 instance HasKind (f (Fix f)) => HasKind (Fix f) where
     kind (Fix t) = kind t
 
+instance HasGen (f (Fix f)) => HasGen (Fix f) where
+    freeGenVars (Fix t) = freeGenVars t
+
 data SType s = SType (TypeABT (STRef s) (SType s))
 
 deriving instance Show (TypeABT (STRef s) (SType s)) => Show (SType s)
@@ -187,6 +205,9 @@ instance SubstGen (SType s) where
 
 instance HasKind (SType s) where
     kind (SType t) = kind t
+
+instance HasGen (SType s) where
+    freeGenVars (SType t) = freeGenVars t
 
 data Class = Class Id Kind
     deriving (Eq, Ord, Show)
@@ -309,7 +330,7 @@ unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
     unify t2 t2'
 unifyAST (TyCon tc1) (TyCon tc2) | tc1 == tc2 = return ()
 unifyAST (TyGenVar g1) (TyGenVar g2) | g1 == g2 = return ()
-unifyAST (TyGen v1 t1) (TyGen v2 t2) = do
+unifyAST u1@(TyGen v1 t1) u2@(TyGen v2 t2) = do
     k1 <- getKind v1
     k2 <- getKind v2
     when (k1 /= k2) $ throwError $ KindMismatchError k1 k2
@@ -317,6 +338,16 @@ unifyAST (TyGen v1 t1) (TyGen v2 t2) = do
     let t1' = substGen (singleSubstGen v1 skolem) t1
         t2' = substGen (singleSubstGen v2 skolem) t2
     unify t1' t2'
+    gvs1 <- freeGenVars u1
+    gvs2 <- freeGenVars u2
+    when (Set.member skolem (gvs1 `Set.union` gvs2) )
+        $ throwError
+        $ EscapedSkolemError
+        $ concat
+        [ "Type not polymorphic enough to unify"
+        , "\n\t", "Type 1: ", show u1
+        , "\n\t", "Type 2: ", show u2
+        ]
 
 unifyAST (TyComp c1) (TyComp c2) = do
     let FlatComposite labels1 mEnd1 = flattenComposite c1
@@ -332,8 +363,8 @@ unifyAST (TyComp c1) (TyComp c2) = do
         unifyRemainder rem mEnd =
             if Map.null rem
             then case mEnd of
-                 Nothing -> return ()
-                 Just t -> throwError UnificationError -- TODO really?
+                Nothing -> return ()
+                Just t -> throwError UnificationError -- TODO really?
             else case mEnd of
                 Nothing -> throwError UnificationError
                 Just end -> unifyAST (TyComp $ unflattenComposite $ FlatComposite rem $ Just remainderVarT) $ fromEnd end
