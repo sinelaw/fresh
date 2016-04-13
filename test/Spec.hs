@@ -112,7 +112,7 @@ examples = [ ( exampleApIdNum,                      Right $ [] ~=> _Number)
            , ( ELit () (LitBool False),             Right $ [] ~=> _Bool)
              -- TODO deal with alpha equivalence, preferrably by
              -- making generalization produce ids like GHC
-           , ( idFunction, Right $ [] ~=> forall (b' 0) (b 0 ^-> b 0))
+           , ( idFunction, Right $ [] ~=> forall (c' 0) (c 0 ^-> c 0))
 
            , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> _Number))) $ var "id",
                Right $ [] ~=> (_Number ^-> _Number))
@@ -120,8 +120,8 @@ examples = [ ( exampleApIdNum,                      Right $ [] ~=> _Number)
            , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> forall (d' 0) (d 0 ^-> d 0)))) $ var "id",
                Right $ [] ~=> ((forall (d' 0) (d 0 ^-> d 0)) ^-> (forall (d' 0) (d 0 ^-> d 0))))
 
-           , ( idFunction ~:: ([PredIs testClass $ b 0] ~=> forall (b' 0) (b 0 ^-> b 0)),
-               Right $ [PredIs testClass $ b 0] ~=> forall (b' 0) (b 0 ^-> b 0))
+           -- , ( idFunction ~:: ([PredIs testClass $ b 0] ~=> forall (b' 0) (b 0 ^-> b 0)),
+           --     Right $ [PredIs testClass $ b 0] ~=> forall (b' 0) (b 0 ^-> b 0))
 
            -- , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
            --   , Right $ [] ~=> forall b' (forall d' (b ^-> d ^-> b)))
@@ -129,8 +129,8 @@ examples = [ ( exampleApIdNum,                      Right $ [] ~=> _Number)
            -- , ( let_ "zero" ("x" ~> var "x" ~$ num 0) (var "zero")
            --   , Right $ [] ~=> forall c' ((_Number ^-> c) ^-> c))
 
-           -- , ( wrapFooLet ("y" ~> "x" ~> var "y")
-           --   , Right $ [] ~=> forall b' (forall c' (b ^-> c ^-> b)))
+           , ( wrapFooLet ("x" ~> "y" ~> var "x")
+             , Right $ [] ~=> forall (e' 0) (forall (d' 0) (d 0 ^-> e 0 ^-> d 0)))
 
            -- , ( let_ "id" ("x" ~> var "x" ## "fieldName") $ var "id"
            --   , Right $ [] ~=> forall c' (forall d' (record [("fieldName", c)] (Just d) ^-> c)))

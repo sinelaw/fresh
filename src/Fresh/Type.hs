@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -12,7 +13,7 @@ module Fresh.Type where
 import           Fresh.Kind (Kind(..))
 import qualified Fresh.Kind as Kind
 import Data.STRef
-import Control.Monad (when, forM_, join)
+import Control.Monad (when, forM_, forM, join, foldM)
 import Control.Monad.ST (ST, runST)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -94,24 +95,14 @@ data TypeAST t
     | TyComp { _tyComp :: Composite t }
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
-class HasGen t where
-    freeGenVars :: Applicative f => t -> f (Set GenVar)
+class Monad m => HasGen m t where
+    freeGenVars :: t -> m (Set GenVar)
 
-class SubstGen t where
-    substGen :: (GenVar -> GenVar) -> t -> t
 
-instance SubstGen t => SubstGen (TypeAST t) where
-    substGen f (TyGenVar g) = TyGenVar (f g)
-    substGen f t = fmap (substGen f) t
-
-instance HasGen t => HasGen (TypeAST t) where
+instance HasGen m t => HasGen m (TypeAST t) where
     freeGenVars (TyGenVar g) = pure $ Set.singleton g
     freeGenVars (TyGen gv t) = Set.difference <$> freeGenVars t <*> pure (Set.singleton gv)
     freeGenVars t = foldr Set.union Set.empty <$> traverse freeGenVars t
-
-singleSubstGen :: GenVar -> GenVar -> GenVar -> GenVar
-singleSubstGen v u gv | gv == v = u
-singleSubstGen _ _ gv = gv
 
 class HasLevel t where
     level :: t -> Level
@@ -156,7 +147,13 @@ data TypeVar v t
 instance Show (STRef s t) where
     show v = "<stref>"
 
-instance HasGen (TypeVar v t) where
+instance HasGen m t => HasGen m (TVarLink t) where
+    freeGenVars (Link t)  = freeGenVars t
+    freeGenVars Unbound{} = pure Set.empty
+
+instance HasGen (ST s) t => HasGen (ST s) (TypeVar (STRef s) t) where
+    freeGenVars (TypeVar cell _) =
+        readSTRef cell >>= freeGenVars
 
 instance HasKind (TypeVar v t) where
     kind (TypeVar c k) = Just k
@@ -178,13 +175,9 @@ instance (HasKind t) => HasKind (TypeABT v t) where
     kind (TyVar tv) = kind tv
     kind (TyAST ast) = kind ast
 
-instance (HasGen t) => HasGen (TypeABT v t) where
+instance HasGen (ST s) t => HasGen (ST s) (TypeABT (STRef s) t) where
     freeGenVars (TyVar tv)  = freeGenVars tv
     freeGenVars (TyAST ast) = freeGenVars ast
-
-instance (SubstGen t) => SubstGen (TypeABT v t) where
-    substGen s t@TyVar{} = t
-    substGen s (TyAST ast) = TyAST $ substGen s ast
 
 newtype Fix f = Fix { unFix :: f (Fix f) }
 
@@ -193,20 +186,17 @@ deriving instance Show (f (Fix f)) => Show (Fix f)
 instance HasKind (f (Fix f)) => HasKind (Fix f) where
     kind (Fix t) = kind t
 
-instance HasGen (f (Fix f)) => HasGen (Fix f) where
+instance HasGen m (f (Fix f)) => HasGen m (Fix f) where
     freeGenVars (Fix t) = freeGenVars t
 
 data SType s = SType (TypeABT (STRef s) (SType s))
 
 deriving instance Show (TypeABT (STRef s) (SType s)) => Show (SType s)
 
-instance SubstGen (SType s) where
-    substGen s (SType abt) = SType $ substGen s abt
-
 instance HasKind (SType s) where
     kind (SType t) = kind t
 
-instance HasGen (SType s) where
+instance HasGen (ST s) (SType s) where
     freeGenVars (SType t) = freeGenVars t
 
 data Class = Class Id Kind
@@ -245,11 +235,14 @@ recT fs rest =
     where
         tcomp = unflattenComposite (FlatComposite (Map.fromList fs) rest)
 
+liftST :: ST s a -> Infer s a
+liftST = lift . lift
+
 readVar :: TypeVar (STRef s) t -> Infer s (TVarLink t)
-readVar (TypeVar ref k) = lift . lift $ readSTRef ref
+readVar (TypeVar ref k) = liftST $ readSTRef ref
 
 writeVar :: TypeVar (STRef s) t -> TVarLink t -> Infer s ()
-writeVar (TypeVar ref k) link = lift . lift $ writeSTRef ref link
+writeVar (TypeVar ref k) link = liftST $ writeSTRef ref link
 
 resolve :: SType s -> Infer s (Maybe Type)
 resolve (SType (TyVar tvar)) = do
@@ -264,10 +257,11 @@ resolve (SType (TyAST (TyGen gv t))) = do
         return $ Fix . TyGen gv <$> t'
 resolve (SType (TyAST (TyGenVar gv))) = do
     curGenLevel <- levelDec <$> getCurrentLevel
-    if genVarLevel gv < curGenLevel
-        then throwError $ EscapedSkolemError
-             $ "genVar : " ++ (show $ genVarLevel gv) ++ " in generalize of " ++ show curGenLevel
-        else return $ Just $ Fix (TyGenVar gv)
+    -- if genVarLevel gv < curGenLevel
+    --     then throwError $ EscapedSkolemError
+    --          $ "genVar : " ++ (show $ genVarLevel gv) ++ " in generalize of " ++ show curGenLevel
+    --     else
+    return $ Just $ Fix (TyGenVar gv)
 resolve (SType (TyAST t)) = do
     mt <- traverse resolve t
     return . fmap Fix $ sequenceA mt
@@ -335,11 +329,11 @@ unifyAST u1@(TyGen v1 t1) u2@(TyGen v2 t2) = do
     k2 <- getKind v2
     when (k1 /= k2) $ throwError $ KindMismatchError k1 k2
     skolem <- GenVar <$> freshName <*> pure k1 <*> getCurrentLevel
-    let t1' = substGen (singleSubstGen v1 skolem) t1
-        t2' = substGen (singleSubstGen v2 skolem) t2
+    let t1' = substGen (skolem) t1
+        t2' = substGen (skolem) t2
     unify t1' t2'
-    gvs1 <- freeGenVars u1
-    gvs2 <- freeGenVars u2
+    gvs1 <- liftST $ freeGenVars u1
+    gvs2 <- liftST $ freeGenVars u2
     when (Set.member skolem (gvs1 `Set.union` gvs2) )
         $ throwError
         $ EscapedSkolemError
@@ -456,58 +450,35 @@ freshName = do
     put $ is { isGenFresh = genId + 1 }
     return genId
 
-generalizeVars :: SType s -> Infer s ([GenVar], SType s)
-generalizeVars t@(SType (TyVar tvar)) = do
-    link <- readVar tvar
-    case link of
-        Link t' -> generalizeVars t'
-        Unbound name level -> do
-            curLevel <- getCurrentLevel
-            if curLevel < level
-            then do
-                let gv = GenVar name Star curLevel
-                    tgenvar = SType (TyAST $ TyGenVar gv)
-                writeVar tvar $ Link tgenvar
-                return ([gv], tgenvar)
-            else return ([], t)
-generalizeVars t@(SType (TyAST (TyGenVar genVar))) =
-    return ([], t)
-generalizeVars (SType (TyAST (TyGen genvar t))) = do
-    -- erase rank > 1
-    -- TODO consider failing if rank > 1 found
-    (rank2Vars, t') <- generalizeVars t
-    -- TODO check for collisions in genvar ids
-    return (rank2Vars, SType (TyAST (TyGen genvar t')))
-generalizeVars (SType (TyAST (TyAp t1 t2))) = do
-    (vs1, t1') <- generalizeVars t1
-    (vs2, t2') <- generalizeVars t2
-    return (vs1 `listUnion` vs2
-           , SType (TyAST (TyAp t1' t2')))
-generalizeVars (SType (TyAST TyCon{..})) =
-    return ([], SType (TyAST TyCon{..}))
-generalizeVars (SType (TyAST (TyComp c))) = do
-    let FlatComposite labels mEnd = flattenComposite c
-    fc' <- mapM (\(name, t) -> (name,) <$> generalizeVars t) $ Map.toList labels
-    (endGVs, mEnd') <- case mEnd of
-        Nothing -> return ([], Nothing)
-        Just end -> do
-            (endGV, endT) <- generalizeVars end
-            return (endGV, Just endT)
-    let genRes = map snd fc'
-        c' = unflattenComposite
-            $ FlatComposite ( Map.fromList
-                              $ map (\(name, (_, tField)) -> (name, tField))
-                              $ fc' )
-            $ mEnd'
-    return ( foldr listUnion [] (endGVs : map fst genRes)
-           , SType (TyAST $ TyComp c'))
+-- TODO should return a set
+getUnbound :: Level -> SType s -> Infer s [TypeVar (STRef s) (SType s)]
+getUnbound curLevel (SType (TyVar tv)) = do
+    v <- readVar tv
+    case v of
+        Unbound _ level -> if curLevel < level
+                           then pure [tv]
+                           else pure []
+        Link t' -> getUnbound curLevel t'
+getUnbound curLevel (SType (TyAST t)) =
+    foldr (++) [] <$> traverse (getUnbound curLevel) t
 
 generalize :: SType s -> Infer s (SType s)
 generalize t = do
     curLevel <- getCurrentLevel
-    let isCurLevel gv = genVarLevel gv == curLevel
-    (genvars, t') <- generalizeVars t
-    return $ foldr (\gv u -> SType $ TyAST $ TyGen gv u) t' $ filter (isCurLevel) genvars
+    unboundTVars <- getUnbound curLevel t
+    let wrapGen t' tv@(TypeVar _ k) = do
+            curVar <- readVar tv
+            case curVar of
+                Link{} -> return t' -- may have been already overwritten (our unboundTVars list isn't unique :()
+                Unbound{} -> do
+                    gv <- GenVar <$> freshName <*> pure k <*> pure curLevel
+                    writeVar tv (Link $ SType $ TyAST $ TyGenVar gv )
+                    return $ SType $ TyAST $ TyGen gv t'
+    foldM wrapGen t unboundTVars
+
+instantiate :: SType s -> Infer s (SType s)
+instantiate (SType (TyAST (TyGen gv t))) = do
+    -- TODO
 
 fresh :: Infer s (STRef s (TVarLink t))
 fresh = do
@@ -543,6 +514,7 @@ infer (ELam a var expr) = do
     let varT = SType $ TyVar tvar
         newContext = Map.insert var tvar (isContext is)
     (expr', QualType ps exprT) <- subInfer (is { isContext = newContext }) $ infer expr
+    -- exprT' <- instantiate exprT
     let t = QualType ps $ funT varT exprT
     return (ELam (a, t) var expr', t)
 
