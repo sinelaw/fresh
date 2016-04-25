@@ -12,7 +12,9 @@ import Data.String (IsString(..))
 import qualified Data.Map as Map
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..))
+import Fresh.Type (EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..))
+import Fresh.Infer (inferExpr, tyFunc, tyRec, runInfer)
+import Fresh.Unify (unify)
 import qualified Fresh.Type as Type
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
 
@@ -61,7 +63,7 @@ _Number :: Type
 _Number =  tcon "Number"
 
 _Func :: Type
-_Func = Fix Type.tyFunc
+_Func = Fix tyFunc
 
 (~=>) :: [Pred t] -> t -> QualType t
 (~=>) = QualType
@@ -88,7 +90,7 @@ a',b',c',d',e' :: Int -> GenVar
 [a',b',c',d',e'] = map gv [0,1,2,3,4]
 
 record :: [(CompositeLabelName, Type)] -> Maybe Type -> Type
-record fs rest = Fix Type.tyRec ^$ (Fix $ TyComp c)
+record fs rest = Fix tyRec ^$ (Fix $ TyComp c)
     where
         c = Type.unflattenComposite (FlatComposite (Map.fromList fs) rest)
 
@@ -173,7 +175,7 @@ prop_constExpand :: Expr () -> Bool
 prop_constExpand expr = (getAnnotation <$> inferExpr expr) == (getAnnotation <$> inferExpr (constWrap expr))
 
 testUnify :: Type -> Type -> Either TypeError ()
-testUnify t1 t2 = Type.runInfer $ Type.unify (Type.unresolve t1) (Type.unresolve t2)
+testUnify t1 t2 = runInfer $ unify (Type.unresolve t1) (Type.unresolve t2)
 
 prop_unifySame :: Type -> Bool
 prop_unifySame t =

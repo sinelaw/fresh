@@ -126,15 +126,6 @@ instance HasKind t => HasKind (TypeAST t) where
     kind (TyGen v s) = kind s
     kind (TyComp fs) = Just Composite
 
-tyRec :: TypeAST t
-tyRec = TyCon (TCon (Id "Rec") (KArrow Composite Star))
-
-tySum :: TypeAST t
-tySum = TyCon (TCon (Id "Sum") (KArrow Composite Star))
-
-tyFunc :: TypeAST t
-tyFunc = TyCon (TCon (Id "->") (KArrow Star (KArrow Star Star)))
-
 data TVarLink t
     = Unbound Int Level
     | Link t
@@ -223,18 +214,6 @@ instance Eq (Fix TypeAST) where
 
 deriving instance Ord (Fix TypeAST)
 
-funT :: SType s -> SType s -> SType s
-funT targ tres =
-    SType . TyAST
-    $ TyAp (SType . TyAST . TyAp (SType $ TyAST tyFunc) $ targ) tres
-
-recT :: [(CompositeLabelName, SType s)] -> Maybe (SType s) -> SType s
-recT fs rest =
-    SType . TyAST
-    $ TyAp (SType $ TyAST tyRec) (SType . TyAST $ TyComp $ tcomp)
-    where
-        tcomp = unflattenComposite (FlatComposite (Map.fromList fs) rest)
-
 liftST :: ST s a -> Infer s a
 liftST = lift . lift
 
@@ -276,96 +255,6 @@ checkKind (Just k) = return k
 getKind :: HasKind t => t -> Infer s Kind
 getKind = checkKind . kind
 
-varBind :: TypeVar (STRef s) (SType s) -> SType s -> Infer s ()
-varBind tvar t = do
-    tvarK <- getKind tvar
-    tK <- getKind t
-    when (tvarK /= tK) $ throwError $ KindMismatchError tvarK tK
-    vt <- readVar tvar
-    case vt of
-        Unbound _name l -> writeVar tvar (Link t)
-        Link t' -> unify t' t -- TODO occurs
-
-unchain :: SType s -> Infer s (SType s)
-unchain t@(SType (TyVar tvar)) = do
-    vt <- readVar tvar
-    case vt of
-        Unbound{} -> return t
-        Link t' -> unchain t'
-unchain t = return t
-
-unify :: SType s -> SType s -> Infer s ()
-unify t1 t2 = do
-    k1 <- getKind t1
-    k2 <- getKind t2
-    when (k1 /= k2) $ throwError $ KindMismatchError k1 k2
-    t1' <- unchain t1
-    t2' <- unchain t2
-    unify' t1' t2'
-
-unify' :: SType s -> SType s -> Infer s ()
-unify' (SType (TyVar tvar1)) t2@(SType (TyVar tvar2)) = do
-    vt1 <- readVar tvar1
-    vt2 <- readVar tvar2
-    case (vt1, vt2) of
-        (Unbound _n1 l1, Unbound _n2 l2) ->
-            if l1 < l2
-            then writeVar tvar2 vt1
-            else writeVar tvar1 vt2
-        _ -> varBind tvar1 t2
-
-unify' (SType (TyVar tvar)) t = varBind tvar t
-unify' t (SType (TyVar tvar)) = varBind tvar t
-unify' (SType (TyAST t1)) (SType (TyAST t2)) = unifyAST t1 t2
-
-unifyAST :: TypeAST (SType s) -> TypeAST (SType s) -> Infer s ()
-unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
-    unify t1 t1'
-    unify t2 t2'
-unifyAST (TyCon tc1) (TyCon tc2) | tc1 == tc2 = return ()
-unifyAST (TyGenVar g1) (TyGenVar g2) | g1 == g2 = return ()
-unifyAST u1@(TyGen v1 t1) u2@(TyGen v2 t2) = do
-    k1 <- getKind v1
-    k2 <- getKind v2
-    when (k1 /= k2) $ throwError $ KindMismatchError k1 k2
-    skolem <- GenVar <$> freshName <*> pure k1 <*> getCurrentLevel
-    let t1' = substGen (skolem) t1
-        t2' = substGen (skolem) t2
-    unify t1' t2'
-    gvs1 <- liftST $ freeGenVars u1
-    gvs2 <- liftST $ freeGenVars u2
-    when (Set.member skolem (gvs1 `Set.union` gvs2) )
-        $ throwError
-        $ EscapedSkolemError
-        $ concat
-        [ "Type not polymorphic enough to unify"
-        , "\n\t", "Type 1: ", show u1
-        , "\n\t", "Type 2: ", show u2
-        ]
-
-unifyAST (TyComp c1) (TyComp c2) = do
-    let FlatComposite labels1 mEnd1 = flattenComposite c1
-        FlatComposite labels2 mEnd2 = flattenComposite c2
-        common = Map.intersectionWith (,) labels1 labels2
-        in1only = Map.difference labels1 labels2
-        in2only = Map.difference labels2 labels1
-    -- TODO: wrap errors to say which field failed
-    forM_ (Map.elems common) $ uncurry unify
-    remainderVar <- freshRVar
-    let remainderVarT = SType $ TyVar remainderVar
-        fromEnd = TyComp . unflattenComposite . FlatComposite Map.empty . Just
-        unifyRemainder rem mEnd =
-            if Map.null rem
-            then case mEnd of
-                Nothing -> return ()
-                Just t -> throwError UnificationError -- TODO really?
-            else case mEnd of
-                Nothing -> throwError UnificationError
-                Just end -> unifyAST (TyComp $ unflattenComposite $ FlatComposite rem $ Just remainderVarT) $ fromEnd end
-    unifyRemainder in1only mEnd2
-    unifyRemainder in2only mEnd1
-
-unifyAST t1 t2 = throwError UnificationError --t1 t2
 
 ----------------------------------------------------------------------
 
@@ -396,13 +285,6 @@ getAnnotation = head . Data.Foldable.toList
 --     deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------
-tcon :: String -> Kind -> SType s
-tcon name k = SType (TyAST (TyCon (TCon (Id name) k)))
-
-inferLit :: Lit -> SType s
-inferLit LitNum{} = tcon "Number" Star
-inferLit LitString{} = tcon "String" Star
-inferLit LitBool{} = tcon "Bool" Star
 
 data InferState s
     = InferState
@@ -477,8 +359,23 @@ generalize t = do
     foldM wrapGen t unboundTVars
 
 instantiate :: SType s -> Infer s (SType s)
-instantiate (SType (TyAST (TyGen gv t))) = do
-    -- TODO
+instantiate (SType (TyAST (TyGen gv@(GenVar id k l) tGen))) = do
+    tv <- SType . TyVar <$> freshTVarK k
+    substGen gv tv tGen
+
+substGen :: GenVar -> SType s -> SType s -> Infer s (SType s)
+substGen gv tv t@(SType (TyVar tv')) = do
+    t' <- readVar tv'
+    case t' of
+        Unbound{} -> return t
+        Link tLink -> substGen gv tv tLink
+substGen gv tv t@(SType (TyAST tast)) =
+    case tast of
+         TyGenVar g -> return $ if g == gv then tv else t
+         TyAp tf tx -> SType . TyAST <$> (TyAp <$> substGen gv tv tf <*> substGen gv tv tx)
+         TyCon c -> return . SType . TyAST $ TyCon c
+         TyGen gvs tGen' -> SType . TyAST . TyGen gvs <$> substGen gv tv tGen'
+         TyComp c -> SType . TyAST . TyComp <$> traverse (substGen gv tv) c
 
 fresh :: Infer s (STRef s (TVarLink t))
 fresh = do
@@ -494,98 +391,5 @@ freshTVarK k = do
 freshTVar = freshTVarK Star
 freshRVar = freshTVarK Composite
 
-subInfer :: InferState s -> Infer s a -> Infer s a
-subInfer state' act = do
-    res <- lift . lift $ runEitherT $ runStateT act state'
-    case res of
-        Left err -> throwError err
-        Right (x, is') -> do
-            modify $ \is -> is { isGenFresh = isGenFresh is' }
-            return x
 
-infer :: Show a => Expr a -> Infer s (Expr (a, QType s), QType s)
-
-infer (ELit a lit) = return (ELit (a, t) lit, t)
-    where t = emptyQual $ inferLit lit
-
-infer (ELam a var expr) = do
-    tvar <- freshTVar
-    is <- get
-    let varT = SType $ TyVar tvar
-        newContext = Map.insert var tvar (isContext is)
-    (expr', QualType ps exprT) <- subInfer (is { isContext = newContext }) $ infer expr
-    -- exprT' <- instantiate exprT
-    let t = QualType ps $ funT varT exprT
-    return (ELam (a, t) var expr', t)
-
-infer (EVar a var) = do
-    is <- get
-    case Map.lookup var (isContext is) of
-        Nothing -> throwError $ InvalidVarError (show var)
-        Just ref -> return (EVar (a, t) var, t)
-            where t = emptyQual $ SType $ TyVar ref
-
-infer (EApp a efun earg) = do
-    (efun', QualType efunP efunT) <- infer efun
-    (earg', QualType eargP eargT) <- infer earg
-    tvar <- freshTVar
-    let resT = SType $ TyVar tvar
-    unify efunT (funT eargT resT)
-    let resQ = QualType (efunP ++ eargP) resT
-    return (EApp (a, resQ) efun' earg', resQ)
-
-infer (ELet a var edef expr) = do
-    (edef', edefP, edefT) <- inLevel $ do
-        tvar <- freshTVar
-        is <- get
-        (edef', QualType edefP edefT) <- subInfer (is { isContext = Map.insert var tvar (isContext is) }) (infer edef)
-        let varT = SType $ TyVar tvar
-        unify varT edefT
-        return (edef', edefP, edefT)
-
-    genVarT <- generalize edefT
-    tvarGen <- freshTVar
-    varBind tvarGen genVarT
-    is' <- get
-    (expr', QualType exprP exprT) <- subInfer (is' { isContext = Map.insert var tvarGen (isContext is') }) (infer expr)
-    let resT = QualType (exprP ++ edefP) exprT
-    return (ELet (a, resT) var edef' expr', resT)
-
-infer (EAsc a asc@(QualType ps t) expr) = do
-    let st = unresolve t
-        sps = map (fmap unresolve) ps
-    (expr', QualType exprP exprT) <- infer expr
-    unify exprT st
-    let resT = QualType (sps ++ exprP) exprT
-    return (EAsc (a, resT) asc expr', resT)
-
-infer (EGetField a expr name) = do
-    (expr', QualType exprP exprT) <- infer expr
-    tvar <- SType . TyVar <$> freshTVar
-    rvar <- SType . TyVar <$> freshRVar
-    unify exprT (recT [(name, tvar)] $ Just rvar)
-    let resT = QualType exprP tvar
-    return (EGetField (a, resT) expr' name, resT)
-
-runInfer :: (forall s. Infer s a) -> Either TypeError a
-runInfer act =
-    runST $ runEitherT $ evalStateT act InferState { isContext = Map.empty
-                                                    , isGenFresh = 0
-                                                    , isLevel = Level 0 }
-
-qresolve :: QType s -> Infer s (QualType Type)
-qresolve (QualType ps t) = do
-    mt' <- resolve t
-    pms' <- traverse (traverse resolve) ps
-    let mps' = sequenceA $ map sequenceA pms'
-    case (mps', mt') of
-        (Just ps', Just t') -> return $ QualType ps' t'
-        _ -> throwError $ EscapedSkolemError $ "qresolve:" ++ show mps' ++ " - " ++ show mt'
-
-inferExpr :: Show a => Expr a -> Either TypeError (Expr (QualType Type))
-inferExpr expr = runInfer $ do
-    (expr', t) <- infer expr
-    k <- getKind t
-    when (k /= Star) $ throwError $ KindMismatchError k Star
-    traverse (qresolve . snd) expr'
 

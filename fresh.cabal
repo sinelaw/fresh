@@ -20,6 +20,8 @@ library
   exposed-modules:     Fresh.Kind
                      , Fresh.Type
                      , Fresh.Pretty
+                     , Fresh.Infer
+                     , Fresh.Unify
                      -- , Fresh.Subst
   -- other-modules:
   -- other-extensions:

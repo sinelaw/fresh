@@ -6,11 +6,13 @@
 -- import           Test.QuickCheck
 -- import           Data.DeriveTH
 
-import           Control.Monad   (void, forM_)
+import           Control.Monad   (forM_)
 import Data.String (IsString(..))
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Type (inferExpr, EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation)
+import Fresh.Type (EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), getAnnotation)
+import Fresh.Infer (inferExpr)
+
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
 
 instance IsString EVarName where
