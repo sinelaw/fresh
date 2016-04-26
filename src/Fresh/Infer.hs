@@ -11,12 +11,14 @@ import Control.Monad.Trans.Either (EitherT(..), runEitherT)
 import Control.Monad.Error.Class (MonadError(..))
 import qualified Data.Map as Map
 import Control.Monad.ST (runST)
+import Data.STRef
 
 import Fresh.Kind (Kind(..))
 import Fresh.Type (TypeAST(..), TypeABT(..), TCon(..), SType(..), Infer,
                    TypeError(..), inLevel, generalize, resolve, unresolve, Level(..), Type, getKind,
                    Id(..), freshTVar, QualType(..), CompositeLabelName(..),
-                   freshRVar, FlatComposite(..), unflattenComposite,
+                   TypeVar(..),
+                   freshRVar, FlatComposite(..), unflattenComposite, EVarName(..),
                    InferState(..), Expr(..), QType, emptyQual, Lit(..))
 import Fresh.Unify (unify, varBind)
 
@@ -60,6 +62,11 @@ subInfer state' act = do
             modify $ \is -> is { isGenFresh = isGenFresh is' }
             return x
 
+withVar :: EVarName -> TypeVar (STRef s) (SType s) -> Infer s a -> Infer s a
+withVar v t act = do
+    is <- get
+    subInfer (is { isContext = Map.insert v t (isContext is) }) act
+
 infer :: Show a => Expr a -> Infer s (Expr (a, QType s), QType s)
 
 infer (ELit a lit) = return (ELit (a, t) lit, t)
@@ -92,19 +99,10 @@ infer (EApp a efun earg) = do
     return (EApp (a, resQ) efun' earg', resQ)
 
 infer (ELet a var edef expr) = do
-    (edef', edefP, edefT) <- inLevel $ do
-        tvar <- freshTVar
-        is <- get
-        (edef', QualType edefP edefT) <- subInfer (is { isContext = Map.insert var tvar (isContext is) }) (infer edef)
-        let varT = SType $ TyVar tvar
-        unify varT edefT
-        return (edef', edefP, edefT)
-
-    genVarT <- generalize edefT
-    tvarGen <- freshTVar
-    varBind tvarGen genVarT
-    is' <- get
-    (expr', QualType exprP exprT) <- subInfer (is' { isContext = Map.insert var tvarGen (isContext is') }) (infer expr)
+    tvar <- freshTVar
+    (edef', QualType edefP edefT) <- withVar var tvar $ infer edef
+    unify (SType $ TyVar tvar) edefT
+    (expr', QualType exprP exprT) <- withVar var tvar $ infer expr
     let resT = QualType (exprP ++ edefP) exprT
     return (ELet (a, resT) var edef' expr', resT)
 
