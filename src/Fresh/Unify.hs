@@ -29,7 +29,9 @@ unify t1 t2 = do
     when (k1 /= k2) $ throwError $ KindMismatchError k1 k2
     t1' <- unchain t1
     t2' <- unchain t2
-    unify' t1' t2'
+    let wrapError :: TypeError -> Infer s ()
+        wrapError e = throwError $ WrappedUnificationError (show t1') (show t2') e
+    unify' t1' t2' `catchError` wrapError
 
 unify' :: SType s -> SType s -> Infer s ()
 unify' (SType (TyVar tvar1)) t2@(SType (TyVar tvar2)) = do

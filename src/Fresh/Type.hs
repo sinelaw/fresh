@@ -303,6 +303,8 @@ data InferState s
 
 data TypeError
     = UnificationError --String String
+    | WrappedUnificationError String String TypeError
+    | WrappedInferenceError String TypeError
     | EscapedSkolemError String
     | InvalidKind
     | KindMismatchError Kind Kind
