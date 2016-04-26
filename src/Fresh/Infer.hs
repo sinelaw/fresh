@@ -15,9 +15,9 @@ import Data.STRef
 
 import Fresh.Kind (Kind(..))
 import Fresh.Type (TypeAST(..), TypeABT(..), TCon(..), SType(..), Infer,
-                   TypeError(..), inLevel, generalize, resolve, unresolve, Level(..), Type, getKind,
+                   TypeError(..), inLevel, generalize, resolve, unresolveQual, Level(..), Type, getKind,
                    Id(..), freshTVar, QualType(..), CompositeLabelName(..),
-                   TypeVar(..),
+                   TypeVar(..), instantiate,
                    freshRVar, FlatComposite(..), unflattenComposite, EVarName(..),
                    InferState(..), Expr(..), QType, emptyQual, Lit(..))
 import Fresh.Unify (unify, varBind)
@@ -72,16 +72,6 @@ infer :: Show a => Expr a -> Infer s (Expr (a, QType s), QType s)
 infer (ELit a lit) = return (ELit (a, t) lit, t)
     where t = emptyQual $ inferLit lit
 
-infer (ELam a var expr) = do
-    tvar <- freshTVar
-    is <- get
-    let varT = SType $ TyVar tvar
-        newContext = Map.insert var tvar (isContext is)
-    (expr', QualType ps exprT) <- subInfer (is { isContext = newContext }) $ infer expr
-    -- exprT' <- instantiate exprT
-    let t = QualType ps $ funT varT exprT
-    return (ELam (a, t) var expr', t)
-
 infer (EVar a var) = do
     is <- get
     case Map.lookup var (isContext is) of
@@ -89,14 +79,29 @@ infer (EVar a var) = do
         Just ref -> return (EVar (a, t) var, t)
             where t = emptyQual $ SType $ TyVar ref
 
-infer (EApp a efun earg) = do
-    (efun', QualType efunP efunT) <- infer efun
-    (earg', QualType eargP eargT) <- infer earg
-    tvar <- freshTVar
-    let resT = SType $ TyVar tvar
-    unify efunT (funT eargT resT)
-    let resQ = QualType (efunP ++ eargP) resT
-    return (EApp (a, resQ) efun' earg', resQ)
+infer (ELam a var expr) = do
+    (tvar, ps, expr', exprT') <- inLevel $ do
+        tvar <- freshTVar
+        (expr', QualType ps exprT) <- withVar var tvar $ infer expr
+        exprT' <- instantiate exprT
+        return (tvar, ps, expr', exprT')
+    genT <- generalize $ funT (SType $ TyVar tvar) exprT'
+    -- TODO check that tvar is not polymorphic (forall'd)
+    let resT = QualType ps genT
+    return (ELam (a, resT) var expr', resT)
+
+infer (EALam a var varQ expr) = do
+    let QualType varPs varAT = unresolveQual varQ
+    (ps, varAT', expr', exprT') <- inLevel $ do
+        varAT' <- instantiate varAT
+        tvar <- freshTVar
+        varBind tvar varAT'
+        (expr', QualType ps exprT) <- withVar var tvar $ infer expr
+        exprT' <- instantiate exprT
+        return (ps, varAT', expr', exprT')
+    genT <- generalize $ funT varAT' exprT'
+    let resT = QualType (varPs ++ ps) genT
+    return (ELam (a, resT) var expr', resT)
 
 infer (ELet a var edef expr) = do
     tvar <- freshTVar
@@ -106,13 +111,17 @@ infer (ELet a var edef expr) = do
     let resT = QualType (exprP ++ edefP) exprT
     return (ELet (a, resT) var edef' expr', resT)
 
-infer (EAsc a asc@(QualType ps t) expr) = do
-    let st = unresolve t
-        sps = map (fmap unresolve) ps
-    (expr', QualType exprP exprT) <- infer expr
-    unify exprT st
-    let resT = QualType (sps ++ exprP) exprT
-    return (EAsc (a, resT) asc expr', resT)
+infer (EApp a efun earg) = do
+    (efun', QualType efunP efunT) <- infer efun
+    (earg', QualType eargP eargT) <- infer earg
+    tvar <- freshTVar
+    let resT = SType $ TyVar tvar
+    unify efunT (funT eargT resT) -- should check instance relation
+    let resQ = QualType (efunP ++ eargP) resT
+    return (EApp (a, resQ) efun' earg', resQ)
+
+--infer (EAsc a asc expr) = do
+--    infer (EApp (EALam
 
 infer (EGetField a expr name) = do
     (expr', QualType exprP exprT) <- infer expr

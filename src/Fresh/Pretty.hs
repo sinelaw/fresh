@@ -68,11 +68,12 @@ instance Pretty (Expr a) where
     pretty (ELit a l) = pretty l
     pretty (EVar a varName) = pretty varName
     pretty (ELam a varName e) = parens $ "\\" <> pretty varName <+> "->" <+> pretty e
+    pretty (EALam a varName t e) = parens $ "\\" <> parens (pretty varName <+> "::" <+> pretty t) <+> "->" <+> pretty e
     pretty (EApp a e1 e2) = pretty e1 <+> pretty e2
     pretty (ELet a varName def expr) =
         "let" <+> pretty varName <+> "="
         <+> pretty def <+> "in" <+> pretty expr
-    pretty (EAsc a t e) = parens $ pretty e <+> "::" <+> pretty t
+--    pretty (EAsc a t e) = parens $ pretty e <+> "::" <+> pretty t
     pretty (EGetField a e name) = pretty e <> "#" <> pretty name
 
 instance Pretty (f (Fix f)) => Pretty (Fix f) where

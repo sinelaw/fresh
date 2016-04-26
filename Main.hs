@@ -33,8 +33,8 @@ num = ELit () . LitNum
 (~$) :: Expr () -> Expr () -> Expr ()
 (~$) = EApp ()
 
-(~::) :: Expr () -> QualType Type -> Expr ()
-(~::) = flip $ EAsc ()
+-- (~::) :: Expr () -> QualType Type -> Expr ()
+-- (~::) = flip $ EAsc ()
 
 (~>) :: EVarName -> Expr () -> Expr ()
 (~>) = ELam ()
@@ -58,7 +58,7 @@ exampleApIdNum = "x" ~> (var "x") ~$ num 2
 
 examples = [ exampleApIdNum
            -- , exampleApIdNum ~:: ([] ~=> _Bool)
-           , exampleApIdNum ~:: ([] ~=> _Number)
+--           , exampleApIdNum ~:: ([] ~=> _Number)
            , let_ "x" (num 3) $ var "x"
            , let_ "id" ("x" ~> var "x") $ var "id"
            , wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))

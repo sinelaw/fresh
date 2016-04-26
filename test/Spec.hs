@@ -39,9 +39,9 @@ infixr 5 ~$
 (~$) :: Expr () -> Expr () -> Expr ()
 (~$) = EApp ()
 
-infixr 2 ~::
-(~::) :: Expr () -> QualType Type -> Expr ()
-(~::) = flip $ EAsc ()
+-- infixr 2 ~::
+-- (~::) :: Expr () -> QualType Type -> Expr ()
+-- (~::) = flip $ EAsc ()
 
 infixr 4 ~>
 (~>) :: EVarName -> Expr () -> Expr ()
@@ -108,19 +108,19 @@ testClass = Class (Id "TestClass") Star
 idFunction = let_ "id" ("x" ~> var "x") $ var "id"
 
 examples :: [(Expr (), Either TypeError (QualType Type))]
-examples = [ ( exampleApIdNum,                      Right $ [] ~=> _Number)
-           , ( exampleApIdNum ~:: ([] ~=> _Bool),   Left Type.UnificationError)
-           , ( exampleApIdNum ~:: ([] ~=> _Number), Right $ [] ~=> _Number)
-           , ( ELit () (LitBool False),             Right $ [] ~=> _Bool)
+examples = [ ( ELit () (LitBool False),             Right $ [] ~=> _Bool)
+           , ( idFunction, Right $ [] ~=> forall (c' 0) (c 0 ^-> c 0))
+           , ( exampleApIdNum,                      Right $ [] ~=> _Number)
+           -- , ( exampleApIdNum ~:: ([] ~=> _Bool),   Left Type.UnificationError)
+           -- , ( exampleApIdNum ~:: ([] ~=> _Number), Right $ [] ~=> _Number)
              -- TODO deal with alpha equivalence, preferrably by
              -- making generalization produce ids like GHC
-           , ( idFunction, Right $ [] ~=> forall (c' 0) (c 0 ^-> c 0))
 
-           , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> _Number))) $ var "id",
-               Right $ [] ~=> (_Number ^-> _Number))
+           -- , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> _Number))) $ var "id",
+           --     Right $ [] ~=> (_Number ^-> _Number))
 
-           , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> forall (d' 0) (d 0 ^-> d 0)))) $ var "id",
-               Right $ [] ~=> ((forall (d' 0) (d 0 ^-> d 0)) ^-> (forall (d' 0) (d 0 ^-> d 0))))
+           -- , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> forall (d' 0) (d 0 ^-> d 0)))) $ var "id",
+           --     Right $ [] ~=> ((forall (d' 0) (d 0 ^-> d 0)) ^-> (forall (d' 0) (d 0 ^-> d 0))))
 
            -- , ( idFunction ~:: ([PredIs testClass $ b 0] ~=> forall (b' 0) (b 0 ^-> b 0)),
            --     Right $ [PredIs testClass $ b 0] ~=> forall (b' 0) (b 0 ^-> b 0))

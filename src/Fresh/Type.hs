@@ -13,8 +13,8 @@ module Fresh.Type where
 import           Fresh.Kind (Kind(..))
 import qualified Fresh.Kind as Kind
 import Data.STRef
-import Control.Monad (when, forM_, forM, join, foldM)
-import Control.Monad.ST (ST, runST)
+import Control.Monad (join, foldM)
+import Control.Monad.ST (ST)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Set (Set)
@@ -22,9 +22,9 @@ import qualified Data.Set as Set
 
 
 import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.State (StateT(..), runStateT, evalStateT)
+import Control.Monad.Trans.State (StateT(..))
 import Control.Monad.State.Class (MonadState(..), modify)
-import Control.Monad.Trans.Either (EitherT(..), runEitherT)
+import Control.Monad.Trans.Either (EitherT(..))
 import Control.Monad.Error.Class (MonadError(..))
 import qualified Data.Foldable
 
@@ -248,6 +248,12 @@ resolve (SType (TyAST t)) = do
 unresolve :: Type -> SType s
 unresolve (Fix t) = SType . TyAST $ fmap unresolve t
 
+unresolvePred :: Pred Type -> Pred (SType s)
+unresolvePred = fmap unresolve
+
+unresolveQual :: QualType Type -> QType s
+unresolveQual (QualType ps t) = QualType (map unresolvePred ps) (unresolve t)
+
 checkKind :: Maybe Kind -> Infer s Kind
 checkKind Nothing  = throwError InvalidKind
 checkKind (Just k) = return k
@@ -271,9 +277,10 @@ data Expr a
     = ELit a Lit
     | EVar a EVarName
     | ELam a EVarName (Expr a)
+    | EALam a EVarName (QualType Type) (Expr a)
     | EApp a (Expr a) (Expr a)
     | ELet a EVarName (Expr a) (Expr a)
-    | EAsc a (QualType Type) (Expr a)
+    -- | EAsc a (QualType Type) (Expr a)
     | EGetField a (Expr a) CompositeLabelName
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
@@ -362,6 +369,7 @@ instantiate :: SType s -> Infer s (SType s)
 instantiate (SType (TyAST (TyGen gv@(GenVar id k l) tGen))) = do
     tv <- SType . TyVar <$> freshTVarK k
     substGen gv tv tGen
+instantiate t = return t
 
 substGen :: GenVar -> SType s -> SType s -> Infer s (SType s)
 substGen gv tv t@(SType (TyVar tv')) = do

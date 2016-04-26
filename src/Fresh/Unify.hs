@@ -53,6 +53,7 @@ unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
 unifyAST (TyCon tc1) (TyCon tc2) | tc1 == tc2 = return ()
 unifyAST (TyGenVar g1) (TyGenVar g2) | g1 == g2 = return ()
 unifyAST u1@(TyGen v1 t1) u2@(TyGen v2 t2) = do
+    -- TODO: check instance relation (subsumption)
     k1 <- getKind v1
     k2 <- getKind v2
     when (k1 /= k2) $ throwError $ KindMismatchError k1 k2
