@@ -13,7 +13,7 @@ module Fresh.Type where
 import           Fresh.Kind (Kind(..))
 import qualified Fresh.Kind as Kind
 import Data.STRef
-import Control.Monad (join, mapM, foldM)
+import Control.Monad (join, foldM)
 import Control.Monad.ST (ST)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -246,7 +246,7 @@ purify :: SType s -> Infer s PType
 purify (SType (TyVar tvar@(TypeVar _ k))) = do
     link <- readVar tvar
     case link of
-        Unbound name level -> return . PType . TyVar $ TypeVar (PCell $ Unbound name level) k
+        Unbound name l -> return . PType . TyVar $ TypeVar (PCell $ Unbound name l) k
         Link t -> purify t
 purify (SType (TyAST t)) = PType . TyAST <$> traverse purify t
 
@@ -254,8 +254,8 @@ resolve :: SType s -> Infer s (Maybe Type)
 resolve (SType (TyVar tvar)) = do
     link <- readVar tvar
     case link of
-        Unbound _name level -> throwError
-            $ EscapedSkolemError $ "resolve" ++ show tvar ++ ", level: " ++ show level
+        Unbound _name l -> throwError
+            $ EscapedSkolemError $ "resolve" ++ show tvar ++ ", level: " ++ show l
         Link t' -> resolve t'
 resolve (SType (TyAST (TyGen gv t))) = do
     inLevel $ do
@@ -375,14 +375,15 @@ getUnbound :: Level -> SType s -> Infer s [TypeVar (STRef s) (SType s)]
 getUnbound curLevel (SType (TyVar tv)) = do
     v <- readVar tv
     case v of
-        Unbound _ level -> if curLevel < level
-                           then pure [tv]
-                           else pure []
+        Unbound _ l -> if curLevel < l
+                       then pure [tv]
+                       else pure []
         Link t' -> getUnbound curLevel t'
 getUnbound curLevel (SType (TyAST t)) =
     foldr (++) [] <$> traverse (getUnbound curLevel) t
 
 
+mkGen :: [GenVar] -> SType s -> SType s
 mkGen gvs (SType (TyAST (TyGen gvs' t))) = mkGen (gvs++gvs') t
 mkGen [] t = t
 mkGen gvs t = SType (TyAST (TyGen gvs t))
@@ -405,7 +406,7 @@ generalize t = do
 
 instantiate :: SType s -> Infer s (SType s)
 instantiate (SType (TyAST (TyGen gvs tGen))) = do
-    let inst t gv@(GenVar id k l) = do
+    let inst t gv@(GenVar n k l) = do
             tv <- SType . TyVar <$> freshTVarK k
             substGen gv tv t
     foldM inst tGen gvs
@@ -439,7 +440,10 @@ freshTVarK k = do
     ref <- fresh
     return $ TypeVar ref k
 
+freshTVar :: Infer s (TypeVar (STRef s) a)
 freshTVar = freshTVarK Star
+
+freshRVar :: Infer s (TypeVar (STRef s) a)
 freshRVar = freshTVarK Composite
 
 
