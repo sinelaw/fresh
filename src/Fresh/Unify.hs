@@ -1,6 +1,6 @@
 module Fresh.Unify where
 
-import Control.Monad (forM_, when)
+import Control.Monad (forM_, when, foldM)
 import Control.Monad.Error.Class (MonadError(..))
 import qualified Data.Set as Set
 import qualified Data.Map as Map
@@ -11,7 +11,7 @@ import Fresh.Pretty (Pretty(..))
 import Fresh.Type (SType(..), TypeAST(..), TypeABT(..), Infer, TypeError(..),
                    GenVar(..), TypeVar(..),
                    freshName, freshRVar, purify,
-                   getCurrentLevel, substGen, liftST, HasGen(..),
+                   getCurrentLevel, substGens, liftST, HasGen(..),
                    FlatComposite(..), flattenComposite, unflattenComposite,
                    getKind, readVar, writeVar, TVarLink(..))
 
@@ -57,19 +57,20 @@ unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
     unify t2 t2'
 unifyAST (TyCon tc1) (TyCon tc2) | tc1 == tc2 = return ()
 unifyAST (TyGenVar g1) (TyGenVar g2) | g1 == g2 = return ()
-unifyAST u1@(TyGen v1 t1) u2@(TyGen v2 t2) = do
+unifyAST u1@(TyGen vs1 t1) u2@(TyGen vs2 t2) | length vs1 == length vs2 = do
     -- TODO: check instance relation (subsumption)
-    k1 <- getKind v1
-    k2 <- getKind v2
-    when (k1 /= k2) $ throwError $ KindMismatchError k1 k2
-    skolem <- GenVar <$> freshName <*> pure k1 <*> getCurrentLevel
-    let skolemT = SType . TyAST $ TyGenVar skolem
-    t1' <- substGen v1 skolemT t1
-    t2' <- substGen v2 skolemT t2
+    ks1 <- mapM getKind vs1
+    ks2 <- mapM getKind vs2
+    forM_ (zip ks1 ks2) $ \(k1, k2) -> when (k1 /= k2 ) $ throwError $ KindMismatchError k1 k2
+    curLevel <- getCurrentLevel
+    skolems <- mapM (\k -> GenVar <$> freshName <*> pure k <*> pure curLevel) ks1
+    let skolemTs = map (SType . TyAST . TyGenVar) skolems
+    t1' <- substGens vs1 skolemTs t1
+    t2' <- substGens vs2 skolemTs t2
     unify t1' t2'
     gvs1 <- liftST $ freeGenVars u1
     gvs2 <- liftST $ freeGenVars u2
-    when (Set.member skolem (gvs1 `Set.union` gvs2) )
+    when (not . Set.null $ Set.fromList skolems `Set.intersection` (gvs1 `Set.union` gvs2) )
         $ throwError
         $ EscapedSkolemError
         $ concat

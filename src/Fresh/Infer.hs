@@ -18,7 +18,7 @@ import Fresh.Pretty (Pretty(..))
 import Fresh.Kind (Kind(..))
 import Fresh.Type (TypeAST(..), TypeABT(..), TCon(..), SType(..), Infer, HasGen(..),
                    TypeError(..), inLevel, generalize, resolve, unresolveQual, Level(..), Type, getKind, liftST,
-                   Id(..), freshTVar, freshTVarK, QualType(..), CompositeLabelName(..), GenVar(..), freshName, getCurrentLevel, substGen,
+                   Id(..), freshTVar, freshTVarK, QualType(..), CompositeLabelName(..), GenVar(..), freshName, getCurrentLevel, substGens,
                    TypeVar(..), instantiate, readVar, writeVar, TVarLink(..), purify,
                    freshRVar, FlatComposite(..), unflattenComposite, EVarName(..),
                    InferState(..), Expr(..), QType, emptyQual, Lit(..))
@@ -174,12 +174,13 @@ matchFun' (SType (TyVar tvar@(TypeVar _ k))) = do
             return (arg, res)
 
 skolemize :: SType s -> Infer s ([GenVar], SType s)
-skolemize (SType (TyAST (TyGen v t))) = do
-    k <- getKind v
-    skolem <- GenVar <$> freshName <*> pure k <*> getCurrentLevel
-    let skolemT = SType . TyAST $ TyGenVar skolem
-    t' <- substGen v skolemT t
-    return ([skolem], t')
+skolemize (SType (TyAST (TyGen vs t))) = do
+    ks <- mapM getKind vs
+    curLevel <- getCurrentLevel
+    skolems <- mapM (\k -> GenVar <$> freshName <*> pure k <*> pure curLevel) ks
+    let skolemTs = map (SType . TyAST . TyGenVar) skolems
+    t' <- substGens vs skolemTs t
+    return (skolems, t')
 skolemize t = return ([], t)
 
 subsume :: SType s -> SType s -> Infer s ()

@@ -76,7 +76,10 @@ infixr 5 ^->
 targ ^-> tres = Fix $ TyAp (Fix $ TyAp _Func targ) tres
 
 forall :: GenVar -> Type -> Type
-forall gv t = Fix $ TyGen gv t
+forall gv t = foralls [gv] t
+
+foralls :: [GenVar] -> Type -> Type
+foralls gvs t = Fix $ TyGen gvs t
 
 gv :: Int -> Int -> GenVar
 gv x l = GenVar x Star (Level l)
@@ -84,10 +87,10 @@ gv x l = GenVar x Star (Level l)
 tv :: Int -> Int -> Type
 tv x l = Fix $ TyGenVar $ gv x l
 
-a, b, c, d, e :: Int -> Type
-[a, b, c, d, e] = map tv [0,1,2,3,4]
-a',b',c',d',e' :: Int -> GenVar
-[a',b',c',d',e'] = map gv [0,1,2,3,4]
+a, b, c, d, e, f, g :: Int -> Type
+[a, b, c, d, e, f, g] = map tv [0,1,2,3,4,5,6]
+a',b',c',d',e',f',g' :: Int -> GenVar
+[a',b',c',d',e',f',g'] = map gv [0,1,2,3,4,5,6]
 
 record :: [(CompositeLabelName, Type)] -> Maybe Type -> Type
 record fs rest = Fix tyRec ^$ (Fix $ TyComp c)
@@ -132,7 +135,7 @@ examples = [ ( ELit () (LitBool False),             Right $ [] ~=> _Bool)
            --   , Right $ [] ~=> forall c' ((_Number ^-> c) ^-> c))
 
            , ( wrapFooLet ("x" ~> "y" ~> var "x")
-             , Right $ [] ~=> forall (e' 0) (forall (d' 0) (d 0 ^-> e 0 ^-> d 0)))
+             , Right $ [] ~=> foralls [f' 0, g' 0] (f 0 ^-> g 0 ^-> f 0))
 
            -- , ( let_ "id" ("x" ~> var "x" ## "fieldName") $ var "id"
            --   , Right $ [] ~=> forall c' (forall d' (record [("fieldName", c)] (Just d) ^-> c)))

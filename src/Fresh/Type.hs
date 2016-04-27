@@ -13,13 +13,13 @@ module Fresh.Type where
 import           Fresh.Kind (Kind(..))
 import qualified Fresh.Kind as Kind
 import Data.STRef
-import Control.Monad (join, foldM)
+import Control.Monad (join, mapM, foldM)
 import Control.Monad.ST (ST)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
-
+import Data.Maybe (catMaybes)
 
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..))
@@ -91,7 +91,7 @@ data TypeAST t
     = TyAp { _tyApFun :: t, _tyApArg :: t }
     | TyCon { _tyCon :: TCon }
     | TyGenVar { _tyGenVar :: GenVar }
-    | TyGen { _tyGenVars :: GenVar, _tyGenScheme :: t }
+    | TyGen { _tyGenVars :: [GenVar], _tyGenScheme :: t }
     | TyComp { _tyComp :: Composite t }
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
@@ -101,7 +101,7 @@ class Monad m => HasGen m t where
 
 instance HasGen m t => HasGen m (TypeAST t) where
     freeGenVars (TyGenVar g) = pure $ Set.singleton g
-    freeGenVars (TyGen gv t) = Set.difference <$> freeGenVars t <*> pure (Set.singleton gv)
+    freeGenVars (TyGen gvs t) = Set.difference <$> freeGenVars t <*> pure (Set.fromList gvs)
     freeGenVars t = foldr Set.union Set.empty <$> traverse freeGenVars t
 
 class HasLevel t where
@@ -382,24 +382,33 @@ getUnbound curLevel (SType (TyVar tv)) = do
 getUnbound curLevel (SType (TyAST t)) =
     foldr (++) [] <$> traverse (getUnbound curLevel) t
 
+
+mkGen gvs (SType (TyAST (TyGen gvs' t))) = mkGen (gvs++gvs') t
+mkGen [] t = t
+mkGen gvs t = SType (TyAST (TyGen gvs t))
+
 generalize :: SType s -> Infer s (SType s)
 generalize t = do
     curLevel <- getCurrentLevel
     unboundTVars <- getUnbound curLevel t
-    let wrapGen t' tv@(TypeVar _ k) = do
-            curVar <- readVar tv
-            case curVar of
-                Link{} -> return t' -- may have been already overwritten (our unboundTVars list isn't unique :()
+    let wrapGen tv@(TypeVar _ k) = do
+            res <- readVar tv
+            case res of
+                Link (SType (TyAST (TyGenVar _))) -> return Nothing -- already overwritten
+                Link _ -> error "Assertion failed"
                 Unbound{} -> do
                     gv <- GenVar <$> freshName <*> pure k <*> pure curLevel
-                    writeVar tv (Link $ SType $ TyAST $ TyGenVar gv )
-                    return $ SType $ TyAST $ TyGen gv t'
-    foldM wrapGen t unboundTVars
+                    writeVar tv (Link $ SType $ TyAST $ TyGenVar gv)
+                    return $ Just gv
+    gvs <- catMaybes <$> mapM wrapGen unboundTVars
+    return $ mkGen gvs t
 
 instantiate :: SType s -> Infer s (SType s)
-instantiate (SType (TyAST (TyGen gv@(GenVar id k l) tGen))) = do
-    tv <- SType . TyVar <$> freshTVarK k
-    substGen gv tv tGen
+instantiate (SType (TyAST (TyGen gvs tGen))) = do
+    let inst t gv@(GenVar id k l) = do
+            tv <- SType . TyVar <$> freshTVarK k
+            substGen gv tv t
+    foldM inst tGen gvs
 instantiate t = return t
 
 substGen :: GenVar -> SType s -> SType s -> Infer s (SType s)
@@ -415,6 +424,9 @@ substGen gv tv t@(SType (TyAST tast)) =
          TyCon c -> return . SType . TyAST $ TyCon c
          TyGen gvs tGen' -> SType . TyAST . TyGen gvs <$> substGen gv tv tGen'
          TyComp c -> SType . TyAST . TyComp <$> traverse (substGen gv tv) c
+
+substGens :: [GenVar] -> [SType s] -> SType s -> Infer s (SType s)
+substGens vs ts t = foldM (\t' (v,s) -> substGen v s t') t $ zip vs ts
 
 fresh :: Infer s (STRef s (TVarLink t))
 fresh = do
