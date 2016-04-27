@@ -337,6 +337,7 @@ data TypeError
     | InvalidKind
     | KindMismatchError Kind Kind
     | InvalidVarError String
+    | ExpectedFunction String
     deriving (Eq, Show)
 
 type Infer s a = StateT (InferState s) (EitherT TypeError (ST s)) a

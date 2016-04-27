@@ -9,16 +9,17 @@ import Control.Monad.Trans.State (StateT(..), runStateT, evalStateT)
 import Control.Monad.State.Class (MonadState(..), modify)
 import Control.Monad.Trans.Either (EitherT(..), runEitherT)
 import Control.Monad.Error.Class (MonadError(..))
+import qualified Data.Set as Set
 import qualified Data.Map as Map
 import Control.Monad.ST (runST)
 import Data.STRef
 
 import Fresh.Pretty (Pretty(..))
 import Fresh.Kind (Kind(..))
-import Fresh.Type (TypeAST(..), TypeABT(..), TCon(..), SType(..), Infer,
-                   TypeError(..), inLevel, generalize, resolve, unresolveQual, Level(..), Type, getKind,
-                   Id(..), freshTVar, QualType(..), CompositeLabelName(..),
-                   TypeVar(..), instantiate,
+import Fresh.Type (TypeAST(..), TypeABT(..), TCon(..), SType(..), Infer, HasGen(..),
+                   TypeError(..), inLevel, generalize, resolve, unresolveQual, Level(..), Type, getKind, liftST,
+                   Id(..), freshTVar, freshTVarK, QualType(..), CompositeLabelName(..), GenVar(..), freshName, getCurrentLevel, substGen,
+                   TypeVar(..), instantiate, readVar, writeVar, TVarLink(..), purify,
                    freshRVar, FlatComposite(..), unflattenComposite, EVarName(..),
                    InferState(..), Expr(..), QType, emptyQual, Lit(..))
 import Fresh.Unify (unify, varBind)
@@ -29,8 +30,10 @@ tyRec = TyCon (TCon (Id "Rec") (KArrow Composite Star))
 tySum :: TypeAST t
 tySum = TyCon (TCon (Id "Sum") (KArrow Composite Star))
 
+conFunc = TCon (Id "->") (KArrow Star (KArrow Star Star))
+
 tyFunc :: TypeAST t
-tyFunc = TyCon (TCon (Id "->") (KArrow Star (KArrow Star Star)))
+tyFunc = TyCon conFunc
 
 
 funT :: SType s -> SType s -> SType s
@@ -116,10 +119,10 @@ infer r (ELet a var edef expr) = do
 
 infer r (EApp a efun earg) = do
     (efun', QualType efunP efunT) <- r efun
+    (efunArg, efunRes) <- matchFun efunT
     (earg', QualType eargP eargT) <- r earg
-    tvar <- freshTVar
-    let resT = SType $ TyVar tvar
-    unify efunT (funT eargT resT) -- should check instance relation
+    subsume efunArg eargT
+    resT <- generalize efunRes
     let resQ = QualType (efunP ++ eargP) resT
     return (EApp (a, resQ) efun' earg', resQ)
 
@@ -133,6 +136,67 @@ infer r (EGetField a expr name) = do
     unify exprT (recT [(name, tvar)] $ Just rvar)
     let resT = QualType exprP tvar
     return (EGetField (a, resT) expr' name, resT)
+
+
+data FlatTy t
+    = FlatTyAp (FlatTy t) (FlatTy t)
+    | FlatTyLeaf t
+
+flattenTyAp :: SType s -> FlatTy (SType s)
+flattenTyAp (SType (TyAST (TyAp ap res))) = FlatTyAp (flattenTyAp ap) (flattenTyAp res)
+flattenTyAp t = FlatTyLeaf t
+
+unFlattenTy :: FlatTy (SType s) -> SType s
+unFlattenTy (FlatTyLeaf t) = t
+unFlattenTy (FlatTyAp f1 f2) = SType (TyAST (TyAp (unFlattenTy f1) (unFlattenTy f2)))
+
+matchFun :: SType s -> Infer s (SType s, SType s)
+matchFun t = instantiate t >>= matchFun'
+
+matchFun' :: SType s -> Infer s (SType s, SType s)
+matchFun' t@(SType (TyAST{}))
+    | (FlatTyAp (FlatTyAp cf fArg) fRes) <- flattenTyAp t
+    , SType (TyAST (TyCon c)) <- unFlattenTy cf
+    , c == conFunc
+    = return (unFlattenTy fArg, unFlattenTy fRes)
+    | otherwise = do
+      pt <- purify t
+      throwError $ ExpectedFunction (show $ pretty pt)
+
+matchFun' (SType (TyVar tvar@(TypeVar _ k))) = do
+    t <- readVar tvar
+    case t of
+        Link t' -> matchFun t'
+        Unbound _n l -> do
+            arg <- SType . TyVar <$> freshTVarK k
+            res <- SType . TyVar <$> freshTVarK k
+            writeVar tvar (Link $ funT arg res)
+            return (arg, res)
+
+skolemize :: SType s -> Infer s ([GenVar], SType s)
+skolemize (SType (TyAST (TyGen v t))) = do
+    k <- getKind v
+    skolem <- GenVar <$> freshName <*> pure k <*> getCurrentLevel
+    let skolemT = SType . TyAST $ TyGenVar skolem
+    t' <- substGen v skolemT t
+    return ([skolem], t')
+skolemize t = return ([], t)
+
+subsume :: SType s -> SType s -> Infer s ()
+subsume t1 t2 = do
+    (sks, t1') <- skolemize t1
+    t2' <- instantiate t2
+    unify t1' t2'
+    gvs1 <- liftST $ freeGenVars t1'
+    gvs2 <- liftST $ freeGenVars t2'
+    when (not . Set.null $ (Set.fromList sks) `Set.intersection` (gvs1 `Set.union` gvs2))
+        $ throwError
+        $ EscapedSkolemError
+        $ concat -- TODO pretty
+        [ "Type not polymorphic enough to unify"
+        , "\n\t", "Type 1: ", show t1
+        , "\n\t", "Type 2: ", show t2
+        ]
 
 runInfer :: (forall s. Infer s a) -> Either TypeError a
 runInfer act =
