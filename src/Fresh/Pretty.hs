@@ -84,6 +84,7 @@ instance Pretty Class where
 
 instance Pretty t => Pretty (Pred t) where
     pretty (PredIs c t) = pretty c <+> pretty t
+    pretty (PredNoLabel c t) = pretty t <> "/" <> pretty c
 
 instance Pretty t => Pretty (QualType t) where
     pretty (QualType [] t) = pretty t
