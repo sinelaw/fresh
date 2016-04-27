@@ -10,7 +10,7 @@ import Data.STRef
 import Fresh.Pretty (Pretty(..))
 import Fresh.Type (SType(..), TypeAST(..), TypeABT(..), Infer, TypeError(..),
                    GenVar(..), TypeVar(..),
-                   freshName, freshRVar,
+                   freshName, freshRVar, purify,
                    getCurrentLevel, substGen, liftST, HasGen(..),
                    FlatComposite(..), flattenComposite, unflattenComposite,
                    getKind, readVar, writeVar, TVarLink(..))
@@ -98,7 +98,12 @@ unifyAST (TyComp c1) (TyComp c2) = do
     unifyRemainder in1only mEnd2
     unifyRemainder in2only mEnd1
 
-unifyAST t1 t2 = throwError $ UnificationError (show $ pretty t1) (show $ pretty t2) --t1 t2
+unifyAST t1 t2 = unifyError t1 t2
+
+unifyError t1 t2 = do
+    pt1 <- purify $ SType $ TyAST t1
+    pt2 <- purify $ SType $ TyAST t2
+    throwError $ UnificationError (show $ pretty pt1) (show $ pretty pt2)
 
 
 varBind :: TypeVar (STRef s) (SType s) -> SType s -> Infer s ()

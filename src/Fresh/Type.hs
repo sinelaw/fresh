@@ -146,6 +146,9 @@ instance HasGen (ST s) t => HasGen (ST s) (TypeVar (STRef s) t) where
     freeGenVars (TypeVar cell _) =
         readSTRef cell >>= freeGenVars
 
+instance HasGen m t => HasGen m (TypeVar PCell t) where
+    freeGenVars (TypeVar (PCell t) _) = freeGenVars t
+
 instance HasKind (TypeVar v t) where
     kind (TypeVar c k) = Just k
 
@@ -166,7 +169,7 @@ instance (HasKind t) => HasKind (TypeABT v t) where
     kind (TyVar tv) = kind tv
     kind (TyAST ast) = kind ast
 
-instance HasGen (ST s) t => HasGen (ST s) (TypeABT (STRef s) t) where
+instance (HasGen m t, HasGen m (TypeVar v t)) => HasGen m (TypeABT v t) where
     freeGenVars (TyVar tv)  = freeGenVars tv
     freeGenVars (TyAST ast) = freeGenVars ast
 
@@ -189,6 +192,22 @@ instance HasKind (SType s) where
 
 instance HasGen (ST s) (SType s) where
     freeGenVars (SType t) = freeGenVars t
+
+-- Pure cells
+data PCell a = PCell a
+     deriving (Show)
+
+data PType = PType (TypeABT PCell PType)
+
+deriving instance Show (TypeABT PCell PType) => Show PType
+
+instance HasKind PType where
+    kind (PType t) = kind t
+
+instance (Monad m) => HasGen m PType where
+    freeGenVars (PType t) = freeGenVars t
+
+----------------------------------------------------------------------
 
 data Class = Class Id Kind
     deriving (Eq, Ord, Show)
@@ -223,19 +242,27 @@ readVar (TypeVar ref k) = liftST $ readSTRef ref
 writeVar :: TypeVar (STRef s) t -> TVarLink t -> Infer s ()
 writeVar (TypeVar ref k) link = liftST $ writeSTRef ref link
 
+purify :: SType s -> Infer s PType
+purify (SType (TyVar tvar@(TypeVar _ k))) = do
+    link <- readVar tvar
+    case link of
+        Unbound name level -> return . PType . TyVar $ TypeVar (PCell $ Unbound name level) k
+        Link t -> purify t
+purify (SType (TyAST t)) = PType . TyAST <$> traverse purify t
+
 resolve :: SType s -> Infer s (Maybe Type)
 resolve (SType (TyVar tvar)) = do
     link <- readVar tvar
     case link of
         Unbound _name level -> throwError
-            $ EscapedSkolemError $ "resolve" ++ show tvar ++ ", level: " ++ show level -- TODO perhaps generalize?
+            $ EscapedSkolemError $ "resolve" ++ show tvar ++ ", level: " ++ show level
         Link t' -> resolve t'
 resolve (SType (TyAST (TyGen gv t))) = do
     inLevel $ do
         t' <- resolve t
         return $ Fix . TyGen gv <$> t'
 resolve (SType (TyAST (TyGenVar gv))) = do
-    curGenLevel <- levelDec <$> getCurrentLevel
+    --curGenLevel <- levelDec <$> getCurrentLevel
     -- if genVarLevel gv < curGenLevel
     --     then throwError $ EscapedSkolemError
     --          $ "genVar : " ++ (show $ genVarLevel gv) ++ " in generalize of " ++ show curGenLevel

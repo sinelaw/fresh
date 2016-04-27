@@ -6,6 +6,7 @@ module Fresh.Pretty
        ( Pretty(..) )
        where
 
+import Data.STRef (STRef)
 import Text.PrettyPrint.ANSI.Leijen
 import Fresh.Type
 import Fresh.Kind (Kind(..))
@@ -90,12 +91,21 @@ instance Pretty t => Pretty (Pred t) where
 instance Pretty (TypeVar v t) where
     pretty (TypeVar _cell k) = "<cell>" <+> "::" <+> pretty k
 
-instance Pretty t => Pretty (TypeABT v t) where
+instance (Pretty (v t), Pretty t) => Pretty (TypeABT v t) where
     pretty (TyVar v) = pretty v
     pretty (TyAST t) = pretty t
 
+instance Pretty (STRef s a) where
+    pretty _ = "<cell>"
+
 instance Pretty (SType s) where
     pretty (SType t) = pretty t
+
+instance Pretty PType where
+    pretty (PType t) = pretty t
+
+instance Pretty a => Pretty (PCell a) where
+    pretty (PCell x) = pretty x
 
 instance Pretty t => Pretty (QualType t) where
     pretty (QualType [] t) = pretty t
