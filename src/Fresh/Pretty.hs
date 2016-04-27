@@ -12,13 +12,16 @@ import Fresh.Type
 import Fresh.Kind (Kind(..))
 
 
-import qualified Data.Char as Char
+
+
+numToLetter :: Int -> Doc
+numToLetter idx =
+    if idx < length ['a'..'z']
+    then char $ ['a'..'z'] !! idx
+    else "t" <> int idx
 
 instance Pretty TCon where
-    pretty (TCon (Id s@(c:_)) k)
-        | Char.isAlpha c = text s
-        | otherwise      = parens $ text s
-    pretty (TCon (Id []) k) = "?" -- TODO
+    pretty (TCon (Id s) k) = pretty s
 
 instance Pretty Kind where
     pretty (KArrow k1 k2) = pretty k1 <+> "->" <+> pretty k2
@@ -26,14 +29,13 @@ instance Pretty Kind where
     pretty Composite = "@"
 
 instance Pretty Level where
-    pretty (LevelAny) = "^^"
-    pretty (Level x) = "^" <> pretty x
+    pretty _ = empty
+    -- pretty (LevelAny) = "^^"
+    -- pretty (Level x) = "^" <> pretty x
 
 instance Pretty GenVar where
     pretty (GenVar idx k l) = pk name <> pretty l
-        where name = if idx < length ['a'..'z']
-                     then char $ ['a'..'z'] !! idx
-                     else "t" <> int idx
+        where name = numToLetter idx
               pk = if k == Star
                    then id
                    else \x -> x <+> "::" <+> pretty k
@@ -51,8 +53,12 @@ instance Pretty t => Pretty (Composite t) where
     pretty (CompositeTerminal) = empty
     pretty (CompositeRemainder t) = " |" <+> pretty t
 
-instance (Pretty t) => Pretty (TypeAST t) where
-    pretty (TyAp fun arg) = parens $ pretty fun <+> pretty arg
+instance (HasKind t, Pretty t) => Pretty (TypeAST t) where
+    pretty (TyAp fun arg) =
+        case kind fun of
+             Just (KArrow _ KArrow{}) -> pretty arg <+> pretty fun
+                 -- TODO red for bad kind app
+             _ -> parens $ pretty fun <+> pretty arg
     pretty (TyCon con) = pretty con
     pretty (TyGenVar genVar) = pretty genVar
     pretty (TyGen genVar t) = "forall" <+> pretty genVar <> "." <+> pretty t
@@ -89,10 +95,14 @@ instance Pretty t => Pretty (Pred t) where
     pretty (PredIs c t) = pretty c <+> pretty t
     pretty (PredNoLabel c t) = pretty t <> "/" <> pretty c
 
-instance Pretty (TypeVar v t) where
-    pretty (TypeVar _cell k) = "<cell>" <+> "::" <+> pretty k
+instance (Pretty t) => Pretty (TVarLink t) where
+    pretty (Unbound n l) = numToLetter n <> "'" -- "<unbound:" <+> pretty n <> "," <+> "level:" <+> pretty l <> ">"
+    pretty (Link t) = "=" <> pretty t
 
-instance (Pretty (v t), Pretty t) => Pretty (TypeABT v t) where
+instance (Pretty (v (TVarLink t))) => Pretty (TypeVar v t) where
+    pretty (TypeVar cell k) = parens $ pretty cell <+> "::" <+> pretty k
+
+instance (HasKind t, Pretty (v (TVarLink t)), Pretty t) => Pretty (TypeABT v t) where
     pretty (TyVar v) = pretty v
     pretty (TyAST t) = pretty t
 
