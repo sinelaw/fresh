@@ -10,6 +10,7 @@ import Text.PrettyPrint.ANSI.Leijen
 import Fresh.Type
 import Fresh.Kind (Kind(..))
 
+
 import qualified Data.Char as Char
 
 instance Pretty TCon where
@@ -86,14 +87,31 @@ instance Pretty t => Pretty (Pred t) where
     pretty (PredIs c t) = pretty c <+> pretty t
     pretty (PredNoLabel c t) = pretty t <> "/" <> pretty c
 
+instance Pretty (TypeVar v t) where
+    pretty (TypeVar _cell k) = "<cell>" <+> "::" <+> pretty k
+
+instance Pretty t => Pretty (TypeABT v t) where
+    pretty (TyVar v) = pretty v
+    pretty (TyAST t) = pretty t
+
+instance Pretty (SType s) where
+    pretty (SType t) = pretty t
+
 instance Pretty t => Pretty (QualType t) where
     pretty (QualType [] t) = pretty t
     pretty (QualType ps t) = pretty ps <+> "=>" <+> pretty t
 
-instance Pretty TypeError where
-    pretty = text . show
-
 instance (Pretty e, Pretty a) => Pretty (Either e a) where
     pretty (Left e) = "Error:" <+> pretty e
     pretty (Right a) = pretty a
+
+instance Pretty TypeError where
+    pretty (WrappedError eOuter eInner) = align $ vsep [pretty eOuter, "in", pretty eInner]
+    pretty (UnificationError a b) = "Failed unifying:" <+> align (vsep [pretty a, "with", pretty b])
+    pretty (RowEndError x) = "Trailing row remainder:" <+> pretty x
+    pretty (InferenceError x) = "Failed inferring a type for expression:" <+> pretty x
+    pretty (EscapedSkolemError x) = "Skolem escaped:" <+> pretty x
+    pretty (InvalidKind) = "Invalid kind"
+    pretty (KindMismatchError k1 k2) = "Kinds mismatch error:" <+> align (vsep [pretty k1, pretty k2])
+    pretty (InvalidVarError x) = "Unknown variable:" <+> pretty x
 

@@ -302,9 +302,10 @@ data InferState s
     deriving Show
 
 data TypeError
-    = UnificationError --String String
-    | WrappedUnificationError String String TypeError
-    | WrappedInferenceError String TypeError
+    = WrappedError TypeError TypeError
+    | UnificationError String String
+    | RowEndError String
+    | InferenceError String
     | EscapedSkolemError String
     | InvalidKind
     | KindMismatchError Kind Kind

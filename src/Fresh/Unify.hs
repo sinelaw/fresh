@@ -7,6 +7,7 @@ import qualified Data.Map as Map
 import Data.STRef
 
 
+import Fresh.Pretty (Pretty(..))
 import Fresh.Type (SType(..), TypeAST(..), TypeABT(..), Infer, TypeError(..),
                    GenVar(..), TypeVar(..),
                    freshName, freshRVar,
@@ -30,7 +31,7 @@ unify t1 t2 = do
     t1' <- unchain t1
     t2' <- unchain t2
     let wrapError :: TypeError -> Infer s ()
-        wrapError e = throwError $ WrappedUnificationError (show t1') (show t2') e
+        wrapError e = throwError $ WrappedError (UnificationError (show $ pretty t1') (show $ pretty t2')) e
     unify' t1' t2' `catchError` wrapError
 
 unify' :: SType s -> SType s -> Infer s ()
@@ -90,14 +91,14 @@ unifyAST (TyComp c1) (TyComp c2) = do
             if Map.null rem'
             then case mEnd of
                 Nothing -> return ()
-                Just t -> throwError UnificationError -- TODO really?
+                Just t -> throwError $ RowEndError (show $ pretty t) -- TODO really?
             else case mEnd of
-                Nothing -> throwError UnificationError
+                Nothing -> throwError $ RowEndError (show rem')
                 Just end -> unifyAST (TyComp $ unflattenComposite $ FlatComposite rem' $ Just remainderVarT) $ fromEnd end
     unifyRemainder in1only mEnd2
     unifyRemainder in2only mEnd1
 
-unifyAST t1 t2 = throwError UnificationError --t1 t2
+unifyAST t1 t2 = throwError $ UnificationError (show $ pretty t1) (show $ pretty t2) --t1 t2
 
 
 varBind :: TypeVar (STRef s) (SType s) -> SType s -> Infer s ()

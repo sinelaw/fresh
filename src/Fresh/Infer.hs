@@ -152,7 +152,7 @@ qresolve (QualType ps t) = do
 wrapInfer :: Show a => Expr a -> Infer s (InferResult s a)
 wrapInfer expr = do
     let wrapError :: TypeError -> Infer s (InferResult s a)
-        wrapError e = throwError $ WrappedInferenceError (show $ pretty expr) e
+        wrapError e = throwError $ WrappedError (InferenceError (show $ pretty expr)) e
     infer wrapInfer expr `catchError` wrapError
 
 inferExpr :: Show a => Expr a -> Either TypeError (Expr (QualType Type))
