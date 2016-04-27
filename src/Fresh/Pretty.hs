@@ -6,7 +6,7 @@ module Fresh.Pretty
        ( Pretty(..) )
        where
 
-import Data.STRef (STRef)
+-- import Data.STRef (STRef)
 import Text.PrettyPrint.ANSI.Leijen
 import Fresh.Type
 import Fresh.Kind (Kind(..))
@@ -18,6 +18,7 @@ instance Pretty TCon where
     pretty (TCon (Id s@(c:_)) k)
         | Char.isAlpha c = text s
         | otherwise      = parens $ text s
+    pretty (TCon (Id []) k) = "?" -- TODO
 
 instance Pretty Kind where
     pretty (KArrow k1 k2) = pretty k1 <+> "->" <+> pretty k2
@@ -95,11 +96,11 @@ instance (Pretty (v t), Pretty t) => Pretty (TypeABT v t) where
     pretty (TyVar v) = pretty v
     pretty (TyAST t) = pretty t
 
-instance Pretty (STRef s a) where
-    pretty _ = "<cell>"
+-- instance Pretty (STRef s a) where
+--     pretty _ = "<cell>"
 
-instance Pretty (SType s) where
-    pretty (SType t) = pretty t
+-- instance Pretty (SType s) where
+--     pretty (SType t) = pretty t
 
 instance Pretty PType where
     pretty (PType t) = pretty t

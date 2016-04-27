@@ -30,8 +30,10 @@ unify t1 t2 = do
     when (k1 /= k2) $ throwError $ KindMismatchError k1 k2
     t1' <- unchain t1
     t2' <- unchain t2
+    pt1 <- purify t1'
+    pt2 <- purify t2'
     let wrapError :: TypeError -> Infer s ()
-        wrapError e = throwError $ WrappedError (UnificationError (show $ pretty t1') (show $ pretty t2')) e
+        wrapError e = throwError (WrappedError (UnificationError (show $ pretty pt1) (show $ pretty pt2)) e)
     unify' t1' t2' `catchError` wrapError
 
 unify' :: SType s -> SType s -> Infer s ()
@@ -91,18 +93,19 @@ unifyAST (TyComp c1) (TyComp c2) = do
             if Map.null rem'
             then case mEnd of
                 Nothing -> return ()
-                Just t -> throwError $ RowEndError (show $ pretty t) -- TODO really?
+                Just t -> purify t >>= \pt -> throwError $ RowEndError (show $ pretty pt) -- TODO really?
             else case mEnd of
                 Nothing -> throwError $ RowEndError (show rem')
                 Just end -> unifyAST (TyComp $ unflattenComposite $ FlatComposite rem' $ Just remainderVarT) $ fromEnd end
     unifyRemainder in1only mEnd2
     unifyRemainder in2only mEnd1
 
-unifyAST t1 t2 = unifyError t1 t2
+unifyAST t1 t2 = unifyError (SType $ TyAST t1) (SType $ TyAST t2)
 
+unifyError :: SType s -> SType s -> Infer s a
 unifyError t1 t2 = do
-    pt1 <- purify $ SType $ TyAST t1
-    pt2 <- purify $ SType $ TyAST t2
+    pt1 <- purify t1
+    pt2 <- purify t2
     throwError $ UnificationError (show $ pretty pt1) (show $ pretty pt2)
 
 
