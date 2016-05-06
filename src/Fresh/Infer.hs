@@ -206,7 +206,8 @@ runInfer act =
                                                     , isLevel = Level 0 }
 
 qresolve :: QType s -> Infer s (QualType Type)
-qresolve (QualType ps t) = do
+qresolve (QualType ps ti) = do
+    t <- generalize ti
     mt' <- resolve t
     pms' <- traverse (traverse resolve) ps
     let mps' = sequenceA $ map sequenceA pms'
