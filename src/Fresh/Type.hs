@@ -255,7 +255,7 @@ resolve (SType (TyVar tvar)) = do
     link <- readVar tvar
     case link of
         Unbound _name l -> throwError
-            $ EscapedSkolemError $ "resolve" ++ show tvar ++ ", level: " ++ show l
+            $ EscapedSkolemError $ "resolve " ++ show tvar ++ ", level: " ++ show l
         Link t' -> resolve t'
 resolve (SType (TyAST (TyGen gv t))) = do
     inLevel $ do
