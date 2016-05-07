@@ -127,6 +127,11 @@ infer r (EApp a efun earg) = do
     let resQ = QualType (efunP ++ eargP) resT
     return (EApp (a, resQ) efun' earg', resQ)
 
+-- Propagate annotations into Let 'manually':
+infer r (EAsc a asc (ELet a' var edef expr)) = do
+   r (ELet a' var edef (EAsc a asc expr))
+
+-- TODO: Propagate into EApp
 infer r (EAsc a asc expr) = do
    r (EApp a (EALam a dummy asc (EVar a dummy)) expr)
    where

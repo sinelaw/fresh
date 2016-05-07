@@ -95,6 +95,17 @@ a, b, c, d, e, f, g :: Int -> Type
 a',b',c',d',e',f',g' :: Int -> GenVar
 [a',b',c',d',e',f',g'] = map gv [0,1,2,3,4,5,6]
 
+rv :: Int -> Int -> GenVar
+rv x l = GenVar x Composite (Level l)
+rtv :: Int -> Int -> Type
+rtv x l = Fix $ TyGenVar $ rv x l
+
+ra, rb, rc, rd, re, rf, rg :: Int -> Type
+[ra, rb, rc, rd, re, rf, rg] = map rtv [0,1,2,3,4,5,6]
+ra',rb',rc',rd',re',rf',rg' :: Int -> GenVar
+[ra',rb',rc',rd',re',rf',rg'] = map rv [0,1,2,3,4,5,6]
+
+
 record :: [(CompositeLabelName, Type)] -> Maybe Type -> Type
 record fs rest = Fix tyRec ^$ (Fix $ TyComp c)
     where
@@ -144,14 +155,14 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( wrapFooLet ("x" ~> "y" ~> var "x")
              , Right $ [] ~=> foralls [f' 0, g' 0] (f 0 ^-> g 0 ^-> f 0))
 
-           -- , ( let_ "id" ("x" ~> var "x" ## "fieldName") $ var "id"
-           --   , Right $ [] ~=> forall c' (forall d' (record [("fieldName", c)] (Just d) ^-> c)))
+           , ( ("x" ~> var "x" ## "fieldName")
+             , Right $ [] ~=> foralls [d' 0, re' 0] (record [("fieldName", d 0)] (Just $ re 0) ^-> d 0))
 
-           -- , ( let_ "id"
-           --     ("x" ~>
-           --      (((var "x") ## "fieldName") ~:: [] ~=> _Number))
-           --     $ var "id"
-           --   , Right $ [] ~=> forall d' (record [("fieldName", _Number)] (Just d) ^-> _Number))
+           , ( let_ "id"
+               ("x" ~>
+                (((var "x") ## "fieldName") ~:: [] ~=> _Number))
+               $ var "id"
+             , Right $ [] ~=> foralls [rf' 0] (record [("fieldName", _Number)] (Just $ rf 0) ^-> _Number))
            ]
 
 -- ----------------------------------------------------------------------
