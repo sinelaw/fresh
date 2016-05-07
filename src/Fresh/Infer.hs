@@ -209,7 +209,7 @@ runInfer act =
 qresolve :: QType s -> Infer s (QualType Type)
 qresolve (QualType ps ti) = do
     t <- generalize ti
-    mt' <- resolve t
+    mt' <- resolve t `catchError` (\e -> throwError $ WrappedError (ResolveError . show $ pretty t) e)
     pms' <- traverse (traverse resolve) ps
     let mps' = sequenceA $ map sequenceA pms'
     case (mps', mt') of
@@ -224,8 +224,9 @@ wrapInfer expr = do
 
 inferExpr :: Show a => Expr a -> Either TypeError (Expr (QualType Type))
 inferExpr expr = runInfer $ do
+    let wrapError = \e -> throwError $ WrappedError (InferenceError (show $ pretty expr)) e
     (expr', t) <- wrapInfer expr
     k <- getKind t
     when (k /= Star) $ throwError $ KindMismatchError k Star
-    traverse (qresolve . snd) expr'
+    traverse (qresolve . snd) expr' `catchError` wrapError
 

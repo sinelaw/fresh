@@ -126,6 +126,7 @@ instance (Pretty e, Pretty a) => Pretty (Either e a) where
 
 instance Pretty TypeError where
     pretty (WrappedError eOuter eInner) = align $ vsep [pretty eOuter, "in", pretty eInner]
+    pretty (ResolveError s) = "Error while resolving:" <+> pretty s
     pretty (UnificationError a b) = "Failed unifying:" <+> align (vsep [pretty a, "with", pretty b])
     pretty (RowEndError x) = "Trailing row remainder:" <+> pretty x
     pretty (InferenceError x) = "Failed inferring a type for expression:" <+> pretty x

@@ -330,6 +330,7 @@ data InferState s
 
 data TypeError
     = WrappedError TypeError TypeError
+    | ResolveError String
     | UnificationError String String
     | RowEndError String
     | InferenceError String
