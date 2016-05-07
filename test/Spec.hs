@@ -130,7 +130,6 @@ examples :: [(Expr (), Either () (QualType Type))]
 examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( idFunction              , Right $ [] ~=> forall (c' 0) (c 0 ^-> c 0))
            , ( idBool                  , Right $ [] ~=> (_Bool ^-> _Bool))
-           , ( polyId                  , Right $ [] ~=> ((forall (a' 0) (a 0 ^-> a 0)) ^-> (forall (a' 0) (a 0 ^-> a 0))))
            , ( exampleApIdNum          , Right $ [] ~=> _Number)
            , ( exampleApIdNum ~:: ([] ~=> _Bool), Left ())
            , ( exampleApIdNum ~:: ([] ~=> _Number), Right $ [] ~=> _Number)
@@ -140,8 +139,20 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> _Number))) $ var "id",
                Right $ [] ~=> (_Number ^-> _Number))
 
-           -- , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> forall (d' 0) (d 0 ^-> d 0)))) $ var "id",
-           --     Right $ [] ~=> ((forall (d' 0) (d 0 ^-> d 0)) ^-> (forall (d' 0) (d 0 ^-> d 0))))
+           , ( lama "x" ([] ~=> forall (a' 0) (a 0 ^-> a 0)) (var "x")
+             , Right $ [] ~=> ((forall (a' 0) (a 0 ^-> a 0)) ^-> (forall (a' 0) (a 0 ^-> a 0))))
+
+           , ( ("x" ~> (var "x")) ~:: ([] ~=> ((forall (a' 0) (a 0 ^-> a 0)) ^-> (forall (a' 0) (a 0 ^-> a 0))))
+             , Right $ [] ~=> ((forall (a' 0) (a 0 ^-> a 0)) ^-> (forall (a' 0) (a 0 ^-> a 0))))
+
+           -- , ( (let_ "id" ("x" ~> (var "x")) (var "id"))  ~:: ([] ~=> ((forall (a' 0) (a 0 ^-> a 0)) ^-> (forall (a' 0) (a 0 ^-> a 0))))
+           --   , Right $ [] ~=> ((forall (a' 0) (a 0 ^-> a 0)) ^-> (forall (a' 0) (a 0 ^-> a 0))))
+
+           , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> forall (d' 0) (d 0 ^-> d 0)))) $ var "id",
+               Left ()) -- impredicative instantiation (eta-expansion of polymorphic arguments doens't work)
+
+           -- , ( idFunction ~:: ([] ~=> forall (b' 0) (b 0 ^-> b 0)),
+           --     Right $ [] ~=> forall (b' 0) (b 0 ^-> b 0))
 
            -- , ( idFunction ~:: ([PredIs testClass $ b 0] ~=> forall (b' 0) (b 0 ^-> b 0)),
            --     Right $ [PredIs testClass $ b 0] ~=> forall (b' 0) (b 0 ^-> b 0))
