@@ -127,8 +127,10 @@ infer r (EApp a efun earg) = do
     let resQ = QualType (efunP ++ eargP) resT
     return (EApp (a, resQ) efun' earg', resQ)
 
---infer r (EAsc a asc expr) = do
---    infer r (EApp (EALam
+infer r (EAsc a asc expr) = do
+   r (EApp a (EALam a dummy asc (EVar a dummy)) expr)
+   where
+       dummy = EVarName "impossible name"
 
 infer r (EGetField a expr name) = do
     (expr', QualType exprP exprT) <- r expr
@@ -196,8 +198,8 @@ subsume t1 t2 = do
         $ EscapedSkolemError
         $ concat -- TODO pretty
         [ "Type not polymorphic enough to unify"
-        , "\n\t", "Type 1: ", show t1
-        , "\n\t", "Type 2: ", show t2
+        , "\n\t", "Type 1: ", show $ pretty t1
+        , "\n\t", "Type 2: ", show $ pretty t2
         ]
 
 runInfer :: (forall s. Infer s a) -> Either TypeError a

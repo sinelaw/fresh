@@ -307,7 +307,7 @@ data Expr a
     | EALam a EVarName (QualType Type) (Expr a)
     | EApp a (Expr a) (Expr a)
     | ELet a EVarName (Expr a) (Expr a)
-    -- | EAsc a (QualType Type) (Expr a)
+    | EAsc a (QualType Type) (Expr a)
     | EGetField a (Expr a) CompositeLabelName
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 

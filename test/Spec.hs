@@ -39,9 +39,9 @@ infixr 5 ~$
 (~$) :: Expr () -> Expr () -> Expr ()
 (~$) = EApp ()
 
--- infixr 2 ~::
--- (~::) :: Expr () -> QualType Type -> Expr ()
--- (~::) = flip $ EAsc ()
+infixr 2 ~::
+(~::) :: Expr () -> QualType Type -> Expr ()
+(~::) = flip $ EAsc ()
 
 infixr 4 ~>
 (~>) :: EVarName -> Expr () -> Expr ()
@@ -115,19 +115,19 @@ idFunction = let_ "id" ("x" ~> var "x") $ var "id"
 idBool = lama "x" ([] ~=> _Bool) (var "x")
 polyId = lama "x" ([] ~=> forall (a' 0) (a 0 ^-> a 0)) (var "x")
 
-examples :: [(Expr (), Either TypeError (QualType Type))]
+examples :: [(Expr (), Either () (QualType Type))]
 examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( idFunction              , Right $ [] ~=> forall (c' 0) (c 0 ^-> c 0))
            , ( idBool                  , Right $ [] ~=> (_Bool ^-> _Bool))
            , ( polyId                  , Right $ [] ~=> ((forall (a' 0) (a 0 ^-> a 0)) ^-> (forall (a' 0) (a 0 ^-> a 0))))
            , ( exampleApIdNum          , Right $ [] ~=> _Number)
-           -- , ( exampleApIdNum ~:: ([] ~=> _Bool),   Left Type.UnificationError)
-           -- , ( exampleApIdNum ~:: ([] ~=> _Number), Right $ [] ~=> _Number)
+           , ( exampleApIdNum ~:: ([] ~=> _Bool), Left ())
+           , ( exampleApIdNum ~:: ([] ~=> _Number), Right $ [] ~=> _Number)
              -- TODO deal with alpha equivalence, preferrably by
              -- making generalization produce ids like GHC
 
-           -- , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> _Number))) $ var "id",
-           --     Right $ [] ~=> (_Number ^-> _Number))
+           , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> _Number))) $ var "id",
+               Right $ [] ~=> (_Number ^-> _Number))
 
            -- , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> forall (d' 0) (d 0 ^-> d 0)))) $ var "id",
            --     Right $ [] ~=> ((forall (d' 0) (d 0 ^-> d 0)) ^-> (forall (d' 0) (d 0 ^-> d 0))))
@@ -218,6 +218,9 @@ rightPad c n (x:xs)
     | n > 0     = x : rightPad c (n-1) xs
     | otherwise = (x:xs)
 
+forgetLeft (Right x) = Right x
+forgetLeft (Left _) = Left ()
+
 main :: IO ()
 main = do
     putStrLn "Testing..."
@@ -232,7 +235,7 @@ main = do
         putStr " :: "
         let inferredType = getAnnotation <$> inferExpr x
         print . pretty $ inferredType
-        when (inferredType /= t)
+        when (forgetLeft inferredType /= t)
             $ error
             $ concat
             [ "Wrong type."
