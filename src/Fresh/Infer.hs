@@ -98,13 +98,14 @@ infer r (ELam a var expr) = do
 
 infer r (EALam a var varQ expr) = do
     let QualType varPs varAT = unresolveQual varQ
-    (ps, varAT', expr', exprT') <- inLevel $ do
-        varAT' <- instantiate varAT
+    (ps, varAT', expr', exprT) <- inLevel $ do
+        --varAT' <- instantiate varAT
+        let varAT' = varAT -- TODO instantiate 'some' quantifiers (when we have them)
         tvar <- freshTVar
         varBind tvar varAT'
         (expr', QualType ps exprT) <- withVar var tvar $ r expr
-        exprT' <- instantiate exprT
-        return (ps, varAT', expr', exprT')
+        return (ps, varAT', expr', exprT)
+    exprT' <- instantiate exprT
     genT <- generalize $ funT varAT' exprT'
     let resT = QualType (varPs ++ ps) genT
     return (ELam (a, resT) var expr', resT)
