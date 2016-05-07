@@ -6,12 +6,10 @@ module Fresh.Pretty
        ( Pretty(..) )
        where
 
--- import Data.STRef (STRef)
+import Data.STRef (STRef)
 import Text.PrettyPrint.ANSI.Leijen
 import Fresh.Type
 import Fresh.Kind (Kind(..))
-
-
 
 
 numToLetter :: Int -> Doc
@@ -106,11 +104,11 @@ instance (HasKind t, Pretty (v (TVarLink t)), Pretty t) => Pretty (TypeABT v t) 
     pretty (TyVar v) = pretty v
     pretty (TyAST t) = pretty t
 
--- instance Pretty (STRef s a) where
---     pretty _ = "<cell>"
+instance Pretty (STRef s a) where
+    pretty _ = "<cell>"
 
--- instance Pretty (SType s) where
---     pretty (SType t) = pretty t
+instance Pretty (SType s) where
+    pretty (SType t) = pretty t
 
 instance Pretty PType where
     pretty (PType t) = pretty t
