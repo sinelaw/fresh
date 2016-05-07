@@ -112,13 +112,14 @@ testClass :: Class
 testClass = Class (Id "TestClass") Star
 
 idFunction = let_ "id" ("x" ~> var "x") $ var "id"
-
-polyId = let_ "polyId" (lama "x" ([] ~=> forall (a' 0) (a 0 ^-> a 0)) ("x" ~> var "x")) $ var "polyId"
+idBool = lama "x" ([] ~=> _Bool) (var "x")
+polyId = lama "x" ([] ~=> forall (a' 0) (a 0 ^-> a 0)) (var "x")
 
 examples :: [(Expr (), Either TypeError (QualType Type))]
 examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( idFunction              , Right $ [] ~=> forall (c' 0) (c 0 ^-> c 0))
-           , ( polyId                  , Right $ [] ~=> ((forall (c' 0) (c 0 ^-> c 0)) ^-> (forall (c' 0) (c 0 ^-> c 0))))
+           , ( idBool                  , Right $ [] ~=> (_Bool ^-> _Bool))
+           , ( polyId                  , Right $ [] ~=> ((forall (a' 0) (a 0 ^-> a 0)) ^-> (forall (a' 0) (a 0 ^-> a 0))))
            , ( exampleApIdNum          , Right $ [] ~=> _Number)
            -- , ( exampleApIdNum ~:: ([] ~=> _Bool),   Left Type.UnificationError)
            -- , ( exampleApIdNum ~:: ([] ~=> _Number), Right $ [] ~=> _Number)
