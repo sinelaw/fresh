@@ -135,3 +135,4 @@ instance Pretty TypeError where
     pretty (KindMismatchError k1 k2) = "Kinds mismatch error:" <+> align (vsep [pretty k1, pretty k2])
     pretty (InvalidVarError x) = "Unknown variable:" <+> pretty x
     pretty (ExpectedFunction x) = "Expected function type, got:" <+> pretty x
+    pretty (SubsumeError t1 t2) = "Subsuming" <+> text t1 <+> "into" <+> text t2

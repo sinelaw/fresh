@@ -339,6 +339,7 @@ data TypeError
     | KindMismatchError Kind Kind
     | InvalidVarError String
     | ExpectedFunction String
+    | SubsumeError String String
     deriving (Eq, Show)
 
 type Infer s a = StateT (InferState s) (EitherT TypeError (ST s)) a
@@ -411,7 +412,12 @@ instantiate (SType (TyAST (TyGen gvs tGen))) = do
             tv <- SType . TyVar <$> freshTVarK k
             substGen gv tv t
     foldM inst tGen gvs
-instantiate t = return t
+instantiate t@(SType (TyAST _)) = return t
+instantiate t@(SType (TyVar tvar)) = do
+    t' <- readVar tvar
+    case t' of
+        Unbound{} -> return t
+        Link tLink -> instantiate tLink
 
 substGen :: GenVar -> SType s -> SType s -> Infer s (SType s)
 substGen gv tv t@(SType (TyVar tv')) = do

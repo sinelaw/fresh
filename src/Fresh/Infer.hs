@@ -129,13 +129,20 @@ infer r (EApp a efun earg) = do
 
 -- Propagate annotations into Let 'manually':
 infer r (EAsc a asc (ELet a' var edef expr)) = do
-   r (ELet a' var edef (EAsc a asc expr))
+    -- TODO handle 'some' quanitifier in annotation
+    (expr', QualType exprP exprT) <- r (ELet a' var edef (EAsc a asc expr))
+    let ascQ@(QualType ascP ascT) = unresolveQual asc
+        -- resQ = QualType (ascP ++ exprP)
+    subsume ascT exprT
+    return (EAsc (a, ascQ) asc expr', ascQ)
 
 -- TODO: Propagate into EApp
 infer r (EAsc a asc expr) = do
-   r (EApp a (EALam a dummy asc (EVar a dummy)) expr)
-   where
-       dummy = EVarName "impossible name"
+    let ascQ = unresolveQual asc
+    (expr', exprQ) <- r (EApp a (EALam a dummy asc (EVar a dummy)) expr)
+    return (EAsc (a, ascQ) asc expr', ascQ)
+    where
+        dummy = EVarName "x"
 
 infer r (EGetField a expr name) = do
     (expr', QualType exprP exprT) <- r expr
@@ -192,7 +199,7 @@ skolemize (SType (TyAST (TyGen vs t))) = do
 skolemize t = return ([], t)
 
 subsume :: SType s -> SType s -> Infer s ()
-subsume t1 t2 = do
+subsume t1 t2 = withWrap $ do
     (sks, t1') <- skolemize t1
     t2' <- instantiate t2
     unify t1' t2'
@@ -206,6 +213,10 @@ subsume t1 t2 = do
         , "\n\t", "Type 1: ", show $ pretty t1
         , "\n\t", "Type 2: ", show $ pretty t2
         ]
+    where
+        withWrap act = act `catchError` wrapError
+        wrapError = \e -> throwError $
+                          WrappedError (SubsumeError (show $ pretty t1)(show $ pretty t2)) e
 
 runInfer :: (forall s. Infer s a) -> Either TypeError a
 runInfer act =
@@ -231,9 +242,14 @@ wrapInfer expr = do
 
 inferExpr :: Show a => Expr a -> Either TypeError (Expr (QualType Type))
 inferExpr expr = runInfer $ do
-    let wrapError = \e -> throwError $ WrappedError (InferenceError (show $ pretty expr)) e
-    (expr', t) <- wrapInfer expr
+    (expr', QualType p t) <- inLevel $ wrapInfer expr
     k <- getKind t
     when (k /= Star) $ throwError $ KindMismatchError k Star
-    traverse (qresolve . snd) expr' `catchError` wrapError
+    -- TODO should we really generalize? Is this func only for top-level exprs?
+    t' <- generalize t
+    let exprG = fmap (\(a, _) -> (a, QualType p t')) expr'
+        wrapError = \e -> do
+            pt <- purify t'
+            throwError $ WrappedError (ResolveError (show $ pretty $ pt)) e
+    traverse (qresolve . snd) exprG `catchError` wrapError
 

@@ -84,25 +84,25 @@ forall gv t = foralls [gv] t
 foralls :: [GenVar] -> Type -> Type
 foralls gvs t = Fix $ TyGen gvs t
 
-gv :: Int -> Int -> GenVar
-gv x l = GenVar x Star (Level l)
+gv :: Int -> GenVar
+gv x = GenVar x Star (Level 1)
 
-tv :: Int -> Int -> Type
-tv x l = Fix $ TyGenVar $ gv x l
+tv :: Int -> Type
+tv x = Fix $ TyGenVar $ gv x
 
-a, b, c, d, e, f, g :: Int -> Type
+a, b, c, d, e, f, g :: Type
 [a, b, c, d, e, f, g] = map tv [0,1,2,3,4,5,6]
-a',b',c',d',e',f',g' :: Int -> GenVar
+a',b',c',d',e',f',g' :: GenVar
 [a',b',c',d',e',f',g'] = map gv [0,1,2,3,4,5,6]
 
-rv :: Int -> Int -> GenVar
-rv x l = GenVar x Composite (Level l)
-rtv :: Int -> Int -> Type
-rtv x l = Fix $ TyGenVar $ rv x l
+rv :: Int -> GenVar
+rv x = GenVar x Composite (Level 1)
+rtv :: Int -> Type
+rtv x = Fix $ TyGenVar $ rv x
 
-ra, rb, rc, rd, re, rf, rg :: Int -> Type
+ra, rb, rc, rd, re, rf, rg :: Type
 [ra, rb, rc, rd, re, rf, rg] = map rtv [0,1,2,3,4,5,6]
-ra',rb',rc',rd',re',rf',rg' :: Int -> GenVar
+ra',rb',rc',rd',re',rf',rg' :: GenVar
 [ra',rb',rc',rd',re',rf',rg'] = map rv [0,1,2,3,4,5,6]
 
 
@@ -124,11 +124,14 @@ testClass = Class (Id "TestClass") Star
 
 idFunction = let_ "id" ("x" ~> var "x") $ var "id"
 idBool = lama "x" ([] ~=> _Bool) (var "x")
-polyId = lama "x" ([] ~=> forall (a' 0) (a 0 ^-> a 0)) (var "x")
+polyId = lama "x" ([] ~=> forall (a') (a ^-> a)) (var "x")
 
 examples :: [(Expr (), Either () (QualType Type))]
 examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
-           , ( idFunction              , Right $ [] ~=> forall (c' 0) (c 0 ^-> c 0))
+           , ( ("x" ~> (var "x")) ~:: ([] ~=> ((forall (a') (a ^-> a)) ^-> (forall (a') (a ^-> a))))
+             , Right $ [] ~=> ((forall (a') (a ^-> a)) ^-> (forall (a') (a ^-> a))))
+
+           , ( idFunction              , Right $ [] ~=> forall (c') (c ^-> c))
            , ( idBool                  , Right $ [] ~=> (_Bool ^-> _Bool))
            , ( exampleApIdNum          , Right $ [] ~=> _Number)
            , ( exampleApIdNum ~:: ([] ~=> _Bool), Left ())
@@ -139,41 +142,38 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> _Number))) $ var "id",
                Right $ [] ~=> (_Number ^-> _Number))
 
-           , ( lama "x" ([] ~=> forall (a' 0) (a 0 ^-> a 0)) (var "x")
-             , Right $ [] ~=> ((forall (a' 0) (a 0 ^-> a 0)) ^-> (forall (a' 0) (a 0 ^-> a 0))))
+           , ( let_ "id" (lama "x" ([] ~=> forall (a') (a ^-> a)) (var "x")) $ var "id"
+             , Right $ [] ~=> ((forall (a') (a ^-> a)) ^-> (forall (a') (a ^-> a))))
 
-           , ( ("x" ~> (var "x")) ~:: ([] ~=> ((forall (a' 0) (a 0 ^-> a 0)) ^-> (forall (a' 0) (a 0 ^-> a 0))))
-             , Right $ [] ~=> ((forall (a' 0) (a 0 ^-> a 0)) ^-> (forall (a' 0) (a 0 ^-> a 0))))
+           , ( (let_ "id" ("x" ~> (var "x")) (var "id"))  ~:: ([] ~=> ((forall (a') (a ^-> a)) ^-> (forall (a') (a ^-> a))))
+             , Right $ [] ~=> ((forall (a') (a ^-> a)) ^-> (forall (a') (a ^-> a))))
 
-           -- , ( (let_ "id" ("x" ~> (var "x")) (var "id"))  ~:: ([] ~=> ((forall (a' 0) (a 0 ^-> a 0)) ^-> (forall (a' 0) (a 0 ^-> a 0))))
-           --   , Right $ [] ~=> ((forall (a' 0) (a 0 ^-> a 0)) ^-> (forall (a' 0) (a 0 ^-> a 0))))
-
-           , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> forall (d' 0) (d 0 ^-> d 0)))) $ var "id",
+           , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> forall (d') (d ^-> d)))) $ var "id",
                Left ()) -- impredicative instantiation (eta-expansion of polymorphic arguments doens't work)
 
-           -- , ( idFunction ~:: ([] ~=> forall (b' 0) (b 0 ^-> b 0)),
-           --     Right $ [] ~=> forall (b' 0) (b 0 ^-> b 0))
+           -- , ( idFunction ~:: ([] ~=> forall (b') (b ^-> b)),
+           --     Right $ [] ~=> forall (b') (b ^-> b))
 
-           -- , ( idFunction ~:: ([PredIs testClass $ b 0] ~=> forall (b' 0) (b 0 ^-> b 0)),
-           --     Right $ [PredIs testClass $ b 0] ~=> forall (b' 0) (b 0 ^-> b 0))
+           -- , ( idFunction ~:: ([PredIs testClass $ b] ~=> forall (b') (b ^-> b)),
+           --     Right $ [PredIs testClass $ b] ~=> forall (b') (b ^-> b))
 
            -- , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
            --   , Right $ [] ~=> forall b' (forall d' (b ^-> d ^-> b)))
 
            , ( let_ "zero" ("x" ~> var "x" ~$ num 0) (var "zero")
-             , Right $ [] ~=> forall (e' 0) ((_Number ^-> e 0) ^-> e 0))
+             , Right $ [] ~=> forall (e') ((_Number ^-> e) ^-> e))
 
            , ( wrapFooLet ("x" ~> "y" ~> var "x")
-             , Right $ [] ~=> foralls [f' 0, g' 0] (f 0 ^-> g 0 ^-> f 0))
+             , Right $ [] ~=> foralls [f', g'] (f ^-> g ^-> f))
 
            , ( ("x" ~> var "x" ## "fieldName")
-             , Right $ [] ~=> foralls [d' 0, re' 0] (record [("fieldName", d 0)] (Just $ re 0) ^-> d 0))
+             , Right $ [] ~=> foralls [d', re'] (record [("fieldName", d)] (Just $ re) ^-> d))
 
            , ( let_ "id"
                ("x" ~>
                 (((var "x") ## "fieldName") ~:: [] ~=> _Number))
                $ var "id"
-             , Right $ [] ~=> foralls [rf' 0] (record [("fieldName", _Number)] (Just $ rf 0) ^-> _Number))
+             , Right $ [] ~=> foralls [rf'] (record [("fieldName", _Number)] (Just $ rf) ^-> _Number))
            ]
 
 -- ----------------------------------------------------------------------
@@ -265,6 +265,10 @@ main = do
             , "\t" , "Expected: " , show (pretty t) -- , " = " , (show t) , "\n"
             , "\n"
             , "\t" , "Inferred: " , show (pretty inferredType) -- , " = " , (show inferredType) , "\n"
+            -- , "\n"
+            -- , "\t" , "Raw Expected: " , show t
+            -- , "\n"
+            -- , "\t" , "Raw Inferred: " , show inferredType
             ]
         -- print . show $ getAnnotation <$> inferExpr x
         -- print . show $ getAnnotation <$> inferExpr (constWrap x)
