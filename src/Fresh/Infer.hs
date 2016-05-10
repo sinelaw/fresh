@@ -21,20 +21,8 @@ import Fresh.Type (TypeAST(..), TypeABT(..), TCon(..), SType(..), Infer, HasGen(
                    Id(..), freshTVar, freshTVarK, QualType(..), CompositeLabelName(..), GenVar(..), freshName, getCurrentLevel, substGens,
                    TypeVar(..), instantiate, readVar, writeVar, TVarLink(..), purify,
                    freshRVar, FlatComposite(..), unflattenComposite, EVarName(..),
-                   InferState(..), Expr(..), QType, emptyQual, Lit(..))
+                   InferState(..), Expr(..), QType, emptyQual, Lit(..), tyFunc, tyRec, conFunc, normalize)
 import Fresh.Unify (unify, varBind)
-
-tyRec :: TypeAST t
-tyRec = TyCon (TCon (Id "Rec") (KArrow Composite Star))
-
-tySum :: TypeAST t
-tySum = TyCon (TCon (Id "Sum") (KArrow Composite Star))
-
-conFunc = TCon (Id "->") (KArrow Star (KArrow Star Star))
-
-tyFunc :: TypeAST t
-tyFunc = TyCon conFunc
-
 
 funT :: SType s -> SType s -> SType s
 funT targ tres =
@@ -251,5 +239,5 @@ inferExpr expr = runInfer $ do
         wrapError = \e -> do
             pt <- purify t'
             throwError $ WrappedError (ResolveError (show $ pretty $ pt)) e
-    traverse (qresolve . snd) exprG `catchError` wrapError
+    traverse ((fmap $ fmap normalize) . qresolve . snd) exprG `catchError` wrapError
 

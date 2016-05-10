@@ -12,8 +12,8 @@ import Data.String (IsString(..))
 import qualified Data.Map as Map
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Type (EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError)
-import Fresh.Infer (inferExpr, tyFunc, tyRec, runInfer)
+import Fresh.Type (EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec)
+import Fresh.Infer (inferExpr, runInfer)
 import Fresh.Unify (unify)
 import qualified Fresh.Type as Type
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))

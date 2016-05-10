@@ -21,6 +21,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Maybe (catMaybes)
 
+import Data.Functor.Identity (runIdentity)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..))
 import Control.Monad.State.Class (MonadState(..), modify)
@@ -98,11 +99,22 @@ data TypeAST t
 class Monad m => HasGen m t where
     freeGenVars :: t -> m (Set GenVar)
 
-
 instance HasGen m t => HasGen m (TypeAST t) where
     freeGenVars (TyGenVar g) = pure $ Set.singleton g
     freeGenVars (TyGen gvs t) = Set.difference <$> freeGenVars t <*> pure (Set.fromList gvs)
     freeGenVars t = foldr Set.union Set.empty <$> traverse freeGenVars t
+
+
+tyRec :: TypeAST t
+tyRec = TyCon (TCon (Id "Rec") (KArrow Composite Star))
+
+tySum :: TypeAST t
+tySum = TyCon (TCon (Id "Sum") (KArrow Composite Star))
+
+conFunc = TCon (Id "->") (KArrow Star (KArrow Star Star))
+
+tyFunc :: TypeAST t
+tyFunc = TyCon conFunc
 
 class HasLevel t where
     level :: t -> Level
@@ -227,6 +239,12 @@ emptyQual t = QualType [] t
 type QType s = QualType (SType s)
 
 type Type = Fix TypeAST
+
+normalize :: Type -> Type
+normalize (Fix (TyAp t1@(Fix (TyAp f arg)) (Fix (TyGen gvs t))))
+    | (f == Fix tyFunc) && (Set.null $ runIdentity (freeGenVars arg) `Set.intersection` (Set.fromList gvs))
+    = Fix $ TyGen gvs (Fix $ TyAp t1 t)
+normalize t = t
 
 instance Eq (Fix TypeAST) where
     (Fix x) == (Fix y) = x == y
