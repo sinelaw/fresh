@@ -27,9 +27,9 @@ instance Pretty Kind where
     pretty Composite = "@"
 
 instance Pretty Level where
-    pretty _ = empty
-    -- pretty (LevelAny) = "^^"
-    -- pretty (Level x) = "^" <> pretty x
+    -- pretty _ = empty
+    pretty (LevelAny) = "^^"
+    pretty (Level x) = "^" <> pretty x
 
 instance Pretty GenVar where
     pretty (GenVar idx k l) = pk name <> pretty l
