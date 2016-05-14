@@ -309,6 +309,9 @@ getKind = checkKind . kind
 
 ----------------------------------------------------------------------
 
+newtype ETypeAsc = ETypeAsc (QualType Type)
+    deriving (Eq, Ord, Show)
+
 data EVarName = EVarName String
     deriving (Eq, Ord, Show)
 
@@ -322,10 +325,10 @@ data Expr a
     = ELit a Lit
     | EVar a EVarName
     | ELam a EVarName (Expr a)
-    | EALam a EVarName (QualType Type) (Expr a)
+    | EALam a EVarName ETypeAsc (Expr a)
     | EApp a (Expr a) (Expr a)
     | ELet a EVarName (Expr a) (Expr a)
-    | EAsc a (QualType Type) (Expr a)
+    | EAsc a ETypeAsc (Expr a)
     | EGetField a (Expr a) CompositeLabelName
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 

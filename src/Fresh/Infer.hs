@@ -21,7 +21,7 @@ import Fresh.Type (TypeAST(..), TypeABT(..), TCon(..), SType(..), Infer, HasGen(
                    Id(..), freshTVar, freshTVarK, QualType(..), CompositeLabelName(..), GenVar(..), freshName, getCurrentLevel, substGens,
                    TypeVar(..), instantiate, readVar, writeVar, TVarLink(..), purify,
                    freshRVar, FlatComposite(..), unflattenComposite, EVarName(..),
-                   InferState(..), Expr(..), QType, emptyQual, Lit(..), tyFunc, tyRec, conFunc, normalize)
+                   InferState(..), Expr(..), QType, emptyQual, Lit(..), tyFunc, tyRec, conFunc, normalize, Fix(..), unresolve, ETypeAsc(..), unresolvePred)
 import Fresh.Unify (unify, varBind)
 
 funT :: SType s -> SType s -> SType s
@@ -85,7 +85,7 @@ infer r (ELam a var expr) = do
     return (ELam (a, resT) var expr', resT)
 
 infer r (EALam a var varQ expr) = do
-    let QualType varPs varAT = unresolveQual varQ
+    QualType varPs varAT <- instantiateAnnot varQ
     (ps, varAT', expr', exprT) <- inLevel $ do
         --varAT' <- instantiate varAT
         let varAT' = varAT -- TODO instantiate 'some' quantifiers (when we have them)
@@ -119,14 +119,14 @@ infer r (EApp a efun earg) = do
 infer r (EAsc a asc (ELet a' var edef expr)) = do
     -- TODO handle 'some' quanitifier in annotation
     (expr', QualType exprP exprT) <- r (ELet a' var edef (EAsc a asc expr))
-    let ascQ@(QualType ascP ascT) = unresolveQual asc
+    ascQ@(QualType ascP ascT) <- instantiateAnnot asc
         -- resQ = QualType (ascP ++ exprP)
     subsume ascT exprT
     return (EAsc (a, ascQ) asc expr', ascQ)
 
 -- TODO: Propagate into EApp
 infer r (EAsc a asc expr) = do
-    let ascQ = unresolveQual asc
+    ascQ <- instantiateAnnot asc
     (expr', exprQ) <- r (EApp a (EALam a dummy asc (EVar a dummy)) expr)
     return (EAsc (a, ascQ) asc expr', ascQ)
     where
@@ -140,6 +140,21 @@ infer r (EGetField a expr name) = do
     let resT = QualType exprP tvar
     return (EGetField (a, resT) expr' name, resT)
 
+instantiateAnnot :: ETypeAsc -> Infer s (QualType (SType s))
+instantiateAnnot (ETypeAsc (QualType ps t)) =
+    QualType (map unresolvePred ps) <$> instantiateAnnot' t
+
+instantiateAnnot' :: Type -> Infer s (SType s)
+instantiateAnnot' (Fix ascType) = do
+    case ascType of
+        TyGen gvs tscheme -> do
+            curLevel <- getCurrentLevel
+            let mkGen k = GenVar <$> freshName <*> pure k <*> pure curLevel
+            freshGVs <- mapM (mkGen . genVarKind) gvs
+            tscheme' <- instantiateAnnot' tscheme
+            tscheme'' <- substGens gvs (map (SType . TyAST . TyGenVar) freshGVs) tscheme'
+            return . SType . TyAST $ TyGen freshGVs tscheme''
+        _ -> SType . TyAST <$> traverse instantiateAnnot' ascType
 
 data FlatTy t
     = FlatTyAp (FlatTy t) (FlatTy t)

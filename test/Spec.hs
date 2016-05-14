@@ -12,7 +12,7 @@ import Data.String (IsString(..))
 import qualified Data.Map as Map
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Type (EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec)
+import Fresh.Type (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec)
 import Fresh.Infer (inferExpr, runInfer)
 import Fresh.Unify (unify)
 import qualified Fresh.Type as Type
@@ -41,7 +41,7 @@ infixr 5 ~$
 
 infixr 2 ~::
 (~::) :: Expr () -> QualType Type -> Expr ()
-(~::) = flip $ EAsc ()
+(~::) = \expr qual -> EAsc () (ETypeAsc qual) expr
 
 infixr 4 ~>
 (~>) :: EVarName -> Expr () -> Expr ()
@@ -52,7 +52,8 @@ infixr 5 ##
 (##) = EGetField ()
 
 
-lama = EALam ()
+lama :: EVarName -> QualType Type -> Expr () -> Expr ()
+lama v t = EALam () v (ETypeAsc t)
 
 -- Types
 
@@ -197,6 +198,7 @@ derive makeArbitrary ''Class
 
 derive makeArbitrary ''Lit
 derive makeArbitrary ''EVarName
+derive makeArbitrary ''ETypeAsc
 derive makeArbitrary ''Expr
 
 constWrap :: Expr () -> Expr ()

@@ -71,6 +71,9 @@ instance Pretty Lit where
     pretty (LitString x) = pretty x
     pretty (LitBool x) = pretty x
 
+instance Pretty ETypeAsc where
+    pretty (ETypeAsc t) = pretty t
+
 instance Pretty (Expr a) where
     pretty (ELit a l) = pretty l
     pretty (EVar a varName) = pretty varName
