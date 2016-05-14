@@ -1,6 +1,6 @@
 module Fresh.Unify where
 
-import Control.Monad (forM_, when, foldM)
+import Control.Monad (forM_, when)
 import Control.Monad.Error.Class (MonadError(..))
 import qualified Data.Set as Set
 import qualified Data.Map as Map
@@ -37,7 +37,7 @@ unify t1 t2 = do
     unify' t1' t2' `catchError` wrapError
 
 unify' :: SType s -> SType s -> Infer s ()
-unify' (SType (TyVar tvar1)) t2@(SType (TyVar tvar2)) = do
+unify' (SType (TyVar tvar1)) (SType (TyVar tvar2)) = do
     vt1 <- readVar tvar1
     vt2 <- readVar tvar2
     case (vt1, vt2) of
@@ -45,7 +45,9 @@ unify' (SType (TyVar tvar1)) t2@(SType (TyVar tvar2)) = do
             if l1 < l2
             then writeVar tvar2 vt1
             else writeVar tvar1 vt2
-        _ -> varBind tvar1 t2 -- TODO
+        (Unbound{}, Link lt2) -> varBind tvar1 lt2
+        (Link lt1, Unbound{}) -> varBind tvar2 lt1
+        (Link lt1, Link lt2) -> unify' lt1 lt2
 
 unify' (SType (TyVar tvar)) t = varBind tvar t
 unify' t (SType (TyVar tvar)) = varBind tvar t
