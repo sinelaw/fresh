@@ -148,8 +148,7 @@ instantiateAnnot' :: Type -> Infer s (SType s)
 instantiateAnnot' (Fix ascType) = do
     case ascType of
         TyGen gvs tscheme -> do
-            curLevel <- getCurrentLevel
-            let mkGen k = GenVar <$> freshName <*> pure k <*> pure curLevel
+            let mkGen k = GenVar <$> freshName <*> pure k <*> pure LevelAny
             freshGVs <- mapM (mkGen . genVarKind) gvs
             tscheme' <- instantiateAnnot' tscheme
             tscheme'' <- substGens gvs (map (SType . TyAST . TyGenVar) freshGVs) tscheme'

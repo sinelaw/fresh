@@ -86,7 +86,7 @@ foralls :: [GenVar] -> Type -> Type
 foralls gvs t = Fix $ TyGen gvs t
 
 gv :: Int -> GenVar
-gv x = GenVar x Star (Level 1)
+gv x = GenVar x Star LevelAny
 
 tv :: Int -> Type
 tv x = Fix $ TyGenVar $ gv x
@@ -97,7 +97,7 @@ a',b',c',d',e',f',g' :: GenVar
 [a',b',c',d',e',f',g'] = map gv [0,1,2,3,4,5,6]
 
 rv :: Int -> GenVar
-rv x = GenVar x Composite (Level 1)
+rv x = GenVar x Composite LevelAny
 rtv :: Int -> Type
 rtv x = Fix $ TyGenVar $ rv x
 
