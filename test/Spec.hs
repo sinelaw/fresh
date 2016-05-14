@@ -130,7 +130,7 @@ polyId = lama "x" ([] ~=> forall (a') (a ^-> a)) (var "x")
 examples :: [(Expr (), Either () (QualType Type))]
 examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( ("x" ~> (var "x")) ~:: ([] ~=> ((forall (a') (a ^-> a)) ^-> (forall (a') (a ^-> a))))
-             , Right $ [] ~=> ((forall (a') (a ^-> a)) ^-> (forall (a') (a ^-> a))))
+             , Right $ [] ~=> forall (b') ((forall (a') (a ^-> a)) ^-> (b ^-> b)))
 
            , ( idFunction              , Right $ [] ~=> forall (c') (c ^-> c))
            , ( idBool                  , Right $ [] ~=> (_Bool ^-> _Bool))
@@ -144,7 +144,7 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
                Right $ [] ~=> (_Number ^-> _Number))
 
            , ( let_ "id" (lama "x" ([] ~=> forall (a') (a ^-> a)) (var "x")) $ var "id"
-             , Right $ [] ~=> ((forall (a') (a ^-> a)) ^-> (forall (a') (a ^-> a))))
+             , Right $ [] ~=> forall (e') ((forall (b') (b ^-> b)) ^-> (e ^-> e)))
 
            , ( (let_ "id" ("x" ~> (var "x")) (var "id"))  ~:: ([] ~=> ((forall (a') (a ^-> a)) ^-> (forall (a') (a ^-> a))))
              , Right $ [] ~=> ((forall (a') (a ^-> a)) ^-> (forall (a') (a ^-> a))))
