@@ -9,7 +9,7 @@ import Data.STRef
 
 import Fresh.Pretty (Pretty(..))
 import Fresh.Type (SType(..), TypeAST(..), TypeABT(..), Infer, TypeError(..),
-                   GenVar(..), TypeVar(..),
+                   GenVar(..), TypeVar(..), Level(..),
                    freshName, freshRVar, purify,
                    getCurrentLevel, substGens, liftST, HasGen(..),
                    FlatComposite(..), flattenComposite, unflattenComposite,
@@ -53,7 +53,7 @@ unify' (SType (TyVar tvar)) t = varBind tvar t
 unify' t (SType (TyVar tvar)) = varBind tvar t
 unify' (SType (TyAST t1)) (SType (TyAST t2)) = unifyAST t1 t2
 
-unifyAST :: TypeAST (SType s) -> TypeAST (SType s) -> Infer s ()
+unifyAST :: TypeAST Level (SType s) -> TypeAST Level (SType s) -> Infer s ()
 unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
     unify t1 t1'
     unify t2 t2'

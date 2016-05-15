@@ -54,13 +54,16 @@ data Id = Id String
 data TCon = TCon { tcId ::  Id, tcKind :: Kind }
     deriving (Eq, Ord, Show)
 
-data GenVar
+data GenVar a
     = GenVar
       { genVarId :: Int
       , genVarKind :: Kind
-      , genVarLevel :: Level
+      , genVarAnnot :: a
       }
-    deriving (Eq, Ord, Show)
+    deriving (Eq, Ord, Show, Functor)
+
+genDropAnnot :: GenVar a -> GenVar ()
+genDropAnnot gv = gv { genVarAnnot = () }
 
 newtype CompositeLabelName = CompositeLabelName String
     deriving (Eq, Ord, Show)
@@ -88,40 +91,49 @@ unflattenComposite (FlatComposite m mRem) =
     foldr (\(n, t) rest -> CompositeLabel n t rest) rem' $ Map.toList m
     where rem' = maybe CompositeTerminal CompositeRemainder mRem
 
-data TypeAST t
+data TypeAST g t
     = TyAp { _tyApFun :: t, _tyApArg :: t }
     | TyCon { _tyCon :: TCon }
-    | TyGenVar { _tyGenVar :: GenVar }
-    | TyGen { _tyGenVars :: [GenVar], _tyGenScheme :: t }
+    | TyGenVar { _tyGenVar :: GenVar g }
+    | TyGen { _tyGenVars :: [GenVar g], _tyGenScheme :: t }
     | TyComp { _tyComp :: Composite t }
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
-class Monad m => HasGen m t where
-    freeGenVars :: t -> m (Set GenVar)
+class Monad m => HasGen m t g where
+    freeGenVars :: t -> m (Set (GenVar g))
 
-instance HasGen m t => HasGen m (TypeAST t) where
+instance (Ord g, HasGen m t g) => HasGen m (TypeAST g t) g where
     freeGenVars (TyGenVar g) = pure $ Set.singleton g
     freeGenVars (TyGen gvs t) = Set.difference <$> freeGenVars t <*> pure (Set.fromList gvs)
     freeGenVars t = foldr Set.union Set.empty <$> traverse freeGenVars t
 
+bimapTypeAST :: (g -> g') -> (t -> t') -> TypeAST g t -> TypeAST g' t'
+bimapTypeAST fg _  (TyGenVar g) = TyGenVar (fmap fg g)
+bimapTypeAST fg ft (TyGen gvs t) = TyGen (map (fmap fg) gvs) (ft t)
+bimapTypeAST _ ft (TyAp t1 t2) = TyAp (ft t1) (ft t2)
+bimapTypeAST _ _ (TyCon{..}) = TyCon{..}
+bimapTypeAST _ ft (TyComp c) = TyComp $ fmap ft c
 
-tyRec :: TypeAST t
+tyRec :: TypeAST g t
 tyRec = TyCon (TCon (Id "Rec") (KArrow Composite Star))
 
-tySum :: TypeAST t
+tySum :: TypeAST g t
 tySum = TyCon (TCon (Id "Sum") (KArrow Composite Star))
 
 conFunc = TCon (Id "->") (KArrow Star (KArrow Star Star))
 
-tyFunc :: TypeAST t
+tyFunc :: TypeAST g t
 tyFunc = TyCon conFunc
 
 class HasLevel t where
     level :: t -> Level
 
-instance HasLevel GenVar where
-    level = genVarLevel
-instance HasLevel t => HasLevel (TypeAST t) where
+instance HasLevel Level where
+    level = id
+
+instance HasLevel (GenVar Level) where
+    level g = genVarAnnot g
+instance HasLevel t => HasLevel (TypeAST g t) where
     level = foldr (min . level) LevelAny
 
 class HasKind t where
@@ -129,9 +141,9 @@ class HasKind t where
 
 instance HasKind TCon where
     kind = Just . tcKind
-instance HasKind GenVar where
+instance HasKind (GenVar a) where
     kind = Just . genVarKind
-instance HasKind t => HasKind (TypeAST t) where
+instance HasKind t => HasKind (TypeAST g t) where
     kind (TyAp f x) = join $ Kind.app <$> kind f <*> kind x
     kind (TyCon tc) = kind tc
     kind (TyGenVar gv) = kind gv
@@ -150,16 +162,13 @@ data TypeVar v t
 instance Show (STRef s t) where
     show v = "<stref>"
 
-instance HasGen m t => HasGen m (TVarLink t) where
+instance HasGen m t g => HasGen m (TVarLink t) g where
     freeGenVars (Link t)  = freeGenVars t
     freeGenVars Unbound{} = pure Set.empty
 
-instance HasGen (ST s) t => HasGen (ST s) (TypeVar (STRef s) t) where
+instance HasGen (ST s) t g => HasGen (ST s) (TypeVar (STRef s) t) g where
     freeGenVars (TypeVar cell _) =
         readSTRef cell >>= freeGenVars
-
-instance HasGen m t => HasGen m (TypeVar PCell t) where
-    freeGenVars (TypeVar (PCell t) _) = freeGenVars t
 
 instance HasKind (TypeVar v t) where
     kind (TypeVar c k) = Just k
@@ -169,19 +178,19 @@ instance HasKind (TypeVar v t) where
 deriving instance Eq t => Eq (TypeVar (STRef s) t)
 deriving instance Show t => Show (TypeVar (STRef s) t)
 
-data TypeABT v t
+data TypeABT g v t
     = TyVar (TypeVar v t)
-    | TyAST (TypeAST t)
+    | TyAST (TypeAST g t)
     deriving (Functor)
 
-deriving instance Eq t => Eq (TypeABT (STRef s) t)
-deriving instance Show t => Show (TypeABT (STRef s) t)
+deriving instance (Eq g, Eq t) => Eq (TypeABT g (STRef s) t)
+deriving instance (Show g, Show t) => Show (TypeABT g (STRef s) t)
 
-instance (HasKind t) => HasKind (TypeABT v t) where
+instance (HasKind t) => HasKind (TypeABT g v t) where
     kind (TyVar tv) = kind tv
     kind (TyAST ast) = kind ast
 
-instance (HasGen m t, HasGen m (TypeVar v t)) => HasGen m (TypeABT v t) where
+instance (Ord g, HasGen m t g, HasGen m (TypeVar v t) g) => HasGen m (TypeABT g v t) g where
     freeGenVars (TyVar tv)  = freeGenVars tv
     freeGenVars (TyAST ast) = freeGenVars ast
 
@@ -192,31 +201,34 @@ deriving instance Show (f (Fix f)) => Show (Fix f)
 instance HasKind (f (Fix f)) => HasKind (Fix f) where
     kind (Fix t) = kind t
 
-instance HasGen m (f (Fix f)) => HasGen m (Fix f) where
+instance HasGen m (f (Fix f)) g => HasGen m (Fix f) g where
     freeGenVars (Fix t) = freeGenVars t
 
-data SType s = SType (TypeABT (STRef s) (SType s))
+data SType s = SType (TypeABT Level (STRef s) (SType s))
 
-deriving instance Show (TypeABT (STRef s) (SType s)) => Show (SType s)
+deriving instance Show (TypeABT Level (STRef s) (SType s)) => Show (SType s)
 
 instance HasKind (SType s) where
     kind (SType t) = kind t
 
-instance HasGen (ST s) (SType s) where
+instance HasGen (ST s) (SType s) Level where
     freeGenVars (SType t) = freeGenVars t
 
 -- Pure cells
 data PCell a = PCell a
      deriving (Show)
 
-data PType = PType (TypeABT PCell PType)
+instance HasGen m t g => HasGen m (TypeVar PCell t) g where
+    freeGenVars (TypeVar (PCell t) _) = freeGenVars t
 
-deriving instance Show (TypeABT PCell PType) => Show PType
+data PType = PType (TypeABT Level PCell PType)
+
+deriving instance Show (TypeABT Level PCell PType) => Show PType
 
 instance HasKind PType where
     kind (PType t) = kind t
 
-instance (Monad m) => HasGen m PType where
+instance (Monad m) => HasGen m PType Level where
     freeGenVars (PType t) = freeGenVars t
 
 ----------------------------------------------------------------------
@@ -238,7 +250,7 @@ emptyQual t = QualType [] t
 
 type QType s = QualType (SType s)
 
-type Type = Fix TypeAST
+type Type = Fix (TypeAST ())
 
 normalize :: Type -> Type
 normalize (Fix (TyAp t1@(Fix (TyAp f arg)) (Fix (TyGen gvs t))))
@@ -246,10 +258,11 @@ normalize (Fix (TyAp t1@(Fix (TyAp f arg)) (Fix (TyGen gvs t))))
     = Fix $ TyGen gvs (Fix $ TyAp t1 t)
 normalize t = t
 
-instance Eq (Fix TypeAST) where
+instance Eq g => Eq (Fix (TypeAST g)) where
     (Fix x) == (Fix y) = x == y
 
-deriving instance Ord (Fix TypeAST)
+instance Ord g => Ord (Fix (TypeAST g)) where
+    (Fix x) `compare` (Fix y) = x `compare` y
 
 liftST :: ST s a -> Infer s a
 liftST = lift . lift
@@ -275,23 +288,15 @@ resolve (SType (TyVar tvar)) = do
         Unbound _name l -> throwError
             $ EscapedSkolemError $ "resolve " ++ show tvar ++ ", level: " ++ show l
         Link t' -> resolve t'
-resolve (SType (TyAST (TyGen gv t))) = do
-    inLevel $ do
-        t' <- resolve t
-        return $ Fix . TyGen gv <$> t'
-resolve (SType (TyAST (TyGenVar gv))) = do
-    --curGenLevel <- levelDec <$> getCurrentLevel
-    -- if genVarLevel gv < curGenLevel
-    --     then throwError $ EscapedSkolemError
-    --          $ "genVar : " ++ (show $ genVarLevel gv) ++ " in generalize of " ++ show curGenLevel
-    --     else
-    return $ Just $ Fix (TyGenVar gv)
 resolve (SType (TyAST t)) = do
     mt <- traverse resolve t
-    return . fmap Fix $ sequenceA mt
+    return $ fmap Fix $ sequenceA $ bimapTypeAST (const ()) id mt
+
+unresolveGV :: GenVar () -> GenVar Level
+unresolveGV = fmap (const LevelAny)
 
 unresolve :: Type -> SType s
-unresolve (Fix t) = SType . TyAST $ fmap unresolve t
+unresolve (Fix t) = SType . TyAST $ bimapTypeAST (const LevelAny) unresolve t
 
 unresolvePred :: Pred Type -> Pred (SType s)
 unresolvePred = fmap unresolve
@@ -406,7 +411,7 @@ getUnbound curLevel (SType (TyAST t)) =
     foldr (++) [] <$> traverse (getUnbound curLevel) t
 
 
-mkGen :: [GenVar] -> SType s -> SType s
+mkGen :: [GenVar Level] -> SType s -> SType s
 mkGen gvs (SType (TyAST (TyGen gvs' t))) = mkGen (gvs++gvs') t
 mkGen [] t = t
 mkGen gvs t = SType (TyAST (TyGen gvs t))
@@ -440,7 +445,7 @@ instantiate t@(SType (TyVar tvar)) = do
         Unbound{} -> return t
         Link tLink -> instantiate tLink
 
-substGen :: GenVar -> SType s -> SType s -> Infer s (SType s)
+substGen :: GenVar Level -> SType s -> SType s -> Infer s (SType s)
 substGen gv tv t@(SType (TyVar tv')) = do
     t' <- readVar tv'
     case t' of
@@ -454,7 +459,7 @@ substGen gv tv t@(SType (TyAST tast)) =
          TyGen gvs tGen' -> SType . TyAST . TyGen gvs <$> substGen gv tv tGen'
          TyComp c -> SType . TyAST . TyComp <$> traverse (substGen gv tv) c
 
-substGens :: [GenVar] -> [SType s] -> SType s -> Infer s (SType s)
+substGens :: [GenVar Level] -> [SType s] -> SType s -> Infer s (SType s)
 substGens vs ts t = foldM (\t' (v,s) -> substGen v s t') t $ zip vs ts
 
 fresh :: Infer s (STRef s (TVarLink t))

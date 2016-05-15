@@ -31,7 +31,7 @@ instance Pretty Level where
     pretty (LevelAny) = "^^"
     pretty (Level x) = "^" <> pretty x
 
-instance Pretty GenVar where
+instance Pretty g => Pretty (GenVar g) where
     pretty (GenVar idx k l) = pk name <> pretty l
         where name = numToLetter idx
               pk = if k == Star
@@ -51,7 +51,7 @@ instance Pretty t => Pretty (Composite t) where
     pretty (CompositeTerminal) = empty
     pretty (CompositeRemainder t) = " |" <+> pretty t
 
-instance (HasKind t, Pretty t) => Pretty (TypeAST t) where
+instance (Pretty g, HasKind t, Pretty t) => Pretty (TypeAST g t) where
     pretty (TyAp fun arg) =
         case kind fun of
              Just (KArrow _ KArrow{}) -> pretty arg <+> pretty fun
@@ -103,7 +103,7 @@ instance (Pretty t) => Pretty (TVarLink t) where
 instance (Pretty (v (TVarLink t))) => Pretty (TypeVar v t) where
     pretty (TypeVar cell k) = parens $ pretty cell <+> "::" <+> pretty k
 
-instance (HasKind t, Pretty (v (TVarLink t)), Pretty t) => Pretty (TypeABT v t) where
+instance (Pretty g, HasKind t, Pretty (v (TVarLink t)), Pretty t) => Pretty (TypeABT g v t) where
     pretty (TyVar v) = pretty v
     pretty (TyAST t) = pretty t
 

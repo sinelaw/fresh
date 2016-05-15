@@ -39,13 +39,13 @@ num = ELit () . LitNum
 (~>) :: EVarName -> Expr () -> Expr ()
 (~>) = ELam ()
 
-tcon :: String -> Fix TypeAST
+tcon :: String -> Type
 tcon x = Fix $ TyCon $ TCon (Id x) Star
 
-_Bool :: Fix TypeAST
+_Bool :: Type
 _Bool = tcon "Bool"
 
-_Number :: Fix TypeAST
+_Number :: Type
 _Number =  tcon "Number"
 
 (~=>) :: [Pred t] -> t -> QualType t

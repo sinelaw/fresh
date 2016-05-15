@@ -21,7 +21,7 @@ import Fresh.Type (TypeAST(..), TypeABT(..), TCon(..), SType(..), Infer, HasGen(
                    Id(..), freshTVar, freshTVarK, QualType(..), CompositeLabelName(..), GenVar(..), freshName, getCurrentLevel, substGens,
                    TypeVar(..), instantiate, readVar, writeVar, TVarLink(..), purify,
                    freshRVar, FlatComposite(..), unflattenComposite, EVarName(..),
-                   InferState(..), Expr(..), QType, emptyQual, Lit(..), tyFunc, tyRec, conFunc, normalize, Fix(..), unresolve, ETypeAsc(..), unresolvePred)
+                   InferState(..), Expr(..), QType, emptyQual, Lit(..), tyFunc, tyRec, conFunc, normalize, Fix(..), unresolve, ETypeAsc(..), unresolvePred, bimapTypeAST)
 import Fresh.Unify (unify, varBind)
 
 funT :: SType s -> SType s -> SType s
@@ -149,11 +149,12 @@ instantiateAnnot' (Fix ascType) = do
     case ascType of
         TyGen gvs tscheme -> do
             let mkGen k = GenVar <$> freshName <*> pure k <*> pure LevelAny
+                gvs' = map (fmap $ const LevelAny) gvs
             freshGVs <- mapM (mkGen . genVarKind) gvs
             tscheme' <- instantiateAnnot' tscheme
-            tscheme'' <- substGens gvs (map (SType . TyAST . TyGenVar) freshGVs) tscheme'
+            tscheme'' <- substGens gvs' (map (SType . TyAST . TyGenVar) freshGVs) tscheme'
             return . SType . TyAST $ TyGen freshGVs tscheme''
-        _ -> SType . TyAST <$> traverse instantiateAnnot' ascType
+        _ -> fmap (SType . TyAST) . sequenceA . bimapTypeAST (const LevelAny) id $ fmap instantiateAnnot' ascType
 
 data FlatTy t
     = FlatTyAp (FlatTy t) (FlatTy t)
@@ -190,7 +191,7 @@ matchFun' (SType (TyVar tvar@(TypeVar _ k))) = do
             writeVar tvar (Link $ funT arg res)
             return (arg, res)
 
-skolemize :: SType s -> Infer s ([GenVar], SType s)
+skolemize :: SType s -> Infer s ([GenVar Level], SType s)
 skolemize (SType (TyAST (TyGen vs t))) = do
     ks <- mapM getKind vs
     curLevel <- getCurrentLevel

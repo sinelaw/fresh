@@ -79,31 +79,31 @@ infixr 5 ^->
 (^->) :: Type -> Type -> Type
 targ ^-> tres = Fix $ TyAp (Fix $ TyAp _Func targ) tres
 
-forall :: GenVar -> Type -> Type
+forall :: GenVar () -> Type -> Type
 forall gv t = foralls [gv] t
 
-foralls :: [GenVar] -> Type -> Type
+foralls :: [GenVar ()] -> Type -> Type
 foralls gvs t = Fix $ TyGen gvs t
 
-gv :: Int -> GenVar
-gv x = GenVar x Star LevelAny
+gv :: Int -> GenVar ()
+gv x = GenVar x Star ()
 
 tv :: Int -> Type
 tv x = Fix $ TyGenVar $ gv x
 
 a, b, c, d, e, f, g :: Type
 [a, b, c, d, e, f, g] = map tv [0,1,2,3,4,5,6]
-a',b',c',d',e',f',g' :: GenVar
+a',b',c',d',e',f',g' :: GenVar ()
 [a',b',c',d',e',f',g'] = map gv [0,1,2,3,4,5,6]
 
-rv :: Int -> GenVar
-rv x = GenVar x Composite LevelAny
+rv :: Int -> GenVar ()
+rv x = GenVar x Composite ()
 rtv :: Int -> Type
 rtv x = Fix $ TyGenVar $ rv x
 
 ra, rb, rc, rd, re, rf, rg :: Type
 [ra, rb, rc, rd, re, rf, rg] = map rtv [0,1,2,3,4,5,6]
-ra',rb',rc',rd',re',rf',rg' :: GenVar
+ra',rb',rc',rd',re',rf',rg' :: GenVar ()
 [ra',rb',rc',rd',re',rf',rg'] = map rv [0,1,2,3,4,5,6]
 
 
@@ -182,7 +182,7 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
 instance Arbitrary (t (Fix t)) => Arbitrary (Fix t) where
     arbitrary = Fix <$> arbitrary
 
-instance Arbitrary GenVar where
+instance Arbitrary g => Arbitrary (GenVar g) where
     arbitrary = GenVar <$> (getPositive <$> arbitrary) <*> arbitrary <*> arbitrary
 
 derive makeArbitrary ''Level
