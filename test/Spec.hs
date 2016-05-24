@@ -257,14 +257,15 @@ main = do
         putStrLn "------------------------------------------------------------"
         putStr $ rightPad ' ' 40 $ show $ pretty x
         putStr " :: "
-        let inferredType = getAnnotation <$> inferExpr x
+        let inferredType = fmap Type.normalize . getAnnotation <$> inferExpr x
+            normExpected = fmap (fmap Type.normalize) t
         print . pretty $ inferredType
-        when (forgetLeft inferredType /= t)
+        when (forgetLeft inferredType /= normExpected)
             $ error
             $ concat
             [ "Wrong type."
             , "\n"
-            , "\t" , "Expected: " , show (pretty t) -- , " = " , (show t) , "\n"
+            , "\t" , "Expected: " , show (pretty normExpected) -- , " = " , (show t) , "\n"
             , "\n"
             , "\t" , "Inferred: " , show (pretty inferredType) -- , " = " , (show inferredType) , "\n"
             -- , "\n"
