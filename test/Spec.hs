@@ -13,7 +13,7 @@ import qualified Data.Map as Map
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
 import Fresh.Type (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec)
-import Fresh.Infer (inferExpr, runInfer)
+import Fresh.Infer (inferExpr, runInfer, instantiateAnnot, qresolve)
 import Fresh.Unify (unify)
 import qualified Fresh.Type as Type
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
@@ -245,6 +245,14 @@ rightPad c n (x:xs)
 forgetLeft (Right x) = Right x
 forgetLeft (Left _) = Left ()
 
+fromRight (Right x) = x
+fromRight (Left _) = error "fromRight!"
+
+slowNormalize :: QualType Type -> QualType Type
+slowNormalize t = fromRight $ runInfer $ do
+    q <- instantiateAnnot . ETypeAsc . fmap Type.normalize $ t
+    qresolve q
+
 main :: IO ()
 main = do
     putStrLn "Testing..."
@@ -256,9 +264,9 @@ main = do
     forM_ examples $ \(x, t) -> do
         putStrLn "------------------------------------------------------------"
         putStr $ rightPad ' ' 40 $ show $ pretty x
-        putStr " :: "
-        let inferredType = fmap Type.normalize . getAnnotation <$> inferExpr x
-            normExpected = fmap (fmap Type.normalize) t
+        putStr " :: (inferred) "
+        let inferredType = slowNormalize . getAnnotation <$> inferExpr x
+            normExpected = slowNormalize <$> t
         print . pretty $ inferredType
         when (forgetLeft inferredType /= normExpected)
             $ error
