@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -26,13 +27,19 @@ instance Pretty Kind where
     pretty Star = "*"
     pretty Composite = "@"
 
-instance Pretty Level where
-    -- pretty _ = empty
-    pretty (LevelAny) = "^^"
-    pretty (Level x) = "^" <> pretty x
+class LevelPretty l where
+    levelPretty :: l -> Doc
 
-instance Pretty g => Pretty (GenVar g) where
-    pretty (GenVar idx k l) = pk name <> pretty l
+instance LevelPretty () where
+    levelPretty = const empty
+
+instance LevelPretty Level where
+    -- pretty _ = empty
+    levelPretty (LevelAny) = "^^"
+    levelPretty (Level x) = "^" <> pretty x
+
+instance LevelPretty g => Pretty (GenVar g) where
+    pretty (GenVar idx k l) = pk name <> levelPretty l
         where name = numToLetter idx
               pk = if k == Star
                    then id
@@ -51,7 +58,7 @@ instance Pretty t => Pretty (Composite t) where
     pretty (CompositeTerminal) = empty
     pretty (CompositeRemainder t) = " |" <+> pretty t
 
-instance (Pretty g, HasKind t, Pretty t) => Pretty (TypeAST g t) where
+instance (LevelPretty g, HasKind t, Pretty t) => Pretty (TypeAST g t) where
     pretty (TyAp fun arg) =
         case kind fun of
              Just (KArrow _ KArrow{}) -> pretty arg <+> pretty fun
@@ -103,7 +110,7 @@ instance (Pretty t) => Pretty (TVarLink t) where
 instance (Pretty (v (TVarLink t))) => Pretty (TypeVar v t) where
     pretty (TypeVar cell k) = parens $ pretty cell <+> "::" <+> pretty k
 
-instance (Pretty g, HasKind t, Pretty (v (TVarLink t)), Pretty t) => Pretty (TypeABT g v t) where
+instance (LevelPretty g, HasKind t, Pretty (v (TVarLink t)), Pretty t) => Pretty (TypeABT g v t) where
     pretty (TyVar v) = pretty v
     pretty (TyAST t) = pretty t
 
