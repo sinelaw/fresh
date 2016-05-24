@@ -21,7 +21,8 @@ import Fresh.Type (TypeAST(..), TypeABT(..), TCon(..), SType(..), Infer, HasGen(
                    Id(..), freshTVar, freshTVarK, QualType(..), CompositeLabelName(..), GenVar(..), freshName, getCurrentLevel, substGens,
                    TypeVar(..), instantiate, readVar, writeVar, TVarLink(..), purify,
                    freshRVar, FlatComposite(..), unflattenComposite, EVarName(..),
-                   InferState(..), Expr(..), QType, emptyQual, Lit(..), tyFunc, tyRec, conFunc, normalize, Fix(..), unresolve, ETypeAsc(..), unresolvePred, bimapTypeAST)
+                   InferState(..), Expr(..), QType, emptyQual, Lit(..), tyFunc, tyRec, conFunc, normalize, Fix(..), unresolve, ETypeAsc(..), unresolvePred,
+                   bimapTypeAST, substGenAST)
 import Fresh.Unify (unify, varBind)
 
 funT :: SType s -> SType s -> SType s

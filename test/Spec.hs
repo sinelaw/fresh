@@ -7,8 +7,9 @@ import           Test.QuickCheck
 
 import           Data.DeriveTH
 
-import           Control.Monad   (void, forM_, when)
+import           Control.Monad   (void, forM, forM_, when)
 import Data.String (IsString(..))
+import Data.Maybe (catMaybes)
 import qualified Data.Map as Map
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
@@ -158,8 +159,17 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            -- , ( idFunction ~:: ([PredIs testClass $ b] ~=> forall (b') (b ^-> b)),
            --     Right $ [PredIs testClass $ b] ~=> forall (b') (b ^-> b))
 
-           -- , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
-           --   , Right $ [] ~=> forall b' (forall d' (b ^-> d ^-> b)))
+           , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
+             , Right $ [] ~=> forall b' (forall d' (b ^-> d ^-> b)))
+
+           , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
+             , Right $ [] ~=> forall b' (forall d' (d ^-> b ^-> d)))
+
+           , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
+             , Right $ [] ~=> forall b' (forall a' (a ^-> b ^-> a)))
+
+           , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
+             , Right $ [] ~=> forall a' (forall b' (a ^-> b ^-> a)))
 
            , ( let_ "zero" ("x" ~> var "x" ~$ num 0) (var "zero")
              , Right $ [] ~=> forall (e') ((_Number ^-> e) ^-> e))
@@ -263,28 +273,36 @@ main = do
     shouldUnify False (erecord [("x", _Bool)]) (erecord [("x", _Number)])
     shouldUnify False (erecord [("x", _Bool)]) (erecord [("y", _Bool)])
 
-    forM_ examples $ \(x, t) -> do
+    merrs <- forM examples $ \(x, t) -> do
         putStrLn "------------------------------------------------------------"
         putStr $ rightPad ' ' 40 $ show $ pretty x
         putStr " :: (inferred) "
         let inferredType = slowNormalize . getAnnotation <$> inferExpr x
             normExpected = slowNormalize <$> t
         print . pretty $ inferredType
-        when (forgetLeft inferredType /= normExpected)
-            $ error
-            $ concat
-            [ "Wrong type."
-            , "\n"
-            , "\t" , "Expected: " , show (pretty normExpected) -- , " = " , (show t) , "\n"
-            , "\n"
-            , "\t" , "Inferred: " , show (pretty inferredType) -- , " = " , (show inferredType) , "\n"
-            -- , "\n"
-            -- , "\t" , "Raw Expected: " , show t
-            -- , "\n"
-            -- , "\t" , "Raw Inferred: " , show inferredType
-            ]
+        return $ if (forgetLeft inferredType == normExpected)
+            then Nothing
+            else Just
+                 $ concat
+                 [ "Wrong type inferred for: ", show (pretty x)
+                 , "\n"
+                 , "\t" , "Expected: " , show (pretty normExpected) -- , " = " , (show t) , "\n"
+                 , "\n"
+                 , "\t" , "Expected (original): " , show (pretty t) -- , " = " , (show t) , "\n"
+                 , "\n"
+                 , "\t" , "Expected (normalized): " , show (pretty $ fmap (fmap Type.normalize) t) -- , " = " , (show t) , "\n"
+                 , "\n"
+                 , "\t" , "Inferred: " , show (pretty inferredType) -- , " = " , (show inferredType) , "\n"
+                 -- , "\n"
+                 -- , "\t" , "Raw Expected: " , show t
+                 -- , "\n"
+                 -- , "\t" , "Raw Inferred: " , show inferredType
+                 ]
         -- print . show $ getAnnotation <$> inferExpr x
         -- print . show $ getAnnotation <$> inferExpr (constWrap x)
+    let errs = catMaybes merrs
+    when (not $ null errs) $
+        forM_ errs putStrLn
     putStrLn "------------------------------------------------------------"
     void runTests
 
