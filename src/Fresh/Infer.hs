@@ -206,13 +206,15 @@ subsume t1 t2 = withWrap $ do
     unify t1' t2'
     gvs1 <- liftST $ freeGenVars t1
     gvs2 <- liftST $ freeGenVars t2
-    when (not . Set.null $ (Set.fromList sks) `Set.intersection` (gvs1 `Set.union` gvs2))
+    let escapingSkolems = (Set.fromList sks) `Set.intersection` (gvs1 `Set.union` gvs2)
+    when (not . Set.null $ escapingSkolems)
         $ throwError
         $ EscapedSkolemError
         $ concat -- TODO pretty
         [ "Type not polymorphic enough to unify"
         , "\n\t", "Type 1: ", show $ pretty t1
         , "\n\t", "Type 2: ", show $ pretty t2
+        , "\n", "Skolems would escape: ", show $ pretty $ Set.toList escapingSkolems
         ]
     where
         withWrap act = act `catchError` wrapError
@@ -258,12 +260,16 @@ isRight :: Either a b -> Bool
 isRight Right{} = True
 isRight Left{}  = False
 
-equivalent :: Type -> Type -> Bool
-equivalent t1 t2 = isRight $ runInfer $ do
+trySubsume :: Type -> Type -> Either TypeError ()
+trySubsume t1 t2 = runInfer $ do
     let t1' = unresolve t1
         t2' = unresolve t2
     subsume t1' t2'
-    subsume t2' t1'
+
+canSubsume t1 t2 = isRight $ trySubsume t1 t2
+
+equivalent :: Type -> Type -> Bool
+equivalent t1 t2 = canSubsume t1 t2 && canSubsume t2 t1
 
 equivalentPred :: Pred Type -> Pred Type -> Bool
 equivalentPred p1 p2 = (fromPred p1) `equivalent` (fromPred p2)
