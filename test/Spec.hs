@@ -281,6 +281,8 @@ main = do
     shouldUnify False (erecord [("x", _Bool)]) (erecord [("x", _Number)])
     shouldUnify False (erecord [("x", _Bool)]) (erecord [("y", _Bool)])
 
+    shouldUnify True (record [("num", _Number)] (Just $ ra)) (record [("bool", _Bool)] (Just $ rb))
+
     merrs <- forM examples $ \(x, t) -> do
         putStrLn "------------------------------------------------------------"
         putStr $ rightPad ' ' 40 $ show $ pretty x
