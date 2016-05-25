@@ -204,8 +204,8 @@ subsume t1 t2 = withWrap $ do
     (sks, t1') <- skolemize t1
     t2' <- instantiate t2
     unify t1' t2'
-    gvs1 <- liftST $ freeGenVars t1'
-    gvs2 <- liftST $ freeGenVars t2'
+    gvs1 <- liftST $ freeGenVars t1
+    gvs2 <- liftST $ freeGenVars t2
     when (not . Set.null $ (Set.fromList sks) `Set.intersection` (gvs1 `Set.union` gvs2))
         $ throwError
         $ EscapedSkolemError
