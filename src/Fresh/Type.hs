@@ -239,6 +239,10 @@ data Class = Class Id Kind
 data Pred t = PredIs Class t | PredNoLabel CompositeLabelName t
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
+fromPred :: Pred t -> t
+fromPred (PredIs _ x) = x
+fromPred (PredNoLabel _ x) = x
+
 data QualType t = QualType { qualPred :: [Pred t], qualType :: t }
     deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 

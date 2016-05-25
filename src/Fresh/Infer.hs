@@ -11,18 +11,12 @@ import Control.Monad.Trans.Either (EitherT(..), runEitherT)
 import Control.Monad.Error.Class (MonadError(..))
 import qualified Data.Set as Set
 import qualified Data.Map as Map
-import Control.Monad.ST (runST)
+import Control.Monad.ST (runST, ST)
 import Data.STRef
 
 import Fresh.Pretty (Pretty(..))
 import Fresh.Kind (Kind(..))
-import Fresh.Type (TypeAST(..), TypeABT(..), TCon(..), SType(..), Infer, HasGen(..),
-                   TypeError(..), inLevel, generalize, resolve, unresolveQual, Level(..), Type, getKind, liftST,
-                   Id(..), freshTVar, freshTVarK, QualType(..), CompositeLabelName(..), GenVar(..), freshName, getCurrentLevel, substGens,
-                   TypeVar(..), instantiate, readVar, writeVar, TVarLink(..), purify,
-                   freshRVar, FlatComposite(..), unflattenComposite, EVarName(..),
-                   InferState(..), Expr(..), QType, emptyQual, Lit(..), tyFunc, tyRec, conFunc, normalize, Fix(..), unresolve, ETypeAsc(..), unresolvePred,
-                   bimapTypeAST, substGenAST)
+import Fresh.Type
 import Fresh.Unify (unify, varBind)
 
 funT :: SType s -> SType s -> SType s
@@ -46,9 +40,12 @@ inferLit LitNum{} = tcon "Number" Star
 inferLit LitString{} = tcon "String" Star
 inferLit LitBool{} = tcon "Bool" Star
 
+runInferError :: InferState s -> Infer s a -> Infer s (Either TypeError (a, InferState s))
+runInferError s act = lift . lift $ runEitherT $ runStateT act s
+
 subInfer :: InferState s -> Infer s a -> Infer s a
 subInfer state' act = do
-    res <- lift . lift $ runEitherT $ runStateT act state'
+    res <- runInferError state' act
     case res of
         Left err -> throwError err
         Right (x, is') -> do
@@ -257,3 +254,22 @@ inferExpr expr = runInfer $ do
             throwError $ WrappedError (ResolveError (show $ pretty $ pt)) e
     traverse ((fmap $ fmap normalize) . qresolve . snd) exprG `catchError` wrapError
 
+isRight :: Either a b -> Bool
+isRight Right{} = True
+isRight Left{}  = False
+
+equivalent :: Type -> Type -> Bool
+equivalent t1 t2 = isRight $ runInfer $ do
+    let t1' = unresolve t1
+        t2' = unresolve t2
+    subsume t1' t2'
+    subsume t2' t1'
+
+equivalentPred :: Pred Type -> Pred Type -> Bool
+equivalentPred p1 p2 = (fromPred p1) `equivalent` (fromPred p2)
+
+equivalentQual :: QualType Type -> QualType Type -> Bool
+equivalentQual (QualType p1 t1) (QualType p2 t2)
+    | length p1 /= length p2                    = False
+    | all (uncurry equivalentPred) (zip p1 p2)  = equivalent t1 t2
+    | otherwise                                 = False
