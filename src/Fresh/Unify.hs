@@ -93,9 +93,13 @@ unifyAST (TyComp c1) (TyComp c2) = do
     let remainderVarT = SType $ TyVar remainderVar
         fromEnd = TyComp . unflattenComposite . FlatComposite Map.empty . Just
         unifyRemainder rem' mEnd =
-            case mEnd of
-                Nothing -> if Map.null rem' then return () else throwError $ RowEndError (show rem')
-                Just end -> unify (SType . TyAST . TyComp $ unflattenComposite $ FlatComposite rem' $ Just remainderVarT) $ end
+            if Map.null rem'
+            then case mEnd of
+                Nothing -> return ()
+                Just t -> purify t >>= \pt -> throwError $ RowEndError (show $ pretty pt) -- TODO really?
+            else case mEnd of
+                Nothing -> throwError $ RowEndError (show rem')
+                Just end -> unifyAST (TyComp $ unflattenComposite $ FlatComposite rem' $ Just remainderVarT) $ fromEnd end
     unifyRemainder in1only mEnd2
     unifyRemainder in2only mEnd1
 

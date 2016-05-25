@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -20,7 +21,7 @@ import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Maybe (catMaybes)
-
+import GHC.Generics (Generic)
 import Data.Functor.Identity (runIdentity)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..))
@@ -32,7 +33,7 @@ import qualified Data.Foldable
 -- import Debug.Trace (traceM)
 
 data Level = Level Int | LevelAny
-    deriving (Eq, Show)
+    deriving (Generic, Eq, Show)
 
 instance Ord Level where
     (Level x) `compare` (Level y) = x `compare` y
@@ -49,10 +50,10 @@ levelDec :: Level -> Level
 levelDec = mapLevel (\x -> x - 1) -- TODO assert > 0
 
 data Id = Id String
-    deriving (Eq, Ord, Show)
+    deriving (Generic, Eq, Ord, Show)
 
 data TCon = TCon { tcId ::  Id, tcKind :: Kind }
-    deriving (Eq, Ord, Show)
+    deriving (Generic, Eq, Ord, Show)
 
 data GenVar a
     = GenVar
@@ -60,24 +61,24 @@ data GenVar a
       , genVarKind :: Kind
       , genVarAnnot :: a
       }
-    deriving (Eq, Ord, Show, Functor)
+    deriving (Generic, Eq, Ord, Show, Functor)
 
 genDropAnnot :: GenVar a -> GenVar ()
 genDropAnnot gv = gv { genVarAnnot = () }
 
 newtype CompositeLabelName = CompositeLabelName String
-    deriving (Eq, Ord, Show)
+    deriving (Generic, Eq, Ord, Show)
 
 data Composite t
     = CompositeLabel CompositeLabelName t (Composite t)
     | CompositeTerminal
     | CompositeRemainder t
-    deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+    deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
 data FlatComposite t
     = FlatComposite { fcLabels :: (Map CompositeLabelName t)
                     , fcRemainder :: Maybe t }
-    deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+    deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
 flattenComposite :: Composite t -> FlatComposite t
 flattenComposite CompositeTerminal = FlatComposite Map.empty Nothing
@@ -97,7 +98,7 @@ data TypeAST g t
     | TyGenVar { _tyGenVar :: GenVar g }
     | TyGen { _tyGenVars :: [GenVar g], _tyGenScheme :: t }
     | TyComp { _tyComp :: Composite t }
-    deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+    deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
 class Monad m => HasGen m t g where
     freeGenVars :: t -> m (Set (GenVar g))
@@ -153,11 +154,11 @@ instance HasKind t => HasKind (TypeAST g t) where
 data TVarLink t
     = Unbound Int Level
     | Link t
-    deriving (Eq, Ord, Show, Functor)
+    deriving (Generic, Eq, Ord, Show, Functor)
 
 data TypeVar v t
     = TypeVar { tyVarCell :: v (TVarLink t), tyVarKind :: Kind }
-    deriving (Functor)
+    deriving (Generic, Functor)
 
 instance Show (STRef s t) where
     show v = "<stref>"
@@ -181,7 +182,7 @@ deriving instance Show t => Show (TypeVar (STRef s) t)
 data TypeABT g v t
     = TyVar (TypeVar v t)
     | TyAST (TypeAST g t)
-    deriving (Functor)
+    deriving (Generic, Functor)
 
 deriving instance (Eq g, Eq t) => Eq (TypeABT g (STRef s) t)
 deriving instance (Show g, Show t) => Show (TypeABT g (STRef s) t)
@@ -216,7 +217,7 @@ instance HasGen (ST s) (SType s) Level where
 
 -- Pure cells
 data PCell a = PCell a
-     deriving (Show)
+     deriving (Generic, Show)
 
 instance HasGen m t g => HasGen m (TypeVar PCell t) g where
     freeGenVars (TypeVar (PCell t) _) = freeGenVars t
@@ -234,17 +235,17 @@ instance (Monad m) => HasGen m PType Level where
 ----------------------------------------------------------------------
 
 data Class = Class Id Kind
-    deriving (Eq, Ord, Show)
+    deriving (Generic, Eq, Ord, Show)
 
 data Pred t = PredIs Class t | PredNoLabel CompositeLabelName t
-    deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+    deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
 fromPred :: Pred t -> t
 fromPred (PredIs _ x) = x
 fromPred (PredNoLabel _ x) = x
 
 data QualType t = QualType { qualPred :: [Pred t], qualType :: t }
-    deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+    deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
 instance HasKind t => HasKind (QualType t) where
     kind (QualType _ t) = kind t
@@ -261,6 +262,8 @@ normalize (Fix (TyAp t1@(Fix (TyAp f arg)) (Fix (TyGen gvs t))))
     | (f == Fix tyFunc) && (Set.null $ runIdentity (freeGenVars arg) `Set.intersection` (Set.fromList gvs))
     = Fix $ TyGen gvs (Fix $ TyAp t1 t)
 normalize t = t
+
+deriving instance Generic (f (Fix f)) => Generic (Fix f)
 
 instance Eq g => Eq (Fix (TypeAST g)) where
     (Fix x) == (Fix y) = x == y
@@ -319,16 +322,16 @@ getKind = checkKind . kind
 ----------------------------------------------------------------------
 
 newtype ETypeAsc = ETypeAsc (QualType Type)
-    deriving (Eq, Ord, Show)
+    deriving (Generic, Eq, Ord, Show)
 
 data EVarName = EVarName String
-    deriving (Eq, Ord, Show)
+    deriving (Generic, Eq, Ord, Show)
 
 data Lit
     = LitNum Double
     | LitString String
     | LitBool Bool
-    deriving (Eq, Ord, Show)
+    deriving (Generic, Eq, Ord, Show)
 
 data Expr a
     = ELit a Lit
@@ -339,14 +342,14 @@ data Expr a
     | ELet a EVarName (Expr a) (Expr a)
     | EAsc a ETypeAsc (Expr a)
     | EGetField a (Expr a) CompositeLabelName
-    deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+    deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
 
 getAnnotation :: Expr a -> a
 getAnnotation = head . Data.Foldable.toList
 
 -- type FExpr = Fix Expr
---     deriving (Eq, Ord, Show)
+--     deriving (Generic, Eq, Ord, Show)
 
 ----------------------------------------------------------------------
 
@@ -370,7 +373,7 @@ data TypeError
     | InvalidVarError String
     | ExpectedFunction String
     | SubsumeError String String
-    deriving (Eq, Show)
+    deriving (Generic, Eq, Show)
 
 type Infer s a = StateT (InferState s) (EitherT TypeError (ST s)) a
 
