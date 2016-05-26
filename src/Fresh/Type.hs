@@ -261,8 +261,11 @@ normalize :: Type -> Type
 normalize (Fix (TyAp t1@(Fix (TyAp f arg)) (Fix (TyGen gvs t))))
     | (f == Fix tyFunc) && (Set.null $ runIdentity (freeGenVars arg) `Set.intersection` (Set.fromList gvs))
     = Fix $ TyGen gvs (Fix $ TyAp t1 t)
+normalize (Fix (TyGen ps1 (Fix (TyGen ps2 t)))) = Fix (TyGen (ps1++ps2) $ normalize t)
 normalize t = t
 
+normalizeQual :: QualType Type -> QualType Type
+normalizeQual = fmap normalize
 deriving instance Generic (f (Fix f)) => Generic (Fix f)
 
 instance Eq g => Eq (Fix (TypeAST g)) where

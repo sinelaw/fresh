@@ -333,6 +333,9 @@ prop_selfSubsumeNormalized t =
 prop_selfEquivalence :: Type -> Bool
 prop_selfEquivalence t = equivalent t t
 
+prop_selfEquivalenceNormalized :: Type -> Bool
+prop_selfEquivalenceNormalized t = equivalent t (Type.normalize t)
+
 prop_selfEquivalencePred :: Pred Type -> Bool
 prop_selfEquivalencePred p = equivalentPred p p
 
@@ -390,7 +393,7 @@ main = do
         putStr " :: (inferred) "
         let inferredType = forgetLeft $ getAnnotation <$> inferExpr x
         print . pretty $ inferredType
-        return $ if (eithers equivalentQual inferredType t)
+        return $ if (eithers equivalentQual inferredType (Type.normalizeQual <$> t))
             then Nothing
             else Just
                  $ concat
@@ -398,7 +401,7 @@ main = do
                  , "\n"
                  , "\t" , "Expected: " , show (pretty t) -- , " = " , (show t) , "\n"
                  , "\n"
-                 , "\t" , "Expected (raw): " , show t
+                 , "\t" , "Expected (normalized): " , show . pretty $ (Type.normalizeQual <$> t)
                  , "\n"
                  , "\t" , "Inferred: " , show (pretty inferredType) -- , " = " , (show inferredType) , "\n"
                  -- , "\n"
