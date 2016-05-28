@@ -16,6 +16,7 @@ import           Control.Monad   (void, forM, forM_, when)
 import Data.String (IsString(..))
 import Data.Maybe (catMaybes, isJust)
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
 import Fresh.Type (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec)
@@ -244,12 +245,16 @@ genTyAp = do
 genTyCon :: Gen TCon
 genTyCon = TCon <$> arbitrary <*> arbitrary
 
+-- genPred :: GenVar () -> Gen (Pred Type)
+-- genPred gv = PredIs <$> arbitrary <*> (pure $ Fix $ TyGenVar gv)
+
 genTyGen :: Gen Type
 genTyGen = do
-    preds <- arbitrary
-    case preds of
-        [] -> arbitrary
-        _ -> Fix . TyGen preds <$> arbitrary
+    t <- arbitrary :: Gen Type
+    gvSet <- Type.freeGenVars t
+    case Set.toList gvSet of
+        [] -> pure t
+        gvs -> pure $ Fix $ TyGen gvs t
 
 instance Arbitrary Type where
     arbitrary = oneof $
