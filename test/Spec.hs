@@ -343,7 +343,10 @@ prop_selfEquivalenceQual :: QualType Type -> Bool
 prop_selfEquivalenceQual q = equivalentQual q q
 
 testUnify :: Type -> Type -> Either TypeError ()
-testUnify t1 t2 = runInfer $ unify (Type.unresolve t1) (Type.unresolve t2)
+testUnify t1 t2 = runInfer $ do
+    ut1 <- Type.instantiate $ Type.unresolve t1
+    ut2 <- Type.instantiate $ Type.unresolve t2
+    unify ut1 ut2
 
 prop_unifySame :: Type -> Bool
 prop_unifySame t =
@@ -380,6 +383,7 @@ main = do
     putStrLn "Testing..."
     shouldUnify True  (erecord []) (erecord [])
     shouldUnify True  (erecord [("x", _Bool)]) (erecord [("x", _Bool)])
+    shouldUnify True  (erecord [("x", _Bool)]) (forall re' $ record [] $ Just re)
     shouldUnify False (erecord [("x", _Bool)]) (erecord [("x", _Number)])
     shouldUnify False (erecord [("x", _Bool)]) (erecord [("y", _Bool)])
 

@@ -81,6 +81,8 @@ unifyAST u1@(TyGen vs1 t1) u2@(TyGen vs2 t2) | length vs1 == length vs2 = do
         , "\n\t", "Type 2: ", show u2
         ]
 
+unifyAST (TyComp CompositeTerminal) (TyComp CompositeTerminal) = return ()
+
 unifyAST (TyComp c1) (TyComp c2) = do
     let FlatComposite labels1 mEnd1 = flattenComposite c1
         FlatComposite labels2 mEnd2 = flattenComposite c2
@@ -91,15 +93,16 @@ unifyAST (TyComp c1) (TyComp c2) = do
     forM_ (Map.elems common) $ uncurry unify
     remainderVar <- freshRVar
     let remainderVarT = SType $ TyVar remainderVar
-        fromEnd = TyComp . unflattenComposite . FlatComposite Map.empty . Just
-        unifyRemainder rem' mEnd =
-            if Map.null rem'
-            then case mEnd of
-                Nothing -> return ()
-                Just t -> purify t >>= \pt -> throwError $ RowEndError (show $ pretty pt) -- TODO really?
-            else case mEnd of
-                Nothing -> throwError $ RowEndError (show rem')
-                Just end -> unifyAST (TyComp $ unflattenComposite $ FlatComposite rem' $ Just remainderVarT) $ fromEnd end
+        unifyRemainder rem' mEnd = do
+            -- e1 + r1 = e2 + r2
+            -- (r + r2) + r1 = (r + r1) + r2
+            case mEnd of
+                Nothing ->
+                    if Map.null rem'
+                    then varBind remainderVar (SType $ TyAST $ TyComp CompositeTerminal)
+                    else traverse purify rem' >>= \pt -> throwError $ RowEndError (show $ fmap pretty pt)
+                Just end ->
+                    unify (SType $ TyAST $ TyComp $ unflattenComposite $ FlatComposite rem' $ Just remainderVarT) end
     unifyRemainder in1only mEnd2
     unifyRemainder in2only mEnd1
 
