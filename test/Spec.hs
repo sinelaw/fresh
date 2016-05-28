@@ -137,6 +137,7 @@ polyId = lama "x" ([] ~=> forall (a') (a ^-> a)) (var "x")
 
 examples :: [(Expr (), Either () (QualType Type))]
 examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
+           , ( var "x", Left () )
            , ( ("x" ~> (var "x")) ~:: ([] ~=> ((forall (a') (a ^-> a)) ^-> (forall (a') (a ^-> a))))
              , Right $ [] ~=> forall (b') ((forall (a') (a ^-> a)) ^-> (b ^-> b)))
 
@@ -192,6 +193,11 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
                 (((var "x") ## "fieldName") ~:: [] ~=> _Number))
                $ var "id"
              , Right $ [] ~=> foralls [rf'] (record [("fieldName", _Number)] (Just $ rf) ^-> _Number))
+
+           -- Causes hang:
+           -- , ( EGetField () (ELet () (EVarName "") (EApp () (EGetField () (EVar () (EVarName "")) (CompositeLabelName "pbe")) (ELam () (EVarName "") (EVar () (EVarName "")))) (EVar () (EVarName ""))) (CompositeLabelName "nid")
+           --   , Left () )
+
            ]
 
 -- ----------------------------------------------------------------------
