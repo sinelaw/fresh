@@ -85,22 +85,30 @@ unifyAST (TyComp c1) (TyComp c2) = do
         common = Map.intersectionWith (,) labels1 labels2
         in1only = Map.difference labels1 labels2
         in2only = Map.difference labels2 labels1
+        emptyRow = SType $ TyAST $ TyComp CompositeTerminal
     -- TODO: wrap errors to say which field failed
     forM_ (Map.elems common) $ uncurry unify
     remainderVar <- freshRVar
-    let remainderVarT = SType $ TyVar remainderVar
-        unifyRemainder rem' mEnd = do
-            -- e1 + r1 = e2 + r2
-            -- (r + r2) + r1 = (r + r1) + r2
-            case mEnd of
-                Nothing ->
-                    if Map.null rem'
-                    then varBind remainderVar (SType $ TyAST $ TyComp CompositeTerminal)
-                    else traverse purify rem' >>= \pt -> throwError $ RowEndError (show $ fmap pretty pt)
-                Just end ->
-                    unify (SType $ TyAST $ TyComp $ unflattenComposite $ FlatComposite rem' $ Just remainderVarT) end
-    unifyRemainder in1only mEnd2
-    unifyRemainder in2only mEnd1
+    if Map.null in1only && Map.null in2only
+        then case (mEnd1, mEnd2) of
+                 (Nothing, Nothing) -> return ()
+                 (Just e, Nothing) -> unify e emptyRow
+                 (Nothing, Just e) -> unify e emptyRow
+                 (Just e1, Just e2) -> unify e1 e2
+        else do
+            let remainderVarT = SType $ TyVar remainderVar
+                unifyRemainder rem' mEnd = do
+                    -- e1 + r1 = e2 + r2
+                    -- (r + r2) + r1 = (r + r1) + r2
+                    case mEnd of
+                        Nothing ->
+                            if Map.null rem'
+                            then varBind remainderVar emptyRow
+                            else traverse purify rem' >>= \pt -> throwError $ RowEndError (show $ fmap pretty pt)
+                        Just end ->
+                            unify (SType $ TyAST $ TyComp $ unflattenComposite $ FlatComposite rem' $ Just remainderVarT) end
+            unifyRemainder in1only mEnd2
+            unifyRemainder in2only mEnd1
 
 unifyAST t1 t2 = unifyError (SType $ TyAST t1) (SType $ TyAST t2)
 
