@@ -7,13 +7,9 @@ import qualified Data.Map as Map
 import Data.STRef
 
 
+
 import Fresh.Pretty (Pretty(..))
-import Fresh.Type (SType(..), TypeAST(..), TypeABT(..), Infer, TypeError(..),
-                   GenVar(..), TypeVar(..), Level(..),
-                   freshName, freshRVar, purify,
-                   getCurrentLevel, substGens, liftST, HasGen(..),
-                   FlatComposite(..), flattenComposite, unflattenComposite,
-                   getKind, readVar, writeVar, TVarLink(..))
+import Fresh.Type
 
 unchain :: SType s -> Infer s (SType s)
 unchain t@(SType (TyVar tvar)) = do
