@@ -140,7 +140,9 @@ infer r (EGetField a expr name) = do
 
 instantiateAnnot :: ETypeAsc -> Infer s (QualType (SType s))
 instantiateAnnot (ETypeAsc (QualType ps t)) =
-    QualType (map unresolvePred ps) <$> instantiateAnnot' t
+    do it <- instantiateAnnot' t
+       gt <- generalize it
+       return $ QualType (map unresolvePred ps) gt
 
 instantiateAnnot' :: Type -> Infer s (SType s)
 instantiateAnnot' (Fix ascType) = do
