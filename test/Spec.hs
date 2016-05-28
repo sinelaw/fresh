@@ -12,6 +12,7 @@ import           Test.QuickCheck
 
 import           Data.DeriveTH
 
+import Data.Functor.Identity (runIdentity)
 import           Control.Monad   (void, forM, forM_, when)
 import Data.String (IsString(..))
 import Data.Maybe (catMaybes, isJust)
@@ -319,14 +320,16 @@ prop_resolve t =
 
 
 -- TODO: Wrong
--- prop_skolemize :: Type -> Bool
--- prop_skolemize t =
---     case (skolemized, instantiated) of
---     (Right (Just s), Right (Just i)) -> equivalent s i
---     _ -> False
---     where
---         skolemized = runInfer $ skolemize (Type.unresolve t) >>= (Type.resolve . snd)
---         instantiated = runInfer $ Type.instantiate (Type.unresolve t) >>= Type.resolve
+prop_skolemize :: Type -> Bool
+prop_skolemize t =
+    case getSkolemized t of
+    Right (Just s) -> equivalent (wrapGen t) (wrapGen s)
+    _ -> False
+    where
+        getSkolemized x = runInfer $ skolemize (Type.unresolve x) >>= (Type.resolve . snd)
+        wrapGen ty = case Set.toList $ runIdentity $ Type.freeGenVars ty of
+            [] -> ty
+            gvs -> Fix $ TyGen gvs ty
 
 -- prop_hasKindStar :: Type -> Bool
 -- prop_hasKindStar t = Just Star == kind t
