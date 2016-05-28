@@ -308,6 +308,12 @@ constWrap expr = let_ dummy (num 0) expr
 prop_hasKind :: Type -> Bool
 prop_hasKind = isJust . kind
 
+
+prop_resolve :: Type -> Bool
+prop_resolve t =
+    case (runInfer $ Type.resolve (Type.unresolve t)) of
+        Right (Just t') -> equivalent t t'
+        Left{} -> False
 -- prop_hasKindStar :: Type -> Bool
 -- prop_hasKindStar t = Just Star == kind t
 
