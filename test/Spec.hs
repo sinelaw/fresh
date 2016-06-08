@@ -161,11 +161,11 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( let_ "id" ("x" ~> (var "x" ~:: ([] ~=> forall (d') (d ^-> d)))) $ var "id",
                Left ()) -- impredicative instantiation (eta-expansion of polymorphic arguments doens't work)
 
-           -- , ( idFunction ~:: ([] ~=> forall (b') (b ^-> b)),
-           --     Right $ [] ~=> forall (b') (b ^-> b))
+           , ( idFunction ~:: ([] ~=> forall (b') (b ^-> b)),
+               Right $ [] ~=> forall (b') (b ^-> b))
 
-           -- , ( idFunction ~:: ([PredIs testClass $ b] ~=> forall (b') (b ^-> b)),
-           --     Right $ [PredIs testClass $ b] ~=> forall (b') (b ^-> b))
+           , ( idFunction ~:: ([PredIs testClass $ b] ~=> forall (b') (b ^-> b)),
+               Right $ [PredIs testClass $ b] ~=> forall (b') (b ^-> b))
 
            , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
              , Right $ [] ~=> forall b' (forall d' (b ^-> d ^-> b)))
@@ -194,8 +194,7 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
                $ var "id"
              , Right $ [] ~=> foralls [rf'] (record [("fieldName", _Number)] (Just $ rf) ^-> _Number))
 
-           -- Causes hang:
-           -- , ( EGetField () (ELet () (EVarName "") (EApp () (EGetField () (EVar () (EVarName "")) (CompositeLabelName "pbe")) (ELam () (EVarName "") (EVar () (EVarName "")))) (EVar () (EVarName ""))) (CompositeLabelName "nid")
+           -- , ( EGetField () (ELet () (EVarName "r") (EApp () (EGetField () (EVar () (EVarName "r")) (CompositeLabelName "pbe")) (ELam () (EVarName "x") (EVar () (EVarName "x")))) (EVar () (EVarName "r"))) (CompositeLabelName "nid")
            --   , Left () )
 
            ]
