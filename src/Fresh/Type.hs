@@ -14,7 +14,7 @@ module Fresh.Type where
 import           Fresh.Kind (Kind(..))
 import qualified Fresh.Kind as Kind
 import Data.STRef
-import Control.Monad (join, foldM)
+import Control.Monad (join, foldM, forM)
 import Control.Monad.ST (ST)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -29,7 +29,7 @@ import Control.Monad.State.Class (MonadState(..), modify)
 import Control.Monad.Trans.Either (EitherT(..))
 import Control.Monad.Error.Class (MonadError(..))
 import qualified Data.Foldable
-
+import qualified Data.List as List
 -- import Debug.Trace (traceM)
 
 data Level = Level Int | LevelAny
@@ -151,8 +151,10 @@ instance HasKind t => HasKind (TypeAST g t) where
     kind (TyGen v s) = kind s
     kind (TyComp fs) = Just Composite
 
+type UnboundVarName = Int
+
 data TVarLink t
-    = Unbound Int Level
+    = Unbound UnboundVarName Level
     | Link t
     deriving (Generic, Eq, Ord, Show, Functor)
 
@@ -466,7 +468,16 @@ substGen gv tv t@(SType (TyAST tast)) =
          TyGenVar g -> return $ if g == gv then tv else t
          TyAp tf tx -> SType . TyAST <$> (TyAp <$> substGen gv tv tf <*> substGen gv tv tx)
          TyCon c -> return . SType . TyAST $ TyCon c
-         TyGen gvs tGen' -> SType . TyAST . TyGen gvs <$> substGen gv tv tGen'
+         TyGen gvs tGen' -> do
+             let (shadowedGVs, rest) = List.partition (\sgv -> genVarId sgv == genVarId gv) gvs
+             (newGVs, newTypes) <-
+                 unzip <$> forM shadowedGVs (\sgv -> do
+                                                    name <- freshName
+                                                    let sgv' = sgv { genVarId = name }
+                                                    return (sgv', SType . TyAST . TyGenVar $ sgv'))
+
+             stGen' <- substGens shadowedGVs newTypes tGen'
+             SType . TyAST . TyGen (newGVs ++ rest) <$> substGen gv tv stGen'
          TyComp c -> SType . TyAST . TyComp <$> traverse (substGen gv tv) c
 
 substGens :: [GenVar Level] -> [SType s] -> SType s -> Infer s (SType s)
