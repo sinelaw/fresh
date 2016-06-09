@@ -194,8 +194,8 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
                $ var "id"
              , Right $ [] ~=> foralls [rf'] (record [("fieldName", _Number)] (Just $ rf) ^-> _Number))
 
-           -- , ( EGetField () (ELet () (EVarName "r") (EApp () (EGetField () (EVar () (EVarName "r")) (CompositeLabelName "pbe")) (ELam () (EVarName "x") (EVar () (EVarName "x")))) (EVar () (EVarName "r"))) (CompositeLabelName "nid")
-           --   , Left () )
+           , ( EGetField () (ELet () (EVarName "r") (EApp () (EGetField () (EVar () (EVarName "r")) (CompositeLabelName "pbe")) (ELam () (EVarName "x") (EVar () (EVarName "x")))) (EVar () (EVarName "r"))) (CompositeLabelName "nid")
+             , Left () ) -- occurs
 
            ]
 
@@ -428,9 +428,9 @@ main = do
         putStrLn "------------------------------------------------------------"
         putStr $ rightPad ' ' 40 $ show $ pretty x
         putStr " :: (inferred) "
-        let inferredType = forgetLeft $ getAnnotation <$> inferExpr x
+        let inferredType = getAnnotation <$> inferExpr x
         print . pretty $ inferredType
-        return $ if (eithers equivalentQual inferredType (Type.normalizeQual <$> t))
+        return $ if (eithers equivalentQual (forgetLeft inferredType) (Type.normalizeQual <$> t))
             then Nothing
             else Just
                  $ concat

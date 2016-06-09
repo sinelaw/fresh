@@ -127,7 +127,7 @@ varBind tvar t = do
     vt <- readVar tvar
     case vt of
         Link t' -> unify t' t
-        Unbound _name l -> --writeVar tvar (Link t)
+        Unbound name l1 -> --writeVar tvar (Link t)
             case t of
                 (SType (TyVar tvar2)) -> do
                     vt2 <- readVar tvar2
@@ -138,11 +138,13 @@ varBind tvar t = do
                             -- adjust the lambda-rank of the unifiable variable
                             when (l2 > l1) (writeVar tvar2 (Unbound _name2 l1))
                 (SType (TyAST tast)) -> do
-                    tvs <- freeTvs tast
-                    check (not (vt `elem` tvs)) ("infinite type: " ++ show tv ++ " and " ++ show tp2)  -- occurs check
+                    tvs <- liftST $ freeVars tast
+                    when (name `Set.member` tvs) $ do
+                        pt <- purify t
+                        throwError $ OccursError (show $ pretty vt) (show $ pretty pt)
                     writeVar tvar (Link t)
                     -- adjust the lambda-rank of the unifiable variables in tp2
-                    adjustRank l1 t
+                    adjustLevel l1 t
 
 adjustLevel :: Level -> SType s -> Infer s ()
 adjustLevel l (SType (TyVar tvar)) = do

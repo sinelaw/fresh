@@ -108,6 +108,12 @@ instance (Ord g, HasGen m t g) => HasGen m (TypeAST g t) g where
     freeGenVars (TyGen gvs t) = Set.difference <$> freeGenVars t <*> pure (Set.fromList gvs)
     freeGenVars t = foldr Set.union Set.empty <$> traverse freeGenVars t
 
+class Monad m => HasVars m t where
+    freeVars :: t -> m (Set UnboundVarName)
+
+instance HasVars m t => HasVars m (TypeAST g t) where
+    freeVars t = foldr Set.union Set.empty <$> traverse freeVars t
+
 bimapTypeAST :: (g -> g') -> (t -> t') -> TypeAST g t -> TypeAST g' t'
 bimapTypeAST fg _  (TyGenVar g) = TyGenVar (fmap fg g)
 bimapTypeAST fg ft (TyGen gvs t) = TyGen (map (fmap fg) gvs) (ft t)
@@ -176,6 +182,14 @@ instance HasGen (ST s) t g => HasGen (ST s) (TypeVar (STRef s) t) g where
 instance HasKind (TypeVar v t) where
     kind (TypeVar c k) = Just k
 
+instance HasVars m t => HasVars m (TVarLink t) where
+    freeVars (Link t)      = freeVars t
+    freeVars (Unbound n _) = pure (Set.singleton n)
+
+instance HasVars (ST s) t => HasVars (ST s) (TypeVar (STRef s) t) where
+    freeVars (TypeVar cell _) =
+        readSTRef cell >>= freeVars
+
 -- deriving instance Eq t => Eq (TypeVar Identity t)
 -- deriving instance Show t => Show (TypeVar Identity t)
 deriving instance Eq t => Eq (TypeVar (STRef s) t)
@@ -197,6 +211,10 @@ instance (Ord g, HasGen m t g, HasGen m (TypeVar v t) g) => HasGen m (TypeABT g 
     freeGenVars (TyVar tv)  = freeGenVars tv
     freeGenVars (TyAST ast) = freeGenVars ast
 
+instance (Ord g, HasVars m t, HasVars m (TypeVar v t)) => HasVars m (TypeABT g v t) where
+    freeVars (TyVar tv)  = freeVars tv
+    freeVars (TyAST ast) = freeVars ast
+
 newtype Fix f = Fix { unFix :: f (Fix f) }
 
 deriving instance Show (f (Fix f)) => Show (Fix f)
@@ -216,6 +234,9 @@ instance HasKind (SType s) where
 
 instance HasGen (ST s) (SType s) Level where
     freeGenVars (SType t) = freeGenVars t
+
+instance HasVars (ST s) (SType s) where
+    freeVars (SType t) = freeVars t
 
 -- Pure cells
 data PCell a = PCell a
@@ -378,6 +399,7 @@ data TypeError
     | InvalidVarError String
     | ExpectedFunction String
     | SubsumeError String String
+    | OccursError String String
     deriving (Generic, Eq, Show)
 
 type Infer s a = StateT (InferState s) (EitherT TypeError (ST s)) a
