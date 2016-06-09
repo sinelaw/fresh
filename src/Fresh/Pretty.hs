@@ -75,7 +75,7 @@ instance Pretty EVarName where
 
 instance Pretty Lit where
     pretty (LitNum x) = pretty x
-    pretty (LitString x) = pretty x
+    pretty (LitString x) = dquotes $ pretty x
     pretty (LitBool x) = pretty x
 
 instance Pretty ETypeAsc where
