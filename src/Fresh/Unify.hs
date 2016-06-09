@@ -126,8 +126,23 @@ varBind tvar t = do
     when (tvarK /= tK) $ throwError $ KindMismatchError tvarK tK
     vt <- readVar tvar
     case vt of
-        Unbound _name l -> writeVar tvar (Link t)
-        Link t' -> unify t' t -- TODO occurs
+        Link t' -> unify t' t
+        Unbound _name l -> --writeVar tvar (Link t)
+            case t of
+                (SType (TyVar tvar2)) -> do
+                    vt2 <- readVar tvar2
+                    case vt2 of
+                        Link t2 -> unify (SType $ TyVar tvar) t2
+                        Unbound _name2 l2 -> do
+                            writeVar tvar (Link t)
+                            -- adjust the lambda-rank of the unifiable variable
+                            when (l2 > l1) (writeVar tvar2 (Unbound _name2 l1))
+                (SType (TyAST tast)) -> do
+                    tvs <- freeTvs tast
+                    check (not (vt `elem` tvs)) ("infinite type: " ++ show tv ++ " and " ++ show tp2)  -- occurs check
+                    writeVar tvar (Link t)
+                    -- adjust the lambda-rank of the unifiable variables in tp2
+                    adjustRank l1 t
 
 adjustLevel :: Level -> SType s -> Infer s ()
 adjustLevel l (SType (TyVar tvar)) = do

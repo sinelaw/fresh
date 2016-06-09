@@ -45,6 +45,7 @@ executable fresh
   ghc-options:         -threaded -rtsopts -Wall
   ghc-prof-options:    -threaded -rtsopts -Wall -auto-all -caf-all
   default-language:    Haskell2010
+  default-extensions:  CPP
   build-depends: base >= 4.7 && <5
                , fresh
                      , ansi-wl-pprint
@@ -62,5 +63,6 @@ test-suite fresh-test
                      , derive
                      , fresh
                      , ansi-wl-pprint
+  default-extensions:  CPP
   ghc-options:         -threaded -rtsopts -Wall
   default-language:    Haskell2010
