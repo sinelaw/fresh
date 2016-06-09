@@ -455,3 +455,6 @@ main = do
     void runTests
 
 
+-- TODO: Check this example, it fails constWrap and also infers a type
+-- that shadows some genvar (e) in the ETypeAsc:
+-- let t = EALam () (EVarName "a") (ETypeAsc (QualType {qualPred = [PredIs (Class (Id "C") Star) (Fix {unFix = TyGenVar {_tyGenVar = GenVar {genVarId = 4, genVarKind = Star, genVarAnnot = ()}}}),PredIs (Class (Id "F") Composite) (Fix {unFix = TyCon {_tyCon = TCon {tcId = Id "F", tcKind = Composite}}}),PredNoLabel (CompositeLabelName "qki") (Fix {unFix = TyCon {_tyCon = TCon {tcId = Id "E", tcKind = Composite}}}),PredNoLabel (CompositeLabelName "frpim") (Fix {unFix = TyAp {_tyApFun = Fix {unFix = TyCon {_tyCon = TCon {tcId = Id "D", tcKind = KArrow Composite Star}}}, _tyApArg = Fix {unFix = TyCon {_tyCon = TCon {tcId = Id "B", tcKind = Composite}}}}}),PredIs (Class (Id "B") Star) (Fix {unFix = TyCon {_tyCon = TCon {tcId = Id "B", tcKind = Star}}})], qualType = Fix {unFix = TyGenVar {_tyGenVar = GenVar {genVarId = 5, genVarKind = Star, genVarAnnot = ()}}}})) (ELam () (EVarName "b") (ELit () (LitString "c")))
