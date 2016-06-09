@@ -1,6 +1,6 @@
 module Fresh.Unify where
 
-import Control.Monad (forM_, when)
+import Control.Monad (forM_, when, void)
 import Control.Monad.Error.Class (MonadError(..))
 import qualified Data.Set as Set
 import qualified Data.Map as Map
@@ -128,3 +128,11 @@ varBind tvar t = do
     case vt of
         Unbound _name l -> writeVar tvar (Link t)
         Link t' -> unify t' t -- TODO occurs
+
+adjustLevel :: Level -> SType s -> Infer s ()
+adjustLevel l (SType (TyVar tvar)) = do
+    tv <- readVar tvar
+    case tv of
+        Link t -> adjustLevel l t
+        Unbound name l' -> when (l' > l) (writeVar tvar (Unbound name l))
+adjustLevel l (SType (TyAST t)) = void $ traverse (adjustLevel l) t
