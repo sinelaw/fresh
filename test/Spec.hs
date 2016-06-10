@@ -68,6 +68,9 @@ lama v t = EALam () v (ETypeAsc t)
 tcon :: String -> Type
 tcon x = Fix $ TyCon $ TCon (Id x) Star
 
+_String :: Type
+_String = tcon "String"
+
 _Bool :: Type
 _Bool = tcon "Bool"
 
@@ -197,6 +200,8 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( EGetField () (ELet () (EVarName "r") (EApp () (EGetField () (EVar () (EVarName "r")) (CompositeLabelName "pbe")) (ELam () (EVarName "x") (EVar () (EVarName "x")))) (EVar () (EVarName "r"))) (CompositeLabelName "nid")
              , Left () ) -- occurs
 
+           , ( lama "a" ([PredIs (Class (Id "C") Star) e] ~=> f) ("b" ~>  (ELit () (LitString "c")))
+             , Right $ [PredIs (Class (Id "C") Star) e] ~=> forall e' (f ^-> (e ^-> _String)) )
            ]
 
 -- ----------------------------------------------------------------------
@@ -457,4 +462,8 @@ main = do
 
 -- TODO: Check this example, it fails constWrap and also infers a type
 -- that shadows some genvar (e) in the ETypeAsc:
--- let t = EALam () (EVarName "a") (ETypeAsc (QualType {qualPred = [PredIs (Class (Id "C") Star) (Fix {unFix = TyGenVar {_tyGenVar = GenVar {genVarId = 4, genVarKind = Star, genVarAnnot = ()}}}),PredIs (Class (Id "F") Composite) (Fix {unFix = TyCon {_tyCon = TCon {tcId = Id "F", tcKind = Composite}}}),PredNoLabel (CompositeLabelName "qki") (Fix {unFix = TyCon {_tyCon = TCon {tcId = Id "E", tcKind = Composite}}}),PredNoLabel (CompositeLabelName "frpim") (Fix {unFix = TyAp {_tyApFun = Fix {unFix = TyCon {_tyCon = TCon {tcId = Id "D", tcKind = KArrow Composite Star}}}, _tyApArg = Fix {unFix = TyCon {_tyCon = TCon {tcId = Id "B", tcKind = Composite}}}}}),PredIs (Class (Id "B") Star) (Fix {unFix = TyCon {_tyCon = TCon {tcId = Id "B", tcKind = Star}}})], qualType = Fix {unFix = TyGenVar {_tyGenVar = GenVar {genVarId = 5, genVarKind = Star, genVarAnnot = ()}}}})) (ELam () (EVarName "b") (ELit () (LitString "c")))
+-- let t = EALam () (EVarName "a") (ETypeAsc (QualType {qualPred = [PredIs (Class (Id "C") Star) (Fix {unFix = TyGenVar {_tyGenVar = GenVar {genVarId = 4, genVarKind = Star, genVarAnnot = ()}}})],
+--                                                      qualType = Fix {unFix = TyGenVar {_tyGenVar = GenVar {genVarId = 5, genVarKind = Star, genVarAnnot = ()}}}
+--                                  }))
+--                                  (ELam () (EVarName "b") (ELit () (LitString "c")))
+-- lama "a" ([PredIs (Class (Id "C") Star) e'] ~=> ("b" ~>  (ELit () (LitString "c"))))
