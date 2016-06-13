@@ -448,18 +448,23 @@ main = do
         putStr $ rightPad ' ' 40 $ show $ pretty x
         putStr " :: (inferred) "
         let inferredType = getAnnotation <$> inferExpr x
+            conInferredType = getAnnotation <$> inferExpr (constWrap x)
         print . pretty $ inferredType
-        return $ if testEquivTypes inferredType t
+        return $ if (testEquivTypes inferredType t) && (testEquivTypes conInferredType t)
             then Nothing
             else Just
                  $ concat
-                 [ "Wrong type inferred for: ", show (pretty x)
+                 [ "TEST FAILED!"
+                 , "\n"
+                 , "Wrong type inferred for: ", show (pretty x)
                  , "\n"
                  , "\t" , "Expected: " , show (pretty t) -- , " = " , (show t) , "\n"
                  , "\n"
                  , "\t" , "Expected (normalized): " , show . pretty $ (Type.normalizeQual <$> t)
                  , "\n"
                  , "\t" , "Inferred: " , show (pretty inferredType) -- , " = " , (show inferredType) , "\n"
+                 , "\n"
+                 , "\t" , "Constwrap-Inferred: " , show (pretty conInferredType) -- , " = " , (show inferredType) , "\n"
                  -- , "\n"
                  -- , "\t" , "Raw Expected: " , show t
                  -- , "\n"
