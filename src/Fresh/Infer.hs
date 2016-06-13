@@ -3,7 +3,7 @@
 
 module Fresh.Infer where
 
-import Control.Monad (when)
+import Control.Monad (when, forM)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..), runStateT, evalStateT)
 import Control.Monad.State.Class (MonadState(..), modify)
@@ -139,22 +139,24 @@ infer r (EGetField a expr name) = do
     return (EGetField (a, resT) expr' name, resT)
 
 instantiateAnnot :: ETypeAsc -> Infer s (QualType (SType s))
-instantiateAnnot (ETypeAsc (QualType ps t)) =
-    do it <- instantiateAnnot' t
-       gt <- generalize it
-       return $ QualType (map unresolvePred ps) gt
+instantiateAnnot (ETypeAsc q@(QualType ps t)) = do
+    -- TODO: This is wrong, because preds are outside the TyGen that captures them.
+    -- We should change TyGen to include Preds and remove QualType?
+    gvs <- (freeGenVars q) :: Infer s (Set.Set (GenVar ()))
+    let mkGen k = GenVar <$> freshName <*> pure k <*> pure LevelAny
+        gvs' = map (fmap $ const LevelAny) $ Set.toList gvs
+    freshGVs <- mapM (mkGen . genVarKind) gvs'
+    let s = substGens gvs' (map (SType . TyAST . TyGenVar) freshGVs)
+    QualType <$> (mapM (traverse s . unresolvePred) ps) <*> s (unresolve t)
 
-instantiateAnnot' :: Type -> Infer s (SType s)
-instantiateAnnot' (Fix ascType) = do
-    case ascType of
-        TyGen gvs tscheme -> do
-            let mkGen k = GenVar <$> freshName <*> pure k <*> pure LevelAny
-                gvs' = map (fmap $ const LevelAny) gvs
-            freshGVs <- mapM (mkGen . genVarKind) gvs
-            tscheme' <- instantiateAnnot' tscheme
-            tscheme'' <- substGens gvs' (map (SType . TyAST . TyGenVar) freshGVs) tscheme'
-            return . SType . TyAST $ TyGen freshGVs tscheme''
-        _ -> fmap (SType . TyAST) . sequenceA . bimapTypeAST (const LevelAny) id $ fmap instantiateAnnot' ascType
+-- instantiateAnnot' :: Type -> Infer s (SType s)
+-- instantiateAnnot' (Fix ascType) = do
+--     case ascType of
+--         TyGen gvs tscheme -> do
+--             tscheme' <- instantiateAnnot' tscheme
+--             tscheme'' <- substGens gvs' (map (SType . TyAST . TyGenVar) freshGVs) tscheme'
+--             return . SType . TyAST $ TyGen freshGVs tscheme''
+--         _ -> fmap (SType . TyAST) . sequenceA . bimapTypeAST (const LevelAny) id $ fmap instantiateAnnot' ascType
 
 data FlatTy t
     = FlatTyAp (FlatTy t) (FlatTy t)

@@ -263,6 +263,10 @@ data Class = Class Id Kind
 data Pred t = PredIs Class t | PredNoLabel CompositeLabelName t
     deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
+instance HasGen m t g => HasGen m (Pred t) g where
+    freeGenVars (PredIs _ t) = freeGenVars t
+    freeGenVars (PredNoLabel _ t) = freeGenVars t
+
 fromPred :: Pred t -> t
 fromPred (PredIs _ x) = x
 fromPred (PredNoLabel _ x) = x
@@ -272,6 +276,13 @@ data QualType t = QualType { qualPred :: [Pred t], qualType :: t }
 
 instance HasKind t => HasKind (QualType t) where
     kind (QualType _ t) = kind t
+
+instance (Ord g, HasGen m t g) => HasGen m (QualType t) g where
+    freeGenVars (QualType ps t) = do
+        gvsp <- mapM freeGenVars ps
+        gvst <- freeGenVars t
+        return $ Set.unions (gvst:gvsp)
+
 
 emptyQual :: t -> QualType t
 emptyQual t = QualType [] t
