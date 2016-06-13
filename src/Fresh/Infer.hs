@@ -268,6 +268,7 @@ trySubsume t1 t2 = runInfer $ do
         t2' = unresolve t2
     subsume t1' t2'
 
+canSubsume :: Type -> Type -> Bool
 canSubsume t1 t2 = isRight $ trySubsume t1 t2
 
 equivalent :: Type -> Type -> Bool
