@@ -115,8 +115,11 @@ targ ^-> tres = Fix $ TyAp (Fix $ TyAp _Func targ) tres
 forall :: GenVar () -> Type -> Type
 forall gv t = foralls [gv] t
 
+forallsQ :: [Pred Type] -> [GenVar ()] -> Type -> Type
+forallsQ ps gvs t = Fix $ TyGen gvs (QualType ps t)
+
 foralls :: [GenVar ()] -> Type -> Type
-foralls gvs t = Fix $ TyGen gvs (QualType [] t)
+foralls gvs t = forallsQ [] gvs t
 
 gv :: Int -> GenVar ()
 gv x = GenVar x Star ()
@@ -194,8 +197,8 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( idFunction ~:: ([] ~=> forall (b') (b ^-> b)),
                Right $ [] ~=> forall (b') (b ^-> b))
 
-           , ( idFunction ~:: ([PredIs testClass $ b] ~=> forall (b') (b ^-> b)),
-               Right $ [PredIs testClass $ b] ~=> forall (b') (b ^-> b))
+           , ( idFunction ~:: ([] ~=> forallsQ [PredIs testClass $ b] [b'] (b ^-> b)),
+               Right $ [] ~=> forallsQ [PredIs testClass $ b] [b'] (b ^-> b))
 
            , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
              , Right $ [] ~=> forall b' (forall d' (b ^-> d ^-> b)))
@@ -227,8 +230,8 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( EGetField () (ELet () (EVarName "r") (EApp () (EGetField () (EVar () (EVarName "r")) (CompositeLabelName "pbe")) (ELam () (EVarName "x") (EVar () (EVarName "x")))) (EVar () (EVarName "r"))) (CompositeLabelName "nid")
              , Left () ) -- occurs
 
-           , ( lama "a" ([PredIs (Class (Id "C") Star) e] ~=> f) ("b" ~>  (ELit () (LitString "c")))
-             , Right $ [PredIs (Class (Id "C") Star) e] ~=> forall e' (f ^-> (e ^-> _String)) )
+           , ( lama "a" ([PredIs (Class (Id "C") Star) e] ~=> e) ("b" ~>  (ELit () (LitString "c")))
+             , Right $ [PredIs (Class (Id "C") Star) e] ~=> forall d' (e ^-> (d ^-> _String)) )
            ]
 
 -- ----------------------------------------------------------------------
@@ -343,7 +346,7 @@ prop_hasKind = isJust . kind
 
 prop_resolve :: Type -> Bool
 prop_resolve t =
-    case (runInfer $ Type.resolve (Type.unresolve t)) of
+    case (runInfer $ (Type.unresolve t >>= Type.resolve)) of
         Right (Just t') -> equivalent t t'
         _ -> False
 
@@ -355,7 +358,7 @@ prop_skolemize t =
     Right (Just s) -> equivalent (wrapGen t) (wrapGen s)
     _ -> False
     where
-        getSkolemized x = runInfer $ skolemize (Type.unresolve x) >>= ( Type.resolve . Type.qualType . snd)
+        getSkolemized x = runInfer $ (Type.unresolve x) >>= skolemize  >>= ( Type.resolve . Type.qualType . snd)
         wrapGen ty = case Set.toList $ runIdentity $ Type.freeGenVars ty of
             [] -> ty
             gvs -> Fix $ TyGen gvs (QualType [] ty)
@@ -373,7 +376,10 @@ prop_constExpand expr =
         _                                           -> False
 
 testSubsume :: Type -> Type -> Either TypeError ()
-testSubsume t1 t2 = runInfer $ subsume (Type.unresolve t1) (Type.unresolve t2)
+testSubsume t1 t2 = runInfer $ do
+    t1' <- Type.unresolve t1
+    t2' <- Type.unresolve t2
+    subsume t1' t2'
 
 prop_selfSubsume :: Type -> Bool
 prop_selfSubsume t =
@@ -401,8 +407,8 @@ prop_selfEquivalenceQual q = equivalentQual q q
 
 testUnify :: Type -> Type -> Either TypeError ()
 testUnify t1 t2 = runInfer $ do
-    (QualType ps1 ut1) <- Type.instantiate $ Type.unresolve t1
-    (QualType ps2 ut2) <- Type.instantiate $ Type.unresolve t2
+    (QualType ps1 ut1) <- Type.unresolve t1 >>= Type.instantiate
+    (QualType ps2 ut2) <- Type.unresolve t2 >>= Type.instantiate
     unify ut1 ut2
 
 prop_unifySame :: Type -> Bool
