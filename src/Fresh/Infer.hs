@@ -279,8 +279,11 @@ equivalent t1 t2 = canSubsume t1 t2 && canSubsume t2 t1
 equivalentPred :: Pred Type -> Pred Type -> Bool
 equivalentPred p1 p2 = (fromPred p1) `equivalent` (fromPred p2)
 
-equivalentQual :: QualType Type -> QualType Type -> Bool
-equivalentQual (QualType p1 t1) (QualType p2 t2)
+equivalentQual' :: QualType Type -> QualType Type -> Bool
+equivalentQual' (QualType p1 t1) (QualType p2 t2)
     | length p1 /= length p2                    = False
     | all (uncurry equivalentPred) (zip p1 p2)  = equivalent t1 t2
     | otherwise                                 = False
+
+equivalentQual :: QualType Type -> QualType Type -> Bool
+equivalentQual q1 q2 = equivalentQual' (normalizeQual q1) (normalizeQual q2)
