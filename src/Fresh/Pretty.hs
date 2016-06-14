@@ -66,7 +66,7 @@ instance (LevelPretty g, HasKind t, Pretty t) => Pretty (TypeAST g t) where
              _ -> parens $ pretty fun <+> pretty arg
     pretty (TyCon con) = pretty con
     pretty (TyGenVar genVar) = pretty genVar
-    pretty (TyGen genVar t) = "forall" <+> pretty genVar <> "." <+> pretty t
+    pretty (TyGen genVar t) = parens $ "forall" <+> pretty genVar <> "." <+> pretty t
     -- TODO
     pretty (TyComp c) = "{" <+> pretty c <+> "}"
 
