@@ -45,6 +45,7 @@ data Level = Level Int | LevelAny
 
 instance Ord Level where
     (Level x) `compare` (Level y) = x `compare` y
+    LevelAny `compare` LevelAny = EQ
     _ `compare` LevelAny = LT
     LevelAny `compare` _ = GT
 

@@ -332,6 +332,9 @@ derive makeArbitrary ''EVarName
 derive makeArbitrary ''ETypeAsc
 derive makeArbitrary ''Expr
 
+prop_ordLevel :: Level -> Bool
+prop_ordLevel l = [l] == Set.toList (Set.singleton l `Set.intersection` Set.singleton l)
+
 -- This just tests the Arbitrary instance for Type: it should only
 -- generate valid types (ones that have a kind)
 prop_hasKind :: Type -> Bool
