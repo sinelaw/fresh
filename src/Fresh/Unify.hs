@@ -55,7 +55,7 @@ unifyAST (TyAp t1 t2) (TyAp t1' t2') = do
     unify t2 t2'
 unifyAST (TyCon tc1) (TyCon tc2) | tc1 == tc2 = return ()
 unifyAST (TyGenVar g1) (TyGenVar g2) | g1 == g2 = return ()
-unifyAST u1@(TyGen vs1 t1) u2@(TyGen vs2 t2) | length vs1 == length vs2 = do
+unifyAST u1@(TyGen vs1 (QualType ps1 t1)) u2@(TyGen vs2 (QualType ps2 t2)) | length vs1 == length vs2 = do
     -- TODO: check instance relation (subsumption)
     ks1 <- mapM getKind vs1
     ks2 <- mapM getKind vs2

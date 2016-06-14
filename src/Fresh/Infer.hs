@@ -75,11 +75,10 @@ infer r (ELam a var expr) = do
     (tvar, ps, expr', exprT') <- inLevel $ do
         tvar <- freshTVar
         (expr', QualType ps exprT) <- withVar var tvar $ r expr
-        exprT' <- instantiate exprT
-        return (tvar, ps, expr', exprT')
-    genT <- generalize $ funT (SType $ TyVar tvar) exprT'
+        QualType instPs exprT' <- instantiate exprT
+        return (tvar, ps ++ instPs, expr', exprT')
+    resT <- generalize ps (funT (SType $ TyVar tvar) exprT')
     -- TODO check that tvar is not polymorphic (forall'd)
-    let resT = QualType ps genT
     return (ELam (a, resT) var expr', resT)
 
 infer r (EALam a var varQ expr) = do
@@ -91,9 +90,8 @@ infer r (EALam a var varQ expr) = do
         varBind tvar varAT'
         (expr', QualType ps exprT) <- withVar var tvar $ r expr
         return (ps, varAT', expr', exprT)
-    exprT' <- instantiate exprT
-    genT <- generalize $ funT varAT' exprT'
-    let resT = QualType (varPs ++ ps) genT
+    QualType instPs exprT' <- instantiate exprT
+    resT <- generalize (varPs++instPs) $ funT varAT' exprT'
     return (ELam (a, resT) var expr', resT)
 
 infer r (ELet a var edef expr) = do
@@ -109,8 +107,7 @@ infer r (EApp a efun earg) = do
     (efunArg, efunRes) <- matchFun efunT
     (earg', QualType eargP eargT) <- r earg
     subsume efunArg eargT
-    resT <- generalize efunRes
-    let resQ = QualType (efunP ++ eargP) resT
+    resQ <- generalize  (efunP ++ eargP) efunRes
     return (EApp (a, resQ) efun' earg', resQ)
 
 -- Propagate annotations into Let 'manually':
@@ -171,7 +168,10 @@ unFlattenTy (FlatTyLeaf t) = t
 unFlattenTy (FlatTyAp f1 f2) = SType (TyAST (TyAp (unFlattenTy f1) (unFlattenTy f2)))
 
 matchFun :: SType s -> Infer s (SType s, SType s)
-matchFun t = instantiate t >>= matchFun'
+matchFun t = do
+    QualType ps t' <- instantiate t
+    -- TODO unused ps
+    matchFun' t'
 
 matchFun' :: SType s -> Infer s (SType s, SType s)
 matchFun' t@(SType (TyAST{}))
@@ -193,20 +193,21 @@ matchFun' (SType (TyVar tvar@(TypeVar _ k))) = do
             writeVar tvar (Link $ funT arg res)
             return (arg, res)
 
-skolemize :: SType s -> Infer s ([GenVar Level], SType s)
-skolemize (SType (TyAST (TyGen vs t))) = do
+skolemize :: SType s -> Infer s ([GenVar Level], QualType (SType s))
+skolemize (SType (TyAST (TyGen vs (QualType ps t)))) = do
     ks <- mapM getKind vs
     curLevel <- getCurrentLevel
     skolems <- mapM (\k -> GenVar <$> freshName <*> pure k <*> pure curLevel) ks
     let skolemTs = map (SType . TyAST . TyGenVar) skolems
     t' <- substGens vs skolemTs t
-    return (skolems, t')
-skolemize t = return ([], t)
+    ps' <- mapM (traverse (substGens vs skolemTs)) ps
+    return (skolems, QualType ps' t')
+skolemize t = return ([], QualType [] t)
 
 subsume :: SType s -> SType s -> Infer s ()
 subsume t1 t2 = withWrap $ do
-    (sks, t1') <- skolemize t1
-    t2' <- instantiate t2
+    (sks, QualType ps1' t1') <- skolemize t1
+    QualType ps2' t2' <- instantiate t2
     unify t1' t2'
     gvs1 <- liftST $ freeGenVars t1
     gvs2 <- liftST $ freeGenVars t2
@@ -233,13 +234,11 @@ runInfer act =
 
 qresolve :: QType s -> Infer s (QualType Type)
 qresolve (QualType ps ti) = do
-    t <- generalize ti
-    mt' <- resolve t `catchError` (\e -> throwError $ WrappedError (ResolveError . show $ pretty t) e)
-    pms' <- traverse (traverse resolve) ps
-    let mps' = sequenceA $ map sequenceA pms'
-    case (mps', mt') of
-        (Just ps', Just t') -> return $ QualType ps' t'
-        _ -> throwError $ EscapedSkolemError $ "qresolve:" ++ show mps' ++ " - " ++ show mt'
+    t <- generalize ps ti
+    mt' <- sequenceA <$> traverse resolve t `catchError` (\e -> throwError $ WrappedError (ResolveError . show $ pretty t) e)
+    case mt' of
+        (Just t') -> return t'
+        _ -> throwError $ EscapedSkolemError $ "qresolve:" ++ show mt'
 
 wrapInfer :: Show a => Expr a -> Infer s (InferResult s a)
 wrapInfer expr = do
@@ -253,10 +252,10 @@ inferExpr expr = runInfer $ do
     k <- getKind t
     when (k /= Star) $ throwError $ KindMismatchError k Star
     -- TODO should we really generalize? Is this func only for top-level exprs?
-    t' <- generalize t
-    let exprG = fmap (\(a, _) -> (a, QualType p t')) expr'
+    t' <- generalize p t
+    let exprG = fmap (\(a, _) -> (a, t')) expr'
         wrapError = \e -> do
-            pt <- purify t'
+            pt <- traverse purify t'
             throwError $ WrappedError (ResolveError (show $ pretty $ pt)) e
     traverse ((fmap $ fmap normalize) . qresolve . snd) exprG `catchError` wrapError
 

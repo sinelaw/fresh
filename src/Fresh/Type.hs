@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -32,13 +33,20 @@ import qualified Data.Foldable
 import qualified Data.List as List
 -- import Debug.Trace (traceM)
 
+partitionM :: Monad m => (t -> m Bool) -> [t] -> m ([t], [t])
+partitionM _ [] = return ([], [])
+partitionM f (x:xs) = do
+    (y, n) <- partitionM f xs
+    res <- f x
+    return $ if res then (x:y, n) else (y, x:n)
+
 data Level = Level Int | LevelAny
     deriving (Generic, Eq, Show)
 
 instance Ord Level where
     (Level x) `compare` (Level y) = x `compare` y
-    l `compare` LevelAny = LT
-    LevelAny `compare` l = GT
+    _ `compare` LevelAny = LT
+    LevelAny `compare` _ = GT
 
 mapLevel :: (Int -> Int) -> Level -> Level
 mapLevel  f (Level x) = Level (f x)
@@ -92,16 +100,54 @@ unflattenComposite (FlatComposite m mRem) =
     foldr (\(n, t) rest -> CompositeLabel n t rest) rem' $ Map.toList m
     where rem' = maybe CompositeTerminal CompositeRemainder mRem
 
+----------------------------------------------------------------------
+class HasKind t where
+    kind :: t -> Maybe Kind -- Should really be just Kind, but hard to generate arbitrary for TyAp
+
+class Monad m => HasGen m t g where
+    freeGenVars :: t -> m (Set (GenVar g))
+
+----------------------------------------------------------------------
+
+data Class = Class Id Kind
+    deriving (Generic, Eq, Ord, Show)
+
+data Pred t = PredIs Class t | PredNoLabel CompositeLabelName t
+    deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
+
+instance HasGen m t g => HasGen m (Pred t) g where
+    freeGenVars (PredIs _ t) = freeGenVars t
+    freeGenVars (PredNoLabel _ t) = freeGenVars t
+
+fromPred :: Pred t -> t
+fromPred (PredIs _ x) = x
+fromPred (PredNoLabel _ x) = x
+
+data QualType t = QualType { qualPred :: [Pred t], qualType :: t }
+    deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
+
+instance HasKind t => HasKind (QualType t) where
+    kind (QualType _ t) = kind t
+
+instance (Ord g, HasGen m t g) => HasGen m (QualType t) g where
+    freeGenVars (QualType ps t) = do
+        gvsp <- mapM freeGenVars ps
+        gvst <- freeGenVars t
+        return $ Set.unions (gvst:gvsp)
+
+
+emptyQual :: t -> QualType t
+emptyQual t = QualType [] t
+
+----------------------------------------------------------------------
+
 data TypeAST g t
     = TyAp { _tyApFun :: t, _tyApArg :: t }
     | TyCon { _tyCon :: TCon }
     | TyGenVar { _tyGenVar :: GenVar g }
-    | TyGen { _tyGenVars :: [GenVar g], _tyGenScheme :: t }
+    | TyGen { _tyGenVars :: [GenVar g], _tyGenScheme :: QualType t }
     | TyComp { _tyComp :: Composite t }
     deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
-
-class Monad m => HasGen m t g where
-    freeGenVars :: t -> m (Set (GenVar g))
 
 instance (Ord g, HasGen m t g) => HasGen m (TypeAST g t) g where
     freeGenVars (TyGenVar g) = pure $ Set.singleton g
@@ -116,7 +162,7 @@ instance HasVars m t => HasVars m (TypeAST g t) where
 
 bimapTypeAST :: (g -> g') -> (t -> t') -> TypeAST g t -> TypeAST g' t'
 bimapTypeAST fg _  (TyGenVar g) = TyGenVar (fmap fg g)
-bimapTypeAST fg ft (TyGen gvs t) = TyGen (map (fmap fg) gvs) (ft t)
+bimapTypeAST fg ft (TyGen gvs t) = TyGen (map (fmap fg) gvs) (fmap ft t)
 bimapTypeAST _ ft (TyAp t1 t2) = TyAp (ft t1) (ft t2)
 bimapTypeAST _ _ (TyCon{..}) = TyCon{..}
 bimapTypeAST _ ft (TyComp c) = TyComp $ fmap ft c
@@ -127,6 +173,7 @@ tyRec = TyCon (TCon (Id "Rec") (KArrow Composite Star))
 tySum :: TypeAST g t
 tySum = TyCon (TCon (Id "Sum") (KArrow Composite Star))
 
+conFunc :: TCon
 conFunc = TCon (Id "->") (KArrow Star (KArrow Star Star))
 
 tyFunc :: TypeAST g t
@@ -143,9 +190,6 @@ instance HasLevel (GenVar Level) where
 instance HasLevel t => HasLevel (TypeAST g t) where
     level = foldr (min . level) LevelAny
 
-class HasKind t where
-    kind :: t -> Maybe Kind -- Should really be just Kind, but hard to generate arbitrary for TyAp
-
 instance HasKind TCon where
     kind = Just . tcKind
 instance HasKind (GenVar a) where
@@ -154,8 +198,8 @@ instance HasKind t => HasKind (TypeAST g t) where
     kind (TyAp f x) = join $ Kind.app <$> kind f <*> kind x
     kind (TyCon tc) = kind tc
     kind (TyGenVar gv) = kind gv
-    kind (TyGen v s) = kind s
-    kind (TyComp fs) = Just Composite
+    kind (TyGen _gvs s) = kind s
+    kind (TyComp _fs) = Just Composite
 
 type UnboundVarName = Int
 
@@ -169,7 +213,7 @@ data TypeVar v t
     deriving (Generic, Functor)
 
 instance Show (STRef s t) where
-    show v = "<stref>"
+    show _v = "<stref>"
 
 instance HasGen m t g => HasGen m (TVarLink t) g where
     freeGenVars (Link t)  = freeGenVars t
@@ -257,45 +301,15 @@ instance (Monad m) => HasGen m PType Level where
 
 ----------------------------------------------------------------------
 
-data Class = Class Id Kind
-    deriving (Generic, Eq, Ord, Show)
-
-data Pred t = PredIs Class t | PredNoLabel CompositeLabelName t
-    deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
-
-instance HasGen m t g => HasGen m (Pred t) g where
-    freeGenVars (PredIs _ t) = freeGenVars t
-    freeGenVars (PredNoLabel _ t) = freeGenVars t
-
-fromPred :: Pred t -> t
-fromPred (PredIs _ x) = x
-fromPred (PredNoLabel _ x) = x
-
-data QualType t = QualType { qualPred :: [Pred t], qualType :: t }
-    deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
-
-instance HasKind t => HasKind (QualType t) where
-    kind (QualType _ t) = kind t
-
-instance (Ord g, HasGen m t g) => HasGen m (QualType t) g where
-    freeGenVars (QualType ps t) = do
-        gvsp <- mapM freeGenVars ps
-        gvst <- freeGenVars t
-        return $ Set.unions (gvst:gvsp)
-
-
-emptyQual :: t -> QualType t
-emptyQual t = QualType [] t
-
 type QType s = QualType (SType s)
 
 type Type = Fix (TypeAST ())
 
 normalize :: Type -> Type
-normalize (Fix (TyAp t1@(Fix (TyAp f arg)) (Fix (TyGen gvs t))))
+normalize (Fix (TyAp t1@(Fix (TyAp f arg)) (Fix (TyGen gvs q))))
     | (f == Fix tyFunc) && (Set.null $ runIdentity (freeGenVars arg) `Set.intersection` (Set.fromList gvs))
-    = Fix $ TyGen gvs (Fix $ TyAp t1 t)
-normalize (Fix (TyGen ps1 (Fix (TyGen ps2 t)))) = Fix (TyGen (ps1++ps2) $ normalize t)
+    = Fix $ TyGen gvs (fmap (Fix . TyAp t1) q)
+normalize (Fix (TyGen gvs1 (QualType ps1 (Fix (TyGen gvs2 (QualType ps2 t)))))) = Fix (TyGen (gvs1++gvs2) $ QualType (ps1++ps2) (normalize t))
 normalize t = t
 
 normalizeQual :: QualType Type -> QualType Type
@@ -456,13 +470,13 @@ getUnbound curLevel (SType (TyAST t)) =
     foldr (++) [] <$> traverse (getUnbound curLevel) t
 
 
-mkGen :: [GenVar Level] -> SType s -> SType s
-mkGen gvs (SType (TyAST (TyGen gvs' t))) = mkGen (gvs++gvs') t
-mkGen [] t = t
-mkGen gvs t = SType (TyAST (TyGen gvs t))
+mkGen :: [GenVar Level] -> [Pred (SType s)] -> SType s -> SType s
+mkGen gvs ps (SType (TyAST (TyGen gvs' (QualType ps2 t)))) = mkGen (gvs++gvs') (ps++ps2) t
+mkGen []  [] t = t
+mkGen gvs ps t = SType (TyAST (TyGen gvs (QualType ps t)))
 
-generalize :: SType s -> Infer s (SType s)
-generalize t = do
+generalize :: [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
+generalize ps t = do
     curLevel <- getCurrentLevel
     unboundTVars <- getUnbound curLevel t
     let wrapGen tv@(TypeVar _ k) = do
@@ -475,19 +489,25 @@ generalize t = do
                     writeVar tv (Link $ SType $ TyAST $ TyGenVar gv)
                     return $ Just gv
     gvs <- catMaybes <$> mapM wrapGen unboundTVars
-    return $ mkGen gvs t
+    gvsInT :: (Set (GenVar Level)) <- liftST (freeGenVars t)
+    (psNotInT, psInT) <- partitionM
+        (\p -> do gvsInP <- liftST (freeGenVars p)
+                  return $ Set.null $ gvsInP `Set.intersection` gvsInT)
+        ps
 
-instantiate :: SType s -> Infer s (SType s)
-instantiate (SType (TyAST (TyGen gvs tGen))) = do
+    return $ QualType psNotInT $ mkGen gvs psInT t
+
+instantiate :: SType s -> Infer s (QualType (SType s))
+instantiate (SType (TyAST (TyGen gvs (QualType ps tGen)))) = do
     let inst t gv@(GenVar n k l) = do
             tv <- SType . TyVar <$> freshTVarK k
             substGen gv tv t
-    foldM inst tGen gvs
-instantiate t@(SType (TyAST _)) = return t
+    QualType ps <$> foldM inst tGen gvs
+instantiate t@(SType (TyAST _)) = return $ QualType [] t
 instantiate t@(SType (TyVar tvar)) = do
     t' <- readVar tvar
     case t' of
-        Unbound{} -> return t
+        Unbound{} -> return $ QualType [] t -- TODO: Keep predicates on metavars?
         Link tLink -> instantiate tLink
 
 substGen :: GenVar Level -> SType s -> SType s -> Infer s (SType s)
@@ -501,7 +521,7 @@ substGen gv tv t@(SType (TyAST tast)) =
          TyGenVar g -> return $ if g == gv then tv else t
          TyAp tf tx -> SType . TyAST <$> (TyAp <$> substGen gv tv tf <*> substGen gv tv tx)
          TyCon c -> return . SType . TyAST $ TyCon c
-         TyGen gvs tGen' -> do
+         TyGen gvs (QualType ps tGen') -> do
              let (shadowedGVs, rest) = List.partition (\sgv -> genVarId sgv == genVarId gv) gvs
              (newGVs, newTypes) <-
                  unzip <$> forM shadowedGVs (\sgv -> do
@@ -510,7 +530,8 @@ substGen gv tv t@(SType (TyAST tast)) =
                                                     return (sgv', SType . TyAST . TyGenVar $ sgv'))
 
              stGen' <- substGens shadowedGVs newTypes tGen'
-             SType . TyAST . TyGen (newGVs ++ rest) <$> substGen gv tv stGen'
+             ps' <- mapM (traverse $ substGens shadowedGVs newTypes) ps
+             SType . TyAST . TyGen (newGVs ++ rest) . QualType ps' <$> substGen gv tv stGen'
          TyComp c -> SType . TyAST . TyComp <$> traverse (substGen gv tv) c
 
 substGens :: [GenVar Level] -> [SType s] -> SType s -> Infer s (SType s)

@@ -116,7 +116,7 @@ forall :: GenVar () -> Type -> Type
 forall gv t = foralls [gv] t
 
 foralls :: [GenVar ()] -> Type -> Type
-foralls gvs t = Fix $ TyGen gvs t
+foralls gvs t = Fix $ TyGen gvs (QualType [] t)
 
 gv :: Int -> GenVar ()
 gv x = GenVar x Star ()
@@ -293,7 +293,7 @@ genTyGen = do
     gvSet <- Type.freeGenVars t
     case Set.toList gvSet of
         [] -> pure t
-        gvs -> pure $ Fix $ TyGen gvs t
+        gvs -> pure $ Fix $ TyGen gvs (QualType [] t)
 
 instance Arbitrary Type where
     arbitrary = oneof $
@@ -307,7 +307,7 @@ instance Arbitrary Type where
     shrink (Fix (TyAp t1 t2)) = [t1, t2]
     shrink (Fix TyCon{}) = []
     shrink (Fix TyGenVar{}) = []
-    shrink (Fix (TyGen _ t)) = [t]
+    shrink (Fix (TyGen _ (QualType ps t))) = [t]
     shrink (Fix TyComp{}) = [] -- TODO
 
 instance (Arbitrary t, HasKind t) => Arbitrary (Pred t) where
@@ -352,10 +352,10 @@ prop_skolemize t =
     Right (Just s) -> equivalent (wrapGen t) (wrapGen s)
     _ -> False
     where
-        getSkolemized x = runInfer $ skolemize (Type.unresolve x) >>= (Type.resolve . snd)
+        getSkolemized x = runInfer $ skolemize (Type.unresolve x) >>= ( Type.resolve . Type.qualType . snd)
         wrapGen ty = case Set.toList $ runIdentity $ Type.freeGenVars ty of
             [] -> ty
-            gvs -> Fix $ TyGen gvs ty
+            gvs -> Fix $ TyGen gvs (QualType [] ty)
 
 -- prop_hasKindStar :: Type -> Bool
 -- prop_hasKindStar t = Just Star == kind t
@@ -398,8 +398,8 @@ prop_selfEquivalenceQual q = equivalentQual q q
 
 testUnify :: Type -> Type -> Either TypeError ()
 testUnify t1 t2 = runInfer $ do
-    ut1 <- Type.instantiate $ Type.unresolve t1
-    ut2 <- Type.instantiate $ Type.unresolve t2
+    (QualType ps1 ut1) <- Type.instantiate $ Type.unresolve t1
+    (QualType ps2 ut2) <- Type.instantiate $ Type.unresolve t2
     unify ut1 ut2
 
 prop_unifySame :: Type -> Bool
