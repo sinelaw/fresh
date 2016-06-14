@@ -139,6 +139,7 @@ instantiateAnnot :: ETypeAsc -> Infer s (QualType (SType s))
 instantiateAnnot (ETypeAsc q@(QualType ps t)) = do
     -- TODO: This is wrong, because preds are outside the TyGen that captures them.
     -- We should change TyGen to include Preds and remove QualType?
+    -- TODO: Check the predicates ps to see if they contain escaped genvars from t
     gvs <- (freeGenVars q) :: Infer s (Set.Set (GenVar ()))
     let mkGen k = GenVar <$> freshName <*> pure k <*> pure LevelAny
         gvs' = map (fmap $ const LevelAny) $ Set.toList gvs
