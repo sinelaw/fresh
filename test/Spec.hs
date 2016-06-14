@@ -231,7 +231,7 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
              , Left () ) -- occurs
 
            , ( lama "a" ([PredIs (Class (Id "C") Star) e] ~=> e) ("b" ~>  (ELit () (LitString "c")))
-             , Right $ [] ~=> forallsQ [PredIs (Class (Id "C") Star) e] [d', e'] (e ^-> (d ^-> _String)) )
+             , Right $ [] ~=> forall d' ((forallsQ [PredIs (Class (Id "C") Star) e] [e'] e) ^-> (d ^-> _String)) )
            ]
 
 -- ----------------------------------------------------------------------
