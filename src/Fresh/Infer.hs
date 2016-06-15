@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
 -- |
 
@@ -142,7 +143,11 @@ instantiateAnnot (ETypeAsc q@(QualType ps t)) = do
     let gvs' = map (fmap $ const LevelAny) $ Set.toList gvs
     ps' <- mapM unresolvePred ps -- >>= mapM (traverse s)
     t' <- unresolve t -- >>= s
-    mkGenQ gvs' ps' t'
+    res <- mkGenQ gvs' ps' t'
+    resFreeGVs :: (Set.Set (GenVar Level)) <- liftST $ freeGenVars res
+    when (not $ Set.null resFreeGVs)
+        $ throwError $ AssertionError ("Genvars escaped from forall'ed annotated type?! " ++ show res)
+    return res
 
 -- instantiateAnnot' :: Type -> Infer s (SType s)
 -- instantiateAnnot' (Fix ascType) = do

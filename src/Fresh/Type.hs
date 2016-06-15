@@ -108,6 +108,9 @@ class HasKind t where
 class Monad m => HasGen m t g where
     freeGenVars :: t -> m (Set (GenVar g))
 
+instance (Ord g, HasGen m t g) => HasGen m [t] g where
+    freeGenVars ft = Set.unions <$> (mapM freeGenVars ft)
+
 ----------------------------------------------------------------------
 
 data Class = Class Id Kind
@@ -429,6 +432,7 @@ data TypeError
     | ExpectedFunction String
     | SubsumeError String String
     | OccursError String String
+    | AssertionError String
     deriving (Generic, Eq, Show)
 
 type Infer s a = StateT (InferState s) (EitherT TypeError (ST s)) a
