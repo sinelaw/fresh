@@ -427,7 +427,7 @@ shouldUnify :: Bool -> Type -> Type -> IO ()
 shouldUnify b t1 t2 = do
     putStrLn $ "Unifying: " ++ show (pretty t1) ++ " with " ++ show (pretty t2) ++ " - should succeed: " ++ show b
     let res = testUnify t1 t2
-    when (b == (Right () /= res)) $ error $ "Wrong result: " ++ (show $ pretty res)
+    when (b == (Right () /= res)) $ error $ show $ red $ "Wrong result: " <+> (pretty res)
 
 erecord :: [(CompositeLabelName, Type)] -> Type
 erecord x = record x Nothing
