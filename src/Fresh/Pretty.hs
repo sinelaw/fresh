@@ -147,3 +147,5 @@ instance Pretty TypeError where
     pretty (ExpectedFunction x) = "Expected function type, got:" <+> pretty x
     pretty (SubsumeError t1 t2) = "Subsuming" <+> text t1 <+> "into" <+> text t2
     pretty (OccursError t1 t2) = "Occurs check failed, " <+> text t1 <+> " is in " <+> text t2
+    pretty (AssertionError s) = "ASSERTION FAILED:" <+> text s
+    pretty (MultipleErrors es) = "Errors:" <+> align (vsep $ map pretty es)

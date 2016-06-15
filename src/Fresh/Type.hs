@@ -430,7 +430,14 @@ data TypeError
     | SubsumeError String String
     | OccursError String String
     | AssertionError String
+    | MultipleErrors [TypeError]
     deriving (Generic, Eq, Show)
+
+concatErrors :: TypeError -> TypeError -> TypeError
+concatErrors (MultipleErrors e1s) (MultipleErrors e2s) = MultipleErrors (e1s ++ e2s)
+concatErrors (MultipleErrors e1s) e                    = MultipleErrors (e1s ++ [e])
+concatErrors e                    (MultipleErrors e2s) = MultipleErrors (e:e2s)
+concatErrors e1                   e2                   = MultipleErrors [e1,e2]
 
 type Infer s a = StateT (InferState s) (EitherT TypeError (ST s)) a
 
