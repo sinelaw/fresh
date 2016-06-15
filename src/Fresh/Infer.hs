@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
 -- |
 
@@ -140,7 +141,11 @@ instantiateAnnot (ETypeAsc q@(QualType ps t)) = do
     -- TODO: Check the predicates ps to see if they contain escaped genvars from t
     gvs <- (freeGenVars q) :: Infer s (Set.Set (GenVar ()))
     let gvs' = map (fmap $ const LevelAny) $ Set.toList gvs
-    mkGenQ gvs' (map unresolvePred ps) (unresolve t)
+    res <- mkGenQ gvs' (map unresolvePred ps) (unresolve t)
+    resFreeGVs :: (Set.Set (GenVar Level)) <- liftST $ freeGenVars res
+    when (not $ Set.null resFreeGVs)
+        $ throwError $ AssertionError ("Genvars escaped from forall'ed annotated type?! " ++ show res)
+    return res
 
 -- instantiateAnnot' :: Type -> Infer s (SType s)
 -- instantiateAnnot' (Fix ascType) = do
