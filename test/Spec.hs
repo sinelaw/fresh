@@ -458,28 +458,30 @@ main = do
         putStr " :: (inferred) "
         let inferredType = getAnnotation <$> inferExpr x
             conInferredType = getAnnotation <$> inferExpr (constWrap x)
+            errMsgInfer = Just $ pretty $ vsep
+                [ "TEST FAILED!"
+                , "Wrong type inferred for:" <+> pretty x
+                ] <$$>
+                (indent 4 $ vsep
+                [ "Expected:" <$$> (pretty t) -- , " = " , ( t) , "\n"
+                , "Expected (normalized):" <$$> pretty (Type.normalizeQual <$> t)
+                , "Inferred:" <$$> (pretty inferredType) -- , " = " , ( inferredType)
+                , "Inferred (normalized):" <$$> pretty (Type.normalizeQual <$> inferredType)
+                , "Inferred (raw): " <$$> pretty inferredType
+                , "Constwrap-Inferred:" <$$> (pretty conInferredType) -- , " = " , (show inferredType) , "\n"
+                ])
         print . pretty $ inferredType
-        return $ if (testEquivTypes inferredType t) && (testEquivTypes conInferredType t)
-            then Nothing
-            else Just
-                 $ show $ pretty $ vsep
+        if (not $ testEquivTypes inferredType conInferredType)
+            then return $ Just $ pretty $ vsep
                  [ "TEST FAILED!"
-                 , "Wrong type inferred for:" <+> pretty x
-                 ] <$$>
-                 (indent 4 $ vsep
-                 [ "Expected:" <$$> (pretty t) -- , " = " , ( t) , "\n"
-                 , "Expected (normalized):" <$$> pretty (Type.normalizeQual <$> t)
-                 , "Inferred:" <$$> (pretty inferredType) -- , " = " , ( inferredType)
-                 , "Inferred (normalized):" <$$> pretty (Type.normalizeQual <$> inferredType)
-                 , "Inferred (raw): " <$$> pretty inferredType
-                 , "Constwrap-Inferred:" <$$> (pretty conInferredType) -- , " = " , (show inferredType) , "\n"
-                 -- , "\n"
-                 -- , "\t" , "Raw Expected: " , show t
-                 -- , "\n"
-                 -- , "\t" , "Raw Inferred: " , show inferredType
-                 ])
-        -- print . show $ getAnnotation <$> inferExpr x
-        -- print . show $ getAnnotation <$> inferExpr (constWrap x)
+                 , "Type not equivalent to constwrap of itself:"
+                 , pretty inferredType
+                 , pretty conInferredType
+                 ]
+            else if ((testEquivTypes inferredType t) && (testEquivTypes conInferredType t))
+                 then return Nothing
+                 else return errMsgInfer
+
     let errs = catMaybes merrs
     when (not $ null errs) $
         forM_ errs (putStrLn . show . red)
