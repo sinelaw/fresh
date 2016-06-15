@@ -139,13 +139,8 @@ instantiateAnnot :: ETypeAsc -> Infer s (QualType (SType s))
 instantiateAnnot (ETypeAsc q@(QualType ps t)) = do
     -- TODO: Check the predicates ps to see if they contain escaped genvars from t
     gvs <- (freeGenVars q) :: Infer s (Set.Set (GenVar ()))
-    let mkGenVar k = GenVar <$> freshName <*> pure k <*> pure LevelAny
-        gvs' = map (fmap $ const LevelAny) $ Set.toList gvs
-    freshGVs <- mapM (mkGenVar . genVarKind) gvs'
-    let s = substGens gvs' (map (SType . TyAST . TyGenVar) freshGVs)
-    ps' <- mapM (traverse s . unresolvePred) ps
-    t' <-  s $ unresolve t
-    mkGenQ freshGVs  ps' t'
+    let gvs' = map (fmap $ const LevelAny) $ Set.toList gvs
+    mkGenQ gvs' (map unresolvePred ps) (unresolve t)
 
 -- instantiateAnnot' :: Type -> Infer s (SType s)
 -- instantiateAnnot' (Fix ascType) = do
