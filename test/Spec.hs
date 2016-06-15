@@ -24,7 +24,7 @@ import Fresh.Type (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), QualType(..), 
 import Fresh.Infer (inferExpr, runInfer, instantiateAnnot, qresolve, equivalent, equivalentQual, equivalentPred, subsume, skolemize)
 import Fresh.Unify (unify)
 import qualified Fresh.Type as Type
-import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
+import Text.PrettyPrint.ANSI.Leijen (Pretty(..), vsep, indent, (<+>), (<$$>), group)
 
 instance IsString EVarName where
     fromString = EVarName
@@ -459,27 +459,22 @@ main = do
         return $ if (testEquivTypes inferredType t) && (testEquivTypes conInferredType t)
             then Nothing
             else Just
-                 $ concat
+                 $ show $ pretty $ vsep
                  [ "TEST FAILED!"
-                 , "\n"
-                 , "Wrong type inferred for: ", show (pretty x)
-                 , "\n"
-                 , "\t" , "Expected: " , show (pretty t) -- , " = " , (show t) , "\n"
-                 , "\n"
-                 , "\t" , "Expected (normalized): " , show . pretty $ (Type.normalizeQual <$> t)
-                 , "\n"
-                 , "\t" , "Inferred: " , show (pretty inferredType) -- , " = " , (show inferredType) , "\n"
-                 , "\n"
-                 , "\t" , "Inferred (normalized): " , show (pretty $ (Type.normalizeQual <$> inferredType))
-                 , "\n"
-                 , "\t" , "Inferred (raw): ", (show inferredType)
-                 , "\n"
-                 , "\t" , "Constwrap-Inferred: " , show (pretty conInferredType) -- , " = " , (show inferredType) , "\n"
+                 , "Wrong type inferred for:" <+> pretty x
+                 ] <$$>
+                 (indent 4 $ vsep
+                 [ "Expected:" <$$> (pretty t) -- , " = " , ( t) , "\n"
+                 , "Expected (normalized):" <$$> pretty (Type.normalizeQual <$> t)
+                 , "Inferred:" <$$> (pretty inferredType) -- , " = " , ( inferredType)
+                 , "Inferred (normalized):" <$$> pretty (Type.normalizeQual <$> inferredType)
+                 , "Inferred (raw): " <$$> pretty inferredType
+                 , "Constwrap-Inferred:" <$$> (pretty conInferredType) -- , " = " , (show inferredType) , "\n"
                  -- , "\n"
                  -- , "\t" , "Raw Expected: " , show t
                  -- , "\n"
                  -- , "\t" , "Raw Inferred: " , show inferredType
-                 ]
+                 ])
         -- print . show $ getAnnotation <$> inferExpr x
         -- print . show $ getAnnotation <$> inferExpr (constWrap x)
     let errs = catMaybes merrs
