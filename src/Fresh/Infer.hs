@@ -270,20 +270,24 @@ trySubsume t1 t2 = runInfer $ do
         t2' = unresolve t2
     subsume t1' t2'
 
-canSubsume :: Type -> Type -> Bool
-canSubsume t1 t2 = isRight $ trySubsume t1 t2
+canSubsume :: Type -> Type -> Either TypeError ()
+canSubsume t1 t2 = trySubsume t1 t2
 
-equivalent :: Type -> Type -> Bool
-equivalent t1 t2 = canSubsume t1 t2 && canSubsume t2 t1
+equivalent :: Type -> Type -> Either TypeError ()
+equivalent t1 t2 = case (canSubsume t1 t2, canSubsume t2 t1) of
+    (Left e1, Left e2) -> Left (concatErrors e1 e2)
+    (Left e,  _      ) -> Left e
+    (_     , Left e  ) -> Left e
+    _                  -> Right ()
 
-equivalentPred :: Pred Type -> Pred Type -> Bool
+equivalentPred :: Pred Type -> Pred Type -> Either TypeError ()
 equivalentPred p1 p2 = (fromPred p1) `equivalent` (fromPred p2)
 
-equivalentQual' :: QualType Type -> QualType Type -> Bool
+equivalentQual' :: QualType Type -> QualType Type -> Either TypeError ()
 equivalentQual' (QualType p1 t1) (QualType p2 t2)
-    | length p1 /= length p2                    = False
-    | all (uncurry equivalentPred) (zip p1 p2)  = equivalent t1 t2
-    | otherwise                                 = False
+    | length p1 /= length p2                    = Left $ AssertionError "Predicates not the same length"
+    | all (isRight . uncurry equivalentPred) (zip p1 p2)  = equivalent t1 t2
+    | otherwise                                 = Left $ AssertionError "Not equivalent predicates"
 
-equivalentQual :: QualType Type -> QualType Type -> Bool
+equivalentQual :: QualType Type -> QualType Type -> Either TypeError ()
 equivalentQual q1 q2 = equivalentQual' (normalizeQual q1) (normalizeQual q2)
