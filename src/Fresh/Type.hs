@@ -14,13 +14,13 @@ module Fresh.Type where
 
 import           Fresh.Kind (Kind(..))
 import qualified Fresh.Kind as Kind
+import qualified Fresh.OrderedSet as OrderedSet
+import           Fresh.OrderedSet (OrderedSet)
 import Data.STRef
 import Control.Monad (join, foldM, forM)
 import Control.Monad.ST (ST)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Set (Set)
-import qualified Data.Set as Set
 import Data.Maybe (catMaybes)
 import GHC.Generics (Generic)
 import Data.Functor.Identity (runIdentity)
@@ -108,10 +108,10 @@ class HasKind t where
 class Monad m => HasGen m t g where
     -- TODO: Should return ordered set so that foralls will have the
     -- genvars in deterministic order for easier alpha-equivalence
-    freeGenVars :: t -> m (Set (GenVar g))
+    freeGenVars :: t -> m (OrderedSet (GenVar g))
 
 instance (Ord g, HasGen m t g) => HasGen m [t] g where
-    freeGenVars ft = Set.unions <$> (mapM freeGenVars ft)
+    freeGenVars ft = OrderedSet.concatUnions <$> (mapM freeGenVars ft)
 
 ----------------------------------------------------------------------
 
@@ -139,7 +139,7 @@ instance (Ord g, HasGen m t g) => HasGen m (QualType t) g where
     freeGenVars (QualType ps t) = do
         gvsp <- mapM freeGenVars ps
         gvst <- freeGenVars t
-        return $ Set.unions (gvst:gvsp)
+        return $ OrderedSet.concatUnions (gvst:gvsp)
 
 
 emptyQual :: t -> QualType t
@@ -156,15 +156,15 @@ data TypeAST g t
     deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
 instance (Ord g, HasGen m t g) => HasGen m (TypeAST g t) g where
-    freeGenVars (TyGenVar g) = pure $ Set.singleton g
-    freeGenVars (TyGen gvs t) = Set.difference <$> freeGenVars t <*> pure (Set.fromList gvs)
-    freeGenVars t = foldr Set.union Set.empty <$> traverse freeGenVars t
+    freeGenVars (TyGenVar g) = pure $ OrderedSet.singleton g
+    freeGenVars (TyGen gvs t) = OrderedSet.difference <$> freeGenVars t <*> pure (OrderedSet.fromList gvs)
+    freeGenVars t = foldr OrderedSet.concatUnion OrderedSet.empty <$> traverse freeGenVars t
 
 class Monad m => HasVars m t where
-    freeVars :: t -> m (Set UnboundVarName)
+    freeVars :: t -> m (OrderedSet UnboundVarName)
 
 instance HasVars m t => HasVars m (TypeAST g t) where
-    freeVars t = foldr Set.union Set.empty <$> traverse freeVars t
+    freeVars t = foldr OrderedSet.concatUnion OrderedSet.empty <$> traverse freeVars t
 
 bimapTypeAST :: (g -> g') -> (t -> t') -> TypeAST g t -> TypeAST g' t'
 bimapTypeAST fg _  (TyGenVar g) = TyGenVar (fmap fg g)
@@ -223,7 +223,7 @@ instance Show (STRef s t) where
 
 instance HasGen m t g => HasGen m (TVarLink t) g where
     freeGenVars (Link t)  = freeGenVars t
-    freeGenVars Unbound{} = pure Set.empty
+    freeGenVars Unbound{} = pure OrderedSet.empty
 
 instance HasGen (ST s) t g => HasGen (ST s) (TypeVar (STRef s) t) g where
     freeGenVars (TypeVar cell _) =
@@ -234,7 +234,7 @@ instance HasKind (TypeVar v t) where
 
 instance HasVars m t => HasVars m (TVarLink t) where
     freeVars (Link t)      = freeVars t
-    freeVars (Unbound n _) = pure (Set.singleton n)
+    freeVars (Unbound n _) = pure (OrderedSet.singleton n)
 
 instance HasVars (ST s) t => HasVars (ST s) (TypeVar (STRef s) t) where
     freeVars (TypeVar cell _) =
@@ -313,7 +313,7 @@ type Type = Fix (TypeAST ())
 
 normalize :: Type -> Type
 normalize (Fix (TyAp t1@(Fix (TyAp f arg)) (Fix (TyGen gvs q))))
-    | (f == Fix tyFunc) && (Set.null $ runIdentity (freeGenVars arg) `Set.intersection` (Set.fromList gvs))
+    | (f == Fix tyFunc) && (OrderedSet.null $ runIdentity (freeGenVars arg) `OrderedSet.intersection` (OrderedSet.fromList gvs))
     = normalize $ Fix $ TyGen gvs (fmap (Fix . TyAp t1) q)
 normalize (Fix (TyGen gvs1 (QualType ps1 (Fix (TyGen gvs2 (QualType ps2 t)))))) = normalize $ Fix (TyGen (gvs1++gvs2) $ QualType (ps1++ps2) t)
 normalize t = t
@@ -465,7 +465,7 @@ inLevel act = do
 listUnion :: Ord a => [a] -> [a] -> [a]
 [] `listUnion` y = y
 x `listUnion` [] = x
-x `listUnion` y = Set.toList $ Set.fromList x `Set.union` Set.fromList y
+x `listUnion` y = OrderedSet.toList $ OrderedSet.fromList x `OrderedSet.concatUnion` OrderedSet.fromList y
 
 freshName :: Infer s Int
 freshName = do
@@ -491,7 +491,7 @@ mkGen :: [GenVar Level] -> [Pred (SType s)] -> SType s -> Infer s (SType s)
 mkGen gvs ps (SType (TyAST (TyGen gvs' (QualType ps2 t)))) = mkGen (gvs++gvs') (ps++ps2) t
 -- mkGen gvs ps touter@(SType (TyAST (TyAp t1@(SType (TyAST (TyAp (SType (TyAST (TyCon f))) arg))) (SType (TyAST (TyGen gvs' (QualType ps' t)))))))
 --     = do gvsArg <- liftST $ freeGenVars arg
---          if (f == conFunc) && (Set.null $ gvsArg `Set.intersection` (Set.fromList gvs'))
+--          if (f == conFunc) && (OrderedSet.null $ gvsArg `OrderedSet.intersection` (OrderedSet.fromList gvs'))
 --              then mkGen (gvs++gvs') (ps++ps') (SType . TyAST $ TyAp t1 t)
 --              else return touter
 --mkGen gvs ps (SType (TyAST (TyAp t1 (SType (TyAST (TyGen gvs' (QualType ps2 t))))))) = mkGen (gvs++gvs') (ps++ps2) (SType (TyAST (TyAp t1 t)))
@@ -500,10 +500,10 @@ mkGen gvs ps t = return $ SType (TyAST (TyGen gvs (QualType ps t)))
 
 mkGenQ :: [GenVar Level] -> [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
 mkGenQ gvs ps t = do
-    let gvsSet = Set.fromList gvs
+    let gvsSet = OrderedSet.fromList gvs
     (psNotInT, psInT) <- partitionM
         (\p -> do gvsInP <- liftST (freeGenVars p)
-                  return $ Set.null $ gvsInP `Set.intersection` gvsSet)
+                  return $ OrderedSet.null $ gvsInP `OrderedSet.intersection` gvsSet)
         ps
     QualType psNotInT <$> mkGen gvs psInT t
 

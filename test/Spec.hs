@@ -23,6 +23,10 @@ import Fresh.Kind (Kind(..))
 import Fresh.Type (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec)
 import Fresh.Infer (inferExpr, runInfer, instantiateAnnot, qresolve, equivalent, equivalentQual, equivalentPred, subsume, skolemize)
 import Fresh.Unify (unify)
+
+import qualified Fresh.OrderedSet as OrderedSet
+
+
 import qualified Fresh.Type as Type
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..), vsep, indent, (<+>), (<$$>), red)
 
@@ -296,7 +300,7 @@ genTyGen :: Gen Type
 genTyGen = do
     t <- arbitrary :: Gen Type
     gvSet <- Type.freeGenVars t
-    case Set.toList gvSet of
+    case OrderedSet.toList gvSet of
         [] -> pure t
         gvs -> pure $ Fix $ TyGen gvs (QualType [] t)
 
@@ -361,7 +365,7 @@ prop_skolemize t =
     _ -> False
     where
         getSkolemized x = runInfer $ (Type.unresolve x) >>= skolemize  >>= ( Type.resolve . Type.qualType . snd)
-        wrapGen ty = case Set.toList $ runIdentity $ Type.freeGenVars ty of
+        wrapGen ty = case OrderedSet.toList $ runIdentity $ Type.freeGenVars ty of
             [] -> ty
             gvs -> Fix $ TyGen gvs (QualType [] ty)
 

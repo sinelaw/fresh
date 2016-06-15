@@ -2,11 +2,11 @@ module Fresh.Unify where
 
 import Control.Monad (forM_, when, void)
 import Control.Monad.Error.Class (MonadError(..))
-import qualified Data.Set as Set
+
 import qualified Data.Map as Map
 import Data.STRef
 
-
+import qualified Fresh.OrderedSet as OrderedSet
 
 import Fresh.Pretty (Pretty(..))
 import Fresh.Type
@@ -68,7 +68,7 @@ unifyAST u1@(TyGen vs1 (QualType ps1 t1)) u2@(TyGen vs2 (QualType ps2 t2)) | len
     unify t1' t2'
     gvs1 <- liftST $ freeGenVars u1
     gvs2 <- liftST $ freeGenVars u2
-    when (not . Set.null $ Set.fromList skolems `Set.intersection` (gvs1 `Set.union` gvs2) )
+    when (not . OrderedSet.null $ OrderedSet.fromList skolems `OrderedSet.intersection` (gvs1 `OrderedSet.concatUnion` gvs2) )
         $ throwError
         $ EscapedSkolemError
         $ concat
@@ -139,7 +139,7 @@ varBind tvar t = do
                             when (l2 > l1) (writeVar tvar2 (Unbound _name2 l1))
                 (SType (TyAST tast)) -> do
                     tvs <- liftST $ freeVars tast
-                    when (name `Set.member` tvs) $ do
+                    when (name `OrderedSet.member` tvs) $ do
                         pt <- purify t
                         throwError $ OccursError (show $ pretty vt) (show $ pretty pt)
                     writeVar tvar (Link t)
