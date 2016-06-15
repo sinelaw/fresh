@@ -22,6 +22,7 @@ library
                      , Fresh.Pretty
                      , Fresh.Infer
                      , Fresh.Unify
+                     , Fresh.OrderedSet
                      -- , Fresh.Subst
   -- other-modules:
   -- other-extensions:
