@@ -4,13 +4,16 @@
 
 module Fresh.Infer where
 
+import qualified Fresh.OrderedSet as OrderedSet
+import           Fresh.OrderedSet (OrderedSet)
+
 import Control.Monad (when, forM)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..), runStateT, evalStateT)
 import Control.Monad.State.Class (MonadState(..), modify)
 import Control.Monad.Trans.Either (EitherT(..), runEitherT)
 import Control.Monad.Error.Class (MonadError(..))
-import qualified Data.Set as Set
+
 import qualified Data.Map as Map
 import Control.Monad.ST (runST, ST)
 import Data.STRef
@@ -139,11 +142,11 @@ infer r (EGetField a expr name) = do
 instantiateAnnot :: ETypeAsc -> Infer s (QualType (SType s))
 instantiateAnnot (ETypeAsc q@(QualType ps t)) = do
     -- TODO: Check the predicates ps to see if they contain escaped genvars from t
-    gvs <- (freeGenVars q) :: Infer s (Set.Set (GenVar ()))
-    let gvs' = map (fmap $ const LevelAny) $ Set.toList gvs
+    gvs <- (freeGenVars q) :: Infer s (OrderedSet (GenVar ()))
+    let gvs' = map (fmap $ const LevelAny) $ OrderedSet.toList gvs
     res <- mkGenQ gvs' (map unresolvePred ps) (unresolve t)
-    resFreeGVs :: (Set.Set (GenVar Level)) <- liftST $ freeGenVars res
-    when (not $ Set.null resFreeGVs)
+    resFreeGVs :: (OrderedSet (GenVar Level)) <- liftST $ freeGenVars res
+    when (not $ OrderedSet.null resFreeGVs)
         $ throwError $ AssertionError ("Genvars escaped from forall'ed annotated type?! " ++ show res)
     return res
 
@@ -212,15 +215,15 @@ subsume t1 t2 = withWrap $ do
     unify t1' t2'
     gvs1 <- liftST $ freeGenVars t1
     gvs2 <- liftST $ freeGenVars t2
-    let escapingSkolems = (Set.fromList sks) `Set.intersection` (gvs1 `Set.union` gvs2)
-    when (not . Set.null $ escapingSkolems)
+    let escapingSkolems = (OrderedSet.fromList sks) `OrderedSet.intersection` (gvs1 `OrderedSet.concatUnion` gvs2)
+    when (not . OrderedSet.null $ escapingSkolems)
         $ throwError
         $ EscapedSkolemError
         $ concat -- TODO pretty
         [ "Type not polymorphic enough to unify"
         , "\n\t", "Type 1: ", show $ pretty t1
         , "\n\t", "Type 2: ", show $ pretty t2
-        , "\n", "Skolems would escape: ", show $ pretty $ Set.toList escapingSkolems
+        , "\n", "Skolems would escape: ", show $ pretty $ OrderedSet.toList escapingSkolems
         ]
     where
         withWrap act = act `catchError` wrapError
