@@ -106,6 +106,8 @@ class HasKind t where
     kind :: t -> Maybe Kind -- Should really be just Kind, but hard to generate arbitrary for TyAp
 
 class Monad m => HasGen m t g where
+    -- TODO: Should return ordered set so that foralls will have the
+    -- genvars in deterministic order for easier alpha-equivalence
     freeGenVars :: t -> m (Set (GenVar g))
 
 instance (Ord g, HasGen m t g) => HasGen m [t] g where
