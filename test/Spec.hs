@@ -24,7 +24,7 @@ import Fresh.Type (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), QualType(..), 
 import Fresh.Infer (inferExpr, runInfer, instantiateAnnot, qresolve, equivalent, equivalentQual, equivalentPred, subsume, skolemize)
 import Fresh.Unify (unify)
 import qualified Fresh.Type as Type
-import Text.PrettyPrint.ANSI.Leijen (Pretty(..), vsep, indent, (<+>), (<$$>), group)
+import Text.PrettyPrint.ANSI.Leijen (Pretty(..), vsep, indent, (<+>), (<$$>), red)
 
 instance IsString EVarName where
     fromString = EVarName
@@ -232,6 +232,9 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
 
            , ( lama "a" ([PredIs (Class (Id "C") Star) e] ~=> e) ("b" ~>  (ELit () (LitString "c")))
              , Right $ [] ~=> forall d' ((forallsQ [PredIs (Class (Id "C") Star) e] [e'] e) ^-> (d ^-> _String)) )
+
+           , ( lama "a" ([PredIs (Class (Id "C") Star) e] ~=> (forall f' f)) ("b" ~>  (ELit () (LitString "c")))
+             , Right $ [] ~=> forall d' ((forallsQ [PredIs (Class (Id "C") Star) e] [e', f'] f) ^-> (d ^-> _String)) )
            ]
 
 -- ----------------------------------------------------------------------
@@ -479,7 +482,7 @@ main = do
         -- print . show $ getAnnotation <$> inferExpr (constWrap x)
     let errs = catMaybes merrs
     when (not $ null errs) $
-        forM_ errs putStrLn
+        forM_ errs (putStrLn . show . red)
     putStrLn "------------------------------------------------------------"
     void runTests
 
