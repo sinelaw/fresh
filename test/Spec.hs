@@ -451,9 +451,9 @@ main = do
     shouldUnify False (erecord [("x", _Bool)]) (erecord [("x", _Number)])
     shouldUnify False (erecord [("x", _Bool)]) (erecord [("y", _Bool)])
 
-    -- TODO Fix
-    -- shouldUnify True (record [("num", _Number)] Nothing) (record [] (Just ra))
-    -- shouldUnify True (record [("num", _Number)] (Just ra)) (record [("bool", _Bool)] (Just rb))
+    shouldUnify True (record [("num", _Number)] Nothing) (forall ra' $ record [] (Just ra))
+    shouldUnify True (forall ra' $ record [("num", _Number)] (Just ra)) (forall rb' $ record [("bool", _Bool)] (Just rb))
+    shouldUnify False (forall ra' $ record [("num", _Number)] (Just ra)) (forall rb' $ record [("num", _Bool)] (Just rb))
 
     merrs <- forM examples $ \(x, t) -> do
         putStrLn "------------------------------------------------------------"
