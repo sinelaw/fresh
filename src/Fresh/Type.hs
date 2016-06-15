@@ -17,10 +17,11 @@ import qualified Fresh.Kind as Kind
 import qualified Fresh.OrderedSet as OrderedSet
 import           Fresh.OrderedSet (OrderedSet)
 import Data.STRef
-import Control.Monad (join, foldM, forM)
+import Control.Monad (join, foldM, forM, when)
 import Control.Monad.ST (ST)
 import Data.Map (Map)
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import Data.Maybe (catMaybes)
 import GHC.Generics (Generic)
 import Data.Functor.Identity (runIdentity)
@@ -496,7 +497,11 @@ mkGen gvs ps (SType (TyAST (TyGen gvs' (QualType ps2 t)))) = mkGen (gvs++gvs') (
 --              else return touter
 --mkGen gvs ps (SType (TyAST (TyAp t1 (SType (TyAST (TyGen gvs' (QualType ps2 t))))))) = mkGen (gvs++gvs') (ps++ps2) (SType (TyAST (TyAp t1 t)))
 mkGen []  [] t = return t
-mkGen gvs ps t = return $ SType (TyAST (TyGen gvs (QualType ps t)))
+mkGen gvs ps t = do
+    freeGVs <-liftST $ freeGenVars (QualType ps t)
+    when (Set.fromList gvs /= OrderedSet.toSet freeGVs) $
+        throwError $ AssertionError $ "Non-existing GenVars appears in TyGen?! " ++ (show gvs) ++ " in type " ++ (show t)
+    return $ SType (TyAST (TyGen (OrderedSet.toList freeGVs) (QualType ps t)))
 
 mkGenQ :: [GenVar Level] -> [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
 mkGenQ gvs ps t = do
