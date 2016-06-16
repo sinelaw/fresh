@@ -23,11 +23,10 @@ import Fresh.Kind (Kind(..))
 import Fresh.Type (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec)
 import Fresh.Infer (inferExpr, runInfer, instantiateAnnot, qresolve, equivalent, equivalentQual, equivalentPred, subsume, skolemize)
 import Fresh.Unify (unify)
-
 import qualified Fresh.OrderedSet as OrderedSet
-
-
 import qualified Fresh.Type as Type
+
+import System.Environment (getArgs, getProgName)
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..), vsep, indent, (<+>), (<$$>), red)
 
 instance IsString EVarName where
@@ -439,11 +438,25 @@ rightPad ch n (x:xs)
 
 return []
 
-runTests :: IO Bool
-runTests = $forAllProperties (quickCheckWithResult stdArgs { maxSuccess = 5000 })
+runTests :: Int -> IO Bool
+runTests testCount = $forAllProperties (quickCheckWithResult stdArgs { maxSuccess = testCount })
+
+defaultTestCount :: Int
+defaultTestCount = 5000
+
+parseArgs :: IO Int
+parseArgs = do
+    args <- getArgs
+    case args of
+        [] -> return defaultTestCount
+        [x] -> return $ read x
+        _ -> do
+            progName <- getProgName
+            error $ show $ pretty $ "Usage:" <+> pretty progName <+> "[tests count]"
 
 main :: IO ()
 main = do
+    testCount <- parseArgs
     putStrLn "Testing..."
     shouldUnify True  (erecord []) (erecord [])
     shouldUnify True  (erecord [("x", _Bool)]) (erecord [("x", _Bool)])
@@ -492,7 +505,7 @@ main = do
     when (not $ null errs) $
         forM_ errs (putStrLn . show . red)
     putStrLn "------------------------------------------------------------"
-    void runTests
+    void $ runTests testCount
 
 
 -- TODO: Check this example, it fails constWrap and also infers a type
