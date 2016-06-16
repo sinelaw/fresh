@@ -11,7 +11,7 @@
 import           Test.QuickCheck
 
 import           Data.DeriveTH
-
+import qualified Data.Foldable as Foldable
 import Data.Functor.Identity (runIdentity)
 import           Control.Monad   (void, forM, forM_, when)
 import Data.String (IsString(..))
@@ -25,6 +25,7 @@ import Fresh.Infer (inferExpr, runInfer, instantiateAnnot, qresolve, equivalent,
 import Fresh.Unify (unify)
 import qualified Fresh.OrderedSet as OrderedSet
 import qualified Fresh.Type as Type
+
 
 import System.Environment (getArgs, getProgName)
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..), vsep, indent, (<+>), (<$$>), red)
@@ -315,7 +316,13 @@ instance Arbitrary Type where
     shrink (Fix (TyAp t1 t2)) = [t1, t2]
     shrink (Fix TyCon{}) = []
     shrink (Fix TyGenVar{}) = []
-    shrink (Fix (TyGen _ (QualType ps t))) = [t]
+    shrink (Fix (TyGen gvs (QualType ps t))) = t : q' ++ pts
+        where
+            pts = concatMap Foldable.toList ps
+            q' = do
+                gvs' <- shrink gvs
+                ps' <- shrink ps
+                return $ Fix $ TyGen gvs' (QualType ps' t)
     shrink (Fix TyComp{}) = [] -- TODO
 
 instance (Arbitrary t, HasKind t) => Arbitrary (Pred t) where
@@ -329,16 +336,46 @@ instance (Arbitrary t, HasKind t) => Arbitrary (Pred t) where
     shrink (PredIs c t) = PredIs <$> shrink c <*> shrink t
     shrink (PredNoLabel l t) = PredNoLabel <$> shrink l <*> shrink t
 
+slowShrinkList :: Arbitrary t => [t] -> [[t]]
+slowShrinkList []     = []
+slowShrinkList (x:xs) = [ xs ]
+                        ++ [ x:xs' | xs' <- shrink xs ]
+                        ++ [ x':xs | x'  <- shrink x ]
+
 instance (Arbitrary t, HasKind t) => Arbitrary (QualType t) where
     arbitrary = QualType <$> arbitrary <*> arbitrary
-    shrink (QualType ps t) = QualType <$> shrink ps <*> shrink t
+    shrink (QualType ps t) = (QualType <$> slowShrinkList ps <*> [t]) ++ (QualType <$> [ps] <*> shrink t)
 
 derive makeArbitrary ''Class
 
 derive makeArbitrary ''Lit
-derive makeArbitrary ''EVarName
-derive makeArbitrary ''ETypeAsc
-derive makeArbitrary ''Expr
+
+instance Arbitrary EVarName where
+    arbitrary = EVarName . (:[]) <$> oneof (map return ['a'..'z'])
+
+instance Arbitrary ETypeAsc where
+    arbitrary = ETypeAsc <$> arbitrary
+    shrink (ETypeAsc q) = ETypeAsc <$> shrink q
+
+instance Arbitrary a => Arbitrary (Expr a) where
+    arbitrary = oneof $
+        [ ELit <$> arbitrary <*> arbitrary
+        , EVar <$> arbitrary <*> arbitrary
+        , ELam <$> arbitrary <*> arbitrary <*> arbitrary
+        , EALam <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+        , EApp <$> arbitrary <*> arbitrary <*> arbitrary
+        , ELet <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+        , EAsc <$> arbitrary <*> arbitrary <*> arbitrary
+        , EGetField <$> arbitrary <*> arbitrary <*> arbitrary
+        ]
+    shrink (ELit a l) = ELit <$> [a] <*> shrink l
+    shrink (EVar a v) = EVar <$> [a] <*> shrink v
+    shrink (ELam a v e) = e : (ELam <$> [a] <*> [v] <*> shrink e) ++ (ELam <$> [a] <*> shrink v <*> [e])
+    shrink (EALam a n t e) = e : (EALam <$> [a] <*> [n] <*> shrink t <*> [e]) ++ (EALam <$> [a] <*> [n] <*> [t] <*> shrink e)
+    shrink (EApp a e1 e2) = e1 : e2 : (EApp <$> [a] <*> shrink e1 <*> [e2]) ++ (EApp <$> [a] <*> [e1] <*> shrink e2)
+    shrink (ELet a n e1 e2) = e1 : e2 : (ELet <$> [a] <*> [n] <*> shrink e1 <*> [e2]) ++ (ELet <$> [a] <*> [n] <*> [e1] <*> shrink e2)
+    shrink (EAsc a t e) = e : (EAsc <$> [a] <*> [t] <*> shrink e) ++ (EAsc <$> [a] <*> shrink t <*> [e])
+    shrink (EGetField a e n) = e : (EGetField <$> [a] <*> [e] <*> shrink n) ++ (EGetField <$> [a] <*> shrink e <*> [n])
 
 prop_ordLevel :: Level -> Bool
 prop_ordLevel l = [l] == Set.toList (Set.singleton l `Set.intersection` Set.singleton l)
