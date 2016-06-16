@@ -75,6 +75,9 @@ var = EVar ()
 num :: Double -> Expr ()
 num = ELit () . LitNum
 
+str_ :: String -> Expr ()
+str_ = ELit () . LitString
+
 infixr 5 ~$
 (~$) :: Expr () -> Expr () -> Expr ()
 (~$) = EApp ()
@@ -245,6 +248,11 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
 
            , ( lama "a" ([PredIs (Class (Id "C") Star) e] ~=> (forall f' f)) ("b" ~>  (ELit () (LitString "c")))
              , Right $ [] ~=> forall d' ((forallsQ [PredIs (Class (Id "C") Star) e] [e', f'] f) ^-> (d ^-> _String)) )
+
+           -- (\o -> let y = (\f -> o 464.5855195404157) in "bla")
+           , ( "o" ~> (let_ "y" ("f" ~> (var "o" ~$ num 123)) (str_ "bla"))
+             , Right $ [] ~=> forall a' ((_Number ^-> a) ^-> _String))
+
            ]
 
 -- ----------------------------------------------------------------------
