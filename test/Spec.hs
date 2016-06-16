@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 --module Spec where
@@ -12,7 +13,7 @@ import           Test.QuickCheck
 
 import           Data.DeriveTH
 import qualified Data.Foldable as Foldable
-import Data.Functor.Identity (runIdentity)
+import Data.Functor.Identity (runIdentity, Identity(..))
 import           Control.Monad   (void, forM, forM_, when)
 import Data.String (IsString(..))
 import Data.Maybe (catMaybes, isJust)
@@ -20,12 +21,13 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Type (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec)
+import Fresh.Type (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec, HasGen(..))
 import Fresh.Infer (inferExpr, runInfer, instantiateAnnot, qresolve, equivalent, equivalentQual, equivalentPred, subsume, skolemize)
 import Fresh.Unify (unify)
 import qualified Fresh.OrderedSet as OrderedSet
+import           Fresh.OrderedSet (OrderedSet)
 import qualified Fresh.Type as Type
-
+import Data.List (inits)
 
 import System.Environment (getArgs, getProgName)
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..), vsep, indent, (<+>), (<$$>), red)
@@ -325,14 +327,16 @@ instance Arbitrary Type where
                 return $ Fix $ TyGen gvs' (QualType ps' t)
     shrink (Fix TyComp{}) = [] -- TODO
 
+arbitraryPred :: (HasKind a, Arbitrary a) => a -> Gen (Pred a)
+arbitraryPred t =
+    oneof $
+    [ PredIs <$> (Class <$> arbitrary <*> pure k) <*> pure t
+    , PredNoLabel <$> arbitrary <*> pure t
+    ]
+    where Just k = kind t
+
 instance (Arbitrary t, HasKind t) => Arbitrary (Pred t) where
-    arbitrary = oneof $
-        [ do
-                t <- arbitrary
-                let Just k = kind t
-                PredIs <$> (Class <$> arbitrary <*> pure k) <*> pure t
-        , PredNoLabel <$> arbitrary <*> arbitrary
-        ]
+    arbitrary = arbitrary >>= arbitraryPred
     shrink (PredIs c t) = PredIs <$> shrink c <*> shrink t
     shrink (PredNoLabel l t) = PredNoLabel <$> shrink l <*> shrink t
 
@@ -342,8 +346,14 @@ slowShrinkList (x:xs) = [ xs ]
                         ++ [ x:xs' | xs' <- shrink xs ]
                         ++ [ x':xs | x'  <- shrink x ]
 
-instance (Arbitrary t, HasKind t) => Arbitrary (QualType t) where
-    arbitrary = QualType <$> arbitrary <*> arbitrary
+instance Arbitrary (QualType Type) where
+    arbitrary = do
+        t <- arbitrary :: Gen Type
+        let gvs = OrderedSet.toList $ ((runIdentity $ Type.freeGenVars t) :: OrderedSet (GenVar ()))
+            gvts = map (Fix . TyGenVar) gvs
+        gvts' <- oneof (map pure $ inits gvts)
+        ps <- mapM arbitraryPred gvts'
+        return $ QualType ps t
     shrink (QualType ps t) = (QualType <$> slowShrinkList ps <*> [t]) ++ (QualType <$> [ps] <*> shrink t)
 
 derive makeArbitrary ''Class
