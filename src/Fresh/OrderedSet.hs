@@ -16,6 +16,7 @@ instance Ord a => Ord (OrderedSet a) where
 
 instance Foldable OrderedSet where
     foldr f x (OrderedSet xs _) = foldr f x xs
+
 null :: Ord a => OrderedSet a -> Bool
 null (OrderedSet [] _) = True
 null _ = False
@@ -45,11 +46,13 @@ toSet (OrderedSet _ ss) = ss
 
 difference :: Ord a => OrderedSet a -> OrderedSet a -> OrderedSet a
 difference (OrderedSet xs sxs) (OrderedSet _ sys) =
-    OrderedSet (filter (\x -> not $ x `Set.member` sys) xs) (sxs `Set.difference` sys)
+    OrderedSet (filter (`Set.member` ds) xs) ds
+    where ds = sxs `Set.difference` sys
 
 intersection :: Ord a => OrderedSet a -> OrderedSet a -> OrderedSet a
 intersection (OrderedSet xs sxs) (OrderedSet _ sys) =
-    OrderedSet (filter (\x -> x `Set.member` sys) xs) (sxs `Set.intersection` sys)
+    OrderedSet (filter (`Set.member` is) xs) is
+    where is = sxs `Set.intersection` sys
 
 concatUnion :: Ord a => OrderedSet a -> OrderedSet a -> OrderedSet a
 concatUnion o1 o2 = foldr insert o1 o2
