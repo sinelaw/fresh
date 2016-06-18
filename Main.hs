@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 -- import           Test.QuickCheck
 -- import           Data.DeriveTH
@@ -54,14 +53,14 @@ _Number =  tcon "Number"
 wrapFooLet :: Expr () -> Expr ()
 wrapFooLet x = let_ "foo" x $ var "foo"
 
-exampleApIdNum = "x" ~> (var "x") ~$ num 2
+exampleApIdNum = "x" ~> var "x" ~$ num 2
 
 examples = [ exampleApIdNum
            -- , exampleApIdNum ~:: ([] ~=> _Bool)
 --           , exampleApIdNum ~:: ([] ~=> _Number)
            , let_ "x" (num 3) $ var "x"
            , let_ "id" ("x" ~> var "x") $ var "id"
-           , wrapFooLet ("y" ~> (let_ "id" ("x" ~> var "y") $ var "id"))
+           , wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
            , wrapFooLet ("y" ~> ("x" ~> var "y"))
            ]
 
@@ -92,7 +91,7 @@ examples = [ exampleApIdNum
 -- runTests = $verboseCheckAll
 
 main :: IO ()
-main = do
+main =
     forM_ examples $ \x -> do
         print $ pretty x
         print . pretty $ getAnnotation <$> inferExpr x
