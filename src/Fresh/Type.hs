@@ -476,6 +476,15 @@ mkGen gvs ps (SType (TyAST (TyGen gvs' (QualType ps2 t)))) = mkGen (gvs++gvs') (
 mkGen []  [] t = t
 mkGen gvs ps t = SType (TyAST (TyGen gvs (QualType ps t)))
 
+mkGenQ :: [GenVar Level] -> [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
+mkGenQ gvs ps t = do
+    let gvsSet = Set.fromList gvs
+    (psNotInT, psInT) <- partitionM
+        (\p -> do gvsInP <- liftST (freeGenVars p)
+                  return $ Set.null $ gvsInP `Set.intersection` gvsSet)
+        ps
+    return $ QualType psNotInT $ mkGen gvs psInT t
+
 generalize :: [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
 generalize ps t = do
     curLevel <- getCurrentLevel
@@ -490,13 +499,7 @@ generalize ps t = do
                     writeVar tv (Link $ SType $ TyAST $ TyGenVar gv)
                     return $ Just gv
     gvs <- catMaybes <$> mapM wrapGen unboundTVars
-    gvsInT :: (Set (GenVar Level)) <- liftST (freeGenVars t)
-    (psNotInT, psInT) <- partitionM
-        (\p -> do gvsInP <- liftST (freeGenVars p)
-                  return $ Set.null $ gvsInP `Set.intersection` gvsInT)
-        ps
-
-    return $ QualType psNotInT $ mkGen gvs psInT t
+    mkGenQ gvs ps t
 
 instantiate :: SType s -> Infer s (QualType (SType s))
 instantiate (SType (TyAST (TyGen gvs (QualType ps tGen)))) = do
