@@ -309,8 +309,8 @@ type Type = Fix (TypeAST ())
 normalize :: Type -> Type
 normalize (Fix (TyAp t1@(Fix (TyAp f arg)) (Fix (TyGen gvs q))))
     | (f == Fix tyFunc) && (Set.null $ runIdentity (freeGenVars arg) `Set.intersection` (Set.fromList gvs))
-    = Fix $ TyGen gvs (fmap (Fix . TyAp t1) q)
-normalize (Fix (TyGen gvs1 (QualType ps1 (Fix (TyGen gvs2 (QualType ps2 t)))))) = Fix (TyGen (gvs1++gvs2) $ QualType (ps1++ps2) (normalize t))
+    = normalize $ Fix $ TyGen gvs (fmap (Fix . TyAp t1) q)
+normalize (Fix (TyGen gvs1 (QualType ps1 (Fix (TyGen gvs2 (QualType ps2 t)))))) = normalize $ Fix (TyGen (gvs1++gvs2) $ QualType (ps1++ps2) t)
 normalize t = t
 
 normalizeQual :: QualType Type -> QualType Type
@@ -535,7 +535,7 @@ substGen gv tv t@(SType (TyAST tast)) =
 
              stGen' <- substGens shadowedGVs newTypes tGen'
              ps' <- mapM (traverse $ substGens shadowedGVs newTypes) ps
-             return $ SType . TyAST . TyGen (newGVs ++ rest) $ QualType ps' stGen'
+             return $ mkGen (newGVs ++ rest) ps' stGen'
          TyComp c -> SType . TyAST . TyComp <$> traverse (substGen gv tv) c
 
 substGens :: [GenVar Level] -> [SType s] -> SType s -> Infer s (SType s)
