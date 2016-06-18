@@ -296,6 +296,9 @@ data PCell a = PCell a
 instance HasGen m t g => HasGen m (TypeVar PCell t) g where
     freeGenVars (TypeVar (PCell t) _) = freeGenVars t
 
+deriving instance (Show t) => Show (TypeVar PCell t)
+deriving instance (Show g, Show t) => Show (TypeABT g PCell t)
+
 data PType = PType (TypeABT Level PCell PType)
 
 deriving instance Show (TypeABT Level PCell PType) => Show PType
@@ -338,12 +341,15 @@ readVar (TypeVar ref k) = liftST $ readSTRef ref
 writeVar :: TypeVar (STRef s) t -> TVarLink t -> Infer s ()
 writeVar (TypeVar ref k) link = liftST $ writeSTRef ref link
 
-purify :: SType s -> Infer s PType
-purify (SType (TyVar tvar@(TypeVar _ k))) = do
+purifyVar :: TypeVar (STRef s) (SType s) -> Infer s PType
+purifyVar tvar@(TypeVar _ k) = do
     link <- readVar tvar
     case link of
         Unbound name l -> return . PType . TyVar $ TypeVar (PCell $ Unbound name l) k
         Link t -> purify t
+
+purify :: SType s -> Infer s PType
+purify (SType (TyVar tvar)) = purifyVar tvar
 purify (SType (TyAST t)) = PType . TyAST <$> traverse purify t
 
 resolve :: SType s -> Infer s (Maybe Type)
@@ -509,9 +515,8 @@ mkGenQ gvs ps t = do
         ps
     QualType psNotInT <$> mkGen gvs psInT t
 
-generalize :: [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
-generalize ps t = do
-    curLevel <- getCurrentLevel
+generalizeAtLevel :: Level -> [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
+generalizeAtLevel curLevel ps t = do
     unboundTVars <- getUnbound curLevel t
     let wrapGen tv@(TypeVar _ k) = do
             res <- readVar tv
@@ -524,6 +529,9 @@ generalize ps t = do
                     return $ Just gv
     gvs <- catMaybes <$> mapM wrapGen unboundTVars
     mkGenQ gvs ps t
+
+generalize :: [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
+generalize ps t = getCurrentLevel >>= \l -> generalizeAtLevel l ps t
 
 instantiate :: SType s -> Infer s (QualType (SType s))
 instantiate (SType (TyAST (TyGen gvs (QualType ps tGen)))) = do
