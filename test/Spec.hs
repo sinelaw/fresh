@@ -463,9 +463,10 @@ main = do
                 , "Expected (normalized):" <$$> pretty (Type.normalizeQual <$> t)
                 , "Inferred:" <$$> (pretty inferredType) -- , " = " , ( inferredType)
                 , "Inferred (normalized):" <$$> pretty (Type.normalizeQual <$> inferredType)
-                , "Inferred (raw): " <$$> pretty inferredType
-                , "Constwrap-Inferred:" <$$> (pretty conInferredType) -- , " = " , (show inferredType) , "\n"
-                ])
+                , "Inferred (raw): " <$$> (pretty $ show inferredType)
+                , "Constwrap-Inferred:" <$$> pretty conInferredType -- , " = " , (show inferredType) , "\n"
+                , "Constwrap-Inferred (raw): " <$$> (pretty $ show conInferredType)
+                ]
             errMsgInfer = Just $ pretty $ vsep
                 [ "TEST FAILED!"
                 , "Wrong type inferred for:" <+> pretty x
