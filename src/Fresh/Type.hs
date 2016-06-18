@@ -471,10 +471,16 @@ getUnbound curLevel (SType (TyAST t)) =
     foldr (++) [] <$> traverse (getUnbound curLevel) t
 
 
-mkGen :: [GenVar Level] -> [Pred (SType s)] -> SType s -> SType s
+mkGen :: [GenVar Level] -> [Pred (SType s)] -> SType s -> Infer s (SType s)
 mkGen gvs ps (SType (TyAST (TyGen gvs' (QualType ps2 t)))) = mkGen (gvs++gvs') (ps++ps2) t
-mkGen []  [] t = t
-mkGen gvs ps t = SType (TyAST (TyGen gvs (QualType ps t)))
+-- mkGen gvs ps touter@(SType (TyAST (TyAp t1@(SType (TyAST (TyAp (SType (TyAST (TyCon f))) arg))) (SType (TyAST (TyGen gvs' (QualType ps' t)))))))
+--     = do gvsArg <- liftST $ freeGenVars arg
+--          if (f == conFunc) && (Set.null $ gvsArg `Set.intersection` (Set.fromList gvs'))
+--              then mkGen (gvs++gvs') (ps++ps') (SType . TyAST $ TyAp t1 t)
+--              else return touter
+--mkGen gvs ps (SType (TyAST (TyAp t1 (SType (TyAST (TyGen gvs' (QualType ps2 t))))))) = mkGen (gvs++gvs') (ps++ps2) (SType (TyAST (TyAp t1 t)))
+mkGen []  [] t = return t
+mkGen gvs ps t = return $ SType (TyAST (TyGen gvs (QualType ps t)))
 
 mkGenQ :: [GenVar Level] -> [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
 mkGenQ gvs ps t = do
@@ -483,7 +489,7 @@ mkGenQ gvs ps t = do
         (\p -> do gvsInP <- liftST (freeGenVars p)
                   return $ Set.null $ gvsInP `Set.intersection` gvsSet)
         ps
-    return $ QualType psNotInT $ mkGen gvs psInT t
+    QualType psNotInT <$> mkGen gvs psInT t
 
 generalize :: [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
 generalize ps t = do
@@ -535,7 +541,7 @@ substGen gv tv t@(SType (TyAST tast)) =
 
              stGen' <- substGens shadowedGVs newTypes tGen'
              ps' <- mapM (traverse $ substGens shadowedGVs newTypes) ps
-             return $ mkGen (newGVs ++ rest) ps' stGen'
+             mkGen (newGVs ++ rest) ps' stGen'
          TyComp c -> SType . TyAST . TyComp <$> traverse (substGen gv tv) c
 
 substGens :: [GenVar Level] -> [SType s] -> SType s -> Infer s (SType s)
