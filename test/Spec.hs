@@ -470,6 +470,10 @@ main = do
                  , "\n"
                  , "\t" , "Inferred: " , show (pretty inferredType) -- , " = " , (show inferredType) , "\n"
                  , "\n"
+                 , "\t" , "Inferred (normalized): " , show (pretty $ (Type.normalizeQual <$> inferredType))
+                 , "\n"
+                 , "\t" , "Inferred (raw): ", (show inferredType)
+                 , "\n"
                  , "\t" , "Constwrap-Inferred: " , show (pretty conInferredType) -- , " = " , (show inferredType) , "\n"
                  -- , "\n"
                  -- , "\t" , "Raw Expected: " , show t
