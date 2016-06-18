@@ -231,7 +231,7 @@ instance HasGen (ST s) t g => HasGen (ST s) (TypeVar (STRef s) t) g where
         readSTRef cell >>= freeGenVars
 
 instance HasKind (TypeVar v t) where
-    kind (TypeVar c k) = Just k
+    kind (TypeVar _ k) = Just k
 
 instance HasVars m t => HasVars m (TVarLink t) where
     freeVars (Link t)      = freeVars t
@@ -336,10 +336,10 @@ liftST :: ST s a -> Infer s a
 liftST = lift . lift
 
 readVar :: TypeVar (STRef s) t -> Infer s (TVarLink t)
-readVar (TypeVar ref k) = liftST $ readSTRef ref
+readVar (TypeVar ref _) = liftST $ readSTRef ref
 
 writeVar :: TypeVar (STRef s) t -> TVarLink t -> Infer s ()
-writeVar (TypeVar ref k) link = liftST $ writeSTRef ref link
+writeVar (TypeVar ref _) link = liftST $ writeSTRef ref link
 
 purifyVar :: TypeVar (STRef s) (SType s) -> Infer s PType
 purifyVar tvar@(TypeVar _ k) = do
