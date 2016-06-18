@@ -9,7 +9,7 @@ module Fresh.Pretty
 
 import Data.STRef (STRef)
 import Text.PrettyPrint.ANSI.Leijen
-import Fresh.Type
+import Fresh.Types
 import Fresh.Kind (Kind(..))
 
 
@@ -35,7 +35,7 @@ instance LevelPretty () where
 
 instance LevelPretty Level where
     -- pretty _ = empty
-    levelPretty (LevelAny) = "^^"
+    levelPretty LevelAny = "^^"
     levelPretty (Level x) = "^" <> pretty x
 
 instance LevelPretty g => Pretty (GenVar g) where
@@ -55,7 +55,7 @@ instance Pretty t => Pretty (Composite t) where
                   CompositeLabel{} -> comma <+> pretty c
                   _ -> pretty c
         -- TODO trailing comma
-    pretty (CompositeTerminal) = empty
+    pretty CompositeTerminal = empty
     pretty (CompositeRemainder t) = " |" <+> pretty t
 
 instance (LevelPretty g, HasKind t, Pretty t) => Pretty (TypeAST g t) where
@@ -66,7 +66,7 @@ instance (LevelPretty g, HasKind t, Pretty t) => Pretty (TypeAST g t) where
              _ -> parens $ pretty fun <+> pretty arg
     pretty (TyCon con) = pretty con
     pretty (TyGenVar genVar) = pretty genVar
-    pretty (TyGen genVar t) = parens $ "forall" <+> foldr (<+>) empty (map pretty genVar) <> "." <+> pretty t
+    pretty (TyGen genVar t) = parens $ "forall" <+> foldr ((<+>) . pretty) empty genVar <> "." <+> pretty t
     -- TODO
     pretty (TyComp c) = "{" <+> pretty c <+> "}"
 
@@ -141,7 +141,7 @@ instance Pretty TypeError where
     pretty (RowEndError x) = "Trailing row remainder:" <+> pretty x
     pretty (InferenceError x) = "Failed inferring a type for expression:" <+> pretty x
     pretty (EscapedSkolemError x) = "Skolem escaped:" <+> pretty x
-    pretty (InvalidKind) = "Invalid kind"
+    pretty InvalidKind = "Invalid kind"
     pretty (KindMismatchError k1 k2) = "Kinds mismatch error:" <+> align (vsep [pretty k1, pretty k2])
     pretty (InvalidVarError x) = "Unknown variable:" <+> pretty x
     pretty (ExpectedFunction x) = "Expected function type, got:" <+> pretty x

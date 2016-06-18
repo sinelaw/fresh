@@ -10,7 +10,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-module Fresh.Type where
+module Fresh.Types where
 
 import           Fresh.Kind (Kind(..))
 import qualified Fresh.Kind as Kind
@@ -86,7 +86,7 @@ data Composite t
     deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
 data FlatComposite t
-    = FlatComposite { fcLabels :: (Map CompositeLabelName t)
+    = FlatComposite { fcLabels :: Map CompositeLabelName t
                     , fcRemainder :: Maybe t }
     deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
@@ -112,7 +112,7 @@ class Monad m => HasGen m t g where
     freeGenVars :: t -> m (OrderedSet (GenVar g))
 
 instance (Ord g, HasGen m t g) => HasGen m [t] g where
-    freeGenVars ft = OrderedSet.concatUnions <$> (mapM freeGenVars ft)
+    freeGenVars ft = OrderedSet.concatUnions <$> mapM freeGenVars ft
 
 ----------------------------------------------------------------------
 
@@ -144,7 +144,7 @@ instance (Ord g, HasGen m t g) => HasGen m (QualType t) g where
 
 
 emptyQual :: t -> QualType t
-emptyQual t = QualType [] t
+emptyQual = QualType []
 
 ----------------------------------------------------------------------
 
@@ -168,11 +168,11 @@ instance HasVars m t => HasVars m (TypeAST g t) where
     freeVars t = foldr OrderedSet.concatUnion OrderedSet.empty <$> traverse freeVars t
 
 bimapTypeAST :: (g -> g') -> (t -> t') -> TypeAST g t -> TypeAST g' t'
-bimapTypeAST fg _  (TyGenVar g) = TyGenVar (fmap fg g)
+bimapTypeAST fg _  (TyGenVar g)  = TyGenVar (fmap fg g)
 bimapTypeAST fg ft (TyGen gvs t) = TyGen (map (fmap fg) gvs) (fmap ft t)
-bimapTypeAST _ ft (TyAp t1 t2) = TyAp (ft t1) (ft t2)
-bimapTypeAST _ _ (TyCon{..}) = TyCon{..}
-bimapTypeAST _ ft (TyComp c) = TyComp $ fmap ft c
+bimapTypeAST _  ft (TyAp t1 t2)  = TyAp (ft t1) (ft t2)
+bimapTypeAST _  _  TyCon{..}     = TyCon{..}
+bimapTypeAST _  ft (TyComp c)    = TyComp $ fmap ft c
 
 tyRec :: TypeAST g t
 tyRec = TyCon (TCon (Id "Rec") (KArrow Composite Star))
@@ -193,7 +193,7 @@ instance HasLevel Level where
     level = id
 
 instance HasLevel (GenVar Level) where
-    level g = genVarAnnot g
+    level = genVarAnnot
 instance HasLevel t => HasLevel (TypeAST g t) where
     level = foldr (min . level) LevelAny
 
@@ -317,7 +317,7 @@ type Type = Fix (TypeAST ())
 
 normalize :: Type -> Type
 normalize (Fix (TyAp t1@(Fix (TyAp f arg)) (Fix (TyGen gvs q))))
-    | (f == Fix tyFunc) && (OrderedSet.null $ runIdentity (freeGenVars arg) `OrderedSet.intersection` (OrderedSet.fromList gvs))
+    | (f == Fix tyFunc) && OrderedSet.null (runIdentity (freeGenVars arg) `OrderedSet.intersection` OrderedSet.fromList gvs)
     = normalize $ Fix $ TyGen gvs (fmap (Fix . TyAp t1) q)
 normalize (Fix (TyGen gvs1 (QualType ps1 (Fix (TyGen gvs2 (QualType ps2 t)))))) = normalize $ Fix (TyGen (gvs1++gvs2) $ QualType (ps1++ps2) t)
 normalize t = t
@@ -488,7 +488,7 @@ getUnbound curLevel (SType (TyVar tv)) = do
                        else pure []
         Link t' -> getUnbound curLevel t'
 getUnbound curLevel (SType (TyAST t)) =
-    foldr (++) [] <$> traverse (getUnbound curLevel) t
+    concat <$> traverse (getUnbound curLevel) t
 
 
 mkGen :: [GenVar Level] -> [Pred (SType s)] -> SType s -> Infer s (SType s)
@@ -503,7 +503,7 @@ mkGen []  [] t = return t
 mkGen gvs ps t = do
     freeGVs <-liftST $ freeGenVars (QualType ps t)
     when (Set.fromList gvs /= OrderedSet.toSet freeGVs) $
-        throwError $ AssertionError $ "Non-existing GenVars appears in TyGen?! " ++ (show gvs) ++ " in type " ++ (show t)
+        throwError $ AssertionError $ "Non-existing GenVars appears in TyGen?! " ++ show gvs ++ " in type " ++ show t
     return $ SType (TyAST (TyGen (OrderedSet.toList freeGVs) (QualType ps t)))
 
 mkGenQ :: [GenVar Level] -> [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))

@@ -21,12 +21,12 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Type (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec, HasGen(..))
+import Fresh.Types (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec, HasGen(..))
 import Fresh.Infer (inferExpr, runInfer, instantiateAnnot, qresolve, equivalent, equivalentQual, equivalentPred, subsume, skolemize)
 import Fresh.Unify (unify)
 import qualified Fresh.OrderedSet as OrderedSet
 import           Fresh.OrderedSet (OrderedSet)
-import qualified Fresh.Type as Type
+import qualified Fresh.Types as Types
 import Data.List (inits)
 
 import System.Environment (getArgs, getProgName)
@@ -159,7 +159,7 @@ ra',rb',rc',rd',re',rf',rg' :: GenVar ()
 record :: [(CompositeLabelName, Type)] -> Maybe Type -> Type
 record fs rest = Fix tyRec ^$ (Fix $ TyComp c)
     where
-        c = Type.unflattenComposite (FlatComposite (Map.fromList fs) rest)
+        c = Types.unflattenComposite (FlatComposite (Map.fromList fs) rest)
 
 -- Tests
 
@@ -309,7 +309,7 @@ genTyCon = TCon <$> arbitrary <*> arbitrary
 genTyGen :: Gen Type
 genTyGen = do
     t <- arbitrary :: Gen Type
-    gvSet <- Type.freeGenVars t
+    gvSet <- Types.freeGenVars t
     case OrderedSet.toList gvSet of
         [] -> pure t
         gvs -> pure $ Fix $ TyGen gvs (QualType [] t)
@@ -357,7 +357,7 @@ slowShrinkList (x:xs) = [ xs ]
 instance Arbitrary (QualType Type) where
     arbitrary = do
         t <- arbitrary :: Gen Type
-        let gvs = OrderedSet.toList $ ((runIdentity $ Type.freeGenVars t) :: OrderedSet (GenVar ()))
+        let gvs = OrderedSet.toList $ ((runIdentity $ Types.freeGenVars t) :: OrderedSet (GenVar ()))
             gvts = map (Fix . TyGenVar) gvs
         gvts' <- oneof (map pure $ inits gvts)
         ps <- mapM arbitraryPred gvts'
@@ -406,7 +406,7 @@ prop_hasKind = isJust . kind
 
 prop_resolve :: Type -> Bool
 prop_resolve t =
-    case (runInfer $ Type.resolve (Type.unresolve t)) of
+    case (runInfer $ Types.resolve (Types.unresolve t)) of
         Right (Just t') -> isRight $ equivalent t t'
         _ -> False
 
@@ -418,8 +418,8 @@ prop_skolemize t =
     Right (Just s) -> isRight $ equivalent (wrapGen t) (wrapGen s)
     _ -> False
     where
-        getSkolemized x = runInfer $ skolemize (Type.unresolve x) >>= ( Type.resolve . Type.qualType . snd)
-        wrapGen ty = case OrderedSet.toList $ runIdentity $ Type.freeGenVars ty of
+        getSkolemized x = runInfer $ skolemize (Types.unresolve x) >>= ( Types.resolve . Types.qualType . snd)
+        wrapGen ty = case OrderedSet.toList $ runIdentity $ Types.freeGenVars ty of
             [] -> ty
             gvs -> Fix $ TyGen gvs (QualType [] ty)
 
@@ -436,7 +436,7 @@ prop_constExpand expr =
         _                                           -> False
 
 testSubsume :: Type -> Type -> Either TypeError ()
-testSubsume t1 t2 = runInfer $ subsume (Type.unresolve t1) (Type.unresolve t2)
+testSubsume t1 t2 = runInfer $ subsume (Types.unresolve t1) (Types.unresolve t2)
 
 prop_selfSubsume :: Type -> Bool
 prop_selfSubsume t =
@@ -447,14 +447,14 @@ prop_selfSubsume t =
 prop_selfSubsumeNormalized :: Type -> Bool
 prop_selfSubsumeNormalized t =
     case kind t of
-        Just k -> isRight $ testSubsume t (Type.normalize t)
+        Just k -> isRight $ testSubsume t (Types.normalize t)
         _ -> error "Arbitrary Type must have kind."
 
 prop_selfEquivalence :: Type -> Bool
 prop_selfEquivalence t = isRight $ equivalent t t
 
 prop_selfEquivalenceNormalized :: Type -> Bool
-prop_selfEquivalenceNormalized t = isRight $ equivalent t (Type.normalize t)
+prop_selfEquivalenceNormalized t = isRight $ equivalent t (Types.normalize t)
 
 prop_selfEquivalencePred :: Pred Type -> Bool
 prop_selfEquivalencePred p = isRight $ equivalentPred p p
@@ -464,8 +464,8 @@ prop_selfEquivalenceQual q = isRight $ equivalentQual q q
 
 testUnify :: Type -> Type -> Either TypeError ()
 testUnify t1 t2 = runInfer $ do
-    (QualType ps1 ut1) <- Type.instantiate $ Type.unresolve t1
-    (QualType ps2 ut2) <- Type.instantiate $ Type.unresolve t2
+    (QualType ps1 ut1) <- Types.instantiate $ Types.unresolve t1
+    (QualType ps2 ut2) <- Types.instantiate $ Types.unresolve t2
     unify ut1 ut2
 
 prop_unifySame :: Type -> Bool
@@ -531,9 +531,9 @@ main = do
             conInferredType = getAnnotation <$> inferExpr (constWrap x)
             msgTypes = vsep
                 [ "Expected:" <$$> (pretty t) -- , " = " , ( t) , "\n"
-                , "Expected (normalized):" <$$> pretty (Type.normalizeQual <$> t)
+                , "Expected (normalized):" <$$> pretty (Types.normalizeQual <$> t)
                 , "Inferred:" <$$> (pretty inferredType) -- , " = " , ( inferredType)
-                , "Inferred (normalized):" <$$> pretty (Type.normalizeQual <$> inferredType)
+                , "Inferred (normalized):" <$$> pretty (Types.normalizeQual <$> inferredType)
                 , "Inferred (raw): " <$$> (pretty $ show inferredType)
                 , "Constwrap-Inferred:" <$$> pretty conInferredType -- , " = " , (show inferredType) , "\n"
                 , "Constwrap-Inferred (raw): " <$$> (pretty $ show conInferredType)

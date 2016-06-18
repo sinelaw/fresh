@@ -10,7 +10,7 @@ import           Control.Monad   (forM_)
 import Data.String (IsString(..))
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Type (EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), getAnnotation)
+import Fresh.Types (EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), getAnnotation)
 import Fresh.Infer (inferExpr)
 
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))

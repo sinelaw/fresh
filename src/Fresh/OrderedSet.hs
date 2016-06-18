@@ -4,15 +4,15 @@ import qualified Data.Set as Set
 import           Data.Set (Set)
 
 
-data OrderedSet a = OrderedSet { osList :: [a], osSet :: (Set a) }
+data OrderedSet a = OrderedSet { osList :: [a], osSet :: Set a }
     deriving (Show)
 
 instance Eq a => Eq (OrderedSet a) where
-    o1 == o2 = (osList o1) == (osList o2)
-    o1 /= o2 = (osList o1) /= (osList o2)
+    o1 == o2 = osList o1 == osList o2
+    o1 /= o2 = osList o1 /= osList o2
 
 instance Ord a => Ord (OrderedSet a) where
-    o1 `compare` o2 = (osList o1) `compare` (osList o2)
+    o1 `compare` o2 = osList o1 `compare` osList o2
 
 instance Foldable OrderedSet where
     foldr f x (OrderedSet xs _) = foldr f x xs
@@ -55,7 +55,7 @@ intersection (OrderedSet xs sxs) (OrderedSet _ sys) =
     where is = sxs `Set.intersection` sys
 
 concatUnion :: Ord a => OrderedSet a -> OrderedSet a -> OrderedSet a
-concatUnion o1 o2 = foldr insert o1 o2
+concatUnion = foldr insert
 
 concatUnions :: Ord a => [OrderedSet a] -> OrderedSet a
 concatUnions [] = empty

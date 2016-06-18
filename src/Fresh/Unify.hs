@@ -1,6 +1,6 @@
 module Fresh.Unify where
 
-import Control.Monad (forM_, when, void)
+import Control.Monad (forM_, when, void, unless)
 import Control.Monad.Error.Class (MonadError(..))
 
 import qualified Data.Map as Map
@@ -9,7 +9,7 @@ import Data.STRef
 import qualified Fresh.OrderedSet as OrderedSet
 
 import Fresh.Pretty (Pretty(..))
-import Fresh.Type
+import Fresh.Types
 
 unchain :: SType s -> Infer s (SType s)
 unchain t@(SType (TyVar tvar)) = do
@@ -68,7 +68,7 @@ unifyAST u1@(TyGen vs1 (QualType ps1 t1)) u2@(TyGen vs2 (QualType ps2 t2)) | len
     unify t1' t2'
     gvs1 <- liftST $ freeGenVars u1
     gvs2 <- liftST $ freeGenVars u2
-    when (not . OrderedSet.null $ OrderedSet.fromList skolems `OrderedSet.intersection` (gvs1 `OrderedSet.concatUnion` gvs2) )
+    unless (OrderedSet.null $ OrderedSet.fromList skolems `OrderedSet.intersection` (gvs1 `OrderedSet.concatUnion` gvs2) )
         $ throwError
         $ EscapedSkolemError
         $ concat
@@ -97,7 +97,7 @@ unifyAST (TyComp c1) (TyComp c2) = do
                  (Just e1, Just e2) -> unify e1 e2
         else do
             let remainderVarT = SType $ TyVar remainderVar
-                unifyRemainder rem' mEnd = do
+                unifyRemainder rem' mEnd =
                     -- e1 + r1 = e2 + r2
                     -- (r + r2) + r1 = (r + r1) + r2
                     case mEnd of

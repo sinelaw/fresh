@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
 -- |
@@ -7,7 +8,7 @@ module Fresh.Infer where
 import qualified Fresh.OrderedSet as OrderedSet
 import           Fresh.OrderedSet (OrderedSet)
 
-import Control.Monad (when, forM)
+import Control.Monad (when, forM, unless)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..), runStateT, evalStateT)
 import Control.Monad.State.Class (MonadState(..), modify)
@@ -20,7 +21,7 @@ import Data.STRef
 
 import Fresh.Pretty (Pretty(..))
 import Fresh.Kind (Kind(..))
-import Fresh.Type
+import Fresh.Types
 import Fresh.Unify (unify, varBind)
 
 funT :: SType s -> SType s -> SType s
@@ -31,7 +32,7 @@ funT targ tres =
 recT :: [(CompositeLabelName, SType s)] -> Maybe (SType s) -> SType s
 recT fs rest =
     SType . TyAST
-    $ TyAp (SType $ TyAST tyRec) (SType . TyAST $ TyComp $ tcomp)
+    $ TyAp (SType $ TyAST tyRec) (SType . TyAST $ TyComp tcomp)
     where
         tcomp = unflattenComposite (FlatComposite (Map.fromList fs) rest)
 
@@ -142,11 +143,11 @@ infer r (EGetField a expr name) = do
 instantiateAnnot :: ETypeAsc -> Infer s (QualType (SType s))
 instantiateAnnot (ETypeAsc q@(QualType ps t)) = do
     -- TODO: Check the predicates ps to see if they contain escaped genvars from t
-    gvs <- (freeGenVars q) :: Infer s (OrderedSet (GenVar ()))
+    gvs <- freeGenVars q :: Infer s (OrderedSet (GenVar ()))
     let gvs' = map (fmap $ const LevelAny) $ OrderedSet.toList gvs
     res <- mkGenQ gvs' (map unresolvePred ps) (unresolve t)
     resFreeGVs :: (OrderedSet (GenVar Level)) <- liftST $ freeGenVars res
-    when (not $ OrderedSet.null resFreeGVs)
+    unless (OrderedSet.null resFreeGVs)
         $ throwError $ AssertionError ("Genvars escaped from forall'ed annotated type?! " ++ show res)
     return res
 
@@ -178,7 +179,7 @@ matchFun t = do
     matchFun' t'
 
 matchFun' :: SType s -> Infer s (SType s, SType s)
-matchFun' t@(SType (TyAST{}))
+matchFun' t@(SType TyAST{})
     | (FlatTyAp (FlatTyAp cf fArg) fRes) <- flattenTyAp t
     , SType (TyAST (TyCon c)) <- unFlattenTy cf
     , c == conFunc
@@ -215,8 +216,8 @@ subsume t1 t2 = withWrap $ do
     unify t1' t2'
     gvs1 <- liftST $ freeGenVars t1
     gvs2 <- liftST $ freeGenVars t2
-    let escapingSkolems = (OrderedSet.fromList sks) `OrderedSet.intersection` (gvs1 `OrderedSet.concatUnion` gvs2)
-    when (not . OrderedSet.null $ escapingSkolems)
+    let escapingSkolems = OrderedSet.fromList sks `OrderedSet.intersection` (gvs1 `OrderedSet.concatUnion` gvs2)
+    unless (OrderedSet.null escapingSkolems)
         $ throwError
         $ EscapedSkolemError
         $ concat -- TODO pretty
@@ -227,8 +228,7 @@ subsume t1 t2 = withWrap $ do
         ]
     where
         withWrap act = act `catchError` wrapError
-        wrapError = \e -> throwError $
-                          WrappedError (SubsumeError (show $ pretty t1)(show $ pretty t2)) e
+        wrapError = throwError . WrappedError (SubsumeError (show $ pretty t1)(show $ pretty t2))
 
 runInfer :: (forall s. Infer s a) -> Either TypeError a
 runInfer act =
@@ -239,7 +239,8 @@ runInfer act =
 qresolve :: QType s -> Infer s (QualType Type)
 qresolve (QualType ps ti) = do
     t <- generalize ps ti
-    mt' <- sequenceA <$> traverse resolve t `catchError` (\e -> throwError $ WrappedError (ResolveError . show $ pretty t) e)
+    let wrapError = throwError . WrappedError (ResolveError . show $ pretty t)
+    mt' <- sequenceA <$> traverse resolve t `catchError` wrapError
     case mt' of
         (Just t') -> return t'
         _ -> throwError $ EscapedSkolemError $ "qresolve:" ++ show mt'
@@ -259,9 +260,9 @@ inferExpr expr = runInfer $ do
     gvs <- liftST $ freeGenVars t
     t' <- mkGenQ (OrderedSet.toList gvs) p t
     let exprG = fmap (\(a, _) -> (a, t')) expr'
-        wrapError = \e -> do
+        wrapError e = do
             pt <- traverse purify t'
-            throwError $ WrappedError (ResolveError (show $ pretty $ pt)) e
+            throwError $ WrappedError (ResolveError (show $ pretty pt)) e
     traverse (qresolve . snd) exprG `catchError` wrapError
 
 isRight :: Either a b -> Bool
@@ -275,7 +276,7 @@ trySubsume t1 t2 = runInfer $ do
     subsume t1' t2'
 
 canSubsume :: Type -> Type -> Either TypeError ()
-canSubsume t1 t2 = trySubsume t1 t2
+canSubsume = trySubsume
 
 equivalent :: Type -> Type -> Either TypeError ()
 equivalent t1 t2 = case (canSubsume t1 t2, canSubsume t2 t1) of
@@ -285,7 +286,7 @@ equivalent t1 t2 = case (canSubsume t1 t2, canSubsume t2 t1) of
     _                  -> Right ()
 
 equivalentPred :: Pred Type -> Pred Type -> Either TypeError ()
-equivalentPred p1 p2 = (fromPred p1) `equivalent` (fromPred p2)
+equivalentPred p1 p2 = fromPred p1 `equivalent` fromPred p2
 
 equivalentQual' :: QualType Type -> QualType Type -> Either TypeError ()
 equivalentQual' (QualType p1 t1) (QualType p2 t2)

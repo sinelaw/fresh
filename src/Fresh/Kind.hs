@@ -1,4 +1,3 @@
-{-# LANGUAGE TemplateHaskell #-}
 module Fresh.Kind where
 
 #ifdef QC
