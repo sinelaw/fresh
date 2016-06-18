@@ -262,7 +262,7 @@ inferExpr expr = runInfer $ do
         wrapError = \e -> do
             pt <- traverse purify t'
             throwError $ WrappedError (ResolveError (show $ pretty $ pt)) e
-    traverse ((fmap $ fmap normalize) . qresolve . snd) exprG `catchError` wrapError
+    traverse (qresolve . snd) exprG `catchError` wrapError
 
 isRight :: Either a b -> Bool
 isRight Right{} = True
