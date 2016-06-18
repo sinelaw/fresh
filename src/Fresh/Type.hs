@@ -535,7 +535,7 @@ substGen gv tv t@(SType (TyAST tast)) =
 
              stGen' <- substGens shadowedGVs newTypes tGen'
              ps' <- mapM (traverse $ substGens shadowedGVs newTypes) ps
-             SType . TyAST . TyGen (newGVs ++ rest) . QualType ps' <$> substGen gv tv stGen'
+             return $ SType . TyAST . TyGen (newGVs ++ rest) $ QualType ps' stGen'
          TyComp c -> SType . TyAST . TyComp <$> traverse (substGen gv tv) c
 
 substGens :: [GenVar Level] -> [SType s] -> SType s -> Infer s (SType s)
