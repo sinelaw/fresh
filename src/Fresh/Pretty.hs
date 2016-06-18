@@ -11,6 +11,7 @@ import Data.STRef (STRef)
 import Text.PrettyPrint.ANSI.Leijen
 import Fresh.Types
 import Fresh.Kind (Kind(..))
+import Fresh.Expr
 
 
 numToLetter :: Int -> Doc

@@ -1,4 +1,3 @@
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -10,7 +9,8 @@ import           Control.Monad   (forM_)
 import Data.String (IsString(..))
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Types (EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), getAnnotation)
+import Fresh.Types (QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..))
+import Fresh.Expr  (EVarName(..), Lit(..), Expr(..), getAnnotation)
 import Fresh.Infer (inferExpr)
 
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))

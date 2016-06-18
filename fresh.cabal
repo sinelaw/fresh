@@ -17,10 +17,12 @@ flag QC
   default: False
 
 library
-  exposed-modules:     Fresh.Kind
+  exposed-modules:     Fresh.Expr
+                     , Fresh.Kind
                      , Fresh.Types
                      , Fresh.Pretty
                      , Fresh.Infer
+                     , Fresh.InferMonad
                      , Fresh.Unify
                      , Fresh.OrderedSet
                      -- , Fresh.Subst

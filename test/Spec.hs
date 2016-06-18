@@ -21,12 +21,14 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Types (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), getAnnotation, Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec, HasGen(..))
+import Fresh.Types (QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec, HasGen(..))
+import Fresh.Expr (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), getAnnotation)
 import Fresh.Infer (inferExpr, runInfer, instantiateAnnot, qresolve, equivalent, equivalentQual, equivalentPred, subsume, skolemize)
 import Fresh.Unify (unify)
 import qualified Fresh.OrderedSet as OrderedSet
 import           Fresh.OrderedSet (OrderedSet)
 import qualified Fresh.Types as Types
+import qualified Fresh.InferMonad as InferM
 import Data.List (inits)
 
 import System.Environment (getArgs, getProgName)
@@ -406,7 +408,7 @@ prop_hasKind = isJust . kind
 
 prop_resolve :: Type -> Bool
 prop_resolve t =
-    case (runInfer $ Types.resolve (Types.unresolve t)) of
+    case (runInfer $ InferM.resolve (Types.unresolve t)) of
         Right (Just t') -> isRight $ equivalent t t'
         _ -> False
 
@@ -418,7 +420,7 @@ prop_skolemize t =
     Right (Just s) -> isRight $ equivalent (wrapGen t) (wrapGen s)
     _ -> False
     where
-        getSkolemized x = runInfer $ skolemize (Types.unresolve x) >>= ( Types.resolve . Types.qualType . snd)
+        getSkolemized x = runInfer $ skolemize (Types.unresolve x) >>= (InferM.resolve . Types.qualType . snd)
         wrapGen ty = case OrderedSet.toList $ runIdentity $ Types.freeGenVars ty of
             [] -> ty
             gvs -> Fix $ TyGen gvs (QualType [] ty)
@@ -464,8 +466,8 @@ prop_selfEquivalenceQual q = isRight $ equivalentQual q q
 
 testUnify :: Type -> Type -> Either TypeError ()
 testUnify t1 t2 = runInfer $ do
-    (QualType ps1 ut1) <- Types.instantiate $ Types.unresolve t1
-    (QualType ps2 ut2) <- Types.instantiate $ Types.unresolve t2
+    (QualType ps1 ut1) <- InferM.instantiate $ Types.unresolve t1
+    (QualType ps2 ut2) <- InferM.instantiate $ Types.unresolve t2
     unify ut1 ut2
 
 prop_unifySame :: Type -> Bool

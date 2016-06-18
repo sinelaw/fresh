@@ -10,6 +10,7 @@ import qualified Fresh.OrderedSet as OrderedSet
 
 import Fresh.Pretty (Pretty(..))
 import Fresh.Types
+import Fresh.InferMonad
 
 unchain :: SType s -> Infer s (SType s)
 unchain t@(SType (TyVar tvar)) = do

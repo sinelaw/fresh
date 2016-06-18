@@ -22,6 +22,8 @@ import Data.STRef
 import Fresh.Pretty (Pretty(..))
 import Fresh.Kind (Kind(..))
 import Fresh.Types
+import Fresh.Expr
+import Fresh.InferMonad
 import Fresh.Unify (unify, varBind)
 
 funT :: SType s -> SType s -> SType s
