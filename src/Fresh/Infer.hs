@@ -256,7 +256,8 @@ inferExpr expr = runInfer $ do
     k <- getKind t
     when (k /= Star) $ throwError $ KindMismatchError k Star
     -- TODO should we really generalize? Is this func only for top-level exprs?
-    t' <- generalize p t
+    gvs <- liftST $ freeGenVars t
+    t' <- mkGenQ (OrderedSet.toList gvs) p t
     let exprG = fmap (\(a, _) -> (a, t')) expr'
         wrapError = \e -> do
             pt <- traverse purify t'
