@@ -115,8 +115,11 @@ targ ^-> tres = Fix $ TyAp (Fix $ TyAp _Func targ) tres
 forall :: GenVar () -> Type -> Type
 forall gv t = foralls [gv] t
 
+forallsQ :: [Pred Type] -> [GenVar ()] -> Type -> Type
+forallsQ ps gvs t = Fix $ TyGen gvs (QualType ps t)
+
 foralls :: [GenVar ()] -> Type -> Type
-foralls gvs t = Fix $ TyGen gvs (QualType [] t)
+foralls gvs t = forallsQ [] gvs t
 
 gv :: Int -> GenVar ()
 gv x = GenVar x Star ()
@@ -194,8 +197,8 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( idFunction ~:: ([] ~=> forall (b') (b ^-> b)),
                Right $ [] ~=> forall (b') (b ^-> b))
 
-           , ( idFunction ~:: ([PredIs testClass $ b] ~=> forall (b') (b ^-> b)),
-               Right $ [PredIs testClass $ b] ~=> forall (b') (b ^-> b))
+           , ( idFunction ~:: ([] ~=> forallsQ [PredIs testClass $ b] [b'] (b ^-> b)),
+               Right $ [] ~=> forallsQ [PredIs testClass $ b] [b'] (b ^-> b))
 
            , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
              , Right $ [] ~=> forall b' (forall d' (b ^-> d ^-> b)))
@@ -227,8 +230,8 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( EGetField () (ELet () (EVarName "r") (EApp () (EGetField () (EVar () (EVarName "r")) (CompositeLabelName "pbe")) (ELam () (EVarName "x") (EVar () (EVarName "x")))) (EVar () (EVarName "r"))) (CompositeLabelName "nid")
              , Left () ) -- occurs
 
-           , ( lama "a" ([PredIs (Class (Id "C") Star) e] ~=> f) ("b" ~>  (ELit () (LitString "c")))
-             , Right $ [PredIs (Class (Id "C") Star) e] ~=> forall e' (f ^-> (e ^-> _String)) )
+           , ( lama "a" ([PredIs (Class (Id "C") Star) e] ~=> e) ("b" ~>  (ELit () (LitString "c")))
+             , Right $ [PredIs (Class (Id "C") Star) e] ~=> forall d' (e ^-> (d ^-> _String)) )
            ]
 
 -- ----------------------------------------------------------------------
