@@ -99,7 +99,7 @@ infer r (EALam a var varQ expr) = do
         return (ps, varAT', expr', exprT)
     QualType instPs exprT' <- instantiate exprT
     resT <- generalize (varPs++instPs) $ funT varAT' exprT'
-    return (ELam (a, resT) var expr', resT)
+    return (EALam (a, resT) var varQ expr', resT)
 
 infer r (ELet a var edef expr) = do
     tvar <- freshTVar
