@@ -21,7 +21,7 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Fresh.Pretty ()
 import Fresh.Kind (Kind(..))
-import Fresh.Types (QualType(..), Type, Fix(..), TypeAST(..), TCon(..), Id(..), Pred(..), GenVar(..), Class(..), TypeError(..), Composite(..), CompositeLabelName(..), FlatComposite(..), HasKind(..), Level(..), TypeError, tyFunc, tyRec, HasGen(..))
+import Fresh.Types
 import Fresh.Expr (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), getAnnotation)
 import Fresh.Infer (inferExpr, runInfer, instantiateAnnot, qresolve, equivalent, equivalentQual, equivalentPred, subsume, skolemize)
 import Fresh.Unify (unify)
@@ -171,8 +171,15 @@ wrapFooLet x = let_ "foo" x $ var "foo"
 exampleApIdNum :: Expr ()
 exampleApIdNum = ("x" ~> var "x") ~$ num 2
 
-testClass :: Class
-testClass = Class (Id "TestClass") Star
+--testClass :: Class
+testClass =
+    Class
+    { clsId = ClassId "TestClass"
+    , clsSupers = []
+    , clsParam = a'
+    , clsMembers = Map.empty
+    , clsInstances = []
+    }
 
 idFunction :: Expr ()
 idFunction = let_ "id" ("x" ~> var "x") $ var "id"
@@ -212,8 +219,8 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( idFunction ~:: ([] ~=> forall b' (b ^-> b)),
                Right $ [] ~=> forall b' (b ^-> b))
 
-           , ( idFunction ~:: ([] ~=> forallsQ [PredIs testClass b] [b'] (b ^-> b)),
-               Right $ [] ~=> forallsQ [PredIs testClass b] [b'] (b ^-> b))
+           , ( idFunction ~:: ([] ~=> forallsQ [PredIs (clsId testClass) b] [b'] (b ^-> b)),
+               Right $ [] ~=> forallsQ [PredIs (clsId testClass) b] [b'] (b ^-> b))
 
            , ( wrapFooLet ("y" ~> let_ "id" ("x" ~> var "y") (var "id"))
              , Right $ [] ~=> forall b' (forall d' (b ^-> d ^-> b)))
@@ -245,11 +252,11 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
            , ( EGetField () (ELet () (EVarName "r") (EApp () (EGetField () (EVar () (EVarName "r")) (CompositeLabelName "pbe")) (ELam () (EVarName "x") (EVar () (EVarName "x")))) (EVar () (EVarName "r"))) (CompositeLabelName "nid")
              , Left () ) -- occurs
 
-           , ( lama "a" ([PredIs (Class (Id "C") Star) e] ~=> e) ("b" ~> ELit () (LitString "c"))
-             , Right $ [] ~=> forall d' (forallsQ [PredIs (Class (Id "C") Star) e] [e'] e ^-> (d ^-> _String)) )
+           , ( lama "a" ([PredIs (clsId testClass) e] ~=> e) ("b" ~> ELit () (LitString "c"))
+             , Right $ [] ~=> forall d' (forallsQ [PredIs (clsId testClass) e] [e'] e ^-> (d ^-> _String)) )
 
-           , ( lama "a" ([PredIs (Class (Id "C") Star) e] ~=> (forall f' f)) ("b" ~>  (ELit () (LitString "c")))
-             , Right $ [] ~=> forall d' ((forallsQ [PredIs (Class (Id "C") Star) e] [e', f'] f) ^-> (d ^-> _String)) )
+           , ( lama "a" ([PredIs (clsId testClass) e] ~=> (forall f' f)) ("b" ~>  (ELit () (LitString "c")))
+             , Right $ [] ~=> forall d' ((forallsQ [PredIs (clsId testClass) e] [e', f'] f) ^-> (d ^-> _String)) )
 
            -- (\o -> let y = (\f -> o 464.5855195404157) in "bla")
            , ( "o" ~> (let_ "y" ("f" ~> (var "o" ~$ num 123)) (str_ "bla"))
@@ -271,6 +278,9 @@ derive makeArbitrary ''Level
 instance Arbitrary Id where
     arbitrary = oneof (map (pure . Id) ["A", "B", "C", "D", "E", "F"])
 
+instance Arbitrary ClassId where
+    arbitrary = oneof (map (pure . ClassId) ["A", "B", "C", "D", "E", "F"])
+
 instance Arbitrary Kind where
     arbitrary = oneof (map pure
                        [ Star
@@ -284,8 +294,13 @@ instance Arbitrary Kind where
 
 derive makeArbitrary ''TCon
 
+arbIdentifier = take 5 <$> shuffle ['a'..'z'] >>= sublistOf
+
 instance Arbitrary CompositeLabelName where
-    arbitrary = CompositeLabelName <$> (take 5 <$> shuffle ['a'..'z'] >>= sublistOf)
+    arbitrary = CompositeLabelName <$> arbIdentifier
+
+instance Arbitrary MemberName where
+    arbitrary = MemberName <$> arbIdentifier
 
 derive makeArbitrary ''Composite
 
@@ -340,7 +355,7 @@ instance Arbitrary Type where
 arbitraryPred :: (HasKind a, Arbitrary a) => a -> Gen (Pred a)
 arbitraryPred t =
     oneof $
-    [ PredIs <$> (Class <$> arbitrary <*> pure k) <*> pure t
+    [ PredIs <$> arbitrary <*> pure t
     , PredNoLabel <$> arbitrary <*> pure t
     ]
     where Just k = kind t
@@ -366,7 +381,18 @@ instance Arbitrary (QualType Type) where
         return $ QualType ps t
     shrink (QualType ps t) = (QualType <$> slowShrinkList ps <*> [t]) ++ (QualType <$> [ps] <*> shrink t)
 
-derive makeArbitrary ''Class
+instance Arbitrary a => Arbitrary (Instance Type (Expr a)) where
+    arbitrary = Instance <$> arbitrary <*> arbitrary <*> arbitrary
+
+instance Arbitrary a => Arbitrary (Class Type (Expr a)) where
+    arbitrary = do
+            arbId <- arbitrary
+            arbSupers <- arbitrary
+            arbParam <- arbitrary
+            arbMembers <- arbitrary
+            --arbInstances <- arbitrary
+            let arbInstances = [] -- hard to generate instances that type check with member types...
+            return (Class arbId arbSupers arbParam arbMembers arbInstances)
 
 derive makeArbitrary ''Lit
 
@@ -569,8 +595,8 @@ main = do
 
 -- TODO: Check this example, it fails constWrap and also infers a type
 -- that shadows some genvar (e) in the ETypeAsc:
--- let t = EALam () (EVarName "a") (ETypeAsc (QualType {qualPred = [PredIs (Class (Id "C") Star) (Fix {unFix = TyGenVar {_tyGenVar = GenVar {genVarId = 4, genVarKind = Star, genVarAnnot = ()}}})],
+-- let t = EALam () (EVarName "a") (ETypeAsc (QualType {qualPred = [PredIs (clsId testClass) (Fix {unFix = TyGenVar {_tyGenVar = GenVar {genVarId = 4, genVarKind = Star, genVarAnnot = ()}}})],
 --                                                      qualType = Fix {unFix = TyGenVar {_tyGenVar = GenVar {genVarId = 5, genVarKind = Star, genVarAnnot = ()}}}
 --                                  }))
 --                                  (ELam () (EVarName "b") (ELit () (LitString "c")))
--- lama "a" ([PredIs (Class (Id "C") Star) e'] ~=> ("b" ~>  (ELit () (LitString "c"))))
+-- lama "a" ([PredIs (clsId testClass) e'] ~=> ("b" ~>  (ELit () (LitString "c"))))

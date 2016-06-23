@@ -5,26 +5,27 @@
 
 module Fresh.Infer where
 
-import qualified Fresh.OrderedSet as OrderedSet
+import           Data.Functor.Identity
 import           Fresh.OrderedSet (OrderedSet)
+import qualified Fresh.OrderedSet as OrderedSet
 
-import Control.Monad (when, forM, unless)
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.State (StateT(..), runStateT, evalStateT)
-import Control.Monad.State.Class (MonadState(..), modify)
-import Control.Monad.Trans.Either (EitherT(..), runEitherT)
-import Control.Monad.Error.Class (MonadError(..))
+import           Control.Monad (when, forM, forM_, unless)
+import           Control.Monad.Trans.Class (lift)
+import           Control.Monad.Trans.State (StateT(..), runStateT, evalStateT)
+import           Control.Monad.State.Class (MonadState(..), modify)
+import           Control.Monad.Trans.Either (EitherT(..), runEitherT)
+import           Control.Monad.Error.Class (MonadError(..))
 
 import qualified Data.Map as Map
-import Control.Monad.ST (runST, ST)
-import Data.STRef
+import           Control.Monad.ST (runST, ST)
+import           Data.STRef
 
-import Fresh.Pretty (Pretty(..))
-import Fresh.Kind (Kind(..))
-import Fresh.Types
-import Fresh.Expr
-import Fresh.InferMonad
-import Fresh.Unify (unify, varBind)
+import           Fresh.Pretty (Pretty(..))
+import           Fresh.Kind (Kind(..))
+import           Fresh.Types
+import           Fresh.Expr
+import           Fresh.InferMonad
+import           Fresh.Unify (unify, varBind)
 
 funT :: SType s -> SType s -> SType s
 funT targ tres =
@@ -257,19 +258,24 @@ wrapInfer expr = do
         wrapError e = throwError $ WrappedError (InferenceError (show $ pretty expr)) e
     infer wrapInfer expr `catchError` wrapError
 
-inferExpr :: Show a => Expr a -> Either TypeError (Expr (QualType Type))
-inferExpr expr = runInfer $ do
+inferExprAct :: Show a => Expr a -> Infer s (Expr (a, QualType (SType s)), QualType (SType s))
+inferExprAct expr = do
     (expr', QualType p t) <- inLevel $ wrapInfer expr
     k <- getKind t
     when (k /= Star) $ throwError $ KindMismatchError k Star
     -- TODO should we really generalize? Is this func only for top-level exprs?
     gvs <- liftST $ freeGenVars t
     t' <- mkGenQ (OrderedSet.toList gvs) p t
-    let exprG = fmap (\(a, _) -> (a, t')) expr'
-        wrapError e = do
+    return $ (fmap (\(a, _) -> (a, t')) expr', t')
+
+inferExpr :: Show a => Expr a -> Either TypeError (Expr (QualType Type))
+inferExpr expr = runInfer $ do
+    (exprG, t') <- inferExprAct expr
+    let wrapError e = do
             pt <- traverse purify t'
             throwError $ WrappedError (ResolveError (show $ pretty pt)) e
     traverse (qresolve . snd) exprG `catchError` wrapError
+
 
 isRight :: Either a b -> Bool
 isRight Right{} = True
@@ -302,3 +308,20 @@ equivalentQual' (QualType p1 t1) (QualType p2 t2)
 
 equivalentQual :: QualType Type -> QualType Type -> Either TypeError ()
 equivalentQual q1 q2 = equivalentQual' (normalizeQual q1) (normalizeQual q2)
+
+checkClassInstance :: Show a => Class Type expr -> Instance t (Expr a) -> Either TypeError ()
+checkClassInstance cls inst = runInfer $ do
+    forM_ (Map.toList $ instMembers inst) $ \(name, expr) -> do
+        case Map.lookup name (clsMembers cls) of
+            Nothing -> throwError $ InstanceMethodMissing (show $ pretty name)
+            Just q -> do
+                qt <- mkGen [const LevelAny <$> clsParam cls] [] (qualType $ unresolveQual q)
+                (_expr', t') <- inferExprAct expr
+                subsume (qualType t') qt
+
+checkClass :: (Show a) => Class Type (Expr a) -> Either TypeError ()
+checkClass cls =
+    runIdentity
+    $ runEitherT
+    $ foldr (>>) (return ())
+    $ map (EitherT . return . checkClassInstance cls) (clsInstances cls)

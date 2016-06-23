@@ -106,11 +106,10 @@ instance (Ord g, HasGen m t g) => HasGen m [t] g where
     freeGenVars ft = OrderedSet.concatUnions <$> mapM freeGenVars ft
 
 ----------------------------------------------------------------------
-
-data Class = Class Id Kind
+data ClassId = ClassId String
     deriving (Generic, Eq, Ord, Show)
 
-data Pred t = PredIs Class t | PredNoLabel CompositeLabelName t
+data Pred t = PredIs ClassId t | PredNoLabel CompositeLabelName t
     deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
 instance HasGen m t g => HasGen m (Pred t) g where
@@ -353,6 +352,8 @@ data TypeError
     | OccursError String String
     | AssertionError String
     | MultipleErrors [TypeError]
+    | InstanceMethodMissing String
+    | InstanceMemberWrongType String
     deriving (Generic, Eq, Show)
 
 concatErrors :: TypeError -> TypeError -> TypeError
@@ -361,5 +362,27 @@ concatErrors (MultipleErrors e1s) e                    = MultipleErrors (e1s ++ 
 concatErrors e                    (MultipleErrors e2s) = MultipleErrors (e:e2s)
 concatErrors e1                   e2                   = MultipleErrors [e1,e2]
 
+
+----------------------------------------------------------------------
+
+newtype MemberName = MemberName String
+    deriving (Generic, Eq, Ord, Show)
+
+data Instance t expr = Instance { instCls :: ClassId, instType :: QualType t, instMembers :: Map MemberName expr }
+    deriving (Generic, Eq, Ord, Show)
+
+data Class t expr = Class { clsId :: ClassId
+                          , clsSupers :: [ClassId]
+                          , clsParam :: GenVar () -- is used in member types
+                          , clsMembers :: Map MemberName (QualType t)
+                          , clsInstances :: [Instance t expr]
+                          }
+    deriving (Generic, Eq, Ord, Show)
+
+data ClassEnv t expr = ClassEnv { cenvClasses :: Map ClassId (Class t expr) }
+    deriving (Generic, Eq, Ord, Show)
+
+getMemberType :: Class t expr -> MemberName -> Maybe (TypeAST () t)
+getMemberType cls name = TyGen [clsParam cls] <$> Map.lookup name (clsMembers cls)
 
 

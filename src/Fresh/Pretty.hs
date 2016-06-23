@@ -13,6 +13,7 @@ import Fresh.Types
 import Fresh.Kind (Kind(..))
 import Fresh.Expr
 
+import qualified Data.Map as Map
 
 numToLetter :: Int -> Doc
 numToLetter idx =
@@ -95,8 +96,30 @@ instance Pretty (Expr a) where
 instance Pretty (f (Fix f)) => Pretty (Fix f) where
     pretty (Fix f) = pretty f
 
-instance Pretty Class where
-    pretty (Class (Id name) _k) = pretty name
+instance Pretty ClassId where
+    pretty (ClassId name) = pretty name
+
+instance Pretty MemberName where
+    pretty (MemberName m) = pretty m
+
+instance (Pretty t, Pretty e) => Pretty (Class t e) where
+    pretty cls =
+        vsep
+        [ "Class"
+            <+> pretty (map (\sup -> pretty sup <+> pretty (clsParam cls)) (clsSupers cls))
+            <+> "=>"
+            <+> pretty (clsId cls) <+> pretty (clsParam cls)
+            <+> "where"
+        , indent 4 $ vsep $ map (\(mem, t) -> pretty mem <+> "::" <+> pretty t) $ Map.toList (clsMembers cls)
+        , vsep $ map pretty (clsInstances cls)
+        ]
+
+instance (Pretty t, Pretty e) => Pretty (Instance t e) where
+    pretty (Instance cid t mems) =
+        vsep
+        [ "instance" <+> pretty cid <+> pretty t <+> "where"
+        , indent 4 $ vsep $ map (\(mname, mt) -> pretty mname <+> "=" <+> pretty mt) $ Map.toList mems
+        ]
 
 instance Pretty t => Pretty (Pred t) where
     pretty (PredIs c t)      = pretty c <+> pretty t
@@ -148,3 +171,5 @@ instance Pretty TypeError where
     pretty (OccursError t1 t2)          = "Occurs check failed, " <+> text t1 <+> " is in " <+> text t2
     pretty (AssertionError s)           = "ASSERTION FAILED:" <+> text s
     pretty (MultipleErrors es)          = "Errors:" <+> align (vsep $ map pretty es)
+    pretty (InstanceMethodMissing s)    = "Instance method missing:" <+> pretty s
+    pretty (InstanceMemberWrongType s)  = "Instance member wrong type:" <+> pretty s
