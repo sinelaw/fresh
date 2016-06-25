@@ -385,4 +385,4 @@ data ClassEnv t expr = ClassEnv { cenvClasses :: Map ClassId (Class t expr) }
 getMemberType :: Class t expr -> MemberName -> Maybe (TypeAST () t)
 getMemberType cls name = TyGen [clsParam cls] <$> Map.lookup name (clsMembers cls)
 
-
+--------------------------------------------------------------------------------
