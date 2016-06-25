@@ -23,7 +23,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import GHC.Generics (Generic)
 import Data.Functor.Identity (runIdentity)
-
+import Data.Foldable (toList)
 
 partitionM :: Monad m => (t -> m Bool) -> [t] -> m ([t], [t])
 partitionM _ [] = return ([], [])
@@ -258,6 +258,9 @@ instance (Ord g, HasVars m t, HasVars m (TypeVar v t)) => HasVars m (TypeABT g v
 
 newtype Fix f = Fix { unFix :: f (Fix f) }
 
+hmap :: (Functor f, Functor g) => (forall a. f a -> g a) -> Fix f -> Fix g
+hmap f (Fix x) = Fix (f $ fmap (hmap f) x)
+
 deriving instance Show (f (Fix f)) => Show (Fix f)
 
 instance HasKind (f (Fix f)) => HasKind (Fix f) where
@@ -340,6 +343,12 @@ unresolveQual (QualType ps t) = QualType (map unresolvePred ps) (unresolve t)
 data FlatTy t
     = FlatTyAp (FlatTy t) (FlatTy t)
     | FlatTyLeaf t
+    deriving (Eq, Show, Functor, Foldable, Traversable)
+
+flatTyHead :: FlatTy t -> (t, [t])
+flatTyHead f = case toList f of
+    []     -> error "Impossible! FlatTy is never empty."
+    (x:xs) -> (x,xs)
 
 flattenTyAp :: (f -> Maybe (TypeAST a f)) -> f -> FlatTy f
 flattenTyAp uncon t = case uncon t of
