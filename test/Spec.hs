@@ -387,6 +387,7 @@ instance Arbitrary a => Arbitrary (Expr a) where
         , ELet <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
         , EAsc <$> arbitrary <*> arbitrary <*> arbitrary
         , EGetField <$> arbitrary <*> arbitrary <*> arbitrary
+        , EBuiltIn <$> arbitrary <*> arbitrary <*> arbitrary
         ]
     shrink (ELit a l) = ELit <$> [a] <*> shrink l
     shrink (EVar a v) = EVar <$> [a] <*> shrink v
@@ -396,6 +397,7 @@ instance Arbitrary a => Arbitrary (Expr a) where
     shrink (ELet a n e1 e2) = e1 : e2 : (ELet <$> [a] <*> [n] <*> shrink e1 <*> [e2]) ++ (ELet <$> [a] <*> [n] <*> [e1] <*> shrink e2)
     shrink (EAsc a t e) = e : (EAsc <$> [a] <*> [t] <*> shrink e) ++ (EAsc <$> [a] <*> shrink t <*> [e])
     shrink (EGetField a e n) = e : (EGetField <$> [a] <*> [e] <*> shrink n) ++ (EGetField <$> [a] <*> shrink e <*> [n])
+    shrink (EBuiltIn a n t) = (EBuiltIn <$> [a] <*> [n] <*> shrink t)
 
 prop_ordLevel :: Level -> Bool
 prop_ordLevel l = [l] == Set.toList (Set.singleton l `Set.intersection` Set.singleton l)

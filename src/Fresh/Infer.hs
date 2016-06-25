@@ -142,6 +142,10 @@ infer r (EGetField a expr name) = do
     let resT = QualType exprP tvar
     return (EGetField (a, resT) expr' name, resT)
 
+infer _r (EBuiltIn a s asc) = do
+    ascQ <- instantiateAnnot asc
+    return (EBuiltIn (a, ascQ) s asc, ascQ)
+
 instantiateAnnot :: ETypeAsc -> Infer s (QualType (SType s))
 instantiateAnnot (ETypeAsc q@(QualType ps t)) = do
     -- TODO: Check the predicates ps to see if they contain escaped genvars from t

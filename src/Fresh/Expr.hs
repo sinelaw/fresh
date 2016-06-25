@@ -30,6 +30,7 @@ data Expr a
     | ELet a EVarName (Expr a) (Expr a)
     | EAsc a ETypeAsc (Expr a)
     | EGetField a (Expr a) CompositeLabelName
+    | EBuiltIn a ETypeAsc
     deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
 
