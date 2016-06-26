@@ -133,7 +133,7 @@ infer r (EAsc a asc expr) = do
     (expr', exprQ) <- r (EApp a (EALam a dummy asc (EVar a dummy)) expr)
     return (EAsc (a, ascQ) asc expr', ascQ)
     where
-        dummy = EVarName "x"
+        dummy = EVarName "_dummy_x_"
 
 infer r (EGetField a expr name) = do
     (expr', QualType exprP exprT) <- r expr
