@@ -246,7 +246,9 @@ runInfer act =
 qresolve :: QType s -> Infer s (QualType Type)
 qresolve (QualType ps ti) = callFrame "qresolve" $ do
     t <- generalize ps ti
-    let wrapError = throwError . WrappedError (ResolveError . show $ pretty t)
+    let wrapError e = do
+            pt <- traverse purify t
+            throwError $ WrappedError (ResolveError (show (pretty pt))) e
     mt' <- sequenceA <$> traverse resolve t `catchError` wrapError
     case mt' of
         (Just t') -> return t'
@@ -258,21 +260,17 @@ wrapInfer expr = do
         wrapError e = throwError $ WrappedError (InferenceError (show $ pretty expr)) e
     infer wrapInfer expr `catchError` wrapError
 
-inferExprAct :: Show a => Expr a -> Infer s (Expr (a, QualType (SType s)), QualType (SType s))
+inferExprAct :: Show a => Expr a -> Infer s (Expr (a, QualType (SType s)))
 inferExprAct expr = callFrame "inferExprAct" $ do
-    (expr', QualType p t) <- inLevel $ wrapInfer expr
+    res@(expr', (QualType p t)) <- inLevel $ wrapInfer expr
     k <- getKind t
     when (k /= Star) $ throwError $ KindMismatchError k Star
-    -- TODO should we really generalize? Is this func only for top-level exprs?
-    gvs <- liftST $ freeGenVars t
-    t' <- mkGenQ (OrderedSet.toList gvs) p t
-    return $ (fmap (\(a, _) -> (a, t')) expr', t')
+    return expr'
 
 inferExpr :: Show a => Expr a -> Either TypeError (Expr (QualType Type))
 inferExpr expr = runInfer $ callFrame "inferExpr" $ do
-    (exprG, t') <- inferExprAct expr
+    exprG <- inferExprAct expr
     traverse (qresolve . snd) exprG
-
 
 isRight :: Either a b -> Bool
 isRight Right{} = True
@@ -313,8 +311,8 @@ checkClassInstance cls inst = runInfer $ do
             Nothing -> throwError $ InstanceMethodMissing (show $ pretty name)
             Just q -> do
                 qt <- mkGen [const LevelAny <$> clsParam cls] [] (qualType $ unresolveQual q)
-                (_expr', t') <- inferExprAct expr
-                subsume (qualType t') qt
+                expr' <- inferExprAct expr
+                subsume (qualType $ snd $ getAnnotation expr') qt
 
 checkClass :: (Show a) => Class Type (Expr a) -> Either TypeError ()
 checkClass cls =

@@ -14,7 +14,7 @@ import Control.Monad.Error.Class (MonadError(..))
 
 import qualified Data.List as List
 import Control.Monad.ST (ST)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromMaybe)
 
 import qualified Fresh.OrderedSet as OrderedSet
 
@@ -61,16 +61,16 @@ freshName = do
     return genId
 
 -- TODO should return a set
-getUnbound :: Level -> SType s -> Infer s [TypeVar (STRef s) (SType s)]
-getUnbound curLevel (SType (TyVar tv)) = do
+getUnbound :: Maybe Level -> SType s -> Infer s [TypeVar (STRef s) (SType s)]
+getUnbound mCurLevel (SType (TyVar tv)) = do
     v <- readVar tv
     case v of
-        Unbound _ l -> if curLevel < l
-                       then pure [tv]
-                       else pure []
-        Link t' -> getUnbound curLevel t'
-getUnbound curLevel (SType (TyAST t)) =
-    concat <$> traverse (getUnbound curLevel) t
+        Unbound _ l -> case mCurLevel of
+            Just curLevel | curLevel >= l -> pure []
+            _ -> pure [tv]
+        Link t' -> getUnbound mCurLevel t'
+getUnbound mCurLevel (SType (TyAST t)) =
+    concat <$> traverse (getUnbound mCurLevel) t
 
 mkGen :: [GenVar Level] -> [Pred (SType s)] -> SType s -> Infer s (SType s)
 mkGen gvs ps (SType (TyAST (TyGen gvs' (QualType ps2 t)))) = mkGen (gvs++gvs') (ps++ps2) t
@@ -96,23 +96,23 @@ mkGenQ gvs ps t = do
         ps
     QualType psNotInT <$> mkGen gvs psInT t
 
-generalizeAtLevel :: Level -> [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
-generalizeAtLevel curLevel ps t = do
-    unboundTVars <- getUnbound curLevel t
+generalizeAtLevel :: [Pred (SType s)] -> SType s -> Maybe Level -> Infer s (QualType (SType s))
+generalizeAtLevel ps t mCurLevel = do
+    unboundTVars <- getUnbound mCurLevel t
     let wrapGen tv@(TypeVar _ k) = do
             res <- readVar tv
             case res of
                 Link (SType (TyAST (TyGenVar _))) -> return Nothing -- already overwritten
                 Link _ -> error "Assertion failed"
                 Unbound{} -> do
-                    gv <- GenVar <$> freshName <*> pure k <*> pure curLevel
+                    gv <- GenVar <$> freshName <*> pure k <*> pure (fromMaybe LevelAny mCurLevel)
                     writeVar tv (Link $ SType $ TyAST $ TyGenVar gv)
                     return $ Just gv
     gvs <- catMaybes <$> mapM wrapGen unboundTVars
     mkGenQ gvs ps t
 
 generalize :: [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
-generalize ps t = callFrame "generalize" $ getCurrentLevel >>= \l -> generalizeAtLevel l ps t
+generalize ps t = callFrame "generalize" $ getCurrentLevel >>= (generalizeAtLevel ps t . Just)
 
 instantiate :: SType s -> Infer s (QualType (SType s))
 instantiate (SType (TyAST (TyGen gvs (QualType ps tGen)))) = callFrame "instantiate" $ do
