@@ -15,6 +15,9 @@ tcon x = Fix $ TyCon $ TCon (Id x) Star
 _String :: Type
 _String = tcon "String"
 
+_Number :: Type
+_Number = tcon "Number"
+
 _Bool :: Type
 _Bool = tcon "Bool"
 

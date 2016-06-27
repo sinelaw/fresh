@@ -25,6 +25,7 @@ import Fresh.Types
 import Fresh.Expr (ETypeAsc(..), EVarName(..), Lit(..), Expr(..), getAnnotation)
 import Fresh.Infer (inferExpr, runInfer, instantiateAnnot, qresolve, equivalent, equivalentQual, equivalentPred, subsume, skolemize)
 import Fresh.Unify (unify)
+import Fresh.BuiltIn
 import qualified Fresh.OrderedSet as OrderedSet
 import           Fresh.OrderedSet (OrderedSet)
 import qualified Fresh.Types as Types
@@ -103,31 +104,6 @@ lama :: EVarName -> QualType Type -> Expr () -> Expr ()
 lama v t = EALam () v (ETypeAsc t)
 
 -- Types
-
-tcon :: String -> Type
-tcon x = Fix $ TyCon $ TCon (Id x) Star
-
-_String :: Type
-_String = tcon "String"
-
-_Bool :: Type
-_Bool = tcon "Bool"
-
-_Number :: Type
-_Number =  tcon "Number"
-
-_Func :: Type
-_Func = Fix tyFunc
-
-(~=>) :: [Pred t] -> t -> QualType t
-(~=>) = QualType
-
-(^$) :: Type -> Type -> Type
-f ^$ x = Fix $ TyAp f x
-
-infixr 5 ^->
-(^->) :: Type -> Type -> Type
-targ ^-> tres = Fix $ TyAp (Fix $ TyAp _Func targ) tres
 
 forall :: GenVar () -> Type -> Type
 forall gv = foralls [gv]
