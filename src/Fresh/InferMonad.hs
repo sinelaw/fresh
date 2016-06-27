@@ -83,8 +83,8 @@ mkGen gvs ps (SType (TyAST (TyGen gvs' (QualType ps2 t)))) = mkGen (gvs++gvs') (
 mkGen []  [] t = return t
 mkGen gvs ps t = do
     freeGVs <-liftST $ freeGenVars (QualType ps t)
-    when (Set.fromList gvs /= OrderedSet.toSet freeGVs) $
-        throwError $ AssertionError $ "Non-existing GenVars appears in TyGen?! " ++ show gvs ++ " in type " ++ show t
+    when (not $ Set.fromList gvs `Set.isSubsetOf` OrderedSet.toSet freeGVs) $
+        throwError $ AssertionError $ "Non-existing GenVars appears in TyGen?! " ++ show gvs ++ " in type " ++ show t ++ ", freeGVs: " ++ show freeGVs
     return $ SType (TyAST (TyGen (OrderedSet.toList freeGVs) (QualType ps t)))
 
 mkGenQ :: [GenVar Level] -> [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
