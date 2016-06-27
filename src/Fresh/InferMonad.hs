@@ -118,10 +118,9 @@ generalize ps t = callFrame "generalize" $ getCurrentLevel >>= (generalizeAtLeve
 
 instantiate :: SType s -> Infer s (QualType (SType s))
 instantiate (SType (TyAST (TyGen gvs (QualType ps tGen)))) = callFrame "instantiate" $ do
-    let inst t gv@(GenVar n k l) = do
-            tv <- SType . TyVar <$> freshTVarK k
-            substGen gv tv t
-    QualType ps <$> foldM inst tGen gvs
+    newGVs <- mapM (\(GenVar n k l) -> SType . TyVar <$> freshTVarK k) gvs
+    let s = substGens gvs newGVs
+    QualType <$> (mapM (traverse s) ps) <*> s tGen
 instantiate t@(SType (TyAST _)) = return $ QualType [] t
 instantiate t@(SType (TyVar tvar)) = do
     t' <- readVar tvar
