@@ -196,7 +196,7 @@ matchFun' t@(SType TyAST{})
       pt <- purify t
       throwError $ ExpectedFunction (show $ pretty pt)
 
-matchFun' (SType (TyVar tvar@(TypeVar _ k))) = do
+matchFun' (SType (TyVar tvar@(TypeVar _ k))) = callFrame "matchFun' (TypVar)" $ do
     t <- readVar tvar
     case t of
         Link t' -> matchFun t'

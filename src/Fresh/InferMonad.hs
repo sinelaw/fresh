@@ -18,6 +18,7 @@ import Data.Maybe (catMaybes, fromMaybe)
 
 import qualified Fresh.OrderedSet as OrderedSet
 
+import           Fresh.Pretty (Pretty(..))
 import Fresh.Types
 import Fresh.Expr
 import Fresh.Kind
@@ -194,11 +195,13 @@ purify (SType (TyVar tvar)) = purifyVar tvar
 purify (SType (TyAST t)) = PType . TyAST <$> traverse purify t
 
 resolve :: SType s -> Infer s (Maybe Type)
-resolve (SType (TyVar tvar)) = do
+resolve t@(SType (TyVar tvar)) = callFrame "resolve" $ do
     link <- readVar tvar
     case link of
-        Unbound _name l -> throwError
-            $ EscapedSkolemError $ "resolve " ++ show tvar ++ ", level: " ++ show l
+        Unbound _name l -> do
+            pt <- purify t
+            throwError
+                $ EscapedSkolemError $ "resolve " ++ show (pretty pt) ++ ", level: " ++ show l
         Link t' -> resolve t'
 resolve (SType (TyAST t)) = do
     mt <- traverse resolve t
