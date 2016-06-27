@@ -98,7 +98,9 @@ mkGenQ gvs ps t = do
 
 generalizeAtLevel :: [Pred (SType s)] -> SType s -> Maybe Level -> Infer s (QualType (SType s))
 generalizeAtLevel ps t mCurLevel = do
-    unboundTVars <- getUnbound mCurLevel t
+    unboundTVarsT <- getUnbound mCurLevel t
+    unboundTVarsPS <- concatMap fromPred <$> mapM (traverse $ getUnbound mCurLevel) ps
+    let unboundTVars = unboundTVarsT ++ unboundTVarsPS
     let wrapGen tv@(TypeVar _ k) = do
             res <- readVar tv
             case res of
