@@ -17,6 +17,9 @@ instance Ord a => Ord (OrderedSet a) where
 instance Foldable OrderedSet where
     foldr f x (OrderedSet xs _) = foldr f x xs
 
+ordTraverse :: (Ord b, Applicative f) => (a -> f b) -> OrderedSet a -> f (OrderedSet b)
+ordTraverse f (OrderedSet xs _) = fromList <$> traverse f xs
+
 null :: Ord a => OrderedSet a -> Bool
 null (OrderedSet [] _) = True
 null _ = False
