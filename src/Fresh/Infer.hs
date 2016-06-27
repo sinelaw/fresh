@@ -148,11 +148,12 @@ infer _r (EBuiltIn a s asc) = do
     return (EBuiltIn (a, ascQ) s asc, ascQ)
 
 instantiateAnnot :: ETypeAsc -> Infer s (QualType (SType s))
-instantiateAnnot (ETypeAsc q@(QualType ps t)) = callFrame "instantiateAnnot" $ do
+instantiateAnnot (ETypeAsc q) = callFrame "instantiateAnnot" $ do
     -- TODO: Check the predicates ps to see if they contain escaped genvars from t
     gvs <- freeGenVars q :: Infer s (OrderedSet (GenVar ()))
     let gvs' = map (fmap $ const LevelAny) $ OrderedSet.toList gvs
-    res <- mkGenQ gvs' (map unresolvePred ps) (unresolve t)
+        QualType ps' t' = unresolveQual q
+    res <- mkGenQ gvs' ps' t'
     resFreeGVs :: (OrderedSet (GenVar Level)) <- liftST $ freeGenVars res
     unless (OrderedSet.null resFreeGVs)
         $ throwError $ AssertionError ("Genvars escaped from forall'ed annotated type?! " ++ show res)
