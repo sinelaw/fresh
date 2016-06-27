@@ -173,3 +173,4 @@ instance Pretty TypeError where
     pretty (MultipleErrors es)          = "Errors:" <+> align (vsep $ map pretty es)
     pretty (InstanceMethodMissing s)    = "Instance method missing:" <+> pretty s
     pretty (InstanceMemberWrongType s)  = "Instance member wrong type:" <+> pretty s
+    pretty (CallFrame s)                = "Frame:" <+> pretty s

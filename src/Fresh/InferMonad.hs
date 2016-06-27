@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 module Fresh.InferMonad where
 
 import Control.Monad (when, foldM, forM)
@@ -71,7 +72,6 @@ getUnbound curLevel (SType (TyVar tv)) = do
 getUnbound curLevel (SType (TyAST t)) =
     concat <$> traverse (getUnbound curLevel) t
 
-
 mkGen :: [GenVar Level] -> [Pred (SType s)] -> SType s -> Infer s (SType s)
 mkGen gvs ps (SType (TyAST (TyGen gvs' (QualType ps2 t)))) = mkGen (gvs++gvs') (ps++ps2) t
 -- mkGen gvs ps touter@(SType (TyAST (TyAp t1@(SType (TyAST (TyAp (SType (TyAST (TyCon f))) arg))) (SType (TyAST (TyGen gvs' (QualType ps' t)))))))
@@ -112,10 +112,10 @@ generalizeAtLevel curLevel ps t = do
     mkGenQ gvs ps t
 
 generalize :: [Pred (SType s)] -> SType s -> Infer s (QualType (SType s))
-generalize ps t = getCurrentLevel >>= \l -> generalizeAtLevel l ps t
+generalize ps t = callFrame "generalize" $ getCurrentLevel >>= \l -> generalizeAtLevel l ps t
 
 instantiate :: SType s -> Infer s (QualType (SType s))
-instantiate (SType (TyAST (TyGen gvs (QualType ps tGen)))) = do
+instantiate (SType (TyAST (TyGen gvs (QualType ps tGen)))) = callFrame "instantiate" $ do
     let inst t gv@(GenVar n k l) = do
             tv <- SType . TyVar <$> freshTVarK k
             substGen gv tv t
@@ -209,4 +209,7 @@ checkKind (Just k) = return k
 
 getKind :: HasKind t => t -> Infer s Kind
 getKind = checkKind . kind
+
+callFrame :: MonadError TypeError m => String -> m a -> m a
+callFrame s act = act `catchError` (\e -> throwError $ WrappedError (CallFrame s) e)
 

@@ -148,7 +148,7 @@ infer _r (EBuiltIn a s asc) = do
     return (EBuiltIn (a, ascQ) s asc, ascQ)
 
 instantiateAnnot :: ETypeAsc -> Infer s (QualType (SType s))
-instantiateAnnot (ETypeAsc q@(QualType ps t)) = do
+instantiateAnnot (ETypeAsc q@(QualType ps t)) = callFrame "instantiateAnnot" $ do
     -- TODO: Check the predicates ps to see if they contain escaped genvars from t
     gvs <- freeGenVars q :: Infer s (OrderedSet (GenVar ()))
     let gvs' = map (fmap $ const LevelAny) $ OrderedSet.toList gvs
@@ -244,7 +244,7 @@ runInfer act =
                                                     , isLevel = Level 0 }
 
 qresolve :: QType s -> Infer s (QualType Type)
-qresolve (QualType ps ti) = do
+qresolve (QualType ps ti) = callFrame "qresolve" $ do
     t <- generalize ps ti
     let wrapError = throwError . WrappedError (ResolveError . show $ pretty t)
     mt' <- sequenceA <$> traverse resolve t `catchError` wrapError
@@ -259,7 +259,7 @@ wrapInfer expr = do
     infer wrapInfer expr `catchError` wrapError
 
 inferExprAct :: Show a => Expr a -> Infer s (Expr (a, QualType (SType s)), QualType (SType s))
-inferExprAct expr = do
+inferExprAct expr = callFrame "inferExprAct" $ do
     (expr', QualType p t) <- inLevel $ wrapInfer expr
     k <- getKind t
     when (k /= Star) $ throwError $ KindMismatchError k Star
@@ -269,12 +269,9 @@ inferExprAct expr = do
     return $ (fmap (\(a, _) -> (a, t')) expr', t')
 
 inferExpr :: Show a => Expr a -> Either TypeError (Expr (QualType Type))
-inferExpr expr = runInfer $ do
+inferExpr expr = runInfer $ callFrame "inferExpr" $ do
     (exprG, t') <- inferExprAct expr
-    let wrapError e = do
-            pt <- traverse purify t'
-            throwError $ WrappedError (ResolveError (show $ pretty pt)) e
-    traverse (qresolve . snd) exprG `catchError` wrapError
+    traverse (qresolve . snd) exprG
 
 
 isRight :: Either a b -> Bool

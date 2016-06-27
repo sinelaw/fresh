@@ -354,6 +354,7 @@ data TypeError
     | MultipleErrors [TypeError]
     | InstanceMethodMissing String
     | InstanceMemberWrongType String
+    | CallFrame String
     deriving (Generic, Eq, Show)
 
 concatErrors :: TypeError -> TypeError -> TypeError
