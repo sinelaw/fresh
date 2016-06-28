@@ -27,6 +27,7 @@ library
                      , Fresh.InferMonad
                      , Fresh.Unify
                      , Fresh.OrderedSet
+                     , Fresh.OrderedMap
                      -- , Fresh.Subst
   -- other-modules:
   -- other-extensions:
