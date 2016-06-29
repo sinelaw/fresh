@@ -337,6 +337,31 @@ unresolveQual (QualType ps t) = QualType (map unresolvePred ps) (unresolve t)
 
 ----------------------------------------------------------------------
 
+data FlatTy t
+    = FlatTyAp (FlatTy t) (FlatTy t)
+    | FlatTyLeaf t
+
+flattenTyAp :: (f -> Maybe (TypeAST a f)) -> f -> FlatTy f
+flattenTyAp uncon t = case uncon t of
+    Just (TyAp ap res) -> FlatTyAp (flattenTyAp uncon ap) (flattenTyAp uncon res)
+    _ -> FlatTyLeaf t
+
+flattenSTyAp :: SType s -> FlatTy (SType s)
+flattenSTyAp = flattenTyAp unSType
+    where
+        unSType (SType (TyAST t)) = Just t
+        unSType _                 = Nothing
+
+unFlattenTy :: (TypeAST g t -> t) -> FlatTy t -> t
+unFlattenTy con (FlatTyAp f1 f2) = con (TyAp (unFlattenTy con f1) (unFlattenTy con f2))
+unFlattenTy _   (FlatTyLeaf t) = t
+
+unFlattenSTy :: FlatTy (SType s) -> SType s
+unFlattenSTy = unFlattenTy (SType . TyAST)
+
+
+----------------------------------------------------------------------
+
 data TypeError
     = WrappedError TypeError TypeError
     | ResolveError String

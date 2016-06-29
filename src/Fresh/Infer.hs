@@ -168,18 +168,6 @@ instantiateAnnot (ETypeAsc q) = callFrame "instantiateAnnot" $ do
 --             return . SType . TyAST $ TyGen freshGVs tscheme''
 --         _ -> fmap (SType . TyAST) . sequenceA . bimapTypeAST (const LevelAny) id $ fmap instantiateAnnot' ascType
 
-data FlatTy t
-    = FlatTyAp (FlatTy t) (FlatTy t)
-    | FlatTyLeaf t
-
-flattenTyAp :: SType s -> FlatTy (SType s)
-flattenTyAp (SType (TyAST (TyAp ap res))) = FlatTyAp (flattenTyAp ap) (flattenTyAp res)
-flattenTyAp t = FlatTyLeaf t
-
-unFlattenTy :: FlatTy (SType s) -> SType s
-unFlattenTy (FlatTyLeaf t) = t
-unFlattenTy (FlatTyAp f1 f2) = SType (TyAST (TyAp (unFlattenTy f1) (unFlattenTy f2)))
-
 matchFun :: SType s -> Infer s (SType s, SType s)
 matchFun t = do
     QualType ps t' <- instantiate t
@@ -188,10 +176,10 @@ matchFun t = do
 
 matchFun' :: SType s -> Infer s (SType s, SType s)
 matchFun' t@(SType TyAST{})
-    | (FlatTyAp (FlatTyAp cf fArg) fRes) <- flattenTyAp t
-    , SType (TyAST (TyCon c)) <- unFlattenTy cf
+    | (FlatTyAp (FlatTyAp cf fArg) fRes) <- flattenSTyAp t
+    , SType (TyAST (TyCon c)) <- unFlattenSTy cf
     , c == conFunc
-    = return (unFlattenTy fArg, unFlattenTy fRes)
+    = return (unFlattenSTy fArg, unFlattenSTy fRes)
     | otherwise = do
       pt <- purify t
       throwError $ ExpectedFunction (show $ pretty pt)
