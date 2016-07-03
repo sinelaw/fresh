@@ -4,3 +4,4 @@ dist/
 *.i_hi
 *.i_o
 .stack-work/
+.dir-locals.el
