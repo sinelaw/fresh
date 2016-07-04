@@ -130,7 +130,7 @@ infer r (EAsc a asc (ELet a' var edef expr)) = do
 -- TODO: Propagate into EApp
 infer r (EAsc a asc expr) = do
     ascQ <- instantiateAnnot asc
-    (expr', exprQ) <- r (EApp a (EALam a dummy asc (EVar a dummy)) expr)
+    (EApp _ _ expr', exprQ) <- r (EApp a (EALam a dummy asc (EVar a dummy)) expr)
     return (EAsc (a, ascQ) asc expr', ascQ)
     where
         dummy = EVarName "_dummy_x_"
