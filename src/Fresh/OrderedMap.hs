@@ -36,9 +36,16 @@ member :: Ord k => k -> OrderedMap k a -> Bool
 member x (OrderedMap _ ss) = x `Map.member` ss
 
 insert :: Ord k => k -> a -> OrderedMap k a -> OrderedMap k a
-insert k x os@(OrderedMap xs ss) = if k `Map.member` ss
-                                   then os
-                                   else OrderedMap ((k,x):xs) (Map.insert k x ss)
+insert k x os@(OrderedMap kxs ss) =
+    if k `Map.member` ss
+    then os
+    else OrderedMap ((k,x):kxs) (Map.insert k x ss)
+
+delete :: Ord k => k -> OrderedMap k a -> OrderedMap k a
+delete k os@(OrderedMap kxs ss) =
+    if not (k `Map.member` ss)
+    then os
+    else OrderedMap (filter ((/= k) . fst) kxs) (Map.delete k ss)
 
 fromList :: Ord k => [(k, a)] -> OrderedMap k a
 fromList = foldr (uncurry insert) empty
@@ -59,9 +66,13 @@ intersection (OrderedMap xs sxs) (OrderedMap _ sys) =
     OrderedMap (filter (\(k,_) -> k `Map.member` is) xs) is
     where is = sxs `Map.intersection` sys
 
--- concatUnion :: Ord k => OrderedMap k a -> OrderedMap k a -> OrderedMap k a
--- concatUnion = foldr2 insert
+-- left-biased: if two keys are the same, picks the value from the first map
+concatUnion :: Ord k => OrderedMap k a -> OrderedMap k a -> OrderedMap k a
+concatUnion o1 o2 = fromList (toList o1 ++ toList o2) -- TODO faster
 
--- concatUnions :: Ord k => [OrderedMap k a] -> OrderedMap k a
--- concatUnions [] = empty
--- concatUnions (o:os) = foldr concatUnion o os
+-- left-biased: if two mapped keys are the same, picks the value at the first
+mapKeys :: Ord k2 => (k1 -> k2) -> OrderedMap k1 a -> OrderedMap k2 a
+mapKeys f = fromList . map (\(k,x) -> (f k, x)) . toList
+
+mapWithKey :: (k -> a -> b) -> OrderedMap k a -> OrderedMap k b
+mapWithKey f (OrderedMap kxs ss) = OrderedMap (map (\(k,x) -> (k, f k x)) kxs) (Map.mapWithKey f ss)
