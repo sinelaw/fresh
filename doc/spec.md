@@ -50,3 +50,4 @@ errorHandler err =
         x -> customHandler x -- The function 'customHandler' must accept all other constructors not handled here.
 ```
 
+# Example
