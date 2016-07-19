@@ -164,18 +164,13 @@ fromFlatTy (Fix (TyGenVar{}), _) = error "Can't convert TyGenVar!"
 fromFlatTy (Fix (TyComp{}), _)   = error "Unadorned TyComp after flattenning!"
 
 fromFlatTy t@(Fix tf, (arg:rest))
-    | tf == tyFunc = gType $ GTFunction () (uncurry funcType $ go arg rest)
+    | tf == tyFunc = gType $ GTFunction () (funcType $ go rest)
     where
-        funcType args res = GFuncType () (OrderedMap.fromList
-                                          $ zip (map (GName . ('x':) . show) [0..])
-                                          $ map fromType args)
-                            (fromType res)
-        go x [y] = ([x], y)
-        go x (Fix tf':y:ys)
-            | tf' == tyFunc =
-                  let (args', res) = go y ys
-                  in (x:args', res)
-        go _ _ = error $ "Can't uncurry: " ++ (show $ pretty t)
+        funcType res = GFuncType () (OrderedMap.fromList [("x", fromType arg)]) res
+        go [y] = fromType y
+        go (Fix tf':y:ys)
+            | tf' == tyFunc = fromFlatTy (Fix tf', y:ys)
+        go _ = error $ "Can't uncurry: " ++ (show $ pretty t)
 
 fromFlatTy (Fix tf, [Fix (TyComp c)])
     | tf == tyRec  = gType $ GTStruct () (OrderedMap.fromList $ fromComposite c)
@@ -273,11 +268,12 @@ mkClosure closureArgs funcName = do
               [("closure", gType $ GTNamed () closureTypeName)
               ,("func", gType $ GTNamed () $ GName funcName)]
     putTypeDecl (GTypeDecl () wrapperType wrapperTypeName)
-    return $ (closureTypeName, GERowLit () wrapperTypeName
-        $ OrderedMap.fromList
-        $ [ ("closure", GERowLit () closureTypeName closure)
-          , ("func"   , GELValue () (GLVarRead () $ GName funcName))
-          ])
+    return $ ( closureTypeName
+             , GERowLit () wrapperTypeName
+               $ OrderedMap.fromList
+               $ [ ("closure", GERowLit () closureTypeName closure)
+                 , ("func"   , GELValue () (GLVarRead () $ GName funcName))
+                 ])
 generateFun :: String -> Type -> EVarName
             -> Expr Type
             -> Generate (GExpr () GTy)
