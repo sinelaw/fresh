@@ -28,6 +28,8 @@
 9. mutable vars vs. let bindings: var, val, let, mut, ?
 10. uncrapify 'static'
 11. shortcuts for defining interfaces using existing function names
+12. typeclass vs. contract (or other name)
+13. mempty of Monoid = by pointer or by value?
 
 Answers:
 
