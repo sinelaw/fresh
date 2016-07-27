@@ -22,7 +22,7 @@ api SLL {
 // impl SLL.Item by Foo {
 // }
 
-typedef (SLL Int) SLLInt;
+typedef (SLL Int) Bah;
 
 struct SLL t {
     t *head;
@@ -51,7 +51,7 @@ void sll_push(SLL t *sll, t *item) where t of SLLItem
 
 t *sll_pop(SLL t *sll) where t of SLLItem
 {
-    SLLItem<T> *const res = sll->head;
+    t *const res = sll->head;
     sll->head = res == NULL ? NULL : sll_get_next(res);
     if (res) sll->count--;
     return res;
