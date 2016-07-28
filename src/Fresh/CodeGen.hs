@@ -93,6 +93,7 @@ data GStmt a t
     | GSBlock a [GStmt a t]
     | GSScope a (GScope a t)
     | GSIf a (GExpr a t) (GStmt a t) (GStmt a t)
+    | GSWhile a (GExpr a t) (GStmt a t)
     | GSReturn a (GExpr a t)
     deriving (Show, Eq, Functor, Foldable, Traversable)
 
