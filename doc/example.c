@@ -14,7 +14,11 @@
 /* data constructors = camel case (Just, Nothing) <-- or maybe lower case? */
 /* types = capitalize (camel case) UInt16 */
 /* type variables = lowercase */
-
+/* import:
+   import DLL;
+   import from DLL (init, bla, ble);
+   void DLL.init( ) { .. implementation .. }
+*/
 /* Questions:
 1. Const vs. non-const vs. pointers
 2. for loops / foreach
@@ -30,6 +34,25 @@
 11. shortcuts for defining interfaces using existing function names
 12. typeclass vs. contract (or other name)
 13. mempty of Monoid = by pointer or by value?
+14. semicolon after every } or not?
+15. union/struct: can contain inline type declarations but value must be named.
+    union Maybe t {
+        Nothing,
+        Just { t value };
+    }
+
+    struct Oid {
+        UniqueId id;
+        union Type { File, Dir } type;
+    }
+
+
+    union List t {
+        Nil,
+        Cons { t head; List *next }
+    }
+
+
 
 Answers:
 
@@ -73,7 +96,7 @@ Maybe(Tuple(Maybe(t), u)) fromMaybe(Maybe(t) m, t _default, u second) {
     case Nothing: return _default;
     }
 }
-Union { Just(t), Nothing }
+union { Just(t), Nothing }
 
 Maybe(t) Just(t) { .. }
 

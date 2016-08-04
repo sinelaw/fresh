@@ -18,13 +18,39 @@ api SLL {
     //     t *append(t *, t*);
     // }
 };
+/* impl SLL { */
+/* }; */
 
-// impl SLL.Item by Foo {
-// }
+/* api DLL { */
+/* }; */
+/* impl DLL { */
+/* }; */
+
+/* #include "sll<Foo>.fc" */
+
+/* // python-style imports */
+/* import DLL; */
+/* import from DLL (init, bla, ble); */
+/* // impl SLL.Item by Foo { */
+/* // } */
+
+/* impl SLL; */
+/* ... */
+
+/* impl SLL { */
+/*    ... */
+/* } */
+
+/* DLL. */
+
+/* void bla(); */
+
+/* void SLL.init(); { */
+/* } */
 
 typedef (SLL Int) Bah;
 
-struct SLL t {
+type SLL t {
     t *head;
     uint32_t count;
 };

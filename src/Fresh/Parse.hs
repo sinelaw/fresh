@@ -10,7 +10,6 @@ import qualified Text.Megaparsec.Lexer as L
 
 import Fresh.CodeGen
 
-
 sc :: Parser ()
 sc = L.space (void spaceChar) lineCmnt blockCmnt
   where lineCmnt  = L.skipLineComment "//"
@@ -43,19 +42,38 @@ rword w = string w *> notFollowedBy alphaNumChar *> sc
 rws :: [String] -- list of reserved words
 rws = ["if","then","else","while"]
 
-identifier :: Parser String
-identifier = lexeme (p >>= check)
+identifier :: Parser Char -> Parser String
+identifier first' = lexeme (p >>= check)
   where
-    p       = (:) <$> letterChar <*> many alphaNumChar
+    p       = (:) <$> first' <*> many alphaNumChar
     check x = if x `elem` rws
                 then fail $ "keyword " ++ show x ++ " cannot be an identifier"
                 else return x
 
+lident, uident :: Parser String
+lident = identifier lowerChar
+uident = identifier upperChar
+
 --whileParser :: Parser GStmt
 -- whileParser = sc *> stmt <* eof
 
+-- types
+-- data ParsedType
+--     = ParsedTypeName String
+--     | ParsedTypeVar String
+--     | ParsedTypeAp ParsedType ParsedType
+--     deriving (Show)
+
+-- typ' = (ParsedTypeName <$> uident)
+--     <|> (ParsedTypeVar <$> lident)
+--     <|> (ParsedTypeAp <$> typ' <*> typ')
+
+-- typ = foldr ParsedTypeAp (typ' <* eof
+
+-- statements / expressions
+
 instance Monoid (GStmt () t) where
-    mempty                              = GSBlock () mempty
+    mempty = GSBlock () mempty
     (GSBlock () xs) `mappend` (GSBlock () ys) = GSBlock () (xs  `mappend` ys)
     (GSBlock () xs) `mappend` y               = GSBlock () (xs  `mappend` [y])
     x               `mappend` (GSBlock () ys) = GSBlock () ([x] `mappend` ys)
@@ -70,7 +88,7 @@ stmt'   = ifStmt <|> whileStmt <|> assignStmt <|> scopeStmt
 ifStmt, whileStmt, assignStmt, scopeStmt :: Parser (GStmt () t)
 ifStmt     = GSIf ()               <$> (rword    "if" *> expr) <*> stmt' <*> (rword "else" *> stmt')
 whileStmt  = GSWhile ()            <$> (rword "while" *> expr) <*> stmt'
-assignStmt = GSVarWrite () . GName <$> identifier <* symbol "=" <*> expr
+assignStmt = GSVarWrite () . GName <$> lident <* symbol "=" <*> expr
 scopeStmt  = emptyScope            <$> braces stmt
     where emptyScope = GSScope () . GScope () []
 
@@ -97,6 +115,6 @@ aOperators =
 
 aTerm :: Parser (GExpr () t)
 aTerm = parens expr
-     <|> GELValue () . GLVarRead () . GName <$> identifier
+     <|> GELValue () . GLVarRead () . GName <$> lident
      <|> GELit () . GLitInt . fromInteger <$> integer
 
