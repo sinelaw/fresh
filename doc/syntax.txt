@@ -1,0 +1,32 @@
+<camel-case>                ::= [A-Z][A-Za-z0-9]*
+<snake-case>                ::= [a-z][A-Za-z0-9_]*
+<type-name>                 ::= <camel-case>
+<contract-name>             ::= <camel-case>
+<variable-name>             ::= <snake-case>
+<function-name>             ::= <snake-case>
+<type-var-name>             ::= <snake-case>
+
+<type-var-name-list>        ::= <type-var-name> [ , <type-var-name> ]*
+
+<type>                      ::=
+
+<where-limit>               ::= <type-var-name> of <type>
+<where-limit-list>          ::= <where-limit> [ , <where-limit> ]*
+<function-decl>             ::= <type> <function-name> ( <function-param-list> ) [ where <where-limit-list> ]
+
+<contract-decl>             ::= contract <contract-name> [ with <type-var-name-list> ] { <contract-decl-content> }
+<contract-decl-content>     ::= <function-decl>*
+
+<api-decl>                  ::= api { <api-decl-content> }
+<api-decl-content>          ::= <type-decl>
+                              | <contract-decl>
+                              | <function-decl>
+                              | <api-decl-content>
+
+<main>                      ::= <api-decl>
+                              | <api-impl>
+                              | <type-decl>
+                              | <type-definition>
+                              | <function-decl>
+                              | <function-defition>
+                              | <contract-impl>
