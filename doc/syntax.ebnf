@@ -1,40 +1,97 @@
-# https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_Form
 digit                     = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
-lower-case-letter         = "a" | ... ;
-upper-case-letter         = "A" | ... ;
-letter                    = upper-case-letter | lower-case-letter ;
-camel-case                = upper-case-letter, { letter | digit } ;
-snake-case                = lower-case-letter, { lower-case-letter | digit | "_" } ;
-type-name                 = camel-case ;
-contract-name             = camel-case ;
-variable-name             = snake-case ;
-function-name             = snake-case ;
-type-var-name             = snake-case ;
-api-name                  = camel-case ;
-api-impl-name             = camel-case ;
+lower_case_letter         = "a" | "..." ;
+upper_case_letter         = "A" | "..." ;
+letter                    = upper_case_letter | lower_case_letter ;
+camel_case                = upper_case_letter, { letter | digit } ;
+snake_case                = lower_case_letter, { lower_case_letter | digit | "_" } ;
+type_name                 = camel_case ;
+contract_name             = camel_case ;
+variable_name             = snake_case ;
+function_name             = snake_case ;
+type_var_name             = snake_case ;
+api_name                  = camel_case ;
+api_impl_name             = camel_case ;
+data_constr_name          = camel_case ;
+field_name                = snake_case ;
+argument_name             = snake_case ;
 
-type-var-name-list        = type-var-name { ",", type-var-name } ;
+type_var_name_list        = type_var_name { ",", type_var_name } ;
 
-type                      = type-name | type-var-name;
+type                      = type_name | type_var_name;
 
-where-limit               = type-var-name, "of", type ;
-where-limit-list          = where-limit { ",", where-limit } ;
-function-decl             = type, function-name, "(", function-decl-param-list, ")", [ "where", where-limit-list ], ";" ;
+where_limit               = type_var_name, "of", type ;
+where_limit_list          = where_limit { ",", where_limit } ;
 
-contract-def              = "contract", contract-name, [ "with", type-var-name-list ], "{", contract-def-content, "}" ;
-contract-def-content      = function-decl, "{", function-decl, "}" ;
+function_decl             = type, function_name, "(", [ function_decl_param_list ], ")", [ "where", where_limit_list ], ";" ;
+function_def              = type, function_name, "(", [ function_def_param_list  ], ")", [ "where", where_limit_list ], "{", function_body, "}" ;
 
-type-decl                 = "type", type-name, { type-var-name } ;
+function_decl_param_list  = type, [ argument_name ], { ",", type, [ argument_name ] } ;
+function_def_param_list   = type,   argument_name  , { ",", type,   argument_name   } ;
 
-api-decl                  = "api", "{", { api-decl-content }, "}" ;
-api-decl-content          = type-decl
-                          | contract-def
-                          | function-decl ;
+function_body             = { statement } ;
+statement                 = block_statement
+                          | if_statement
+                          | while_statement
+                          | do_while_statement
+                          | for_statement
+                          | let_statement
+                          | mut_decl_statement
+                          | mut_assignment_statement
+                          | return_statement ;
 
-api-impl-content          = type-def
-                          | function-def
-                          | contract-impl ;
 
-api-impl                  = "api-impl", api-name, "by", api-impl-name, "{", { api-impl-content }, "}" ;
 
-file                      = { api-decl | api-impl } ;
+contract_def              = "contract", contract_name, [ "with", type_var_name_list ], "{", contract_def_content, "}" ;
+contract_def_content      = function_decl, "{", function_decl, "}" ;
+
+contract_impl             = "impl", contract_name, "by", type, "{", { function_def }, "}" ;
+
+type_decl                 = "type", type_name, { type_var_name } ;
+type_def                  = union_type | struct_type ;
+
+union_type                = "union", type_name, { type_var_name }, "{", [ union_body ], "}" ;
+union_body                = union_item, { ",", union_item } ;
+union_item                = data_constr_name , [ "{", [ struct_body ], "}" ] ;
+
+struct_type               = "struct", type_name, { type_var_name }, "{", [ struct body ], "}" ;
+struct_body               = struct_item, { ";", struct_item } ;
+struct_item               = type, field_name ;
+
+api_decl                  = "api", "{", { api_decl_content }, "}" ;
+api_decl_content          = type_decl
+                          | contract_def
+                          | function_decl ;
+
+api_impl_content          = type_def
+                          | function_def
+                          | contract_impl ;
+
+api_impl                  = "api_impl", api_name, "by", api_impl_name, "{", { api_impl_content }, "}" ;
+
+file                      = { api_decl | api_impl } ;
+
+block_statement           = "{", { statement }, "}" ;
+if_statement              = "if", "(", expr, ")", block_statement, [ "else", block_statement ] ;
+while_statement           = "while", "(", expr, ")", block_statement ;
+do_while_statement        = "do", block_statement, "while", "(", expr, ")", ";" ;
+for_statement             = "for", "(", for_variable_defs, ";", expr, ";", statement ")", block_statement ;
+let_statement             = "let", variable_name, "=", expr, { ",", variable_name, "=", expr }, ";" ;
+mut_decl_statement        = "mut", mut_decl_item, { ",", mut_decl_item }, ";" ;
+mut_decl_item             = variable_name, [ "=", expr ] ;
+mut_assignment_statement  = variable_name, "=", expr, ";" ;
+return_statement          = "return", expr, ";" ;
+
+value                     = literal | variable_name | data_constr_appl | function_call ;
+literal                   = int_literal | string_literal | char_literal ;
+int_literal               = [ "+" | "-" ], digit, { digit } ;
+string_literal            = "\"", { character }, "\"" ;
+char_literal              = "'", character, "'" ;
+
+data_constr_appl          = data_constr_name, [ "{", [ expr, { ",", expr } ], "}" ] ;
+function_call             = function_name, "(", [ expr, { ",", expr } ], ")" ;
+
+sum_expr                  = mul_expr, { ( "+" | "-" ), mul_expr } ;
+mul_expr                  = par_expr, { ( "*" | "/" ), par_expr } ;
+par_expr                  = value | ( "(", expr, ")" ) ;
+
+expr                      = sum_expr ;
