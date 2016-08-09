@@ -4,34 +4,37 @@ lower-case-letter         = "a" | ... ;
 upper-case-letter         = "A" | ... ;
 letter                    = upper-case-letter | lower-case-letter ;
 camel-case                = upper-case-letter, { letter | digit } ;
-snake-case                = lower-case-letter, { letter | digit | "_" } ;
+snake-case                = lower-case-letter, { lower-case-letter | digit | "_" } ;
 type-name                 = camel-case ;
 contract-name             = camel-case ;
 variable-name             = snake-case ;
 function-name             = snake-case ;
 type-var-name             = snake-case ;
+api-name                  = camel-case ;
+api-impl-name             = camel-case ;
 
 type-var-name-list        = type-var-name { ",", type-var-name } ;
 
-type                      =
+type                      = type-name | type-var-name;
 
 where-limit               = type-var-name, "of", type ;
 where-limit-list          = where-limit { ",", where-limit } ;
-function-decl             = "type", function-name, "(", function-param-list, ")", [ "where", where-limit-list ], ";" ;
+function-decl             = type, function-name, "(", function-decl-param-list, ")", [ "where", where-limit-list ], ";" ;
 
-contract-decl             = "contract", contract-name, [ "with", type-var-name-list ], "{", contract-decl-content, "}" ;
-contract-decl-content     = function-decl, "{", function-decl, "}" ;
+contract-def              = "contract", contract-name, [ "with", type-var-name-list ], "{", contract-def-content, "}" ;
+contract-def-content      = function-decl, "{", function-decl, "}" ;
 
-api-decl                  = "api", "{", api-decl-content, "}" ;
+type-decl                 = "type", type-name, { type-var-name } ;
+
+api-decl                  = "api", "{", { api-decl-content }, "}" ;
 api-decl-content          = type-decl
-                          | contract-decl
-                          | function-decl
-                          | api-decl-content ;
+                          | contract-def
+                          | function-decl ;
 
-main                      = api-decl
-                          | api-impl
-                          | type-decl
-                          | type-definition
-                          | function-decl
-                          | function-defition
+api-impl-content          = type-def
+                          | function-def
                           | contract-impl ;
+
+api-impl                  = "api-impl", api-name, "by", api-impl-name, "{", { api-impl-content }, "}" ;
+
+file                      = { api-decl | api-impl } ;
