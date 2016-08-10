@@ -8,6 +8,9 @@ import Text.Megaparsec
 import Text.Megaparsec.String -- input stream is of type ‘String’
 import qualified Text.Megaparsec.Lexer as L
 
+import System.IO (readFile)
+import System.Environment (getArgs)
+
 sc :: Parser ()
 sc = L.space (void spaceChar) lineCmnt blockCmnt
     where
@@ -39,23 +42,26 @@ data Grammar = Grammar [Rule]
 data Rule = Rule String RHS
     deriving (Show)
 
+data Op = OpChoice | OpThen
+    deriving (Show)
+
 data RHS
     = RHSIdent String
     | RHSTerm Terminal
     | RHSZeroOrOne RHS
     | RHSZeroOrMore RHS
-    | RHSOr RHS RHS
-    | RHSThen RHS RHS
+    | RHSBinary Op [RHS]
     deriving (Show)
 
 data Terminal = Terminal String
     deriving (Show)
 
 identifier :: Parser [Char]
-identifier = lexeme $ (:) <$> letterChar <*> many (letterChar <|> digitChar <|> char '_')
+identifier = label "identifier" $ lexeme $
+    (:) <$> letterChar <*> many (letterChar <|> digitChar <|> char '_')
 
 terminal :: Parser Terminal
-terminal = lexeme $
+terminal = label "terminal" $ lexeme $
     Terminal <$> ( char '\'' *> some (character '\'') <* char '\''
                    <|> char '"' *> some (character '"') <* char '"'
                  )
@@ -63,17 +69,28 @@ terminal = lexeme $
 lhs :: Parser [Char]
 lhs = identifier
 
+rhsPair :: Parser RHS
+rhsPair = do
+    r <- rhs
+    op <- (pure OpChoice <* symbol "|") <|> (pure OpThen <* symbol ",")
+    let opParser =
+            case op of
+                OpChoice -> symbol "|"
+                OpThen -> symbol ","
+    RHSBinary op . (r:) <$> ((:) <$> rhs <*> many (opParser *> rhs))
+
 rhs :: Parser RHS
-rhs = RHSIdent <$> identifier
-     <|> RHSTerm <$> terminal
-     <|> RHSZeroOrOne <$> ( symbol "[" *> rhs <* symbol "]" )
-     <|> RHSZeroOrMore <$> ( symbol "{" *> rhs <* symbol "}" )
-     <|> ( symbol "(" *> rhs <* symbol ")" )
-     <|> RHSOr <$> rhs <* symbol "|" <*> rhs
-     <|> RHSThen <$> rhs <* symbol "," <*> rhs
+rhs = RHSZeroOrOne <$> ( symbol "[" *> rhs <* symbol "]" )
+      <|> RHSZeroOrMore <$> ( symbol "{" *> rhs <* symbol "}" )
+      <|> RHSTerm <$> terminal
+      <|> RHSIdent <$> identifier
+      <|> ( symbol "(" *> (rhsPair <?> "expression") <* symbol ")" )
 
 rule :: Parser Rule
 rule = Rule <$> lhs <* symbol "=" <*> rhs <* symbol ";"
 
 grammar :: Parser [Rule]
-grammar = many rule
+grammar = many rule <* eof
+
+main :: IO ()
+main = (head <$> getArgs) >>= readFile >>= parseTest grammar
