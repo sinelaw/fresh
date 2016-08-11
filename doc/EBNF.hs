@@ -8,7 +8,7 @@ import Control.Monad (void)
 import Text.Megaparsec
 import Text.Megaparsec.String -- input stream is of type ‘String’
 import qualified Text.Megaparsec.Lexer as L
-
+import qualified Data.Char
 import System.Environment (getArgs)
 
 import Text.PrettyPrint.ANSI.Leijen hiding ((<$>), char, empty)
@@ -116,6 +116,39 @@ instance Pretty Terminal where
 
 ------------------------------------------------------------------------
 
+newtype CodeDoc = CodeDoc Doc
+
+class Code a where
+    code :: a -> Doc
+
+snake :: String -> String
+snake []         = []
+snake ('_':x:xs) = Data.Char.toUpper x : snake xs
+snake (  x:xs)   = x : snake xs
+
+camel :: String -> String
+camel []     = []
+camel (x:xs) = Data.Char.toUpper x : snake xs
+
+instance Code Grammar where
+    code (Grammar rules) = vsep (map code rules)
+
+instance Code Rule where
+    code (Rule l r) = pretty (snake l) <+> "=" <+> code r
+
+instance Code RHS where
+    code (RHSIdent i) = pretty $ snake i
+    code (RHSTerm  t) = code t
+    code (RHSZeroOrOne  r) = parens $ "optional" <+> code r
+    code (RHSZeroOrMore r) = parens $ "many" <+> code r
+    code (RHSChoice r rs) = align . parens . vsep $ code r : (map (\r' -> "<|>" <+> code r') rs)
+    code (RHSSeq    r rs) = align . parens . hsep $ code r : (map (\r' -> "<$>" <+> code r') rs)
+
+instance Code Terminal where
+    code (Terminal s) = "\"" <> pretty s <> "\""
+
+------------------------------------------------------------------------
+
 main :: IO ()
 main = do
     fileName <- head <$> getArgs
@@ -124,4 +157,8 @@ main = do
         Left e -> putStrLn (show e)
         Right g -> do
             print g
+            putStrLn "----------------------------------------------------------------------"
             putStrLn $ show $ pretty g
+            putStrLn "----------------------------------------------------------------------"
+            putStrLn $ show $ code g
+            
