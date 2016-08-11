@@ -16,13 +16,18 @@ terminal = ( ( "'" , character , { character } , "'" )
            | ( "\"" , character , { character } , "\"" ) );
 
 lhs = identifier ;
-rhs = ( identifier
-      | terminal
-      | ( "[" , rhs , "]" )
-      | ( "{" , rhs , "}" )
-      | ( "(" , rhs , ")" )
-      | ( rhs , "|" , rhs )
-      | ( rhs , "," , rhs ) );
+
+rhsSingle = identifier
+          | terminal
+          | ( "[" , rhs , "]" )
+          | ( "{" , rhs , "}" )
+          | ( "(" , rhs , ")" ) ;
+
+rhsChoice = rhsSeq , { "|", rhsSeq    } ;
+rhsSeq = rhsSingle , { ",", rhsSingle } ;
+
+rhs = rhsChoice ;
 
 rule = ( lhs , "=" , rhs , ";" ) ;
+
 grammar = { rule } ;
