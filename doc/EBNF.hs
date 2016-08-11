@@ -3,7 +3,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module EBNF where
 
-import Data.List (intersperse)
 import Control.Applicative (empty)
 import Control.Monad (void)
 import Text.Megaparsec
@@ -31,15 +30,6 @@ eparens   = between (symbol "(") (symbol ")")
 ebraces   = between (symbol "{") (symbol "}")
 ebrackets = between (symbol "[") (symbol "]")
 
-semi :: Parser String
-semi = symbol ";"
-
-symb :: Parser Char
-symb = foldr (<|>) empty $ map char "[]{}()<>'=|.,;"
-
-character :: Char -> Parser Char
-character q = (char '\\' *> char q) <|> letterChar <|> digitChar <|> symb <|> char '_'
-
 data Grammar = Grammar [Rule]
     deriving (Show)
 
@@ -58,26 +48,16 @@ data RHS
 data Terminal = Terminal String
     deriving (Show)
 
-mkList c r [] = r
+-- helper for not building RHSChoice / RHSSeq that have just one element
+mkList :: (b -> [a] -> b) -> b -> [a] -> b
+mkList _ r [] = r
 mkList c r rs = c r rs
 
-instance Pretty Grammar where
-    pretty (Grammar rules) = vsep (map pretty rules)
+symb :: Parser Char
+symb = foldr (<|>) empty $ map char "[]{}()<>'=|.,;"
 
-instance Pretty Rule where
-    pretty (Rule l r) = pretty l <+> "=" <+> pretty r <+> ";"
-
-instance Pretty RHS where
-    pretty (RHSIdent i) = pretty i
-    pretty (RHSTerm  t) = pretty t
-    pretty (RHSZeroOrOne  r) = "[" <+> pretty r <+> "]"
-    pretty (RHSZeroOrMore r) = "{" <+> pretty r <+> "}"
-    pretty (RHSChoice r rs) = align . parens . vsep $ pretty r : (map (\r' -> "|" <+> pretty r') rs)
-    pretty (RHSSeq    r rs) = align . parens . hsep $ pretty r : (map (\r' -> "," <+> pretty r') rs)
-
-instance Pretty Terminal where
-    pretty (Terminal s) = "\"" <> pretty s <> "\""
-
+character :: Char -> Parser Char
+character q = (char '\\' *> char q) <|> letterChar <|> digitChar <|> symb <|> char '_'
 
 identifier :: Parser [Char]
 identifier = label "identifier" $ lexeme $
@@ -114,6 +94,27 @@ rule = Rule <$> lhs <* symbol "=" <*> rhs <* symbol ";"
 grammar :: Parser Grammar
 grammar = Grammar <$> many rule <* eof
 
+
+-- Pretty printing instances
+
+instance Pretty Grammar where
+    pretty (Grammar rules) = vsep (map pretty rules)
+
+instance Pretty Rule where
+    pretty (Rule l r) = pretty l <+> "=" <+> pretty r <+> ";"
+
+instance Pretty RHS where
+    pretty (RHSIdent i) = pretty i
+    pretty (RHSTerm  t) = pretty t
+    pretty (RHSZeroOrOne  r) = "[" <+> pretty r <+> "]"
+    pretty (RHSZeroOrMore r) = "{" <+> pretty r <+> "}"
+    pretty (RHSChoice r rs) = align . parens . vsep $ pretty r : (map (\r' -> "|" <+> pretty r') rs)
+    pretty (RHSSeq    r rs) = align . parens . hsep $ pretty r : (map (\r' -> "," <+> pretty r') rs)
+
+instance Pretty Terminal where
+    pretty (Terminal s) = "\"" <> pretty s <> "\""
+
+------------------------------------------------------------------------
 
 main :: IO ()
 main = do
