@@ -145,7 +145,7 @@ instance Code RHS where
     code (RHSSeq    r rs) = align . parens . hsep $ code r : (map (\r' -> "<$>" <+> code r') rs)
 
 instance Code Terminal where
-    code (Terminal s) = "\"" <> pretty s <> "\""
+    code (Terminal s) = pretty $ show s
 
 ------------------------------------------------------------------------
 
