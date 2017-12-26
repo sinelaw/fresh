@@ -106,6 +106,7 @@ intBuiltIn
         , intDiv
         ]
     , moduleClasses = Map.empty
+    , moduleInstances = []
     }
 ----------------------------------------------------------------------
 
@@ -123,6 +124,7 @@ boolBuiltIn
         , boolBinOp "||"
         ]
     , moduleClasses = Map.empty
+    , moduleInstances = []
     }
 
 ----------------------------------------------------------------------

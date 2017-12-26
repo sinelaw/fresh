@@ -75,10 +75,11 @@ instance (LevelPretty g, HasKind t, Pretty t) => Pretty (TypeAST g t) where
 instance Pretty EVarName where
     pretty (EVarName s) = text s
 
-instance Pretty Lit where
+instance Pretty (Lit a) where
     pretty (LitNum x)     = pretty x
     pretty (LitString x)  = dquotes $ pretty x
     pretty (LitBool x)    = pretty x
+    pretty (LitStruct fs) = "{" <+> (vsep $ map (\(fname, fexpr) -> pretty fname <+> "=" <+> pretty fexpr) fs) <+> "}"
 
 instance Pretty ETypeAsc where
     pretty (ETypeAsc t) = pretty t
@@ -92,6 +93,7 @@ instance Pretty (Expr a) where
     pretty (ELet       _a varName def expr) = "let" <+> pretty varName <+> "=" <+> pretty def <+> "in" <+> pretty expr
     pretty (EAsc       _a t e)          = parens $ pretty e <+> "::" <+> pretty t
     pretty (EGetField  _a e name)       = pretty e <> "#" <> pretty name
+    pretty (EBuiltIn   _a name t)       = parens $ pretty name <+> "::" <+> pretty t
 
 instance Pretty (f (Fix f)) => Pretty (Fix f) where
     pretty (Fix f) = pretty f

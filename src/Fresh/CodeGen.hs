@@ -22,10 +22,11 @@ import qualified Data.Map as Map
 
 
 
-generateLit :: Lit -> Doc
+generateLit :: Lit a -> Doc
 generateLit (LitNum d) = pretty $ show d
 generateLit (LitString s) = pretty $ show s
 generateLit (LitBool b) = pretty . text $ if b then "true" else "false"
+generateLit (LitStruct []) = pretty . text $ "{}"
 
 funcArgRes :: QualType Type
            -> Either TypeError (QualType Type, QualType Type)
@@ -153,4 +154,3 @@ generate (EAsc t asc body) = generate body
 generate (EGetField t row (CompositeLabelName field)) =
     generate row >>= (\gr -> return $ "(" <> gr <> ")" <> "." <> pretty field)
 generate (EBuiltIn a (EVarName s) _) = return $ pretty s
-

@@ -227,6 +227,11 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
                $ var "id"
              , Right $ [] ~=> foralls [rf'] (record [("fieldName", _Number)] (Just rf) ^-> _Number))
 
+           , ( let_ "record"
+               (ELit () $ LitStruct [("fieldName", num 0)])
+               $ (var "record")
+             , Right $ [] ~=> (record [("fieldName", _Number)] Nothing))
+
            , ( EGetField () (ELet () (EVarName "r") (EApp () (EGetField () (EVar () (EVarName "r")) (CompositeLabelName "pbe")) (ELam () (EVarName "x") (EVar () (EVarName "x")))) (EVar () (EVarName "r"))) (CompositeLabelName "nid")
              , Left () ) -- occurs
 

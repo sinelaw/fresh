@@ -15,14 +15,15 @@ newtype ETypeAsc = ETypeAsc (QualType Type)
 data EVarName = EVarName String
     deriving (Generic, Eq, Ord, Show)
 
-data Lit
+data Lit a
     = LitNum Double
     | LitString String
     | LitBool Bool
-    deriving (Generic, Eq, Ord, Show)
+    | LitStruct [(CompositeLabelName, (Expr a))]
+    deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 
 data Expr a
-    = ELit a Lit
+    = ELit a (Lit a)
     | EVar a EVarName
     | ELam a EVarName (Expr a)
     | EALam a EVarName ETypeAsc (Expr a)
@@ -38,4 +39,3 @@ getAnnotation = head . Data.Foldable.toList
 
 -- type FExpr = Fix Expr
 --     deriving (Generic, Eq, Ord, Show)
-

@@ -9,7 +9,7 @@ import           Data.Functor.Identity
 import           Fresh.OrderedSet (OrderedSet)
 import qualified Fresh.OrderedSet as OrderedSet
 
-import           Control.Monad (when, forM, forM_, unless)
+import           Control.Monad (when, forM_, unless)
 import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.State (StateT(..), runStateT, evalStateT)
 import           Control.Monad.State.Class (MonadState(..), modify)
@@ -17,7 +17,7 @@ import           Control.Monad.Trans.Either (EitherT(..), runEitherT)
 import           Control.Monad.Error.Class (MonadError(..))
 
 import qualified Data.Map as Map
-import           Control.Monad.ST (runST, ST)
+import           Control.Monad.ST (runST)
 import           Data.STRef
 
 import           Fresh.Pretty (Pretty(..))
@@ -43,10 +43,29 @@ recT fs rest =
 tcon :: String -> Kind -> SType s
 tcon name k = SType (TyAST (TyCon (TCon (Id name) k)))
 
-inferLit :: Lit -> SType s
-inferLit LitNum{} = tcon "Number" Star
-inferLit LitString{} = tcon "String" Star
-inferLit LitBool{} = tcon "Bool" Star
+inferLit :: (Expr a -> Infer s (InferResult s a)) -> a -> Lit a -> Infer s (InferResult s a)
+inferLit r a LitNum{} = return (ELit (a, t) LitNum{}, t)
+    where t = emptyQual $ tcon "Number" Star
+inferLit r a LitString{} = return (ELit (a, t) LitString{}, t)
+    where t = emptyQual $ tcon "String" Star
+inferLit r a LitBool{} = return (ELit (a, t) LitBool{}, t)
+    where t = emptyQual $ tcon "Bool" Star
+inferLit r a (LitStruct []) = return (ELit (a, t) (LitStruct []), t)
+    where t = emptyQual $ recT [] Nothing
+inferLit r a (LitStruct rs) = do
+    ts <- go rs
+    let rs' = zip (map fst rs) (map fst ts)
+        preds = concat (map (qualPred . snd) ts)
+        ts' = zip (map fst rs) (map (qualType . snd) ts)
+        t = QualType preds $ (recT ts' Nothing)
+    return (ELit (a, t) (LitStruct rs'), t)
+    where
+        go [] = return []
+        go ((fname, fexpr):rs) = do
+            texpr <- r fexpr
+            trs <- go rs
+            return $ texpr:trs
+
 
 runInferError :: InferState s -> Infer s a -> Infer s (Either TypeError (a, InferState s))
 runInferError s act = lift . lift $ runEitherT $ runStateT act s
@@ -69,8 +88,7 @@ type InferResult s a = (Expr (a, QType s), QType s)
 
 infer :: Show a => (Expr a -> Infer s (InferResult s a)) -> Expr a -> Infer s (InferResult s a)
 
-infer r (ELit a lit) = return (ELit (a, t) lit, t)
-    where t = emptyQual $ inferLit lit
+infer r (ELit a lit) = inferLit r a lit
 
 infer r (EVar a var) = do
     is <- get
