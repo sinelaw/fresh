@@ -232,6 +232,26 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
                $ (var "record")
              , Right $ [] ~=> (record [("fieldName", _Number)] Nothing))
 
+           , ( let_ "record"
+               (ELit () $ LitStruct [("fieldA", num 0), ("fieldB", str_ "bla")])
+               $ (var "record")
+             , Right $ [] ~=> (record [("fieldA", _Number), ("fieldB", _String)] Nothing))
+
+           , ( let_ "record"
+               (ELit () $ LitStruct [("polyField", idFunction ~:: ([] ~=> forall b' (b ^-> b)))])
+               $ (var "record")
+             , Right $ [] ~=> (record [("polyField", forall a' $ a ^-> a)] Nothing))
+
+           , ( let_ "record"
+               (ELit () $ LitStruct [("polyField", "x" ~> var "x")])
+               $ (var "record")
+             , Right $ [] ~=> forall a' (record [("polyField", a ^-> a)] Nothing))
+
+           , ( let_ "record"
+               (ELit () $ LitStruct [("polyField", "x" ~> var "x"), ("polyField2", "x" ~> var "x")])
+               $ (var "record")
+             , Right $ [] ~=> foralls [a',b'] (record [("polyField", a ^-> a), ("polyField2", b ^-> b)] Nothing))
+
            , ( EGetField () (ELet () (EVarName "r") (EApp () (EGetField () (EVar () (EVarName "r")) (CompositeLabelName "pbe")) (ELam () (EVarName "x") (EVar () (EVarName "x")))) (EVar () (EVarName "r"))) (CompositeLabelName "nid")
              , Left () ) -- occurs
 

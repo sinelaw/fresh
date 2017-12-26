@@ -53,19 +53,18 @@ inferLit r a LitBool{} = return (ELit (a, t) LitBool{}, t)
 inferLit r a (LitStruct []) = return (ELit (a, t) (LitStruct []), t)
     where t = emptyQual $ recT [] Nothing
 inferLit r a (LitStruct rs) = do
-    ts <- go rs
-    let rs' = zip (map fst rs) (map fst ts)
-        preds = concat (map (qualPred . snd) ts)
-        ts' = zip (map fst rs) (map (qualType . snd) ts)
+    (preds, rts) <- go rs
+    let rs' = zip (map fst rs) (map fst rts)
+        ts' = zip (map fst rs) (map snd rts)
         t = QualType preds $ (recT ts' Nothing)
     return (ELit (a, t) (LitStruct rs'), t)
     where
-        go [] = return []
+        go [] = return ([], [])
         go ((fname, fexpr):rs) = do
-            texpr <- r fexpr
-            trs <- go rs
-            return $ texpr:trs
-
+            (fexpr', QualType ps texpr) <- r fexpr
+            QualType ps2 texpr' <- instantiate texpr
+            (pss, trs) <- go rs
+            return (ps++ps2++pss, (fexpr', texpr'):trs)
 
 runInferError :: InferState s -> Infer s a -> Infer s (Either TypeError (a, InferState s))
 runInferError s act = lift . lift $ runEitherT $ runStateT act s
