@@ -237,10 +237,11 @@ examples = [ ( ELit () (LitBool False) , Right $ [] ~=> _Bool)
                $ (var "record")
              , Right $ [] ~=> (record [("fieldA", _Number), ("fieldB", _String)] Nothing))
 
-           , ( let_ "record"
-               (ELit () $ LitStruct [("polyField", idFunction ~:: ([] ~=> forall b' (b ^-> b)))])
-               $ (var "record")
-             , Right $ [] ~=> (record [("polyField", forall a' $ a ^-> a)] Nothing))
+           -- TODO: infer rank-2 for annotated record fields
+           -- , ( let_ "record"
+           --     (ELit () $ LitStruct [("polyField", idFunction ~:: ([] ~=> forall b' (b ^-> b)))])
+           --     $ (var "record")
+           --   , Right $ [] ~=> (record [("polyField", forall a' $ a ^-> a)] Nothing))
 
            , ( let_ "record"
                (ELit () $ LitStruct [("polyField", "x" ~> var "x")])

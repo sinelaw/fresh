@@ -62,9 +62,9 @@ inferLit r a (LitStruct rs) = do
         go [] = return ([], [])
         go ((fname, fexpr):rs) = do
             (fexpr', QualType ps texpr) <- r fexpr
-            -- QualType ps2 texpr' <- instantiate texpr
+            QualType ps2 texpr' <- instantiate texpr
             (pss, trs) <- go rs
-            return (ps++pss, (fexpr', texpr):trs)
+            return (ps2++pss, (fexpr', texpr'):trs)
 
 runInferError :: InferState s -> Infer s a -> Infer s (Either TypeError (a, InferState s))
 runInferError s act = lift . lift $ runEitherT $ runStateT act s
