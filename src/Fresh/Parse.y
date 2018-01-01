@@ -29,13 +29,19 @@ import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
 
 %%
 
-Stmt        : Expr                          { StmtExpr $1 }
+Stmt        : Expr                              { StmtExpr $1 }
             | TEnum                             { StmtType $1 }
             | return Expr                       { StmtReturn $2 }
-            | Stmt ';' Stmt                      { StmtSeq $1 $3 }
+            | Stmt ';' Stmt                     { StmtSeq $1 $3 }
             | Stmt ';'                          { $1 }
 
-TEnum        : enum constr '{' TEnumConstrs '}' { TEnum (TypeName $2) $4 }
+TEnum        : enum constr TEnumArgs '{' TEnumConstrs '}' { TEnum (TypeName $2) $3 $5 }
+
+TEnumArgs    : '(' TEnumArgsNotEmpty ')'        { $2 }
+             | {- empty -}                      { [] }
+
+TEnumArgsNotEmpty : ident                       { [TVarName $1] }
+                  | TEnumArgsNotEmpty ',' ident { (TVarName $3) : $1 }
 
 TEnumConstrs : {- empty -}                      { [] }
              | TEnumConstrs ',' TEnumConstr     { $3 : $1 }
@@ -48,19 +54,19 @@ ConstrArg   : ident ':' constr                  { ConstrArg (VarName $1) (TypeSp
 ConstrArgs  : ConstrArg                         { [$1] }
             | ConstrArgs ',' ConstrArg          { $3 : $1 }
 
-PatternMatch  : ident ':'                    { PatternMatch (VarName $1) Nothing }
-              | '(' ident ':' constr ')'     { PatternMatch (VarName $2) (Just (ConstrName $4)) }
+PatternMatch  : ident ':'                       { PatternMatch (VarName $1) Nothing }
+              | '(' ident ':' constr ')'        { PatternMatch (VarName $2) (Just (ConstrName $4)) }
 
 SwitchCase  : PatternMatch ':' Stmt             { ($1, $3) }
 
 SwitchCases : SwitchCase                        { [$1] }
             | SwitchCases ',' SwitchCase        { $3 : $1 }
 
-FuncArg  : ident ':' constr             { FuncArg (VarName $1) (Just (TypeSpec $3)) }
-         | ident                        { FuncArg (VarName $1) Nothing }
+FuncArg  : ident ':' constr                     { FuncArg (VarName $1) (Just (TypeSpec $3)) }
+         | ident                                { FuncArg (VarName $1) Nothing }
 
-FuncArgs : FuncArg                        { [$1] }
-         | FuncArgs ',' FuncArg        { $3 : $1 }
+FuncArgs : FuncArg                              { [$1] }
+         | FuncArgs ',' FuncArg                 { $3 : $1 }
 
 
 Func        : func ident '(' FuncArgs ')' '{' Stmt '}' { Func (VarName $2) $4 $7 }
@@ -86,6 +92,8 @@ data ConstrName = ConstrName String
     deriving Show
 data VarName = VarName String
     deriving Show
+data TVarName = TVarName String
+    deriving Show
 data TypeSpec = TypeSpec String
     deriving Show
 data TypeName = TypeName String
@@ -104,7 +112,7 @@ data Expr = Lam VarName Expr
           | Func VarName [FuncArg] Stmt
     deriving Show
 
-data TEnum = TEnum TypeName [ConstrDef]
+data TEnum = TEnum TypeName [TVarName] [ConstrDef]
     deriving Show
 data ConstrDef = ConstrDef ConstrName [ConstrArg]
     deriving Show
@@ -150,7 +158,7 @@ lexer (':':cs) = TokenColon : lexer cs
 lexer (',':cs) = TokenComma : lexer cs
 lexer (';':cs) = TokenSemi  : lexer cs
 lexer ('-':'>':cs) = TokenArrow : lexer cs
-lexer ('/':'/':cs) = TokenComment com : lexer (tail ment)
+lexer ('/':'/':cs) = lexer (tail ment) -- TokenComment com : lexer (tail ment)
     where
       (com, ment) = break (== '\n') cs
 lexer (c:cs)
