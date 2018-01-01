@@ -1,7 +1,7 @@
 {
 module Fresh.Parse where
 
-import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum)
+import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
 }
 
 %name parse
@@ -17,6 +17,7 @@ import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum)
       case            { TokenCase }
       return          { TokenReturn }
       lam             { TokenLam }
+      op              { TokenOp $$ }
       ':'             { TokenColon }
       '('             { TokenParenOpen }
       ')'             { TokenParenClose }
@@ -30,6 +31,7 @@ import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum)
 
 Stmt        : Expr                          { StmtExpr $1 }
             | TEnum                             { StmtType $1 }
+            | return Expr                       { StmtReturn $2 }
             | Stmt ';' Stmt                      { StmtSeq $1 $3 }
             | Stmt ';'                          { $1 }
 
@@ -68,6 +70,7 @@ Switch      : switch '(' Expr ')' '{' SwitchCases '}' { Switch $3 $6 }
 
 Expr        : lam ident '->' Expr               { Lam (VarName $2) $4 }
             | Expr '(' Expr ')'                 { App $1 $3 }
+            | Expr op Expr                      { OpApp (Op $2) $1 $3 }
             | Switch                            { $1 }
             | Func                              { $1 }
             | ident                             { Var (VarName $1) }
@@ -78,6 +81,8 @@ parseError :: [Token] -> a
 parseError ts = error $ "Parse error at: " ++ (show ts)
 
 
+data Op = Op String
+    deriving Show
 data ConstrName = ConstrName String
     deriving Show
 data VarName = VarName String
@@ -92,6 +97,7 @@ data PatternMatch = PatternMatch VarName (Maybe ConstrName)
 
 data Expr = Lam VarName Expr
           | App Expr Expr
+          | OpApp Op Expr Expr
           | Var VarName
           | Switch Expr [(PatternMatch, Stmt)]
           | Func VarName [FuncArg] Stmt
@@ -107,6 +113,7 @@ data ConstrArg = ConstrArg VarName TypeSpec
 data Stmt = StmtExpr Expr
           | StmtType TEnum
           | StmtSeq Stmt Stmt
+          | StmtReturn Expr
     deriving Show
 
 data Token
@@ -128,14 +135,12 @@ data Token
     | TokenComma
     | TokenSemi
     | TokenComment String
+    | TokenOp String
+    | TokenInt Integer
     deriving Show
 
 lexer :: String -> [Token]
 lexer [] = []
-lexer (c:cs)
-      | isSpace c = lexer cs
-      | isAlpha c = lexVar (c:cs)
-      -- | isDigit c = lexNum (c:cs) */
 lexer ('(':cs) = TokenParenOpen  : lexer cs
 lexer (')':cs) = TokenParenClose : lexer cs
 lexer ('{':cs) = TokenBraceOpen  : lexer cs
@@ -147,9 +152,15 @@ lexer ('-':'>':cs) = TokenArrow : lexer cs
 lexer ('/':'/':cs) = TokenComment com : lexer (tail ment)
     where
       (com, ment) = break (== '\n') cs
+lexer (c:cs)
+      | isSpace c = lexer cs
+      | isAlpha c = lexVar (c:cs)
+      | isDigit c = lexNum (c:cs)
+      | otherwise = TokenOp [c] : lexer cs
 lexer cs = error ("Unknown token: " ++ show cs)
--- lexNum cs = TokenInt (read num) : lexer rest */
---       where (num,rest) = span isDigit cs */
+
+lexNum cs = TokenInt (read num) : lexer rest
+      where (num,rest) = span isDigit cs
 
 lexVar cs =
    case span isAlpha cs of
