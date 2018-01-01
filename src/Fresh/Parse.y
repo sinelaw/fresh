@@ -39,17 +39,27 @@ TEnum        : enum constr '{' '}'              { TEnum $2 [] }
 TEnumConstrs : TEnumConstr                      { [$1] }
              | TEnumConstrs ',' TEnumConstr     { $3 : $1 }
 
-TEnumConstr  : constr '(' ConstrArgs ')'        { ConstrDef $1 $3 }
-             | constr                           { ConstrDef $1 [] }
+TEnumConstr  : constr '(' ConstrArgs ')'        { ConstrDef (ConstrName $1) $3 }
+             | constr                           { ConstrDef (ConstrName $1) [] }
 
-ConstrArg   : ident ':' constr                  { ConstrArg $1 $3  }
+ConstrArg   : ident ':' constr                  { ConstrArg (VarName $1) (TypeSpec $3)  }
 
 ConstrArgs  : ConstrArg                         { [$1] }
             | ConstrArgs ',' ConstrArg          { $3 : $1 }
 
-Expr        : lam ident '->' Expr               { Lam $2 $4 }
+PatternMatch  : ident ':'                    { PatternMatch (VarName $1) Nothing }
+              | '(' ident ':' constr ')'     { PatternMatch (VarName $2) (Just (ConstrName $4)) }
+
+SwitchCase  : PatternMatch ':' Stmt             { ($1, $3) }
+
+SwitchCases : SwitchCase                        { [$1] }
+            | SwitchCases ',' SwitchCase        { $3 : $1 }
+
+Switch      : switch '(' Expr ')' '{' SwitchCases '}' { Switch $3 $6 }
+Expr        : lam ident '->' Expr               { Lam (VarName $2) $4 }
             | Expr '(' Expr ')'                 { App $1 $3 }
-            | ident                             { Var $1 }
+            | Switch                            { $1 }
+            | ident                             { Var (VarName $1) }
 
 {
 
@@ -57,16 +67,27 @@ parseError :: [Token] -> a
 parseError ts = error $ "Parse error at: " ++ (show ts)
 
 
-data Expr = Lam String Expr
+data ConstrName = ConstrName String
+    deriving Show
+data VarName = VarName String
+    deriving Show
+data TypeSpec = TypeSpec String
+    deriving Show
+
+data PatternMatch = PatternMatch VarName (Maybe ConstrName)
+    deriving Show
+
+data Expr = Lam VarName Expr
           | App Expr Expr
-          | Var String
+          | Var VarName
+          | Switch Expr [(PatternMatch, Stmt)]
     deriving Show
 
 data TEnum = TEnum String [ConstrDef]
     deriving Show
-data ConstrDef = ConstrDef String [ConstrArg]
+data ConstrDef = ConstrDef ConstrName [ConstrArg]
     deriving Show
-data ConstrArg = ConstrArg String String
+data ConstrArg = ConstrArg VarName TypeSpec
     deriving Show
 
 data Stmt = StmtExpr Expr
@@ -92,7 +113,7 @@ data Token
     | TokenArrow
     | TokenComma
     | TokenSemi
-    -- | TokenComment */
+    | TokenComment String
     deriving Show
 
 lexer :: String -> [Token]
@@ -109,6 +130,10 @@ lexer (':':cs) = TokenColon : lexer cs
 lexer (',':cs) = TokenComma : lexer cs
 lexer (';':cs) = TokenSemi  : lexer cs
 lexer ('-':'>':cs) = TokenArrow : lexer cs
+lexer ('/':'/':cs) = TokenComment com : lexer (tail ment)
+    where
+      (com, ment) = break (== '\n') cs
+lexer cs = error ("Unknown token: " ++ show cs)
 -- lexNum cs = TokenInt (read num) : lexer rest */
 --       where (num,rest) = span isDigit cs */
 

@@ -1,0 +1,63 @@
+enum Option(x) {
+    Null,
+    Value(x),
+};
+
+
+// (x -> x -> x) -> Option(x) -> Option(x) -> Option(x)
+func combine(f, o1, o2) {
+    switch (o1, o2) {
+    case (Null      , Null      ): return Null;
+    case (v: Value  , Null      ): return v;
+    case (Null      , v: Value  ): return v;
+    case (v1: Value , v2: Value ): return Value(f(v1.value, v2.value));
+    }
+}
+
+enum Tree(x) {
+    Branch(left: Tree(x), value: x, right: Tree(x)),
+    Stump,
+};
+
+
+// Tree(Number) -> Option(Number)
+func treeMax(t) {
+    switch (t) {
+    case Stump      : return Null;
+    case (b: Branch): combine(max, Value(t.value), treeMax(b));
+    }
+}
+
+
+// Tree(x) -> Iterator(x)
+// func treeIter(t) {
+//     switch (t) {
+//     case Stump      : return;
+//     case (b: Branch): {
+//         yieldmore treeIter(b.left);
+//         yield b.value;
+//         yieldmore treeIter(b.right);
+//     };
+//     }
+// }
+
+// (x -> y) -> Tree(x) -> Tree(y)
+func treeMap(f, t) {
+    switch (t) {
+    case (Stump    ) : return Stump;
+    case (b: Branch) : return Branch(treeMap(f, b.left),
+                                     f(b.value),
+                                    treeMap(f, b.right));
+    }
+}
+
+// Polymorphic variants:
+
+// [ ERR_FILE_NOT_FOUND | a… ] -> [ a… ]
+func handleFileErrors(e) {
+    switch (e) {
+    case ERR_FILE_NOT_FOUND: do_something;
+    case ERR_PERMISSION_DENIED: do_something_else;
+    case x: return x;
+    }
+}
