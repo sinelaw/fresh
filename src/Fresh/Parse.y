@@ -29,11 +29,13 @@ import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
 
 %%
 
+Stmts       : Stmt                              { [$1] }
+            | Stmt ';'                          { [$1] }
+            | Stmts ';' Stmt                    { $3 : $1 }
+
 Stmt        : Expr                              { StmtExpr $1 }
             | TEnum                             { StmtType $1 }
             | return Expr                       { StmtReturn $2 }
-            | Stmt ';' Stmt                     { StmtSeq $1 $3 }
-            | Stmt ';'                          { $1 }
 
 TEnum        : enum constr TEnumArgs '{' TEnumConstrs '}' { TEnum (TypeName $2) $3 $5 }
 
@@ -50,7 +52,14 @@ TEnumConstrs : TEnumConstr                      { [$1] }
 TEnumConstr  : constr '(' ConstrArgs ')'        { ConstrDef (ConstrName $1) $3 }
              | constr                           { ConstrDef (ConstrName $1) [] }
 
-ConstrArg   : ident ':' constr                  { ConstrArg (VarName $1) (TypeSpec $3)  }
+TypeSpec    : ident                             { TSVar (TVarName $1) }
+            | constr                            { TSName (TypeName $1) }
+            | TypeSpec '(' TypeSpecArgs ')'     { TSApp $1 $3 }
+
+TypeSpecArgs  : TypeSpec                        { [$1] }
+              | TypeSpecArgs ',' TypeSpec       { $3 : $1 }
+
+ConstrArg   : ident ':' TypeSpec                { ConstrArg (VarName $1) $3 }
 
 ConstrArgs  : ConstrArg                         { [$1] }
             | ConstrArgs ',' ConstrArg          { $3 : $1 }
@@ -63,14 +72,14 @@ SwitchCase  : PatternMatch ':' Stmt             { ($1, $3) }
 SwitchCases : SwitchCase                        { [$1] }
             | SwitchCases ',' SwitchCase        { $3 : $1 }
 
-FuncArg  : ident ':' constr                     { FuncArg (VarName $1) (Just (TypeSpec $3)) }
+FuncArg  : ident ':' TypeSpec                   { FuncArg (VarName $1) (Just $3) }
          | ident                                { FuncArg (VarName $1) Nothing }
 
 FuncArgs : FuncArg                              { [$1] }
          | FuncArgs ',' FuncArg                 { $3 : $1 }
 
 
-Func        : func ident '(' FuncArgs ')' '{' Stmt '}' { Func (VarName $2) $4 $7 }
+Func        : func ident '(' FuncArgs ')' '{' Stmts '}' { Func (VarName $2) $4 $7 }
 
 Switch      : switch '(' Expr ')' '{' SwitchCases '}' { Switch $3 $6 }
 
@@ -95,7 +104,9 @@ data VarName = VarName String
     deriving Show
 data TVarName = TVarName String
     deriving Show
-data TypeSpec = TypeSpec String
+data TypeSpec = TSVar TVarName
+              | TSName TypeName
+              | TSApp TypeSpec [TypeSpec]
     deriving Show
 data TypeName = TypeName String
     deriving Show
@@ -110,7 +121,7 @@ data Expr = Lam VarName Expr
           | OpApp Op Expr Expr
           | Var VarName
           | Switch Expr [(PatternMatch, Stmt)]
-          | Func VarName [FuncArg] Stmt
+          | Func VarName [FuncArg] [Stmt]
     deriving Show
 
 data TEnum = TEnum TypeName [TVarName] [ConstrDef]
@@ -122,7 +133,6 @@ data ConstrArg = ConstrArg VarName TypeSpec
 
 data Stmt = StmtExpr Expr
           | StmtType TEnum
-          | StmtSeq Stmt Stmt
           | StmtReturn Expr
     deriving Show
 

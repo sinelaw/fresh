@@ -7,7 +7,6 @@ enum Fruit {
 };
 
 // enum Option(x) {
-//     Null,
 //     Value(value: x),
 // };
 
