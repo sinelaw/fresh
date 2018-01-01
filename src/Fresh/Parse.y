@@ -29,9 +29,10 @@ import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
 
 %%
 
-Stmts       : Stmt                              { [$1] }
-            | Stmt ';'                          { [$1] }
+Stmts       : {- empty -}                       { [] }
+            | Stmt                              { [$1] }
             | Stmts ';' Stmt                    { $3 : $1 }
+            | Stmts ';'                         { $1 }
 
 Stmt        : Expr                              { StmtExpr $1 }
             | TEnum                             { StmtType $1 }
@@ -46,8 +47,8 @@ TEnumArgsNotEmpty : ident                       { [TVarName $1] }
                   | TEnumArgsNotEmpty ',' ident { (TVarName $3) : $1 }
 
 TEnumConstrs : TEnumConstr                      { [$1] }
-             | TEnumConstr ','                  { [$1] }
              | TEnumConstrs ',' TEnumConstr     { $3 : $1 }
+             | TEnumConstrs ','                 { $1 }
 
 TEnumConstr  : constr '(' ConstrArgs ')'        { ConstrDef (ConstrName $1) $3 }
              | constr                           { ConstrDef (ConstrName $1) [] }
