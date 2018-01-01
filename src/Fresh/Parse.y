@@ -98,7 +98,8 @@ Exprs       : Expr                              { [$1] }
             | Exprs ',' Expr                    { $3 : $1 }
 
 Expr        : lam ident '->' Expr               { Lam (VarName $2) $4 }
-            | Expr '(' Expr ')'                 { App $1 $3 }
+            | Expr '('  ')'                     { Call $1 [] }
+            | Expr '(' Exprs ')'                { Call $1 $3 }
             | Expr op Expr                      { OpApp (Op $2) $1 $3 }
             | Switch                            { $1 }
             | Func                              { $1 }
@@ -134,7 +135,7 @@ data SwitchCase = SwitchCase [PatternMatch] [Stmt]
     deriving Show
 
 data Expr = Lam VarName Expr
-          | App Expr Expr
+          | Call Expr [Expr]
           | OpApp Op Expr Expr
           | Var VarName
           | Constr ConstrName
