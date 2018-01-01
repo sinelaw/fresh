@@ -43,7 +43,8 @@ TEnumArgs    : '(' TEnumArgsNotEmpty ')'        { $2 }
 TEnumArgsNotEmpty : ident                       { [TVarName $1] }
                   | TEnumArgsNotEmpty ',' ident { (TVarName $3) : $1 }
 
-TEnumConstrs : {- empty -}                      { [] }
+TEnumConstrs : TEnumConstr                      { [$1] }
+             | TEnumConstr ','                  { [$1] }
              | TEnumConstrs ',' TEnumConstr     { $3 : $1 }
 
 TEnumConstr  : constr '(' ConstrArgs ')'        { ConstrDef (ConstrName $1) $3 }
