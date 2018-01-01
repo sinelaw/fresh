@@ -1,3 +1,7 @@
+func id(x) {
+    return x;
+}
+
 enum Option(x) {
     Null,
     Value(x),

@@ -1,7 +1,7 @@
 {
 module Fresh.Parse where
 
-import Data.Char (isSpace, isAlpha, isUpper, isLower)
+import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum)
 }
 
 %name parse
@@ -55,10 +55,21 @@ SwitchCase  : PatternMatch ':' Stmt             { ($1, $3) }
 SwitchCases : SwitchCase                        { [$1] }
             | SwitchCases ',' SwitchCase        { $3 : $1 }
 
+FuncArg  : ident ':' constr             { FuncArg (VarName $1) (Just (TypeSpec $3)) }
+         | ident                        { FuncArg (VarName $1) Nothing }
+
+FuncArgs : FuncArg                        { [$1] }
+         | FuncArgs ',' FuncArg        { $3 : $1 }
+
+
+Func        : func ident '(' FuncArgs ')' '{' Stmt '}' { Func (VarName $2) $4 $7 }
+
 Switch      : switch '(' Expr ')' '{' SwitchCases '}' { Switch $3 $6 }
+
 Expr        : lam ident '->' Expr               { Lam (VarName $2) $4 }
             | Expr '(' Expr ')'                 { App $1 $3 }
             | Switch                            { $1 }
+            | Func                              { $1 }
             | ident                             { Var (VarName $1) }
 
 {
@@ -73,6 +84,8 @@ data VarName = VarName String
     deriving Show
 data TypeSpec = TypeSpec String
     deriving Show
+data FuncArg = FuncArg VarName (Maybe TypeSpec)
+    deriving Show
 
 data PatternMatch = PatternMatch VarName (Maybe ConstrName)
     deriving Show
@@ -81,6 +94,7 @@ data Expr = Lam VarName Expr
           | App Expr Expr
           | Var VarName
           | Switch Expr [(PatternMatch, Stmt)]
+          | Func VarName [FuncArg] Stmt
     deriving Show
 
 data TEnum = TEnum String [ConstrDef]
@@ -145,8 +159,9 @@ lexVar cs =
       ("case"   , rest) -> TokenCase    : lexer rest
       ("return" , rest) -> TokenReturn  : lexer rest
       ("lam"    , rest) -> TokenLam     : lexer rest
-      ((v:vs)   , rest) | isUpper v -> TokenConstr (v:vs) : lexer rest
-      ((v:vs)   , rest) | isLower v -> TokenIdent (v:vs) : lexer rest
+      (vs'       , rest') -> case span isAlphaNum cs of
+        ((v:vs), rest) | isUpper v -> TokenConstr (v:vs) : lexer rest
+        ((v:vs), rest) | isLower v -> TokenIdent (v:vs)  : lexer rest
 
 main = getContents >>= print . parse . lexer
 }
