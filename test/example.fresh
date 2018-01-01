@@ -12,15 +12,21 @@ enum Option(x) {
 };
 
 
-// (x -> x -> x) -> Option(x) -> Option(x) -> Option(x)
-func combine(f, o1, o2) {
-    switch (o1, o2) {
-    case (Null      , Null      ): return Null;
-    case (v: Value  , Null      ): return v;
-    case (Null      , v: Value  ): return v;
-    case (v1: Value , v2: Value ): return Value(f(v1.value, v2.value));
+func test(x) {
+    switch (x) {
+    case Null: return Null;
     }
-}
+};
+
+// (x -> x -> x) -> Option(x) -> Option(x) -> Option(x)
+// func combine(f, o1, o2) {
+//     switch (o1, o2) {
+//     case (Null      , Null      ): return Null;
+//     case (Value   , Null      ): return v;
+//     case (Null      , Value   ): return v;
+//     case (Value  , Value  ): return Value(f(v1.value, v2.value));
+//     }
+// }
 
 // enum Tree(x) {
 //     Branch(left: Tree(x), value: x, right: Tree(x)),

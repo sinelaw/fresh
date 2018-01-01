@@ -65,24 +65,37 @@ ConstrArg   : ident ':' TypeSpec                { ConstrArg (VarName $1) $3 }
 ConstrArgs  : ConstrArg                         { [$1] }
             | ConstrArgs ',' ConstrArg          { $3 : $1 }
 
-PatternMatch  : ident ':'                       { PatternMatch (VarName $1) Nothing }
-              | '(' ident ':' constr ')'        { PatternMatch (VarName $2) (Just (ConstrName $4)) }
+PatternMatch  : constr                          { PatternMatch (Just (ConstrName $1)) }
+              -- | ident ':'                       { PatternMatch (VarName $1) Nothing }
+              -- | ident ':' constr                { PatternMatch (VarName $2) (Just $3) }
 
-SwitchCase  : PatternMatch ':' Stmt             { ($1, $3) }
+PatternMatches : PatternMatch                      { [$1] }
+               | PatternMatches ',' PatternMatch   { $3 : $1 }
+
+SwitchCaseStmts : Stmt                             { [$1] }
+                | '{' Stmts '}'                    { $2 }
+
+SwitchCase  : case PatternMatch ':' SwitchCaseStmts             { SwitchCase [$2] $4 }
+            | case '(' PatternMatches ')' ':' SwitchCaseStmts   { SwitchCase $3 $6 }
 
 SwitchCases : SwitchCase                        { [$1] }
-            | SwitchCases ',' SwitchCase        { $3 : $1 }
+            | SwitchCases ';' SwitchCase            { $3 : $1 }
+            | SwitchCases ';'                   { $1 }
 
 FuncArg  : ident ':' TypeSpec                   { FuncArg (VarName $1) (Just $3) }
          | ident                                { FuncArg (VarName $1) Nothing }
 
-FuncArgs : FuncArg                              { [$1] }
+FuncArgs : {- empty -}                          { [] }
+         | FuncArg                              { [$1] }
          | FuncArgs ',' FuncArg                 { $3 : $1 }
 
 
 Func        : func ident '(' FuncArgs ')' '{' Stmts '}' { Func (VarName $2) $4 $7 }
 
-Switch      : switch '(' Expr ')' '{' SwitchCases '}' { Switch $3 $6 }
+Switch      : switch '(' Exprs ')' '{' SwitchCases '}' { Switch $3 $6 }
+
+Exprs       : Expr                              { [$1] }
+            | Exprs ',' Expr                    { $3 : $1 }
 
 Expr        : lam ident '->' Expr               { Lam (VarName $2) $4 }
             | Expr '(' Expr ')'                 { App $1 $3 }
@@ -90,7 +103,7 @@ Expr        : lam ident '->' Expr               { Lam (VarName $2) $4 }
             | Switch                            { $1 }
             | Func                              { $1 }
             | ident                             { Var (VarName $1) }
-
+            | constr                            { Constr (ConstrName $1) }
 {
 
 parseError :: [Token] -> a
@@ -114,14 +127,18 @@ data TypeName = TypeName String
 data FuncArg = FuncArg VarName (Maybe TypeSpec)
     deriving Show
 
-data PatternMatch = PatternMatch VarName (Maybe ConstrName)
+data PatternMatch = PatternMatch (Maybe ConstrName)
+    deriving Show
+
+data SwitchCase = SwitchCase [PatternMatch] [Stmt]
     deriving Show
 
 data Expr = Lam VarName Expr
           | App Expr Expr
           | OpApp Op Expr Expr
           | Var VarName
-          | Switch Expr [(PatternMatch, Stmt)]
+          | Constr ConstrName
+          | Switch [Expr] [SwitchCase]
           | Func VarName [FuncArg] [Stmt]
     deriving Show
 
