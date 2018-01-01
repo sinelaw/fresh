@@ -35,10 +35,9 @@ Stmt        : Expr                          { StmtExpr $1 }
             | Stmt ';' Stmt                      { StmtSeq $1 $3 }
             | Stmt ';'                          { $1 }
 
-TEnum        : enum constr '{' '}'              { TEnum $2 [] }
-             | enum constr '{' TEnumConstrs '}' { TEnum $2 $4 }
+TEnum        : enum constr '{' TEnumConstrs '}' { TEnum (TypeName $2) $4 }
 
-TEnumConstrs : TEnumConstr                      { [$1] }
+TEnumConstrs : {- empty -}                      { [] }
              | TEnumConstrs ',' TEnumConstr     { $3 : $1 }
 
 TEnumConstr  : constr '(' ConstrArgs ')'        { ConstrDef (ConstrName $1) $3 }
@@ -89,6 +88,8 @@ data VarName = VarName String
     deriving Show
 data TypeSpec = TypeSpec String
     deriving Show
+data TypeName = TypeName String
+    deriving Show
 data FuncArg = FuncArg VarName (Maybe TypeSpec)
     deriving Show
 
@@ -103,7 +104,7 @@ data Expr = Lam VarName Expr
           | Func VarName [FuncArg] Stmt
     deriving Show
 
-data TEnum = TEnum String [ConstrDef]
+data TEnum = TEnum TypeName [ConstrDef]
     deriving Show
 data ConstrDef = ConstrDef ConstrName [ConstrArg]
     deriving Show
