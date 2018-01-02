@@ -27,6 +27,8 @@ import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
       ','             { TokenComma }
       ';'             { TokenSemi }
 
+%left op
+
 %%
 
 Stmts       : {- empty -}                       { [] }

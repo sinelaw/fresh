@@ -7,6 +7,10 @@ func id(x) {
     return x;
 };
 
+func getX(obj) {
+    return obj.sub.x;
+};
+
 enum Fruit {
     Apple,
     Pear,
