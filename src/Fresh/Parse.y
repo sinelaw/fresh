@@ -20,6 +20,8 @@ import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
       op              { TokenOp $$ }
       var             { TokenVar }
       ':'             { TokenColon }
+      '<'             { TokenTriangleOpen }
+      '>'             { TokenTriangleClose }
       '('             { TokenParenOpen }
       ')'             { TokenParenClose }
       '{'             { TokenBraceOpen }
@@ -28,6 +30,7 @@ import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
       ';'             { TokenSemi }
       ','             { TokenComma }
       '='             { TokenEq }
+      '@'             { TokenAt }
       number          { TokenInt $$ }
 
 %left op
@@ -43,7 +46,8 @@ StmtOrBlock : Stmt                              { [$1] }
             | StmtBlock                         { $1 }
 
 Stmt        : var ident '=' Expr ';'            { StmtLetVar (VarName $2) $4 }
-            | return Expr ';'                   { StmtReturn $2 }
+            | return ';'                        { StmtReturn Nothing }
+            | return Expr ';'                   { StmtReturn (Just $2) }
             | Func                              { $1 }
             | TUnion                            { StmtType $1 }
             | Expr ';'                          { StmtExpr $1 }
@@ -56,7 +60,7 @@ Func        : func ident '(' FuncArgs ')' StmtBlock { StmtLetVar (VarName $2) (L
 
 TUnion      : union constr TUnionArgs '{' TUnionConstrs '}' { TUnion (TypeName $2) $3 $5 }
 
-TUnionArgs  : '(' TUnionArgsNotEmpty ')'         { $2 }
+TUnionArgs  : '<' TUnionArgsNotEmpty '>'         { $2 }
             | {- empty -}                        { [] }
 
 TUnionArgsNotEmpty : ident                       { [TVarName $1] }
@@ -71,7 +75,7 @@ TUnionConstr  : constr '(' ConstrArgs ')'        { ConstrDef (ConstrName $1) $3 
 
 TypeSpec    : ident                             { TSVar (TVarName $1) }
             | constr                            { TSName (TypeName $1) }
-            | TypeSpec '(' TypeSpecArgs ')'     { TSApp $1 $3 }
+            | TypeSpec '<' TypeSpecArgs '>'     { TSApp $1 $3 }
 
 TypeSpecArgs  : TypeSpec                        { [$1] }
               | TypeSpecArgs ',' TypeSpec       { $3 : $1 }
@@ -81,7 +85,9 @@ ConstrArg   : ident ':' TypeSpec                { ConstrArg (VarName $1) $3 }
 ConstrArgs  : ConstrArg                         { [$1] }
             | ConstrArgs ',' ConstrArg          { $3 : $1 }
 
-PatternMatch  : constr                          { PatternMatch (Just (ConstrName $1)) }
+PatternMatch  : constr                          { PatternMatchAnon (ConstrName $1) }
+              | ident '@' constr                { PatternMatchNamed (VarName $1) (ConstrName $3) }
+              | ident                           { PatternMatchAny   (VarName $1) }
               -- | ident ':'                       { PatternMatch (VarName $1) Nothing }
               -- | ident ':' constr                { PatternMatch (VarName $2) (Just $3) }
 
@@ -137,7 +143,10 @@ data TypeName = TypeName String
 data FuncArg = FuncArg VarName (Maybe TypeSpec)
     deriving Show
 
-data PatternMatch = PatternMatch (Maybe ConstrName)
+data PatternMatch = PatternMatchAll
+                  | PatternMatchAnon ConstrName
+                  | PatternMatchNamed VarName ConstrName
+                  | PatternMatchAny   VarName
     deriving Show
 
 data SwitchCase = SwitchCase [PatternMatch] [Stmt]
@@ -165,7 +174,7 @@ data ConstrArg = ConstrArg VarName TypeSpec
 data Stmt = StmtExpr Expr
           | StmtLetVar VarName Expr
           | StmtType TUnion
-          | StmtReturn Expr
+          | StmtReturn (Maybe Expr)
     deriving Show
 
 data Token
@@ -180,6 +189,8 @@ data Token
     | TokenLam
     | TokenVar
     | TokenColon
+    | TokenTriangleOpen
+    | TokenTriangleClose
     | TokenParenOpen
     | TokenParenClose
     | TokenBraceOpen
@@ -188,6 +199,7 @@ data Token
     | TokenComma
     | TokenEq
     | TokenSemi
+    | TokenAt
     | TokenComment String
     | TokenOp String
     | TokenInt Int
@@ -195,6 +207,8 @@ data Token
 
 lexer :: String -> [Token]
 lexer [] = []
+lexer ('<':cs) = TokenTriangleOpen  : lexer cs
+lexer ('>':cs) = TokenTriangleClose : lexer cs
 lexer ('(':cs) = TokenParenOpen  : lexer cs
 lexer (')':cs) = TokenParenClose : lexer cs
 lexer ('{':cs) = TokenBraceOpen  : lexer cs
@@ -203,10 +217,12 @@ lexer ('=':cs) = TokenEq    : lexer cs
 lexer (';':cs) = TokenSemi  : lexer cs
 lexer (':':cs) = TokenColon : lexer cs
 lexer (',':cs) = TokenComma : lexer cs
+lexer ('@':cs) = TokenAt    : lexer cs
 lexer ('-':'>':cs) = TokenArrow : lexer cs
 lexer ('/':'/':cs) = lexer (tail ment) -- TokenComment com : lexer (tail ment)
     where
       (com, ment) = break (== '\n') cs
+lexer ('_':cs) = lexVar ('_':cs)
 lexer (c:cs)
       | isSpace c = lexer cs
       | isAlpha c = lexVar (c:cs)
@@ -226,9 +242,10 @@ lexVar cs =
       ("case"   , rest) -> TokenCase    : lexer rest
       ("return" , rest) -> TokenReturn  : lexer rest
       ("lam"    , rest) -> TokenLam     : lexer rest
-      (vs'       , rest') -> case span isAlphaNum cs of
+      (vs'       , rest') -> case span (\x -> isAlphaNum x || x == '_') cs of
         ((v:vs), rest) | isUpper v -> TokenConstr (v:vs) : lexer rest
         ((v:vs), rest) | isLower v -> TokenIdent (v:vs)  : lexer rest
+        (('_':vs), rest)           -> TokenIdent ('_':vs)  : lexer rest
 
 main = getContents >>= print . parse . lexer
 }
