@@ -1,31 +1,35 @@
-enum List(x) {
-    Nil,
-    Cons(head: x, tail: List(x)),
-};
+func save(x) {
+    mem = x;
+}
 
-func id(x) {
-    return x;
-};
+// union List(x) {
+//     Nil,
+//     Cons(head: x, tail: List(x)),
+// }
 
-func getX(obj) {
-    return obj.sub.x;
-};
+// func id(x) {
+//     return x;
+// }
 
-enum Fruit {
-    Apple,
-    Pear,
-};
+// func getX(obj) {
+//     return obj.sub.x;
+// }
 
-enum Option(x) {
-    Value(value: x),
-};
+// union Fruit {
+//     Apple,
+//     Pear,
+// }
+
+// union Option(x) {
+//     Value(value: x),
+// }
 
 
-func test(x) {
-    switch (x) {
-    case Null: return Null;
-    }
-};
+// func test(x) {
+//     switch (x) {
+//     case Null: return Null;
+//     }
+// }
 
 // // (x -> x -> x) -> Option(x) -> Option(x) -> Option(x)
 // func combine(f, o1, o2) {
@@ -37,7 +41,7 @@ func test(x) {
 //     }
 // }
 
-// enum Tree(x) {
+// union Tree(x) {
 //     Branch(left: Tree(x), value: x, right: Tree(x)),
 //     Stump,
 // };

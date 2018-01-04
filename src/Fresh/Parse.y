@@ -25,35 +25,31 @@ import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
       '}'             { TokenBraceClose }
       '->'            { TokenArrow }
       ','             { TokenComma }
-      ';'             { TokenSemi }
 
 %left op
 
 %%
 
 Stmts       : {- empty -}                       { [] }
-            | Stmt                              { [$1] }
-            | Stmts ';' Stmt                    { $3 : $1 }
-            | Stmts ';'                         { $1 }
+            | Stmts Stmt                        { $2 : $1 }
 
 Stmt        : Expr                              { StmtExpr $1 }
-            | TUnion                             { StmtType $1 }
-            | return Expr                       { StmtReturn $2 }
+            | TUnion                            { StmtType $1 }
 
 TUnion        : union constr TUnionArgs '{' TUnionConstrs '}' { TUnion (TypeName $2) $3 $5 }
 
-TUnionArgs    : '(' TUnionArgsNotEmpty ')'        { $2 }
-             | {- empty -}                      { [] }
+TUnionArgs    : '(' TUnionArgsNotEmpty ')'       { $2 }
+              | {- empty -}                      { [] }
 
 TUnionArgsNotEmpty : ident                       { [TVarName $1] }
                   | TUnionArgsNotEmpty ',' ident { (TVarName $3) : $1 }
 
-TUnionConstrs : TUnionConstr                      { [$1] }
-             | TUnionConstrs ',' TUnionConstr     { $3 : $1 }
-             | TUnionConstrs ','                 { $1 }
+TUnionConstrs : TUnionConstr                     { [$1] }
+              | TUnionConstrs ',' TUnionConstr   { $3 : $1 }
+              | TUnionConstrs ','                { $1 }
 
 TUnionConstr  : constr '(' ConstrArgs ')'        { ConstrDef (ConstrName $1) $3 }
-             | constr                           { ConstrDef (ConstrName $1) [] }
+              | constr                           { ConstrDef (ConstrName $1) [] }
 
 TypeSpec    : ident                             { TSVar (TVarName $1) }
             | constr                            { TSName (TypeName $1) }
@@ -74,15 +70,11 @@ PatternMatch  : constr                          { PatternMatch (Just (ConstrName
 PatternMatches : PatternMatch                      { [$1] }
                | PatternMatches ',' PatternMatch   { $3 : $1 }
 
-SwitchCaseStmts : Stmt                             { [$1] }
-                | '{' Stmts '}'                    { $2 }
-
-SwitchCase  : case PatternMatch ':' SwitchCaseStmts             { SwitchCase [$2] $4 }
-            | case '(' PatternMatches ')' ':' SwitchCaseStmts   { SwitchCase $3 $6 }
+SwitchCase  : case PatternMatch ':' Expr             { SwitchCase [$2] $4 }
+            | case '(' PatternMatches ')' ':' Expr   { SwitchCase $3 $6 }
 
 SwitchCases : SwitchCase                        { [$1] }
-            | SwitchCases ';' SwitchCase            { $3 : $1 }
-            | SwitchCases ';'                   { $1 }
+            | SwitchCases SwitchCase            { $2: $1 }
 
 FuncArg  : ident ':' TypeSpec                   { FuncArg (VarName $1) (Just $3) }
          | ident                                { FuncArg (VarName $1) Nothing }
@@ -92,21 +84,25 @@ FuncArgs : {- empty -}                          { [] }
          | FuncArgs ',' FuncArg                 { $3 : $1 }
 
 
-Func        : func ident '(' FuncArgs ')' '{' Stmts '}' { Func (VarName $2) $4 $7 }
+Func        : func ident '(' FuncArgs ')' '{' Expr '}' { Func (VarName $2) $4 $7 }
 
-Switch      : switch '(' Exprs ')' '{' SwitchCases '}' { Switch $3 $6 }
+Switch      : switch Expr '{' SwitchCases '}' { Switch $2 $4 }
 
-Exprs       : Expr                              { [$1] }
-            | Exprs ',' Expr                    { $3 : $1 }
+CallArgs    : Expr                              { [$1] }
+            | CallArgs ',' Expr                 { $3 : $1 }
 
 Expr        : lam ident '->' Expr               { Lam (VarName $2) $4 }
             | Expr '('  ')'                     { Call $1 [] }
-            | Expr '(' Exprs ')'                { Call $1 $3 }
+            | Expr '(' CallArgs ')'             { Call $1 $3 }
             | Expr op Expr                      { OpApp (Op $2) $1 $3 }
             | Switch                            { $1 }
             | Func                              { $1 }
             | ident                             { Var (VarName $1) }
             | constr                            { Constr (ConstrName $1) }
+            | '{' Expr '}'                      { $2 }
+            | '(' Expr ')'                      { $2 }
+            | return Expr                       { Return $2 }
+            | {- empty -}                       { Empty }
 {
 
 parseError :: [Token] -> a
@@ -133,7 +129,7 @@ data FuncArg = FuncArg VarName (Maybe TypeSpec)
 data PatternMatch = PatternMatch (Maybe ConstrName)
     deriving Show
 
-data SwitchCase = SwitchCase [PatternMatch] [Stmt]
+data SwitchCase = SwitchCase [PatternMatch] Expr
     deriving Show
 
 data Expr = Lam VarName Expr
@@ -141,8 +137,10 @@ data Expr = Lam VarName Expr
           | OpApp Op Expr Expr
           | Var VarName
           | Constr ConstrName
-          | Switch [Expr] [SwitchCase]
-          | Func VarName [FuncArg] [Stmt]
+          | Switch Expr [SwitchCase]
+          | Func VarName [FuncArg] Expr
+          | Return Expr
+          | Empty
     deriving Show
 
 data TUnion = TUnion TypeName [TVarName] [ConstrDef]
@@ -154,7 +152,6 @@ data ConstrArg = ConstrArg VarName TypeSpec
 
 data Stmt = StmtExpr Expr
           | StmtType TUnion
-          | StmtReturn Expr
     deriving Show
 
 data Token
@@ -188,7 +185,6 @@ lexer ('{':cs) = TokenBraceOpen  : lexer cs
 lexer ('}':cs) = TokenBraceClose : lexer cs
 lexer (':':cs) = TokenColon : lexer cs
 lexer (',':cs) = TokenComma : lexer cs
-lexer (';':cs) = TokenSemi  : lexer cs
 lexer ('-':'>':cs) = TokenArrow : lexer cs
 lexer ('/':'/':cs) = lexer (tail ment) -- TokenComment com : lexer (tail ment)
     where
