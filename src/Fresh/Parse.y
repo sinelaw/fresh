@@ -11,7 +11,7 @@ import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
 %token
       ident           { TokenIdent $$ }
       constr          { TokenConstr $$ }
-      enum            { TokenTEnum }
+      union           { TokenTUnion }
       func            { TokenFunc }
       switch          { TokenSwitch }
       case            { TokenCase }
@@ -37,22 +37,22 @@ Stmts       : {- empty -}                       { [] }
             | Stmts ';'                         { $1 }
 
 Stmt        : Expr                              { StmtExpr $1 }
-            | TEnum                             { StmtType $1 }
+            | TUnion                             { StmtType $1 }
             | return Expr                       { StmtReturn $2 }
 
-TEnum        : enum constr TEnumArgs '{' TEnumConstrs '}' { TEnum (TypeName $2) $3 $5 }
+TUnion        : union constr TUnionArgs '{' TUnionConstrs '}' { TUnion (TypeName $2) $3 $5 }
 
-TEnumArgs    : '(' TEnumArgsNotEmpty ')'        { $2 }
+TUnionArgs    : '(' TUnionArgsNotEmpty ')'        { $2 }
              | {- empty -}                      { [] }
 
-TEnumArgsNotEmpty : ident                       { [TVarName $1] }
-                  | TEnumArgsNotEmpty ',' ident { (TVarName $3) : $1 }
+TUnionArgsNotEmpty : ident                       { [TVarName $1] }
+                  | TUnionArgsNotEmpty ',' ident { (TVarName $3) : $1 }
 
-TEnumConstrs : TEnumConstr                      { [$1] }
-             | TEnumConstrs ',' TEnumConstr     { $3 : $1 }
-             | TEnumConstrs ','                 { $1 }
+TUnionConstrs : TUnionConstr                      { [$1] }
+             | TUnionConstrs ',' TUnionConstr     { $3 : $1 }
+             | TUnionConstrs ','                 { $1 }
 
-TEnumConstr  : constr '(' ConstrArgs ')'        { ConstrDef (ConstrName $1) $3 }
+TUnionConstr  : constr '(' ConstrArgs ')'        { ConstrDef (ConstrName $1) $3 }
              | constr                           { ConstrDef (ConstrName $1) [] }
 
 TypeSpec    : ident                             { TSVar (TVarName $1) }
@@ -145,7 +145,7 @@ data Expr = Lam VarName Expr
           | Func VarName [FuncArg] [Stmt]
     deriving Show
 
-data TEnum = TEnum TypeName [TVarName] [ConstrDef]
+data TUnion = TUnion TypeName [TVarName] [ConstrDef]
     deriving Show
 data ConstrDef = ConstrDef ConstrName [ConstrArg]
     deriving Show
@@ -153,7 +153,7 @@ data ConstrArg = ConstrArg VarName TypeSpec
     deriving Show
 
 data Stmt = StmtExpr Expr
-          | StmtType TEnum
+          | StmtType TUnion
           | StmtReturn Expr
     deriving Show
 
@@ -161,7 +161,7 @@ data Token
     = TokenIdent String
     | TokenTypeIdent String
     | TokenConstr String
-    | TokenTEnum
+    | TokenTUnion
     | TokenFunc
     | TokenSwitch
     | TokenCase
@@ -205,7 +205,7 @@ lexNum cs = TokenInt (read num) : lexer rest
 
 lexVar cs =
    case span isAlpha cs of
-      ("enum"   , rest) -> TokenTEnum    : lexer rest
+      ("union"  , rest) -> TokenTUnion  : lexer rest
       ("func"   , rest) -> TokenFunc    : lexer rest
       ("switch" , rest) -> TokenSwitch  : lexer rest
       ("case"   , rest) -> TokenCase    : lexer rest
