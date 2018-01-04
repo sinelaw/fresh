@@ -1,6 +1,6 @@
-func save(x) {
-    mem = 3;
-}
+// func save(x) {
+//     mem = 3;
+// }
 
 // union List(x) {
 //     Nil,
@@ -25,11 +25,11 @@ func save(x) {
 // }
 
 
-// func test(x) {
-//     switch (x) {
-//     case Null: return Null;
-//     }
-// }
+func test(x) {
+    switch (x) {
+    case Null: return Null;
+    }
+}
 
 // // (x -> x -> x) -> Option(x) -> Option(x) -> Option(x)
 // func combine(f, o1, o2) {

@@ -37,16 +37,23 @@ import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
 Stmts       : Stmt                              { [$1] }
             | Stmts Stmt                        { $2 : $1 }
 
+StmtBlock   : '{' Stmts '}'                     { $2 }
+
+StmtOrBlock : Stmt                              { [$1] }
+            | StmtBlock                         { $1 }
+
 Stmt        : Expr ';'                          { StmtExpr $1 }
             | var ident '=' Expr ';'            { StmtLetVar (VarName $2) $4 }
+            | return Expr ';'                   { StmtReturn $2 }
             | Func                              { $1 }
+            | Switch                            { StmtExpr $1 }
             | TUnion                            { StmtType $1 }
 
 FuncArgs    : {- empty -}                       { [] }
             | FuncArg                           { [$1] }
             | FuncArgs ',' FuncArg              { $3 : $1 }
 
-Func        : func ident '(' FuncArgs ')' '{' Stmts '}' { StmtLetVar (VarName $2) (Lam $4 $7) }
+Func        : func ident '(' FuncArgs ')' StmtBlock { StmtLetVar (VarName $2) (Lam $4 $6) }
 
 TUnion      : union constr TUnionArgs '{' TUnionConstrs '}' { TUnion (TypeName $2) $3 $5 }
 
@@ -82,8 +89,8 @@ PatternMatch  : constr                          { PatternMatch (Just (ConstrName
 PatternMatches : PatternMatch                      { [$1] }
                | PatternMatches ',' PatternMatch   { $3 : $1 }
 
-SwitchCase  : case PatternMatch ':' Expr             { SwitchCase [$2] $4 }
-            | case '(' PatternMatches ')' ':' Expr   { SwitchCase $3 $6 }
+SwitchCase  : case PatternMatch ':' StmtOrBlock           { SwitchCase [$2] $4 }
+            | case '(' PatternMatches ')' ':' StmtOrBlock { SwitchCase $3 $6 }
 
 SwitchCases : SwitchCase                        { [$1] }
             | SwitchCases SwitchCase            { $2: $1 }
@@ -108,7 +115,6 @@ Expr        : lam ident '->' Stmts              { Lam [FuncArg (VarName $2) Noth
             | ident                             { Var (VarName $1) }
             | constr                            { Constr (ConstrName $1) }
             | '(' Expr ')'                      { $2 }
-            | return Expr                       { Return $2 }
             | number                            { LitNum $1 }
 {
 
@@ -136,7 +142,7 @@ data FuncArg = FuncArg VarName (Maybe TypeSpec)
 data PatternMatch = PatternMatch (Maybe ConstrName)
     deriving Show
 
-data SwitchCase = SwitchCase [PatternMatch] Expr
+data SwitchCase = SwitchCase [PatternMatch] [Stmt]
     deriving Show
 
 data Expr = Lam [FuncArg] [Stmt]
@@ -161,6 +167,7 @@ data ConstrArg = ConstrArg VarName TypeSpec
 data Stmt = StmtExpr Expr
           | StmtLetVar VarName Expr
           | StmtType TUnion
+          | StmtReturn Expr
     deriving Show
 
 data Token
