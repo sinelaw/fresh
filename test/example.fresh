@@ -1,5 +1,5 @@
 func save(x) {
-    mem = x;
+    mem = 3;
 }
 
 // union List(x) {
