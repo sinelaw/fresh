@@ -42,12 +42,11 @@ StmtBlock   : '{' Stmts '}'                     { $2 }
 StmtOrBlock : Stmt                              { [$1] }
             | StmtBlock                         { $1 }
 
-Stmt        : Expr ';'                          { StmtExpr $1 }
-            | var ident '=' Expr ';'            { StmtLetVar (VarName $2) $4 }
+Stmt        : var ident '=' Expr ';'            { StmtLetVar (VarName $2) $4 }
             | return Expr ';'                   { StmtReturn $2 }
             | Func                              { $1 }
-            | Switch                            { StmtExpr $1 }
             | TUnion                            { StmtType $1 }
+            | Expr ';'                          { StmtExpr $1 }
 
 FuncArgs    : {- empty -}                       { [] }
             | FuncArg                           { [$1] }
@@ -114,7 +113,6 @@ Expr        : lam ident '->' Stmts              { Lam [FuncArg (VarName $2) Noth
             | Switch                            { $1 }
             | ident                             { Var (VarName $1) }
             | constr                            { Constr (ConstrName $1) }
-            | '(' Expr ')'                      { $2 }
             | number                            { LitNum $1 }
 {
 
