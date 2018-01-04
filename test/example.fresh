@@ -49,9 +49,10 @@ union Tree<x> {
 
 // Tree(Number) -> Option(Number)
 func treeMax(t) {
-    switch (t) {
-    case Stump      : return Null;
-    case b@Branch   : combine(max, Value(t.value), treeMax(b));
+    return switch (t) {
+    case Stump         : Null;
+    case Branch(l,v,r) : combine(max, v,
+                                 combine(max, treeMax(l), treeMax(r)));
     };
 }
 
