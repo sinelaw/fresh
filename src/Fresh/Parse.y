@@ -85,8 +85,14 @@ ConstrArg   : ident ':' TypeSpec                { ConstrArg (VarName $1) $3 }
 ConstrArgs  : ConstrArg                         { [$1] }
             | ConstrArgs ',' ConstrArg          { $3 : $1 }
 
-PatternMatch  : constr                          { PatternMatchAnon (ConstrName $1) }
-              | ident '@' constr                { PatternMatchNamed (VarName $1) (ConstrName $3) }
+PatternMatchConstrArgs : ident                            { [VarName $1] }
+                       | PatternMatchConstrArgs ',' ident { (VarName $3) : $1 }
+
+PatternMatchConstr : constr                     { PatternConstrAll (ConstrName $1) }
+                   | constr '(' PatternMatchConstrArgs ')' { PatternConstrUnpack (ConstrName $1) $3 }
+
+PatternMatch  : PatternMatchConstr              { PatternMatchAnon ($1) }
+              | ident '@' PatternMatchConstr    { PatternMatchNamed (VarName $1) ($3) }
               | ident                           { PatternMatchAny   (VarName $1) }
               -- | ident ':'                       { PatternMatch (VarName $1) Nothing }
               -- | ident ':' constr                { PatternMatch (VarName $2) (Just $3) }
@@ -143,9 +149,13 @@ data TypeName = TypeName String
 data FuncArg = FuncArg VarName (Maybe TypeSpec)
     deriving Show
 
+data PatternConstr = PatternConstrAll ConstrName
+                   | PatternConstrUnpack ConstrName [VarName]
+    deriving Show
+
 data PatternMatch = PatternMatchAll
-                  | PatternMatchAnon ConstrName
-                  | PatternMatchNamed VarName ConstrName
+                  | PatternMatchAnon PatternConstr
+                  | PatternMatchNamed VarName PatternConstr
                   | PatternMatchAny   VarName
     deriving Show
 

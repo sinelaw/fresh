@@ -35,9 +35,9 @@ func test(x) {
 func combine(f, o1, o2) {
     switch (o1, o2) {
     case (Null      , Null      ): return Null;
-    case (Value   , Null      ): return v;
-    case (Null      , Value   ): return v;
-    case (Value  , Value  ): return Value(f(v1.value, v2.value));
+    case (Value     , Null      ): return v;
+    case (Null      , Value     ): return v;
+    case (Value(v1) , Value(v2) ): return Value(f(v1, v2));
     };
 }
 
