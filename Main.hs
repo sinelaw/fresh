@@ -16,4 +16,5 @@ main = do
     s <- getContents
     print $ lexer s
     let p = parse . lexer $ s
+    -- TODO: ParseAST -> Expr -> inference
     print p
