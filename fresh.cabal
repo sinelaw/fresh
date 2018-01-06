@@ -27,6 +27,7 @@ library
                      , Fresh.Module
                      , Fresh.OrderedSet
                      , Fresh.Parse
+                     , Fresh.ParseAST
                      , Fresh.Pretty
                      , Fresh.Types
                      , Fresh.Unify
