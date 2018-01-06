@@ -20,18 +20,22 @@ library
   exposed-modules:     Fresh.Expr
                      , Fresh.BuiltIn
                      , Fresh.CodeGen
-                     , Fresh.Kind
-                     , Fresh.Module
-                     , Fresh.Types
-                     , Fresh.Pretty
                      , Fresh.Infer
                      , Fresh.InferMonad
-                     , Fresh.Unify
+                     , Fresh.Kind
+                     , Fresh.Lexer
+                     , Fresh.Module
                      , Fresh.OrderedSet
-                     -- , Fresh.Subst
+                     , Fresh.Parse
+                     , Fresh.Pretty
+                     , Fresh.Types
+                     , Fresh.Unify
+                    -- , Fresh.Subst
   -- other-modules:
   -- other-extensions:
+  build-tools:         alex, happy
   build-depends:       base >=4.7 && <5
+                     , array >= 0.5.1
                      , containers >= 0.5.6.2
                      , either
                      , mtl >= 2.2.1

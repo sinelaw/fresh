@@ -1,5 +1,5 @@
 {
-module Fresh.Lexer (main) where
+module Fresh.Lexer (Token(..), lexer) where
 }
 
 %wrapper "basic"
@@ -12,27 +12,27 @@ $upper = [A-Z]
 tokens :-
 
   $white+                       ;
-  "<"                           { \s -> TokenTriangleOpen   }
-  ">"                           { \s -> TokenTriangleClose  }
-  "("                           { \s -> TokenParenOpen      }
-  ")"                           { \s -> TokenParenClose     }
-  "{"                           { \s -> TokenBraceOpen      }
-  "}"                           { \s -> TokenBraceClose     }
-  "="                           { \s -> TokenEq             }
-  ";"                           { \s -> TokenSemi           }
-  ":"                           { \s -> TokenColon          }
-  ","                           { \s -> TokenComma          }
-  "@"                           { \s -> TokenAt             }
-  "->"                          { \s -> TokenArrow          }
+  "<"                           { \_ -> TokenTriangleOpen   }
+  ">"                           { \_ -> TokenTriangleClose  }
+  "("                           { \_ -> TokenParenOpen      }
+  ")"                           { \_ -> TokenParenClose     }
+  "{"                           { \_ -> TokenBraceOpen      }
+  "}"                           { \_ -> TokenBraceClose     }
+  "="                           { \_ -> TokenEq             }
+  ";"                           { \_ -> TokenSemi           }
+  ":"                           { \_ -> TokenColon          }
+  ","                           { \_ -> TokenComma          }
+  "@"                           { \_ -> TokenAt             }
+  "->"                          { \_ -> TokenArrow          }
   "//".*                        { \s -> TokenComment s      }
   $digit+                       { \s -> TokenInt (read s)   }
-  union                         { \s -> TokenTUnion         }
-  var                           { \s -> TokenVar            }
-  func                          { \s -> TokenFunc           }
-  switch                        { \s -> TokenSwitch         }
-  case                          { \s -> TokenCase           }
-  return                        { \s -> TokenReturn         }
-  lam                           { \s -> TokenLam            }
+  union                         { \_ -> TokenTUnion         }
+  var                           { \_ -> TokenVar            }
+  func                          { \_ -> TokenFunc           }
+  switch                        { \_ -> TokenSwitch         }
+  case                          { \_ -> TokenCase           }
+  return                        { \_ -> TokenReturn         }
+  lam                           { \_ -> TokenLam            }
   $lower [$alpha $digit \_ \']* { \s -> TokenIdent s        }
   $upper [$alpha $digit \_ \']* { \s -> TokenConstr s       }
 
@@ -66,7 +66,6 @@ data Token
     | TokenInt Int
     deriving (Eq,Show)
 
-main = do
-  s <- getContents
-  print (alexScanTokens s)
+lexer = alexScanTokens
+
 }

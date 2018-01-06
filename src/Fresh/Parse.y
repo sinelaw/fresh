@@ -1,6 +1,7 @@
 {
 module Fresh.Parse where
 
+import Fresh.Lexer (Token(..))
 import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
 }
 
@@ -187,75 +188,5 @@ data Stmt = StmtExpr Expr
           | StmtReturn (Maybe Expr)
     deriving Show
 
-data Token
-    = TokenIdent String
-    | TokenTypeIdent String
-    | TokenConstr String
-    | TokenTUnion
-    | TokenFunc
-    | TokenSwitch
-    | TokenCase
-    | TokenReturn
-    | TokenLam
-    | TokenVar
-    | TokenColon
-    | TokenTriangleOpen
-    | TokenTriangleClose
-    | TokenParenOpen
-    | TokenParenClose
-    | TokenBraceOpen
-    | TokenBraceClose
-    | TokenArrow
-    | TokenComma
-    | TokenEq
-    | TokenSemi
-    | TokenAt
-    | TokenComment String
-    | TokenOp String
-    | TokenInt Int
-    deriving Show
 
-lexer :: String -> [Token]
-lexer [] = []
-lexer ('<':cs) = TokenTriangleOpen  : lexer cs
-lexer ('>':cs) = TokenTriangleClose : lexer cs
-lexer ('(':cs) = TokenParenOpen  : lexer cs
-lexer (')':cs) = TokenParenClose : lexer cs
-lexer ('{':cs) = TokenBraceOpen  : lexer cs
-lexer ('}':cs) = TokenBraceClose : lexer cs
-lexer ('=':cs) = TokenEq    : lexer cs
-lexer (';':cs) = TokenSemi  : lexer cs
-lexer (':':cs) = TokenColon : lexer cs
-lexer (',':cs) = TokenComma : lexer cs
-lexer ('@':cs) = TokenAt    : lexer cs
-lexer ('-':'>':cs) = TokenArrow : lexer cs
-lexer ('/':'/':cs) = lexer (tail ment) -- TokenComment com : lexer (tail ment)
-    where
-      (com, ment) = break (== '\n') cs
-lexer ('_':cs) = lexVar ('_':cs)
-lexer (c:cs)
-      | isSpace c = lexer cs
-      | isAlpha c = lexVar (c:cs)
-      | isDigit c = lexNum (c:cs)
-      | otherwise = TokenOp [c] : lexer cs
-lexer cs = error ("Unknown token: " ++ show cs)
-
-lexNum cs = TokenInt (read num) : lexer rest
-      where (num,rest) = span isDigit cs
-
-lexVar cs =
-   case span isAlpha cs of
-      ("union"  , rest) -> TokenTUnion  : lexer rest
-      ("var"    , rest) -> TokenVar     : lexer rest
-      ("func"   , rest) -> TokenFunc    : lexer rest
-      ("switch" , rest) -> TokenSwitch  : lexer rest
-      ("case"   , rest) -> TokenCase    : lexer rest
-      ("return" , rest) -> TokenReturn  : lexer rest
-      ("lam"    , rest) -> TokenLam     : lexer rest
-      (vs'       , rest') -> case span (\x -> isAlphaNum x || x == '_') cs of
-        ((v:vs), rest) | isUpper v -> TokenConstr (v:vs) : lexer rest
-        ((v:vs), rest) | isLower v -> TokenIdent (v:vs)  : lexer rest
-        (('_':vs), rest)           -> TokenIdent ('_':vs)  : lexer rest
-
-main = getContents >>= print . parse . lexer
 }

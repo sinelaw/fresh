@@ -56,19 +56,6 @@ func treeMax(t) {
     };
 }
 
-
-// // Tree(x) -> Iterator(x)
-// func treeIter(t) {
-//     switch (t) {
-//     case Stump      : return;
-//     case b@Branch   : {
-//         yieldmore treeIter(b.left);
-//         yield b.value;
-//         yieldmore treeIter(b.right);
-//     }
-//     };
-// }
-
 // (x -> y) -> Tree(x) -> Tree(y)
 func treeMap(f, t) {
     switch (t) {
@@ -89,3 +76,15 @@ func handleFileErrors(e) {
     case x: return x;
     };
 }
+
+// // Tree(x) -> Iterator(x)
+// func treeIter(t) {
+//     switch (t) {
+//     case Stump      : return;
+//     case b@Branch   : {
+//         yieldmore treeIter(b.left);
+//         yield b.value;
+//         yieldmore treeIter(b.right);
+//     }
+//     };
+// }
