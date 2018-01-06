@@ -25,7 +25,7 @@ tokens :-
   ","                           { \p _ -> TokenComma p          }
   "@"                           { \p _ -> TokenAt p             }
   "->"                          { \p _ -> TokenArrow p          }
-  "//".*                        { \p s -> TokenComment p s      }
+  "//".*                        ;
   $digit+                       { \p s -> TokenInt p (read s)   }
   union                         { \p _ -> TokenTUnion p         }
   var                           { \p _ -> TokenVar p            }
@@ -36,6 +36,7 @@ tokens :-
   lam                           { \p _ -> TokenLam p            }
   $lower [$alpha $digit \_ \']* { \p s -> TokenIdent p s        }
   $upper [$alpha $digit \_ \']* { \p s -> TokenConstr p s       }
+  [\.\,\~\!\#\$\%\^\&\*\-\=\+\/] { \p s -> TokenOp p s          }
 
 {
 
