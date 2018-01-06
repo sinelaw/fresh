@@ -1,38 +1,38 @@
 {
 module Fresh.Parse where
 
-import Fresh.Lexer (Token(..))
+import Fresh.Lexer (Token(..), LToken)
 import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
 }
 
 %name parse
-%tokentype { Token }
+%tokentype { LToken }
 %error { parseError }
 
 %token
-      ident           { TokenIdent $$ }
-      constr          { TokenConstr $$ }
-      union           { TokenTUnion }
-      func            { TokenFunc }
-      switch          { TokenSwitch }
-      case            { TokenCase }
-      return          { TokenReturn }
-      lam             { TokenLam }
-      op              { TokenOp $$ }
-      var             { TokenVar }
-      ':'             { TokenColon }
-      '<'             { TokenTriangleOpen }
-      '>'             { TokenTriangleClose }
-      '('             { TokenParenOpen }
-      ')'             { TokenParenClose }
-      '{'             { TokenBraceOpen }
-      '}'             { TokenBraceClose }
-      '->'            { TokenArrow }
-      ';'             { TokenSemi }
-      ','             { TokenComma }
-      '='             { TokenEq }
-      '@'             { TokenAt }
-      number          { TokenInt $$ }
+      ident           { TokenIdent _ $$ }
+      constr          { TokenConstr _ $$ }
+      union           { TokenTUnion _ }
+      func            { TokenFunc _ }
+      switch          { TokenSwitch _ }
+      case            { TokenCase _ }
+      return          { TokenReturn _ }
+      lam             { TokenLam _ }
+      op              { TokenOp _ $$ }
+      var             { TokenVar _ }
+      ':'             { TokenColon _ }
+      '<'             { TokenTriangleOpen _ }
+      '>'             { TokenTriangleClose _ }
+      '('             { TokenParenOpen _ }
+      ')'             { TokenParenClose _ }
+      '{'             { TokenBraceOpen _ }
+      '}'             { TokenBraceClose _ }
+      '->'            { TokenArrow _ }
+      ';'             { TokenSemi _ }
+      ','             { TokenComma _ }
+      '='             { TokenEq _ }
+      '@'             { TokenAt _ }
+      number          { TokenInt _ $$ }
 
 %left op
 
@@ -129,8 +129,8 @@ Expr        : lam ident '->' Stmts              { Lam [FuncArg (VarName $2) Noth
             | number                            { LitNum $1 }
 {
 
-parseError :: [Token] -> a
-parseError ts = error $ "Parse error at: " ++ (show ts)
+parseError :: [LToken] -> a
+parseError ts = error $ "Parse error at: " ++ (show $ head ts)
 
 
 data Op = Op String
