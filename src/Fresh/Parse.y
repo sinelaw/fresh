@@ -31,6 +31,7 @@ import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
       '->'            { TokenArrow _ }
       ';'             { TokenSemi _ }
       ','             { TokenComma _ }
+      '.'             { TokenDot _ }
       '='             { TokenEq _ }
       '@'             { TokenAt _ }
       number          { TokenInt _ $$ }
@@ -124,8 +125,11 @@ Expr        : lam ident '->' Stmts              { Lam [FuncArg (VarName $2) Noth
             | '(' TupleArgs ')'                 { Tuple $2 }
             | Expr op Expr                      { OpApp (Op $2) $1 $3 }
             | Expr '=' Expr                     { OpApp (Op "=") $1 $3 }
+            | Expr '.' ident '=' Expr           { DotSet $1 (FieldName $3) $5 }
+            | Expr '.' ident                    { DotGet $1 (FieldName $3) }
             | Switch                            { $1 }
             | ident                             { Var (VarName $1) }
+            | ident '=' Expr                    { VarSet (VarName $1) $3 }
             | constr                            { Constr (ConstrName $1) }
             | number                            { LitNum $1 }
 {

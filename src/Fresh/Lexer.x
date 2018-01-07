@@ -23,6 +23,7 @@ tokens :-
   ";"                           { \p _ -> TokenSemi p           }
   ":"                           { \p _ -> TokenColon p          }
   ","                           { \p _ -> TokenComma p          }
+  "."                           { \p _ -> TokenDot p            }
   "@"                           { \p _ -> TokenAt p             }
   "->"                          { \p _ -> TokenArrow p          }
   "//".*                        ;
@@ -36,7 +37,7 @@ tokens :-
   lam                           { \p _ -> TokenLam p            }
   $lower [$alpha $digit \_ \']* { \p s -> TokenIdent p s        }
   $upper [$alpha $digit \_ \']* { \p s -> TokenConstr p s       }
-  [\.\,\~\!\#\$\%\^\&\*\-\=\+\/] { \p s -> TokenOp p s          }
+  [\,\~\!\#\$\%\^\&\*\-\=\+\/] { \p s -> TokenOp p s          }
 
 {
 
@@ -61,6 +62,7 @@ data Token a
     | TokenArrow a
     | TokenComma a
     | TokenEq a
+    | TokenDot a
     | TokenSemi a
     | TokenAt a
     | TokenComment a String

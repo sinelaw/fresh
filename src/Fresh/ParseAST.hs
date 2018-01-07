@@ -6,6 +6,8 @@ data ConstrName = ConstrName String
     deriving Show
 data VarName = VarName String
     deriving Show
+data FieldName = FieldName String
+    deriving Show
 data TVarName = TVarName String
     deriving Show
 data TypeSpec = TSVar TVarName
@@ -34,11 +36,14 @@ data Expr = Lam [FuncArg] [Stmt]
           | Call Expr [Expr]
           | OpApp Op Expr Expr
           | Var VarName
+          | VarSet VarName Expr
           | Constr ConstrName
           | Switch Expr [SwitchCase]
           | Return Expr
           | Tuple [Expr]
           | LitNum Int
+          | DotGet Expr FieldName
+          | DotSet Expr FieldName Expr
           | Empty
     deriving Show
 
