@@ -64,7 +64,7 @@ FuncArgs    : {- empty -}                       { [] }
             | FuncArg                           { [$1] }
             | FuncArgs ',' FuncArg              { $3 : $1 }
 
-Func        : func ident '(' FuncArgs ')' StmtBlock { StmtLetVar (gta $1) (VarName (gta $2) (gtc $2)) (Lam (gta $3) $4 $6) }
+Func        : func ident '(' FuncArgs ')' StmtBlock { StmtLetVar (gta $1) (VarName (gta $2) (gtc $2)) (ExprLam (gta $3) $4 $6) }
 
 TUnion      : union constr TUnionArgs '{' TUnionConstrs '}' { TUnion (gta $1) (TypeName (gta $2) (gtc $2)) $3 $5 }
 
@@ -115,23 +115,23 @@ SwitchCases : SwitchCase                        { [$1] }
 FuncArg  : ident ':' TypeSpec                   { FuncArg (gta $1) (VarName (gta $1) (gtc $1)) (Just $3) }
          | ident                                { FuncArg (gta $1) (VarName (gta $1) (gtc $1)) Nothing }
 
-Switch      : switch Expr '{' SwitchCases '}'   { Switch (gta $1) $2 $4 }
+Switch      : switch Expr '{' SwitchCases '}'   { ExprSwitch (gta $1) $2 $4 }
 
 TupleArgs   : Expr                              { [$1] }
             | TupleArgs ',' Expr                { $3 : $1 }
 
-Expr        : lam ident '->' Stmts              { Lam (gta $1) [FuncArg (gta $2) (VarName (gta $2) (gtc $2)) Nothing] $4 }
+Expr        : lam ident '->' Stmts              { ExprLam (gta $1) [FuncArg (gta $2) (VarName (gta $2) (gtc $2)) Nothing] $4 }
             | lam '(' ident ':' TypeSpec ')' '->' Stmts
-                                                { Lam (gta $1) [FuncArg (gta $2) (VarName (gta $3) (gtc $3)) (Just $5)] $8 }
-            | Expr '('  ')'                     { Call (gta $2) $1 [] }
-            | Expr '(' TupleArgs ')'            { Call (gta $2) $1 $3 }
-            | '(' TupleArgs ')'                 { Tuple (gta $1) $2 }
-            | Expr op Expr                      { OpApp (gta $2) (Op (gta $2) (gtc $2)) $1 $3 }
-            | Expr '.' ident                    { DotGet (gta $2) $1 (FieldName (gta $3) (gtc $3)) }
+                                                { ExprLam (gta $1) [FuncArg (gta $2) (VarName (gta $3) (gtc $3)) (Just $5)] $8 }
+            | Expr '('  ')'                     { ExprCall (gta $2) $1 [] }
+            | Expr '(' TupleArgs ')'            { ExprCall (gta $2) $1 $3 }
+            | '(' TupleArgs ')'                 { ExprTuple (gta $1) $2 }
+            | Expr op Expr                      { ExprOpApp (gta $2) (Op (gta $2) (gtc $2)) $1 $3 }
+            | Expr '.' ident                    { ExprDotGet (gta $2) $1 (FieldName (gta $3) (gtc $3)) }
             | Switch                            { $1 }
-            | ident                             { Var (gta $1) (VarName (gta $1) (gtc $1)) }
-            | constr                            { Constr (gta $1) (ConstrName (gta $1) (gtc $1)) }
-            | number                            { LitNum (gta $1) (getNum $1) }
+            | ident                             { ExprVar (gta $1) (VarName (gta $1) (gtc $1)) }
+            | constr                            { ExprConstr (gta $1) (ConstrName (gta $1) (gtc $1)) }
+            | number                            { ExprLitNum (gta $1) (getNum $1) }
 {
 
 gta = Token.getAnnotation

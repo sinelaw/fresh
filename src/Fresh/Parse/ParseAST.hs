@@ -46,31 +46,27 @@ data SwitchCase a = SwitchCase a [PatternMatch a] [Stmt a]
     deriving (Show, Functor, Foldable, Traversable)
 
 data Expr a
-    = Lam a [FuncArg a] [Stmt a]
-    | Call a (Expr a) [Expr a]
-    | OpApp a (Op a) (Expr a) (Expr a)
-    | Var a (VarName a)
-    | Constr a (ConstrName a)
-    | Switch a (Expr a) [SwitchCase a]
-    | Return a (Expr a)
-    | Tuple a [Expr a]
-    | LitNum a Int
-    | DotGet a (Expr a) (FieldName a)
-    | Empty a
+    = ExprLam a [FuncArg a] [Stmt a]
+    | ExprCall a (Expr a) [Expr a]
+    | ExprOpApp a (Op a) (Expr a) (Expr a)
+    | ExprVar a (VarName a)
+    | ExprConstr a (ConstrName a)
+    | ExprSwitch a (Expr a) [SwitchCase a]
+    | ExprTuple a [Expr a]
+    | ExprLitNum a Int
+    | ExprDotGet a (Expr a) (FieldName a)
     deriving (Show, Functor, Foldable, Traversable)
 
 getExprAnnotation :: Expr a -> a
-getExprAnnotation (Lam a _ _) = a
-getExprAnnotation (Call a _ _) = a
-getExprAnnotation (OpApp a _ _ _) = a
-getExprAnnotation (Var a _) = a
-getExprAnnotation (Constr a _) = a
-getExprAnnotation (Switch a _ _) = a
-getExprAnnotation (Return a _) = a
-getExprAnnotation (Tuple a _) = a
-getExprAnnotation (LitNum a _) = a
-getExprAnnotation (DotGet a _ _) = a
-getExprAnnotation (Empty a) = a
+getExprAnnotation (ExprLam a _ _) = a
+getExprAnnotation (ExprCall a _ _) = a
+getExprAnnotation (ExprOpApp a _ _ _) = a
+getExprAnnotation (ExprVar a _) = a
+getExprAnnotation (ExprConstr a _) = a
+getExprAnnotation (ExprSwitch a _ _) = a
+getExprAnnotation (ExprTuple a _) = a
+getExprAnnotation (ExprLitNum a _) = a
+getExprAnnotation (ExprDotGet a _ _) = a
 
 data TUnion a
     = TUnion a (TypeName a) [TVarName a] [ConstrDef a]
