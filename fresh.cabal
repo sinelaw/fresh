@@ -29,6 +29,7 @@ library
                      , Fresh.Parse
                      , Fresh.ParseAST
                      , Fresh.Pretty
+                     , Fresh.Token
                      , Fresh.Types
                      , Fresh.Unify
                     -- , Fresh.Subst
