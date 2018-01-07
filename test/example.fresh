@@ -2,90 +2,90 @@ func save(x) {
     a.b.c = 3;
 }
 
-// union List<x> {
-//     Nil,
-//     Cons(head: x, tail: List<x>),
-// }
+union List<x> {
+    Nil,
+    Cons(head: x, tail: List<x>),
+}
 
-// // a -> a
-// func id(x) {
-//     return x;
-// }
+// a -> a
+func id(x) {
+    return x;
+}
 
-// // { sub: { x: a, r1.. }, r2.. } -> a
-// func getX(obj) {
-//     return obj.sub.x;
-// }
+// { sub: { x: a, r1.. }, r2.. } -> a
+func getX(obj) {
+    return obj.sub.x;
+}
 
-// union Fruit {
-//     Apple,
-//     Pear,
-// }
+union Fruit {
+    Apple,
+    Pear,
+}
 
-// union Option<x> {
-//     Null,
-//     Value(value: x),
-// }
+union Option<x> {
+    Null,
+    Value(value: x),
+}
 
-// // func getpid(Int x) {
-// //     return $clang[x]{
-// //         wait(x);
-// //     };
-// // }
-
-// // (x -> x -> x) -> Option<x> -> Option<x> -> Option<x>
-// func combine(f, o1, o2) {
-//     switch (o1, o2) {
-//     case (Null      , Null      ): return Null;
-//     case (Value(v)  , Null      ): return v;
-//     case (Null      , Value(v)  ): return v;
-//     case (Value(v1) , Value(v2) ): return Value(f(v1, v2));
+// func getpid(Int x) {
+//     return $clang[x]{
+//         wait(x);
 //     };
 // }
 
-// union Tree<x> {
-//     Branch(left: Tree<x>, value: x, right: Tree<x>),
-//     Stump,
-// }
+// (x -> x -> x) -> Option<x> -> Option<x> -> Option<x>
+func combine(f, o1, o2) {
+    switch (o1, o2) {
+    case (Null      , Null      ): return Null;
+    case (Value(v)  , Null      ): return v;
+    case (Null      , Value(v)  ): return v;
+    case (Value(v1) , Value(v2) ): return Value(f(v1, v2));
+    };
+}
 
-// // Tree<Number> -> Option<Number>
-// func treeMax(t) {
-//     return switch (t) {
-//     case Stump         : Null;
-//     case Branch(l,v,r) : combine(max, v,
-//                                  combine(max, treeMax(l), treeMax(r)));
-//     };
-// }
+union Tree<x> {
+    Branch(left: Tree<x>, value: x, right: Tree<x>),
+    Stump,
+}
 
-// // (x -> y) -> Tree<x> -> Tree<y>
-// func treeMap(f, t) {
+// Tree<Number> -> Option<Number>
+func treeMax(t) {
+    return switch (t) {
+    case Stump         : Null;
+    case Branch(l,v,r) : combine(max, v,
+                                 combine(max, treeMax(l), treeMax(r)));
+    };
+}
+
+// (x -> y) -> Tree<x> -> Tree<y>
+func treeMap(f, t) {
+    switch (t) {
+    case Stump     : return Stump;
+    case b@Branch  : return Branch(treeMap(f, b.left),
+                                   f(b.value),
+                                   treeMap(f, b.right));
+    };
+}
+
+// // Polymorphic variants:
+
+// [ ERR_FILE_NOT_FOUND | a… ] -> [ a… ]
+func handleFileErrors(e) {
+    switch (e) {
+    case ERR_FILE_NOT_FOUND: do_something;
+    case ERR_PERMISSION_DENIED: do_something_else;
+    case x: return x;
+    };
+}
+
+// // Tree(x) -> Iterator(x)
+// func treeIter(t) {
 //     switch (t) {
-//     case Stump     : return Stump;
-//     case b@Branch  : return Branch(treeMap(f, b.left),
-//                                    f(b.value),
-//                                    treeMap(f, b.right));
+//     case Stump      : return;
+//     case b@Branch   : {
+//         yieldmore treeIter(b.left);
+//         yield b.value;
+//         yieldmore treeIter(b.right);
+//     }
 //     };
 // }
-
-// // // Polymorphic variants:
-
-// // [ ERR_FILE_NOT_FOUND | a… ] -> [ a… ]
-// func handleFileErrors(e) {
-//     switch (e) {
-//     case ERR_FILE_NOT_FOUND: do_something;
-//     case ERR_PERMISSION_DENIED: do_something_else;
-//     case x: return x;
-//     };
-// }
-
-// // // Tree(x) -> Iterator(x)
-// // func treeIter(t) {
-// //     switch (t) {
-// //     case Stump      : return;
-// //     case b@Branch   : {
-// //         yieldmore treeIter(b.left);
-// //         yield b.value;
-// //         yieldmore treeIter(b.right);
-// //     }
-// //     };
-// // }
