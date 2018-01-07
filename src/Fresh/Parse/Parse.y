@@ -1,10 +1,10 @@
 {
-module Fresh.Parse where
+module Fresh.Parse.Parse where
 
-import Fresh.ParseAST
-import Fresh.Lexer (LToken)
-import Fresh.Token (Token(..))
-import qualified Fresh.Token as Token
+import Fresh.Parse.ParseAST
+import Fresh.Parse.Lexer (LToken)
+import Fresh.Parse.Token (Token(..))
+import qualified Fresh.Parse.Token as Token
 import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
 
 }

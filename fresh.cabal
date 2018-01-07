@@ -23,13 +23,13 @@ library
                      , Fresh.Infer
                      , Fresh.InferMonad
                      , Fresh.Kind
-                     , Fresh.Lexer
                      , Fresh.Module
                      , Fresh.OrderedSet
-                     , Fresh.Parse
-                     , Fresh.ParseAST
+                     , Fresh.Parse.Lexer
+                     , Fresh.Parse.Parse
+                     , Fresh.Parse.ParseAST
+                     , Fresh.Parse.Token
                      , Fresh.Pretty
-                     , Fresh.Token
                      , Fresh.Types
                      , Fresh.Unify
                     -- , Fresh.Subst

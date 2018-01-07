@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
-module Fresh.ParseAST where
+module Fresh.Parse.ParseAST where
 
 data Op a = Op a String
     deriving (Show, Functor, Foldable, Traversable)

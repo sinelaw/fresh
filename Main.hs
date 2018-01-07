@@ -4,8 +4,8 @@ module Main (main) where
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 import Fresh.Pretty ()
-import Fresh.Parse (parse)
-import Fresh.Lexer (lexer)
+import Fresh.Parse.Parse (parse)
+import Fresh.Parse.Lexer (lexer)
 -- import Fresh.Expr  (getAnnotation)
 -- import Fresh.Infer (inferExpr)
 

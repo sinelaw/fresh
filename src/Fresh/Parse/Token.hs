@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
-module Fresh.Token (Token(..), getAnnotation, getContent) where
+module Fresh.Parse.Token (Token(..), getAnnotation, getContent) where
 
 import Data.Foldable
 
