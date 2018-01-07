@@ -48,11 +48,11 @@ data SwitchCase a = SwitchCase a [PatternMatch a] [Stmt a]
 data Expr a
     = ExprLam a [FuncArg a] [Stmt a]
     | ExprCall a (Expr a) [Expr a]
-    | ExprOpApp a (Op a) (Expr a) (Expr a)
+    | ExprOpApp a (Op a) (Expr a) (Expr a) -- TODO: parse as ExprCall (ExprVar '...') [ ... ]
     | ExprVar a (VarName a)
     | ExprConstr a (ConstrName a)
     | ExprSwitch a (Expr a) [SwitchCase a]
-    | ExprTuple a [Expr a]
+    | ExprTuple a [Expr a] -- TODO: parse as ExprCall (ExprConstr "Tuple") [ ... ]
     | ExprLitNum a Int
     | ExprDotGet a (Expr a) (FieldName a)
     deriving (Show, Functor, Foldable, Traversable)
