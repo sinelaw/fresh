@@ -50,14 +50,12 @@ data Expr a
     | Call a (Expr a) [Expr a]
     | OpApp a (Op a) (Expr a) (Expr a)
     | Var a (VarName a)
-    | VarSet a (VarName a) (Expr a)
     | Constr a (ConstrName a)
     | Switch a (Expr a) [SwitchCase a]
     | Return a (Expr a)
     | Tuple a [Expr a]
     | LitNum a Int
     | DotGet a (Expr a) (FieldName a)
-    | DotSet a (Expr a) (FieldName a) (Expr a)
     | Empty a
     deriving (Show, Functor, Foldable, Traversable)
 
@@ -66,14 +64,12 @@ getExprAnnotation (Lam a _ _) = a
 getExprAnnotation (Call a _ _) = a
 getExprAnnotation (OpApp a _ _ _) = a
 getExprAnnotation (Var a _) = a
-getExprAnnotation (VarSet a _ _) = a
 getExprAnnotation (Constr a _) = a
 getExprAnnotation (Switch a _ _) = a
 getExprAnnotation (Return a _) = a
 getExprAnnotation (Tuple a _) = a
 getExprAnnotation (LitNum a _) = a
 getExprAnnotation (DotGet a _ _) = a
-getExprAnnotation (DotSet a _ _ _) = a
 getExprAnnotation (Empty a) = a
 
 data TUnion a
@@ -93,6 +89,8 @@ data Stmt a
     | StmtLetVar a (VarName a) (Expr a)
     | StmtType a (TUnion a)
     | StmtReturn a (Maybe (Expr a))
+    | StmtVarSet a (VarName a) (Expr a)
+    | StmtDotSet a (Expr a) (FieldName a) (Expr a)
     deriving (Show, Functor, Foldable, Traversable)
 
 getStmtAnnotation :: Stmt a -> a
@@ -100,3 +98,5 @@ getStmtAnnotation (StmtExpr a _) = a
 getStmtAnnotation (StmtLetVar a _ _) = a
 getStmtAnnotation (StmtType a _) = a
 getStmtAnnotation (StmtReturn a _) = a
+getStmtAnnotation (StmtVarSet a _ _) = a
+getStmtAnnotation (StmtDotSet a _ _ _) = a

@@ -56,6 +56,8 @@ Stmt        : var ident '=' Expr ';'            { StmtLetVar (gta $1) (VarName (
             | return Expr ';'                   { StmtReturn (gta $1) (Just $2) }
             | Func                              { $1 }
             | TUnion                            { StmtType (gua $1) $1 }
+            | Expr '.' ident '=' Expr ';'       { StmtDotSet (gta $2) $1 (FieldName (gta $3) (gtc $3)) $5 }
+            | ident '=' Expr ';'                { StmtVarSet (gta $1) (VarName (gta $1) (gtc $1)) $3 }
             | Expr ';'                          { StmtExpr (gea $1) $1 }
 
 FuncArgs    : {- empty -}                       { [] }
@@ -125,11 +127,9 @@ Expr        : lam ident '->' Stmts              { Lam (gta $1) [FuncArg (gta $2)
             | Expr '(' TupleArgs ')'            { Call (gta $2) $1 $3 }
             | '(' TupleArgs ')'                 { Tuple (gta $1) $2 }
             | Expr op Expr                      { OpApp (gta $2) (Op (gta $2) (gtc $2)) $1 $3 }
-            | Expr '.' ident '=' Expr           { DotSet (gta $2) $1 (FieldName (gta $3) (gtc $3)) $5 }
             | Expr '.' ident                    { DotGet (gta $2) $1 (FieldName (gta $3) (gtc $3)) }
             | Switch                            { $1 }
             | ident                             { Var (gta $1) (VarName (gta $1) (gtc $1)) }
-            | ident '=' Expr                    { VarSet (gta $1) (VarName (gta $1) (gtc $1)) $3 }
             | constr                            { Constr (gta $1) (ConstrName (gta $1) (gtc $1)) }
             | number                            { LitNum (gta $1) (getNum $1) }
 {
