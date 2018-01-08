@@ -42,7 +42,7 @@ data PatternMatch a = PatternMatchAll a
                     | PatternMatchAny a (VarName a)
     deriving (Show, Functor, Foldable, Traversable)
 
-data SwitchCase a = SwitchCase a [PatternMatch a] [Stmt a]
+data SwitchCase a = SwitchCase a (PatternMatch a) [Stmt a]
     deriving (Show, Functor, Foldable, Traversable)
 
 data Expr a

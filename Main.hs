@@ -6,15 +6,16 @@ module Main (main) where
 import Fresh.Pretty ()
 import Fresh.Parse.Parse (parse)
 import Fresh.Parse.Lexer (lexer)
+import Fresh.Parse.Pretty ()
 -- import Fresh.Expr  (getAnnotation)
 -- import Fresh.Infer (inferExpr)
 
--- import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
+import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
 
 main :: IO ()
 main = do
     s <- getContents
-    print $ lexer s
+    -- print $ lexer s
     let p = parse . lexer $ s
     -- TODO: ParseAST -> Expr -> inference
-    print p
+    print $ pretty p

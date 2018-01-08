@@ -28,6 +28,7 @@ library
                      , Fresh.Parse.Lexer
                      , Fresh.Parse.Parse
                      , Fresh.Parse.ParseAST
+                     , Fresh.Parse.Pretty
                      , Fresh.Parse.Token
                      , Fresh.Pretty
                      , Fresh.Types

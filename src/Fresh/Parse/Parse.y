@@ -107,8 +107,7 @@ PatternMatch  : PatternMatchConstr              { PatternMatchAnon  (gpca $1) ($
 PatternMatches : PatternMatch                      { [$1] }
                | PatternMatches ',' PatternMatch   { $3 : $1 }
 
-SwitchCase  : case PatternMatch ':' StmtOrBlock           { SwitchCase (gta $1) [$2] $4 }
-            | case '(' PatternMatches ')' ':' StmtOrBlock { SwitchCase (gta $1) $3 $6 }
+SwitchCase  : case PatternMatch ':' StmtOrBlock           { SwitchCase (gta $1) $2 $4 }
 
 SwitchCases : SwitchCase                        { [$1] }
             | SwitchCases SwitchCase            { $2: $1 }
