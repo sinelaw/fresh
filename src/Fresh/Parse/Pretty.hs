@@ -87,7 +87,7 @@ instance Pretty (Stmt a) where
     pretty (StmtExpr _ e) = pretty e <> ";"
     pretty (StmtLetVar _ v e) = "var" <+> pretty v <+> "=" <+> pretty e
     pretty (StmtType _ t) = pretty t
-    pretty (StmtReturn _ (Just e)) = "return" <+> pretty e
+    pretty (StmtReturn _ (Just e)) = "return" <+> pretty e <> ";"
     pretty (StmtReturn _ Nothing) = "return;"
     pretty (StmtVarSet _ v e) = pretty v <+> "=" <+> pretty e <> ";"
     pretty (StmtDotSet _ e1 f e2) = pretty e1 <> "." <> pretty f <+> "=" <+> pretty e2 <> ";"
