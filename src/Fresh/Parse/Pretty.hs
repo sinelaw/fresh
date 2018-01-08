@@ -9,8 +9,8 @@ import Prelude hiding ((<$>))
 
 vbraced :: [Doc] -> Doc
 vbraced xs
-    = lbrace
-    <$> nest 4 (vsep xs)
+    = nest 4 (lbrace
+              <$> vsep xs)
     <$> rbrace
 
 instance Pretty (Op a) where
@@ -69,13 +69,16 @@ instance Pretty (Expr a) where
     pretty (ExprLitNum _ num) = pretty num
     pretty (ExprDotGet _ e f) = pretty e <> "." <> pretty f
 
+emptyTupled [] = empty
+emptyTupled ts = tupled ts
+
 instance Pretty (TUnion a) where
     pretty (TUnion _ tname tvars constrs) =
-        "union" <+> pretty tname <+> tupled (map pretty tvars)
+        "union" <+> pretty tname <> emptyTupled (map pretty tvars)
         <+> vbraced (map (\x -> pretty x <> comma) constrs)
 
 instance Pretty (ConstrDef a) where
-    pretty (ConstrDef _ n args) = pretty n <> tupled (map pretty args)
+    pretty (ConstrDef _ n args) = pretty n <> emptyTupled (map pretty args)
 
 instance Pretty (ConstrArg a) where
     pretty (ConstrArg _ v t) = pretty t <+> pretty v

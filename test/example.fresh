@@ -33,15 +33,15 @@ union Option<x> {
 //     };
 // }
 
-// (x -> x -> x) -> Option<x> -> Option<x> -> Option<x>
-func combine(f, o1, o2) {
-    switch (o1, o2) {
-    case (Null      , Null      ): return Null;
-    case (Value(v)  , Null      ): return v;
-    case (Null      , Value(v)  ): return v;
-    case (Value(v1) , Value(v2) ): return Value(f(v1, v2));
-    };
-}
+// // (x -> x -> x) -> Option<x> -> Option<x> -> Option<x>
+// func combine(f, o1, o2) {
+//     switch (o1, o2) {
+//     case (Null      , Null      ): return Null;
+//     case (Value(v)  , Null      ): return v;
+//     case (Null      , Value(v)  ): return v;
+//     case (Value(v1) , Value(v2) ): return Value(f(v1, v2));
+//     };
+// }
 
 union Tree<x> {
     Branch(left: Tree<x>, value: x, right: Tree<x>),

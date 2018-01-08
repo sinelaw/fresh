@@ -7,6 +7,8 @@ import Fresh.Pretty ()
 import Fresh.Parse.Parse (parse)
 import Fresh.Parse.Lexer (lexer)
 import Fresh.Parse.Pretty ()
+
+import Control.Monad (forM_)
 -- import Fresh.Expr  (getAnnotation)
 -- import Fresh.Infer (inferExpr)
 
@@ -16,6 +18,6 @@ main :: IO ()
 main = do
     s <- getContents
     -- print $ lexer s
-    let p = parse . lexer $ s
+    let ps = parse . lexer $ s
     -- TODO: ParseAST -> Expr -> inference
-    print $ pretty p
+    forM_ ps $ \p -> print (pretty p)
