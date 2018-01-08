@@ -263,7 +263,7 @@ deriving instance Show (f (Fix f)) => Show (Fix f)
 instance HasKind (f (Fix f)) => HasKind (Fix f) where
     kind (Fix t) = kind t
 
-instance HasGen m (f (Fix f)) g => HasGen m (Fix f) g where
+instance (Monad m, HasGen m (f (Fix f)) g) => HasGen m (Fix f) g where
     freeGenVars (Fix t) = freeGenVars t
 
 data SType s = SType (TypeABT Level (STRef s) (SType s))

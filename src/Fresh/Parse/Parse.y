@@ -2,15 +2,16 @@
 module Fresh.Parse.Parse where
 
 import Fresh.Parse.ParseAST
-import Fresh.Parse.Lexer (LToken)
+import Fresh.Parse.Lexer (LToken, AlexPosn(..))
 import Fresh.Parse.Token (Token(..))
 import qualified Fresh.Parse.Token as Token
 import Data.Char (isSpace, isAlpha, isUpper, isLower, isAlphaNum, isDigit)
-
+import Data.List (intercalate)
 }
 
 %name parse
 %tokentype { LToken }
+%errorhandlertype explist
 %error { parseError }
 
 %token
@@ -144,7 +145,10 @@ gpca = getPatternConstrAnnotation
 
 getNum (TokenInt _ n) = n
 
-parseError :: [LToken] -> a
-parseError ts = error $ "Parse error at: " ++ (show $ head ts)
+parseError :: ([LToken], [String]) -> a
+parseError (t, opts) = error $ pos ++ ": Got '" ++ tok ++ "' expected one of: " ++ (intercalate ", " opts)
+    where pos = show line ++ ":" ++ show col
+          (AlexPn _ line col) = Token.getAnnotation $ head t
+          tok = Token.debugToken $ head t
 
 }

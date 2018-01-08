@@ -1,5 +1,5 @@
 {
-module Fresh.Parse.Lexer (LToken, AlexPosn, lexer) where
+module Fresh.Parse.Lexer (LToken, AlexPosn(..), lexer) where
 
 import Fresh.Parse.Token (Token(..))
 
