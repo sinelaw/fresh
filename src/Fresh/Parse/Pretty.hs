@@ -28,10 +28,12 @@ instance Pretty (FieldName a) where
 instance Pretty (TVarName a) where
     pretty (TVarName _ s) = pretty s
 
+triangleSep tss = encloseSep "<" ">" "," tss
+
 instance Pretty (TypeSpec a) where
     pretty (TSVar _ tv) = pretty tv
     pretty (TSName _ tn) = pretty tn
-    pretty (TSApp _ ts tss) = pretty ts <> encloseSep "<" ">" "," (map pretty tss)
+    pretty (TSApp _ ts tss) = pretty ts <> triangleSep (map pretty tss)
 
 
 instance Pretty (TypeName a) where
@@ -74,7 +76,9 @@ emptyTupled ts = tupled ts
 
 instance Pretty (TUnion a) where
     pretty (TUnion _ tname tvars constrs) =
-        "union" <+> pretty tname <> emptyTupled (map pretty tvars)
+        "union" <+> pretty tname <> (case tvars of
+                                       [] -> empty
+                                       _ -> triangleSep (map pretty tvars))
         <+> vbraced (map (\x -> pretty x <> comma) constrs)
 
 instance Pretty (ConstrDef a) where
