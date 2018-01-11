@@ -1,5 +1,5 @@
 {
-module Fresh.Parse.Parse where
+module Fresh.Parse.Parse (parse) where
 
 import Fresh.Parse.ParseAST
 import Fresh.Parse.Lexer (LToken, AlexPosn(..))

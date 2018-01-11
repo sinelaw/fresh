@@ -8,6 +8,9 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 --module Spec where
+module Main (main) where
+
+import qualified TestParse
 
 import           Test.QuickCheck
 
@@ -596,6 +599,9 @@ main = do
         forM_ errs (print . red)
     putStrLn "------------------------------------------------------------"
     void $ runTests testCount
+    putStrLn "------------------------------------------------------------"
+    void $ TestParse.runTests testCount
+    putStrLn "DONE ALL"
 
 
 -- TODO: Check this example, it fails constWrap and also infers a type
