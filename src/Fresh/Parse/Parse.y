@@ -125,10 +125,10 @@ TupleArgs   : Expr                              { [$1] }
 Expr        : lam ident '->' Stmts              { ExprLam (gta $1) [FuncArg (gta $2) (VarName (gta $2) (gtc $2)) Nothing] $4 }
             | lam '(' ident ':' TypeSpec ')' '->' Stmts
                                                 { ExprLam (gta $1) [FuncArg (gta $2) (VarName (gta $3) (gtc $3)) (Just $5)] $8 }
-            | Expr '('  ')'                     { ExprCall (gta $2) $1 [] }
-            | Expr '(' TupleArgs ')'            { ExprCall (gta $2) $1 $3 }
-            | '(' TupleArgs ')'                 { ExprCall (gta $1) (ExprConstr (gta $1) (ConstrName (gta $1) "()")) $2 }
-            | Expr op Expr                      { ExprCall (gta $2) (ExprVar (gta $2) (VarName (gta $2) (gtc $2))) [$1, $3] }
+            | Expr '('  ')'                     { ExprCall (gta $2) $1 (CallFormPrefix []) }
+            | Expr '(' TupleArgs ')'            { ExprCall (gta $2) $1 (CallFormPrefix $3) }
+            | '(' TupleArgs ')'                 { ExprCall (gta $1) (ExprConstr (gta $1) (ConstrName (gta $1) "()")) (CallFormPrefix $2) }
+            | Expr op Expr                      { ExprCall (gta $2) (ExprVar (gta $2) (VarName (gta $2) (gtc $2))) (CallFormInfix $1 $3) }
             | Expr '.' ident                    { ExprDotGet (gta $2) $1 (FieldName (gta $3) (gtc $3)) }
             | Switch                            { $1 }
             | ident                             { ExprVar (gta $1) (VarName (gta $1) (gtc $1)) }

@@ -61,7 +61,10 @@ instance Pretty (Expr a) where
     pretty (ExprLam _ args stmts) = tupled (map pretty args)
         <+> "->"
         <+> vbraced (map pretty stmts)
-    pretty (ExprCall _ e args) = pretty e <> tupled (map pretty args)
+    pretty (ExprCall _ e form) =
+        case form of
+        CallFormPrefix args -> pretty e <> tupled (map pretty args)
+        CallFormInfix e1 e2 -> pretty e1 <+> pretty e <+> pretty e2
     pretty (ExprVar _ v) = pretty v
     pretty (ExprConstr _ c) = pretty c
     pretty (ExprSwitch _ e cases) = "switch"
