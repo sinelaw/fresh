@@ -32,6 +32,7 @@ tokens :-
   $digit+                       { \p s -> TokenInt p (read s)   }
   union                         { \p _ -> TokenTUnion p         }
   var                           { \p _ -> TokenVar p            }
+  mut                           { \p _ -> TokenMut p            }
   func                          { \p _ -> TokenFunc p           }
   switch                        { \p _ -> TokenSwitch p         }
   case                          { \p _ -> TokenCase p           }

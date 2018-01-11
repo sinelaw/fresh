@@ -28,7 +28,8 @@ instance Pretty (FieldName a) where
 instance Pretty (TVarName a) where
     pretty (TVarName _ s) = pretty s
 
-triangleSep tss = encloseSep "<" ">" "," tss
+triangleSep :: [Doc] -> Doc
+triangleSep = encloseSep "<" ">" ","
 
 instance Pretty (TypeSpec a) where
     pretty (TSVar _ tv) = pretty tv
@@ -61,16 +62,15 @@ instance Pretty (Expr a) where
         <+> "->"
         <+> vbraced (map pretty stmts)
     pretty (ExprCall _ e args) = pretty e <> tupled (map pretty args)
-    pretty (ExprOpApp _ op e1 e2) = pretty e1 <+> pretty op <+> pretty e2
     pretty (ExprVar _ v) = pretty v
     pretty (ExprConstr _ c) = pretty c
     pretty (ExprSwitch _ e cases) = "switch"
         <+> parens (pretty e)
         <+> vbraced (map pretty cases)
-    pretty (ExprTuple _ items) = tupled (map pretty items)
     pretty (ExprLitNum _ num) = pretty num
     pretty (ExprDotGet _ e f) = pretty e <> "." <> pretty f
 
+emptyTupled :: [Doc] -> Doc
 emptyTupled [] = empty
 emptyTupled ts = tupled ts
 
@@ -90,6 +90,7 @@ instance Pretty (ConstrArg a) where
 instance Pretty (Stmt a) where
     pretty (StmtExpr _ e) = pretty e <> ";"
     pretty (StmtLetVar _ v e) = "var" <+> pretty v <+> "=" <+> pretty e
+    pretty (StmtMutVar _ v e) = "mut" <+> pretty v <+> "=" <+> pretty e
     pretty (StmtType _ t) = pretty t
     pretty (StmtReturn _ (Just e)) = "return" <+> pretty e <> ";"
     pretty (StmtReturn _ Nothing) = "return;"

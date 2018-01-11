@@ -1,5 +1,6 @@
 func save(x) {
-    a.b.c = 3;
+    a.b.c = 3 + x;
+    return (a, x);
 }
 
 union List<x> {

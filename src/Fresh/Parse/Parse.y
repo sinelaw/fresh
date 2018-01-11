@@ -25,6 +25,7 @@ import Data.List (intercalate)
       lam             { TokenLam _ }
       op              { TokenOp _ _ }
       var             { TokenVar _ }
+      mut             { TokenMut _ }
       ':'             { TokenColon _ }
       '<'             { TokenTriangleOpen _ }
       '>'             { TokenTriangleClose _ }
@@ -53,6 +54,7 @@ StmtOrBlock : Stmt                              { [$1] }
             | StmtBlock                         { $1 }
 
 Stmt        : var ident '=' Expr ';'            { StmtLetVar (gta $1) (VarName (gta $2) (gtc $2)) $4 }
+            | mut ident '=' Expr ';'            { StmtMutVar (gta $1) (VarName (gta $2) (gtc $2)) $4 }
             | return ';'                        { StmtReturn (gta $1) Nothing }
             | return Expr ';'                   { StmtReturn (gta $1) (Just $2) }
             | Func                              { $1 }
@@ -125,8 +127,8 @@ Expr        : lam ident '->' Stmts              { ExprLam (gta $1) [FuncArg (gta
                                                 { ExprLam (gta $1) [FuncArg (gta $2) (VarName (gta $3) (gtc $3)) (Just $5)] $8 }
             | Expr '('  ')'                     { ExprCall (gta $2) $1 [] }
             | Expr '(' TupleArgs ')'            { ExprCall (gta $2) $1 $3 }
-            | '(' TupleArgs ')'                 { ExprTuple (gta $1) $2 }
-            | Expr op Expr                      { ExprOpApp (gta $2) (Op (gta $2) (gtc $2)) $1 $3 }
+            | '(' TupleArgs ')'                 { ExprCall (gta $1) (ExprConstr (gta $1) (ConstrName (gta $1) "()")) $2 }
+            | Expr op Expr                      { ExprCall (gta $2) (ExprVar (gta $2) (VarName (gta $2) (gtc $2))) [$1, $3] }
             | Expr '.' ident                    { ExprDotGet (gta $2) $1 (FieldName (gta $3) (gtc $3)) }
             | Switch                            { $1 }
             | ident                             { ExprVar (gta $1) (VarName (gta $1) (gtc $1)) }

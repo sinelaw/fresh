@@ -48,11 +48,9 @@ data SwitchCase a = SwitchCase a (PatternMatch a) [Stmt a]
 data Expr a
     = ExprLam a [FuncArg a] [Stmt a]
     | ExprCall a (Expr a) [Expr a]
-    | ExprOpApp a (Op a) (Expr a) (Expr a) -- TODO: parse as ExprCall (ExprVar '...') [ ... ]
     | ExprVar a (VarName a)
     | ExprConstr a (ConstrName a)
     | ExprSwitch a (Expr a) [SwitchCase a]
-    | ExprTuple a [Expr a] -- TODO: parse as ExprCall (ExprConstr "Tuple") [ ... ]
     | ExprLitNum a Int
     | ExprDotGet a (Expr a) (FieldName a)
     deriving (Show, Functor, Foldable, Traversable)
@@ -60,11 +58,9 @@ data Expr a
 getExprAnnotation :: Expr a -> a
 getExprAnnotation (ExprLam a _ _) = a
 getExprAnnotation (ExprCall a _ _) = a
-getExprAnnotation (ExprOpApp a _ _ _) = a
 getExprAnnotation (ExprVar a _) = a
 getExprAnnotation (ExprConstr a _) = a
 getExprAnnotation (ExprSwitch a _ _) = a
-getExprAnnotation (ExprTuple a _) = a
 getExprAnnotation (ExprLitNum a _) = a
 getExprAnnotation (ExprDotGet a _ _) = a
 
@@ -83,6 +79,7 @@ data ConstrArg a = ConstrArg a (VarName a) (TypeSpec a)
 data Stmt a
     = StmtExpr a (Expr a)
     | StmtLetVar a (VarName a) (Expr a)
+    | StmtMutVar a (VarName a) (Expr a)
     | StmtType a (TUnion a)
     | StmtReturn a (Maybe (Expr a))
     | StmtVarSet a (VarName a) (Expr a)
@@ -92,6 +89,7 @@ data Stmt a
 getStmtAnnotation :: Stmt a -> a
 getStmtAnnotation (StmtExpr a _) = a
 getStmtAnnotation (StmtLetVar a _ _) = a
+getStmtAnnotation (StmtMutVar a _ _) = a
 getStmtAnnotation (StmtType a _) = a
 getStmtAnnotation (StmtReturn a _) = a
 getStmtAnnotation (StmtVarSet a _ _) = a

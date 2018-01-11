@@ -18,6 +18,7 @@ data Token a
     | TokenReturn a
     | TokenLam a
     | TokenVar a
+    | TokenMut a
     | TokenColon a
     | TokenTriangleOpen a
     | TokenTriangleClose a
@@ -59,6 +60,7 @@ debugToken (TokenCase _)          = "case"
 debugToken (TokenReturn _)        = "return"
 debugToken (TokenLam _)           = "lam"
 debugToken (TokenVar _)           = "var"
+debugToken (TokenMut _)           = "mut"
 debugToken (TokenColon _)         = ":"
 debugToken (TokenTriangleOpen _)  = "<"
 debugToken (TokenTriangleClose _) = ">"
