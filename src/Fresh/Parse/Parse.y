@@ -118,6 +118,7 @@ FuncArg  : ident ':' TypeSpec                   { FuncArg (gta $1) (VarName (gta
          | ident                                { FuncArg (gta $1) (VarName (gta $1) (gtc $1)) Nothing }
 
 Switch      : switch Expr '{' SwitchCases '}'   { ExprSwitch (gta $1) $2 $4 }
+            | switch Expr '{' '}'               { ExprSwitch (gta $1) $2 [] }
 
 TupleArgs   : Expr                              { [$1] }
             | TupleArgs ',' Expr                { $3 : $1 }

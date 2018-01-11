@@ -28,18 +28,29 @@ lowerCase = oneof (map pure ['a'..'z'])
 upperCase :: Gen Char
 upperCase = oneof (map pure ['A'..'Z'])
 
+nameChar :: Gen Char
+nameChar = oneof (map pure $ ['a'..'z']++['A'..'Z']++['0'..'9']++['_'])
+
+nameStr :: Gen String
+nameStr = listOf nameChar
+
 instance Arbitrary a => Arbitrary (Op a) where
     arbitrary = Op <$> arbitrary <*> (genStrChoose ["~","!","#","$","%","^","&","*","-","+","/"])
 
 instance Arbitrary a => Arbitrary (VarName a) where
-    arbitrary = VarName <$> arbitrary <*> (lowerCase >>= (\c -> (c:) <$> arbitrary))
+    arbitrary = VarName <$> arbitrary <*> (lowerCase >>= (\c -> (c:) <$> nameStr))
 
 instance Arbitrary a => Arbitrary (ConstrName a) where
-    arbitrary = ConstrName <$> arbitrary <*> (upperCase >>= (\c -> (c:) <$> arbitrary))
+    arbitrary = ConstrName <$> arbitrary <*> (upperCase >>= (\c -> (c:) <$> nameStr))
 
-derive makeArbitrary ''FieldName
-derive makeArbitrary ''TVarName
-derive makeArbitrary ''TypeName
+instance Arbitrary a => Arbitrary (FieldName a) where
+    arbitrary = FieldName <$> arbitrary <*> (lowerCase >>= (\c -> (c:) <$> nameStr))
+
+instance Arbitrary a => Arbitrary (TVarName a) where
+    arbitrary = TVarName <$> arbitrary <*> (lowerCase >>= (\c -> (c:) <$> nameStr))
+
+instance Arbitrary a => Arbitrary (TypeName a) where
+    arbitrary = TypeName <$> arbitrary <*> (upperCase >>= (\c -> (c:) <$> nameStr))
 
 derive makeArbitrary ''FuncArg
 derive makeArbitrary ''TypeSpec
