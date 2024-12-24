@@ -1,0 +1,8 @@
+[package]
+name = "editor"
+version = "0.1.0"
+authors = ["Noam Lewis"]
+
+[dependencies]
+crossterm = "0.28.1"
+ratatui = "0.29.0"
