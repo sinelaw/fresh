@@ -26,6 +26,11 @@ impl State {
                     modifiers: KeyModifiers::NONE,
                     ..
                 }) => self.insert_char(c),
+                Event::Key(KeyEvent {
+                    code: KeyCode::Enter,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                }) => self.insert_char('\n'),
                 _ => {}
             }
         }
