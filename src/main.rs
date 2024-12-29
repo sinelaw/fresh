@@ -36,6 +36,12 @@ impl State {
                     modifiers: KeyModifiers::NONE,
                     ..
                 }) => self.delete_prev_char(),
+
+                Event::Key(KeyEvent {
+                    code: KeyCode::Delete,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                }) => self.delete_next_char(),
                 Event::Key(KeyEvent {
                     code: KeyCode::Enter,
                     modifiers: KeyModifiers::NONE,
@@ -51,6 +57,18 @@ impl State {
                     modifiers: KeyModifiers::NONE,
                     ..
                 }) => self.move_right(),
+
+                Event::Key(KeyEvent {
+                    code: KeyCode::Down,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                }) => self.move_down(),
+
+                Event::Key(KeyEvent {
+                    code: KeyCode::Up,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                }) => self.move_up(),
 
                 _ => {}
             }
@@ -79,8 +97,17 @@ impl State {
             let prev_line = self.lines.get_mut(self.cursor.y as usize).unwrap();
             self.cursor.x = prev_line.len() as u16;
             prev_line.extend(line);
-        } else {
-            return;
+        }
+    }
+
+    fn delete_next_char(&mut self) {
+        let line = self.lines.get_mut(self.cursor.y as usize).unwrap();
+        if self.cursor.x < line.len() as u16 {
+            line.remove(self.cursor.x as usize);
+        } else if self.cursor.y + 1 < self.lines.len() as u16 {
+            let next_line = self.lines.remove((self.cursor.y + 1) as usize);
+            let line = self.lines.get_mut(self.cursor.y as usize).unwrap();
+            line.extend(next_line);
         }
     }
 
@@ -120,6 +147,23 @@ impl State {
             self.cursor.y += 1;
             self.cursor.x = 0;
         }
+    }
+
+    fn move_up(&mut self) {
+        if self.cursor.y == 0 {
+            return;
+        }
+        self.cursor.y -= 1;
+        let line = self.lines.get(self.cursor.y as usize).unwrap();
+        self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
+    }
+    fn move_down(&mut self) {
+        if self.cursor.y + 1 >= self.lines.len() as u16 {
+            return;
+        }
+        self.cursor.y += 1;
+        let line = self.lines.get(self.cursor.y as usize).unwrap();
+        self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
     }
 }
 
