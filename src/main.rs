@@ -17,6 +17,7 @@ struct State {
     // pageup/pagedown or scrolling up/down beyond end of screen, change the window being considered (load some lines from mmap, drop some)
     lines: Vec<Vec<char>>,
     cursor: Position, // relative to the screen (or current view window), not to the whole file
+    insert_mode: bool,
 }
 
 impl State {
@@ -31,11 +32,18 @@ impl State {
                     modifiers: KeyModifiers::CONTROL,
                     ..
                 }) => break Ok(()),
+
+                Event::Key(KeyEvent {
+                    code: KeyCode::Insert,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                }) => self.insert_mode = !self.insert_mode,
+
                 Event::Key(KeyEvent {
                     code: KeyCode::Char(c),
                     modifiers: KeyModifiers::NONE,
                     ..
-                }) => self.insert_char(c),
+                }) => self.overwrite_or_insert_char(c),
                 Event::Key(KeyEvent {
                     code: KeyCode::Backspace,
                     modifiers: KeyModifiers::NONE,
@@ -80,15 +88,24 @@ impl State {
         }
     }
 
-    fn insert_char(&mut self, c: char) {
-        let line = self.lines.get_mut(self.cursor.y as usize);
-        match line {
-            None => {}
-            Some(v) => {
-                v.insert(self.cursor.x as usize, c);
-                self.cursor.x += 1;
-            }
+    fn overwrite_or_insert_char(&mut self, c: char) {
+        if self.insert_mode {
+            self.insert_char(c);
+            return;
         }
+        let line = self.lines.get_mut(self.cursor.y as usize).unwrap();
+        if let Some(elem) = line.get_mut(self.cursor.x as usize) {
+            *elem = c;
+            self.cursor.x += 1;
+        } else {
+            self.insert_char(c);
+        }
+    }
+
+    fn insert_char(&mut self, c: char) {
+        let line = self.lines.get_mut(self.cursor.y as usize).unwrap();
+        line.insert(self.cursor.x as usize, c);
+        self.cursor.x += 1;
     }
 
     fn delete_prev_char(&mut self) {
@@ -117,15 +134,17 @@ impl State {
     }
 
     fn insert_line(&mut self) {
+        let line = self.lines.get_mut(self.cursor.y as usize).unwrap();
+        let new_line = line.split_off(self.cursor.x as usize);
         self.cursor.y += 1;
         self.cursor.x = 0;
-        self.lines.insert(self.cursor.y as usize, vec![]);
+        self.lines.insert(self.cursor.y as usize, new_line);
     }
 
     fn render(&self, frame: &mut Frame) {
         let left_margin_width = self.left_margin_width();
 
-        let to_line = |pair: (usize, &Vec<char>)| -> Line<'_> {
+        let render_line = |pair: (usize, &Vec<char>)| -> Line<'_> {
             let content = pair.1.iter().collect::<String>();
             let line_index = pair.0;
             Line::from(vec![
@@ -143,7 +162,7 @@ impl State {
         };
 
         frame.render_widget(
-            Text::from_iter(self.lines.iter().enumerate().map(to_line)),
+            Text::from_iter(self.lines.iter().enumerate().map(render_line)),
             frame.area(),
         );
 
@@ -200,6 +219,7 @@ fn main() -> io::Result<()> {
     let mut state: State = State {
         lines: vec![vec![]],
         cursor: Position::new(0, 0),
+        insert_mode: true,
     };
     let result = state.run(terminal);
     ratatui::restore();
