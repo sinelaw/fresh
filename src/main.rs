@@ -5,13 +5,18 @@ use std::{io, iter::FromIterator};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::Position,
+    style::{Style, Stylize},
     text::{Line, Span, Text},
     DefaultTerminal, Frame,
 };
 
 struct State {
+    // TODO
+    // Map (even huge) files to memory
+    // "lines" is a window into a small portion of the file starting at some offset
+    // pageup/pagedown or scrolling up/down beyond end of screen, change the window being considered (load some lines from mmap, drop some)
     lines: Vec<Vec<char>>,
-    cursor: Position,
+    cursor: Position, // relative to the screen (or current view window), not to the whole file
 }
 
 impl State {
@@ -118,15 +123,34 @@ impl State {
     }
 
     fn render(&self, frame: &mut Frame) {
-        fn to_line(l: &Vec<char>) -> Line<'_> {
-            let content = l.iter().collect::<String>();
-            Line::from(Span::raw(content))
-        }
+        let left_margin_width = self.left_margin_width();
+
+        let to_line = |pair: (usize, &Vec<char>)| -> Line<'_> {
+            let content = pair.1.iter().collect::<String>();
+            let line_index = pair.0;
+            Line::from(vec![
+                Span::styled(
+                    format!(
+                        "{:>width$}",
+                        (line_index + 1),
+                        width = left_margin_width as usize
+                    ),
+                    Style::new().dark_gray(),
+                ),
+                Span::raw(" "),
+                Span::raw(content),
+            ])
+        };
+
         frame.render_widget(
-            Text::from_iter(self.lines.iter().map(to_line)),
+            Text::from_iter(self.lines.iter().enumerate().map(to_line)),
             frame.area(),
         );
-        frame.set_cursor_position(self.cursor);
+
+        frame.set_cursor_position(Position::new(
+            self.cursor.x + left_margin_width + 1,
+            self.cursor.y,
+        ));
     }
 
     fn move_left(&mut self) {
@@ -164,6 +188,10 @@ impl State {
         self.cursor.y += 1;
         let line = self.lines.get(self.cursor.y as usize).unwrap();
         self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
+    }
+
+    fn left_margin_width(&self) -> u16 {
+        std::cmp::max(4, self.lines.len().to_string().len() as u16 + 1)
     }
 }
 
