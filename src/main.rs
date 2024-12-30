@@ -25,6 +25,7 @@ struct State {
     status_text: String,
     file: Option<std::fs::File>,
     file_offset: u64,
+    window_offset: Position,
 }
 
 impl State {
@@ -66,8 +67,26 @@ impl State {
         terminal: &mut ratatui::Terminal<ratatui::prelude::CrosstermBackend<io::Stdout>>,
     ) -> Result<(), io::Error> {
         self.status_text = format!("Line {}, Column {}", self.cursor.y, self.cursor.x);
+
+        self.scroll_to_cursor(terminal.get_frame().area());
+
         terminal.draw(|x| self.draw_frame(x))?;
         Ok(())
+    }
+
+    fn scroll_to_cursor(&mut self, window_area: Rect) {
+        // bring cursor into view
+
+        let text_area = Rect::new(0, 0, window_area.width, window_area.height - 1);
+        if self.cursor.y > text_area.height - 1 {
+            if self.cursor.y - (text_area.height - 1) > self.window_offset.y {
+                self.window_offset.y = self.cursor.y - (text_area.height - 1);
+            }
+        }
+        if self.cursor.y < self.window_offset.y {
+            self.window_offset.y = self.cursor.y;
+        }
+        assert!(self.window_offset.y <= self.cursor.y);
     }
 
     fn handle_event(&mut self, event: Event) -> bool {
@@ -221,7 +240,6 @@ impl State {
         let window_area = frame.area();
         let text_area = Rect::new(0, 0, window_area.width, window_area.height - 1);
         let status_area = Rect::new(0, window_area.height - 1, window_area.width, 1);
-
         let left_margin_width = self.left_margin_width();
 
         let render_line = |pair: (usize, &Vec<char>)| -> Line<'_> {
@@ -242,15 +260,21 @@ impl State {
         };
 
         frame.render_widget(
-            Text::from_iter(self.lines.iter().enumerate().map(render_line)),
+            Text::from_iter(
+                self.lines
+                    .iter()
+                    .enumerate()
+                    .skip(self.window_offset.y as usize)
+                    .map(render_line),
+            ),
             text_area,
         );
 
         frame.render_widget(self.status_text.clone(), status_area);
 
         frame.set_cursor_position(Position::new(
-            self.cursor.x + left_margin_width + 1,
-            self.cursor.y,
+            self.cursor.x + left_margin_width + 1 - self.window_offset.x,
+            self.cursor.y - self.window_offset.y,
         ));
     }
 
@@ -365,6 +389,7 @@ fn main() -> io::Result<()> {
     let terminal = ratatui::init();
     let mut state: State = State {
         lines: vec![vec![]],
+        window_offset: Position::new(0, 0),
         cursor: Position::new(0, 0),
         insert_mode: true,
         status_text: String::new(),
