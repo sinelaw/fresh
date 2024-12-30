@@ -76,17 +76,17 @@ impl State {
 
     fn scroll_to_cursor(&mut self, window_area: Rect) {
         // bring cursor into view
-
         let text_area = Rect::new(0, 0, window_area.width, window_area.height - 1);
-        if self.cursor.y > text_area.height - 1 {
-            if self.cursor.y - (text_area.height - 1) > self.window_offset.y {
-                self.window_offset.y = self.cursor.y - (text_area.height - 1);
-            }
-        }
-        if self.cursor.y < self.window_offset.y {
-            self.window_offset.y = self.cursor.y;
-        }
-        assert!(self.window_offset.y <= self.cursor.y);
+        let left_margin_width = self.left_margin_width();
+
+        let max_pos = Position::new(
+            self.cursor
+                .x
+                .saturating_sub(text_area.width - 1 - left_margin_width - 1 /* to allow trailing cursor after last line character */),
+            self.cursor.y.saturating_sub(text_area.height - 1),
+        );
+        self.window_offset = self.window_offset.max(max_pos);
+        self.window_offset = self.window_offset.min(self.cursor);
     }
 
     fn handle_event(&mut self, event: Event) -> bool {
@@ -243,7 +243,11 @@ impl State {
         let left_margin_width = self.left_margin_width();
 
         let render_line = |pair: (usize, &Vec<char>)| -> Line<'_> {
-            let content = pair.1.iter().collect::<String>();
+            let content = pair
+                .1
+                .iter()
+                .skip(self.window_offset.x as usize)
+                .collect::<String>();
             let line_index = pair.0;
             Line::from(vec![
                 Span::styled(
