@@ -1,6 +1,6 @@
 extern crate crossterm;
 extern crate ratatui;
-use std::{io, iter::FromIterator};
+use std::{io, iter::FromIterator, ops::ControlFlow};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
@@ -26,84 +26,92 @@ impl State {
             terminal.draw(|x| self.render(x))?;
             let event = event::read()?;
 
-            match event {
-                Event::Key(KeyEvent {
-                    code: KeyCode::Char('q'),
-                    modifiers: KeyModifiers::CONTROL,
-                    ..
-                }) => break Ok(()),
-
-                Event::Key(KeyEvent {
-                    code: KeyCode::Insert,
-                    modifiers: KeyModifiers::NONE,
-                    ..
-                }) => self.insert_mode = !self.insert_mode,
-
-                Event::Key(KeyEvent {
-                    code: KeyCode::Char(c),
-                    modifiers,
-                    ..
-                }) if modifiers == KeyModifiers::NONE || modifiers == KeyModifiers::SHIFT => {
-                    self.overwrite_or_insert_char(c)
-                }
-
-                Event::Key(KeyEvent {
-                    code: KeyCode::Backspace,
-                    modifiers: KeyModifiers::NONE,
-                    ..
-                }) => self.delete_prev_char(),
-
-                Event::Key(KeyEvent {
-                    code: KeyCode::Delete,
-                    modifiers: KeyModifiers::NONE,
-                    ..
-                }) => self.delete_next_char(),
-
-                Event::Key(KeyEvent {
-                    code: KeyCode::Enter,
-                    modifiers: KeyModifiers::NONE,
-                    ..
-                }) => self.insert_line(),
-
-                Event::Key(KeyEvent {
-                    code: KeyCode::Left,
-                    modifiers: KeyModifiers::NONE,
-                    ..
-                }) => self.move_left(),
-
-                Event::Key(KeyEvent {
-                    code: KeyCode::Right,
-                    modifiers: KeyModifiers::NONE,
-                    ..
-                }) => self.move_right(),
-
-                Event::Key(KeyEvent {
-                    code: KeyCode::Down,
-                    modifiers: KeyModifiers::NONE,
-                    ..
-                }) => self.move_down(),
-
-                Event::Key(KeyEvent {
-                    code: KeyCode::Up,
-                    modifiers: KeyModifiers::NONE,
-                    ..
-                }) => self.move_up(),
-
-                Event::Key(KeyEvent {
-                    code: KeyCode::PageDown,
-                    modifiers: KeyModifiers::NONE,
-                    ..
-                }) => self.move_page_down(),
-
-                Event::Key(KeyEvent {
-                    code: KeyCode::PageUp,
-                    modifiers: KeyModifiers::NONE,
-                    ..
-                }) => self.move_page_up(),
-
-                _ => {}
+            if !self.handle_event(event) {
+                break Ok(());
             }
         }
+    }
+
+    fn handle_event(&mut self, event: Event) -> bool {
+        match event {
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('q'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }) => return false,
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Insert,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => self.insert_mode = !self.insert_mode,
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers,
+                ..
+            }) if modifiers == KeyModifiers::NONE || modifiers == KeyModifiers::SHIFT => {
+                self.overwrite_or_insert_char(c)
+            }
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Backspace,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => self.delete_prev_char(),
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Delete,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => self.delete_next_char(),
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => self.insert_line(),
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Left,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => self.move_left(),
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Right,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => self.move_right(),
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Down,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => self.move_down(),
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Up,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => self.move_up(),
+
+            Event::Key(KeyEvent {
+                code: KeyCode::PageDown,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => self.move_page_down(),
+
+            Event::Key(KeyEvent {
+                code: KeyCode::PageUp,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => self.move_page_up(),
+
+            _ => {}
+        }
+
+        return true;
     }
 
     fn overwrite_or_insert_char(&mut self, c: char) {
