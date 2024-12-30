@@ -24,14 +24,22 @@ struct State {
 impl State {
     fn run(&mut self, mut terminal: DefaultTerminal) -> io::Result<()> {
         loop {
-            self.status_text = format!("Line {}, Column {}", self.cursor.y, self.cursor.x);
-            terminal.draw(|x| self.render(x))?;
+            self.render(&mut terminal)?;
 
             let event = event::read()?;
             if !self.handle_event(event) {
                 break Ok(());
             }
         }
+    }
+
+    fn render(
+        &mut self,
+        terminal: &mut ratatui::Terminal<ratatui::prelude::CrosstermBackend<io::Stdout>>,
+    ) -> Result<(), io::Error> {
+        self.status_text = format!("Line {}, Column {}", self.cursor.y, self.cursor.x);
+        terminal.draw(|x| self.draw_frame(x))?;
+        Ok(())
     }
 
     fn handle_event(&mut self, event: Event) -> bool {
@@ -181,7 +189,7 @@ impl State {
         self.lines.insert(self.cursor.y as usize, new_line);
     }
 
-    fn render(&self, frame: &mut Frame) {
+    fn draw_frame(&self, frame: &mut Frame) {
         let window_area = frame.area();
         let text_area = Rect::new(0, 0, window_area.width, window_area.height - 1);
         let status_area = Rect::new(0, window_area.height - 1, window_area.width, 1);
