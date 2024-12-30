@@ -24,13 +24,13 @@ struct State {
     insert_mode: bool,
     status_text: String,
     file: Option<std::fs::File>,
-    offset: u64,
+    file_offset: u64,
 }
 
 impl State {
     fn load(&mut self) -> io::Result<()> {
         if let Some(ref mut f) = self.file {
-            f.seek(io::SeekFrom::Start(self.offset))?;
+            f.seek(io::SeekFrom::Start(self.file_offset))?;
             let mut buf = [0; 1024 * 1024];
             f.read(&mut buf)?;
 
@@ -369,7 +369,7 @@ fn main() -> io::Result<()> {
         insert_mode: true,
         status_text: String::new(),
         file: file,
-        offset: 0,
+        file_offset: 0,
     };
     state.load()?;
     let result = state.run(terminal);
