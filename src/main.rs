@@ -1,10 +1,10 @@
 extern crate crossterm;
 extern crate ratatui;
-use std::{io, iter::FromIterator, ops::ControlFlow};
+use std::{io, iter::FromIterator};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    layout::Position,
+    layout::{Position, Rect},
     style::{Style, Stylize},
     text::{Line, Span, Text},
     DefaultTerminal, Frame,
@@ -18,14 +18,16 @@ struct State {
     lines: Vec<Vec<char>>,
     cursor: Position, // relative to the screen (or current view window), not to the whole file
     insert_mode: bool,
+    status_text: String,
 }
 
 impl State {
     fn run(&mut self, mut terminal: DefaultTerminal) -> io::Result<()> {
         loop {
+            self.status_text = format!("Line {}, Column {}", self.cursor.y, self.cursor.x);
             terminal.draw(|x| self.render(x))?;
-            let event = event::read()?;
 
+            let event = event::read()?;
             if !self.handle_event(event) {
                 break Ok(());
             }
@@ -83,6 +85,18 @@ impl State {
                 modifiers: KeyModifiers::NONE,
                 ..
             }) => self.move_right(),
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Left,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }) => self.move_word_left(),
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Right,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }) => self.move_word_right(),
 
             Event::Key(KeyEvent {
                 code: KeyCode::Down,
@@ -168,6 +182,10 @@ impl State {
     }
 
     fn render(&self, frame: &mut Frame) {
+        let window_area = frame.area();
+        let text_area = Rect::new(0, 0, window_area.width, window_area.height - 1);
+        let status_area = Rect::new(0, window_area.height - 1, window_area.width, 1);
+
         let left_margin_width = self.left_margin_width();
 
         let render_line = |pair: (usize, &Vec<char>)| -> Line<'_> {
@@ -189,8 +207,10 @@ impl State {
 
         frame.render_widget(
             Text::from_iter(self.lines.iter().enumerate().map(render_line)),
-            frame.area(),
+            text_area,
         );
+
+        frame.render_widget(self.status_text.clone(), status_area);
 
         frame.set_cursor_position(Position::new(
             self.cursor.x + left_margin_width + 1,
@@ -203,13 +223,13 @@ impl State {
             self.cursor.x -= 1;
         } else if self.cursor.y > 0 {
             self.cursor.y -= 1;
-            let prev_line = self.lines.get(self.cursor.y as usize).unwrap();
+            let prev_line = self.get_current_line();
             self.cursor.x = prev_line.len() as u16;
         }
     }
 
     fn move_right(&mut self) {
-        let line = self.lines.get(self.cursor.y as usize).unwrap();
+        let line = self.get_current_line();
         if self.cursor.x < line.len() as u16 {
             self.cursor.x += 1;
         } else if self.cursor.y + 1 < self.lines.len() as u16 {
@@ -218,12 +238,48 @@ impl State {
         }
     }
 
+    fn move_word_left(&mut self) {
+        if self.cursor.x == 0 {
+            self.move_left();
+            return;
+        }
+        let line = self.get_current_line();
+        let start_char = line.get(self.cursor.x as usize - 1).unwrap();
+        let is_whitespace = start_char.is_whitespace();
+        for i in (0..self.cursor.x).rev() {
+            if line.get(i as usize).unwrap().is_whitespace() != is_whitespace {
+                self.cursor.x = i;
+                return;
+            }
+        }
+        self.cursor.x = 0;
+    }
+
+    fn move_word_right(&mut self) {
+        let line_len = self.get_current_line().len() as u16;
+        if self.cursor.x == line_len {
+            self.move_right();
+            return;
+        }
+        let line = self.get_current_line();
+        let line_len = line.len() as u16;
+        let start_char = line.get(self.cursor.x as usize).unwrap();
+        let is_whitespace = start_char.is_whitespace();
+        for i in self.cursor.x..line_len {
+            if line.get(i as usize).unwrap().is_whitespace() != is_whitespace {
+                self.cursor.x = i;
+                return;
+            }
+        }
+        self.cursor.x = line_len;
+    }
+
     fn move_up(&mut self) {
         if self.cursor.y == 0 {
             return;
         }
         self.cursor.y -= 1;
-        let line = self.lines.get(self.cursor.y as usize).unwrap();
+        let line = self.get_current_line();
         self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
     }
 
@@ -232,7 +288,7 @@ impl State {
             return;
         }
         self.cursor.y += 1;
-        let line = self.lines.get(self.cursor.y as usize).unwrap();
+        let line = self.get_current_line();
         self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
     }
 
@@ -256,6 +312,10 @@ impl State {
     fn left_margin_width(&self) -> u16 {
         std::cmp::max(4, self.lines.len().to_string().len() as u16 + 1)
     }
+
+    fn get_current_line(&self) -> &Vec<char> {
+        self.lines.get(self.cursor.y as usize).unwrap()
+    }
 }
 
 fn main() -> io::Result<()> {
@@ -264,6 +324,7 @@ fn main() -> io::Result<()> {
         lines: vec![vec![]],
         cursor: Position::new(0, 0),
         insert_mode: true,
+        status_text: String::new(),
     };
     let result = state.run(terminal);
     ratatui::restore();
