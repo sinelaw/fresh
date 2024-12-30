@@ -1,6 +1,10 @@
 extern crate crossterm;
 extern crate ratatui;
-use std::{io, iter::FromIterator};
+use std::{
+    fs::OpenOptions,
+    io::{self, Read, Seek},
+    iter::FromIterator,
+};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
@@ -19,9 +23,33 @@ struct State {
     cursor: Position, // relative to the screen (or current view window), not to the whole file
     insert_mode: bool,
     status_text: String,
+    file: Option<std::fs::File>,
+    offset: u64,
 }
 
 impl State {
+    fn load(&mut self) -> io::Result<()> {
+        if let Some(ref mut f) = self.file {
+            f.seek(io::SeekFrom::Start(self.offset))?;
+            let mut buf = [0; 1024 * 1024];
+            f.read(&mut buf)?;
+
+            self.lines.clear();
+            self.lines.push(vec![]);
+            let mut y = 0;
+            for byte in buf {
+                let c: char = byte.into();
+                if c == '\n' {
+                    y += 1;
+                    self.lines.push(vec![]);
+                } else {
+                    self.lines[y].push(c);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn run(&mut self, mut terminal: DefaultTerminal) -> io::Result<()> {
         loop {
             self.render(&mut terminal)?;
@@ -327,13 +355,23 @@ impl State {
 }
 
 fn main() -> io::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    let file: Option<std::fs::File> = if args.len() > 1 {
+        let filename = &args[1];
+        Some(OpenOptions::new().read(true).open(filename)?)
+    } else {
+        None
+    };
     let terminal = ratatui::init();
     let mut state: State = State {
         lines: vec![vec![]],
         cursor: Position::new(0, 0),
         insert_mode: true,
         status_text: String::new(),
+        file: file,
+        offset: 0,
     };
+    state.load()?;
     let result = state.run(terminal);
     ratatui::restore();
     result
