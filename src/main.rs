@@ -41,9 +41,12 @@ impl State {
 
                 Event::Key(KeyEvent {
                     code: KeyCode::Char(c),
-                    modifiers: KeyModifiers::NONE,
+                    modifiers,
                     ..
-                }) => self.overwrite_or_insert_char(c),
+                }) if modifiers == KeyModifiers::NONE || modifiers == KeyModifiers::SHIFT => {
+                    self.overwrite_or_insert_char(c)
+                }
+
                 Event::Key(KeyEvent {
                     code: KeyCode::Backspace,
                     modifiers: KeyModifiers::NONE,
@@ -55,16 +58,19 @@ impl State {
                     modifiers: KeyModifiers::NONE,
                     ..
                 }) => self.delete_next_char(),
+
                 Event::Key(KeyEvent {
                     code: KeyCode::Enter,
                     modifiers: KeyModifiers::NONE,
                     ..
                 }) => self.insert_line(),
+
                 Event::Key(KeyEvent {
                     code: KeyCode::Left,
                     modifiers: KeyModifiers::NONE,
                     ..
                 }) => self.move_left(),
+
                 Event::Key(KeyEvent {
                     code: KeyCode::Right,
                     modifiers: KeyModifiers::NONE,
@@ -82,6 +88,18 @@ impl State {
                     modifiers: KeyModifiers::NONE,
                     ..
                 }) => self.move_up(),
+
+                Event::Key(KeyEvent {
+                    code: KeyCode::PageDown,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                }) => self.move_page_down(),
+
+                Event::Key(KeyEvent {
+                    code: KeyCode::PageUp,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                }) => self.move_page_up(),
 
                 _ => {}
             }
@@ -200,6 +218,7 @@ impl State {
         let line = self.lines.get(self.cursor.y as usize).unwrap();
         self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
     }
+
     fn move_down(&mut self) {
         if self.cursor.y + 1 >= self.lines.len() as u16 {
             return;
@@ -207,6 +226,23 @@ impl State {
         self.cursor.y += 1;
         let line = self.lines.get(self.cursor.y as usize).unwrap();
         self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
+    }
+
+    fn move_page_up(&mut self) {
+        for _ in 0..self.lines_per_page() {
+            self.move_up();
+        }
+    }
+
+    fn move_page_down(&mut self) {
+        for _ in 0..self.lines_per_page() {
+            self.move_down();
+        }
+    }
+
+    fn lines_per_page(&self) -> u16 {
+        // TODO
+        return 10;
     }
 
     fn left_margin_width(&self) -> u16 {
