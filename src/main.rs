@@ -74,6 +74,14 @@ impl State {
         Ok(())
     }
 
+    fn pos_min_x_y(a: Position, b: Position) -> Position {
+        return Position::new(a.x.min(b.x), a.y.min(b.y));
+    }
+
+    fn pos_max_x_y(a: Position, b: Position) -> Position {
+        return Position::new(a.x.max(b.x), a.y.max(b.y));
+    }
+
     fn scroll_to_cursor(&mut self, window_area: Rect) {
         // bring cursor into view
         let text_area = Rect::new(0, 0, window_area.width, window_area.height - 1);
@@ -85,8 +93,14 @@ impl State {
                 .saturating_sub(text_area.width - 1 - left_margin_width - 1 /* to allow trailing cursor after last line character */),
             self.cursor.y.saturating_sub(text_area.height - 1),
         );
-        self.window_offset = self.window_offset.max(max_pos);
-        self.window_offset = self.window_offset.min(self.cursor);
+        self.window_offset = State::pos_max_x_y(self.window_offset, max_pos);
+        self.window_offset = State::pos_min_x_y(self.window_offset, self.cursor);
+        assert!(
+            self.window_offset.y <= self.cursor.y,
+            "window_offset={}, cursor={}",
+            self.window_offset,
+            self.cursor
+        );
     }
 
     fn handle_event(&mut self, event: Event) -> bool {
