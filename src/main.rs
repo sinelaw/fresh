@@ -58,6 +58,23 @@ mod lines {
 
 use lines::LoadedLine;
 
+// TODO
+// How to represent edited content?
+//
+// Main problem: "insert char" pushes all remaining memory forward.
+//
+// Other editors:
+// - emacs: gap buffer
+// - vim: rope
+//
+// Idea:
+// List of contiguous chunks: (disk_offset, data, is_modified).
+// When a char is inserted in the middle of a chunk, split it into three: prev, cur, next.
+// prev and next remain unchanged (can be dropped from memory and reloaded from disk).
+// When saving the file, iterate chunks: write to disk, update disk_offset, set is_modified = false
+// if disk_offset = write offset and is_modified = false, no need to write (skip the chunk).
+// This can optimize writing huge files.
+
 struct State {
     /// Content loaded from the file, may be a small portion of the entire file starting at some offset
     lines: Vec<LoadedLine>,
