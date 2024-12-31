@@ -59,17 +59,23 @@ mod lines {
 use lines::LoadedLine;
 
 struct State {
-    // TODO
-    // Map (even huge) files to memory
-    // "lines" is a window into a small portion of the file starting at some offset
-    // pageup/pagedown or scrolling up/down beyond end of screen, change the window being considered (load some lines from mmap, drop some)
+    /// Content loaded from the file, may be a small portion of the entire file starting at some offset
     lines: Vec<LoadedLine>,
-    cursor: Position, // relative to the screen (or current view window), not to the whole file
+
+    /// Cursor position relative to loaded content (lines)
+    cursor: Position,
+
+    /// Offset of the visible part of the content
+    window_offset: Position,
+
+    /// If true, entering a character will insert it (pushing the rest of the line forward), otherwise will override the character at the cursor
     insert_mode: bool,
+
+    /// Text to print at the status bar
     status_text: String,
+
     file: Option<std::fs::File>,
     file_offset: u64,
-    window_offset: Position,
 }
 
 impl State {
