@@ -14,12 +14,56 @@ use ratatui::{
     DefaultTerminal, Frame,
 };
 
+mod lines {
+    pub struct LoadedLine {
+        chars: Vec<char>,
+    }
+
+    impl LoadedLine {
+        pub fn empty() -> LoadedLine {
+            LoadedLine { chars: vec![] }
+        }
+        pub fn new(chars: Vec<char>) -> LoadedLine {
+            LoadedLine { chars }
+        }
+        pub fn len(&self) -> usize {
+            self.chars.len()
+        }
+        pub fn push(&mut self, c: char) {
+            self.chars.push(c);
+        }
+        pub fn insert(&mut self, index: usize, c: char) {
+            self.chars.insert(index, c);
+        }
+        pub fn remove(&mut self, index: usize) {
+            self.chars.remove(index);
+        }
+        pub fn extend(&mut self, line: LoadedLine) {
+            self.chars.extend(line.chars);
+        }
+        pub fn char_get_mut(&mut self, index: usize) -> Option<&mut char> {
+            self.chars.get_mut(index)
+        }
+        pub fn char_get(&self, index: usize) -> Option<&char> {
+            self.chars.get(index)
+        }
+        pub fn split_off(&mut self, x: usize) -> Vec<char> {
+            self.chars.split_off(x)
+        }
+        pub fn chars_iter(&self) -> std::slice::Iter<'_, char> {
+            self.chars.iter()
+        }
+    }
+}
+
+use lines::LoadedLine;
+
 struct State {
     // TODO
     // Map (even huge) files to memory
     // "lines" is a window into a small portion of the file starting at some offset
     // pageup/pagedown or scrolling up/down beyond end of screen, change the window being considered (load some lines from mmap, drop some)
-    lines: Vec<Vec<char>>,
+    lines: Vec<LoadedLine>,
     cursor: Position, // relative to the screen (or current view window), not to the whole file
     insert_mode: bool,
     status_text: String,
@@ -36,13 +80,14 @@ impl State {
             f.read(&mut buf)?;
 
             self.lines.clear();
-            self.lines.push(vec![]);
+            let line = LoadedLine::empty();
+            self.lines.push(line);
             let mut y = 0;
-            for byte in buf {
-                let c: char = byte.into();
+            for byte in buf.iter() {
+                let c: char = (*byte).into();
                 if c == '\n' {
                     y += 1;
-                    self.lines.push(vec![]);
+                    self.lines.push(LoadedLine::empty());
                 } else {
                     self.lines[y].push(c);
                 }
@@ -215,7 +260,7 @@ impl State {
             return;
         }
         let line = self.lines.get_mut(self.cursor.y as usize).unwrap();
-        if let Some(elem) = line.get_mut(self.cursor.x as usize) {
+        if let Some(elem) = line.char_get_mut(self.cursor.x as usize) {
             *elem = c;
             self.cursor.x += 1;
         } else {
@@ -259,7 +304,8 @@ impl State {
         let new_line = line.split_off(self.cursor.x as usize);
         self.cursor.y += 1;
         self.cursor.x = 0;
-        self.lines.insert(self.cursor.y as usize, new_line);
+        self.lines
+            .insert(self.cursor.y as usize, LoadedLine::new(new_line));
     }
 
     fn draw_frame(&self, frame: &mut Frame) {
@@ -268,10 +314,10 @@ impl State {
         let status_area = Rect::new(0, window_area.height - 1, window_area.width, 1);
         let left_margin_width = self.left_margin_width();
 
-        let render_line = |pair: (usize, &Vec<char>)| -> Line<'_> {
+        let render_line = |pair: (usize, &LoadedLine)| -> Line<'_> {
             let content = pair
                 .1
-                .iter()
+                .chars_iter()
                 .skip(self.window_offset.x as usize)
                 .collect::<String>();
             let line_index = pair.0;
@@ -338,10 +384,10 @@ impl State {
             return;
         }
         let line = self.get_current_line();
-        let start_char = line.get(self.cursor.x as usize - 1).unwrap();
+        let start_char = line.char_get(self.cursor.x as usize - 1).unwrap();
         let is_whitespace = start_char.is_whitespace();
         for i in (0..self.cursor.x).rev() {
-            if line.get(i as usize).unwrap().is_whitespace() != is_whitespace {
+            if line.char_get(i as usize).unwrap().is_whitespace() != is_whitespace {
                 self.cursor.x = i;
                 return;
             }
@@ -357,10 +403,10 @@ impl State {
         }
         let line = self.get_current_line();
         let line_len = line.len() as u16;
-        let start_char = line.get(self.cursor.x as usize).unwrap();
+        let start_char = line.char_get(self.cursor.x as usize).unwrap();
         let is_whitespace = start_char.is_whitespace();
         for i in self.cursor.x..line_len {
-            if line.get(i as usize).unwrap().is_whitespace() != is_whitespace {
+            if line.char_get(i as usize).unwrap().is_whitespace() != is_whitespace {
                 self.cursor.x = i;
                 return;
             }
@@ -415,7 +461,7 @@ impl State {
         std::cmp::max(4, self.lines.len().to_string().len() as u16 + 1)
     }
 
-    fn get_current_line(&self) -> &Vec<char> {
+    fn get_current_line(&self) -> &LoadedLine {
         self.lines.get(self.cursor.y as usize).unwrap()
     }
 }
@@ -430,7 +476,7 @@ fn main() -> io::Result<()> {
     };
     let terminal = ratatui::init();
     let mut state: State = State {
-        lines: vec![vec![]],
+        lines: vec![LoadedLine::empty()],
         window_offset: Position::new(0, 0),
         cursor: Position::new(0, 0),
         insert_mode: true,
