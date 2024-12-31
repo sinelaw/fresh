@@ -138,6 +138,18 @@ impl State {
             }) => self.delete_next_char(),
 
             Event::Key(KeyEvent {
+                code: KeyCode::Home,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => self.move_to_line_start(),
+
+            Event::Key(KeyEvent {
+                code: KeyCode::End,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => self.move_to_line_end(),
+
+            Event::Key(KeyEvent {
                 code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
                 ..
@@ -270,7 +282,11 @@ impl State {
                         (line_index + 1),
                         width = left_margin_width as usize
                     ),
-                    Style::new().dark_gray(),
+                    if self.cursor.y as usize == line_index {
+                        Style::new().white()
+                    } else {
+                        Style::new().dark_gray()
+                    },
                 ),
                 Span::raw(" "),
                 Span::raw(content),
@@ -380,6 +396,14 @@ impl State {
         for _ in 0..self.lines_per_page() {
             self.move_down();
         }
+    }
+
+    fn move_to_line_start(&mut self) {
+        self.cursor.x = 0;
+    }
+
+    fn move_to_line_end(&mut self) {
+        self.cursor.x = self.get_current_line().len() as u16;
     }
 
     fn lines_per_page(&self) -> u16 {
