@@ -8,7 +8,7 @@ use std::{
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    layout::{Position, Rect},
+    layout::{Position, Rect, Size},
     style::{Style, Stylize},
     text::{Line, Span, Text},
     DefaultTerminal, Frame,
@@ -74,6 +74,8 @@ struct State {
     /// Text to print at the status bar
     status_text: String,
 
+    terminal_size: Size,
+
     file: Option<std::fs::File>,
     file_offset: u64,
 }
@@ -104,6 +106,8 @@ impl State {
 
     fn run(&mut self, mut terminal: DefaultTerminal) -> io::Result<()> {
         loop {
+            self.terminal_size = terminal.size()?;
+
             self.render(&mut terminal)?;
 
             let event = event::read()?;
@@ -459,8 +463,7 @@ impl State {
     }
 
     fn lines_per_page(&self) -> u16 {
-        // TODO
-        return 10;
+        return self.terminal_size.height - 1;
     }
 
     fn left_margin_width(&self) -> u16 {
@@ -489,6 +492,7 @@ fn main() -> io::Result<()> {
         status_text: String::new(),
         file: file,
         file_offset: 0,
+        terminal_size: terminal.size()?,
     };
     state.load()?;
     let result = state.run(terminal);
