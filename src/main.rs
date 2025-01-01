@@ -176,104 +176,112 @@ impl State {
     }
 
     fn handle_event(&mut self, event: Event) -> bool {
-        match event {
-            Event::Key(KeyEvent {
+        if let Event::Key(key_event) = event {
+            return self.handle_key_event(key_event);
+        }
+
+        return true;
+    }
+
+    fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
+        match key_event {
+            KeyEvent {
                 code: KeyCode::Char('q'),
                 modifiers: KeyModifiers::CONTROL,
                 ..
-            }) => return false,
+            } => return false,
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::Insert,
                 modifiers: KeyModifiers::NONE,
                 ..
-            }) => self.insert_mode = !self.insert_mode,
+            } => self.insert_mode = !self.insert_mode,
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::Char(c),
                 modifiers,
                 ..
-            }) if modifiers == KeyModifiers::NONE || modifiers == KeyModifiers::SHIFT => {
+            } if modifiers == KeyModifiers::NONE || modifiers == KeyModifiers::SHIFT => {
                 self.overwrite_or_insert_char(c)
             }
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::Backspace,
                 modifiers: KeyModifiers::NONE,
                 ..
-            }) => self.delete_prev_char(),
+            } => self.delete_prev_char(),
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::Delete,
                 modifiers: KeyModifiers::NONE,
                 ..
-            }) => self.delete_next_char(),
+            } => self.delete_next_char(),
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::Home,
                 modifiers: KeyModifiers::NONE,
                 ..
-            }) => self.move_to_line_start(),
+            } => self.move_to_line_start(),
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::End,
                 modifiers: KeyModifiers::NONE,
                 ..
-            }) => self.move_to_line_end(),
+            } => self.move_to_line_end(),
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
                 ..
-            }) => self.insert_line(),
+            } => self.insert_line(),
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::Left,
                 modifiers: KeyModifiers::NONE,
                 ..
-            }) => self.move_left(),
+            } => self.move_left(),
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::Right,
                 modifiers: KeyModifiers::NONE,
                 ..
-            }) => self.move_right(),
+            } => self.move_right(),
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::Left,
                 modifiers: KeyModifiers::CONTROL,
                 ..
-            }) => self.move_word_left(),
+            } => self.move_word_left(),
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::Right,
                 modifiers: KeyModifiers::CONTROL,
                 ..
-            }) => self.move_word_right(),
+            } => self.move_word_right(),
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::Down,
                 modifiers: KeyModifiers::NONE,
                 ..
-            }) => self.move_down(),
+            } => self.move_down(),
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::Up,
                 modifiers: KeyModifiers::NONE,
                 ..
-            }) => self.move_up(),
+            } => self.move_up(),
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::PageDown,
                 modifiers: KeyModifiers::NONE,
                 ..
-            }) => self.move_page_down(),
+            } => self.move_page_down(),
 
-            Event::Key(KeyEvent {
+            KeyEvent {
                 code: KeyCode::PageUp,
                 modifiers: KeyModifiers::NONE,
                 ..
-            }) => self.move_page_up(),
+            } => self.move_page_up(),
 
             _ => {}
         }
