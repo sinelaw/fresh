@@ -2,6 +2,7 @@ use std::slice::{RSplit, Split};
 
 use crate::LoadedLine;
 
+/// An iterator over the lines of a chunk of data.
 pub fn lines_iter<'a>(data: &'a [char]) -> ChunkLinesIter {
     ChunkLinesIter {
         forward: data.split(Box::new(|c: &char| *c == '\n')),
@@ -18,15 +19,13 @@ impl<'a> Iterator for ChunkLinesIter<'a> {
     type Item = LoadedLine;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let line = self.forward.next();
-        return line.map(LoadedLine::new);
+        return self.forward.next().map(LoadedLine::new);
     }
 }
 
 impl<'a> DoubleEndedIterator for ChunkLinesIter<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        let line = self.back.next();
-        return line.map(LoadedLine::new);
+        return self.back.next().map(LoadedLine::new);
     }
 }
 
