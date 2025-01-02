@@ -15,8 +15,9 @@ use ratatui::{
     DefaultTerminal, Frame,
 };
 
-pub mod lines;
-pub mod lines_iter;
+mod chunks;
+mod lines;
+mod lines_iter;
 
 // TODO
 // How to represent edited content?
