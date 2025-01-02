@@ -9,15 +9,6 @@ pub struct LoadedChunk<'a> {
 }
 
 impl UnloadedChunk {
-    pub fn load(self, data: &[char]) -> LoadedChunk {
-        assert_eq!(self.size as usize, data.len());
-        LoadedChunk {
-            offset: self.offset,
-            data: &data,
-            is_modified: false,
-        }
-    }
-
     pub fn split(self, offset: u64) -> (UnloadedChunk, UnloadedChunk) {
         let first = UnloadedChunk {
             offset: self.offset,

@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::lines::LoadedLine;
+use chunks::Chunk;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Position, Rect, Size},
@@ -36,9 +37,39 @@ mod lines_iter;
 // if disk_offset = write offset and is_modified = false, no need to write (skip the chunk).
 // This can optimize writing huge files.
 
+struct VirtualLines {}
+
+impl VirtualLines {
+    fn get_mut(&self, line_index: usize) -> &mut LoadedLine {
+        todo!()
+    }
+
+    fn len(&self) -> u16 {
+        todo!()
+    }
+
+    fn remove(&self, y: usize) -> LoadedLine {
+        todo!()
+    }
+
+    fn insert(&self, y: usize, new_line: LoadedLine) {
+        todo!()
+    }
+
+    fn get(&self, y: usize) -> &LoadedLine {
+        todo!()
+    }
+
+    fn iter<I: Iterator>(&self, y: usize, lines_per_page: usize) -> I {
+        todo!()
+    }
+}
+
 struct State {
     /// Content loaded from the file, may be a small portion of the entire file starting at some offset
-    lines: Vec<LoadedLine>,
+    data: Chunk<'static>,
+
+    lines: VirtualLines,
 
     /// Cursor position relative to loaded content (lines)
     cursor: Position,
@@ -59,7 +90,7 @@ struct State {
 }
 
 impl State {
-    fn load(&mut self) -> io::Result<()> {
+    /*  fn load(&mut self) -> io::Result<()> {
         if let Some(ref mut f) = self.file {
             f.seek(io::SeekFrom::Start(self.file_offset))?;
             let mut buf = [0; 1024 * 1024];
@@ -80,7 +111,7 @@ impl State {
             }
         }
         Ok(())
-    }
+    } */
 
     fn run(&mut self, mut terminal: DefaultTerminal) -> io::Result<()> {
         loop {
@@ -255,7 +286,7 @@ impl State {
             self.insert_char(c);
             return;
         }
-        let line = self.lines.get_mut(self.cursor.y as usize).unwrap();
+        let line = self.lines.get_mut(self.cursor.y as usize);
         if let Some(elem) = line.char_get_mut(self.cursor.x as usize) {
             *elem = c;
             self.cursor.x += 1;
@@ -265,7 +296,7 @@ impl State {
     }
 
     fn insert_char(&mut self, c: char) {
-        let line = self.lines.get_mut(self.cursor.y as usize).unwrap();
+        let line = self.lines.get_mut(self.cursor.y as usize);
         line.insert(self.cursor.x as usize, c);
         self.cursor.x += 1;
     }
@@ -273,30 +304,30 @@ impl State {
     fn delete_prev_char(&mut self) {
         if self.cursor.x > 0 {
             self.cursor.x -= 1;
-            let line = self.lines.get_mut(self.cursor.y as usize).unwrap();
+            let line = self.lines.get_mut(self.cursor.y as usize);
             line.remove(self.cursor.x as usize);
         } else if self.cursor.y > 0 {
             self.cursor.y -= 1;
             let line = self.lines.remove((self.cursor.y + 1) as usize);
-            let prev_line = self.lines.get_mut(self.cursor.y as usize).unwrap();
+            let prev_line = self.lines.get_mut(self.cursor.y as usize);
             self.cursor.x = prev_line.len() as u16;
             prev_line.extend(line);
         }
     }
 
     fn delete_next_char(&mut self) {
-        let line = self.lines.get_mut(self.cursor.y as usize).unwrap();
+        let line = self.lines.get_mut(self.cursor.y as usize);
         if self.cursor.x < line.len() as u16 {
             line.remove(self.cursor.x as usize);
         } else if self.cursor.y + 1 < self.lines.len() as u16 {
             let next_line = self.lines.remove((self.cursor.y + 1) as usize);
-            let line = self.lines.get_mut(self.cursor.y as usize).unwrap();
+            let line = self.lines.get_mut(self.cursor.y as usize);
             line.extend(next_line);
         }
     }
 
     fn insert_line(&mut self) {
-        let line = self.lines.get_mut(self.cursor.y as usize).unwrap();
+        let line = self.lines.get_mut(self.cursor.y as usize);
         let new_line = line.split_off(self.cursor.x as usize);
         self.cursor.y += 1;
         self.cursor.x = 0;
@@ -338,9 +369,11 @@ impl State {
         frame.render_widget(
             Text::from_iter(
                 self.lines
-                    .iter()
+                    .iter(
+                        self.window_offset.y as usize,
+                        self.lines_per_page() as usize,
+                    )
                     .enumerate()
-                    .skip(self.window_offset.y as usize)
                     .map(render_line),
             ),
             text_area,
@@ -457,7 +490,7 @@ impl State {
     }
 
     fn get_current_line(&self) -> &LoadedLine {
-        self.lines.get(self.cursor.y as usize).unwrap()
+        self.lines.get(self.cursor.y as usize)
     }
 }
 
@@ -471,7 +504,7 @@ fn main() -> io::Result<()> {
     };
     let terminal = ratatui::init();
     let mut state: State = State {
-        lines: vec![LoadedLine::empty()],
+        //lines: vec![LoadedLine::empty()],
         window_offset: Position::new(0, 0),
         cursor: Position::new(0, 0),
         insert_mode: true,
@@ -479,8 +512,10 @@ fn main() -> io::Result<()> {
         file: file,
         file_offset: 0,
         terminal_size: terminal.size()?,
+        data: todo!(),
+        lines: todo!(),
     };
-    state.load()?;
+    //state.load()?;
     let result = state.run(terminal);
     ratatui::restore();
     result
