@@ -1,15 +1,23 @@
-pub struct LoadedChunk<'a> {
-    pub offset: u64,
-    pub data: &'a [char],
-    pub is_modified: bool,
-}
-
 pub struct UnloadedChunk {
-    pub offset: u64,
-    pub size: u64,
+    offset: u64,
+    size: u64,
+}
+pub struct LoadedChunk<'a> {
+    offset: u64,
+    data: &'a [char],
+    is_modified: bool,
 }
 
 impl UnloadedChunk {
+    pub fn load(self, data: &[char]) -> LoadedChunk {
+        assert_eq!(self.size as usize, data.len());
+        LoadedChunk {
+            offset: self.offset,
+            data: &data,
+            is_modified: false,
+        }
+    }
+
     pub fn split(self, offset: u64) -> (UnloadedChunk, UnloadedChunk) {
         let first = UnloadedChunk {
             offset: self.offset,
@@ -21,22 +29,47 @@ impl UnloadedChunk {
         };
         (first, second)
     }
+
+    pub fn merge(self, other: UnloadedChunk) -> Option<UnloadedChunk> {
+        if self.offset + self.size == other.offset {
+            Some(UnloadedChunk {
+                offset: self.offset,
+                size: self.size + other.size,
+            })
+        } else if other.offset + other.size == self.offset {
+            Some(UnloadedChunk {
+                offset: other.offset,
+                size: other.size + self.size,
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl LoadedChunk<'_> {
+    pub fn drop(self) -> UnloadedChunk {
+        UnloadedChunk {
+            offset: self.offset,
+            size: self.data.len() as u64,
+        }
+    }
 }
 
 pub enum Chunk<'a> {
-    Loaded(LoadedChunk<'a>),
     Unloaded(UnloadedChunk),
+    Loaded(LoadedChunk<'a>),
 }
 
 impl Chunk<'_> {
     pub fn unloaded(offset: u64, size: u64) -> Chunk<'static> {
         Chunk::Unloaded(UnloadedChunk { offset, size })
     }
-    pub fn loaded(offset: u64, data: &[char], is_modified: bool) -> Chunk<'_> {
+    pub fn loaded(offset: u64, data: &[char]) -> Chunk<'_> {
         Chunk::Loaded(LoadedChunk {
             offset,
             data,
-            is_modified,
+            is_modified: false,
         })
     }
 }
