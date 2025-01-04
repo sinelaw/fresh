@@ -56,26 +56,4 @@ impl<'a> Memstore<'a> {
             }
         }
     }
-
-    pub fn iter_at(&'a mut self, offset: u64) -> ChunkIter<'a> {
-        ChunkIter {
-            index: offset / self.chunk_size,
-            memstore: self,
-        }
-    }
-}
-
-pub struct ChunkIter<'a> {
-    memstore: &'a mut Memstore<'a>,
-    index: u64,
-}
-
-impl<'a> Iterator for ChunkIter<'a> {
-    type Item = &'a Chunk;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let chunk = self.memstore.get(self.index * self.memstore.chunk_size);
-        self.index += 1;
-        Some(chunk)
-    }
 }

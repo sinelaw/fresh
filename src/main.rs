@@ -2,13 +2,13 @@ extern crate crossterm;
 extern crate ratatui;
 use std::{
     fs::OpenOptions,
-    io::{self, Read, Seek},
+    io::{self},
     iter::FromIterator,
 };
 
 use crate::lines::LoadedLine;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use memstore::Memstore;
+
 use ratatui::{
     layout::{Position, Rect, Size},
     style::{Style, Stylize},
@@ -288,7 +288,7 @@ impl State {
         let line = self.lines.get_mut(self.cursor.y as usize);
         if self.cursor.x < line.len() as u16 {
             line.remove(self.cursor.x as usize);
-        } else if self.cursor.y + 1 < self.lines.len() as u16 {
+        } else {
             let next_line = self.lines.remove((self.cursor.y + 1) as usize);
             let line = self.lines.get_mut(self.cursor.y as usize);
             line.extend(next_line);
@@ -368,7 +368,7 @@ impl State {
         let line = self.get_current_line();
         if self.cursor.x < line.len() as u16 {
             self.cursor.x += 1;
-        } else if self.cursor.y + 1 < self.lines.len() as u16 {
+        } else {
             self.cursor.y += 1;
             self.cursor.x = 0;
         }
@@ -420,9 +420,6 @@ impl State {
     }
 
     fn move_down(&mut self) {
-        if self.cursor.y + 1 >= self.lines.len() as u16 {
-            return;
-        }
         self.cursor.y += 1;
         let line = self.get_current_line();
         self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
@@ -453,7 +450,7 @@ impl State {
     }
 
     fn left_margin_width(&self) -> u16 {
-        std::cmp::max(4, self.lines.len().to_string().len() as u16 + 1)
+        4 //std::cmp::max(4, self.lines.len().to_string().len() as u16 + 1)
     }
 
     fn get_current_line(&self) -> &LoadedLine {
@@ -463,11 +460,9 @@ impl State {
 
 fn main() -> io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let file: Option<std::fs::File> = if args.len() > 1 {
-        let filename = &args[1];
-        Some(OpenOptions::new().read(true).open(filename)?)
-    } else {
-        None
+    let file: std::fs::File = {
+        let filename = args.get(1).map_or("/tmp/editor_tmpfile.tmp", |v| v);
+        OpenOptions::new().read(true).open(filename)?
     };
     let terminal = ratatui::init();
     let mut state: State = State {
@@ -476,11 +471,8 @@ fn main() -> io::Result<()> {
         cursor: Position::new(0, 0),
         insert_mode: true,
         status_text: String::new(),
-        file: file,
-        file_offset: 0,
         terminal_size: terminal.size()?,
-        memstore: todo!(), //Memstore::new(1024 *1024 , |offset:u64| , store_fn),
-        lines: todo!(),
+        lines: VirtualFile::new(1024 * 1024, file),
     };
     //state.load()?;
     let result = state.run(terminal);

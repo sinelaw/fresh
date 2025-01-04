@@ -1,14 +1,14 @@
-use std::{io::Seek, os::unix::fs::FileExt, sync::Arc};
+use std::{os::unix::fs::FileExt, sync::Arc};
 
 use crate::{lines::LoadedLine, memstore::Memstore};
 
-pub struct VirtualFile<'a> {
+pub struct VirtualFile {
     file: Arc<std::fs::File>,
-    memstore: Memstore<'a>,
+    memstore: Memstore<'static>,
 }
 
-impl<'a> VirtualFile<'a> {
-    pub fn new(chunk_size: u64, file: std::fs::File) -> VirtualFile<'a> {
+impl VirtualFile {
+    pub fn new(chunk_size: u64, file: std::fs::File) -> VirtualFile {
         let file = Arc::new(file);
         let load_fn = {
             let file = Arc::clone(&file);
@@ -34,10 +34,6 @@ impl<'a> VirtualFile<'a> {
         todo!()
     }
 
-    pub fn len(&self) -> u16 {
-        todo!()
-    }
-
     pub fn remove(&self, y: usize) -> LoadedLine {
         todo!()
     }
@@ -50,9 +46,5 @@ impl<'a> VirtualFile<'a> {
         todo!()
     }
 
-    pub fn iter_at<'b, I>(&self, offset: usize) -> I
-    where
-        I: Iterator<Item = &'b LoadedLine>,
-    {
-    }
+    pub fn iter_at(&self, offset: usize) -> impl Iterator<Item = LoadedLine> {}
 }
