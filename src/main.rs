@@ -7,18 +7,20 @@ use std::{
 };
 
 use crate::lines::LoadedLine;
-use chunks::Chunk;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use memstore::Memstore;
 use ratatui::{
     layout::{Position, Rect, Size},
     style::{Style, Stylize},
     text::{Line, Span, Text},
     DefaultTerminal, Frame,
 };
+use virtual_file::VirtualFile;
 
-mod chunks;
 mod lines;
 mod lines_iter;
+mod memstore;
+mod virtual_file;
 
 // TODO
 // How to represent edited content?
@@ -37,39 +39,9 @@ mod lines_iter;
 // if disk_offset = write offset and is_modified = false, no need to write (skip the chunk).
 // This can optimize writing huge files.
 
-struct VirtualLines {}
-
-impl VirtualLines {
-    fn get_mut(&self, line_index: usize) -> &mut LoadedLine {
-        todo!()
-    }
-
-    fn len(&self) -> u16 {
-        todo!()
-    }
-
-    fn remove(&self, y: usize) -> LoadedLine {
-        todo!()
-    }
-
-    fn insert(&self, y: usize, new_line: LoadedLine) {
-        todo!()
-    }
-
-    fn get(&self, y: usize) -> &LoadedLine {
-        todo!()
-    }
-
-    fn iter<I: Iterator>(&self, y: usize, lines_per_page: usize) -> I {
-        todo!()
-    }
-}
-
 struct State {
     /// Content loaded from the file, may be a small portion of the entire file starting at some offset
-    data: Chunk<'static>,
-
-    lines: VirtualLines,
+    lines: VirtualFile,
 
     /// Cursor position relative to loaded content (lines)
     cursor: Position,
@@ -84,9 +56,6 @@ struct State {
     status_text: String,
 
     terminal_size: Size,
-
-    file: Option<std::fs::File>,
-    file_offset: u64,
 }
 
 impl State {
@@ -369,10 +338,8 @@ impl State {
         frame.render_widget(
             Text::from_iter(
                 self.lines
-                    .iter(
-                        self.window_offset.y as usize,
-                        self.lines_per_page() as usize,
-                    )
+                    .iter_at(self.window_offset.y as usize)
+                    .take(self.lines_per_page() as usize)
                     .enumerate()
                     .map(render_line),
             ),
@@ -512,7 +479,7 @@ fn main() -> io::Result<()> {
         file: file,
         file_offset: 0,
         terminal_size: terminal.size()?,
-        data: todo!(),
+        memstore: todo!(), //Memstore::new(1024 *1024 , |offset:u64| , store_fn),
         lines: todo!(),
     };
     //state.load()?;
