@@ -3,7 +3,7 @@ pub enum Chunk {
     Loaded { data: Vec<u8>, need_store: bool },
     Empty,
 }
-trait LoadStore {
+pub trait LoadStore {
     fn load(&self, offset: u64) -> Option<Vec<u8>>;
     fn store(&self, offset: u64, data: &[u8]);
 }
@@ -29,7 +29,7 @@ where
         }
     }
 
-    pub fn get(&mut self, offset: u64) -> &mut Chunk {
+    pub fn get(&mut self, offset: u64) -> &Chunk {
         let chunk_index = offset / self.chunk_size;
 
         let load_store = &self.load_store;
@@ -59,33 +59,5 @@ where
                 }
             }
         }
-    }
-
-    pub fn iter_at(&mut self, offset: u64) -> ChunkIter<L> {
-        ChunkIter {
-            index: offset / self.chunk_size,
-            memstore: self,
-        }
-    }
-}
-
-pub struct ChunkIter<'a, L>
-where
-    L: LoadStore,
-{
-    memstore: &'a mut Memstore<L>,
-    index: u64,
-}
-
-impl<'a, L> Iterator for ChunkIter<'a, L>
-where
-    L: LoadStore,
-{
-    type Item = &'a Chunk;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let chunk = self.memstore.get(self.index * self.memstore.chunk_size);
-        self.index += 1;
-        Some(chunk)
     }
 }

@@ -1,33 +1,48 @@
-use std::{os::unix::fs::FileExt, sync::Arc};
+use std::os::unix::fs::FileExt;
 
-use crate::{lines::LoadedLine, memstore::Memstore};
+use crate::{
+    lines::LoadedLine,
+    memstore::{LoadStore, Memstore},
+};
+
+struct FileLoadStore {
+    chunk_size: u64,
+    file: std::fs::File,
+}
+
+impl FileLoadStore {
+    fn new(chunk_size: u64, file: std::fs::File) -> FileLoadStore {
+        FileLoadStore { chunk_size, file }
+    }
+}
+
+impl LoadStore for FileLoadStore {
+    fn load(&self, x: u64) -> Option<Vec<u8>> {
+        let mut buf = vec![0; self.chunk_size as usize];
+        self.file
+            .read_at(&mut buf, x)
+            .expect("failed reading from file");
+        return Some(buf);
+    }
+
+    fn store(&self, x: u64, buf: &[u8]) {
+        self.file.write_at(&buf, x).expect("failed writing to file");
+    }
+}
 
 pub struct VirtualFile {
-    file: Arc<std::fs::File>,
-    memstore: Memstore<'static>,
+    memstore: Memstore<FileLoadStore>,
 }
 
 impl VirtualFile {
     pub fn new(chunk_size: u64, file: std::fs::File) -> VirtualFile {
-        let file = Arc::new(file);
-        let load_fn = {
-            let file = Arc::clone(&file);
-            move |x: u64| -> Option<Vec<u8>> {
-                let mut buf = vec![0; chunk_size as usize];
-                file.read_at(&mut buf, x).expect("failed reading from file");
-                return Some(buf);
-            }
-        };
-        let store_fn = {
-            let file = Arc::clone(&file);
-            move |x: u64, buf: &[u8]| {
-                file.write_at(&buf, x).expect("failed writing to file");
-            }
-        };
         VirtualFile {
-            file,
-            memstore: Memstore::new(chunk_size, load_fn, store_fn),
+            memstore: Memstore::new(chunk_size, FileLoadStore::new(chunk_size, file)),
         }
+    }
+
+    pub fn seek(&self, offset: u64) {
+        todo!()
     }
 
     pub fn get_mut(&self, line_index: usize) -> &mut LoadedLine {
@@ -45,6 +60,4 @@ impl VirtualFile {
     pub fn get(&self, y: usize) -> &LoadedLine {
         todo!()
     }
-
-    pub fn iter_at(&self, offset: usize) -> impl Iterator<Item = LoadedLine> {}
 }
