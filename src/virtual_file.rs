@@ -2,7 +2,7 @@ use std::os::unix::fs::FileExt;
 
 use crate::{
     lines::LoadedLine,
-    memstore::{LoadStore, Memstore},
+    memstore::{Chunk, LoadStore, Memstore},
 };
 
 struct FileLoadStore {
@@ -31,22 +31,36 @@ impl LoadStore for FileLoadStore {
 }
 
 pub struct VirtualFile {
+    offset: u64,
+    chunk_lines: Option<Vec<LoadedLine>>,
     memstore: Memstore<FileLoadStore>,
 }
 
 impl VirtualFile {
     pub fn new(chunk_size: u64, file: std::fs::File) -> VirtualFile {
         VirtualFile {
+            offset: 0,
+            chunk_lines: None,
             memstore: Memstore::new(chunk_size, FileLoadStore::new(chunk_size, file)),
         }
     }
 
-    pub fn seek(&self, offset: u64) {
-        todo!()
+    pub fn seek(&mut self, offset: u64) {
+        self.offset = offset;
     }
 
-    pub fn get_mut(&self, line_index: usize) -> &mut LoadedLine {
-        todo!()
+    pub fn next_line(&mut self) -> &mut LoadedLine {
+        let chunk = self.memstore.get(self.offset);
+        self.chunk_lines = match chunk {
+            Chunk::Loaded { data, need_store } => Some(
+                String::from_utf8_lossy(data)
+                    .split(|c: char| c == '\n')
+                    .map(|s| LoadedLine::new(s.to_string()))
+                    .collect(),
+            ),
+            Chunk::Empty => None,
+        };
+        self.chunk_lines
     }
 
     pub fn remove(&self, y: usize) -> LoadedLine {
