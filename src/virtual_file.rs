@@ -1,4 +1,4 @@
-use std::os::unix::fs::FileExt;
+use std::{os::unix::fs::FileExt, vec};
 
 use crate::{
     lines::LoadedLine,
@@ -31,7 +31,7 @@ impl LoadStore for FileLoadStore {
 }
 
 pub struct VirtualFile {
-    chunk_offset: u64,
+    chunk_index: u64,
     chunk_size: u64,
     line_index_in_chunk: usize,
     chunk_lines: Option<Vec<LoadedLine>>,
@@ -41,7 +41,7 @@ pub struct VirtualFile {
 impl VirtualFile {
     pub fn new(chunk_size: u64, file: std::fs::File) -> VirtualFile {
         VirtualFile {
-            chunk_offset: 0,
+            chunk_index: 0,
             chunk_size,
             line_index_in_chunk: 0,
             chunk_lines: None,
@@ -50,33 +50,57 @@ impl VirtualFile {
     }
 
     pub fn seek(&mut self, offset: u64) {
-        self.chunk_offset = offset;
-        let chunk = self.memstore.get(self.chunk_offset);
-        self.chunk_lines = match chunk {
+        let index = offset / self.chunk_size;
+        if self.chunk_index == index {
+            return;
+        }
+        let new_chunk = self.memstore.get(index);
+        let new_chunk_lines = match new_chunk {
             Chunk::Loaded { data, need_store } => Some(Self::parse_chunk(data)),
             Chunk::Empty => None,
         };
+        self.update_chunk_lines(index, new_chunk_lines);
         self.line_index_in_chunk = 0;
     }
 
+    fn update_chunk_lines(&mut self, new_index: u64, mut new_chunk_lines: Option<Vec<LoadedLine>>) {
+        let old_index = self.chunk_index;
+        self.chunk_index = new_index;
+        let mut empty: Vec<LoadedLine> = vec![];
+        if new_index == old_index + 1 {
+            // append new lines to existing lines
+            // line_index_in_chunk was relative to the old chunk, which is still first, so stays unchanged.
+            self.chunk_lines
+                .as_mut()
+                .unwrap_or(&mut empty)
+                .append(&mut new_chunk_lines.unwrap_or(vec![]));
+        } else if new_index == old_index - 1 {
+            // append existing lines to new lines
+            // line_index_in_chunk was relative to the old chunk lines, which are now after the lines we are perpending
+            self.line_index_in_chunk += new_chunk_lines.as_ref().map_or(0, |l| l.len());
+            std::mem::swap(&mut self.chunk_lines, &mut new_chunk_lines);
+            self.chunk_lines
+                .as_mut()
+                .unwrap_or(&mut empty)
+                .append(&mut new_chunk_lines.unwrap_or(vec![]));
+        } else {
+            // replace existing lines
+            self.chunk_lines = new_chunk_lines;
+        };
+    }
+
     pub fn next_line(&mut self) -> Option<&mut LoadedLine> {
-        if let Some(chunk_lines) = self.chunk_lines.as_mut() {
-            let index = self.line_index_in_chunk;
-            if self.line_index_in_chunk >= chunk_lines.len() {
-                self.chunk_offset += self.chunk_size;
-                let next_chunk = self.memstore.get(self.chunk_offset);
-                let more_lines = match next_chunk {
-                    Chunk::Loaded { data, need_store } => Some(Self::parse_chunk(data)),
-                    Chunk::Empty => None,
-                };
-                if let Some(more_lines) = more_lines {
-                    chunk_lines.extend(more_lines);
-                }
-            }
-            self.line_index_in_chunk += 1;
-            return chunk_lines.get_mut(index);
+        let lines_count = self.chunk_lines.as_ref().map_or(0, |lines| lines.len());
+        self.line_index_in_chunk += 1;
+        if self.line_index_in_chunk >= lines_count {
+            self.seek(self.chunk_index + 1);
         }
-        None
+        let index = self.line_index_in_chunk;
+        return self
+            .chunk_lines
+            .as_mut()
+            .map(|x| x.get_mut(index))
+            .flatten();
     }
 
     pub fn remove(&self, y: usize) -> LoadedLine {

@@ -29,12 +29,11 @@ where
         }
     }
 
-    pub fn get(&mut self, offset: u64) -> &Chunk {
-        let chunk_index = offset / self.chunk_size;
-
+    pub fn get(&mut self, chunk_index: u64) -> &Chunk {
         let load_store = &self.load_store;
-        return self.chunks.entry(chunk_index).or_insert_with_key(|v| {
-            if let Some(data) = load_store.load(*v) {
+        let chunk_size = self.chunk_size;
+        return self.chunks.entry(chunk_index).or_insert_with_key(|index| {
+            if let Some(data) = load_store.load(*index * chunk_size) {
                 Chunk::Loaded {
                     data,
                     need_store: false,
@@ -47,6 +46,7 @@ where
 
     pub fn store_all(&mut self) {
         let load_store = &self.load_store;
+        let chunk_size = self.chunk_size;
         for (index, chunk) in self.chunks.iter_mut() {
             if let Chunk::Loaded {
                 data,
@@ -54,7 +54,7 @@ where
             } = chunk
             {
                 if *is_modified {
-                    load_store.store(*index, data);
+                    load_store.store(*index * chunk_size, data);
                     *is_modified = false;
                 }
             }
