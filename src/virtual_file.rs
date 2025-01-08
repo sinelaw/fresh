@@ -22,9 +22,11 @@ impl FileLoadStore {
 impl LoadStore for FileLoadStore {
     fn load(&self, x: u64) -> Option<Vec<u8>> {
         let mut buf = vec![0; self.chunk_size as usize];
-        self.file
+        let result = self
+            .file
             .read_at(&mut buf, x)
             .expect("failed reading from file");
+        buf.truncate(result);
         return Some(buf);
     }
 
