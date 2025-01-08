@@ -267,6 +267,45 @@ mod tests {
         let mut iter = vf.iter_at(1, 3);
         assert_eq!(iter.next().unwrap().str(), "line2");
         assert_eq!(iter.next().unwrap().str(), "line3");
+        assert_eq!(iter.next().unwrap().str(), "");
         assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_parse_chunk() {
+        let data = b"line1\nline2\nline3\n";
+        let lines = VirtualFile::parse_chunk(&data.to_vec());
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0].str(), "line1");
+        assert_eq!(lines[1].str(), "line2");
+        assert_eq!(lines[2].str(), "line3");
+        assert_eq!(lines[3].str(), "");
+    }
+
+    #[test]
+    fn test_parse_chunk_empty() {
+        let data = b"";
+        let lines = VirtualFile::parse_chunk(&data.to_vec());
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].str(), "");
+    }
+
+    #[test]
+    fn test_parse_chunk_no_newline() {
+        let data = b"line1";
+        let lines = VirtualFile::parse_chunk(&data.to_vec());
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].str(), "line1");
+    }
+
+    #[test]
+    fn test_parse_chunk_multiple_newlines() {
+        let data = b"line1\n\nline2\n";
+        let lines = VirtualFile::parse_chunk(&data.to_vec());
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0].str(), "line1");
+        assert_eq!(lines[1].str(), "");
+        assert_eq!(lines[2].str(), "line2");
+        assert_eq!(lines[3].str(), "");
     }
 }
