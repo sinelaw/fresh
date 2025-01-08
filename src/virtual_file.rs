@@ -1,4 +1,7 @@
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::{convert::TryInto, iter::Skip, ops::Range, os::unix::fs::FileExt, vec};
+use tempfile::tempfile;
 
 use crate::{
     lines::LoadedLine,
@@ -62,6 +65,7 @@ impl VirtualFile {
         if self.loaded_chunks.contains(&index) {
             return;
         }
+        println!("seeking to chunk {}", index);
         let new_chunk = self.memstore.get(index);
         let new_chunk_lines = match new_chunk {
             Chunk::Loaded { data, need_store } => Self::parse_chunk(data),
@@ -71,12 +75,12 @@ impl VirtualFile {
     }
 
     fn update_chunk_lines(&mut self, new_index: u64, mut new_chunk_lines: Vec<LoadedLine>) {
-        if new_index == self.loaded_chunks.end {
+        if new_index == self.loaded_chunks.end && !self.loaded_chunks.is_empty() {
             self.loaded_chunks.end = new_index;
             // append new lines to existing lines
             // line_index is relative to the range start which stays unchanged.
             self.chunk_lines.append(&mut new_chunk_lines);
-        } else if new_index + 1 == self.loaded_chunks.start {
+        } else if new_index + 1 == self.loaded_chunks.start && !self.loaded_chunks.is_empty() {
             self.loaded_chunks.start = new_index;
             // append existing lines to new lines
             // line_index is relative to the range start, which was pushed up by the new chunk
@@ -97,12 +101,15 @@ impl VirtualFile {
     pub fn next_line(&mut self) -> Option<&mut LoadedLine> {
         let lines_count = self.chunk_lines.len();
         self.line_index += 1;
+        println!(
+            "lines_count: {}, line_index: {}",
+            lines_count, self.line_index
+        );
         if self.line_index >= lines_count {
             // seek to next chunk
-            self.seek(self.loaded_chunks.end);
+            self.seek(self.chunk_size * self.loaded_chunks.end);
         }
-        let index = self.line_index;
-        return self.chunk_lines.get_mut(index);
+        return self.chunk_lines.get_mut(self.line_index);
     }
 
     pub fn remove(&mut self) -> LoadedLine {
@@ -135,10 +142,107 @@ impl VirtualFile {
             .collect()
     }
 
-    pub fn iter_at(&self, offset_from_line_index: i64) -> impl Iterator<Item = &LoadedLine> {
+    pub fn iter_at(
+        &mut self,
+        offset_from_line_index: i64,
+        count: usize,
+    ) -> impl Iterator<Item = &LoadedLine> {
         let start_index: usize = ((self.line_index as i64) + offset_from_line_index)
             .try_into()
             .unwrap();
+        if self.line_index < start_index {
+            // materialize lines
+            for i in self.line_index..(start_index + count) {
+                self.next_line();
+            }
+        } else {
+            // need to iterate lines backwards
+            todo!()
+        };
         self.chunk_lines.iter().skip(start_index)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use VirtualFile;
+
+    fn create_test_file(content: &str) -> std::fs::File {
+        let mut file = tempfile().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        file
+    }
+
+    #[test]
+    fn test_virtual_file_new() {
+        let file = create_test_file("line1\nline2\nline3\n");
+        let _ = VirtualFile::new(10, file);
+    }
+
+    #[test]
+    fn test_virtual_file_seek() {
+        let file = create_test_file("line1\nline2\nline3\n");
+        let mut vf = VirtualFile::new(10, file);
+        vf.seek(0);
+        vf.seek(11);
+        vf.seek(0);
+    }
+
+    #[test]
+    fn test_virtual_file_next_line() {
+        let file = create_test_file("line1\nline2\nline3\n");
+        let mut vf = VirtualFile::new(10, file);
+        vf.seek(0);
+        assert_eq!(vf.next_line().unwrap().str(), "line2");
+        assert_eq!(vf.next_line().unwrap().str(), "line3");
+        assert!(vf.next_line().is_none());
+    }
+
+    #[test]
+    fn test_virtual_file_remove() {
+        let file = create_test_file("line1\nline2\nline3\n");
+        let mut vf = VirtualFile::new(10, file);
+        vf.seek(0);
+        assert_eq!(vf.remove().str(), "line1");
+        assert_eq!(vf.get().str(), "line2");
+    }
+
+    #[test]
+    fn test_virtual_file_insert() {
+        let file = create_test_file("line1\nline2\nline3\n");
+        let mut vf = VirtualFile::new(10, file);
+        vf.seek(0);
+        vf.insert(LoadedLine::new("new_line".to_string()));
+        assert_eq!(vf.get().str(), "new_line");
+    }
+
+    #[test]
+    fn test_virtual_file_get() {
+        let file = create_test_file("line1\nline2\nline3\n");
+        let mut vf = VirtualFile::new(10, file);
+        vf.seek(0);
+        assert_eq!(vf.get().str(), "line1");
+    }
+
+    #[test]
+    fn test_virtual_file_get_mut() {
+        let file = create_test_file("line1\nline2\nline3\n");
+        let mut vf = VirtualFile::new(10, file);
+        vf.seek(0);
+        let line = vf.get_mut();
+        line.overwrite(0, 'b');
+        assert_eq!(vf.get().str(), "bine1");
+    }
+
+    #[test]
+    fn test_virtual_file_iter_at() {
+        let file = create_test_file("line1\nline2\nline3\n");
+        let mut vf = VirtualFile::new(10, file);
+        vf.seek(0);
+        let mut iter = vf.iter_at(1, 3);
+        assert_eq!(iter.next().unwrap().str(), "line2");
+        assert_eq!(iter.next().unwrap().str(), "line3");
+        assert!(iter.next().is_none());
     }
 }

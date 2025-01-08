@@ -1,5 +1,7 @@
 extern crate crossterm;
 extern crate ratatui;
+extern crate tempfile;
+
 use std::{
     fs::OpenOptions,
     io::{self},
@@ -304,17 +306,20 @@ impl State {
         self.lines.insert(LoadedLine::new(new_line));
     }
 
-    fn draw_frame(&self, frame: &mut Frame) {
+    fn draw_frame(&mut self, frame: &mut Frame) {
         let window_area = frame.area();
         let text_area = Rect::new(0, 0, window_area.width, window_area.height - 1);
         let status_area = Rect::new(0, window_area.height - 1, window_area.width, 1);
         let left_margin_width = self.left_margin_width();
+        let cursor = self.cursor;
+        let lines_per_page = self.lines_per_page();
+        let window_offset = self.window_offset;
 
         let render_line = |pair: (usize, &LoadedLine)| -> Line<'_> {
             let content = pair
                 .1
                 .chars_iter()
-                .skip(self.window_offset.x as usize)
+                .skip(window_offset.x as usize)
                 .collect::<String>();
             let line_index = pair.0;
             Line::from(vec![
@@ -324,7 +329,7 @@ impl State {
                         (line_index + 1),
                         width = left_margin_width as usize
                     ),
-                    if self.cursor.y as usize == line_index {
+                    if cursor.y as usize == line_index {
                         Style::new().white()
                     } else {
                         Style::new().dark_gray()
@@ -338,8 +343,7 @@ impl State {
         frame.render_widget(
             Text::from_iter(
                 self.lines
-                    .iter_at(self.window_offset.y.into())
-                    .take(self.lines_per_page() as usize)
+                    .iter_at(window_offset.y.into(), lines_per_page as usize)
                     .enumerate()
                     .map(render_line),
             ),

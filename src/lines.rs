@@ -13,6 +13,9 @@ impl LoadedLine {
     pub fn new(chars: String) -> LoadedLine {
         LoadedLine { chars }
     }
+    pub fn str(&self) -> &str {
+        &self.chars
+    }
     pub fn len(&self) -> usize {
         self.chars.len()
     }
