@@ -62,6 +62,10 @@ impl VirtualFile {
 
     pub fn seek(&mut self, offset: u64) {
         let index = offset / self.chunk_size;
+        println!(
+            "self.loaded_chunks: {:?}, offset: {}, index: {}",
+            self.loaded_chunks, offset, index
+        );
         if self.loaded_chunks.contains(&index) {
             return;
         }
@@ -76,9 +80,13 @@ impl VirtualFile {
 
     fn update_chunk_lines(&mut self, new_index: u64, mut new_chunk_lines: Vec<LoadedLine>) {
         if new_index == self.loaded_chunks.end && !self.loaded_chunks.is_empty() {
-            self.loaded_chunks.end = new_index;
+            self.loaded_chunks.end = new_index + 1;
             // append new lines to existing lines
             // line_index is relative to the range start which stays unchanged.
+            self.chunk_lines
+                .last_mut()
+                .unwrap()
+                .extend(new_chunk_lines.remove(0));
             self.chunk_lines.append(&mut new_chunk_lines);
         } else if new_index + 1 == self.loaded_chunks.start && !self.loaded_chunks.is_empty() {
             self.loaded_chunks.start = new_index;
@@ -86,6 +94,10 @@ impl VirtualFile {
             // line_index is relative to the range start, which was pushed up by the new chunk
             self.line_index += new_chunk_lines.len();
             std::mem::swap(&mut self.chunk_lines, &mut new_chunk_lines);
+            self.chunk_lines
+                .last_mut()
+                .unwrap()
+                .extend(new_chunk_lines.remove(0));
             self.chunk_lines.append(&mut new_chunk_lines);
         } else {
             // replace existing lines
@@ -177,6 +189,14 @@ mod tests {
     }
 
     #[test]
+    fn test_virtual_file_empty() {
+        let file = create_test_file("");
+        let mut vf = VirtualFile::new(10, file);
+        vf.seek(0);
+        assert!(vf.next_line().is_none());
+    }
+
+    #[test]
     fn test_virtual_file_new() {
         let file = create_test_file("line1\nline2\nline3\n");
         let _ = VirtualFile::new(10, file);
@@ -198,7 +218,9 @@ mod tests {
         vf.seek(0);
         assert_eq!(vf.next_line().unwrap().str(), "line2");
         assert_eq!(vf.next_line().unwrap().str(), "line3");
-        assert!(vf.next_line().is_none());
+        assert_eq!(vf.next_line().unwrap().str(), "");
+        let last = vf.next_line();
+        assert!(last.is_none(), "should be None, got: {:?}", last);
     }
 
     #[test]
