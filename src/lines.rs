@@ -44,4 +44,8 @@ impl LoadedLine {
     pub fn overwrite(&mut self, x: usize, new_char: char) {
         self.chars.replace_range(x..x + 1, &new_char.to_string());
     }
+
+    pub fn char_get(&self, index: usize) -> Option<char> {
+        self.chars.chars().nth(index)
+    }
 }

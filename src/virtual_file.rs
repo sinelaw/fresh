@@ -1,4 +1,4 @@
-use std::{ops::Range, os::unix::fs::FileExt, vec};
+use std::{convert::TryInto, iter::Skip, ops::Range, os::unix::fs::FileExt, vec};
 
 use crate::{
     lines::LoadedLine,
@@ -106,7 +106,6 @@ impl VirtualFile {
     }
 
     pub fn remove(&mut self) -> LoadedLine {
-        // TODO if this was the last line, self.line_index will now be invalid
         let removed_line = self.chunk_lines.remove(self.line_index);
         if self.line_index > 0 {
             self.line_index -= 1;
@@ -134,5 +133,12 @@ impl VirtualFile {
             .split(|c: char| c == '\n')
             .map(|s| LoadedLine::new(s.to_string()))
             .collect()
+    }
+
+    pub fn iter_at(&self, offset_from_line_index: i64) -> impl Iterator<Item = &LoadedLine> {
+        let start_index: usize = ((self.line_index as i64) + offset_from_line_index)
+            .try_into()
+            .unwrap();
+        self.chunk_lines.iter().skip(start_index)
     }
 }

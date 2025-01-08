@@ -301,8 +301,7 @@ impl State {
         let new_line = line.split_off(self.cursor.x as usize);
         self.cursor.y += 1;
         self.cursor.x = 0;
-        self.lines
-            .insert(self.cursor.y as usize, LoadedLine::from_vec(new_line));
+        self.lines.insert(LoadedLine::new(new_line));
     }
 
     fn draw_frame(&self, frame: &mut Frame) {
@@ -339,7 +338,7 @@ impl State {
         frame.render_widget(
             Text::from_iter(
                 self.lines
-                    .iter_at(self.window_offset.y as usize)
+                    .iter_at(self.window_offset.y.into())
                     .take(self.lines_per_page() as usize)
                     .enumerate()
                     .map(render_line),
@@ -455,7 +454,7 @@ impl State {
     }
 
     fn get_current_line(&self) -> &LoadedLine {
-        self.lines.get(self.cursor.y as usize)
+        self.lines.get()
     }
 }
 
