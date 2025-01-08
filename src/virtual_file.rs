@@ -127,6 +127,10 @@ impl VirtualFile {
     }
 
     pub fn remove(&mut self) -> LoadedLine {
+        if self.line_index + 2 >= self.chunk_lines.len() {
+            // fetch more lines, after removal it will be the last line which may be incomplete
+            self.seek(self.chunk_size * self.loaded_chunks.end);
+        }
         let removed_line = self.chunk_lines.remove(self.line_index);
         if self.line_index > 0 {
             self.line_index -= 1;
