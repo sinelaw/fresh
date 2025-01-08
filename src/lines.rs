@@ -1,5 +1,6 @@
 use std::str::Chars;
 
+#[derive(Debug)]
 pub struct LoadedLine {
     chars: String,
 }

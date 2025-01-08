@@ -96,6 +96,7 @@ impl VirtualFile {
             self.chunk_lines = new_chunk_lines;
             self.line_index = 0;
         };
+        println!("lines: {:?}", self.chunk_lines);
     }
 
     pub fn next_line(&mut self) -> Option<&mut LoadedLine> {
@@ -105,7 +106,8 @@ impl VirtualFile {
             "lines_count: {}, line_index: {}",
             lines_count, self.line_index
         );
-        if self.line_index >= lines_count {
+        // "+1" because last line in the chunk may be incomplete
+        if self.line_index + 1 >= lines_count {
             // seek to next chunk
             self.seek(self.chunk_size * self.loaded_chunks.end);
         }
