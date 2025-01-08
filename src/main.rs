@@ -462,7 +462,11 @@ fn main() -> io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let file: std::fs::File = {
         let filename = args.get(1).map_or("/tmp/editor_tmpfile.tmp", |v| v);
-        OpenOptions::new().read(true).open(filename)?
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .read(true)
+            .open(filename)?
     };
     let terminal = ratatui::init();
     let mut state: State = State {
