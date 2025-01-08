@@ -1,4 +1,4 @@
-use std::{os::unix::fs::FileExt, vec};
+use std::{ops::Range, os::unix::fs::FileExt, vec};
 
 use crate::{
     lines::LoadedLine,
@@ -31,88 +31,102 @@ impl LoadStore for FileLoadStore {
 }
 
 pub struct VirtualFile {
-    chunk_index: u64,
+    // configuration
     chunk_size: u64,
-    line_index_in_chunk: usize,
-    chunk_lines: Option<Vec<LoadedLine>>,
+
+    /// index into chunk_lines
+    line_index: usize,
+
+    // indices of chunks loaded in chunk_lines
+    loaded_chunks: Range<u64>,
+
+    /// lines loaded from memstore (disk)
+    chunk_lines: Vec<LoadedLine>,
+
     memstore: Memstore<FileLoadStore>,
 }
 
 impl VirtualFile {
     pub fn new(chunk_size: u64, file: std::fs::File) -> VirtualFile {
         VirtualFile {
-            chunk_index: 0,
             chunk_size,
-            line_index_in_chunk: 0,
-            chunk_lines: None,
+            line_index: 0,
+            loaded_chunks: Range { start: 0, end: 0 },
+            chunk_lines: vec![LoadedLine::empty()],
             memstore: Memstore::new(chunk_size, FileLoadStore::new(chunk_size, file)),
         }
     }
 
     pub fn seek(&mut self, offset: u64) {
         let index = offset / self.chunk_size;
-        if self.chunk_index == index {
+        if self.loaded_chunks.contains(&index) {
             return;
         }
         let new_chunk = self.memstore.get(index);
         let new_chunk_lines = match new_chunk {
-            Chunk::Loaded { data, need_store } => Some(Self::parse_chunk(data)),
-            Chunk::Empty => None,
+            Chunk::Loaded { data, need_store } => Self::parse_chunk(data),
+            Chunk::Empty => vec![],
         };
         self.update_chunk_lines(index, new_chunk_lines);
-        self.line_index_in_chunk = 0;
     }
 
-    fn update_chunk_lines(&mut self, new_index: u64, mut new_chunk_lines: Option<Vec<LoadedLine>>) {
-        let old_index = self.chunk_index;
-        self.chunk_index = new_index;
-        let mut empty: Vec<LoadedLine> = vec![];
-        if new_index == old_index + 1 {
+    fn update_chunk_lines(&mut self, new_index: u64, mut new_chunk_lines: Vec<LoadedLine>) {
+        if new_index == self.loaded_chunks.end {
+            self.loaded_chunks.end = new_index;
             // append new lines to existing lines
-            // line_index_in_chunk was relative to the old chunk, which is still first, so stays unchanged.
-            self.chunk_lines
-                .as_mut()
-                .unwrap_or(&mut empty)
-                .append(&mut new_chunk_lines.unwrap_or(vec![]));
-        } else if new_index == old_index - 1 {
+            // line_index is relative to the range start which stays unchanged.
+            self.chunk_lines.append(&mut new_chunk_lines);
+        } else if new_index + 1 == self.loaded_chunks.start {
+            self.loaded_chunks.start = new_index;
             // append existing lines to new lines
-            // line_index_in_chunk was relative to the old chunk lines, which are now after the lines we are perpending
-            self.line_index_in_chunk += new_chunk_lines.as_ref().map_or(0, |l| l.len());
+            // line_index is relative to the range start, which was pushed up by the new chunk
+            self.line_index += new_chunk_lines.len();
             std::mem::swap(&mut self.chunk_lines, &mut new_chunk_lines);
-            self.chunk_lines
-                .as_mut()
-                .unwrap_or(&mut empty)
-                .append(&mut new_chunk_lines.unwrap_or(vec![]));
+            self.chunk_lines.append(&mut new_chunk_lines);
         } else {
             // replace existing lines
+            self.loaded_chunks = Range {
+                start: new_index,
+                end: new_index + 1,
+            };
             self.chunk_lines = new_chunk_lines;
+            self.line_index = 0;
         };
     }
 
     pub fn next_line(&mut self) -> Option<&mut LoadedLine> {
-        let lines_count = self.chunk_lines.as_ref().map_or(0, |lines| lines.len());
-        self.line_index_in_chunk += 1;
-        if self.line_index_in_chunk >= lines_count {
-            self.seek(self.chunk_index + 1);
+        let lines_count = self.chunk_lines.len();
+        self.line_index += 1;
+        if self.line_index >= lines_count {
+            // seek to next chunk
+            self.seek(self.loaded_chunks.end);
         }
-        let index = self.line_index_in_chunk;
-        return self
-            .chunk_lines
-            .as_mut()
-            .map(|x| x.get_mut(index))
-            .flatten();
+        let index = self.line_index;
+        return self.chunk_lines.get_mut(index);
     }
 
-    pub fn remove(&self, y: usize) -> LoadedLine {
-        todo!()
+    pub fn remove(&mut self) -> LoadedLine {
+        // TODO if this was the last line, self.line_index will now be invalid
+        let removed_line = self.chunk_lines.remove(self.line_index);
+        if self.line_index > 0 {
+            self.line_index -= 1;
+        } else if self.chunk_lines.len() == 0 {
+            // that was the only line left, add one back to avoid empty
+            self.chunk_lines.push(LoadedLine::empty());
+        }
+        return removed_line;
     }
 
-    pub fn insert(&self, y: usize, new_line: LoadedLine) {
-        todo!()
+    pub fn insert(&mut self, new_line: LoadedLine) {
+        self.chunk_lines.insert(self.line_index, new_line);
     }
 
-    pub fn get(&self, y: usize) -> &LoadedLine {
-        todo!()
+    pub fn get(&self) -> &LoadedLine {
+        self.chunk_lines.get(self.line_index).unwrap()
+    }
+
+    pub fn get_mut(&mut self) -> &mut LoadedLine {
+        self.chunk_lines.get_mut(self.line_index).unwrap()
     }
 
     fn parse_chunk(data: &Vec<u8>) -> Vec<LoadedLine> {

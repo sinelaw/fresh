@@ -40,4 +40,8 @@ impl LoadedLine {
     pub fn chars_iter(&self) -> Chars<'_> {
         self.chars.chars()
     }
+
+    pub fn overwrite(&mut self, x: usize, new_char: char) {
+        self.chars.replace_range(x..x + 1, &new_char.to_string());
+    }
 }

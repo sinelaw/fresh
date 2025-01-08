@@ -18,7 +18,7 @@ use ratatui::{
 use virtual_file::VirtualFile;
 
 mod lines;
-mod lines_iter;
+
 mod memstore;
 mod virtual_file;
 
@@ -255,9 +255,9 @@ impl State {
             self.insert_char(c);
             return;
         }
-        let line = self.lines.get_mut(self.cursor.y as usize);
-        if let Some(elem) = line.char_get_mut(self.cursor.x as usize) {
-            *elem = c;
+        let line = self.lines.get_mut();
+        if line.len() < (self.cursor.x as usize) {
+            line.overwrite(self.cursor.x as usize, c);
             self.cursor.x += 1;
         } else {
             self.insert_char(c);
@@ -265,7 +265,7 @@ impl State {
     }
 
     fn insert_char(&mut self, c: char) {
-        let line = self.lines.get_mut(self.cursor.y as usize);
+        let line = self.lines.get_mut();
         line.insert(self.cursor.x as usize, c);
         self.cursor.x += 1;
     }
@@ -273,30 +273,31 @@ impl State {
     fn delete_prev_char(&mut self) {
         if self.cursor.x > 0 {
             self.cursor.x -= 1;
-            let line = self.lines.get_mut(self.cursor.y as usize);
+            let line = self.lines.get_mut();
             line.remove(self.cursor.x as usize);
         } else if self.cursor.y > 0 {
+            let line = self.lines.remove();
             self.cursor.y -= 1;
-            let line = self.lines.remove((self.cursor.y + 1) as usize);
-            let prev_line = self.lines.get_mut(self.cursor.y as usize);
+            let prev_line = self.lines.get_mut();
             self.cursor.x = prev_line.len() as u16;
             prev_line.extend(line);
         }
     }
 
     fn delete_next_char(&mut self) {
-        let line = self.lines.get_mut(self.cursor.y as usize);
+        let line = self.lines.get_mut();
         if self.cursor.x < line.len() as u16 {
             line.remove(self.cursor.x as usize);
         } else {
-            let next_line = self.lines.remove((self.cursor.y + 1) as usize);
-            let line = self.lines.get_mut(self.cursor.y as usize);
+            self.lines.next_line();
+            let next_line = self.lines.remove();
+            let line = self.lines.get_mut();
             line.extend(next_line);
         }
     }
 
     fn insert_line(&mut self) {
-        let line = self.lines.get_mut(self.cursor.y as usize);
+        let line = self.lines.get_mut();
         let new_line = line.split_off(self.cursor.x as usize);
         self.cursor.y += 1;
         self.cursor.x = 0;
