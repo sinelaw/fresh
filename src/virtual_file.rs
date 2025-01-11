@@ -50,13 +50,15 @@ pub struct VirtualFile {
 
 impl VirtualFile {
     pub fn new(chunk_size: u64, file: std::fs::File) -> VirtualFile {
-        VirtualFile {
+        let mut res = VirtualFile {
             chunk_size,
             line_index: 0,
             loaded_chunks: Range { start: 0, end: 0 },
-            chunk_lines: vec![LoadedLine::empty()],
+            chunk_lines: vec![],
             memstore: Memstore::new(chunk_size, FileLoadStore::new(chunk_size, file)),
-        }
+        };
+        res.seek(0);
+        res
     }
 
     pub fn seek(&mut self, offset: u64) {
