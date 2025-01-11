@@ -113,6 +113,15 @@ impl VirtualFile {
         println!("lines: {:?}", self.chunk_lines);
     }
 
+    pub fn prev_line(&mut self) -> Option<&mut LoadedLine> {
+        if self.line_index == 0 {
+            // seek to previous chunk
+            self.seek(self.chunk_size * (self.loaded_chunks.start - 1));
+        }
+        self.line_index -= 1;
+        return self.chunk_lines.get_mut(self.line_index);
+    }
+
     pub fn next_line(&mut self) -> Option<&mut LoadedLine> {
         let lines_count = self.chunk_lines.len();
         self.line_index += 1;

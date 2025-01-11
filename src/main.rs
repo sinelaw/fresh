@@ -61,29 +61,6 @@ struct State {
 }
 
 impl State {
-    /*  fn load(&mut self) -> io::Result<()> {
-        if let Some(ref mut f) = self.file {
-            f.seek(io::SeekFrom::Start(self.file_offset))?;
-            let mut buf = [0; 1024 * 1024];
-            f.read(&mut buf)?;
-
-            self.lines.clear();
-            let line = LoadedLine::empty();
-            self.lines.push(line);
-            let mut y = 0;
-            for byte in buf.iter() {
-                let c: char = (*byte).into();
-                if c == '\n' {
-                    y += 1;
-                    self.lines.push(LoadedLine::empty());
-                } else {
-                    self.lines[y].push(c);
-                }
-            }
-        }
-        Ok(())
-    } */
-
     fn run(&mut self, mut terminal: DefaultTerminal) -> io::Result<()> {
         loop {
             self.terminal_size = terminal.size()?;
@@ -272,6 +249,16 @@ impl State {
         self.cursor.x += 1;
     }
 
+    fn iter_line_prev(&mut self) {
+        self.cursor.y -= 1;
+        self.lines.prev_line();
+    }
+
+    fn iter_line_next(&mut self) {
+        self.cursor.y += 1;
+        self.lines.next_line();
+    }
+
     fn delete_prev_char(&mut self) {
         if self.cursor.x > 0 {
             self.cursor.x -= 1;
@@ -279,7 +266,7 @@ impl State {
             line.remove(self.cursor.x as usize);
         } else if self.cursor.y > 0 {
             let line = self.lines.remove();
-            self.cursor.y -= 1;
+            self.iter_line_prev();
             let prev_line = self.lines.get_mut();
             self.cursor.x = prev_line.len() as u16;
             prev_line.extend(line);
@@ -301,7 +288,7 @@ impl State {
     fn insert_line(&mut self) {
         let line = self.lines.get_mut();
         let new_line = line.split_off(self.cursor.x as usize);
-        self.cursor.y += 1;
+        self.iter_line_next();
         self.cursor.x = 0;
         self.lines.insert(LoadedLine::new(new_line));
     }
@@ -362,7 +349,7 @@ impl State {
         if self.cursor.x > 0 {
             self.cursor.x -= 1;
         } else if self.cursor.y > 0 {
-            self.cursor.y -= 1;
+            self.iter_line_prev();
             let prev_line = self.get_current_line();
             self.cursor.x = prev_line.len() as u16;
         }
@@ -373,7 +360,7 @@ impl State {
         if self.cursor.x < line.len() as u16 {
             self.cursor.x += 1;
         } else {
-            self.cursor.y += 1;
+            self.iter_line_next();
             self.cursor.x = 0;
         }
     }
@@ -418,13 +405,13 @@ impl State {
         if self.cursor.y == 0 {
             return;
         }
-        self.cursor.y -= 1;
+        self.iter_line_prev();
         let line = self.get_current_line();
         self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
     }
 
     fn move_down(&mut self) {
-        self.cursor.y += 1;
+        self.iter_line_next();
         let line = self.get_current_line();
         self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
     }
