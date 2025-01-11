@@ -45,7 +45,7 @@ struct State {
     /// Content loaded from the file, may be a small portion of the entire file starting at some offset
     lines: VirtualFile,
 
-    /// Cursor position relative to loaded content (lines)
+    /// Cursor position relative to ???
     cursor: Position,
 
     /// Offset of the visible part of the content
@@ -335,7 +335,7 @@ impl State {
         frame.render_widget(
             Text::from_iter(
                 self.lines
-                    .iter_at(window_offset.y.into(), lines_per_page as usize)
+                    .iter_at(-(cursor.y as i64), lines_per_page as usize)
                     .enumerate()
                     .map(render_line),
             ),

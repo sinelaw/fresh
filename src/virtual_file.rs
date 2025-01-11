@@ -192,14 +192,12 @@ impl VirtualFile {
         for _ in 0..count {
             self.prev_line();
         }
+        let start_index = self.line_index;
         // ... and now go back to where line_index was before
         for _ in 0..offset_from_line_index {
             self.prev_line();
         }
 
-        let start_index: usize = (self.line_index as i64 + offset_from_line_index)
-            .try_into()
-            .unwrap();
         self.chunk_lines.iter().skip(start_index)
     }
 }
