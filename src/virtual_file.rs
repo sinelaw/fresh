@@ -109,6 +109,7 @@ impl VirtualFile {
 
     pub fn prev_line(&mut self) -> Option<&mut LoadedLine> {
         if self.line_index == 0 {
+            assert!(self.loaded_chunks.start > 0);
             // seek to previous chunk
             self.seek(self.chunk_size * (self.loaded_chunks.start - 1));
         }
@@ -166,28 +167,35 @@ impl VirtualFile {
         offset_from_line_index: i64,
         count: usize,
     ) -> impl Iterator<Item = &LoadedLine> {
-        let start_index: usize = ((self.line_index as i64) + offset_from_line_index)
-            .try_into()
-            .unwrap();
+        // TODO: This is inefficient and also clobbers the current line_index
 
-        if self.line_index < start_index {
+        if offset_from_line_index < 0 {
+            // need to iterate lines backwards
+            for _ in offset_from_line_index..0 {
+                self.prev_line();
+            }
+        } else {
             // need to iterate lines forwards
-            for _ in start_index..self.line_index {
+            for _ in 0..offset_from_line_index {
                 self.next_line();
             }
         }
-        if self.line_index > start_index {
-            // need to iterate lines backwards
-            for _ in start_index..self.line_index {
-                self.prev_line();
-            }
-        };
-        // materialize lines after line_index
-        for _ in start_index..(start_index + count) {
+        // line_index is now at the start of the range
+        // materialize 'count' lines
+        for _ in 0..count {
             self.next_line();
         }
-        // since lines may have been loaded, need to recalculate start_index
-        let start_index: usize = ((self.line_index as i64) + offset_from_line_index)
+
+        // correct the line_index: go back to beginning of the range
+        for _ in 0..count {
+            self.prev_line();
+        }
+        // ... and now go back to where line_index was before
+        for _ in 0..offset_from_line_index {
+            self.prev_line();
+        }
+
+        let start_index: usize = (self.line_index as i64 + offset_from_line_index)
             .try_into()
             .unwrap();
         self.chunk_lines.iter().skip(start_index)

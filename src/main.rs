@@ -327,6 +327,11 @@ impl State {
             ])
         };
 
+        self.status_text = format!(
+            "cursor: {:?}, window_offset {:?}",
+            self.cursor, self.window_offset
+        );
+
         frame.render_widget(
             Text::from_iter(
                 self.lines
