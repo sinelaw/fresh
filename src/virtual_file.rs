@@ -194,7 +194,10 @@ impl VirtualFile {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use super::*;
+    use tempfile::tempfile;
     use VirtualFile;
 
     fn create_test_file(content: &str) -> std::fs::File {
