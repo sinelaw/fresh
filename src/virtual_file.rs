@@ -1,7 +1,4 @@
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::{convert::TryInto, iter::Skip, ops::Range, os::unix::fs::FileExt, vec};
-use tempfile::tempfile;
+use std::{convert::TryInto, ops::Range, os::unix::fs::FileExt, vec};
 
 use crate::{
     lines::LoadedLine,
