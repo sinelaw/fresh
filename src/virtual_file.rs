@@ -61,14 +61,9 @@ impl VirtualFile {
 
     pub fn seek(&mut self, offset: u64) {
         let index = offset / self.chunk_size;
-        println!(
-            "self.loaded_chunks: {:?}, offset: {}, index: {}",
-            self.loaded_chunks, offset, index
-        );
         if self.loaded_chunks.contains(&index) {
             return;
         }
-        println!("seeking to chunk {}", index);
         let new_chunk = self.memstore.get(index);
         let new_chunk_lines = match new_chunk {
             Chunk::Loaded {
@@ -110,7 +105,6 @@ impl VirtualFile {
             self.chunk_lines = new_chunk_lines;
             self.line_index = 0;
         };
-        println!("lines: {:?}", self.chunk_lines);
     }
 
     pub fn prev_line(&mut self) -> Option<&mut LoadedLine> {
@@ -125,10 +119,6 @@ impl VirtualFile {
     pub fn next_line(&mut self) -> Option<&mut LoadedLine> {
         let lines_count = self.chunk_lines.len();
         self.line_index += 1;
-        println!(
-            "lines_count: {}, line_index: {}",
-            lines_count, self.line_index
-        );
         // "+1" because last line in the chunk may be incomplete
         if self.line_index + 1 >= lines_count {
             // seek to next chunk
@@ -179,15 +169,27 @@ impl VirtualFile {
         let start_index: usize = ((self.line_index as i64) + offset_from_line_index)
             .try_into()
             .unwrap();
+
         if self.line_index < start_index {
-            // materialize lines
-            for _ in self.line_index..(start_index + count) {
+            // need to iterate lines forwards
+            for _ in start_index..self.line_index {
                 self.next_line();
             }
-        } else {
+        }
+        if self.line_index > start_index {
             // need to iterate lines backwards
-            todo!()
+            for _ in start_index..self.line_index {
+                self.prev_line();
+            }
         };
+        // materialize lines after line_index
+        for _ in start_index..(start_index + count) {
+            self.next_line();
+        }
+        // since lines may have been loaded, need to recalculate start_index
+        let start_index: usize = ((self.line_index as i64) + offset_from_line_index)
+            .try_into()
+            .unwrap();
         self.chunk_lines.iter().skip(start_index)
     }
 }
