@@ -71,7 +71,10 @@ impl VirtualFile {
         println!("seeking to chunk {}", index);
         let new_chunk = self.memstore.get(index);
         let new_chunk_lines = match new_chunk {
-            Chunk::Loaded { data, need_store } => Self::parse_chunk(data),
+            Chunk::Loaded {
+                data,
+                need_store: _,
+            } => Self::parse_chunk(data),
             Chunk::Empty => vec![],
         };
         self.update_chunk_lines(index, new_chunk_lines);
@@ -178,7 +181,7 @@ impl VirtualFile {
             .unwrap();
         if self.line_index < start_index {
             // materialize lines
-            for i in self.line_index..(start_index + count) {
+            for _ in self.line_index..(start_index + count) {
                 self.next_line();
             }
         } else {
