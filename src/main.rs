@@ -250,13 +250,11 @@ impl State {
     }
 
     fn iter_line_prev(&mut self) {
-        self.cursor.y -= 1;
-        self.lines.prev_line();
+        self.cursor.y -= self.lines.prev_line();
     }
 
     fn iter_line_next(&mut self) {
-        self.cursor.y += 1;
-        self.lines.next_line();
+        self.cursor.y += self.lines.next_line();
     }
 
     fn delete_prev_char(&mut self) {
@@ -278,7 +276,7 @@ impl State {
         if self.cursor.x < line.len() as u16 {
             line.remove(self.cursor.x as usize);
         } else {
-            self.lines.next_line();
+            self.iter_line_next();
             let next_line = self.lines.remove();
             let line = self.lines.get_mut();
             line.extend(next_line);
@@ -288,9 +286,9 @@ impl State {
     fn insert_line(&mut self) {
         let line = self.lines.get_mut();
         let new_line = line.split_off(self.cursor.x as usize);
+        self.lines.insert_after(LoadedLine::new(new_line));
         self.iter_line_next();
         self.cursor.x = 0;
-        self.lines.insert(LoadedLine::new(new_line));
     }
 
     fn draw_frame(&mut self, frame: &mut Frame) {
@@ -303,20 +301,20 @@ impl State {
         let window_offset = self.window_offset;
 
         let render_line = |pair: (usize, &LoadedLine)| -> Line<'_> {
-            let content = pair
-                .1
+            let (line_index, loaded_line) = pair;
+
+            let content = loaded_line
                 .chars_iter()
                 .skip(window_offset.x as usize)
                 .collect::<String>();
-            let line_index = pair.0;
             Line::from(vec![
                 Span::styled(
                     format!(
                         "{:>width$}",
-                        (line_index + 1),
+                        (line_index + window_offset.y as usize + 1),
                         width = left_margin_width as usize
                     ),
-                    if cursor.y as usize == line_index {
+                    if (cursor.y - window_offset.y) as usize == line_index {
                         Style::new().white()
                     } else {
                         Style::new().dark_gray()
@@ -327,19 +325,24 @@ impl State {
             ])
         };
 
-        self.status_text = format!(
-            "cursor: {:?}, window_offset {:?}",
-            self.cursor, self.window_offset
-        );
-
         frame.render_widget(
             Text::from_iter(
                 self.lines
-                    .iter_at(-(cursor.y as i64), lines_per_page as usize)
+                    .iter_at(
+                        self.window_offset.y as i64 - cursor.y as i64,
+                        lines_per_page as usize,
+                    )
                     .enumerate()
                     .map(render_line),
             ),
             text_area,
+        );
+
+        self.status_text = format!(
+            "cursor: {:?}, window_offset {:?}, line_index: {:?}",
+            self.cursor,
+            self.window_offset,
+            self.lines.get_index()
         );
 
         frame.render_widget(self.status_text.clone(), status_area);

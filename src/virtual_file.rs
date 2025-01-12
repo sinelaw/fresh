@@ -109,25 +109,29 @@ impl VirtualFile {
         };
     }
 
-    pub fn prev_line(&mut self) -> Option<&mut LoadedLine> {
-        if self.line_index == 0 {
-            assert!(self.loaded_chunks.start > 0);
+    pub fn prev_line(&mut self) -> u16 {
+        if self.line_index == 0 && self.loaded_chunks.start > 0 {
             // seek to previous chunk
             self.seek(self.chunk_size * (self.loaded_chunks.start - 1));
         }
-        self.line_index -= 1;
-        return self.chunk_lines.get_mut(self.line_index);
+        // after possible seek, line_index may still be zero if there was nothing to load
+        if self.line_index > 0 {
+            self.line_index -= 1;
+            return 1;
+        }
+        return 0;
     }
 
-    pub fn next_line(&mut self) -> Option<&mut LoadedLine> {
-        let lines_count = self.chunk_lines.len();
-        self.line_index += 1;
-        // "+1" because last line in the chunk may be incomplete
-        if self.line_index + 1 >= lines_count {
-            // seek to next chunk
+    pub fn next_line(&mut self) -> u16 {
+        if self.line_index + 2 >= self.chunk_lines.len() {
+            // fetch more lines, after increasing index it will be the last line which may be incomplete
             self.seek(self.chunk_size * self.loaded_chunks.end);
         }
-        return self.chunk_lines.get_mut(self.line_index);
+        if self.line_index + 1 < self.chunk_lines.len() {
+            self.line_index += 1;
+            return 1;
+        }
+        return 0;
     }
 
     pub fn remove(&mut self) -> LoadedLine {
@@ -145,8 +149,12 @@ impl VirtualFile {
         return removed_line;
     }
 
-    pub fn insert(&mut self, new_line: LoadedLine) {
-        self.chunk_lines.insert(self.line_index, new_line);
+    pub fn get_index(&self) -> usize {
+        self.line_index
+    }
+
+    pub fn insert_after(&mut self, new_line: LoadedLine) {
+        self.chunk_lines.insert(self.line_index + 1, new_line);
     }
 
     pub fn get(&self) -> &LoadedLine {
@@ -170,33 +178,26 @@ impl VirtualFile {
         count: usize,
     ) -> impl Iterator<Item = &LoadedLine> {
         // TODO: This is inefficient and also clobbers the current line_index
-
+        let mut clobber: i32 = 0;
         if offset_from_line_index < 0 {
             // need to iterate lines backwards
             for _ in offset_from_line_index..0 {
-                self.prev_line();
+                clobber -= self.prev_line() as i32;
             }
         } else {
             // need to iterate lines forwards
             for _ in 0..offset_from_line_index {
-                self.next_line();
+                clobber += self.next_line() as i32;
             }
         }
         // line_index is now at the start of the range
+        let start_index = self.line_index;
         // materialize 'count' lines
         for _ in 0..count {
-            self.next_line();
+            clobber += self.next_line() as i32;
         }
-
-        // correct the line_index: go back to beginning of the range
-        for _ in 0..count {
-            self.prev_line();
-        }
-        let start_index = self.line_index;
         // ... and now go back to where line_index was before
-        for _ in 0..offset_from_line_index {
-            self.prev_line();
-        }
+        self.line_index = (self.line_index as i32 - clobber).try_into().unwrap();
 
         self.chunk_lines.iter().skip(start_index)
     }
@@ -265,7 +266,7 @@ mod tests {
         let file = create_test_file("line1\nline2\nline3\n");
         let mut vf = VirtualFile::new(10, file);
         vf.seek(0);
-        vf.insert(LoadedLine::new("new_line".to_string()));
+        vf.insert_after(LoadedLine::new("new_line".to_string()));
         assert_eq!(vf.get().str(), "new_line");
     }
 
