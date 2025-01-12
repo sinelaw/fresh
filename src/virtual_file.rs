@@ -1,7 +1,7 @@
 use std::{convert::TryInto, ops::Range, os::unix::fs::FileExt, vec};
 
 use crate::{
-    lines::LoadedLine,
+    lines::EditLine,
     memstore::{Chunk, LoadStore, Memstore},
 };
 
@@ -43,7 +43,7 @@ pub struct VirtualFile {
     loaded_chunks: Range<u64>,
 
     /// lines loaded from memstore (disk)
-    chunk_lines: Vec<LoadedLine>,
+    chunk_lines: Vec<EditLine>,
 
     memstore: Memstore<FileLoadStore>,
 }
@@ -77,7 +77,7 @@ impl VirtualFile {
         self.update_chunk_lines(index, new_chunk_lines);
     }
 
-    fn update_chunk_lines(&mut self, new_index: u64, mut new_chunk_lines: Vec<LoadedLine>) {
+    fn update_chunk_lines(&mut self, new_index: u64, mut new_chunk_lines: Vec<EditLine>) {
         if new_index == self.loaded_chunks.end && !self.loaded_chunks.is_empty() {
             self.loaded_chunks.end = new_index + 1;
             // append new lines to existing lines
@@ -134,7 +134,7 @@ impl VirtualFile {
         return 0;
     }
 
-    pub fn remove(&mut self) -> LoadedLine {
+    pub fn remove(&mut self) -> EditLine {
         if self.line_index + 2 >= self.chunk_lines.len() {
             // fetch more lines, after removal it will be the last line which may be incomplete
             self.seek(self.chunk_size * self.loaded_chunks.end);
@@ -144,7 +144,7 @@ impl VirtualFile {
             self.line_index -= 1;
         } else if self.chunk_lines.len() == 0 {
             // that was the only line left, add one back to avoid empty
-            self.chunk_lines.push(LoadedLine::empty());
+            self.chunk_lines.push(EditLine::empty());
         }
         return removed_line;
     }
@@ -153,22 +153,22 @@ impl VirtualFile {
         self.line_index
     }
 
-    pub fn insert_after(&mut self, new_line: LoadedLine) {
+    pub fn insert_after(&mut self, new_line: EditLine) {
         self.chunk_lines.insert(self.line_index + 1, new_line);
     }
 
-    pub fn get(&self) -> &LoadedLine {
+    pub fn get(&self) -> &EditLine {
         self.chunk_lines.get(self.line_index).unwrap()
     }
 
-    pub fn get_mut(&mut self) -> &mut LoadedLine {
+    pub fn get_mut(&mut self) -> &mut EditLine {
         self.chunk_lines.get_mut(self.line_index).unwrap()
     }
 
-    fn parse_chunk(data: &Vec<u8>) -> Vec<LoadedLine> {
+    fn parse_chunk(data: &Vec<u8>) -> Vec<EditLine> {
         String::from_utf8_lossy(data)
             .split(|c: char| c == '\n')
-            .map(|s| LoadedLine::new(s.to_string()))
+            .map(|s| EditLine::new(s.to_string()))
             .collect()
     }
 
@@ -176,7 +176,7 @@ impl VirtualFile {
         &mut self,
         offset_from_line_index: i64,
         count: usize,
-    ) -> impl Iterator<Item = &LoadedLine> {
+    ) -> impl Iterator<Item = &EditLine> {
         // TODO: This is inefficient and also clobbers the current line_index
         let mut clobber: i32 = 0;
         if offset_from_line_index < 0 {
@@ -266,7 +266,7 @@ mod tests {
         let file = create_test_file("line1\nline2\nline3\n");
         let mut vf = VirtualFile::new(10, file);
         vf.seek(0);
-        vf.insert_after(LoadedLine::new("new_line".to_string()));
+        vf.insert_after(EditLine::new("new_line".to_string()));
         assert_eq!(vf.get().str(), "new_line");
     }
 

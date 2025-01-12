@@ -8,7 +8,7 @@ use std::{
     iter::FromIterator,
 };
 
-use crate::lines::LoadedLine;
+use crate::lines::EditLine;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 
 use ratatui::{
@@ -159,6 +159,12 @@ impl State {
 
             KeyEvent {
                 code: KeyCode::Home,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => self.move_to_file_start(),
+
+            KeyEvent {
+                code: KeyCode::Home,
                 modifiers: KeyModifiers::NONE,
                 ..
             } => self.move_to_line_start(),
@@ -286,7 +292,7 @@ impl State {
     fn insert_line(&mut self) {
         let line = self.lines.get_mut();
         let new_line = line.split_off(self.cursor.x as usize);
-        self.lines.insert_after(LoadedLine::new(new_line));
+        self.lines.insert_after(EditLine::new(new_line));
         self.iter_line_next();
         self.cursor.x = 0;
     }
@@ -300,7 +306,7 @@ impl State {
         let lines_per_page = self.lines_per_page();
         let window_offset = self.window_offset;
 
-        let render_line = |pair: (usize, &LoadedLine)| -> Line<'_> {
+        let render_line = |pair: (usize, &EditLine)| -> Line<'_> {
             let (line_index, loaded_line) = pair;
 
             let content = loaded_line
@@ -452,8 +458,12 @@ impl State {
         4 //std::cmp::max(4, self.lines.len().to_string().len() as u16 + 1)
     }
 
-    fn get_current_line(&self) -> &LoadedLine {
+    fn get_current_line(&self) -> &EditLine {
         self.lines.get()
+    }
+
+    fn move_to_file_start(&mut self) {
+        self.lines.seek(0);
     }
 }
 

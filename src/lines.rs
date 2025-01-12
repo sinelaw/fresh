@@ -1,18 +1,18 @@
 use std::str::Chars;
 
 #[derive(Debug)]
-pub struct LoadedLine {
+pub struct EditLine {
     chars: String,
 }
 
-impl LoadedLine {
-    pub fn empty() -> LoadedLine {
-        LoadedLine {
+impl EditLine {
+    pub fn empty() -> EditLine {
+        EditLine {
             chars: String::new(),
         }
     }
-    pub fn new(chars: String) -> LoadedLine {
-        LoadedLine { chars }
+    pub fn new(chars: String) -> EditLine {
+        EditLine { chars }
     }
     pub fn str(&self) -> &str {
         &self.chars
@@ -29,7 +29,7 @@ impl LoadedLine {
     pub fn remove(&mut self, index: usize) {
         self.chars.remove(index);
     }
-    pub fn extend(&mut self, line: LoadedLine) {
+    pub fn extend(&mut self, line: EditLine) {
         self.chars.extend(line.chars.chars());
     }
     /*  pub fn char_get_mut(&mut self, index: usize) -> Option<&mut char> {
