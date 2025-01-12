@@ -37,6 +37,11 @@ impl LoadStore for FileLoadStore {
     }
 }
 
+struct LoadedLine {
+    chunk_index: ChunkIndex,
+    line: EditLine,
+}
+
 pub struct VirtualFile {
     // configuration
     chunk_size: u64,
@@ -48,7 +53,7 @@ pub struct VirtualFile {
     loaded_chunks: Range<ChunkIndex>,
 
     /// lines loaded from memstore (disk)
-    chunk_lines: Vec<EditLine>,
+    chunk_lines: Vec<LoadedLine>,
 
     memstore: Memstore<FileLoadStore>,
 }
@@ -80,13 +85,13 @@ impl VirtualFile {
             Chunk::Loaded {
                 data,
                 need_store: _,
-            } => Self::parse_chunk(data),
+            } => Self::parse_chunk(&index, data),
             Chunk::Empty => vec![],
         };
         self.update_chunk_lines(index, new_chunk_lines);
     }
 
-    fn update_chunk_lines(&mut self, new_index: ChunkIndex, mut new_chunk_lines: Vec<EditLine>) {
+    fn update_chunk_lines(&mut self, new_index: ChunkIndex, mut new_chunk_lines: Vec<LoadedLine>) {
         if new_index == self.loaded_chunks.end && !self.loaded_chunks.is_empty() {
             self.loaded_chunks.end = new_index.next();
             // append new lines to existing lines
@@ -94,7 +99,8 @@ impl VirtualFile {
             self.chunk_lines
                 .last_mut()
                 .unwrap()
-                .extend(new_chunk_lines.remove(0));
+                .line
+                .extend(new_chunk_lines.remove(0).line);
             self.chunk_lines.append(&mut new_chunk_lines);
         } else if new_index.next() == self.loaded_chunks.start && !self.loaded_chunks.is_empty() {
             self.loaded_chunks.start = new_index;
@@ -105,7 +111,8 @@ impl VirtualFile {
             self.chunk_lines
                 .last_mut()
                 .unwrap()
-                .extend(new_chunk_lines.remove(0));
+                .line
+                .extend(new_chunk_lines.remove(0).line);
             self.chunk_lines.append(&mut new_chunk_lines);
         } else {
             // replace existing lines
@@ -153,9 +160,12 @@ impl VirtualFile {
             self.line_index -= 1;
         } else if self.chunk_lines.len() == 0 {
             // that was the only line left, add one back to avoid empty
-            self.chunk_lines.push(EditLine::empty());
+            self.chunk_lines.push(LoadedLine {
+                chunk_index: ChunkIndex::from_offset(0, self.chunk_size),
+                line: EditLine::empty(),
+            });
         }
-        return removed_line;
+        return removed_line.line;
     }
 
     pub fn get_index(&self) -> usize {
@@ -163,21 +173,31 @@ impl VirtualFile {
     }
 
     pub fn insert_after(&mut self, new_line: EditLine) {
-        self.chunk_lines.insert(self.line_index + 1, new_line);
+        let line = self.chunk_lines.get(self.line_index).unwrap();
+        self.chunk_lines.insert(
+            self.line_index + 1,
+            LoadedLine {
+                chunk_index: line.chunk_index.clone(),
+                line: new_line,
+            },
+        );
     }
 
     pub fn get(&self) -> &EditLine {
-        self.chunk_lines.get(self.line_index).unwrap()
+        &self.chunk_lines.get(self.line_index).unwrap().line
     }
 
     pub fn get_mut(&mut self) -> &mut EditLine {
-        self.chunk_lines.get_mut(self.line_index).unwrap()
+        &mut self.chunk_lines.get_mut(self.line_index).unwrap().line
     }
 
-    fn parse_chunk(data: &Vec<u8>) -> Vec<EditLine> {
+    fn parse_chunk(chunk_index: &ChunkIndex, data: &Vec<u8>) -> Vec<LoadedLine> {
         String::from_utf8_lossy(data)
             .split(|c: char| c == '\n')
-            .map(|s| EditLine::new(s.to_string()))
+            .map(|s| LoadedLine {
+                chunk_index: chunk_index.clone(),
+                line: EditLine::new(s.to_string()),
+            })
             .collect()
     }
 
@@ -208,7 +228,7 @@ impl VirtualFile {
         // ... and now go back to where line_index was before
         self.line_index = (self.line_index as i32 - clobber).try_into().unwrap();
 
-        self.chunk_lines.iter().skip(start_index)
+        self.chunk_lines.iter().skip(start_index).map(|l| &l.line)
     }
 }
 
