@@ -1,8 +1,13 @@
-use std::{convert::TryInto, ops::Range, os::unix::fs::FileExt, vec};
+use std::{
+    convert::TryInto,
+    ops::{Range, RangeBounds},
+    os::unix::fs::FileExt,
+    vec,
+};
 
 use crate::{
     lines::EditLine,
-    memstore::{Chunk, LoadStore, Memstore},
+    memstore::{Chunk, ChunkIndex, LoadStore, Memstore},
 };
 
 struct FileLoadStore {
@@ -40,7 +45,7 @@ pub struct VirtualFile {
     line_index: usize,
 
     // indices of chunks loaded in chunk_lines
-    loaded_chunks: Range<u64>,
+    loaded_chunks: Range<ChunkIndex>,
 
     /// lines loaded from memstore (disk)
     chunk_lines: Vec<EditLine>,
@@ -50,10 +55,14 @@ pub struct VirtualFile {
 
 impl VirtualFile {
     pub fn new(chunk_size: u64, file: std::fs::File) -> VirtualFile {
+        let chunk_zero = ChunkIndex::from_offset(0, chunk_size);
         let mut res = VirtualFile {
             chunk_size,
             line_index: 0,
-            loaded_chunks: Range { start: 0, end: 0 },
+            loaded_chunks: Range {
+                start: chunk_zero.clone(),
+                end: chunk_zero.clone(),
+            },
             chunk_lines: vec![],
             memstore: Memstore::new(chunk_size, FileLoadStore::new(chunk_size, file)),
         };
@@ -62,11 +71,11 @@ impl VirtualFile {
     }
 
     pub fn seek(&mut self, offset: u64) {
-        let index = offset / self.chunk_size;
+        let index = ChunkIndex::from_offset(offset, self.chunk_size);
         if self.loaded_chunks.contains(&index) {
             return;
         }
-        let new_chunk = self.memstore.get(index);
+        let new_chunk = self.memstore.get(&index);
         let new_chunk_lines = match new_chunk {
             Chunk::Loaded {
                 data,
@@ -77,9 +86,9 @@ impl VirtualFile {
         self.update_chunk_lines(index, new_chunk_lines);
     }
 
-    fn update_chunk_lines(&mut self, new_index: u64, mut new_chunk_lines: Vec<EditLine>) {
+    fn update_chunk_lines(&mut self, new_index: ChunkIndex, mut new_chunk_lines: Vec<EditLine>) {
         if new_index == self.loaded_chunks.end && !self.loaded_chunks.is_empty() {
-            self.loaded_chunks.end = new_index + 1;
+            self.loaded_chunks.end = new_index.next();
             // append new lines to existing lines
             // line_index is relative to the range start which stays unchanged.
             self.chunk_lines
@@ -87,7 +96,7 @@ impl VirtualFile {
                 .unwrap()
                 .extend(new_chunk_lines.remove(0));
             self.chunk_lines.append(&mut new_chunk_lines);
-        } else if new_index + 1 == self.loaded_chunks.start && !self.loaded_chunks.is_empty() {
+        } else if new_index.next() == self.loaded_chunks.start && !self.loaded_chunks.is_empty() {
             self.loaded_chunks.start = new_index;
             // append existing lines to new lines
             // line_index is relative to the range start, which was pushed up by the new chunk
@@ -101,8 +110,8 @@ impl VirtualFile {
         } else {
             // replace existing lines
             self.loaded_chunks = Range {
-                start: new_index,
-                end: new_index + 1,
+                start: new_index.clone(),
+                end: new_index.next(),
             };
             self.chunk_lines = new_chunk_lines;
             self.line_index = 0;
@@ -110,9 +119,9 @@ impl VirtualFile {
     }
 
     pub fn prev_line(&mut self) -> u16 {
-        if self.line_index == 0 && self.loaded_chunks.start > 0 {
+        if self.line_index == 0 && self.loaded_chunks.start.index > 0 {
             // seek to previous chunk
-            self.seek(self.chunk_size * (self.loaded_chunks.start - 1));
+            self.seek(self.chunk_size * (self.loaded_chunks.start.index - 1));
         }
         // after possible seek, line_index may still be zero if there was nothing to load
         if self.line_index > 0 {
@@ -125,7 +134,7 @@ impl VirtualFile {
     pub fn next_line(&mut self) -> u16 {
         if self.line_index + 2 >= self.chunk_lines.len() {
             // fetch more lines, after increasing index it will be the last line which may be incomplete
-            self.seek(self.chunk_size * self.loaded_chunks.end);
+            self.seek(self.loaded_chunks.end.to_offset());
         }
         if self.line_index + 1 < self.chunk_lines.len() {
             self.line_index += 1;
@@ -137,7 +146,7 @@ impl VirtualFile {
     pub fn remove(&mut self) -> EditLine {
         if self.line_index + 2 >= self.chunk_lines.len() {
             // fetch more lines, after removal it will be the last line which may be incomplete
-            self.seek(self.chunk_size * self.loaded_chunks.end);
+            self.seek(self.loaded_chunks.end.to_offset());
         }
         let removed_line = self.chunk_lines.remove(self.line_index);
         if self.line_index > 0 {
@@ -222,7 +231,7 @@ mod tests {
         let file = create_test_file("");
         let mut vf = VirtualFile::new(10, file);
         vf.seek(0);
-        assert!(vf.next_line().is_none());
+        assert!(vf.next_line() == 0);
     }
 
     #[test]
@@ -245,11 +254,14 @@ mod tests {
         let file = create_test_file("line1\nline2\nline3\n");
         let mut vf = VirtualFile::new(10, file);
         vf.seek(0);
-        assert_eq!(vf.next_line().unwrap().str(), "line2");
-        assert_eq!(vf.next_line().unwrap().str(), "line3");
-        assert_eq!(vf.next_line().unwrap().str(), "");
+        vf.next_line();
+        assert_eq!(vf.get().str(), "line2");
+        vf.next_line();
+        assert_eq!(vf.get().str(), "line3");
+        vf.next_line();
+        assert_eq!(vf.get().str(), "");
         let last = vf.next_line();
-        assert!(last.is_none(), "should be None, got: {:?}", last);
+        assert_eq!(last, 0);
     }
 
     #[test]
@@ -267,6 +279,8 @@ mod tests {
         let mut vf = VirtualFile::new(10, file);
         vf.seek(0);
         vf.insert_after(EditLine::new("new_line".to_string()));
+        assert_eq!(vf.get().str(), "line1");
+        assert_eq!(vf.next_line(), 1);
         assert_eq!(vf.get().str(), "new_line");
     }
 

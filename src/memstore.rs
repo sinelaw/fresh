@@ -8,11 +8,35 @@ pub trait LoadStore {
     fn store(&self, offset: u64, data: &[u8]);
 }
 
+#[derive(PartialEq, PartialOrd, Clone, Debug, Eq, Hash)]
+pub struct ChunkIndex {
+    pub index: u64,
+    pub chunk_size: u64,
+}
+
+impl ChunkIndex {
+    pub fn from_offset(offset: u64, chunk_size: u64) -> ChunkIndex {
+        ChunkIndex {
+            index: offset / chunk_size,
+            chunk_size,
+        }
+    }
+    pub fn to_offset(&self) -> u64 {
+        self.index * self.chunk_size
+    }
+    pub fn next(&self) -> ChunkIndex {
+        ChunkIndex {
+            index: self.index + 1,
+            chunk_size: self.chunk_size,
+        }
+    }
+}
+
 pub struct Memstore<L>
 where
     L: LoadStore,
 {
-    chunks: HashMap<u64, Chunk>,
+    chunks: HashMap<ChunkIndex, Chunk>,
     chunk_size: u64,
     load_store: L,
 }
@@ -29,24 +53,26 @@ where
         }
     }
 
-    pub fn get(&mut self, chunk_index: u64) -> &Chunk {
+    pub fn get(&mut self, chunk_index: &ChunkIndex) -> &Chunk {
+        assert!(chunk_index.chunk_size == self.chunk_size);
         let load_store = &self.load_store;
-        let chunk_size = self.chunk_size;
-        return self.chunks.entry(chunk_index).or_insert_with_key(|index| {
-            if let Some(data) = load_store.load(*index * chunk_size) {
-                Chunk::Loaded {
-                    data,
-                    need_store: false,
+        return self
+            .chunks
+            .entry(chunk_index.clone())
+            .or_insert_with_key(|index| {
+                if let Some(data) = load_store.load((*index).to_offset()) {
+                    Chunk::Loaded {
+                        data,
+                        need_store: false,
+                    }
+                } else {
+                    Chunk::Empty
                 }
-            } else {
-                Chunk::Empty
-            }
-        });
+            });
     }
 
     pub fn store_all(&mut self) {
         let load_store = &self.load_store;
-        let chunk_size = self.chunk_size;
         for (index, chunk) in self.chunks.iter_mut() {
             if let Chunk::Loaded {
                 data,
@@ -54,7 +80,7 @@ where
             } = chunk
             {
                 if *is_modified {
-                    load_store.store(*index * chunk_size, data);
+                    load_store.store((*index).to_offset(), data);
                     *is_modified = false;
                 }
             }
