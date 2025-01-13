@@ -45,7 +45,7 @@ jobs:
         with:
           components: clippy
       - name: Run clippy action
-        uses: clechasseur/rs-clippy-check@v3
+        uses: clechasseur/rs-clippy-check@v4
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
   doc:
