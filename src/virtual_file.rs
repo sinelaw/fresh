@@ -5,6 +5,8 @@ use std::{
     vec,
 };
 
+use ratatui::symbols::line;
+
 use crate::{
     lines::EditLine,
     memstore::{Chunk, ChunkIndex, LoadStore, Memstore},
@@ -37,12 +39,18 @@ impl LoadStore for FileLoadStore {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct LineIndex {
+    relative: i64,
+    offset_version: u64,
+}
+
 pub struct VirtualFile {
     // configuration
     chunk_size: u64,
 
-    /// index into chunk_lines
-    line_index: usize,
+    line_offset: i64,
+    offset_version: u64,
 
     // indices of chunks loaded in chunk_lines
     loaded_chunks: Range<ChunkIndex>,
@@ -58,7 +66,8 @@ impl VirtualFile {
         let chunk_zero = ChunkIndex::from_offset(0, chunk_size);
         let mut res = VirtualFile {
             chunk_size,
-            line_index: 0,
+            offset_version: 0,
+            line_offset: 0,
             loaded_chunks: Range {
                 start: chunk_zero.clone(),
                 end: chunk_zero.clone(),
@@ -99,8 +108,9 @@ impl VirtualFile {
         } else if new_index.next() == self.loaded_chunks.start && !self.loaded_chunks.is_empty() {
             self.loaded_chunks.start = new_index;
             // append existing lines to new lines
-            // line_index is relative to the range start, which was pushed up by the new chunk
-            self.line_index += new_chunk_lines.len();
+            // line indexes are relative to the range start, which was pushed up by the new chunk
+            let len: i64 = new_chunk_lines.len().try_into().unwrap();
+            self.line_offset = self.line_offset + len;
             std::mem::swap(&mut self.chunk_lines, &mut new_chunk_lines);
             self.chunk_lines
                 .last_mut()
@@ -114,64 +124,97 @@ impl VirtualFile {
                 end: new_index.next(),
             };
             self.chunk_lines = new_chunk_lines;
-            self.line_index = 0;
+            self.line_offset = 0;
+            self.offset_version += 1;
         };
     }
 
-    pub fn prev_line(&mut self) -> u16 {
-        if self.line_index == 0 && self.loaded_chunks.start.index > 0 {
+    pub fn prev_line(&mut self, line_index: &LineIndex) -> Option<LineIndex> {
+        let index = self.to_abs_index(&line_index);
+        if index.is_none() {
+            return None;
+        }
+        let index = index.unwrap();
+        if index == 0 && self.loaded_chunks.start.index > 0 {
             // seek to previous chunk
             self.seek(self.chunk_size * (self.loaded_chunks.start.index - 1));
+            assert!(line_index.offset_version == self.offset_version);
         }
-        // after possible seek, line_index may still be zero if there was nothing to load
-        if self.line_index > 0 {
-            self.line_index -= 1;
-            return 1;
+        // after possible seek, index may still be zero if there was nothing to load
+        if index > 0 {
+            return Some(LineIndex {
+                relative: line_index.relative - 1,
+                offset_version: line_index.offset_version,
+            });
         }
-        return 0;
+        return Some(line_index.clone());
     }
 
-    pub fn next_line(&mut self) -> u16 {
-        if self.line_index + 2 >= self.chunk_lines.len() {
+    pub fn next_line(&mut self, line_index: &LineIndex) -> Option<LineIndex> {
+        let index = self.to_abs_index(&line_index);
+        if index.is_none() {
+            return None;
+        }
+        let index = index.unwrap();
+        if index + 2 >= self.chunk_lines.len() {
             // fetch more lines, after increasing index it will be the last line which may be incomplete
             self.seek(self.loaded_chunks.end.to_offset());
+            assert!(line_index.offset_version == self.offset_version);
         }
-        if self.line_index + 1 < self.chunk_lines.len() {
-            self.line_index += 1;
-            return 1;
+        if index + 1 < self.chunk_lines.len() {
+            return Some(LineIndex {
+                relative: line_index.relative + 1,
+                offset_version: line_index.offset_version,
+            });
         }
-        return 0;
+        return Some(line_index.clone());
     }
 
-    pub fn remove(&mut self) -> EditLine {
-        if self.line_index + 2 >= self.chunk_lines.len() {
+    pub fn remove(&mut self, line_index: &LineIndex) -> Option<EditLine> {
+        let index = self.to_abs_index(&line_index);
+        if index.is_none() {
+            return None;
+        }
+        let index = index.unwrap();
+        if index + 2 >= self.chunk_lines.len() {
             // fetch more lines, after removal it will be the last line which may be incomplete
             self.seek(self.loaded_chunks.end.to_offset());
+            assert!(line_index.offset_version == self.offset_version);
         }
-        let removed_line = self.chunk_lines.remove(self.line_index);
-        if self.line_index > 0 {
-            self.line_index -= 1;
-        } else if self.chunk_lines.len() == 0 {
+        let removed_line = self.chunk_lines.remove(index);
+        if self.chunk_lines.len() == 0 {
             // that was the only line left, add one back to avoid empty
             self.chunk_lines.push(EditLine::empty());
         }
-        return removed_line;
+        return Some(removed_line);
     }
 
-    pub fn get_index(&self) -> usize {
-        self.line_index
+    pub fn insert_after(&mut self, line_index: &LineIndex, new_line: EditLine) -> Option<()> {
+        match self.to_abs_index(&line_index) {
+            None => return None,
+            Some(index) => {
+                self.chunk_lines.insert(index + 1, new_line);
+                return Some(());
+            }
+        }
     }
 
-    pub fn insert_after(&mut self, new_line: EditLine) {
-        self.chunk_lines.insert(self.line_index + 1, new_line);
+    pub fn get(&self, line_index: &LineIndex) -> Option<&EditLine> {
+        match self.to_abs_index(&line_index) {
+            None => return None,
+            Some(index) => {
+                return self.chunk_lines.get(index);
+            }
+        }
     }
 
-    pub fn get(&self) -> &EditLine {
-        self.chunk_lines.get(self.line_index).unwrap()
-    }
-
-    pub fn get_mut(&mut self) -> &mut EditLine {
-        self.chunk_lines.get_mut(self.line_index).unwrap()
+    pub fn get_mut(&mut self, line_index: &LineIndex) -> Option<&mut EditLine> {
+        match self.to_abs_index(&line_index) {
+            None => return None,
+            Some(index) => {
+                return self.chunk_lines.get_mut(index);
+            }
+        }
     }
 
     fn parse_chunk(data: &Vec<u8>) -> Vec<EditLine> {
@@ -181,34 +224,38 @@ impl VirtualFile {
             .collect()
     }
 
+    pub fn get_index(&self) -> LineIndex {
+        LineIndex {
+            relative: 0,
+            offset_version: self.offset_version,
+        }
+    }
+
     pub fn iter_at(
         &mut self,
-        offset_from_line_index: i64,
+        line_index: &LineIndex,
         count: usize,
     ) -> impl Iterator<Item = &EditLine> {
-        // TODO: This is inefficient and also clobbers the current line_index
-        let mut clobber: i32 = 0;
-        if offset_from_line_index < 0 {
-            // need to iterate lines backwards
-            for _ in offset_from_line_index..0 {
-                clobber -= self.prev_line() as i32;
-            }
-        } else {
-            // need to iterate lines forwards
-            for _ in 0..offset_from_line_index {
-                clobber += self.next_line() as i32;
+        match self.to_abs_index(&line_index) {
+            None => return [].iter(),
+            Some(index) => {
+                // materialize 'count' lines
+                let mut line_index = line_index.clone();
+                for _ in 0..count {
+                    line_index = self.next_line(&line_index).unwrap();
+                }
+                self.chunk_lines[index..(index + count)].iter()
             }
         }
-        // line_index is now at the start of the range
-        let start_index = self.line_index;
-        // materialize 'count' lines
-        for _ in 0..count {
-            clobber += self.next_line() as i32;
-        }
-        // ... and now go back to where line_index was before
-        self.line_index = (self.line_index as i32 - clobber).try_into().unwrap();
+    }
 
-        self.chunk_lines.iter().skip(start_index)
+    fn to_abs_index(&self, line_index: &LineIndex) -> Option<usize> {
+        if self.offset_version != line_index.offset_version {
+            return None;
+        }
+        let index = (line_index.relative + self.line_offset).try_into().unwrap();
+        assert!(index < self.chunk_lines.len());
+        Some(index)
     }
 }
 

@@ -17,15 +17,15 @@ use ratatui::{
     text::{Line, Span, Text},
     DefaultTerminal, Frame,
 };
-use virtual_file::VirtualFile;
+use virtual_file::{LineIndex, VirtualFile};
 
 mod lines;
-
 mod memstore;
 mod virtual_file;
 
 // TODO
 // How to represent edited content?
+// How to map offset (or chunk index) -> line index? (e.g. CTRL + HOME / END implementation)
 //
 // Main problem: "insert char" pushes all remaining memory forward.
 //
@@ -44,6 +44,8 @@ mod virtual_file;
 struct State {
     /// Content loaded from the file, may be a small portion of the entire file starting at some offset
     lines: VirtualFile,
+
+    line_index: LineIndex,
 
     /// Cursor position relative to ???
     cursor: Position,
@@ -240,7 +242,7 @@ impl State {
             self.insert_char(c);
             return;
         }
-        let line = self.lines.get_mut();
+        let line = self.lines.get_mut(&self.line_index);
         if line.len() < (self.cursor.x as usize) {
             line.overwrite(self.cursor.x as usize, c);
             self.cursor.x += 1;
@@ -478,6 +480,7 @@ fn main() -> io::Result<()> {
             .open(filename)?
     };
     let terminal = ratatui::init();
+    let lines = VirtualFile::new(1024 * 1024, file);
     let mut state: State = State {
         //lines: vec![LoadedLine::empty()],
         window_offset: Position::new(0, 0),
@@ -485,7 +488,8 @@ fn main() -> io::Result<()> {
         insert_mode: true,
         status_text: String::new(),
         terminal_size: terminal.size()?,
-        lines: VirtualFile::new(1024 * 1024, file),
+        line_index: lines.get_index(),
+        lines,
     };
     //state.load()?;
     let result = state.run(terminal);
