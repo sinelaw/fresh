@@ -284,16 +284,16 @@ impl State {
                 self.cursor.x -= 1;
                 line.remove(self.cursor.x as usize);
             }
-        } else {
-            let removed_line_index = self.line_index;
-            self.iter_line_prev();
-            if let Some(line) = self.lines.remove(&removed_line_index) {
-                if let Some(prev_line) = self.lines.get_mut(&self.line_index) {
-                    self.cursor.x = prev_line.len() as u16;
-                    prev_line.extend(line);
-                } else {
-                    self.cursor.x = 0;
-                }
+            return;
+        }
+        let removed_line_index = self.line_index;
+        self.iter_line_prev();
+        if let Some(line) = self.lines.remove(&removed_line_index) {
+            if let Some(prev_line) = self.lines.get_mut(&self.line_index) {
+                self.cursor.x = prev_line.len() as u16;
+                prev_line.extend(line);
+            } else {
+                self.cursor.x = 0;
             }
         }
     }
@@ -302,12 +302,12 @@ impl State {
         if let Some(line) = self.lines.get_mut(&self.line_index) {
             if self.cursor.x < line.len() as u16 {
                 line.remove(self.cursor.x as usize);
-            } else {
-                self.iter_line_next();
-                if let Some(next_line) = self.lines.remove(&self.line_index) {
-                    if let Some(line) = self.lines.get_mut(&self.line_index) {
-                        line.extend(next_line);
-                    }
+                return;
+            }
+            self.iter_line_next();
+            if let Some(next_line) = self.lines.remove(&self.line_index) {
+                if let Some(line) = self.lines.get_mut(&self.line_index) {
+                    line.extend(next_line);
                 }
             }
         }
