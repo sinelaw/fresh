@@ -268,7 +268,7 @@ mod tests {
 
     use super::*;
     use tempfile::tempfile;
-    use VirtualFile;
+    use crate::VirtualFile;
 
     fn create_test_file(content: &str) -> std::fs::File {
         let mut file = tempfile().unwrap();

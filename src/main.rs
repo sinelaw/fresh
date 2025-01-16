@@ -18,7 +18,7 @@ use ratatui::{
     text::{Line, Span, Text},
     DefaultTerminal, Frame,
 };
-use virtual_file::{LineIndex, VirtualFile};
+use crate::virtual_file::{LineIndex, VirtualFile};
 
 mod lines;
 mod memstore;
