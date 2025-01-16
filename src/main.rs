@@ -354,7 +354,12 @@ impl State {
         frame.render_widget(
             Text::from_iter(
                 self.lines
-                    .iter_at(&self.line_index, lines_per_page as usize)
+                    .iter_at(
+                        &self
+                            .line_index
+                            .plus(self.window_offset.y as i64 - self.cursor.y as i64),
+                        lines_per_page as usize,
+                    )
                     .enumerate()
                     .map(render_line),
             ),
