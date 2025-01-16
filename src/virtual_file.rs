@@ -281,7 +281,7 @@ mod tests {
         let mut vf = VirtualFile::new(10, file);
         vf.seek(0);
         let line_index = vf.get_index();
-        assert!(vf.next_line(&line_index).is_none());
+        assert_eq!(vf.next_line(&line_index), Some(line_index));
     }
 
     #[test]
@@ -312,7 +312,7 @@ mod tests {
         let line_index = vf.next_line(&line_index).unwrap();
         assert_eq!(vf.get(&line_index).unwrap().str(), "");
         let last = vf.next_line(&line_index);
-        assert_eq!(last, None);
+        assert_eq!(last, Some(line_index));
     }
 
     #[test]
