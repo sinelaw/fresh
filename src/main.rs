@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 extern crate crossterm;
 extern crate ratatui;
 extern crate tempfile;
