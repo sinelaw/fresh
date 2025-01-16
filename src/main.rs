@@ -242,61 +242,79 @@ impl State {
             self.insert_char(c);
             return;
         }
-        let line = self.lines.get_mut(&self.line_index);
-        if line.len() < (self.cursor.x as usize) {
-            line.overwrite(self.cursor.x as usize, c);
-            self.cursor.x += 1;
-        } else {
-            self.insert_char(c);
+        if let Some(line) = self.lines.get_mut(&self.line_index) {
+            if line.len() < (self.cursor.x as usize) {
+                line.overwrite(self.cursor.x as usize, c);
+                self.cursor.x += 1;
+            } else {
+                self.insert_char(c);
+            }
         }
     }
 
     fn insert_char(&mut self, c: char) {
-        let line = self.lines.get_mut();
-        line.insert(self.cursor.x as usize, c);
-        self.cursor.x += 1;
+        if let Some(line) = self.lines.get_mut(&self.line_index) {
+            line.insert(self.cursor.x as usize, c);
+            self.cursor.x += 1;
+        }
     }
 
     fn iter_line_prev(&mut self) {
-        self.cursor.y -= self.lines.prev_line();
+        let prev_index: LineIndex = self.line_index;
+        self.line_index = self.lines.prev_line(&self.line_index).unwrap_or(prev_index);
+        if self.line_index != prev_index {
+            self.cursor.y -= 1;
+        }
     }
 
     fn iter_line_next(&mut self) {
-        self.cursor.y += self.lines.next_line();
+        let prev_index: LineIndex = self.line_index;
+        self.line_index = self.lines.next_line(&self.line_index).unwrap_or(prev_index);
+        if self.line_index != prev_index {
+            self.cursor.y += 1;
+        }
     }
 
     fn delete_prev_char(&mut self) {
         if self.cursor.x > 0 {
-            self.cursor.x -= 1;
-            let line = self.lines.get_mut();
-            line.remove(self.cursor.x as usize);
-        } else if self.cursor.y > 0 {
-            let line = self.lines.remove();
+            if let Some(line) = self.lines.get_mut(&self.line_index) {
+                self.cursor.x -= 1;
+                line.remove(self.cursor.x as usize);
+            }
+        } else if let Some(line) = self.lines.remove(&self.line_index) {
             self.iter_line_prev();
-            let prev_line = self.lines.get_mut();
-            self.cursor.x = prev_line.len() as u16;
-            prev_line.extend(line);
+            if let Some(prev_line) = self.lines.get_mut(&self.line_index) {
+                self.cursor.x = prev_line.len() as u16;
+                prev_line.extend(line);
+            } else {
+                self.cursor.x = 0;
+            }
         }
     }
 
     fn delete_next_char(&mut self) {
-        let line = self.lines.get_mut();
-        if self.cursor.x < line.len() as u16 {
-            line.remove(self.cursor.x as usize);
-        } else {
-            self.iter_line_next();
-            let next_line = self.lines.remove();
-            let line = self.lines.get_mut();
-            line.extend(next_line);
+        if let Some(line) = self.lines.get_mut(&self.line_index) {
+            if self.cursor.x < line.len() as u16 {
+                line.remove(self.cursor.x as usize);
+            } else {
+                self.iter_line_next();
+                if let Some(next_line) = self.lines.remove(&self.line_index) {
+                    if let Some(line) = self.lines.get_mut(&self.line_index) {
+                        line.extend(next_line);
+                    }
+                }
+            }
         }
     }
 
     fn insert_line(&mut self) {
-        let line = self.lines.get_mut();
-        let new_line = line.split_off(self.cursor.x as usize);
-        self.lines.insert_after(EditLine::new(new_line));
-        self.iter_line_next();
-        self.cursor.x = 0;
+        if let Some(line) = self.lines.get_mut(&self.line_index) {
+            let new_line = line.split_off(self.cursor.x as usize);
+            self.lines
+                .insert_after(&self.line_index, EditLine::new(new_line));
+            self.iter_line_next();
+            self.cursor.x = 0;
+        }
     }
 
     fn draw_frame(&mut self, frame: &mut Frame) {
@@ -336,10 +354,7 @@ impl State {
         frame.render_widget(
             Text::from_iter(
                 self.lines
-                    .iter_at(
-                        self.window_offset.y as i64 - cursor.y as i64,
-                        lines_per_page as usize,
-                    )
+                    .iter_at(&self.line_index, lines_per_page as usize)
                     .enumerate()
                     .map(render_line),
             ),
@@ -367,17 +382,18 @@ impl State {
         } else if self.cursor.y > 0 {
             self.iter_line_prev();
             let prev_line = self.get_current_line();
-            self.cursor.x = prev_line.len() as u16;
+            self.cursor.x = prev_line.map(|x| x.len() as u16).unwrap_or(0);
         }
     }
 
     fn move_right(&mut self) {
-        let line = self.get_current_line();
-        if self.cursor.x < line.len() as u16 {
-            self.cursor.x += 1;
-        } else {
-            self.iter_line_next();
-            self.cursor.x = 0;
+        if let Some(line) = self.get_current_line() {
+            if self.cursor.x < line.len() as u16 {
+                self.cursor.x += 1;
+            } else {
+                self.iter_line_next();
+                self.cursor.x = 0;
+            }
         }
     }
 
@@ -386,35 +402,37 @@ impl State {
             self.move_left();
             return;
         }
-        let line = self.get_current_line();
-        let start_char = line.char_get(self.cursor.x as usize - 1).unwrap();
-        let is_whitespace = start_char.is_whitespace();
-        for i in (0..self.cursor.x).rev() {
-            if line.char_get(i as usize).unwrap().is_whitespace() != is_whitespace {
-                self.cursor.x = i;
-                return;
+        if let Some(line) = self.get_current_line() {
+            let start_char = line.char_get(self.cursor.x as usize - 1).unwrap();
+            let is_whitespace = start_char.is_whitespace();
+            for i in (0..self.cursor.x).rev() {
+                if line.char_get(i as usize).unwrap().is_whitespace() != is_whitespace {
+                    self.cursor.x = i;
+                    return;
+                }
             }
         }
         self.cursor.x = 0;
     }
 
     fn move_word_right(&mut self) {
-        let line_len = self.get_current_line().len() as u16;
-        if self.cursor.x == line_len {
-            self.move_right();
-            return;
-        }
-        let line = self.get_current_line();
-        let line_len = line.len() as u16;
-        let start_char = line.char_get(self.cursor.x as usize).unwrap();
-        let is_whitespace = start_char.is_whitespace();
-        for i in self.cursor.x..line_len {
-            if line.char_get(i as usize).unwrap().is_whitespace() != is_whitespace {
-                self.cursor.x = i;
+        if let Some(line) = self.get_current_line() {
+            let line_len = line.len() as u16;
+            if self.cursor.x == line_len {
+                self.move_right();
                 return;
             }
+            let line_len = line.len() as u16;
+            let start_char = line.char_get(self.cursor.x as usize).unwrap();
+            let is_whitespace = start_char.is_whitespace();
+            for i in self.cursor.x..line_len {
+                if line.char_get(i as usize).unwrap().is_whitespace() != is_whitespace {
+                    self.cursor.x = i;
+                    return;
+                }
+            }
+            self.cursor.x = line_len;
         }
-        self.cursor.x = line_len;
     }
 
     fn move_up(&mut self) {
@@ -422,14 +440,16 @@ impl State {
             return;
         }
         self.iter_line_prev();
-        let line = self.get_current_line();
-        self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
+        if let Some(line) = self.get_current_line() {
+            self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
+        }
     }
 
     fn move_down(&mut self) {
         self.iter_line_next();
-        let line = self.get_current_line();
-        self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
+        if let Some(line) = self.get_current_line() {
+            self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
+        }
     }
 
     fn move_page_up(&mut self) {
@@ -449,7 +469,7 @@ impl State {
     }
 
     fn move_to_line_end(&mut self) {
-        self.cursor.x = self.get_current_line().len() as u16;
+        self.cursor.x = self.get_current_line().map(|x| x.len() as u16).unwrap_or(0);
     }
 
     fn lines_per_page(&self) -> u16 {
@@ -460,8 +480,8 @@ impl State {
         4 //std::cmp::max(4, self.lines.len().to_string().len() as u16 + 1)
     }
 
-    fn get_current_line(&self) -> &EditLine {
-        self.lines.get()
+    fn get_current_line(&self) -> Option<&EditLine> {
+        self.lines.get(&self.line_index)
     }
 
     fn move_to_file_start(&mut self) {

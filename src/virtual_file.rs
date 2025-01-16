@@ -39,7 +39,7 @@ impl LoadStore for FileLoadStore {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub struct LineIndex {
     relative: i64,
     offset_version: u64,
