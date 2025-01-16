@@ -256,9 +256,15 @@ impl VirtualFile {
         if self.offset_version != line_index.offset_version {
             return None;
         }
-        let index = (line_index.relative + self.line_offset).try_into().unwrap();
-        assert!(index < self.chunk_lines.len());
-        Some(index)
+        let range = std::ops::Range::<i64> {
+            start: 0,
+            end: self.chunk_lines.len() as i64,
+        };
+        let index = line_index.relative + self.line_offset;
+        if !range.contains(&index) {
+            return None;
+        }
+        Some(index.try_into().unwrap())
     }
 }
 
@@ -267,8 +273,8 @@ mod tests {
     use std::io::Write;
 
     use super::*;
-    use tempfile::tempfile;
     use crate::VirtualFile;
+    use tempfile::tempfile;
 
     fn create_test_file(content: &str) -> std::fs::File {
         let mut file = tempfile().unwrap();

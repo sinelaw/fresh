@@ -12,13 +12,13 @@ use std::{
 use crate::lines::EditLine;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 
+use crate::virtual_file::{LineIndex, VirtualFile};
 use ratatui::{
     layout::{Position, Rect, Size},
     style::{Style, Stylize},
     text::{Line, Span, Text},
     DefaultTerminal, Frame,
 };
-use crate::virtual_file::{LineIndex, VirtualFile};
 
 mod lines;
 mod memstore;
@@ -284,13 +284,16 @@ impl State {
                 self.cursor.x -= 1;
                 line.remove(self.cursor.x as usize);
             }
-        } else if let Some(line) = self.lines.remove(&self.line_index) {
+        } else {
+            let removed_line_index = self.line_index;
             self.iter_line_prev();
-            if let Some(prev_line) = self.lines.get_mut(&self.line_index) {
-                self.cursor.x = prev_line.len() as u16;
-                prev_line.extend(line);
-            } else {
-                self.cursor.x = 0;
+            if let Some(line) = self.lines.remove(&removed_line_index) {
+                if let Some(prev_line) = self.lines.get_mut(&self.line_index) {
+                    self.cursor.x = prev_line.len() as u16;
+                    prev_line.extend(line);
+                } else {
+                    self.cursor.x = 0;
+                }
             }
         }
     }
