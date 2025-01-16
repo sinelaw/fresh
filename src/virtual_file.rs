@@ -246,7 +246,8 @@ impl VirtualFile {
                 for _ in 0..count {
                     line_index = self.next_line(&line_index).unwrap();
                 }
-                self.chunk_lines[index..(index + count)].iter()
+                let end_index = usize::min(index + count, self.chunk_lines.len());
+                self.chunk_lines[index..end_index].iter()
             }
         }
     }

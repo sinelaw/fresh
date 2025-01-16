@@ -267,12 +267,14 @@ impl State {
         }
     }
 
-    fn iter_line_next(&mut self) {
+    fn iter_line_next(&mut self) -> bool {
         let prev_index: LineIndex = self.line_index;
         self.line_index = self.lines.next_line(&self.line_index).unwrap_or(prev_index);
         if self.line_index != prev_index {
             self.cursor.y += 1;
+            return true;
         }
+        return false;
     }
 
     fn delete_prev_char(&mut self) {
@@ -396,8 +398,9 @@ impl State {
             if self.cursor.x < line.len() as u16 {
                 self.cursor.x += 1;
             } else {
-                self.iter_line_next();
-                self.cursor.x = 0;
+                if self.iter_line_next() {
+                    self.cursor.x = 0;
+                }
             }
         }
     }
