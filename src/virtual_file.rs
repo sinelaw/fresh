@@ -52,6 +52,7 @@ struct LoadedLoc {
     loaded_size: u64,
 }
 
+#[derive(Debug)]
 pub struct LoadedLine {
     line: Box<EditLine>,
     loaded_loc: Option<LoadedLoc>,
@@ -70,7 +71,7 @@ impl LoadedLine {
             line: Box::new(line),
             loaded_loc: Some(LoadedLoc {
                 loaded_offset: offset,
-                loaded_size: offset + line_size,
+                loaded_size: line_size,
             }),
         }
     }
@@ -348,7 +349,15 @@ fn populate_lines(
         offset += loaded_line.loaded_loc.unwrap().loaded_size;
         lines.push(loaded_line);
     }
-    assert_eq!(offset, new_index.end_offset());
+    // chunk could have been a 'short read', so total data <= size
+    assert!(
+        offset <= new_index.end_offset(),
+        "{:?} <= {:?} (index: {:?}), lines:\n{:?}",
+        offset,
+        new_index.end_offset(),
+        new_index,
+        lines,
+    );
 }
 
 #[cfg(test)]
