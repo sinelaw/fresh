@@ -11,6 +11,7 @@ use std::{
 
 use crate::lines::EditLine;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use virtual_file::LoadedLine;
 
 use crate::virtual_file::{LineIndex, VirtualFile};
 use ratatui::{
@@ -332,10 +333,11 @@ impl State {
         let lines_per_page = self.lines_per_page();
         let window_offset = self.window_offset;
 
-        let render_line = |pair: (usize, &EditLine)| -> Line<'_> {
+        let render_line = |pair: (usize, &LoadedLine)| -> Line<'_> {
             let (line_index, loaded_line) = pair;
 
             let content = loaded_line
+                .line()
                 .chars_iter()
                 .skip(window_offset.x as usize)
                 .collect::<String>();

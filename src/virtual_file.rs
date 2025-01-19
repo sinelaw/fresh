@@ -46,6 +46,39 @@ impl LineIndex {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct LoadedLoc {
+    loaded_offset: u64,
+    loaded_size: u64,
+}
+
+pub struct LoadedLine {
+    line: Box<EditLine>,
+    loaded_loc: Option<LoadedLoc>,
+}
+
+impl LoadedLine {
+    pub fn new(line: EditLine) -> LoadedLine {
+        LoadedLine {
+            line: Box::new(line),
+            loaded_loc: None,
+        }
+    }
+    pub fn from_loaded(line: EditLine, offset: u64) -> LoadedLine {
+        let line_size: u64 = line.str().bytes().len().try_into().unwrap();
+        LoadedLine {
+            line: Box::new(line),
+            loaded_loc: Some(LoadedLoc {
+                loaded_offset: offset,
+                loaded_size: offset + line_size,
+            }),
+        }
+    }
+    pub fn line(&self) -> &EditLine {
+        &*self.line
+    }
+}
+
 pub struct VirtualFile {
     // configuration
     chunk_size: u64,
@@ -57,7 +90,7 @@ pub struct VirtualFile {
     loaded_chunks: Vec<ChunkIndex>,
 
     /// lines loaded from memstore (disk)
-    chunk_lines: Vec<EditLine>,
+    chunk_lines: Vec<LoadedLine>,
 
     memstore: Memstore<FileLoadStore>,
 }
@@ -120,8 +153,10 @@ impl VirtualFile {
             self.chunk_lines
                 .last_mut()
                 .unwrap()
+                .line
                 .extend(new_chunk_lines.remove(0));
-            self.chunk_lines.append(&mut new_chunk_lines);
+
+            populate_lines(new_index, new_chunk_lines, &mut self.chunk_lines);
         } else if !self.loaded_chunks.is_empty()
             && new_index.end_offset() == self.loaded_chunks.first().unwrap().offset
         {
@@ -130,17 +165,21 @@ impl VirtualFile {
             // line indexes are relative to the range start, which was pushed up by the new chunk
             let len: i64 = new_chunk_lines.len().try_into().unwrap();
             self.line_offset = self.line_offset + len;
-            std::mem::swap(&mut self.chunk_lines, &mut new_chunk_lines);
+            let mut lines: Vec<LoadedLine> = vec![];
+            populate_lines(new_index, new_chunk_lines, &mut lines);
+            std::mem::swap(&mut self.chunk_lines, &mut lines);
             self.chunk_lines
                 .last_mut()
                 .unwrap()
-                .extend(new_chunk_lines.remove(0));
-            self.chunk_lines.append(&mut new_chunk_lines);
+                .line
+                .extend(*lines.remove(0).line);
+            self.chunk_lines.append(&mut lines);
         } else {
             // replace existing lines
             self.loaded_chunks.clear();
             self.loaded_chunks.push(new_index);
-            self.chunk_lines = new_chunk_lines;
+            self.chunk_lines.clear();
+            populate_lines(new_index, new_chunk_lines, &mut self.chunk_lines);
             self.line_offset = 0;
             self.offset_version += 1;
         };
@@ -215,16 +254,17 @@ impl VirtualFile {
         let removed_line = self.chunk_lines.remove(index);
         if self.chunk_lines.len() == 0 {
             // that was the only line left, add one back to avoid empty
-            self.chunk_lines.push(EditLine::empty());
+            self.chunk_lines.push(LoadedLine::new(EditLine::empty()));
         }
-        return Some(removed_line);
+        return Some(*removed_line.line);
     }
 
     pub fn insert_after(&mut self, line_index: &LineIndex, new_line: EditLine) -> Option<()> {
         match self.to_abs_index(&line_index) {
             None => return None,
             Some(index) => {
-                self.chunk_lines.insert(index + 1, new_line);
+                self.chunk_lines
+                    .insert(index + 1, LoadedLine::new(new_line));
                 return Some(());
             }
         }
@@ -234,7 +274,7 @@ impl VirtualFile {
         match self.to_abs_index(&line_index) {
             None => return None,
             Some(index) => {
-                return self.chunk_lines.get(index);
+                return self.chunk_lines.get(index).map(|x| &*x.line);
             }
         }
     }
@@ -243,7 +283,7 @@ impl VirtualFile {
         match self.to_abs_index(&line_index) {
             None => return None,
             Some(index) => {
-                return self.chunk_lines.get_mut(index);
+                return self.chunk_lines.get_mut(index).map(|x| &mut *x.line);
             }
         }
     }
@@ -266,7 +306,7 @@ impl VirtualFile {
         &mut self,
         line_index: &LineIndex,
         count: usize,
-    ) -> impl Iterator<Item = &EditLine> {
+    ) -> impl Iterator<Item = &LoadedLine> {
         match self.to_abs_index(&line_index) {
             None => return [].iter(),
             Some(index) => {
@@ -295,6 +335,20 @@ impl VirtualFile {
         }
         Some(index.try_into().unwrap())
     }
+}
+
+fn populate_lines(
+    new_index: ChunkIndex,
+    new_chunk_lines: Vec<EditLine>,
+    lines: &mut Vec<LoadedLine>,
+) {
+    let mut offset = new_index.offset;
+    for new_line in new_chunk_lines {
+        let loaded_line = LoadedLine::from_loaded(new_line, offset);
+        offset += loaded_line.loaded_loc.unwrap().loaded_size;
+        lines.push(loaded_line);
+    }
+    assert_eq!(offset, new_index.end_offset());
 }
 
 #[cfg(test)]
@@ -401,9 +455,9 @@ mod tests {
         vf.seek(0);
         let line_index = vf.get_index();
         let mut iter = vf.iter_at(&line_index, 3);
-        assert_eq!(iter.next().unwrap().str(), "line1");
-        assert_eq!(iter.next().unwrap().str(), "line2");
-        assert_eq!(iter.next().unwrap().str(), "line3");
+        assert_eq!(iter.next().unwrap().line().str(), "line1");
+        assert_eq!(iter.next().unwrap().line().str(), "line2");
+        assert_eq!(iter.next().unwrap().line().str(), "line3");
         assert!(iter.next().is_none());
     }
 

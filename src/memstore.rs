@@ -8,7 +8,7 @@ pub trait LoadStore {
     fn store(&mut self, offset: u64, data: &[u8]);
 }
 
-#[derive(PartialEq, PartialOrd, Clone, Debug, Eq, Hash)]
+#[derive(PartialEq, PartialOrd, Clone, Debug, Eq, Hash, Copy)]
 pub struct ChunkIndex {
     pub offset: u64,
     pub chunk_size: u64,
