@@ -1,4 +1,4 @@
-use std::{convert::TryInto, os::unix::fs::FileExt};
+use std::{collections::BTreeMap, convert::TryInto, os::unix::fs::FileExt};
 
 use crate::{
     lines::EditLine,
@@ -86,8 +86,7 @@ pub struct VirtualFile {
     line_offset: i64,
     offset_version: u64,
 
-    // indices of chunks loaded in chunk_lines
-    loaded_chunks: Vec<ChunkIndex>,
+    loaded_chunks: BTreeMap<u64, ChunkIndex>,
 
     /// lines loaded from memstore (disk)
     chunk_lines: Vec<LoadedLine>,
@@ -101,7 +100,7 @@ impl VirtualFile {
             chunk_size,
             offset_version: 0,
             line_offset: 0,
-            loaded_chunks: vec![],
+            loaded_chunks: BTreeMap::new(),
             chunk_lines: vec![],
             memstore: Memstore::new(FileLoadStore::new(file)),
         };
@@ -111,17 +110,18 @@ impl VirtualFile {
 
     pub fn seek(&mut self, offset: u64) {
         // -> LineIndex {
-        let index = ChunkIndex::new(offset, self.chunk_size);
-        if !self.loaded_chunks.contains(&index) {
-            let new_chunk = self.memstore.get(&index);
+        let load_index = ChunkIndex::new(offset, self.chunk_size);
+        if !self.loaded_chunks.contains_key(&offset) {
+            let new_chunk = self.memstore.get(&load_index);
             let new_chunk_lines = match new_chunk {
                 Chunk::Loaded {
                     data,
                     need_store: _,
                 } => Self::parse_chunk(data),
+
                 Chunk::Empty => vec![],
             };
-            self.update_chunk_lines(index, new_chunk_lines);
+            self.update_chunk_lines(load_index, new_chunk_lines);
         }
         //return self.offset_to_line(offset);
     }
@@ -145,9 +145,9 @@ impl VirtualFile {
     */
     fn update_chunk_lines(&mut self, new_index: ChunkIndex, mut new_chunk_lines: Vec<EditLine>) {
         if !self.loaded_chunks.is_empty()
-            && new_index.offset == self.loaded_chunks.last().unwrap().end_offset()
+            && new_index.offset == self.loaded_chunks.last_key_value().unwrap().1.end_offset()
         {
-            self.loaded_chunks.push(new_index);
+            self.loaded_chunks.insert(new_index.offset, new_index);
             // append new lines to existing lines
             // line_index is relative to the range start which stays unchanged.
             self.chunk_lines
@@ -158,7 +158,7 @@ impl VirtualFile {
 
             populate_lines(new_index, new_chunk_lines, &mut self.chunk_lines);
         } else if !self.loaded_chunks.is_empty()
-            && new_index.end_offset() == self.loaded_chunks.first().unwrap().offset
+            && new_index.end_offset() == self.loaded_chunks.first_key_value().unwrap().1.offset
         {
             self.loaded_chunks.insert(0, new_index);
             // append existing lines to new lines
@@ -177,7 +177,7 @@ impl VirtualFile {
         } else {
             // replace existing lines
             self.loaded_chunks.clear();
-            self.loaded_chunks.push(new_index);
+            self.loaded_chunks.insert(new_index.offset, new_index);
             self.chunk_lines.clear();
             populate_lines(new_index, new_chunk_lines, &mut self.chunk_lines);
             self.line_offset = 0;
@@ -192,8 +192,8 @@ impl VirtualFile {
         }
         let index = index.unwrap();
         if index == 0 {
-            match self.loaded_chunks.first() {
-                Some(i) if i.offset > 0 => {
+            match self.loaded_chunks.first_key_value() {
+                Some((_, i)) if i.offset > 0 => {
                     // seek to previous chunk
                     let offset = i.offset.saturating_sub(self.chunk_size);
                     self.seek(offset);
@@ -232,8 +232,8 @@ impl VirtualFile {
     }
 
     fn load_more_lines(&mut self) {
-        match self.loaded_chunks.last() {
-            Some(i) => {
+        match self.loaded_chunks.last_key_value() {
+            Some((_, i)) => {
                 // fetch more lines, after increasing index it will be the last line which may be incomplete
                 self.seek(i.end_offset());
             }
