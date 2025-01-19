@@ -499,7 +499,8 @@ impl State {
     }
 
     fn move_to_file_start(&mut self) {
-        self.lines.seek(0);
+        self.line_index = self.lines.seek(0);
+        self.cursor.y = 0;
     }
 }
 
