@@ -1,4 +1,4 @@
-use std::{convert::TryInto, ops::Range, os::unix::fs::FileExt};
+use std::{convert::TryInto, os::unix::fs::FileExt};
 
 use crate::{
     lines::EditLine,
@@ -6,28 +6,27 @@ use crate::{
 };
 
 struct FileLoadStore {
-    chunk_size: u64,
     file: std::fs::File,
 }
 
 impl FileLoadStore {
-    fn new(chunk_size: u64, file: std::fs::File) -> FileLoadStore {
-        FileLoadStore { chunk_size, file }
+    fn new(file: std::fs::File) -> FileLoadStore {
+        FileLoadStore { file }
     }
 }
 
 impl LoadStore for FileLoadStore {
-    fn load(&self, x: u64) -> Option<Vec<u8>> {
-        let mut buf = vec![0; self.chunk_size as usize];
+    fn load(&self, offset: u64, size: u64) -> Option<Vec<u8>> {
+        let mut buf = vec![0; size as usize];
         let result = self
             .file
-            .read_at(&mut buf, x)
+            .read_at(&mut buf, offset)
             .expect("failed reading from file");
         buf.truncate(result);
         return Some(buf);
     }
 
-    fn store(&self, x: u64, buf: &[u8]) {
+    fn store(&mut self, x: u64, buf: &[u8]) {
         self.file.write_at(&buf, x).expect("failed writing to file");
     }
 }
@@ -55,7 +54,7 @@ pub struct VirtualFile {
     offset_version: u64,
 
     // indices of chunks loaded in chunk_lines
-    loaded_chunks: Range<ChunkIndex>,
+    loaded_chunks: Vec<ChunkIndex>,
 
     /// lines loaded from memstore (disk)
     chunk_lines: Vec<EditLine>,
@@ -65,41 +64,57 @@ pub struct VirtualFile {
 
 impl VirtualFile {
     pub fn new(chunk_size: u64, file: std::fs::File) -> VirtualFile {
-        let chunk_zero = ChunkIndex::from_offset(0, chunk_size);
         let mut res = VirtualFile {
             chunk_size,
             offset_version: 0,
             line_offset: 0,
-            loaded_chunks: Range {
-                start: chunk_zero.clone(),
-                end: chunk_zero.clone(),
-            },
+            loaded_chunks: vec![],
             chunk_lines: vec![],
-            memstore: Memstore::new(chunk_size, FileLoadStore::new(chunk_size, file)),
+            memstore: Memstore::new(FileLoadStore::new(file)),
         };
         res.seek(0);
         res
     }
 
     pub fn seek(&mut self, offset: u64) {
-        let index = ChunkIndex::from_offset(offset, self.chunk_size);
-        if self.loaded_chunks.contains(&index) {
-            return;
+        // -> LineIndex {
+        let index = ChunkIndex::new(offset, self.chunk_size);
+        if !self.loaded_chunks.contains(&index) {
+            let new_chunk = self.memstore.get(&index);
+            let new_chunk_lines = match new_chunk {
+                Chunk::Loaded {
+                    data,
+                    need_store: _,
+                } => Self::parse_chunk(data),
+                Chunk::Empty => vec![],
+            };
+            self.update_chunk_lines(index, new_chunk_lines);
         }
-        let new_chunk = self.memstore.get(&index);
-        let new_chunk_lines = match new_chunk {
-            Chunk::Loaded {
-                data,
-                need_store: _,
-            } => Self::parse_chunk(data),
-            Chunk::Empty => vec![],
-        };
-        self.update_chunk_lines(index, new_chunk_lines);
+        //return self.offset_to_line(offset);
     }
 
+    /* fn offset_to_line(&self, offset: u64) -> LineIndex {
+           let index = ChunkIndex::new(offset, self.chunk_size);
+           assert!(self.loaded_chunks.contains(&index));
+           let mut lines_count: i64 = 0;
+           for chunk_index in self.loaded_chunks {
+               if chunk_index == index {
+                   // TODO offset within chunk (count lines)
+                   return LineIndex {
+                       relative: lines_count,
+                       offset_version: self.offset_version,
+                   };
+               }
+               lines_count += *self.chunk_sizes.get(&chunk_index).unwrap() as i64;
+           }
+           panic!("offset not found in loaded chunks?!");
+       }
+    */
     fn update_chunk_lines(&mut self, new_index: ChunkIndex, mut new_chunk_lines: Vec<EditLine>) {
-        if new_index == self.loaded_chunks.end && !self.loaded_chunks.is_empty() {
-            self.loaded_chunks.end = new_index.next();
+        if !self.loaded_chunks.is_empty()
+            && new_index.offset == self.loaded_chunks.last().unwrap().end_offset()
+        {
+            self.loaded_chunks.push(new_index);
             // append new lines to existing lines
             // line_index is relative to the range start which stays unchanged.
             self.chunk_lines
@@ -107,8 +122,10 @@ impl VirtualFile {
                 .unwrap()
                 .extend(new_chunk_lines.remove(0));
             self.chunk_lines.append(&mut new_chunk_lines);
-        } else if new_index.next() == self.loaded_chunks.start && !self.loaded_chunks.is_empty() {
-            self.loaded_chunks.start = new_index;
+        } else if !self.loaded_chunks.is_empty()
+            && new_index.end_offset() == self.loaded_chunks.first().unwrap().offset
+        {
+            self.loaded_chunks.insert(0, new_index);
             // append existing lines to new lines
             // line indexes are relative to the range start, which was pushed up by the new chunk
             let len: i64 = new_chunk_lines.len().try_into().unwrap();
@@ -121,10 +138,8 @@ impl VirtualFile {
             self.chunk_lines.append(&mut new_chunk_lines);
         } else {
             // replace existing lines
-            self.loaded_chunks = Range {
-                start: new_index.clone(),
-                end: new_index.next(),
-            };
+            self.loaded_chunks.clear();
+            self.loaded_chunks.push(new_index);
             self.chunk_lines = new_chunk_lines;
             self.line_offset = 0;
             self.offset_version += 1;
@@ -137,10 +152,16 @@ impl VirtualFile {
             return None;
         }
         let index = index.unwrap();
-        if index == 0 && self.loaded_chunks.start.index > 0 {
-            // seek to previous chunk
-            self.seek(self.chunk_size * (self.loaded_chunks.start.index - 1));
-            assert!(line_index.offset_version == self.offset_version);
+        if index == 0 {
+            match self.loaded_chunks.first() {
+                Some(i) if i.offset > 0 => {
+                    // seek to previous chunk
+                    let offset = i.offset.saturating_sub(self.chunk_size);
+                    self.seek(offset);
+                    assert!(line_index.offset_version == self.offset_version);
+                }
+                _ => {}
+            }
         }
         // after possible seek, index may still be zero if there was nothing to load
         if index > 0 {
@@ -159,8 +180,7 @@ impl VirtualFile {
         }
         let index = index.unwrap();
         if index + 2 >= self.chunk_lines.len() {
-            // fetch more lines, after increasing index it will be the last line which may be incomplete
-            self.seek(self.loaded_chunks.end.to_offset());
+            self.load_more_lines();
             assert!(line_index.offset_version == self.offset_version);
         }
         if index + 1 < self.chunk_lines.len() {
@@ -172,6 +192,16 @@ impl VirtualFile {
         return Some(line_index.clone());
     }
 
+    fn load_more_lines(&mut self) {
+        match self.loaded_chunks.last() {
+            Some(i) => {
+                // fetch more lines, after increasing index it will be the last line which may be incomplete
+                self.seek(i.end_offset());
+            }
+            _ => {}
+        }
+    }
+
     pub fn remove(&mut self, line_index: &LineIndex) -> Option<EditLine> {
         let index = self.to_abs_index(&line_index);
         if index.is_none() {
@@ -179,8 +209,7 @@ impl VirtualFile {
         }
         let index = index.unwrap();
         if index + 2 >= self.chunk_lines.len() {
-            // fetch more lines, after removal it will be the last line which may be incomplete
-            self.seek(self.loaded_chunks.end.to_offset());
+            self.load_more_lines();
             assert!(line_index.offset_version == self.offset_version);
         }
         let removed_line = self.chunk_lines.remove(index);
