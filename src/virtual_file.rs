@@ -109,7 +109,7 @@ impl VirtualFile {
         res
     }
 
-    pub fn seek(&mut self, offset: u64) -> LineIndex {
+    pub fn seek(&mut self, offset: u64) {
         let load_index = ChunkIndex::new(offset, self.chunk_size);
         if !self.loaded_chunks.contains_key(&offset) {
             let new_chunk = self.memstore.get(&load_index);
@@ -123,10 +123,9 @@ impl VirtualFile {
             };
             self.update_chunk_lines(load_index, new_chunk_lines);
         }
-        return self.offset_to_line(offset);
     }
 
-    fn offset_to_line(&self, offset: u64) -> LineIndex {
+    pub fn offset_to_line(&self, offset: u64) -> LineIndex {
         // TODO This is inefficient
         for (index, line) in self.chunk_lines.iter().enumerate() {
             match line.loaded_loc {
