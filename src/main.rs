@@ -1,4 +1,9 @@
 #![allow(dead_code)]
+mod lines;
+mod logs;
+mod memstore;
+mod virtual_file;
+
 extern crate crossterm;
 extern crate ratatui;
 extern crate tempfile;
@@ -20,10 +25,6 @@ use ratatui::{
     text::{Line, Span, Text},
     DefaultTerminal, Frame,
 };
-
-mod lines;
-mod memstore;
-mod virtual_file;
 
 // TODO
 // How to represent edited content?

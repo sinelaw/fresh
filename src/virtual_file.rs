@@ -4,23 +4,9 @@ use std::{
 
 use crate::{
     lines::EditLine,
+    logs::log,
     memstore::{Chunk, ChunkIndex, LoadStore, Memstore},
 };
-
-#[cfg(test)]
-macro_rules! log {
-    ($($arg:tt)*) => {
-        println!($($arg)*);
-    };
-}
-
-#[cfg(not(test))]
-macro_rules! log {
-    ($($arg:tt)*) => {
-        // In non-debug mode, you can replace this with logging to memory or a file
-        // For now, it does nothing
-    };
-}
 
 struct FileLoadStore {
     file: Arc<std::fs::File>,
@@ -133,24 +119,26 @@ impl VirtualFile {
     pub fn seek(&mut self, from: SeekFrom) {
         let offset = self.resolve_offset(from);
         let load_index = ChunkIndex::new(offset, self.chunk_size);
-        if !self.loaded_chunks.contains_key(&offset) {
-            let new_chunk = self.memstore.get(&load_index);
-            let new_chunk_lines = match new_chunk {
-                Chunk::Loaded {
-                    data,
-                    need_store: _,
-                } => Self::parse_chunk(data),
-
-                Chunk::Empty => vec![],
-            };
-            log!(
-                "loaded {:?} lines from chunk {:?}, loaded_chunks: {:?}",
-                new_chunk_lines.len(),
-                load_index,
-                self.loaded_chunks,
-            );
-            self.update_chunk_lines(load_index, new_chunk_lines);
+        if self.loaded_chunks.contains_key(&offset) {
+            log!("seek to loaded chunk, doing nothing - offset: {:?}", offset);
+            return;
         }
+        let new_chunk = self.memstore.get(&load_index);
+        let new_chunk_lines = match new_chunk {
+            Chunk::Loaded {
+                data,
+                need_store: _,
+            } => Self::parse_chunk(data),
+
+            Chunk::Empty => vec![],
+        };
+        log!(
+            "loaded {:?} lines from chunk {:?}, loaded_chunks: {:?}",
+            new_chunk_lines.len(),
+            load_index,
+            self.loaded_chunks,
+        );
+        self.update_chunk_lines(load_index, new_chunk_lines);
     }
 
     fn resolve_offset(&mut self, from: SeekFrom) -> u64 {
@@ -189,6 +177,7 @@ impl VirtualFile {
         if !self.loaded_chunks.is_empty()
             && new_index.offset == self.loaded_chunks.last_key_value().unwrap().1.end_offset()
         {
+            log!("appending loaded lines after existing lines");
             self.loaded_chunks.insert(new_index.offset, new_index);
             // append new lines to existing lines
             // line_index is relative to the range start which stays unchanged.
@@ -202,6 +191,7 @@ impl VirtualFile {
         } else if !self.loaded_chunks.is_empty()
             && new_index.end_offset() == self.loaded_chunks.first_key_value().unwrap().1.offset
         {
+            log!("prepending loaded lines before existing lines");
             self.loaded_chunks.insert(0, new_index);
             // append existing lines to new lines
             // line indexes are relative to the range start, which was pushed up by the new chunk
@@ -217,6 +207,7 @@ impl VirtualFile {
                 .extend(*lines.remove(0).line);
             self.chunk_lines.append(&mut lines);
         } else {
+            log!("dropping existing lines, replacing with new lines");
             // replace existing lines
             self.loaded_chunks.clear();
             self.loaded_chunks.insert(new_index.offset, new_index);
@@ -232,7 +223,7 @@ impl VirtualFile {
             return None;
         }
         let offset: u64 = (line_index.relative + self.line_offset).try_into().unwrap();
-        log!("index: {:?}", offset);
+        log!("line_index: {:?}, offset: {:?}", line_index, offset);
         match self.loaded_chunks.first_key_value() {
             Some((_, first_chunk_index)) if first_chunk_index.offset >= offset => {
                 // seek to previous chunk
