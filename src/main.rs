@@ -456,9 +456,6 @@ impl State {
     }
 
     fn move_up(&mut self) {
-        if self.cursor.y == 0 {
-            return;
-        }
         self.iter_line_prev();
         if let Some(line) = self.get_current_line() {
             self.cursor.x = std::cmp::min(self.cursor.x, line.len() as u16);
