@@ -1,4 +1,6 @@
-use std::{collections::BTreeMap, convert::TryInto, os::unix::fs::FileExt};
+use std::{
+    collections::BTreeMap, convert::TryInto, io::SeekFrom, os::unix::fs::FileExt, sync::Arc,
+};
 
 use crate::{
     lines::EditLine,
@@ -6,11 +8,11 @@ use crate::{
 };
 
 struct FileLoadStore {
-    file: std::fs::File,
+    file: Arc<std::fs::File>,
 }
 
 impl FileLoadStore {
-    fn new(file: std::fs::File) -> FileLoadStore {
+    fn new(file: Arc<std::fs::File>) -> FileLoadStore {
         FileLoadStore { file }
     }
 }
@@ -93,23 +95,28 @@ pub struct VirtualFile {
     chunk_lines: Vec<LoadedLine>,
 
     memstore: Memstore<FileLoadStore>,
+
+    file: Arc<std::fs::File>,
 }
 
 impl VirtualFile {
     pub fn new(chunk_size: u64, file: std::fs::File) -> VirtualFile {
+        let file = Arc::new(file);
         let mut res = VirtualFile {
             chunk_size,
             offset_version: 0,
             line_offset: 0,
             loaded_chunks: BTreeMap::new(),
             chunk_lines: vec![],
-            memstore: Memstore::new(FileLoadStore::new(file)),
+            file: file.clone(),
+            memstore: Memstore::new(FileLoadStore::new(file.clone())),
         };
-        res.seek(0);
+        res.seek(SeekFrom::Start(0));
         res
     }
 
-    pub fn seek(&mut self, offset: u64) {
+    pub fn seek(&mut self, from: SeekFrom) {
+        let offset = self.resolve_offset(from);
         let load_index = ChunkIndex::new(offset, self.chunk_size);
         if !self.loaded_chunks.contains_key(&offset) {
             let new_chunk = self.memstore.get(&load_index);
@@ -125,8 +132,20 @@ impl VirtualFile {
         }
     }
 
-    pub fn offset_to_line(&self, offset: u64) -> LineIndex {
+    fn resolve_offset(&mut self, from: SeekFrom) -> u64 {
+        let offset = match from {
+            SeekFrom::Start(x) => x,
+            SeekFrom::End(x) => (self.file.metadata().unwrap().len() as i64 + x)
+                .try_into()
+                .unwrap(),
+            SeekFrom::Current(x) => x.try_into().unwrap(), // current behaves like start
+        };
+        offset
+    }
+
+    pub fn offset_to_line(&mut self, from: SeekFrom) -> LineIndex {
         // TODO This is inefficient
+        let offset = self.resolve_offset(from);
         for (index, line) in self.chunk_lines.iter().enumerate() {
             match line.loaded_loc {
                 Some(loc) if loc.loaded_offset >= offset => {
@@ -199,7 +218,7 @@ impl VirtualFile {
                 Some((_, i)) if i.offset > 0 => {
                     // seek to previous chunk
                     let offset = i.offset.saturating_sub(self.chunk_size);
-                    self.seek(offset);
+                    self.seek(SeekFrom::Start(offset));
                     assert!(line_index.offset_version == self.offset_version);
                 }
                 _ => {}
@@ -238,7 +257,7 @@ impl VirtualFile {
         match self.loaded_chunks.last_key_value() {
             Some((_, i)) => {
                 // fetch more lines, after increasing index it will be the last line which may be incomplete
-                self.seek(i.end_offset());
+                self.seek(SeekFrom::Start(i.end_offset()));
             }
             _ => {}
         }
@@ -380,7 +399,7 @@ mod tests {
     fn test_virtual_file_empty() {
         let file = create_test_file("");
         let mut vf = VirtualFile::new(10, file);
-        vf.seek(0);
+        vf.seek(SeekFrom::Start(0));
         let line_index = vf.get_index();
         assert_eq!(vf.next_line(&line_index), Some(line_index));
     }
@@ -395,16 +414,16 @@ mod tests {
     fn test_virtual_file_seek() {
         let file = create_test_file("line1\nline2\nline3\n");
         let mut vf = VirtualFile::new(10, file);
-        vf.seek(0);
-        vf.seek(11);
-        vf.seek(0);
+        vf.seek(SeekFrom::Start(0));
+        vf.seek(SeekFrom::Start(11));
+        vf.seek(SeekFrom::Start(0));
     }
 
     #[test]
     fn test_virtual_file_next_line() {
         let file = create_test_file("line1\nline2\nline3\n");
         let mut vf = VirtualFile::new(10, file);
-        vf.seek(0);
+        vf.seek(SeekFrom::Start(0));
         let line_index = vf.get_index();
         let line_index = vf.next_line(&line_index).unwrap();
         assert_eq!(vf.get(&line_index).unwrap().str(), "line2");
@@ -420,7 +439,7 @@ mod tests {
     fn test_virtual_file_remove() {
         let file = create_test_file("line1\nline2\nline3\n");
         let mut vf = VirtualFile::new(10, file);
-        vf.seek(0);
+        vf.seek(SeekFrom::Start(0));
         let line_index = vf.get_index();
         assert_eq!(vf.remove(&line_index).unwrap().str(), "line1");
         assert_eq!(vf.get(&line_index).unwrap().str(), "line2");
@@ -430,7 +449,7 @@ mod tests {
     fn test_virtual_file_insert() {
         let file = create_test_file("line1\nline2\nline3\n");
         let mut vf = VirtualFile::new(10, file);
-        vf.seek(0);
+        vf.seek(SeekFrom::Start(0));
         let line_index = vf.get_index();
         vf.insert_after(&line_index, EditLine::new("new_line".to_string()));
         assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
@@ -442,7 +461,7 @@ mod tests {
     fn test_virtual_file_get() {
         let file = create_test_file("line1\nline2\nline3\n");
         let mut vf = VirtualFile::new(10, file);
-        vf.seek(0);
+        vf.seek(SeekFrom::Start(0));
         let line_index = vf.get_index();
         assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
     }
@@ -451,7 +470,7 @@ mod tests {
     fn test_virtual_file_get_mut() {
         let file = create_test_file("line1\nline2\nline3\n");
         let mut vf = VirtualFile::new(10, file);
-        vf.seek(0);
+        vf.seek(SeekFrom::Start(0));
         let line_index = vf.get_index();
 
         let line = vf.get_mut(&line_index).unwrap();
@@ -463,7 +482,7 @@ mod tests {
     fn test_virtual_file_iter_at() {
         let file = create_test_file("line1\nline2\nline3\n");
         let mut vf = VirtualFile::new(10, file);
-        vf.seek(0);
+        vf.seek(SeekFrom::Start(0));
         let line_index = vf.get_index();
         let mut iter = vf.iter_at(&line_index, 3);
         assert_eq!(iter.next().unwrap().line().str(), "line1");

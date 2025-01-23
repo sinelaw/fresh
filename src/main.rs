@@ -5,7 +5,7 @@ extern crate tempfile;
 
 use std::{
     fs::OpenOptions,
-    io::{self},
+    io::{self, SeekFrom},
     iter::FromIterator,
 };
 
@@ -166,6 +166,12 @@ impl State {
                 modifiers: KeyModifiers::CONTROL,
                 ..
             } => self.move_to_file_start(),
+
+            KeyEvent {
+                code: KeyCode::End,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => self.move_to_file_end(),
 
             KeyEvent {
                 code: KeyCode::Home,
@@ -499,8 +505,16 @@ impl State {
     }
 
     fn move_to_file_start(&mut self) {
-        self.lines.seek(0);
-        self.line_index = self.lines.offset_to_line(0);
+        let offset = SeekFrom::Start(0);
+        self.lines.seek(offset);
+        self.line_index = self.lines.offset_to_line(offset);
+        self.cursor.y = 0;
+    }
+
+    fn move_to_file_end(&mut self) {
+        let offset = SeekFrom::End(0);
+        self.lines.seek(offset);
+        self.line_index = self.lines.offset_to_line(offset);
         self.cursor.y = 0;
     }
 }
