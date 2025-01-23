@@ -7,6 +7,21 @@ use crate::{
     memstore::{Chunk, ChunkIndex, LoadStore, Memstore},
 };
 
+#[cfg(test)]
+macro_rules! log {
+    ($($arg:tt)*) => {
+        println!($($arg)*);
+    };
+}
+
+#[cfg(not(test))]
+macro_rules! log {
+    ($($arg:tt)*) => {
+        // In non-debug mode, you can replace this with logging to memory or a file
+        // For now, it does nothing
+    };
+}
+
 struct FileLoadStore {
     file: Arc<std::fs::File>,
 }
@@ -128,19 +143,24 @@ impl VirtualFile {
 
                 Chunk::Empty => vec![],
             };
+            log!(
+                "loaded {:?} lines from chunk {:?}, loaded_chunks: {:?}",
+                new_chunk_lines.len(),
+                load_index,
+                self.loaded_chunks,
+            );
             self.update_chunk_lines(load_index, new_chunk_lines);
         }
     }
 
     fn resolve_offset(&mut self, from: SeekFrom) -> u64 {
-        let offset = match from {
+        match from {
             SeekFrom::Start(x) => x,
             SeekFrom::End(x) => (self.file.metadata().unwrap().len() as i64 + x)
                 .try_into()
                 .unwrap(),
             SeekFrom::Current(x) => x.try_into().unwrap(), // current behaves like start
-        };
-        offset
+        }
     }
 
     pub fn offset_to_line(&mut self, from: SeekFrom) -> LineIndex {
@@ -202,30 +222,34 @@ impl VirtualFile {
             self.loaded_chunks.insert(new_index.offset, new_index);
             self.chunk_lines.clear();
             populate_lines(new_index, new_chunk_lines, &mut self.chunk_lines);
-            self.line_offset = 0;
+            self.line_offset = new_index.offset.try_into().unwrap();
             self.offset_version += 1;
         };
     }
 
     pub fn prev_line(&mut self, line_index: &LineIndex) -> Option<LineIndex> {
-        let index = self.to_abs_index(&line_index);
-        if index.is_none() {
+        if self.offset_version != line_index.offset_version {
             return None;
         }
-        let index = index.unwrap();
-        if index == 0 {
-            match self.loaded_chunks.first_key_value() {
-                Some((_, i)) if i.offset > 0 => {
-                    // seek to previous chunk
-                    let offset = i.offset.saturating_sub(self.chunk_size);
-                    self.seek(SeekFrom::Start(offset));
-                    assert!(line_index.offset_version == self.offset_version);
-                }
-                _ => {}
+        let offset: u64 = (line_index.relative + self.line_offset).try_into().unwrap();
+        log!("index: {:?}", offset);
+        match self.loaded_chunks.first_key_value() {
+            Some((_, first_chunk_index)) if first_chunk_index.offset >= offset => {
+                // seek to previous chunk
+                let prev_chunk = first_chunk_index.offset.saturating_sub(self.chunk_size);
+                log!(
+                    "first_chunk_index: {:?}, load prev_chunk: {:?}",
+                    first_chunk_index,
+                    prev_chunk
+                );
+                self.seek(SeekFrom::Start(prev_chunk));
+
+                assert!(line_index.offset_version == self.offset_version);
             }
+            _ => {}
         }
         // after possible seek, index may still be zero if there was nothing to load
-        if index > 0 {
+        if offset > 0 {
             return Some(LineIndex {
                 relative: line_index.relative - 1,
                 offset_version: line_index.offset_version,
@@ -432,6 +456,24 @@ mod tests {
         let line_index = vf.next_line(&line_index).unwrap();
         assert_eq!(vf.get(&line_index).unwrap().str(), "");
         let last = vf.next_line(&line_index);
+        assert_eq!(last, Some(line_index));
+    }
+
+    #[test]
+    fn test_virtual_file_prev_line() {
+        let file = create_test_file("line1\nline2\nline3\n");
+        let mut vf = VirtualFile::new(10, file);
+        vf.seek(SeekFrom::End(0));
+        let line_index = vf.get_index();
+        log!("line_index: {:?}", line_index);
+        let line_index = vf.prev_line(&line_index).unwrap();
+        log!("line_index: {:?}", line_index);
+        assert_eq!(vf.get(&line_index).unwrap().str(), "line2");
+        let line_index = vf.prev_line(&line_index).unwrap();
+        assert_eq!(vf.get(&line_index).unwrap().str(), "line3");
+        let line_index = vf.prev_line(&line_index).unwrap();
+        assert_eq!(vf.get(&line_index).unwrap().str(), "");
+        let last = vf.prev_line(&line_index);
         assert_eq!(last, Some(line_index));
     }
 
