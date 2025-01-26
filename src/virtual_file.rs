@@ -87,9 +87,13 @@ pub struct VirtualFile {
     // configuration
     chunk_size: u64,
 
-    line_offset: i64,
+    /// current version of line indexes, any line index from older version is invalid
     offset_version: u64,
 
+    /// relative to which line index in chunk_lines is the current line index offset version
+    line_anchor: i64,
+
+    /// file offset -> chunk index
     loaded_chunks: BTreeMap<u64, ChunkIndex>,
 
     /// lines loaded from memstore (disk)
@@ -106,7 +110,7 @@ impl VirtualFile {
         let mut res = VirtualFile {
             chunk_size,
             offset_version: 0,
-            line_offset: 0,
+            line_anchor: 0,
             loaded_chunks: BTreeMap::new(),
             chunk_lines: vec![],
             file: file.clone(),
@@ -191,12 +195,12 @@ impl VirtualFile {
         } else if !self.loaded_chunks.is_empty()
             && new_index.end_offset() == self.loaded_chunks.first_key_value().unwrap().1.offset
         {
-            log!("prepending loaded lines before existing lines");
+            let len: i64 = new_chunk_lines.len().try_into().unwrap();
+            log!("prepending loaded lines before existing lines, old self.line_offset: {:?}, len: {:?}", self.line_anchor, len);
             self.loaded_chunks.insert(0, new_index);
             // append existing lines to new lines
             // line indexes are relative to the range start, which was pushed up by the new chunk
-            let len: i64 = new_chunk_lines.len().try_into().unwrap();
-            self.line_offset = self.line_offset + len;
+            self.line_anchor = self.line_anchor + len;
             let mut lines: Vec<LoadedLine> = vec![];
             populate_lines(new_index, new_chunk_lines, &mut lines);
             std::mem::swap(&mut self.chunk_lines, &mut lines);
@@ -213,8 +217,13 @@ impl VirtualFile {
             self.loaded_chunks.insert(new_index.offset, new_index);
             self.chunk_lines.clear();
             populate_lines(new_index, new_chunk_lines, &mut self.chunk_lines);
-            self.line_offset = new_index.offset.try_into().unwrap();
+            self.line_anchor = 0;
             self.offset_version += 1;
+            log!(
+                "self.line_offset: {:?}, chunk_lines.len: {:?}",
+                self.line_anchor,
+                self.chunk_lines.len()
+            );
         };
     }
 
@@ -222,31 +231,51 @@ impl VirtualFile {
         if self.offset_version != line_index.offset_version {
             return None;
         }
-        let offset: u64 = (line_index.relative + self.line_offset).try_into().unwrap();
-        log!("line_index: {:?}, offset: {:?}", line_index, offset);
-        match self.loaded_chunks.first_key_value() {
-            Some((_, first_chunk_index)) if first_chunk_index.offset >= offset => {
-                // seek to previous chunk
-                let prev_chunk = first_chunk_index.offset.saturating_sub(self.chunk_size);
-                log!(
-                    "first_chunk_index: {:?}, load prev_chunk: {:?}",
-                    first_chunk_index,
-                    prev_chunk
-                );
-                self.seek(SeekFrom::Start(prev_chunk));
+        let prev_line_index = line_index.plus(-1);
+        if let Some(prev_abs_index) = self.to_abs_index(&prev_line_index) {
+            // previous line is loaded
+            return Some(prev_line_index);
+        }
+        if let Some(cur_abs_index) = self.to_abs_index(line_index) {
+            let line = self.chunk_lines.get(cur_abs_index).unwrap();
+            match line.loaded_loc {
+                None => {
+                    // current line exists but has no file location
+                    return None;
+                }
+                Some(line_loc) => {
+                    // current line is loaded and has a file location
+                    match self.loaded_chunks.first_key_value() {
+                        Some((_, first_chunk_index))
+                            if first_chunk_index.offset >= line_loc.loaded_offset =>
+                        {
+                            // seek to previous chunk
+                            let prev_chunk =
+                                first_chunk_index.offset.saturating_sub(self.chunk_size);
+                            log!(
+                                "first_chunk_index: {:?}, load prev_chunk: {:?}",
+                                first_chunk_index,
+                                prev_chunk
+                            );
+                            self.seek(SeekFrom::Start(prev_chunk));
 
-                assert!(line_index.offset_version == self.offset_version);
+                            assert!(line_index.offset_version == self.offset_version);
+                        }
+                        _ => {}
+                    }
+                    // after possible seek, index may still be zero if there was nothing to load
+                    if line_loc.loaded_offset > 0 {
+                        return Some(LineIndex {
+                            relative: line_index.relative - 1,
+                            offset_version: line_index.offset_version,
+                        });
+                    }
+                    return Some(line_index.clone());
+                }
             }
-            _ => {}
         }
-        // after possible seek, index may still be zero if there was nothing to load
-        if offset > 0 {
-            return Some(LineIndex {
-                relative: line_index.relative - 1,
-                offset_version: line_index.offset_version,
-            });
-        }
-        return Some(line_index.clone());
+        // No current line, no previous line ???
+        return None;
     }
 
     pub fn next_line(&mut self, line_index: &LineIndex) -> Option<LineIndex> {
@@ -359,6 +388,13 @@ impl VirtualFile {
     }
 
     fn to_abs_index(&self, line_index: &LineIndex) -> Option<usize> {
+        log!(
+            "line_index: {:?}, self.offset_version: {:?}, self.line_offset: {:?}",
+            line_index,
+            self.offset_version,
+            self.line_anchor
+        );
+
         if self.offset_version != line_index.offset_version {
             return None;
         }
@@ -366,7 +402,8 @@ impl VirtualFile {
             start: 0,
             end: self.chunk_lines.len() as i64,
         };
-        let index = line_index.relative + self.line_offset;
+        let index = line_index.relative + self.line_anchor;
+        log!("index: {:?}, range: {:?}", index, range);
         if !range.contains(&index) {
             return None;
         }
