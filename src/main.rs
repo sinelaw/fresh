@@ -99,9 +99,13 @@ impl State {
         return Position::new(a.x.max(b.x), a.y.max(b.y));
     }
 
+    fn text_area(&self, window_area: Rect) -> Rect {
+        Rect::new(0, 0, window_area.width, window_area.height - 1)
+    }
+
     fn scroll_to_cursor(&mut self, window_area: Rect) {
         // bring cursor into view
-        let text_area = Rect::new(0, 0, window_area.width, window_area.height - 1);
+        let text_area = self.text_area(window_area);
         let left_margin_width = self.left_margin_width();
 
         let max_pos = Position::new(
@@ -333,7 +337,7 @@ impl State {
 
     fn draw_frame(&mut self, frame: &mut Frame) {
         let window_area = frame.area();
-        let text_area = Rect::new(0, 0, window_area.width, window_area.height - 1);
+        let text_area = self.text_area(window_area);
         let status_area = Rect::new(0, window_area.height - 1, window_area.width, 1);
         let left_margin_width = self.left_margin_width();
         let cursor = self.cursor;
