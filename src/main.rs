@@ -341,10 +341,7 @@ impl State {
         let window_offset = self.window_offset;
 
         let render_line = |(window_index, loaded_line): (usize, &LoadedLine)| -> Line<'_> {
-            let line_index = loaded_line
-                .loaded_loc()
-                .map(|l| l.loaded_offset)
-                .unwrap_or(0);
+            let line_label = Self::line_label(loaded_line);
 
             let content = loaded_line
                 .line()
@@ -353,7 +350,7 @@ impl State {
                 .collect::<String>();
             Line::from(vec![
                 Span::styled(
-                    format!("{:>width$}", line_index, width = left_margin_width as usize),
+                    format!("{:>width$}", line_label, width = left_margin_width as usize),
                     if (cursor.y - window_offset.y) as usize == window_index {
                         Style::new().white()
                     } else {
@@ -493,18 +490,14 @@ impl State {
         return self.terminal_size.height - 1;
     }
 
-    fn left_margin_width(&self) -> u16 {
-        4 //std::cmp::max(4, self.lines.len().to_string().len() as u16 + 1)
-    }
-
     fn get_current_line(&self) -> Option<&EditLine> {
-        self.lines.get(&self.line_index)
+        self.lines.get(&self.line_index).map(|l| l.line())
     }
 
     fn move_to_file_start(&mut self) {
         let offset = SeekFrom::Start(0);
         self.lines.seek(offset);
-        self.line_index = self.lines.offset_to_line(offset);
+        self.line_index = self.lines.get_index();
         self.cursor.y = 0;
     }
 
@@ -513,6 +506,24 @@ impl State {
         self.lines.seek(offset);
         self.line_index = self.lines.get_index();
         self.cursor.y = 0;
+    }
+
+    fn left_margin_width(&self) -> u16 {
+        let cur_line = self.lines.get(&self.line_index);
+        let label_width: u16 = cur_line
+            .map(|l| Self::line_label(l).len())
+            .unwrap_or(0) // no line, pretend empty label
+            .try_into()
+            .unwrap();
+        // Use the current line's label width + 1, but at least 5 characters:
+        u16::max(5, label_width + 1)
+    }
+
+    fn line_label(loaded_line: &LoadedLine) -> String {
+        loaded_line
+            .loaded_loc()
+            .map(|l| format!("{}", l.loaded_offset))
+            .unwrap_or("?".to_owned())
     }
 }
 

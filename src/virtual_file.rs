@@ -182,28 +182,6 @@ impl VirtualFile {
         }
     }
 
-    pub fn offset_to_line(&mut self, from: SeekFrom) -> LineIndex {
-        // TODO This is inefficient
-        let offset = self.resolve_offset(from);
-        for (index, line) in self.chunk_lines.iter().enumerate() {
-            match line.loaded_loc {
-                Some(loc) if loc.loaded_offset >= offset => {
-                    return LineIndex {
-                        relative: index.try_into().unwrap(),
-                        offset_version: self.offset_version,
-                    };
-                }
-                _ => {
-                    continue;
-                }
-            };
-        }
-        return LineIndex {
-            relative: self.chunk_lines.len().try_into().unwrap(),
-            offset_version: self.offset_version,
-        };
-    }
-
     fn update_chunk_lines(&mut self, new_index: ChunkIndex, mut new_chunk_lines: Vec<EditLine>) {
         if !self.loaded_chunks.is_empty()
             && new_index.offset == self.loaded_chunks.last_key_value().unwrap().1.end_offset()
@@ -350,11 +328,11 @@ impl VirtualFile {
         }
     }
 
-    pub fn get(&self, line_index: &LineIndex) -> Option<&EditLine> {
+    pub fn get(&self, line_index: &LineIndex) -> Option<&LoadedLine> {
         match self.to_abs_index(&line_index) {
             None => return None,
             Some(index) => {
-                return self.chunk_lines.get(index).map(|x| &*x.line);
+                return self.chunk_lines.get(index);
             }
         }
     }
@@ -491,13 +469,13 @@ mod tests {
         let mut vf = VirtualFile::new(10, file);
         vf.seek(SeekFrom::Start(0));
         let line_index = vf.get_index();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line1");
         let line_index = vf.next_line(&line_index).unwrap();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line2");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line2");
         let line_index = vf.next_line(&line_index).unwrap();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line3");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line3");
         let line_index = vf.next_line(&line_index).unwrap();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "");
         let last = vf.next_line(&line_index);
         assert_eq!(last, Some(line_index));
     }
@@ -509,15 +487,15 @@ mod tests {
         vf.seek(SeekFrom::End(0));
         let line_index = vf.get_index();
         log!("line_index: {:?}", line_index);
-        assert_eq!(vf.get(&line_index).unwrap().str(), "");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "");
         let line_index = vf.prev_line(&line_index).unwrap();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line3");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line3");
         let line_index = vf.prev_line(&line_index).unwrap();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line2");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line2");
         let line_index = vf.prev_line(&line_index).unwrap();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line1");
         let line_index = vf.prev_line(&line_index).unwrap();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line1");
         let last = vf.prev_line(&line_index);
         assert_eq!(last, Some(line_index));
     }
@@ -529,19 +507,19 @@ mod tests {
         vf.seek(SeekFrom::End(0));
         let line_index = vf.get_index();
         log!("line_index: {:?}", line_index);
-        assert_eq!(vf.get(&line_index).unwrap().str(), "");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "");
         let line_index = vf.prev_line(&line_index).unwrap();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line3");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line3");
         let line_index = vf.next_line(&line_index).unwrap();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "");
 
         vf.seek(SeekFrom::Start(0));
         let line_index = vf.get_index();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line1");
         let line_index = vf.next_line(&line_index).unwrap();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line2");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line2");
         let line_index = vf.prev_line(&line_index).unwrap();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line1");
     }
 
     #[test]
@@ -551,7 +529,7 @@ mod tests {
         vf.seek(SeekFrom::Start(0));
         let line_index = vf.get_index();
         assert_eq!(vf.remove(&line_index).unwrap().str(), "line1");
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line2");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line2");
     }
 
     #[test]
@@ -561,9 +539,9 @@ mod tests {
         vf.seek(SeekFrom::Start(0));
         let line_index = vf.get_index();
         vf.insert_after(&line_index, EditLine::new("new_line".to_string()));
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line1");
         let line_index = vf.next_line(&line_index).unwrap();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "new_line");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "new_line");
     }
 
     #[test]
@@ -572,7 +550,7 @@ mod tests {
         let mut vf = VirtualFile::new(10, file);
         vf.seek(SeekFrom::Start(0));
         let line_index = vf.get_index();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "line1");
     }
 
     #[test]
@@ -584,7 +562,7 @@ mod tests {
 
         let line = vf.get_mut(&line_index).unwrap();
         line.overwrite(0, 'b');
-        assert_eq!(vf.get(&line_index).unwrap().str(), "bine1");
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "bine1");
     }
 
     #[test]
