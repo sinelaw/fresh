@@ -126,15 +126,22 @@ impl VirtualFile {
 
         // Move the anchor to be as near as possible to the requested seek position:
         for (index, line) in self.chunk_lines.iter().enumerate() {
+            log!(
+                "seek: Checking line[{:?}] loc: {:?} >= offset {:?}",
+                index,
+                line.loaded_loc,
+                offset
+            );
+            self.line_anchor = index.try_into().unwrap();
             if line
                 .loaded_loc
                 .map(|loc| loc.loaded_offset >= offset)
                 .unwrap_or(false)
             {
-                self.line_anchor = index.try_into().unwrap();
                 break;
             }
         }
+        log!("seek: Set line_anchor = {:?}", self.line_anchor);
     }
 
     fn load_lines(&mut self, offset: u64) {
@@ -500,16 +507,13 @@ mod tests {
         log!("line_index: {:?}", line_index);
         assert_eq!(vf.get(&line_index).unwrap().str(), "");
         let line_index = vf.prev_line(&line_index).unwrap();
-        log!("line_index: {:?}", line_index);
-        assert_eq!(vf.get(&line_index).unwrap().str(), "");
-        let line_index = vf.prev_line(&line_index).unwrap();
         assert_eq!(vf.get(&line_index).unwrap().str(), "line3");
         let line_index = vf.prev_line(&line_index).unwrap();
         assert_eq!(vf.get(&line_index).unwrap().str(), "line2");
         let line_index = vf.prev_line(&line_index).unwrap();
         assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
         let line_index = vf.prev_line(&line_index).unwrap();
-        assert_eq!(vf.get(&line_index).unwrap().str(), "");
+        assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
         let last = vf.prev_line(&line_index);
         assert_eq!(last, Some(line_index));
     }
