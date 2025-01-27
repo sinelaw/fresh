@@ -85,8 +85,7 @@ impl State {
     ) -> Result<(), io::Error> {
         self.status_text = format!("Line {}, Column {}", self.cursor.y, self.cursor.x);
 
-        self.scroll_to_cursor(terminal.get_frame().area());
-
+        self.scroll_to_cursor();
         terminal.draw(|x| self.draw_frame(x))?;
         Ok(())
     }
@@ -99,13 +98,13 @@ impl State {
         return Position::new(a.x.max(b.x), a.y.max(b.y));
     }
 
-    fn text_area(&self, window_area: Rect) -> Rect {
-        Rect::new(0, 0, window_area.width, window_area.height - 1)
+    fn text_area(&self) -> Size {
+        Size::new(self.terminal_size.width, self.terminal_size.height - 1)
     }
 
-    fn scroll_to_cursor(&mut self, window_area: Rect) {
+    fn scroll_to_cursor(&mut self) {
         // bring cursor into view
-        let text_area = self.text_area(window_area);
+        let text_area = self.text_area();
         let left_margin_width = self.left_margin_width();
 
         let max_pos = Position::new(
@@ -337,7 +336,7 @@ impl State {
 
     fn draw_frame(&mut self, frame: &mut Frame) {
         let window_area = frame.area();
-        let text_area = self.text_area(window_area);
+        let text_area = self.text_area();
         let status_area = Rect::new(0, window_area.height - 1, window_area.width, 1);
         let left_margin_width = self.left_margin_width();
         let cursor = self.cursor;
@@ -378,7 +377,7 @@ impl State {
                     .enumerate()
                     .map(render_line),
             ),
-            text_area,
+            Rect::new(0, 0, text_area.width, text_area.height),
         );
 
         self.status_text = format!(
@@ -499,17 +498,24 @@ impl State {
     }
 
     fn move_to_file_start(&mut self) {
-        let offset = SeekFrom::Start(0);
-        self.lines.seek(offset);
+        self.lines.seek(SeekFrom::Start(0));
         self.line_index = self.lines.get_index();
         self.cursor.y = 0;
     }
 
     fn move_to_file_end(&mut self) {
-        let offset = SeekFrom::End(0);
-        self.lines.seek(offset);
+        self.lines.seek(SeekFrom::End(0));
         self.line_index = self.lines.get_index();
         self.cursor.y = 0;
+
+        // populate lines to fill the window
+        for _ in 0..self.text_area().height {
+            self.iter_line_prev();
+        }
+        // go to the last line
+        for _ in 1..self.text_area().height {
+            self.iter_line_next();
+        }
     }
 
     fn left_margin_width(&self) -> u16 {
@@ -526,7 +532,7 @@ impl State {
     fn line_label(loaded_line: &LoadedLine) -> String {
         loaded_line
             .loaded_loc()
-            .map(|l| format!("{}", l.loaded_offset))
+            .map(|l| format!("{:x}", l.loaded_offset))
             .unwrap_or("?".to_owned())
     }
 }
