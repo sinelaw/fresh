@@ -271,7 +271,7 @@ impl State {
     fn iter_line_prev(&mut self) {
         let prev_index: LineIndex = self.line_index;
         self.line_index = self.lines.prev_line(&self.line_index).unwrap_or(prev_index);
-        if self.line_index != prev_index {
+        if (self.line_index != prev_index) && (self.cursor.y > 0) {
             self.cursor.y -= 1;
         }
     }
@@ -512,7 +512,7 @@ impl State {
     fn move_to_file_end(&mut self) {
         let offset = SeekFrom::End(0);
         self.lines.seek(offset);
-        self.line_index = self.lines.offset_to_line(offset);
+        self.line_index = self.lines.get_index();
         self.cursor.y = 0;
     }
 }
