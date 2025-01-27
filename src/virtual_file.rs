@@ -50,9 +50,9 @@ impl LineIndex {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct LoadedLoc {
-    loaded_offset: u64,
-    loaded_size: u64,
+pub struct LoadedLoc {
+    pub loaded_offset: u64,
+    pub loaded_size: u64,
 }
 
 #[derive(Debug)]
@@ -80,6 +80,10 @@ impl LoadedLine {
     }
     pub fn line(&self) -> &EditLine {
         &*self.line
+    }
+
+    pub fn loaded_loc(&self) -> Option<LoadedLoc> {
+        self.loaded_loc
     }
 }
 
@@ -516,6 +520,28 @@ mod tests {
         assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
         let last = vf.prev_line(&line_index);
         assert_eq!(last, Some(line_index));
+    }
+
+    #[test]
+    fn test_virtual_file_next_and_prev_line() {
+        let file = create_test_file("line1\nline2\nline3\n");
+        let mut vf = VirtualFile::new(10, file);
+        vf.seek(SeekFrom::End(0));
+        let line_index = vf.get_index();
+        log!("line_index: {:?}", line_index);
+        assert_eq!(vf.get(&line_index).unwrap().str(), "");
+        let line_index = vf.prev_line(&line_index).unwrap();
+        assert_eq!(vf.get(&line_index).unwrap().str(), "line3");
+        let line_index = vf.next_line(&line_index).unwrap();
+        assert_eq!(vf.get(&line_index).unwrap().str(), "");
+
+        vf.seek(SeekFrom::Start(0));
+        let line_index = vf.get_index();
+        assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
+        let line_index = vf.next_line(&line_index).unwrap();
+        assert_eq!(vf.get(&line_index).unwrap().str(), "line2");
+        let line_index = vf.prev_line(&line_index).unwrap();
+        assert_eq!(vf.get(&line_index).unwrap().str(), "line1");
     }
 
     #[test]

@@ -340,8 +340,11 @@ impl State {
         let lines_per_page = self.lines_per_page();
         let window_offset = self.window_offset;
 
-        let render_line = |pair: (usize, &LoadedLine)| -> Line<'_> {
-            let (line_index, loaded_line) = pair;
+        let render_line = |(window_index, loaded_line): (usize, &LoadedLine)| -> Line<'_> {
+            let line_index = loaded_line
+                .loaded_loc()
+                .map(|l| l.loaded_offset)
+                .unwrap_or(0);
 
             let content = loaded_line
                 .line()
@@ -350,12 +353,8 @@ impl State {
                 .collect::<String>();
             Line::from(vec![
                 Span::styled(
-                    format!(
-                        "{:>width$}",
-                        (line_index + window_offset.y as usize + 1),
-                        width = left_margin_width as usize
-                    ),
-                    if (cursor.y - window_offset.y) as usize == line_index {
+                    format!("{:>width$}", line_index, width = left_margin_width as usize),
+                    if (cursor.y - window_offset.y) as usize == window_index {
                         Style::new().white()
                     } else {
                         Style::new().dark_gray()
