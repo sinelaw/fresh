@@ -154,7 +154,7 @@ impl VirtualFile {
         let aligned_offset = (offset / self.chunk_size) * self.chunk_size;
         let load_index = ChunkIndex::new(aligned_offset, self.chunk_size);
         if self.loaded_chunks.contains_key(&aligned_offset) {
-            log!("load_lines: already loaded: {:?}", aligned_offset);
+            log!("load_lines: already loaded, offset: {:?}", aligned_offset);
             return;
         }
         let new_chunk = self.memstore.get(&load_index);
@@ -212,7 +212,7 @@ impl VirtualFile {
         {
             let len: i64 = new_chunk_lines.len().try_into().unwrap();
             log!("prepending loaded lines before existing lines, old self.line_offset: {:?}, len: {:?}", self.line_anchor, len);
-            self.loaded_chunks.insert(0, new_index);
+            self.loaded_chunks.insert(new_index.offset, new_index);
             // append existing lines to new lines
             // line indexes are relative to the range start, which was pushed up by the new chunk
             self.line_anchor = self.line_anchor + len;
