@@ -526,7 +526,7 @@ impl State {
             .try_into()
             .unwrap();
         // Use the current line's label width + 1, but at least 5 characters:
-        u16::max(5, label_width + 1)
+        u16::max(7, label_width + 1)
     }
 
     fn line_label(loaded_line: &LoadedLine) -> String {
