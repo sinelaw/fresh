@@ -97,9 +97,6 @@ pub struct VirtualFile {
     /// relative to which line index in chunk_lines is the current line index offset version
     line_anchor: i64,
 
-    /// from which offset was the current anchor loaded
-    line_anchor_offset: Option<u64>,
-
     /// file offset -> chunk index
     loaded_chunks: BTreeMap<u64, ChunkIndex>,
 
@@ -118,7 +115,6 @@ impl VirtualFile {
             chunk_size,
             offset_version: 0,
             line_anchor: 0,
-            line_anchor_offset: None,
             loaded_chunks: BTreeMap::new(),
             chunk_lines: vec![],
             file: file.clone(),
@@ -142,7 +138,7 @@ impl VirtualFile {
                 offset
             );
             self.line_anchor = index.try_into().unwrap();
-            self.line_anchor_offset = line.loaded_loc.map(|loc| loc.loaded_offset);
+
             if line
                 .loaded_loc
                 .map(|loc| loc.loaded_offset >= offset)
@@ -223,11 +219,13 @@ impl VirtualFile {
             let mut lines: Vec<LoadedLine> = vec![];
             populate_lines(new_index, new_chunk_lines, &mut lines);
             std::mem::swap(&mut self.chunk_lines, &mut lines);
-            self.chunk_lines
-                .last_mut()
-                .unwrap()
-                .line
-                .extend(*lines.remove(0).line);
+            if lines.len() > 0 {
+                self.chunk_lines
+                    .last_mut()
+                    .unwrap()
+                    .line
+                    .extend(*lines.remove(0).line);
+            }
             self.chunk_lines.append(&mut lines);
         } else {
             log!("dropping existing lines, replacing with new lines");
@@ -237,7 +235,6 @@ impl VirtualFile {
             self.chunk_lines.clear();
             populate_lines(new_index, new_chunk_lines, &mut self.chunk_lines);
             self.line_anchor = 0;
-            self.line_anchor_offset = Some(new_index.offset);
             self.offset_version += 1;
             log!(
                 "self.line_offset: {:?}, chunk_lines.len: {:?}",
@@ -262,44 +259,30 @@ impl VirtualFile {
             return Some(prev_line_index);
         }
 
-        match self.to_abs_index(line_index) {
+        match self.loaded_chunks.first_key_value() {
             None => {
-                // No current line, no previous line ???
-                log!("prev_line: no current line");
-                if let Some(anchor_offset) = self.line_anchor_offset {
-                    // load one chunk back from whatever we loaded last
-                    self.load_lines(anchor_offset.saturating_sub(self.chunk_size));
-                }
+                // No chunks loaded?
+                log!("prev_line: no chunks loaded");
                 return None;
             }
-            Some(cur_abs_index) => {
-                let line = self.chunk_lines.get(cur_abs_index).unwrap();
-                match line.loaded_loc {
-                    None => {
-                        // current line exists but has no file location - TODO
-                        return None;
+            Some((first_chunk_offset, _)) => {
+                let prev_chunk_offset = first_chunk_offset.saturating_sub(self.chunk_size);
+                log!(
+                    "prev_line: loading prev_chunk_offset: {:?}",
+                    prev_chunk_offset
+                );
+                self.load_lines(prev_chunk_offset);
+                // shouldn't invalidate the offset version, this chunk should be just before the first loaded chunk
+                assert!(line_index.offset_version == self.offset_version);
+                // after possible seek, index may still be zero if there was nothing to load
+                match self.to_abs_index(&prev_line_index) {
+                    Some(_) => {
+                        return Some(prev_line_index);
                     }
-                    Some(line_loc) => {
-                        // current line is loaded and has a file location, get previous chunk
-                        let prev_chunk_offset =
-                            line_loc.loaded_offset.saturating_sub(self.chunk_size);
-                        log!(
-                            "prev_line: loading prev_chunk_offset: {:?}",
-                            prev_chunk_offset
-                        );
-                        self.load_lines(prev_chunk_offset);
-                        // shouldn't invalidate the offset version, this chunk should be just before the first loaded chunk
-                        assert!(line_index.offset_version == self.offset_version);
-                        // after possible seek, index may still be zero if there was nothing to load
-                        if line_loc.loaded_offset > 0 {
-                            return Some(LineIndex {
-                                relative: line_index.relative - 1,
-                                offset_version: line_index.offset_version,
-                            });
-                        }
+                    None => {
                         return Some(line_index.clone());
                     }
-                }
+                };
             }
         }
     }
@@ -596,6 +579,8 @@ mod tests {
         let line_index = vf.get_index();
         log!("line_index: {:?}", line_index);
         assert!(vf.get(&line_index).is_none());
+        let line_index = vf.prev_line(&line_index).unwrap();
+        assert_eq!(vf.get(&line_index).unwrap().line().str(), "");
         let line_index = vf.prev_line(&line_index).unwrap();
         assert_eq!(vf.get(&line_index).unwrap().line().str(), "line5");
         let line_index = vf.next_line(&line_index).unwrap();
