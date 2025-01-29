@@ -23,7 +23,6 @@ use ratatui::{
     layout::{Position, Rect, Size},
     style::{Style, Stylize},
     text::{Line, Span, Text},
-    widgets::Block,
     DefaultTerminal, Frame,
 };
 
