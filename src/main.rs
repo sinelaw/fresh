@@ -23,6 +23,7 @@ use ratatui::{
     layout::{Position, Rect, Size},
     style::{Style, Stylize},
     text::{Line, Span, Text},
+    widgets::Block,
     DefaultTerminal, Frame,
 };
 
@@ -343,6 +344,9 @@ impl State {
         let lines_per_page = self.lines_per_page();
         let window_offset = self.window_offset;
 
+        let current_line_style = Style::new().bg(ratatui::style::Color::Rgb(30, 30, 30));
+        let editor_style = Style::new().bg(ratatui::style::Color::Black);
+
         let render_line = |(window_index, loaded_line): (usize, &LoadedLine)| -> Line<'_> {
             let line_label = Self::line_label(loaded_line);
             let formatted_label =
@@ -352,6 +356,8 @@ impl State {
             left_margin_width =
                 u16::max(left_margin_width, formatted_label.len().try_into().unwrap());
 
+            let is_current_line = (cursor.y - window_offset.y) as usize == window_index;
+
             let content = loaded_line
                 .line()
                 .chars_iter()
@@ -360,14 +366,21 @@ impl State {
             Line::from(vec![
                 Span::styled(
                     formatted_label,
-                    if (cursor.y - window_offset.y) as usize == window_index {
+                    if is_current_line {
                         Style::new().white()
                     } else {
                         Style::new().dark_gray()
                     },
                 ),
                 Span::raw(" "),
-                Span::raw(content),
+                Span::styled(
+                    content,
+                    if is_current_line {
+                        current_line_style
+                    } else {
+                        Style::new()
+                    },
+                ),
             ])
         };
 
@@ -382,7 +395,8 @@ impl State {
                     )
                     .enumerate()
                     .map(render_line),
-            ),
+            )
+            .style(editor_style),
             Rect::new(0, 0, text_area.width, text_area.height),
         );
 
