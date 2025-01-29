@@ -15,16 +15,16 @@ use std::{
 };
 
 use crate::lines::EditLine;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use virtual_file::LoadedLine;
-
 use crate::virtual_file::{LineIndex, VirtualFile};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Position, Rect, Size},
     style::{Style, Stylize},
     text::{Line, Span, Text},
     DefaultTerminal, Frame,
 };
+use tree_sitter_highlight::{Highlight, HighlightConfiguration, Highlighter};
+use virtual_file::LoadedLine;
 
 // TODO
 // How to represent edited content?
@@ -43,6 +43,28 @@ use ratatui::{
 // When saving the file, iterate chunks: write to disk, update disk_offset, set is_modified = false
 // if disk_offset = write offset and is_modified = false, no need to write (skip the chunk).
 // This can optimize writing huge files.
+
+const HIGHLIGHT_NAMES: [&str; 19] = [
+    "carriage-return",
+    "attribute",
+    "constant",
+    "function.builtin",
+    "function",
+    "keyword",
+    "operator",
+    "property",
+    "punctuation",
+    "punctuation.bracket",
+    "punctuation.delimiter",
+    "string",
+    "string.special",
+    "tag",
+    "type",
+    "type.builtin",
+    "variable",
+    "variable.builtin",
+    "variable.parameter",
+];
 
 struct State {
     /// Content loaded from the file, may be a small portion of the entire file starting at some offset
@@ -63,6 +85,9 @@ struct State {
     status_text: String,
 
     terminal_size: Size,
+
+    highlighter: Highlighter,
+    highlighter_config: HighlightConfiguration,
 }
 
 impl State {
@@ -359,7 +384,27 @@ impl State {
         let current_line_style = Style::new().bg(ratatui::style::Color::Rgb(30, 30, 30));
         let status_bar_style = Style::new().bg(ratatui::style::Color::Rgb(50, 50, 50));
 
-        let render_line = |(window_index, loaded_line): (usize, &LoadedLine)| -> Line<'_> {
+        let highlighter = &mut self.highlighter;
+        let highlighter_config = &mut self.highlighter_config;
+
+        let lines: Vec<&LoadedLine> = self
+            .lines
+            .iter_at(
+                &self
+                    .line_index
+                    .plus(self.window_offset.y as i64 - self.cursor.y as i64),
+                lines_per_page as usize,
+            )
+            .collect();
+
+        let mut bytes = vec![];
+        for line in lines {
+            bytes.extend_from_slice(line.line().str().as_bytes());
+        }
+
+        let rendered_parts = Self::syntax_highlight(&bytes, highlighter, highlighter_config);
+        /*
+        let render_line = move |(window_index, loaded_line): (usize, &LoadedLine)| -> Line<'_> {
             let line_label = Self::line_label(loaded_line);
             let formatted_label =
                 format!("{:>width$}", line_label, width = left_margin_width as usize);
@@ -375,6 +420,18 @@ impl State {
                 .chars_iter()
                 .skip(window_offset.x as usize)
                 .collect::<String>();
+
+            rendered_parts
+            /*
+            let styled_content = Span::styled(
+                content,
+                if is_current_line {
+                    current_line_style
+                } else {
+                    Style::new()
+                },
+            ); */
+            /*
             Line::from(vec![
                 Span::styled(
                     formatted_label,
@@ -385,30 +442,13 @@ impl State {
                     },
                 ),
                 Span::raw(" "),
-                Span::styled(
-                    content,
-                    if is_current_line {
-                        current_line_style
-                    } else {
-                        Style::new()
-                    },
-                ),
-            ])
-        };
+                styled_content,
+            ]) */
+        }; */
 
         frame.render_widget(
-            Text::from_iter(
-                self.lines
-                    .iter_at(
-                        &self
-                            .line_index
-                            .plus(self.window_offset.y as i64 - self.cursor.y as i64),
-                        lines_per_page as usize,
-                    )
-                    .enumerate()
-                    .map(render_line),
-            )
-            .style(editor_style),
+            //Text::from_iter(lines.map(render_line)).style(editor_style),
+            Text::from_iter(rendered_parts).style(editor_style),
             Rect::new(0, 0, text_area.width, text_area.height),
         );
 
@@ -428,6 +468,42 @@ impl State {
             self.cursor.x + left_margin_width + 1 - self.window_offset.x,
             self.cursor.y - self.window_offset.y,
         ));
+    }
+
+    fn syntax_highlight<'a>(
+        bytes: &'a [u8],
+        highlighter: &'a mut Highlighter,
+        highlighter_config: &'a mut HighlightConfiguration,
+    ) -> Vec<Line<'a>> {
+        let regions = highlighter
+            .highlight(&highlighter_config, bytes, None, |_| None)
+            .unwrap();
+
+        let mut highlights: Vec<Highlight> = vec![];
+        let mut rendered_parts: Vec<Span<'_>> = vec![];
+        let mut rendered_lines: Vec<Line<'_>> = vec![];
+        for part in regions {
+            match part.unwrap() {
+                tree_sitter_highlight::HighlightEvent::Source { start, end } => {
+                    let s = highlights.last();
+                    let content = String::from_utf8_lossy(&bytes[start..end]).into_owned();
+                    let part_style = highlight_to_style(s);
+                    for content_part in content.split('\n') {
+                        rendered_parts.push(Span::styled(content_part, part_style));
+                        rendered_lines.push(Line::from_iter(rendered_parts));
+                        rendered_parts = vec![];
+                    }
+                }
+                tree_sitter_highlight::HighlightEvent::HighlightStart(highlight) => {
+                    highlights.push(highlight);
+                }
+                tree_sitter_highlight::HighlightEvent::HighlightEnd => {
+                    highlights.pop();
+                }
+            }
+        }
+        rendered_lines.push(Line::from_iter(rendered_parts));
+        rendered_lines
     }
 
     fn move_left(&mut self) {
@@ -584,6 +660,69 @@ impl State {
             .map(|l| format!("{:x}", l.loaded_offset))
             .unwrap_or("?".to_owned())
     }
+
+    pub fn new(terminal: &DefaultTerminal, file: std::fs::File) -> State {
+        let highlighter = Highlighter::new();
+
+        let language = tree_sitter_rust::LANGUAGE;
+
+        let mut highlighter_config = HighlightConfiguration::new(
+            language.into(),
+            "rust",
+            tree_sitter_rust::HIGHLIGHTS_QUERY,
+            tree_sitter_rust::INJECTIONS_QUERY,
+            "",
+        )
+        .unwrap();
+
+        highlighter_config.configure(&HIGHLIGHT_NAMES);
+
+        let lines = VirtualFile::new(1024 * 1024, file);
+
+        State {
+            //lines: vec![LoadedLine::empty()],
+            window_offset: Position::new(0, 0),
+            cursor: Position::new(0, 0),
+            insert_mode: true,
+            status_text: String::new(),
+            terminal_size: terminal.size().unwrap(),
+            line_index: lines.get_index(),
+            lines,
+            highlighter,
+            highlighter_config,
+        }
+    }
+}
+
+fn highlight_to_style(s: Option<&Highlight>) -> Style {
+    if let Some(h) = s {
+        let i: usize = h.0;
+        let name = HIGHLIGHT_NAMES[i];
+        match name {
+            "carriage-return" => Style::new(),
+            "attribute" => Style::new().red(),
+            "constant" => Style::new().cyan(),
+            "function.builtin" => Style::new(),
+            "function" => Style::new().yellow(),
+            "keyword" => Style::new().magenta(),
+            "operator" => Style::new().white(),
+            "property" => Style::new().blue(),
+            "punctuation" => Style::new().gray(),
+            "punctuation.bracket" => Style::new().light_yellow(),
+            "punctuation.delimiter" => Style::new().light_yellow(),
+            "string" => Style::new().light_red(),
+            "string.special" => Style::new().light_red(),
+            "tag" => Style::new().light_blue(),
+            "type" => Style::new().green(),
+            "type.builtin" => Style::new().green(),
+            "variable" => Style::new().light_cyan(),
+            "variable.builtin" => Style::new().light_cyan(),
+            "variable.parameter" => Style::new().light_cyan(),
+            _ => Style::new(),
+        }
+    } else {
+        Style::new()
+    }
 }
 
 fn main() -> io::Result<()> {
@@ -596,18 +735,10 @@ fn main() -> io::Result<()> {
             .read(true)
             .open(filename)?
     };
+
     let terminal = ratatui::init();
-    let lines = VirtualFile::new(1024 * 1024, file);
-    let mut state: State = State {
-        //lines: vec![LoadedLine::empty()],
-        window_offset: Position::new(0, 0),
-        cursor: Position::new(0, 0),
-        insert_mode: true,
-        status_text: String::new(),
-        terminal_size: terminal.size()?,
-        line_index: lines.get_index(),
-        lines,
-    };
+
+    let mut state: State = State::new(&terminal, file);
     //state.load()?;
     let result = state.run(terminal);
     ratatui::restore();

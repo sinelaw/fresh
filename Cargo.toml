@@ -8,3 +8,6 @@ edition = "2021"
 crossterm = "0.28.1"
 ratatui = "0.29.0"
 tempfile = "3.15.0"
+
+tree-sitter-highlight = "0.24.7"
+tree-sitter-rust = "0.23.2"
