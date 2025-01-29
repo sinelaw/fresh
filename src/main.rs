@@ -338,13 +338,19 @@ impl State {
         let window_area = frame.area();
         let text_area = self.text_area();
         let status_area = Rect::new(0, window_area.height - 1, window_area.width, 1);
-        let left_margin_width = self.left_margin_width();
+        let mut left_margin_width = self.left_margin_width();
         let cursor = self.cursor;
         let lines_per_page = self.lines_per_page();
         let window_offset = self.window_offset;
 
         let render_line = |(window_index, loaded_line): (usize, &LoadedLine)| -> Line<'_> {
             let line_label = Self::line_label(loaded_line);
+            let formatted_label =
+                format!("{:>width$}", line_label, width = left_margin_width as usize);
+
+            // Update margin width for the rest of the lines going forward:
+            left_margin_width =
+                u16::max(left_margin_width, formatted_label.len().try_into().unwrap());
 
             let content = loaded_line
                 .line()
@@ -353,7 +359,7 @@ impl State {
                 .collect::<String>();
             Line::from(vec![
                 Span::styled(
-                    format!("{:>width$}", line_label, width = left_margin_width as usize),
+                    formatted_label,
                     if (cursor.y - window_offset.y) as usize == window_index {
                         Style::new().white()
                     } else {
@@ -526,7 +532,7 @@ impl State {
             .try_into()
             .unwrap();
         // Use the current line's label width + 1, but at least 5 characters:
-        u16::max(7, label_width + 1)
+        u16::max(7, label_width)
     }
 
     fn line_label(loaded_line: &LoadedLine) -> String {
