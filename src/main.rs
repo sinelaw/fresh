@@ -243,6 +243,18 @@ impl State {
                 ..
             } => self.move_page_up(),
 
+            KeyEvent {
+                code: KeyCode::Down,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => self.scroll_down(),
+
+            KeyEvent {
+                code: KeyCode::Up,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => self.scroll_up(),
+
             _ => {}
         }
 
@@ -274,7 +286,7 @@ impl State {
     fn iter_line_prev(&mut self) {
         let prev_index: LineIndex = self.line_index;
         self.line_index = self.lines.prev_line(&self.line_index).unwrap_or(prev_index);
-        if (self.line_index != prev_index) && (self.cursor.y > 0) {
+        if self.line_index != prev_index {
             self.cursor.y -= 1;
         }
     }
@@ -343,8 +355,9 @@ impl State {
         let lines_per_page = self.lines_per_page();
         let window_offset = self.window_offset;
 
-        let current_line_style = Style::new().bg(ratatui::style::Color::Rgb(30, 30, 30));
         let editor_style = Style::new().bg(ratatui::style::Color::Black);
+        let current_line_style = Style::new().bg(ratatui::style::Color::Rgb(30, 30, 30));
+        let status_bar_style = Style::new().bg(ratatui::style::Color::Rgb(50, 50, 50));
 
         let render_line = |(window_index, loaded_line): (usize, &LoadedLine)| -> Line<'_> {
             let line_label = Self::line_label(loaded_line);
@@ -400,13 +413,16 @@ impl State {
         );
 
         self.status_text = format!(
-            "cursor: {:?}, window_offset {:?}, line_index: {:?}",
+            "cursor: {:?}, window_offset {:?}, text_area: {:?}",
             self.cursor,
             self.window_offset,
-            self.lines.get_index()
+            self.text_area()
         );
 
-        frame.render_widget(self.status_text.clone(), status_area);
+        frame.render_widget(
+            Text::from(self.status_text.clone()).style(status_bar_style),
+            status_area,
+        );
 
         frame.set_cursor_position(Position::new(
             self.cursor.x + left_margin_width + 1 - self.window_offset.x,
@@ -498,6 +514,20 @@ impl State {
         for _ in 0..self.lines_per_page() {
             self.move_down();
         }
+    }
+
+    fn scroll_down(&mut self) {
+        if self.window_offset.y == self.cursor.y {
+            self.move_down();
+        }
+        self.window_offset.y += 1;
+    }
+
+    fn scroll_up(&mut self) {
+        if self.window_offset.y + self.text_area().height - 1 == self.cursor.y {
+            self.move_up();
+        }
+        self.window_offset.y = self.window_offset.y.saturating_sub(1);
     }
 
     fn move_to_line_start(&mut self) {
