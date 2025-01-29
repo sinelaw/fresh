@@ -23,7 +23,7 @@ use ratatui::{
     text::{Line, Span, Text},
     DefaultTerminal, Frame,
 };
-use tree_sitter_highlight::{Highlight, HighlightConfiguration, Highlighter};
+use tree_sitter_highlight::{Highlight, HighlightConfiguration, HighlightEvent, Highlighter};
 use virtual_file::LoadedLine;
 
 // TODO
@@ -45,7 +45,7 @@ use virtual_file::LoadedLine;
 // This can optimize writing huge files.
 
 const HIGHLIGHT_NAMES: [&str; 19] = [
-    "carriage-return",
+    "comment",
     "attribute",
     "constant",
     "function.builtin",
@@ -400,6 +400,7 @@ impl State {
         let mut bytes = vec![];
         for line in lines {
             bytes.extend_from_slice(line.line().str().as_bytes());
+            bytes.push(b'\n');
         }
 
         let rendered_parts = Self::syntax_highlight(&bytes, highlighter, highlighter_config);
@@ -465,7 +466,7 @@ impl State {
         );
 
         frame.set_cursor_position(Position::new(
-            self.cursor.x + left_margin_width + 1 - self.window_offset.x,
+            self.cursor.x - self.window_offset.x, //self.cursor.x + left_margin_width + 1 - self.window_offset.x,
             self.cursor.y - self.window_offset.y,
         ));
     }
@@ -482,22 +483,27 @@ impl State {
         let mut highlights: Vec<Highlight> = vec![];
         let mut rendered_parts: Vec<Span<'_>> = vec![];
         let mut rendered_lines: Vec<Line<'_>> = vec![];
+        //logs::log!("bytes:\n{}\n", String::from_utf8_lossy(bytes));
         for part in regions {
             match part.unwrap() {
-                tree_sitter_highlight::HighlightEvent::Source { start, end } => {
+                HighlightEvent::Source { start, end } => {
                     let s = highlights.last();
-                    let content = String::from_utf8_lossy(&bytes[start..end]).into_owned();
+                    let content = String::from_utf8_lossy(&bytes[start..end]);
                     let part_style = highlight_to_style(s);
-                    for content_part in content.split('\n') {
-                        rendered_parts.push(Span::styled(content_part, part_style));
-                        rendered_lines.push(Line::from_iter(rendered_parts));
-                        rendered_parts = vec![];
+
+                    logs::log!("{:?} => [{}..{}] = {}", s, start, end, content);
+                    for (idx, content_part) in content.split('\n').enumerate() {
+                        if idx > 0 {
+                            rendered_lines.push(Line::from(rendered_parts));
+                            rendered_parts = vec![];
+                        }
+                        rendered_parts.push(Span::styled(content_part.to_owned(), part_style));
                     }
                 }
-                tree_sitter_highlight::HighlightEvent::HighlightStart(highlight) => {
+                HighlightEvent::HighlightStart(highlight) => {
                     highlights.push(highlight);
                 }
-                tree_sitter_highlight::HighlightEvent::HighlightEnd => {
+                HighlightEvent::HighlightEnd => {
                     highlights.pop();
                 }
             }
@@ -699,7 +705,7 @@ fn highlight_to_style(s: Option<&Highlight>) -> Style {
         let i: usize = h.0;
         let name = HIGHLIGHT_NAMES[i];
         match name {
-            "carriage-return" => Style::new(),
+            "comment" => Style::new().green(),
             "attribute" => Style::new().red(),
             "constant" => Style::new().cyan(),
             "function.builtin" => Style::new(),
@@ -713,8 +719,8 @@ fn highlight_to_style(s: Option<&Highlight>) -> Style {
             "string" => Style::new().light_red(),
             "string.special" => Style::new().light_red(),
             "tag" => Style::new().light_blue(),
-            "type" => Style::new().green(),
-            "type.builtin" => Style::new().green(),
+            "type" => Style::new().light_green(),
+            "type.builtin" => Style::new().light_green(),
             "variable" => Style::new().light_cyan(),
             "variable.builtin" => Style::new().light_cyan(),
             "variable.parameter" => Style::new().light_cyan(),
