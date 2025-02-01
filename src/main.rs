@@ -15,7 +15,7 @@ use std::{
 };
 
 use crate::lines::EditLine;
-use crate::virtual_file::{LineIndex, VirtualFile};
+use crate::virtual_file::{LineCursor, VirtualFile};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Position, Rect, Size},
@@ -28,22 +28,10 @@ use virtual_file::LoadedLine;
 
 // TODO
 // How to represent edited content?
-// How to map offset (or chunk index) -> line index? (e.g. CTRL + HOME / END implementation)
+// Layers and deltas:
+// Original file is base layer. Edits are additional layers on top (newer edits are higher layers).
+// Needed API:
 //
-// Main problem: "insert char" pushes all remaining memory forward.
-//
-// Other editors:
-// - emacs: gap buffer
-// - vim: rope (https://github.com/vim/vim/blob/master/src/memline.c and https://github.com/vim/vim/blob/master/src/memfile.c)
-//
-// Idea:
-// List of contiguous chunks: (disk_offset, data, is_modified).
-// When a char is inserted in the middle of a chunk, split it into three: prev, cur, next.
-// prev and next remain unchanged (can be dropped from memory and reloaded from disk).
-// When saving the file, iterate chunks: write to disk, update disk_offset, set is_modified = false
-// if disk_offset = write offset and is_modified = false, no need to write (skip the chunk).
-// This can optimize writing huge files.
-
 const HIGHLIGHT_NAMES: [&str; 19] = [
     "comment",
     "attribute",
@@ -70,7 +58,7 @@ struct State {
     /// Content loaded from the file, may be a small portion of the entire file starting at some offset
     lines: VirtualFile,
 
-    line_index: LineIndex,
+    line_index: LineCursor,
 
     /// Cursor position relative to ???
     cursor: Position,
@@ -309,7 +297,7 @@ impl State {
     }
 
     fn iter_line_prev(&mut self) {
-        let prev_index: LineIndex = self.line_index;
+        let prev_index: LineCursor = self.line_index;
         self.line_index = self.lines.prev_line(&self.line_index).unwrap_or(prev_index);
         if self.line_index != prev_index {
             self.cursor.y -= 1;
@@ -317,7 +305,7 @@ impl State {
     }
 
     fn iter_line_next(&mut self) -> bool {
-        let prev_index: LineIndex = self.line_index;
+        let prev_index: LineCursor = self.line_index;
         self.line_index = self.lines.next_line(&self.line_index).unwrap_or(prev_index);
         if self.line_index != prev_index {
             self.cursor.y += 1;
@@ -629,14 +617,12 @@ impl State {
     }
 
     fn move_to_file_start(&mut self) {
-        self.lines.seek(SeekFrom::Start(0));
-        self.line_index = self.lines.get_index();
+        self.line_index = self.lines.seek(SeekFrom::Start(0));
         self.cursor.y = 0;
     }
 
     fn move_to_file_end(&mut self) {
-        self.lines.seek(SeekFrom::End(0));
-        self.line_index = self.lines.get_index();
+        self.line_index = self.lines.seek(SeekFrom::End(0));
         self.cursor.y = 0;
 
         // populate lines to fill the window
@@ -683,7 +669,8 @@ impl State {
 
         highlighter_config.configure(&HIGHLIGHT_NAMES);
 
-        let lines = VirtualFile::new(1024 * 1024, file);
+        let mut lines = VirtualFile::new(1024 * 1024, file);
+        let line_index = lines.seek(SeekFrom::Start(0));
 
         State {
             //lines: vec![LoadedLine::empty()],
@@ -692,7 +679,7 @@ impl State {
             insert_mode: true,
             status_text: String::new(),
             terminal_size: terminal.size().unwrap(),
-            line_index: lines.get_index(),
+            line_index: line_index,
             lines,
             highlighter,
             highlighter_config,
