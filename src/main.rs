@@ -30,8 +30,7 @@ use virtual_file::LoadedLine;
 // How to represent edited content?
 // Layers and deltas:
 // Original file is base layer. Edits are additional layers on top (newer edits are higher layers).
-// Needed API:
-//
+// Changes represented in an incremental log that can be stored and loaded, used for undo/redo, etc.
 const HIGHLIGHT_NAMES: [&str; 19] = [
     "comment",
     "attribute",

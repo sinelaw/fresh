@@ -1,30 +1,22 @@
-/// Text lines backed by an external storage (file, S3 / GCS object, etc.).
-///
-/// # Design Goals
-/// - Handles files too large to fit in memory
-/// - Minimizes access to backing storage, which may have high latency (100ms-few seconds)
-/// - Provides efficient line-based navigation and editing capabilities
-///
-/// # Assumptions
-/// - The file is either immutable or exclusively edited by this process
-/// - Read/write operations to backing store may have high latency but decent bandwidth
-/// - Trades some accuracy (e.g., incomplete file information) for reduced storage access
-///
-/// # Usage
-/// The API operates through line cursors, which are opaque handles to specific lines.
-/// Users can:
-/// - Seek to positions in the file to obtain cursors
-/// - Navigate through nearby lines using the cursor
-/// - Perform edits (insert/remove) at cursor positions
-///
-/// # Implementation Details
-/// - Uses a layered approach:
-///   - Layer 0: Original data loaded from file
-///   - Additional layers: User edits and modifications
-/// - Chunks data into fixed-size blocks for efficient loading
-/// - Maintains line indexes relative to loaded chunks
-/// - Handles partial line loads across chunk boundaries
-/// - Caches loaded chunks to minimize redundant reads
+//! Text lines backed by an external storage (file, S3 / GCS object, etc.).
+//!
+//! # Design Goals
+//! - Provides efficient line-based navigation and editing capabilities.
+//! - Memory usage and speed independent of file size, handles files too large to fit in memory.
+//! - Minimizes access to backing storage, tolerates high latency (100ms-few seconds)
+//!
+//! # Assumptions
+//! - The file is either immutable or exclusively edited by this process
+//! - Read/write operations to backing store may have high latency but decent bandwidth
+//! - Trades some accuracy (e.g., incomplete file information) for reduced storage access
+//!
+//! # Usage
+//! The API operates through line cursors, which are opaque handles to specific lines.
+//! Users can:
+//! - Seek to positions in the file to obtain cursors
+//! - Navigate through nearby lines using the cursor
+//! - Perform edits (insert/remove) at cursor positions
+//!
 use std::{
     collections::BTreeMap, convert::TryInto, io::SeekFrom, os::unix::fs::FileExt, sync::Arc,
 };
