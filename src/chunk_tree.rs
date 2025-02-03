@@ -312,7 +312,7 @@ mod tests {
     fn test_remove_all_ranges() {
         let initial = b"Hello World!";
         let tree = ChunkTree::<2>::from_slice(initial);
-        for pos in 0..=initial.len() {
+        for pos in 0..initial.len() {
             for len in 0..=initial.len() {
                 // Test remove
                 let range = pos..std::cmp::min(pos + len, tree.len());
