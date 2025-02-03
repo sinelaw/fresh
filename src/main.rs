@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+mod chunk_tree;
 mod lines;
 mod logs;
 mod memstore;
