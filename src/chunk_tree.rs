@@ -1,6 +1,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+#[derive(Debug)]
 enum ChunkTree<'a, const N: usize> {
     Leaf {
         data: &'a [u8],
@@ -115,6 +116,19 @@ impl<'a, const N: usize> ChunkTree<'a, N> {
     }
 
     fn remove(&'a self, range: Range<usize>) -> Arc<ChunkTree<N>> {
+        if self.len() == 0 && range.is_empty() {
+            return Arc::new(ChunkTree::Leaf { data: &[] });
+        }
+
+        if range.start >= self.len() || range.end > self.len() {
+            panic!(
+                "invalid range: {:?}, expected to be bound by 0..{}, self: {:?}",
+                range,
+                self.len(),
+                self,
+            );
+        }
+
         match self {
             ChunkTree::Leaf { data } => Arc::new(ChunkTree::Internal {
                 left: Self::from_slice(&data[..range.start]),
@@ -128,13 +142,6 @@ impl<'a, const N: usize> ChunkTree<'a, N> {
                 right,
                 size,
             } => {
-                if range.start > self.len() || range.end > self.len() {
-                    panic!(
-                        "invalid range: {:?}, expected to be bound by 0..{}",
-                        range,
-                        self.len()
-                    );
-                }
                 if range.start > *size {
                     return Arc::new(ChunkTree::Internal {
                         left: left.clone(),
@@ -144,15 +151,25 @@ impl<'a, const N: usize> ChunkTree<'a, N> {
                     });
                 }
 
-                let new_left = left.remove(Self::range_cap(&range, left.len()));
-                let new_mid = mid.remove(Self::range_cap(
-                    &Self::range_shift_left(&range, left.len()),
-                    mid.len(),
-                ));
-                let new_right = right.remove(Self::range_cap(
-                    &Self::range_shift_left(&range, left.len() + mid.len()),
-                    right.len(),
-                ));
+                let new_left = if range.start < left.len() {
+                    left.remove(Self::range_cap(&range, left.len()))
+                } else {
+                    left.clone()
+                };
+
+                let mid_range = Self::range_shift_left(&range, left.len());
+                let new_mid = if mid_range.start < mid.len() {
+                    mid.remove(Self::range_cap(&mid_range, mid.len()))
+                } else {
+                    mid.clone()
+                };
+
+                let right_range = Self::range_shift_left(&range, left.len() + mid.len());
+                let new_right = if right_range.start < right.len() {
+                    right.remove(Self::range_cap(&right_range, right.len()))
+                } else {
+                    right.clone()
+                };
 
                 let new_size = new_left.len() + new_mid.len() + new_right.len();
 
@@ -267,5 +284,48 @@ mod tests {
     fn test_remove_invalid_range() {
         let tree = ChunkTree::<2>::from_slice(b"Hello");
         tree.remove(3..6);
+    }
+
+    #[test]
+    fn test_insert_all_ranges() {
+        let initial = b"Hello World!";
+        let tree = ChunkTree::<2>::from_slice(initial);
+        for pos in 0..=initial.len() {
+            for len in 0..=initial.len() {
+                let data = ("0123456789abcdefgh"[0..len]).as_bytes();
+
+                // Test insert
+                let mut reference = Vec::from(&initial[..]);
+                reference.splice(pos..pos, data.iter().cloned());
+                let modified_tree = tree.insert(pos, &data);
+                assert_eq!(modified_tree.collect_bytes(), reference);
+                if len > 0 {
+                    assert_ne!(modified_tree.collect_bytes(), tree.collect_bytes());
+                } else {
+                    assert_eq!(modified_tree.collect_bytes(), tree.collect_bytes());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_remove_all_ranges() {
+        let initial = b"Hello World!";
+        let tree = ChunkTree::<2>::from_slice(initial);
+        for pos in 0..=initial.len() {
+            for len in 0..=initial.len() {
+                // Test remove
+                let range = pos..std::cmp::min(pos + len, tree.len());
+                let mut reference = Vec::from(&initial[..]);
+                reference.splice(range.clone(), []);
+                let modified_tree = tree.remove(range);
+                assert_eq!(modified_tree.collect_bytes(), reference);
+                if len > 0 {
+                    assert_ne!(modified_tree.collect_bytes(), tree.collect_bytes());
+                } else {
+                    assert_eq!(modified_tree.collect_bytes(), tree.collect_bytes());
+                }
+            }
+        }
     }
 }
