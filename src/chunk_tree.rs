@@ -429,6 +429,17 @@ mod tests {
         assert_eq!(tree.collect_bytes(b'X'), b"HelloX World!");
     }
 
+    fn test_sparse_insert_remove() {
+        let tree = ChunkTree::<15>::from_slice(b"Hello");
+        let tree = tree.insert(6, b" World!");
+        assert_eq!(tree.len(), 13);
+        assert_eq!(tree.collect_bytes(b'X'), b"HelloX World!");
+
+        let tree = tree.remove(4..7);
+        assert_eq!(tree.len(), 12);
+        assert_eq!(tree.collect_bytes(b'X'), b"HellWorld!");
+    }
+
     #[test]
     fn test_remove_beyond_end_small() {
         let tree = ChunkTree::<2>::from_slice(b"Hello");
