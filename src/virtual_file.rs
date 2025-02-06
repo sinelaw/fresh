@@ -22,6 +22,7 @@ use std::{
 };
 
 use crate::{
+    chunk_tree::ChunkTree,
     lines::EditLine,
     logs::log,
     memstore::{Chunk, ChunkIndex, LoadStore, Memstore},
@@ -118,7 +119,7 @@ pub struct VirtualFile {
     line_anchor: i64,
 
     /// file offset -> chunk index
-    loaded_chunks: BTreeMap<u64, ChunkIndex>,
+    loaded_chunks: ChunkTree<1048576>,
 
     /// lines loaded from memstore (disk)
     chunk_lines: Vec<LoadedLine>,
@@ -135,7 +136,7 @@ impl VirtualFile {
             chunk_size,
             offset_version: 0,
             line_anchor: 0,
-            loaded_chunks: BTreeMap::new(),
+            loaded_chunks: ChunkTree::new(),
             chunk_lines: vec![],
             file: file.clone(),
             memstore: Memstore::new(FileLoadStore::new(file.clone())),

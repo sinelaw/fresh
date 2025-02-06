@@ -79,7 +79,7 @@ enum ChunkTreeNode<'a, const N: usize> {
 }
 
 impl<'a, const N: usize> ChunkTreeNode<'a, N> {
-    fn from_slice(data: &[u8]) -> ChunkTreeNode<N> {
+    fn from_slice(data: &'a [u8]) -> ChunkTreeNode<'a, N> {
         assert!(N > 0);
         if data.len() <= N {
             return ChunkTreeNode::Leaf { data };
@@ -92,7 +92,7 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
 
         ChunkTreeNode::Internal {
             left: Arc::new(left),
-            mid: Arc::new(ChunkTreeNode::Leaf { data: &[] }),
+            mid: Arc::new(ChunkTreeNode::empty()),
             right: Arc::new(right),
             size,
         }
@@ -114,7 +114,11 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
         }
     }
 
-    fn insert(&'a self, index: usize, data: &'a [u8]) -> ChunkTreeNode<N> {
+    fn empty() -> ChunkTreeNode<'a, N> {
+        ChunkTreeNode::Gap { size: 0 }
+    }
+
+    fn insert(&self, index: usize, data: &'a [u8]) -> ChunkTreeNode<'a, N> {
         match self {
             ChunkTreeNode::Leaf { data: leaf_data } => {
                 let left = Self::from_slice(&leaf_data[..index]);
@@ -178,15 +182,15 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
         }
     }
 
-    pub fn remove(&'a self, range: Range<usize>) -> ChunkTreeNode<N> {
+    pub fn remove(&self, range: Range<usize>) -> ChunkTreeNode<'a, N> {
         if self.len() == 0 && range.is_empty() {
-            return ChunkTreeNode::Leaf { data: &[] };
+            return ChunkTreeNode::empty();
         }
 
         match self {
             ChunkTreeNode::Leaf { data } => ChunkTreeNode::Internal {
                 left: Arc::new(Self::from_slice(&data[..range.start])),
-                mid: Arc::new(Self::from_slice(&[])),
+                mid: Arc::new(Self::empty()),
                 right: Arc::new(Self::from_slice(&data[range.end..])),
                 size: data.len() - range.len(),
             },
@@ -287,7 +291,7 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
 }
 
 #[derive(Debug)]
-struct ChunkTree<'a, const N: usize> {
+pub struct ChunkTree<'a, const N: usize> {
     root: Arc<ChunkTreeNode<'a, N>>,
 }
 
@@ -298,7 +302,7 @@ impl<'a, const N: usize> ChunkTree<'a, N> {
     }
 
     /// Creates a tree from (possibly empty) data
-    pub fn from_slice(data: &[u8]) -> ChunkTree<N> {
+    pub fn from_slice(data: &'a [u8]) -> ChunkTree<'a, N> {
         ChunkTree {
             root: Arc::new(ChunkTreeNode::from_slice(data)),
         }
@@ -312,7 +316,7 @@ impl<'a, const N: usize> ChunkTree<'a, N> {
         self.root.is_empty()
     }
 
-    pub fn insert(&'a self, index: usize, data: &'a [u8]) -> ChunkTree<N> {
+    pub fn insert(&self, index: usize, data: &'a [u8]) -> ChunkTree<'a, N> {
         if index <= self.len() {
             ChunkTree {
                 root: Arc::new(self.root.insert(index, data)),
@@ -332,7 +336,7 @@ impl<'a, const N: usize> ChunkTree<'a, N> {
         }
     }
 
-    pub fn remove(&'a self, range: Range<usize>) -> ChunkTree<N> {
+    pub fn remove(&self, range: Range<usize>) -> ChunkTree<'a, N> {
         if range.start < self.len() {
             ChunkTree {
                 root: Arc::new(
