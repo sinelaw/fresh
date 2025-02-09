@@ -289,7 +289,57 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
         }
     }
 }
+pub struct ChunkTreeIterator<'a, const N: usize> {
+    stack: Vec<(&'a ChunkTreeNode<'a, N>, usize)>, // (node, next_child_index)
+}
 
+impl<'a, const N: usize> ChunkTreeNode<'a, N> {
+    pub fn iter(&'a self) -> ChunkTreeIterator<'a, N> {
+        let mut iter = ChunkTreeIterator { stack: Vec::new() };
+        iter.stack.push((self, 0));
+        iter
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ChunkPiece<'a> {
+    Data { data: &'a [u8] },
+    Gap { size: usize },
+}
+
+impl<'a, const N: usize> Iterator for ChunkTreeIterator<'a, N> {
+    type Item = ChunkPiece<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some((node, child_idx)) = self.stack.pop() {
+            if node.len() == 0 {
+                // hide empty data / empty gaps
+                continue;
+            }
+            match node {
+                ChunkTreeNode::Leaf { data } => return Some(ChunkPiece::Data { data }),
+                ChunkTreeNode::Gap { size } => return Some(ChunkPiece::Gap { size: *size }),
+                ChunkTreeNode::Internal {
+                    left, mid, right, ..
+                } => match child_idx {
+                    0 => {
+                        self.stack.push((node, 1));
+                        self.stack.push((left, 0));
+                    }
+                    1 => {
+                        self.stack.push((node, 2));
+                        self.stack.push((mid, 0));
+                    }
+                    2 => {
+                        self.stack.push((right, 0));
+                    }
+                    _ => panic!("invalid child_idx: {:?}", child_idx),
+                },
+            }
+        }
+        None
+    }
+}
 #[derive(Debug)]
 pub struct ChunkTree<'a, const N: usize> {
     root: Arc<ChunkTreeNode<'a, N>>,
@@ -560,5 +610,49 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_iterator() {
+        // Empty tree
+        let empty_tree = ChunkTreeNode::<2>::empty();
+        let mut iter = empty_tree.iter();
+        assert_eq!(iter.next(), None);
+
+        // Simple leaf node
+        let leaf = ChunkTreeNode::<2>::from_slice(b"abc");
+        let mut iter = leaf.iter();
+        assert_eq!(iter.next(), Some(ChunkPiece::Data { data: b"a" }));
+        assert_eq!(iter.next(), Some(ChunkPiece::Data { data: b"bc" }));
+        assert_eq!(iter.next(), None);
+
+        // Gap node
+        let gap: ChunkTreeNode<'_, 2> = ChunkTreeNode::Gap { size: 3 };
+        let mut iter = gap.iter();
+        assert_eq!(iter.next(), Some(ChunkPiece::Gap { size: 3 }));
+        assert_eq!(iter.next(), None);
+
+        // Complex tree with internal nodes
+        let tree = ChunkTreeNode::<2>::from_slice(b"Hello");
+        let tree = tree.insert(5, b" World!");
+
+        let expected = vec![
+            ChunkPiece::Data { data: b"He" },
+            ChunkPiece::Data { data: b"l" },
+            ChunkPiece::Data { data: b"lo" },
+            ChunkPiece::Data { data: b" " },
+            ChunkPiece::Data { data: b"Wo" },
+            ChunkPiece::Data { data: b"rl" },
+            ChunkPiece::Data { data: b"d!" },
+        ];
+
+        let actual: Vec<_> = tree.iter().collect();
+
+        for (index, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+            println!("index: {}, actual: {:?}, expected: {:?}", index, a, e);
+            assert_eq!(a, e);
+        }
+        println!("actual: {:?}", actual);
+        assert_eq!(actual.len(), expected.len());
     }
 }

@@ -108,7 +108,7 @@ impl LoadedLine {
     }
 }
 
-pub struct VirtualFile {
+pub struct VirtualFile<'a> {
     // configuration
     chunk_size: u64,
 
@@ -119,25 +119,21 @@ pub struct VirtualFile {
     line_anchor: i64,
 
     /// file offset -> chunk index
-    loaded_chunks: ChunkTree<1048576>,
-
-    /// lines loaded from memstore (disk)
-    chunk_lines: Vec<LoadedLine>,
+    loaded_chunks: ChunkTree<'a, 1048576>,
 
     memstore: Memstore<FileLoadStore>,
 
     file: Arc<std::fs::File>,
 }
 
-impl VirtualFile {
-    pub fn new(chunk_size: u64, file: std::fs::File) -> VirtualFile {
+impl<'a> VirtualFile<'a> {
+    pub fn new(chunk_size: u64, file: std::fs::File) -> VirtualFile<'a> {
         let file = Arc::new(file);
         let mut res = VirtualFile {
             chunk_size,
             offset_version: 0,
             line_anchor: 0,
             loaded_chunks: ChunkTree::new(),
-            chunk_lines: vec![],
             file: file.clone(),
             memstore: Memstore::new(FileLoadStore::new(file.clone())),
         };
@@ -310,36 +306,6 @@ impl VirtualFile {
         }
     }
 
-    fn load_lines(&mut self, offset: u64) {
-        let aligned_offset = (offset / self.chunk_size) * self.chunk_size;
-        let load_index = ChunkIndex::new(aligned_offset, self.chunk_size);
-        if self.loaded_chunks.contains_key(&aligned_offset) {
-            log!("load_lines: already loaded, offset: {:?}", aligned_offset);
-            return;
-        }
-        let new_chunk = self.memstore.get(&load_index);
-        let new_chunk_lines = match new_chunk {
-            Chunk::Loaded {
-                data,
-                need_store: _,
-            } => Self::parse_chunk(data),
-
-            Chunk::Empty => vec![],
-        };
-        log!(
-            "load_lines: loaded {:?} lines from chunk {:?}, loaded_chunks: {:?}",
-            new_chunk_lines.len(),
-            load_index,
-            self.loaded_chunks
-        );
-        /* log!(
-            "load_lines: lines: {:?}..{:?}",
-            &new_chunk_lines.first(),
-            &new_chunk_lines.last(),
-        ); */
-        self.update_chunk_lines(load_index, new_chunk_lines);
-    }
-
     fn resolve_offset(&mut self, from: SeekFrom) -> u64 {
         match from {
             SeekFrom::Start(x) => x,
@@ -348,125 +314,6 @@ impl VirtualFile {
                 .unwrap(),
             SeekFrom::Current(x) => x.try_into().unwrap(), // current behaves like start
         }
-    }
-
-    fn update_chunk_lines(&mut self, new_index: ChunkIndex, mut new_chunk_lines: Vec<EditLine>) {
-        if !self.loaded_chunks.is_empty()
-            && new_index.offset == self.loaded_chunks.last_key_value().unwrap().1.end_offset()
-        {
-            log!("appending loaded lines after existing lines");
-            self.loaded_chunks.insert(new_index.offset, new_index);
-            // append new lines to existing lines
-            // line_index is relative to the range start which stays unchanged.
-            if new_chunk_lines.len() > 0 {
-                self.chunk_lines
-                    .last_mut()
-                    .unwrap()
-                    .line
-                    .extend(new_chunk_lines.remove(0));
-            }
-
-            Self::populate_lines(new_index, new_chunk_lines, &mut self.chunk_lines);
-        } else if !self.loaded_chunks.is_empty()
-            && new_index.end_offset() == self.loaded_chunks.first_key_value().unwrap().1.offset
-        {
-            let len: i64 = new_chunk_lines.len().try_into().unwrap();
-            log!("prepending loaded lines before existing lines, old self.line_offset: {:?}, len: {:?}", self.line_anchor, len);
-            self.loaded_chunks.insert(new_index.offset, new_index);
-            // append existing lines to new lines
-            // line indexes are relative to the range start, which was pushed up by the new chunk
-            self.line_anchor = self.line_anchor + len;
-            let mut lines: Vec<LoadedLine> = vec![];
-            Self::populate_lines(new_index, new_chunk_lines, &mut lines);
-            std::mem::swap(&mut self.chunk_lines, &mut lines);
-            if lines.len() > 0 {
-                self.chunk_lines
-                    .last_mut()
-                    .unwrap()
-                    .line
-                    .extend(*lines.remove(0).line);
-            }
-            self.chunk_lines.append(&mut lines);
-        } else {
-            log!("dropping existing lines, replacing with new lines");
-            // replace existing lines
-            self.loaded_chunks.clear();
-            self.loaded_chunks.insert(new_index.offset, new_index);
-            self.chunk_lines.clear();
-            Self::populate_lines(new_index, new_chunk_lines, &mut self.chunk_lines);
-            self.line_anchor = 0;
-            self.offset_version += 1;
-            log!(
-                "self.line_offset: {:?}, chunk_lines.len: {:?}",
-                self.line_anchor,
-                self.chunk_lines.len()
-            );
-        };
-    }
-
-    fn load_more_lines(&mut self) {
-        match self.loaded_chunks.last_key_value() {
-            Some((_, i)) => {
-                // fetch more lines, after increasing index it will be the last line which may be incomplete
-                self.load_lines(i.end_offset());
-            }
-            _ => {}
-        }
-    }
-
-    fn parse_chunk(data: &Vec<u8>) -> Vec<EditLine> {
-        if data.is_empty() {
-            return vec![];
-        }
-        String::from_utf8_lossy(data)
-            .split(|c: char| c == '\n')
-            .map(|s| EditLine::new(s.to_string()))
-            .collect()
-    }
-
-    fn to_abs_index(&self, line_index: &LineCursor) -> Option<usize> {
-        log!(
-            "to_abs_index: line_index: {:?}, self.offset_version: {:?}, self.line_offset: {:?}",
-            line_index,
-            self.offset_version,
-            self.line_anchor
-        );
-
-        if self.offset_version != line_index.offset_version {
-            return None;
-        }
-        let range = std::ops::Range::<i64> {
-            start: 0,
-            end: self.chunk_lines.len() as i64,
-        };
-        let index = line_index.relative + self.line_anchor;
-        log!("to_abs_index: index: {:?}, range: {:?}", index, range);
-        if !range.contains(&index) {
-            return None;
-        }
-        Some(index.try_into().unwrap())
-    }
-
-    fn populate_lines(
-        new_index: ChunkIndex,
-        new_chunk_lines: Vec<EditLine>,
-        lines: &mut Vec<LoadedLine>,
-    ) {
-        let mut offset = new_index.offset;
-        for new_line in new_chunk_lines {
-            let loaded_line = LoadedLine::from_loaded(new_line, offset);
-            offset += loaded_line.loaded_loc.unwrap().loaded_size;
-            lines.push(loaded_line);
-        }
-        // chunk could have been a 'short read', so total data <= size
-        assert!(
-            offset <= new_index.end_offset(),
-            "{:?} <= {:?} (index: {:?}), lines:\n{:?}",
-            offset,
-            new_index.end_offset(),
-            new_index,
-            lines,
-        );
     }
 }
 

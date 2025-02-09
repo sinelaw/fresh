@@ -54,9 +54,9 @@ const HIGHLIGHT_NAMES: [&str; 19] = [
     "variable.parameter",
 ];
 
-struct State {
+struct State<'a> {
     /// Content loaded from the file, may be a small portion of the entire file starting at some offset
-    lines: VirtualFile,
+    lines: VirtualFile<'a>,
 
     line_index: LineCursor,
 
@@ -78,7 +78,7 @@ struct State {
     highlighter_config: HighlightConfiguration,
 }
 
-impl State {
+impl<'a> State<'a> {
     fn run(&mut self, mut terminal: DefaultTerminal) -> io::Result<()> {
         loop {
             self.terminal_size = terminal.size()?;
@@ -459,11 +459,11 @@ impl State {
         ));
     }
 
-    fn syntax_highlight<'a>(
-        bytes: &'a [u8],
-        highlighter: &'a mut Highlighter,
-        highlighter_config: &'a mut HighlightConfiguration,
-    ) -> Vec<Line<'a>> {
+    fn syntax_highlight<'b>(
+        bytes: &'b [u8],
+        highlighter: &'b mut Highlighter,
+        highlighter_config: &'b mut HighlightConfiguration,
+    ) -> Vec<Line<'b>> {
         let regions = highlighter
             .highlight(&highlighter_config, bytes, None, |_| None)
             .unwrap();
