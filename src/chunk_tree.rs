@@ -118,6 +118,7 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
         ChunkTreeNode::Gap { size: 0 }
     }
 
+    /// Inserts bytes in between existing data - growing the tree by data.len() bytes
     fn insert(&self, index: usize, data: &'a [u8]) -> ChunkTreeNode<'a, N> {
         match self {
             ChunkTreeNode::Leaf { data: leaf_data } => {
@@ -133,7 +134,7 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
                 }
             }
             ChunkTreeNode::Gap { size } => {
-                let end_padding = size.saturating_sub(index + data.len());
+                let end_padding = size.saturating_sub(index);
                 ChunkTreeNode::Internal {
                     left: Arc::new(ChunkTreeNode::Gap { size: index }),
                     mid: Arc::new(Self::from_slice(data)),
@@ -426,6 +427,13 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_operations() {
+        let tree = ChunkTree::<2>::from_slice(b"test");
+        let tree = tree.remove(2..2); // Empty range
+        assert_eq!(tree.collect_bytes(0), b"test");
+    }
+
+    #[test]
     fn test_from_slice() {
         let data = b"Hello World!";
         let tree = ChunkTree::<2>::from_slice(data);
@@ -435,10 +443,28 @@ mod tests {
     }
 
     #[test]
+    fn test_from_slice_big() {
+        let data = b"Hello World!";
+        let tree = ChunkTree::<20>::from_slice(data);
+        assert!(!tree.is_empty());
+        println!("tree: {:?}", tree);
+        assert_eq!(tree.len(), data.len());
+        assert_eq!(tree.collect_bytes(0), b"Hello World!");
+    }
+
+    #[test]
     fn test_insert_middle() {
         let tree = ChunkTree::<2>::from_slice(b"Hello World!");
         let tree = tree.insert(5, b" beautiful");
         assert_eq!(tree.collect_bytes(0), b"Hello beautiful World!");
+    }
+
+    #[test]
+    fn test_insert_sparse_big() {
+        let tree = ChunkTree::<20>::new();
+        let tree = tree.insert(5, b"ahem, ahem");
+        println!("tree: {:?}", tree);
+        assert_eq!(tree.collect_bytes(b'_'), b"_____ahem, ahem");
     }
 
     #[test]
@@ -564,7 +590,7 @@ mod tests {
     #[test]
     fn test_remove_beyond_end() {
         let tree = ChunkTree::<15>::from_slice(b"Hello");
-        let tree = tree.remove(3..6);
+        let tree = tree.remove(3..8);
         assert_eq!(tree.len(), 3);
         assert_eq!(tree.collect_bytes(0), b"Hel");
     }
@@ -654,5 +680,102 @@ mod tests {
         }
         println!("actual: {:?}", actual);
         assert_eq!(actual.len(), expected.len());
+    }
+
+    #[test]
+    fn test_fill_sparse() {
+        let tree = ChunkTree::<2>::new();
+        let tree = tree.insert(1, b"the end");
+        let tree = tree.insert(0, b"start");
+        assert_eq!(tree.collect_bytes(b'_'), b"start_the end");
+    }
+
+    #[test]
+    fn test_complex_sparse_operations() {
+        let tree = ChunkTree::<30>::new();
+
+        // Test sparse insert with large gap
+        let tree = tree.insert(10, b"hello");
+        assert_eq!(tree.len(), 15);
+        assert_eq!(tree.collect_bytes(b'_'), b"__________hello");
+
+        // Test sparse remove beyond end
+        let tree = tree.remove(20..30);
+        assert_eq!(tree.len(), 15);
+
+        // Test removing gaps
+        let tree = tree.remove(5..12);
+        println!("tree: {:?}", tree);
+        assert_eq!(tree.collect_bytes(b'_'), b"_____llo");
+
+        // Test complex insert chain
+        let tree = tree.insert(2, b"ABC");
+        println!("tree: {:?}", tree);
+        assert_eq!(tree.collect_bytes(b'_'), b"__ABC___llo");
+        let tree = tree.insert(8, b"XYZ");
+        assert_eq!(tree.collect_bytes(b'_'), b"__ABC___XYZllo");
+    }
+
+    #[test]
+    fn test_internal_node_edge_cases() {
+        let tree = ChunkTree::<2>::from_slice(b"abcdef");
+
+        // Test internal node operations at boundaries
+        let tree = tree.remove(0..2); // Remove from start
+        let tree = tree.remove(2..4); // Remove from middle
+        assert_eq!(tree.collect_bytes(b'_'), b"cd");
+
+        // Test empty gap creation
+        let tree = tree.insert(10, b"end");
+        assert_eq!(tree.collect_bytes(b'_'), b"cd________end");
+    }
+
+    #[test]
+    fn test_iterator_complex() {
+        let tree = ChunkTree::<10>::new();
+        println!("tree: {:?}", tree);
+        let tree = tree.insert(5, b"middle");
+        println!("tree: {:?}", tree);
+        let tree = tree.insert(0, b"start");
+        println!("tree: {:?}", tree);
+        let tree = tree.insert(20, b"end");
+        println!("tree: {:?}", tree);
+
+        let pieces: Vec<ChunkPiece> = tree.root.iter().collect();
+        assert!(pieces.len() > 0);
+
+        // Verify the structure contains expected data and gaps
+        let mut found_start = false;
+        let mut found_middle = false;
+        let mut found_end = false;
+
+        for piece in pieces {
+            match piece {
+                ChunkPiece::Data { data } => {
+                    let str = String::from_utf8_lossy(data);
+                    println!("data: {:?}", str);
+                    if data == b"start" {
+                        found_start = true;
+                    }
+                    if data == b"middle" {
+                        found_middle = true;
+                    }
+                    if data == b"end" {
+                        found_end = true;
+                    }
+                }
+                ChunkPiece::Gap { size: _ } => {}
+            }
+        }
+
+        assert!(found_start);
+        assert!(found_middle);
+        assert!(found_end);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_zero_size_chunk() {
+        let _tree = ChunkTree::<0>::new();
     }
 }
