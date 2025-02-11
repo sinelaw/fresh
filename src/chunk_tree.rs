@@ -568,21 +568,25 @@ mod tests {
     }
 
     fn test_sparse_insert() {
-        let tree = ChunkTree::from_slice(b"Hello", 15);
-        let tree = tree.insert(6, b" World!");
-        assert_eq!(tree.len(), 13);
-        assert_eq!(tree.collect_bytes(b'X'), b"HelloX World!");
+        for chunk_size in 1..15 {
+            let tree = ChunkTree::from_slice(b"Hello", chunk_size);
+            let tree = tree.insert(6, b" World!");
+            assert_eq!(tree.len(), 13);
+            assert_eq!(tree.collect_bytes(b'X'), b"HelloX World!");
+        }
     }
 
     fn test_sparse_insert_remove() {
-        let tree = ChunkTree::from_slice(b"Hello", 15);
-        let tree = tree.insert(6, b" World!");
-        assert_eq!(tree.len(), 13);
-        assert_eq!(tree.collect_bytes(b'X'), b"HelloX World!");
+        for chunk_size in 1..15 {
+            let tree = ChunkTree::from_slice(b"Hello", chunk_size);
+            let tree = tree.insert(6, b" World!");
+            assert_eq!(tree.len(), 13);
+            assert_eq!(tree.collect_bytes(b'X'), b"HelloX World!");
 
-        let tree = tree.remove(4..7);
-        assert_eq!(tree.len(), 12);
-        assert_eq!(tree.collect_bytes(b'X'), b"HellWorld!");
+            let tree = tree.remove(4..7);
+            assert_eq!(tree.len(), 12);
+            assert_eq!(tree.collect_bytes(b'X'), b"HellWorld!");
+        }
     }
 
     #[test]
@@ -604,20 +608,22 @@ mod tests {
     #[test]
     fn test_insert_all_ranges() {
         let initial = b"Hello World!";
-        let tree = ChunkTree::from_slice(initial, 2);
-        for pos in 0..=initial.len() {
-            for len in 0..=initial.len() {
-                let data = ("0123456789abcdefgh"[0..len]).as_bytes();
+        for chunk_size in 1..15 {
+            let tree = ChunkTree::from_slice(initial, chunk_size);
+            for pos in 0..=initial.len() {
+                for len in 0..=initial.len() {
+                    let data = ("0123456789abcdefgh"[0..len]).as_bytes();
 
-                // Test insert
-                let mut reference = Vec::from(&initial[..]);
-                reference.splice(pos..pos, data.iter().cloned());
-                let modified_tree = tree.insert(pos, &data);
-                assert_eq!(modified_tree.collect_bytes(0), reference);
-                if len > 0 {
-                    assert_ne!(modified_tree.collect_bytes(0), tree.collect_bytes(0));
-                } else {
-                    assert_eq!(modified_tree.collect_bytes(0), tree.collect_bytes(0));
+                    // Test insert
+                    let mut reference = Vec::from(&initial[..]);
+                    reference.splice(pos..pos, data.iter().cloned());
+                    let modified_tree = tree.insert(pos, &data);
+                    assert_eq!(modified_tree.collect_bytes(0), reference);
+                    if len > 0 {
+                        assert_ne!(modified_tree.collect_bytes(0), tree.collect_bytes(0));
+                    } else {
+                        assert_eq!(modified_tree.collect_bytes(0), tree.collect_bytes(0));
+                    }
                 }
             }
         }
@@ -626,19 +632,21 @@ mod tests {
     #[test]
     fn test_remove_all_ranges() {
         let initial = b"Hello World!";
-        let tree = ChunkTree::from_slice(initial, 2);
-        for pos in 0..initial.len() {
-            for len in 0..=initial.len() {
-                // Test remove
-                let range = pos..std::cmp::min(pos + len, tree.len());
-                let mut reference = Vec::from(&initial[..]);
-                reference.splice(range.clone(), []);
-                let modified_tree = tree.remove(range);
-                assert_eq!(modified_tree.collect_bytes(0), reference);
-                if len > 0 {
-                    assert_ne!(modified_tree.collect_bytes(0), tree.collect_bytes(0));
-                } else {
-                    assert_eq!(modified_tree.collect_bytes(0), tree.collect_bytes(0));
+        for chunk_size in 1..15 {
+            let tree = ChunkTree::from_slice(initial, chunk_size);
+            for pos in 0..initial.len() {
+                for len in 0..=initial.len() {
+                    // Test remove
+                    let range = pos..std::cmp::min(pos + len, tree.len());
+                    let mut reference = Vec::from(&initial[..]);
+                    reference.splice(range.clone(), []);
+                    let modified_tree = tree.remove(range);
+                    assert_eq!(modified_tree.collect_bytes(0), reference);
+                    if len > 0 {
+                        assert_ne!(modified_tree.collect_bytes(0), tree.collect_bytes(0));
+                    } else {
+                        assert_eq!(modified_tree.collect_bytes(0), tree.collect_bytes(0));
+                    }
                 }
             }
         }
@@ -690,36 +698,40 @@ mod tests {
 
     #[test]
     fn test_fill_sparse() {
-        let tree = ChunkTree::new(2);
-        let tree = tree.insert(1, b"the end");
-        let tree = tree.insert(0, b"start");
-        assert_eq!(tree.collect_bytes(b'_'), b"start_the end");
+        for chunk_size in 1..15 {
+            let tree = ChunkTree::new(chunk_size);
+            let tree = tree.insert(1, b"the end");
+            let tree = tree.insert(0, b"start");
+            assert_eq!(tree.collect_bytes(b'_'), b"start_the end");
+        }
     }
 
     #[test]
     fn test_complex_sparse_operations() {
-        let tree = ChunkTree::new(30);
+        for chunk_size in 1..30 {
+            let tree = ChunkTree::new(chunk_size);
 
-        // Test sparse insert with large gap
-        let tree = tree.insert(10, b"hello");
-        assert_eq!(tree.len(), 15);
-        assert_eq!(tree.collect_bytes(b'_'), b"__________hello");
+            // Test sparse insert with large gap
+            let tree = tree.insert(10, b"hello");
+            assert_eq!(tree.len(), 15);
+            assert_eq!(tree.collect_bytes(b'_'), b"__________hello");
 
-        // Test sparse remove beyond end
-        let tree = tree.remove(20..30);
-        assert_eq!(tree.len(), 15);
+            // Test sparse remove beyond end
+            let tree = tree.remove(20..30);
+            assert_eq!(tree.len(), 15);
 
-        // Test removing gaps
-        let tree = tree.remove(5..12);
-        println!("tree: {:?}", tree);
-        assert_eq!(tree.collect_bytes(b'_'), b"_____llo");
+            // Test removing gaps
+            let tree = tree.remove(5..12);
+            println!("tree: {:?}", tree);
+            assert_eq!(tree.collect_bytes(b'_'), b"_____llo");
 
-        // Test complex insert chain
-        let tree = tree.insert(2, b"ABC");
-        println!("tree: {:?}", tree);
-        assert_eq!(tree.collect_bytes(b'_'), b"__ABC___llo");
-        let tree = tree.insert(8, b"XYZ");
-        assert_eq!(tree.collect_bytes(b'_'), b"__ABC___XYZllo");
+            // Test complex insert chain
+            let tree = tree.insert(2, b"ABC");
+            println!("tree: {:?}", tree);
+            assert_eq!(tree.collect_bytes(b'_'), b"__ABC___llo");
+            let tree = tree.insert(8, b"XYZ");
+            assert_eq!(tree.collect_bytes(b'_'), b"__ABC___XYZllo");
+        }
     }
 
     #[test]
