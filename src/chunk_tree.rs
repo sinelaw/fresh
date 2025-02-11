@@ -251,6 +251,20 @@ impl<'a> ChunkTreeNode<'a> {
                 assert!(*size >= new_size);
                 assert_eq!(size - Self::range_cap(&range, *size).len(), new_size);
 
+                // flatten when possible: if two are empty, keep the other
+                match (new_left.len(), new_mid.len(), new_right.len()) {
+                    (0, 0, _) => {
+                        return (*new_right).clone();
+                    }
+                    (0, _, 0) => {
+                        return (*new_mid).clone();
+                    }
+                    (_, 0, 0) => {
+                        return (*new_left).clone();
+                    }
+                    _ => {}
+                };
+
                 ChunkTreeNode::Internal {
                     left: new_left,
                     mid: new_mid,
