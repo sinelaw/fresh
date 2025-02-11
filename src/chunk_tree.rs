@@ -72,27 +72,25 @@ enum ChunkTreeNode<'a> {
     },
     Internal {
         left: Arc<ChunkTreeNode<'a>>,
-        mid: Arc<ChunkTreeNode<'a>>,
         right: Arc<ChunkTreeNode<'a>>,
         size: usize,
     },
 }
 
 impl<'a> ChunkTreeNode<'a> {
-    fn from_slice(data: &'a [u8], n: usize) -> ChunkTreeNode<'a> {
-        assert!(n > 0);
-        if data.len() <= n {
+    fn from_slice(data: &'a [u8], chunk_size: usize) -> ChunkTreeNode<'a> {
+        assert!(chunk_size > 0);
+        if data.len() <= chunk_size {
             return ChunkTreeNode::Leaf { data };
         }
 
         let mid_index = data.len() / 2;
-        let left = Self::from_slice(&data[..mid_index], n);
-        let right = Self::from_slice(&data[mid_index..], n);
+        let left = Self::from_slice(&data[..mid_index], chunk_size);
+        let right = Self::from_slice(&data[mid_index..], chunk_size);
         let size = data.len();
 
         ChunkTreeNode::Internal {
             left: Arc::new(left),
-            mid: Arc::new(ChunkTreeNode::empty()),
             right: Arc::new(right),
             size,
         }
@@ -119,60 +117,58 @@ impl<'a> ChunkTreeNode<'a> {
     }
 
     /// Inserts bytes in between existing data - growing the tree by data.len() bytes
-    fn insert(&self, index: usize, data: &'a [u8], n: usize) -> ChunkTreeNode<'a> {
+    fn insert(&self, index: usize, data: &'a [u8], chunk_size: usize) -> ChunkTreeNode<'a> {
+        assert!(index <= self.len());
         match self {
             ChunkTreeNode::Leaf { data: leaf_data } => {
-                let left = Self::from_slice(&leaf_data[..index], n);
-                let mid = Self::from_slice(data, n);
-                let right = Self::from_slice(&leaf_data[index..], n);
+                let left = Self::from_slice(&leaf_data[..index], chunk_size);
+                let mid = Self::from_slice(data, chunk_size);
+                let right = Self::from_slice(&leaf_data[index..], chunk_size);
 
+                assert_eq!(leaf_data.len(), left.len() + right.len());
                 ChunkTreeNode::Internal {
                     left: Arc::new(left),
-                    mid: Arc::new(mid),
-                    right: Arc::new(right),
+                    right: Arc::new(ChunkTreeNode::Internal {
+                        size: mid.len() + right.len(),
+                        left: Arc::new(mid),
+                        right: Arc::new(right),
+                    }),
                     size: leaf_data.len() + data.len(),
                 }
             }
             ChunkTreeNode::Gap { size } => {
-                let end_padding = size.saturating_sub(index);
+                let right = if *size == index {
+                    Arc::new(Self::from_slice(data, chunk_size))
+                } else {
+                    let end_padding = size.checked_sub(index).unwrap();
+                    Arc::new(ChunkTreeNode::Internal {
+                        left: Arc::new(Self::from_slice(data, chunk_size)),
+                        right: Arc::new(ChunkTreeNode::Gap { size: end_padding }),
+                        size: data.len() + end_padding,
+                    })
+                };
                 ChunkTreeNode::Internal {
+                    size: index + right.len(),
                     left: Arc::new(ChunkTreeNode::Gap { size: index }),
-                    mid: Arc::new(Self::from_slice(data, n)),
-                    right: Arc::new(ChunkTreeNode::Gap { size: end_padding }),
-                    size: index + data.len() + end_padding,
+                    right,
                 }
             }
-            ChunkTreeNode::Internal {
-                left,
-                mid,
-                right,
-                size: _,
-            } => {
+            ChunkTreeNode::Internal { left, right, size } => {
+                assert_eq!(*size, left.len() + right.len());
                 let left_size = left.len();
                 if index <= left_size {
-                    let new_left = left.insert(index, data, n);
-                    let new_size = new_left.len() + mid.len() + right.len();
+                    let new_left = left.insert(index, data, chunk_size);
+                    let new_size = new_left.len() + right.len();
                     ChunkTreeNode::Internal {
                         left: Arc::new(new_left),
-                        mid: mid.clone(),
                         right: right.clone(),
                         size: new_size,
                     }
-                } else if index <= left_size + mid.len() {
-                    let new_mid = mid.insert(index - left_size, data, n);
-                    let new_size = left_size + new_mid.len() + right.len();
+                } else if index <= left_size + right.len() {
+                    let new_right = right.insert(index - left_size, data, chunk_size);
+                    let new_size = left_size + new_right.len();
                     ChunkTreeNode::Internal {
                         left: left.clone(),
-                        mid: Arc::new(new_mid),
-                        right: right.clone(),
-                        size: new_size,
-                    }
-                } else if index <= left_size + mid.len() + right.len() {
-                    let new_right = right.insert(index - left_size - mid.len(), data, n);
-                    let new_size = left_size + mid.len() + new_right.len();
-                    ChunkTreeNode::Internal {
-                        left: left.clone(),
-                        mid: mid.clone(),
                         right: Arc::new(new_right),
                         size: new_size,
                     }
@@ -183,16 +179,15 @@ impl<'a> ChunkTreeNode<'a> {
         }
     }
 
-    pub fn remove(&self, range: Range<usize>, n: usize) -> ChunkTreeNode<'a> {
+    pub fn remove(&self, range: Range<usize>, chunk_size: usize) -> ChunkTreeNode<'a> {
         if self.len() == 0 && range.is_empty() {
             return ChunkTreeNode::empty();
         }
 
         match self {
             ChunkTreeNode::Leaf { data } => ChunkTreeNode::Internal {
-                left: Arc::new(Self::from_slice(&data[..range.start], n)),
-                mid: Arc::new(Self::empty()),
-                right: Arc::new(Self::from_slice(&data[range.end..], n)),
+                left: Arc::new(Self::from_slice(&data[..range.start], chunk_size)),
+                right: Arc::new(Self::from_slice(&data[range.end..], chunk_size)),
                 size: data.len() - range.len(),
             },
             ChunkTreeNode::Gap { size } => {
@@ -211,55 +206,39 @@ impl<'a> ChunkTreeNode<'a> {
                 );
                 return ChunkTreeNode::Gap { size: new_size };
             }
-            ChunkTreeNode::Internal {
-                left,
-                mid,
-                right,
-                size,
-            } => {
+            ChunkTreeNode::Internal { left, right, size } => {
                 if range.start > *size {
                     return ChunkTreeNode::Internal {
                         left: left.clone(),
-                        mid: mid.clone(),
                         right: right.clone(),
                         size: *size,
                     };
                 }
 
                 let new_left = if range.start < left.len() {
-                    Arc::new(left.remove(Self::range_cap(&range, left.len()), n))
+                    Arc::new(left.remove(Self::range_cap(&range, left.len()), chunk_size))
                 } else {
                     left.clone()
                 };
 
-                let mid_range = Self::range_shift_left(&range, left.len());
-                let new_mid = if mid_range.start < mid.len() {
-                    Arc::new(mid.remove(Self::range_cap(&mid_range, mid.len()), n))
-                } else {
-                    mid.clone()
-                };
-
-                let right_range = Self::range_shift_left(&range, left.len() + mid.len());
+                let right_range = Self::range_shift_left(&range, left.len());
                 let new_right = if right_range.start < right.len() {
-                    Arc::new(right.remove(Self::range_cap(&right_range, right.len()), n))
+                    Arc::new(right.remove(Self::range_cap(&right_range, right.len()), chunk_size))
                 } else {
                     right.clone()
                 };
 
-                let new_size = new_left.len() + new_mid.len() + new_right.len();
+                let new_size = new_left.len() + new_right.len();
 
                 assert!(*size >= new_size);
                 assert_eq!(size - Self::range_cap(&range, *size).len(), new_size);
 
                 // flatten when possible: if two are empty, keep the other
-                match (new_left.len(), new_mid.len(), new_right.len()) {
-                    (0, 0, _) => {
+                match (new_left.len(), new_right.len()) {
+                    (0, _) => {
                         return (*new_right).clone();
                     }
-                    (0, _, 0) => {
-                        return (*new_mid).clone();
-                    }
-                    (_, 0, 0) => {
+                    (_, 0) => {
                         return (*new_left).clone();
                     }
                     _ => {}
@@ -267,7 +246,6 @@ impl<'a> ChunkTreeNode<'a> {
 
                 ChunkTreeNode::Internal {
                     left: new_left,
-                    mid: new_mid,
                     right: new_right,
                     size: new_size,
                 }
@@ -293,12 +271,10 @@ impl<'a> ChunkTreeNode<'a> {
             }
             ChunkTreeNode::Internal {
                 left,
-                mid,
                 right,
                 size: _,
             } => {
                 left.collect_bytes_into(gap_value, output);
-                mid.collect_bytes_into(gap_value, output);
                 right.collect_bytes_into(gap_value, output);
             }
         }
@@ -334,18 +310,12 @@ impl<'a> Iterator for ChunkTreeIterator<'a> {
             match node {
                 ChunkTreeNode::Leaf { data } => return Some(ChunkPiece::Data { data }),
                 ChunkTreeNode::Gap { size } => return Some(ChunkPiece::Gap { size: *size }),
-                ChunkTreeNode::Internal {
-                    left, mid, right, ..
-                } => match child_idx {
+                ChunkTreeNode::Internal { left, right, .. } => match child_idx {
                     0 => {
                         self.stack.push((node, 1));
                         self.stack.push((left, 0));
                     }
                     1 => {
-                        self.stack.push((node, 2));
-                        self.stack.push((mid, 0));
-                    }
-                    2 => {
                         self.stack.push((right, 0));
                     }
                     _ => panic!("invalid child_idx: {:?}", child_idx),
@@ -363,8 +333,8 @@ pub struct ChunkTree<'a> {
 
 impl<'a> ChunkTree<'a> {
     /// Panics if n = 0
-    pub fn new(n: usize) -> ChunkTree<'a> {
-        Self::from_slice(&[], n)
+    pub fn new(chunk_size: usize) -> ChunkTree<'a> {
+        Self::from_slice(&[], chunk_size)
     }
 
     /// Creates a tree from (possibly empty) data
@@ -394,10 +364,13 @@ impl<'a> ChunkTree<'a> {
             ChunkTree {
                 root: Arc::new(ChunkTreeNode::Internal {
                     left: self.root.clone(),
-                    mid: Arc::new(ChunkTreeNode::Gap {
-                        size: index - self.len(),
+                    right: Arc::new(ChunkTreeNode::Internal {
+                        left: Arc::new(ChunkTreeNode::Gap {
+                            size: index - self.len(),
+                        }),
+                        right: Arc::new(ChunkTreeNode::from_slice(data, self.chunk_size)),
+                        size: index + data.len() - self.len(),
                     }),
-                    right: Arc::new(ChunkTreeNode::from_slice(data, self.chunk_size)),
                     size: index + data.len(),
                 }),
                 chunk_size: self.chunk_size,

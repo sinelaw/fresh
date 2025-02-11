@@ -120,7 +120,7 @@ pub struct VirtualFile<'a> {
 
     /// file offset -> chunk index
     // TODO undo tree of previous chunks tree
-    loaded_chunks: ChunkTree<'a, 1048576>,
+    loaded_chunks: ChunkTree<'a>,
 
     memstore: Memstore<FileLoadStore>,
 
@@ -134,7 +134,7 @@ impl<'a> VirtualFile<'a> {
             chunk_size,
             offset_version: 0,
             line_anchor: 0,
-            loaded_chunks: ChunkTree::new(),
+            loaded_chunks: ChunkTree::new(1024 * 1024),
             file: file.clone(),
             memstore: Memstore::new(FileLoadStore::new(file.clone())),
         };

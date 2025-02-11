@@ -3,6 +3,7 @@ mod chunk_tree;
 mod lines;
 mod logs;
 mod memstore;
+//mod virtual_file;
 /* //mod virtual_file;
 
 extern crate crossterm;
