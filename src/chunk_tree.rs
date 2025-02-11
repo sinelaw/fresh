@@ -344,7 +344,7 @@ impl<'a> Iterator for ChunkTreeIterator<'a> {
 #[derive(Debug)]
 pub struct ChunkTree<'a> {
     root: Arc<ChunkTreeNode<'a>>,
-    n: usize,
+    chunk_size: usize,
 }
 
 impl<'a> ChunkTree<'a> {
@@ -354,10 +354,10 @@ impl<'a> ChunkTree<'a> {
     }
 
     /// Creates a tree from (possibly empty) data
-    pub fn from_slice(data: &'a [u8], n: usize) -> ChunkTree<'a> {
+    pub fn from_slice(data: &'a [u8], chunk_size: usize) -> ChunkTree<'a> {
         ChunkTree {
-            root: Arc::new(ChunkTreeNode::from_slice(data, n)),
-            n: n,
+            root: Arc::new(ChunkTreeNode::from_slice(data, chunk_size)),
+            chunk_size,
         }
     }
 
@@ -372,8 +372,8 @@ impl<'a> ChunkTree<'a> {
     pub fn insert(&self, index: usize, data: &'a [u8]) -> ChunkTree<'a> {
         if index <= self.len() {
             ChunkTree {
-                root: Arc::new(self.root.insert(index, data, self.n)),
-                n: self.n,
+                root: Arc::new(self.root.insert(index, data, self.chunk_size)),
+                chunk_size: self.chunk_size,
             }
         } else {
             // sparse insert
@@ -383,10 +383,10 @@ impl<'a> ChunkTree<'a> {
                     mid: Arc::new(ChunkTreeNode::Gap {
                         size: index - self.len(),
                     }),
-                    right: Arc::new(ChunkTreeNode::from_slice(data, self.n)),
+                    right: Arc::new(ChunkTreeNode::from_slice(data, self.chunk_size)),
                     size: index + data.len(),
                 }),
-                n: self.n,
+                chunk_size: self.chunk_size,
             }
         }
     }
@@ -396,15 +396,15 @@ impl<'a> ChunkTree<'a> {
             ChunkTree {
                 root: Arc::new(self.root.remove(
                     range.start..(std::cmp::min(self.root.len(), range.end)),
-                    self.n,
+                    self.chunk_size,
                 )),
-                n: self.n,
+                chunk_size: self.chunk_size,
             }
         } else {
             // sparse remove - do nothing
             ChunkTree {
                 root: self.root.clone(),
-                n: self.n,
+                chunk_size: self.chunk_size,
             }
         }
     }
