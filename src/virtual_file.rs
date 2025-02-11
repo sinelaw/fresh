@@ -119,6 +119,7 @@ pub struct VirtualFile<'a> {
     line_anchor: i64,
 
     /// file offset -> chunk index
+    // TODO undo tree of previous chunks tree
     loaded_chunks: ChunkTree<'a, 1048576>,
 
     memstore: Memstore<FileLoadStore>,
@@ -149,6 +150,7 @@ impl<'a> VirtualFile<'a> {
     pub fn seek(&mut self, from: SeekFrom) -> LineCursor {
         let offset = self.resolve_offset(from);
         log!("seek: from: {:?} => offset: {:?}", from, offset);
+        //self.loaded_chunks.i
         self.load_lines(offset);
 
         // Move the anchor to be as near as possible to the requested seek position:

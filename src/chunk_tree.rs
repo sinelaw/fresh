@@ -15,7 +15,7 @@
 //! ```
 //! use chunk_tree::ChunkTree;
 //!
-//! let tree = ChunkTree::<2>::new();
+//! let tree = ChunkTree::new(2);
 //! let tree = tree.insert(0, b"Hello");      // Creates a new tree, original remains unchanged
 //! let tree = tree.insert(5, b" World!");    // Creates another new version
 //! assert_eq!(tree.collect_bytes(), b"Hello World!");
@@ -63,7 +63,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
-enum ChunkTreeNode<'a, const N: usize> {
+enum ChunkTreeNode<'a> {
     Leaf {
         data: &'a [u8],
     },
@@ -71,23 +71,23 @@ enum ChunkTreeNode<'a, const N: usize> {
         size: usize,
     },
     Internal {
-        left: Arc<ChunkTreeNode<'a, N>>,
-        mid: Arc<ChunkTreeNode<'a, N>>,
-        right: Arc<ChunkTreeNode<'a, N>>,
+        left: Arc<ChunkTreeNode<'a>>,
+        mid: Arc<ChunkTreeNode<'a>>,
+        right: Arc<ChunkTreeNode<'a>>,
         size: usize,
     },
 }
 
-impl<'a, const N: usize> ChunkTreeNode<'a, N> {
-    fn from_slice(data: &'a [u8]) -> ChunkTreeNode<'a, N> {
-        assert!(N > 0);
-        if data.len() <= N {
+impl<'a> ChunkTreeNode<'a> {
+    fn from_slice(data: &'a [u8], n: usize) -> ChunkTreeNode<'a> {
+        assert!(n > 0);
+        if data.len() <= n {
             return ChunkTreeNode::Leaf { data };
         }
 
         let mid_index = data.len() / 2;
-        let left = Self::from_slice(&data[..mid_index]);
-        let right = Self::from_slice(&data[mid_index..]);
+        let left = Self::from_slice(&data[..mid_index], n);
+        let right = Self::from_slice(&data[mid_index..], n);
         let size = data.len();
 
         ChunkTreeNode::Internal {
@@ -114,17 +114,17 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
         }
     }
 
-    fn empty() -> ChunkTreeNode<'a, N> {
+    fn empty() -> ChunkTreeNode<'a> {
         ChunkTreeNode::Gap { size: 0 }
     }
 
     /// Inserts bytes in between existing data - growing the tree by data.len() bytes
-    fn insert(&self, index: usize, data: &'a [u8]) -> ChunkTreeNode<'a, N> {
+    fn insert(&self, index: usize, data: &'a [u8], n: usize) -> ChunkTreeNode<'a> {
         match self {
             ChunkTreeNode::Leaf { data: leaf_data } => {
-                let left = Self::from_slice(&leaf_data[..index]);
-                let mid = Self::from_slice(data);
-                let right = Self::from_slice(&leaf_data[index..]);
+                let left = Self::from_slice(&leaf_data[..index], n);
+                let mid = Self::from_slice(data, n);
+                let right = Self::from_slice(&leaf_data[index..], n);
 
                 ChunkTreeNode::Internal {
                     left: Arc::new(left),
@@ -137,7 +137,7 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
                 let end_padding = size.saturating_sub(index);
                 ChunkTreeNode::Internal {
                     left: Arc::new(ChunkTreeNode::Gap { size: index }),
-                    mid: Arc::new(Self::from_slice(data)),
+                    mid: Arc::new(Self::from_slice(data, n)),
                     right: Arc::new(ChunkTreeNode::Gap { size: end_padding }),
                     size: index + data.len() + end_padding,
                 }
@@ -150,7 +150,7 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
             } => {
                 let left_size = left.len();
                 if index <= left_size {
-                    let new_left = left.insert(index, data);
+                    let new_left = left.insert(index, data, n);
                     let new_size = new_left.len() + mid.len() + right.len();
                     ChunkTreeNode::Internal {
                         left: Arc::new(new_left),
@@ -159,7 +159,7 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
                         size: new_size,
                     }
                 } else if index <= left_size + mid.len() {
-                    let new_mid = mid.insert(index - left_size, data);
+                    let new_mid = mid.insert(index - left_size, data, n);
                     let new_size = left_size + new_mid.len() + right.len();
                     ChunkTreeNode::Internal {
                         left: left.clone(),
@@ -168,7 +168,7 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
                         size: new_size,
                     }
                 } else if index <= left_size + mid.len() + right.len() {
-                    let new_right = right.insert(index - left_size - mid.len(), data);
+                    let new_right = right.insert(index - left_size - mid.len(), data, n);
                     let new_size = left_size + mid.len() + new_right.len();
                     ChunkTreeNode::Internal {
                         left: left.clone(),
@@ -183,16 +183,16 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
         }
     }
 
-    pub fn remove(&self, range: Range<usize>) -> ChunkTreeNode<'a, N> {
+    pub fn remove(&self, range: Range<usize>, n: usize) -> ChunkTreeNode<'a> {
         if self.len() == 0 && range.is_empty() {
             return ChunkTreeNode::empty();
         }
 
         match self {
             ChunkTreeNode::Leaf { data } => ChunkTreeNode::Internal {
-                left: Arc::new(Self::from_slice(&data[..range.start])),
+                left: Arc::new(Self::from_slice(&data[..range.start], n)),
                 mid: Arc::new(Self::empty()),
-                right: Arc::new(Self::from_slice(&data[range.end..])),
+                right: Arc::new(Self::from_slice(&data[range.end..], n)),
                 size: data.len() - range.len(),
             },
             ChunkTreeNode::Gap { size } => {
@@ -227,21 +227,21 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
                 }
 
                 let new_left = if range.start < left.len() {
-                    Arc::new(left.remove(Self::range_cap(&range, left.len())))
+                    Arc::new(left.remove(Self::range_cap(&range, left.len()), n))
                 } else {
                     left.clone()
                 };
 
                 let mid_range = Self::range_shift_left(&range, left.len());
                 let new_mid = if mid_range.start < mid.len() {
-                    Arc::new(mid.remove(Self::range_cap(&mid_range, mid.len())))
+                    Arc::new(mid.remove(Self::range_cap(&mid_range, mid.len()), n))
                 } else {
                     mid.clone()
                 };
 
                 let right_range = Self::range_shift_left(&range, left.len() + mid.len());
                 let new_right = if right_range.start < right.len() {
-                    Arc::new(right.remove(Self::range_cap(&right_range, right.len())))
+                    Arc::new(right.remove(Self::range_cap(&right_range, right.len()), n))
                 } else {
                     right.clone()
                 };
@@ -290,12 +290,12 @@ impl<'a, const N: usize> ChunkTreeNode<'a, N> {
         }
     }
 }
-pub struct ChunkTreeIterator<'a, const N: usize> {
-    stack: Vec<(&'a ChunkTreeNode<'a, N>, usize)>, // (node, next_child_index)
+pub struct ChunkTreeIterator<'a> {
+    stack: Vec<(&'a ChunkTreeNode<'a>, usize)>, // (nodeext_child_index)
 }
 
-impl<'a, const N: usize> ChunkTreeNode<'a, N> {
-    pub fn iter(&'a self) -> ChunkTreeIterator<'a, N> {
+impl<'a> ChunkTreeNode<'a> {
+    pub fn iter(&'a self) -> ChunkTreeIterator<'a> {
         let mut iter = ChunkTreeIterator { stack: Vec::new() };
         iter.stack.push((self, 0));
         iter
@@ -308,7 +308,7 @@ pub enum ChunkPiece<'a> {
     Gap { size: usize },
 }
 
-impl<'a, const N: usize> Iterator for ChunkTreeIterator<'a, N> {
+impl<'a> Iterator for ChunkTreeIterator<'a> {
     type Item = ChunkPiece<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -342,20 +342,22 @@ impl<'a, const N: usize> Iterator for ChunkTreeIterator<'a, N> {
     }
 }
 #[derive(Debug)]
-pub struct ChunkTree<'a, const N: usize> {
-    root: Arc<ChunkTreeNode<'a, N>>,
+pub struct ChunkTree<'a> {
+    root: Arc<ChunkTreeNode<'a>>,
+    n: usize,
 }
 
-impl<'a, const N: usize> ChunkTree<'a, N> {
-    /// Panics if N = 0
-    pub fn new() -> ChunkTree<'a, N> {
-        Self::from_slice(&[])
+impl<'a> ChunkTree<'a> {
+    /// Panics if n = 0
+    pub fn new(n: usize) -> ChunkTree<'a> {
+        Self::from_slice(&[], n)
     }
 
     /// Creates a tree from (possibly empty) data
-    pub fn from_slice(data: &'a [u8]) -> ChunkTree<'a, N> {
+    pub fn from_slice(data: &'a [u8], n: usize) -> ChunkTree<'a> {
         ChunkTree {
-            root: Arc::new(ChunkTreeNode::from_slice(data)),
+            root: Arc::new(ChunkTreeNode::from_slice(data, n)),
+            n: n,
         }
     }
 
@@ -367,10 +369,11 @@ impl<'a, const N: usize> ChunkTree<'a, N> {
         self.root.is_empty()
     }
 
-    pub fn insert(&self, index: usize, data: &'a [u8]) -> ChunkTree<'a, N> {
+    pub fn insert(&self, index: usize, data: &'a [u8]) -> ChunkTree<'a> {
         if index <= self.len() {
             ChunkTree {
-                root: Arc::new(self.root.insert(index, data)),
+                root: Arc::new(self.root.insert(index, data, self.n)),
+                n: self.n,
             }
         } else {
             // sparse insert
@@ -380,25 +383,28 @@ impl<'a, const N: usize> ChunkTree<'a, N> {
                     mid: Arc::new(ChunkTreeNode::Gap {
                         size: index - self.len(),
                     }),
-                    right: Arc::new(ChunkTreeNode::from_slice(data)),
+                    right: Arc::new(ChunkTreeNode::from_slice(data, self.n)),
                     size: index + data.len(),
                 }),
+                n: self.n,
             }
         }
     }
 
-    pub fn remove(&self, range: Range<usize>) -> ChunkTree<'a, N> {
+    pub fn remove(&self, range: Range<usize>) -> ChunkTree<'a> {
         if range.start < self.len() {
             ChunkTree {
-                root: Arc::new(
-                    self.root
-                        .remove(range.start..(std::cmp::min(self.root.len(), range.end))),
-                ),
+                root: Arc::new(self.root.remove(
+                    range.start..(std::cmp::min(self.root.len(), range.end)),
+                    self.n,
+                )),
+                n: self.n,
             }
         } else {
             // sparse remove - do nothing
             ChunkTree {
                 root: self.root.clone(),
+                n: self.n,
             }
         }
     }
@@ -420,7 +426,7 @@ mod tests {
 
     #[test]
     fn test_empty_tree() {
-        let tree = ChunkTree::<2>::new();
+        let tree = ChunkTree::new(2);
         assert!(tree.is_empty());
         assert_eq!(tree.len(), 0);
         assert_eq!(tree.collect_bytes(0), vec![]);
@@ -428,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_empty_operations() {
-        let tree = ChunkTree::<2>::from_slice(b"test");
+        let tree = ChunkTree::from_slice(b"test", 2);
         let tree = tree.remove(2..2); // Empty range
         assert_eq!(tree.collect_bytes(0), b"test");
     }
@@ -436,7 +442,7 @@ mod tests {
     #[test]
     fn test_from_slice() {
         let data = b"Hello World!";
-        let tree = ChunkTree::<2>::from_slice(data);
+        let tree = ChunkTree::from_slice(data, 2);
         assert!(!tree.is_empty());
         assert_eq!(tree.len(), data.len());
         assert_eq!(tree.collect_bytes(0), b"Hello World!");
@@ -445,7 +451,7 @@ mod tests {
     #[test]
     fn test_from_slice_big() {
         let data = b"Hello World!";
-        let tree = ChunkTree::<20>::from_slice(data);
+        let tree = ChunkTree::from_slice(data, 20);
         assert!(!tree.is_empty());
         println!("tree: {:?}", tree);
         assert_eq!(tree.len(), data.len());
@@ -454,14 +460,14 @@ mod tests {
 
     #[test]
     fn test_insert_middle() {
-        let tree = ChunkTree::<2>::from_slice(b"Hello World!");
+        let tree = ChunkTree::from_slice(b"Hello World!", 2);
         let tree = tree.insert(5, b" beautiful");
         assert_eq!(tree.collect_bytes(0), b"Hello beautiful World!");
     }
 
     #[test]
     fn test_insert_sparse_big() {
-        let tree = ChunkTree::<20>::new();
+        let tree = ChunkTree::new(20);
         let tree = tree.insert(5, b"ahem, ahem");
         println!("tree: {:?}", tree);
         assert_eq!(tree.collect_bytes(b'_'), b"_____ahem, ahem");
@@ -469,35 +475,35 @@ mod tests {
 
     #[test]
     fn test_insert_start() {
-        let tree = ChunkTree::<2>::from_slice(b"World!");
+        let tree = ChunkTree::from_slice(b"World!", 2);
         let tree = tree.insert(0, b"Hello ");
         assert_eq!(tree.collect_bytes(0), b"Hello World!");
     }
 
     #[test]
     fn test_insert_end() {
-        let tree = ChunkTree::<2>::from_slice(b"Hello");
+        let tree = ChunkTree::from_slice(b"Hello", 2);
         let tree = tree.insert(5, b" World!");
         assert_eq!(tree.collect_bytes(0), b"Hello World!");
     }
 
     #[test]
     fn test_remove_middle() {
-        let tree = ChunkTree::<2>::from_slice(b"Hello beautiful World!");
+        let tree = ChunkTree::from_slice(b"Hello beautiful World!", 2);
         let tree = tree.remove(5..15);
         assert_eq!(tree.collect_bytes(0), b"Hello World!");
     }
 
     #[test]
     fn test_remove_start() {
-        let tree = ChunkTree::<2>::from_slice(b"Hello World!");
+        let tree = ChunkTree::from_slice(b"Hello World!", 2);
         let tree = tree.remove(0..6);
         assert_eq!(tree.collect_bytes(0), b"World!");
     }
 
     #[test]
     fn test_remove_end() {
-        let tree = ChunkTree::<2>::from_slice(b"Hello World!");
+        let tree = ChunkTree::from_slice(b"Hello World!", 2);
         let tree = tree.remove(5..12);
         assert_eq!(tree.collect_bytes(0), b"Hello");
     }
@@ -505,7 +511,7 @@ mod tests {
     #[test]
     fn test_from_slice_big_chunk() {
         let data = b"Hello World!";
-        let tree = ChunkTree::<15>::from_slice(data);
+        let tree = ChunkTree::from_slice(data, 15);
         assert!(!tree.is_empty());
         assert_eq!(tree.len(), data.len());
         assert_eq!(tree.collect_bytes(0), b"Hello World!");
@@ -513,42 +519,42 @@ mod tests {
 
     #[test]
     fn test_insert_middle_big_chunk() {
-        let tree = ChunkTree::<15>::from_slice(b"Hello World!");
+        let tree = ChunkTree::from_slice(b"Hello World!", 15);
         let tree = tree.insert(5, b" beautiful");
         assert_eq!(tree.collect_bytes(0), b"Hello beautiful World!");
     }
 
     #[test]
     fn test_insert_start_big_chunk() {
-        let tree = ChunkTree::<15>::from_slice(b"World!");
+        let tree = ChunkTree::from_slice(b"World!", 15);
         let tree = tree.insert(0, b"Hello ");
         assert_eq!(tree.collect_bytes(0), b"Hello World!");
     }
 
     #[test]
     fn test_insert_end_big_chunk() {
-        let tree = ChunkTree::<15>::from_slice(b"Hello");
+        let tree = ChunkTree::from_slice(b"Hello", 15);
         let tree = tree.insert(5, b" World!");
         assert_eq!(tree.collect_bytes(0), b"Hello World!");
     }
 
     #[test]
     fn test_remove_middle_big_chunk() {
-        let tree = ChunkTree::<15>::from_slice(b"Hello beautiful World!");
+        let tree = ChunkTree::from_slice(b"Hello beautiful World!", 15);
         let tree = tree.remove(5..15);
         assert_eq!(tree.collect_bytes(0), b"Hello World!");
     }
 
     #[test]
     fn test_remove_start_big_chunk() {
-        let tree = ChunkTree::<15>::from_slice(b"Hello World!");
+        let tree = ChunkTree::from_slice(b"Hello World!", 15);
         let tree = tree.remove(0..6);
         assert_eq!(tree.collect_bytes(0), b"World!");
     }
 
     #[test]
     fn test_remove_end_big_chunk() {
-        let tree = ChunkTree::<15>::from_slice(b"Hello World!");
+        let tree = ChunkTree::from_slice(b"Hello World!", 15);
         let tree = tree.remove(5..12);
         assert_eq!(tree.collect_bytes(0), b"Hello");
     }
@@ -556,20 +562,20 @@ mod tests {
     #[test]
 
     fn test_sparse_insert_small() {
-        let tree = ChunkTree::<2>::from_slice(b"Hello");
+        let tree = ChunkTree::from_slice(b"Hello", 2);
         let tree = tree.insert(6, b" World!");
         assert_eq!(tree.len(), 13);
     }
 
     fn test_sparse_insert() {
-        let tree = ChunkTree::<15>::from_slice(b"Hello");
+        let tree = ChunkTree::from_slice(b"Hello", 15);
         let tree = tree.insert(6, b" World!");
         assert_eq!(tree.len(), 13);
         assert_eq!(tree.collect_bytes(b'X'), b"HelloX World!");
     }
 
     fn test_sparse_insert_remove() {
-        let tree = ChunkTree::<15>::from_slice(b"Hello");
+        let tree = ChunkTree::from_slice(b"Hello", 15);
         let tree = tree.insert(6, b" World!");
         assert_eq!(tree.len(), 13);
         assert_eq!(tree.collect_bytes(b'X'), b"HelloX World!");
@@ -581,7 +587,7 @@ mod tests {
 
     #[test]
     fn test_remove_beyond_end_small() {
-        let tree = ChunkTree::<2>::from_slice(b"Hello");
+        let tree = ChunkTree::from_slice(b"Hello", 2);
         let tree = tree.remove(3..6);
         assert_eq!(tree.len(), 3);
         assert_eq!(tree.collect_bytes(0), b"Hel");
@@ -589,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_remove_beyond_end() {
-        let tree = ChunkTree::<15>::from_slice(b"Hello");
+        let tree = ChunkTree::from_slice(b"Hello", 15);
         let tree = tree.remove(3..8);
         assert_eq!(tree.len(), 3);
         assert_eq!(tree.collect_bytes(0), b"Hel");
@@ -598,7 +604,7 @@ mod tests {
     #[test]
     fn test_insert_all_ranges() {
         let initial = b"Hello World!";
-        let tree = ChunkTree::<2>::from_slice(initial);
+        let tree = ChunkTree::from_slice(initial, 2);
         for pos in 0..=initial.len() {
             for len in 0..=initial.len() {
                 let data = ("0123456789abcdefgh"[0..len]).as_bytes();
@@ -620,7 +626,7 @@ mod tests {
     #[test]
     fn test_remove_all_ranges() {
         let initial = b"Hello World!";
-        let tree = ChunkTree::<2>::from_slice(initial);
+        let tree = ChunkTree::from_slice(initial, 2);
         for pos in 0..initial.len() {
             for len in 0..=initial.len() {
                 // Test remove
@@ -641,26 +647,26 @@ mod tests {
     #[test]
     fn test_iterator() {
         // Empty tree
-        let empty_tree = ChunkTreeNode::<2>::empty();
+        let empty_tree = ChunkTreeNode::empty();
         let mut iter = empty_tree.iter();
         assert_eq!(iter.next(), None);
 
         // Simple leaf node
-        let leaf = ChunkTreeNode::<2>::from_slice(b"abc");
+        let leaf = ChunkTreeNode::from_slice(b"abc", 2);
         let mut iter = leaf.iter();
         assert_eq!(iter.next(), Some(ChunkPiece::Data { data: b"a" }));
         assert_eq!(iter.next(), Some(ChunkPiece::Data { data: b"bc" }));
         assert_eq!(iter.next(), None);
 
         // Gap node
-        let gap: ChunkTreeNode<'_, 2> = ChunkTreeNode::Gap { size: 3 };
+        let gap: ChunkTreeNode<'_> = ChunkTreeNode::Gap { size: 3 };
         let mut iter = gap.iter();
         assert_eq!(iter.next(), Some(ChunkPiece::Gap { size: 3 }));
         assert_eq!(iter.next(), None);
 
         // Complex tree with internal nodes
-        let tree = ChunkTreeNode::<2>::from_slice(b"Hello");
-        let tree = tree.insert(5, b" World!");
+        let tree = ChunkTreeNode::from_slice(b"Hello", 2);
+        let tree = tree.insert(5, b" World!", 2);
 
         let expected = vec![
             ChunkPiece::Data { data: b"He" },
@@ -684,7 +690,7 @@ mod tests {
 
     #[test]
     fn test_fill_sparse() {
-        let tree = ChunkTree::<2>::new();
+        let tree = ChunkTree::new(2);
         let tree = tree.insert(1, b"the end");
         let tree = tree.insert(0, b"start");
         assert_eq!(tree.collect_bytes(b'_'), b"start_the end");
@@ -692,7 +698,7 @@ mod tests {
 
     #[test]
     fn test_complex_sparse_operations() {
-        let tree = ChunkTree::<30>::new();
+        let tree = ChunkTree::new(30);
 
         // Test sparse insert with large gap
         let tree = tree.insert(10, b"hello");
@@ -718,7 +724,7 @@ mod tests {
 
     #[test]
     fn test_internal_node_edge_cases() {
-        let tree = ChunkTree::<2>::from_slice(b"abcdef");
+        let tree = ChunkTree::from_slice(b"abcdef", 2);
 
         // Test internal node operations at boundaries
         let tree = tree.remove(0..2); // Remove from start
@@ -732,7 +738,7 @@ mod tests {
 
     #[test]
     fn test_iterator_complex() {
-        let tree = ChunkTree::<10>::new();
+        let tree = ChunkTree::new(10);
         println!("tree: {:?}", tree);
         let tree = tree.insert(5, b"middle");
         println!("tree: {:?}", tree);
@@ -776,6 +782,6 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_zero_size_chunk() {
-        let _tree = ChunkTree::<0>::new();
+        let _tree = ChunkTree::new(0);
     }
 }
