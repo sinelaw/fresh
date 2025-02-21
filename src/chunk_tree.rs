@@ -62,6 +62,8 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use crate::logs::log;
+
 #[derive(Debug, Clone)]
 enum ChunkTreeNode<'a> {
     Leaf {
@@ -306,6 +308,12 @@ impl<'a> ChunkTreeNode<'a> {
                     let end = std::cmp::min(remaining_range.start + child_len, remaining_range.end);
                     let remove_relative_range =
                         (remaining_range.start - child_pos)..(end - child_pos);
+                    log!(
+                        "remaining_range: {:?}, remove_relative_range: {:?}, child: {:?}",
+                        remaining_range,
+                        remove_relative_range,
+                        child
+                    );
                     let new_child = child.remove(remove_relative_range, config);
                     if !new_child.is_empty() {
                         new_children.push(Arc::new(new_child));
@@ -420,7 +428,12 @@ impl<'a> ChunkTree<'a> {
     }
 
     pub fn insert(&self, index: usize, data: &'a [u8]) -> ChunkTree<'a> {
-        if index <= self.len() {
+        if data.len() == 0 {
+            ChunkTree {
+                root: self.root.clone(),
+                config: self.config,
+            }
+        } else if index <= self.len() {
             ChunkTree {
                 root: Arc::new(self.root.insert(index, data, self.config)),
                 config: self.config,
