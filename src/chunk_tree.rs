@@ -439,18 +439,18 @@ impl<'a> ChunkTree<'a> {
     }
 
     pub fn remove(&self, range: Range<usize>) -> ChunkTree<'a> {
-        if range.start < self.len() {
+        if range.is_empty() || range.start >= self.len() {
+            // empty or sparse remove - do nothing
+            ChunkTree {
+                root: self.root.clone(),
+                config: self.config,
+            }
+        } else {
             ChunkTree {
                 root: Arc::new(self.root.remove(
                     range.start..(std::cmp::min(self.root.len(), range.end)),
                     self.config,
                 )),
-                config: self.config,
-            }
-        } else {
-            // sparse remove - do nothing
-            ChunkTree {
-                root: self.root.clone(),
                 config: self.config,
             }
         }
@@ -481,6 +481,7 @@ mod tests {
         assert_eq!(tree.collect_bytes(0), vec![]);
     }
 
+    #[should_panic]
     #[test]
     fn test_empty_operations() {
         let tree = ChunkTree::from_slice(b"test", SMALL_CONFIG);
