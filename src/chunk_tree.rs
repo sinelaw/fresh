@@ -121,8 +121,10 @@ impl<'a> ChunkTreeNode<'a> {
 
     /// Inserts bytes in between existing data - growing the tree by data.len() bytes
     ///
-    /// 'index' can be larger than the size of the node (sparse insert)
+    /// panics if `index > self.len()` (sparse insert)
+    /// panics if data.is_empty()
     fn insert(&self, index: usize, data: &'a [u8], config: ChunkTreeConfig) -> ChunkTreeNode<'a> {
+        assert!(index <= self.len());
         assert!(!data.is_empty());
         match self {
             ChunkTreeNode::Leaf { data: leaf_data } => {
@@ -130,8 +132,8 @@ impl<'a> ChunkTreeNode<'a> {
                 if index > 0 {
                     children.push(Arc::new(Self::from_slice(&leaf_data[..index], config)));
                 }
+                children.push(Arc::new(Self::from_slice(data, config)));
                 if index < leaf_data.len() {
-                    children.push(Arc::new(Self::from_slice(data, config)));
                     children.push(Arc::new(Self::from_slice(&leaf_data[index..], config)));
                 }
                 ChunkTreeNode::Internal {
@@ -144,9 +146,7 @@ impl<'a> ChunkTreeNode<'a> {
                 if index > 0 {
                     children.push(Arc::new(ChunkTreeNode::Gap { size: index }));
                 }
-                if !data.is_empty() {
-                    children.push(Arc::new(Self::from_slice(data, config)));
-                }
+                children.push(Arc::new(Self::from_slice(data, config)));
                 if index < *size {
                     children.push(Arc::new(ChunkTreeNode::Gap { size: size - index }));
                 }
@@ -195,8 +195,16 @@ impl<'a> ChunkTreeNode<'a> {
         }
     }
 
+    /// Removes a range from the tree
+    ///
+    /// panics if range.start or range.end > tree.len()
+    /// panics if range.is_empty()
     pub fn remove(&self, range: Range<usize>, config: ChunkTreeConfig) -> ChunkTreeNode<'a> {
-        if self.len() == 0 && range.is_empty() {
+        assert!(range.start <= self.len());
+        assert!(range.end <= self.len());
+        assert!(!range.is_empty());
+
+        if self.len() == 0 {
             return ChunkTreeNode::empty();
         }
 
@@ -209,63 +217,44 @@ impl<'a> ChunkTreeNode<'a> {
                 size: data.len() - range.len(),
             },
             ChunkTreeNode::Gap { size } => {
-                let new_size = if range.start >= *size {
-                    *size
-                } else {
-                    let clamped_end = std::cmp::min(*size, range.end);
-                    let removed_size = clamped_end - range.start;
-                    *size - removed_size
+                return ChunkTreeNode::Gap {
+                    size: *size - range.len(),
                 };
-                assert!(
-                    new_size <= *size,
-                    "not satifisfied: new_size: {} <= size: {}",
-                    new_size,
-                    size
-                );
-                return ChunkTreeNode::Gap { size: new_size };
             }
-            ChunkTreeNode::Internal { left, right, size } => {
-                if range.start > *size {
-                    return ChunkTreeNode::Internal {
-                        left: left.clone(),
-                        right: right.clone(),
-                        size: *size,
-                    };
+            ChunkTreeNode::Internal { children, size } => {
+                let mut next_pos = 0;
+                let mut new_children = Vec::new();
+                let mut remaining_range = range.clone();
+                // Iterate through children to find affected ranges
+                for (idx, child) in children.iter().enumerate() {
+                    let child_len = child.len();
+                    let child_range = next_pos..(next_pos + child_len);
+                    next_pos += child_len;
+
+                    if child_range.is_empty() {
+                        continue; // skip empty child
+                    }
+                    if child_range.end <= remaining_range.start {
+                        new_children.push(child.clone());
+                        continue;
+                    }
+                    if child_range.start >= remaining_range.end {
+                        new_children.push(child.clone());
+                        continue;
+                    }
+
+                    // Process child that intersects with range
+                    let new_child = child.remove(child_range, config);
+                    if !new_child.is_empty() {
+                        new_children.push(Arc::new(new_child));
+                    }
+                    // Adjust remaining range
+                    remaining_range.start = remaining_range.start + child_len;
                 }
 
-                let new_left = if range.start < left.len() {
-                    Arc::new(left.remove(Self::range_cap(&range, left.len()), chunk_size))
-                } else {
-                    left.clone()
-                };
-
-                let right_range = Self::range_shift_left(&range, left.len());
-                let new_right = if right_range.start < right.len() {
-                    Arc::new(right.remove(Self::range_cap(&right_range, right.len()), chunk_size))
-                } else {
-                    right.clone()
-                };
-
-                let new_size = new_left.len() + new_right.len();
-
-                assert!(*size >= new_size);
-                assert_eq!(size - Self::range_cap(&range, *size).len(), new_size);
-
-                // flatten when possible: if two are empty, keep the other
-                match (new_left.len(), new_right.len()) {
-                    (0, _) => {
-                        return (*new_right).clone();
-                    }
-                    (_, 0) => {
-                        return (*new_left).clone();
-                    }
-                    _ => {}
-                };
-
                 ChunkTreeNode::Internal {
-                    left: new_left,
-                    right: new_right,
-                    size: new_size,
+                    children: new_children,
+                    size: size - range.len(),
                 }
             }
         }
@@ -287,13 +276,10 @@ impl<'a> ChunkTreeNode<'a> {
                     output.push(gap_value);
                 }
             }
-            ChunkTreeNode::Internal {
-                left,
-                right,
-                size: _,
-            } => {
-                left.collect_bytes_into(gap_value, output);
-                right.collect_bytes_into(gap_value, output);
+            ChunkTreeNode::Internal { children, size: _ } => {
+                for child in children {
+                    child.collect_bytes_into(gap_value, output);
+                }
             }
         }
     }
@@ -328,16 +314,16 @@ impl<'a> Iterator for ChunkTreeIterator<'a> {
             match node {
                 ChunkTreeNode::Leaf { data } => return Some(ChunkPiece::Data { data }),
                 ChunkTreeNode::Gap { size } => return Some(ChunkPiece::Gap { size: *size }),
-                ChunkTreeNode::Internal { left, right, .. } => match child_idx {
-                    0 => {
-                        self.stack.push((node, 1));
-                        self.stack.push((left, 0));
+                ChunkTreeNode::Internal { children, .. } => {
+                    if child_idx < children.len() {
+                        if child_idx + 1 < children.len() {
+                            self.stack.push((node, child_idx + 1));
+                        }
+                        self.stack.push((&children[child_idx], 0));
+                    } else {
+                        panic!("invalid child_idx: {:?}", child_idx);
                     }
-                    1 => {
-                        self.stack.push((right, 0));
-                    }
-                    _ => panic!("invalid child_idx: {:?}", child_idx),
-                },
+                }
             }
         }
         None
