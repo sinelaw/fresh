@@ -268,6 +268,8 @@ impl<'a> ChunkTreeNode<'a> {
             return ChunkTreeNode::empty();
         }
 
+        log!("range: {:?}", range);
+
         match self {
             ChunkTreeNode::Leaf { data } => ChunkTreeNode::Internal {
                 children: vec![
@@ -305,7 +307,7 @@ impl<'a> ChunkTreeNode<'a> {
                     }
 
                     // Process child that intersects with range
-                    let end = std::cmp::min(remaining_range.start + child_len, remaining_range.end);
+                    let end = std::cmp::min(child_pos + child_len, remaining_range.end);
                     let remove_relative_range =
                         (remaining_range.start - child_pos)..(end - child_pos);
                     log!(
@@ -494,7 +496,6 @@ mod tests {
         assert_eq!(tree.collect_bytes(0), vec![]);
     }
 
-    #[should_panic]
     #[test]
     fn test_empty_operations() {
         let tree = ChunkTree::from_slice(b"test", SMALL_CONFIG);
@@ -693,8 +694,8 @@ mod tests {
                 assert_eq!(tree.collect_bytes(b'X'), b"HelloX World!");
 
                 let tree = tree.remove(4..7);
-                assert_eq!(tree.len(), 12);
                 assert_eq!(tree.collect_bytes(b'X'), b"HellWorld!");
+                assert_eq!(tree.len(), 10);
             }
         }
     }
@@ -939,9 +940,6 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_zero_size_chunk() {
-        let _tree = ChunkTree::new(ChunkTreeConfig {
-            chunk_size: 0,
-            max_children: 1,
-        });
+        let _config = ChunkTreeConfig::new(0, 1);
     }
 }
