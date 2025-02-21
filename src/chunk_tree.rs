@@ -77,7 +77,7 @@ enum ChunkTreeNode<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ChunkTreeConfig {
+pub struct ChunkTreeConfig {
     chunk_size: usize,
     max_children: usize,
 }
@@ -135,7 +135,7 @@ impl<'a> ChunkTreeNode<'a> {
         &self,
         gap_size: usize,
         other: Arc<ChunkTreeNode<'a>>,
-        config: ChunkTreeConfig,
+        _config: ChunkTreeConfig,
     ) -> ChunkTreeNode<'a> {
         let other_len = other.len();
         match self {
@@ -284,7 +284,7 @@ impl<'a> ChunkTreeNode<'a> {
                 let mut new_children = Vec::new();
                 let mut remaining_range = range.clone();
                 // Iterate through children to find affected ranges
-                for (idx, child) in children.iter().enumerate() {
+                for child in children.iter() {
                     let child_len = child.len();
                     let child_pos = next_pos;
                     next_pos += child_len;
