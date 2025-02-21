@@ -71,27 +71,30 @@ enum ChunkTreeNode<'a> {
         size: usize,
     },
     Internal {
-        left: Arc<ChunkTreeNode<'a>>,
-        right: Arc<ChunkTreeNode<'a>>,
+        children: Vec<Arc<ChunkTreeNode<'a>>>,
         size: usize,
     },
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ChunkTreeConfig {
+    chunk_size: usize,
+    max_children: usize,
+}
+
 impl<'a> ChunkTreeNode<'a> {
-    fn from_slice(data: &'a [u8], chunk_size: usize) -> ChunkTreeNode<'a> {
-        assert!(chunk_size > 0);
-        if data.len() <= chunk_size {
+    fn from_slice(data: &'a [u8], config: ChunkTreeConfig) -> ChunkTreeNode<'a> {
+        if data.len() <= config.chunk_size {
             return ChunkTreeNode::Leaf { data };
         }
 
         let mid_index = data.len() / 2;
-        let left = Self::from_slice(&data[..mid_index], chunk_size);
-        let right = Self::from_slice(&data[mid_index..], chunk_size);
+        let left = Self::from_slice(&data[..mid_index], config);
+        let right = Self::from_slice(&data[mid_index..], config);
         let size = data.len();
 
         ChunkTreeNode::Internal {
-            left: Arc::new(left),
-            right: Arc::new(right),
+            children: vec![Arc::new(left), Arc::new(right)],
             size,
         }
     }
@@ -117,77 +120,92 @@ impl<'a> ChunkTreeNode<'a> {
     }
 
     /// Inserts bytes in between existing data - growing the tree by data.len() bytes
-    fn insert(&self, index: usize, data: &'a [u8], chunk_size: usize) -> ChunkTreeNode<'a> {
-        assert!(index <= self.len());
+    ///
+    /// 'index' can be larger than the size of the node (sparse insert)
+    fn insert(&self, index: usize, data: &'a [u8], config: ChunkTreeConfig) -> ChunkTreeNode<'a> {
+        assert!(!data.is_empty());
         match self {
             ChunkTreeNode::Leaf { data: leaf_data } => {
-                let left = Self::from_slice(&leaf_data[..index], chunk_size);
-                let mid = Self::from_slice(data, chunk_size);
-                let right = Self::from_slice(&leaf_data[index..], chunk_size);
-
-                assert_eq!(leaf_data.len(), left.len() + right.len());
+                let mut children = Vec::with_capacity(3);
+                if index > 0 {
+                    children.push(Arc::new(Self::from_slice(&leaf_data[..index], config)));
+                }
+                if index < leaf_data.len() {
+                    children.push(Arc::new(Self::from_slice(data, config)));
+                    children.push(Arc::new(Self::from_slice(&leaf_data[index..], config)));
+                }
                 ChunkTreeNode::Internal {
-                    left: Arc::new(left),
-                    right: Arc::new(ChunkTreeNode::Internal {
-                        size: mid.len() + right.len(),
-                        left: Arc::new(mid),
-                        right: Arc::new(right),
-                    }),
+                    children,
                     size: leaf_data.len() + data.len(),
                 }
             }
             ChunkTreeNode::Gap { size } => {
-                let right = if *size == index {
-                    Arc::new(Self::from_slice(data, chunk_size))
-                } else {
-                    let end_padding = size.checked_sub(index).unwrap();
-                    Arc::new(ChunkTreeNode::Internal {
-                        left: Arc::new(Self::from_slice(data, chunk_size)),
-                        right: Arc::new(ChunkTreeNode::Gap { size: end_padding }),
-                        size: data.len() + end_padding,
-                    })
-                };
+                let mut children = Vec::with_capacity(3);
+                if index > 0 {
+                    children.push(Arc::new(ChunkTreeNode::Gap { size: index }));
+                }
+                if !data.is_empty() {
+                    children.push(Arc::new(Self::from_slice(data, config)));
+                }
+                if index < *size {
+                    children.push(Arc::new(ChunkTreeNode::Gap { size: size - index }));
+                }
                 ChunkTreeNode::Internal {
-                    size: index + right.len(),
-                    left: Arc::new(ChunkTreeNode::Gap { size: index }),
-                    right,
+                    children,
+                    size: size + data.len(),
                 }
             }
-            ChunkTreeNode::Internal { left, right, size } => {
-                assert_eq!(*size, left.len() + right.len());
-                let left_size = left.len();
-                if index <= left_size {
-                    let new_left = left.insert(index, data, chunk_size);
-                    let new_size = new_left.len() + right.len();
-                    ChunkTreeNode::Internal {
-                        left: Arc::new(new_left),
-                        right: right.clone(),
-                        size: new_size,
+            ChunkTreeNode::Internal { children, size } => {
+                let mut current_pos = 0;
+                let mut i = 0;
+                // Find which child we should insert into
+                for (idx, child) in children.iter().enumerate() {
+                    if current_pos + child.len() >= index {
+                        i = idx;
+                        break;
                     }
-                } else if index <= left_size + right.len() {
-                    let new_right = right.insert(index - left_size, data, chunk_size);
-                    let new_size = left_size + new_right.len();
-                    ChunkTreeNode::Internal {
-                        left: left.clone(),
-                        right: Arc::new(new_right),
-                        size: new_size,
-                    }
+                    current_pos += child.len();
+                }
+
+                if i >= children.len() {
+                    panic!("bug: sparse insert should have been handled above!");
+                }
+
+                // Insert into the appropriate child
+                let relative_index = index - current_pos;
+                let mut new_children = children.clone();
+
+                if relative_index == 0 {
+                    // Insert at start of child - add as new node between children
+                    new_children.insert(i, Arc::new(ChunkTreeNode::from_slice(data, config)));
+                } else if relative_index == children[i].len() {
+                    // Insert at end of child - add as new node between children
+                    new_children.insert(i + 1, Arc::new(ChunkTreeNode::from_slice(data, config)));
                 } else {
-                    panic!("bug: sparse insert should have been handled above!")
+                    // Insert within child
+                    let new_child = new_children[i].insert(relative_index, data, config);
+                    new_children[i] = Arc::new(new_child);
+                }
+
+                ChunkTreeNode::Internal {
+                    children: new_children,
+                    size: size + data.len(),
                 }
             }
         }
     }
 
-    pub fn remove(&self, range: Range<usize>, chunk_size: usize) -> ChunkTreeNode<'a> {
+    pub fn remove(&self, range: Range<usize>, config: ChunkTreeConfig) -> ChunkTreeNode<'a> {
         if self.len() == 0 && range.is_empty() {
             return ChunkTreeNode::empty();
         }
 
         match self {
             ChunkTreeNode::Leaf { data } => ChunkTreeNode::Internal {
-                left: Arc::new(Self::from_slice(&data[..range.start], chunk_size)),
-                right: Arc::new(Self::from_slice(&data[range.end..], chunk_size)),
+                children: vec![
+                    Arc::new(Self::from_slice(&data[..range.start], config)),
+                    Arc::new(Self::from_slice(&data[range.end..], config)),
+                ],
                 size: data.len() - range.len(),
             },
             ChunkTreeNode::Gap { size } => {
@@ -328,19 +346,19 @@ impl<'a> Iterator for ChunkTreeIterator<'a> {
 #[derive(Debug)]
 pub struct ChunkTree<'a> {
     root: Arc<ChunkTreeNode<'a>>,
-    chunk_size: usize,
+    config: ChunkTreeConfig,
 }
 
 impl<'a> ChunkTree<'a> {
     /// Panics if n = 0
-    pub fn new(chunk_size: usize) -> ChunkTree<'a> {
-        Self::from_slice(&[], chunk_size)
+    pub fn new(config: ChunkTreeConfig) -> ChunkTree<'a> {
+        Self::from_slice(&[], config)
     }
 
     /// Creates a tree from (possibly empty) data
-    pub fn from_slice(data: &'a [u8], chunk_size: usize) -> ChunkTree<'a> {
+    pub fn from_slice(data: &'a [u8], config: ChunkTreeConfig) -> ChunkTree<'a> {
         ChunkTree {
-            root: Arc::new(ChunkTreeNode::from_slice(data, chunk_size)),
+            root: Arc::new(ChunkTreeNode::from_slice(data, config)),
             chunk_size,
         }
     }
