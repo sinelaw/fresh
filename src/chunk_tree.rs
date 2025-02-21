@@ -119,6 +119,53 @@ impl<'a> ChunkTreeNode<'a> {
         ChunkTreeNode::Gap { size: 0 }
     }
 
+    /// Concatenates two trees with optional gap
+    fn append(
+        &self,
+        gap_size: usize,
+        other: Arc<ChunkTreeNode<'a>>,
+        config: ChunkTreeConfig,
+    ) -> ChunkTreeNode<'a> {
+        let other_len = other.len();
+        match self {
+            ChunkTreeNode::Leaf { .. } => {
+                let mut children = Vec::new();
+                children.push(Arc::new(self.clone()));
+                if gap_size > 0 {
+                    children.push(Arc::new(ChunkTreeNode::Gap { size: gap_size }));
+                }
+                children.push(other);
+                ChunkTreeNode::Internal {
+                    children,
+                    size: self.len() + gap_size + other_len,
+                }
+            }
+            ChunkTreeNode::Gap { .. } => {
+                let mut children = Vec::new();
+                children.push(Arc::new(self.clone()));
+                if gap_size > 0 {
+                    children.push(Arc::new(ChunkTreeNode::Gap { size: gap_size }));
+                }
+                children.push(other);
+                ChunkTreeNode::Internal {
+                    children,
+                    size: self.len() + gap_size + other_len,
+                }
+            }
+            ChunkTreeNode::Internal { children, size } => {
+                let mut new_children = children.clone();
+                if gap_size > 0 {
+                    new_children.push(Arc::new(ChunkTreeNode::Gap { size: gap_size }));
+                }
+                new_children.push(other);
+                ChunkTreeNode::Internal {
+                    children: new_children,
+                    size: size + gap_size + other_len,
+                }
+            }
+        }
+    }
+
     /// Inserts bytes in between existing data - growing the tree by data.len() bytes
     ///
     /// panics if `index > self.len()` (sparse insert)
@@ -228,28 +275,32 @@ impl<'a> ChunkTreeNode<'a> {
                 // Iterate through children to find affected ranges
                 for (idx, child) in children.iter().enumerate() {
                     let child_len = child.len();
-                    let child_range = next_pos..(next_pos + child_len);
+                    let child_pos = next_pos;
                     next_pos += child_len;
+                    let child_range_abs = child_pos..(child_pos + child_len);
 
-                    if child_range.is_empty() {
+                    if child_range_abs.is_empty() {
                         continue; // skip empty child
                     }
-                    if child_range.end <= remaining_range.start {
+                    if child_range_abs.end <= remaining_range.start {
                         new_children.push(child.clone());
                         continue;
                     }
-                    if child_range.start >= remaining_range.end {
+                    if child_range_abs.start >= remaining_range.end {
                         new_children.push(child.clone());
                         continue;
                     }
 
                     // Process child that intersects with range
-                    let new_child = child.remove(child_range, config);
+                    let end = std::cmp::min(remaining_range.start + child_len, remaining_range.end);
+                    let remove_relative_range =
+                        (remaining_range.start - child_pos)..(end - child_pos);
+                    let new_child = child.remove(remove_relative_range, config);
                     if !new_child.is_empty() {
                         new_children.push(Arc::new(new_child));
                     }
                     // Adjust remaining range
-                    remaining_range.start = remaining_range.start + child_len;
+                    remaining_range.start = end;
                 }
 
                 ChunkTreeNode::Internal {
@@ -345,7 +396,7 @@ impl<'a> ChunkTree<'a> {
     pub fn from_slice(data: &'a [u8], config: ChunkTreeConfig) -> ChunkTree<'a> {
         ChunkTree {
             root: Arc::new(ChunkTreeNode::from_slice(data, config)),
-            chunk_size,
+            config,
         }
     }
 
@@ -360,24 +411,18 @@ impl<'a> ChunkTree<'a> {
     pub fn insert(&self, index: usize, data: &'a [u8]) -> ChunkTree<'a> {
         if index <= self.len() {
             ChunkTree {
-                root: Arc::new(self.root.insert(index, data, self.chunk_size)),
-                chunk_size: self.chunk_size,
+                root: Arc::new(self.root.insert(index, data, self.config)),
+                config: self.config,
             }
         } else {
             // sparse insert
             ChunkTree {
-                root: Arc::new(ChunkTreeNode::Internal {
-                    left: self.root.clone(),
-                    right: Arc::new(ChunkTreeNode::Internal {
-                        left: Arc::new(ChunkTreeNode::Gap {
-                            size: index - self.len(),
-                        }),
-                        right: Arc::new(ChunkTreeNode::from_slice(data, self.chunk_size)),
-                        size: index + data.len() - self.len(),
-                    }),
-                    size: index + data.len(),
-                }),
-                chunk_size: self.chunk_size,
+                root: Arc::new(self.root.append(
+                    index - self.len(),
+                    Arc::new(ChunkTreeNode::from_slice(&data, self.config)),
+                    self.config,
+                )),
+                config: self.config,
             }
         }
     }
@@ -387,15 +432,15 @@ impl<'a> ChunkTree<'a> {
             ChunkTree {
                 root: Arc::new(self.root.remove(
                     range.start..(std::cmp::min(self.root.len(), range.end)),
-                    self.chunk_size,
+                    self.config,
                 )),
-                chunk_size: self.chunk_size,
+                config: self.config,
             }
         } else {
             // sparse remove - do nothing
             ChunkTree {
                 root: self.root.clone(),
-                chunk_size: self.chunk_size,
+                config: self.config,
             }
         }
     }
