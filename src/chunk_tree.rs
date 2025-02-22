@@ -323,6 +323,10 @@ impl<'a> ChunkTreeNode<'a> {
                     remaining_range.start = end;
                 }
 
+                if new_children.len() == 1 {
+                    return (*new_children[0]).clone();
+                }
+
                 ChunkTreeNode::Internal {
                     children: new_children,
                     size: size - range.len(),
