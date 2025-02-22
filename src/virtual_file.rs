@@ -22,7 +22,7 @@ use std::{
 };
 
 use crate::{
-    chunk_tree::ChunkTree,
+    chunk_tree::{ChunkTree, ChunkTreeConfig},
     lines::EditLine,
     logs::log,
     memstore::{Chunk, ChunkIndex, LoadStore, Memstore},
@@ -134,7 +134,7 @@ impl<'a> VirtualFile<'a> {
             chunk_size,
             offset_version: 0,
             line_anchor: 0,
-            loaded_chunks: ChunkTree::new(1024 * 1024),
+            loaded_chunks: ChunkTree::new(ChunkTreeConfig::new(1024 * 1024, 16)),
             file: file.clone(),
             memstore: Memstore::new(FileLoadStore::new(file.clone())),
         };

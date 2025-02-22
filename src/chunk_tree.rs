@@ -1,28 +1,31 @@
-//! A rope-like data structure implemented as a ternary tree for efficient text manipulation.
+//! A rope-like data structure implemented as a tree for efficient text manipulation.
 //!
 //! # Overview
 //! `ChunkTree` is an immutable, persistent data structure that represents text as a tree of chunks,
-//! allowing for efficient insert and remove operations. It maintains data in a ternary tree structure
-//! where each internal node has three children (left, middle, and right), and leaf nodes contain
-//! the actual data. Being persistent means that operations create new versions of the tree while
-//! preserving the original, making it suitable for scenarios requiring history or undo functionality.
+//! allowing for efficient insert and remove operations. Each node in the tree can be a leaf containing
+//! actual data, a gap representing empty space, or an internal node with multiple children.
 //!
 //! # Type Parameters
 //! - `'a`: Lifetime parameter for the stored data
-//! - `N`: Const generic parameter that defines the maximum size of leaf chunks
+//!
+//! # Configuration
+//! The tree's behavior is controlled by `ChunkTreeConfig`:
+//! - `chunk_size`: Maximum size of leaf chunks
+//! - `max_children`: Maximum number of children for internal nodes
 //!
 //! # Examples
 //! ```
-//! use chunk_tree::ChunkTree;
+//! use chunk_tree::{ChunkTree, ChunkTreeConfig};
 //!
-//! let tree = ChunkTree::new(2);
+//! let config = ChunkTreeConfig::new(2, 2);
+//! let tree = ChunkTree::new(config);
 //! let tree = tree.insert(0, b"Hello");      // Creates a new tree, original remains unchanged
 //! let tree = tree.insert(5, b" World!");    // Creates another new version
-//! assert_eq!(tree.collect_bytes(), b"Hello World!");
+//! assert_eq!(tree.collect_bytes(b'_'), b"Hello World!");
 //!
 //! // Remove some content (creates new version)
 //! let tree = tree.remove(5..11);
-//! assert_eq!(tree.collect_bytes(), b"Hello!");
+//! assert_eq!(tree.collect_bytes(b'_'), b"Hello!");
 //!
 //! // Sparse insert (creates gaps)
 //! let tree = tree.insert(10, b"far away");  // Inserts with gaps
@@ -31,11 +34,11 @@
 //!
 //! # Implementation Details
 //! The tree maintains the following invariants:
-//! - Leaf nodes contain at most `N` bytes
-//! - Internal nodes track the total size of their subtree
+//! - Leaf nodes contain arbitrary-sized byte slices up to chunk_size
+//! - Gap nodes represent empty spaces efficiently
+//! - Internal nodes contain multiple children and track total size
 //! - All operations create new nodes instead of modifying existing ones
 //! - Unchanged subtrees are shared between versions through Arc
-//! - Gaps are represented explicitly using special Gap nodes
 //!
 //! # Sparse Operations
 //! The structure supports sparse operations:
@@ -87,7 +90,7 @@ pub struct ChunkTreeConfig {
 impl ChunkTreeConfig {
     pub const fn new(chunk_size: usize, max_children: usize) -> ChunkTreeConfig {
         assert!(chunk_size > 0);
-        assert!(max_children > 0);
+        assert!(max_children > 2);
         ChunkTreeConfig {
             chunk_size,
             max_children,
@@ -137,7 +140,7 @@ impl<'a> ChunkTreeNode<'a> {
         &self,
         gap_size: usize,
         other: Arc<ChunkTreeNode<'a>>,
-        _config: ChunkTreeConfig,
+        config: ChunkTreeConfig,
     ) -> ChunkTreeNode<'a> {
         let other_len = other.len();
         match self {
@@ -166,15 +169,13 @@ impl<'a> ChunkTreeNode<'a> {
                 }
             }
             ChunkTreeNode::Internal { children, size } => {
+                assert!(children.len() <= config.max_children);
                 let mut new_children = children.clone();
                 if gap_size > 0 {
                     new_children.push(Arc::new(ChunkTreeNode::Gap { size: gap_size }));
                 }
                 new_children.push(other);
-                ChunkTreeNode::Internal {
-                    children: new_children,
-                    size: size + gap_size + other_len,
-                }
+                Self::build_internal_node(config, size + gap_size + other_len, new_children)
             }
         }
     }
@@ -216,6 +217,7 @@ impl<'a> ChunkTreeNode<'a> {
                 }
             }
             ChunkTreeNode::Internal { children, size } => {
+                assert!(children.len() <= config.max_children);
                 let mut current_pos = 0;
                 let mut i = 0;
                 // Find which child we should insert into
@@ -247,10 +249,7 @@ impl<'a> ChunkTreeNode<'a> {
                     new_children[i] = Arc::new(new_child);
                 }
 
-                ChunkTreeNode::Internal {
-                    children: new_children,
-                    size: size + data.len(),
-                }
+                Self::build_internal_node(config, size + data.len(), new_children)
             }
         }
     }
@@ -332,6 +331,40 @@ impl<'a> ChunkTreeNode<'a> {
         }
     }
 
+    fn build_internal_node(
+        config: ChunkTreeConfig,
+        size: usize,
+        new_children: Vec<Arc<ChunkTreeNode<'a>>>,
+    ) -> ChunkTreeNode<'a> {
+        if new_children.len() <= config.max_children {
+            ChunkTreeNode::Internal {
+                children: new_children,
+                size,
+            }
+        } else {
+            // need to split the children between two nodes
+            let mid = new_children.len() / 2;
+            let left_children = new_children[..mid].to_vec();
+            let right_children = new_children[mid..].to_vec();
+            let left_size: usize = left_children.iter().map(|c| c.len()).sum();
+            let right_size: usize = right_children.iter().map(|c| c.len()).sum();
+            assert!(left_size + right_size == size);
+            ChunkTreeNode::Internal {
+                children: vec![
+                    Arc::new(ChunkTreeNode::Internal {
+                        children: left_children,
+                        size: left_size,
+                    }),
+                    Arc::new(ChunkTreeNode::Internal {
+                        children: right_children,
+                        size: right_size,
+                    }),
+                ],
+                size,
+            }
+        }
+    }
+
     fn range_shift_left(range: &Range<usize>, amount: usize) -> Range<usize> {
         (range.start.saturating_sub(amount))..(range.end.saturating_sub(amount))
     }
@@ -356,6 +389,7 @@ impl<'a> ChunkTreeNode<'a> {
         }
     }
 }
+
 pub struct ChunkTreeIterator<'a> {
     stack: Vec<(&'a ChunkTreeNode<'a>, usize)>, // (nodeext_child_index)
 }
@@ -486,7 +520,7 @@ impl<'a> ChunkTree<'a> {
 mod tests {
     use super::*;
 
-    const SMALL_CONFIG: ChunkTreeConfig = ChunkTreeConfig::new(2, 2);
+    const SMALL_CONFIG: ChunkTreeConfig = ChunkTreeConfig::new(2, 3);
 
     #[test]
     fn test_empty_tree() {
@@ -590,65 +624,35 @@ mod tests {
 
     #[test]
     fn test_insert_start_big_chunk() {
-        let tree = ChunkTree::from_slice(
-            b"World!",
-            ChunkTreeConfig {
-                chunk_size: 15,
-                max_children: 5,
-            },
-        );
+        let tree = ChunkTree::from_slice(b"World!", ChunkTreeConfig::new(15, 5));
         let tree = tree.insert(0, b"Hello ");
         assert_eq!(tree.collect_bytes(0), b"Hello World!");
     }
 
     #[test]
     fn test_insert_end_big_chunk() {
-        let tree = ChunkTree::from_slice(
-            b"Hello",
-            ChunkTreeConfig {
-                chunk_size: 15,
-                max_children: 5,
-            },
-        );
+        let tree = ChunkTree::from_slice(b"Hello", ChunkTreeConfig::new(15, 5));
         let tree = tree.insert(5, b" World!");
         assert_eq!(tree.collect_bytes(0), b"Hello World!");
     }
 
     #[test]
     fn test_remove_middle_big_chunk() {
-        let tree = ChunkTree::from_slice(
-            b"Hello beautiful World!",
-            ChunkTreeConfig {
-                chunk_size: 15,
-                max_children: 5,
-            },
-        );
+        let tree = ChunkTree::from_slice(b"Hello beautiful World!", ChunkTreeConfig::new(15, 5));
         let tree = tree.remove(5..15);
         assert_eq!(tree.collect_bytes(0), b"Hello World!");
     }
 
     #[test]
     fn test_remove_start_big_chunk() {
-        let tree = ChunkTree::from_slice(
-            b"Hello World!",
-            ChunkTreeConfig {
-                chunk_size: 15,
-                max_children: 5,
-            },
-        );
+        let tree = ChunkTree::from_slice(b"Hello World!", ChunkTreeConfig::new(15, 5));
         let tree = tree.remove(0..6);
         assert_eq!(tree.collect_bytes(0), b"World!");
     }
 
     #[test]
     fn test_remove_end_big_chunk() {
-        let tree = ChunkTree::from_slice(
-            b"Hello World!",
-            ChunkTreeConfig {
-                chunk_size: 15,
-                max_children: 5,
-            },
-        );
+        let tree = ChunkTree::from_slice(b"Hello World!", ChunkTreeConfig::new(15, 5));
         let tree = tree.remove(5..12);
         assert_eq!(tree.collect_bytes(0), b"Hello");
     }
@@ -663,14 +667,9 @@ mod tests {
     #[test]
     fn test_sparse_insert() {
         for chunk_size in 1..15 {
-            for max_children in 1..10 {
-                let tree = ChunkTree::from_slice(
-                    b"Hello",
-                    ChunkTreeConfig {
-                        chunk_size,
-                        max_children,
-                    },
-                );
+            for max_children in 3..10 {
+                let tree =
+                    ChunkTree::from_slice(b"Hello", ChunkTreeConfig::new(chunk_size, max_children));
                 let tree = tree.insert(6, b" World!");
                 assert_eq!(tree.len(), 13);
                 assert_eq!(tree.collect_bytes(b'X'), b"HelloX World!");
@@ -681,14 +680,9 @@ mod tests {
     #[test]
     fn test_sparse_insert_remove() {
         for chunk_size in 1..15 {
-            for max_children in 1..10 {
-                let tree = ChunkTree::from_slice(
-                    b"Hello",
-                    ChunkTreeConfig {
-                        chunk_size,
-                        max_children,
-                    },
-                );
+            for max_children in 3..10 {
+                let tree =
+                    ChunkTree::from_slice(b"Hello", ChunkTreeConfig::new(chunk_size, max_children));
                 let tree = tree.insert(6, b" World!");
                 assert_eq!(tree.len(), 13);
                 assert_eq!(tree.collect_bytes(b'X'), b"HelloX World!");
@@ -710,13 +704,7 @@ mod tests {
 
     #[test]
     fn test_remove_beyond_end() {
-        let tree = ChunkTree::from_slice(
-            b"Hello",
-            ChunkTreeConfig {
-                chunk_size: 15,
-                max_children: 5,
-            },
-        );
+        let tree = ChunkTree::from_slice(b"Hello", ChunkTreeConfig::new(15, 5));
         let tree = tree.remove(3..8);
         assert_eq!(tree.len(), 3);
         assert_eq!(tree.collect_bytes(0), b"Hel");
@@ -726,14 +714,9 @@ mod tests {
     fn test_insert_all_ranges() {
         let initial = b"Hello World!";
         for chunk_size in 1..15 {
-            for max_children in 1..10 {
-                let tree = ChunkTree::from_slice(
-                    initial,
-                    ChunkTreeConfig {
-                        chunk_size,
-                        max_children,
-                    },
-                );
+            for max_children in 3..10 {
+                let tree =
+                    ChunkTree::from_slice(initial, ChunkTreeConfig::new(chunk_size, max_children));
                 for pos in 0..=initial.len() {
                     for len in 0..=initial.len() {
                         let data = ("0123456789abcdefgh"[0..len]).as_bytes();
@@ -758,14 +741,9 @@ mod tests {
     fn test_remove_all_ranges() {
         let initial = b"Hello World!";
         for chunk_size in 1..15 {
-            for max_children in 1..15 {
-                let tree = ChunkTree::from_slice(
-                    initial,
-                    ChunkTreeConfig {
-                        chunk_size,
-                        max_children,
-                    },
-                );
+            for max_children in 3..15 {
+                let tree =
+                    ChunkTree::from_slice(initial, ChunkTreeConfig::new(chunk_size, max_children));
                 for pos in 0..initial.len() {
                     for len in 0..=initial.len() {
                         // Test remove
@@ -831,11 +809,8 @@ mod tests {
     #[test]
     fn test_fill_sparse() {
         for chunk_size in 1..15 {
-            for max_children in 1..15 {
-                let tree = ChunkTree::new(ChunkTreeConfig {
-                    chunk_size: chunk_size,
-                    max_children: max_children,
-                });
+            for max_children in 3..15 {
+                let tree = ChunkTree::new(ChunkTreeConfig::new(chunk_size, max_children));
                 let tree = tree.insert(1, b"the end");
                 let tree = tree.insert(0, b"start");
                 assert_eq!(tree.collect_bytes(b'_'), b"start_the end");
@@ -846,11 +821,8 @@ mod tests {
     #[test]
     fn test_complex_sparse_operations() {
         for chunk_size in 1..30 {
-            for max_children in 1..15 {
-                let config = ChunkTreeConfig {
-                    chunk_size,
-                    max_children,
-                };
+            for max_children in 3..15 {
+                let config = ChunkTreeConfig::new(chunk_size, max_children);
                 let tree = ChunkTree::new(config);
 
                 // Test sparse insert with large gap
