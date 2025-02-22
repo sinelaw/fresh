@@ -611,6 +611,27 @@ mod tests {
     }
 
     #[test]
+    fn test_remove_all_piecewise() {
+        let tree = ChunkTree::from_slice(b"Hello World!", SMALL_CONFIG);
+        let tree = tree.remove(0..2);
+        let tree = tree.remove(0..2);
+        let tree = tree.remove(0..2);
+        let tree = tree.remove(0..2);
+        let tree = tree.remove(0..2);
+        let tree = tree.remove(0..2);
+        assert_eq!(tree.collect_bytes(0), b"");
+        assert_eq!(tree.len(), 0);
+    }
+
+    #[test]
+    fn test_remove_all() {
+        let tree = ChunkTree::from_slice(b"Hello World!", SMALL_CONFIG);
+        let tree = tree.remove(0..12);
+        assert_eq!(tree.collect_bytes(0), b"");
+        assert_eq!(tree.len(), 0);
+    }
+
+    #[test]
     fn test_from_slice_big_chunk() {
         let data = b"Hello World!";
         let tree = ChunkTree::from_slice(data, ChunkTreeConfig::new(15, 5));
