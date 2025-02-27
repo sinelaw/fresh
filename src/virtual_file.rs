@@ -151,6 +151,7 @@ impl<'a> VirtualFile<'a> {
         let offset = self.resolve_offset(from);
         log!("seek: from: {:?} => offset: {:?}", from, offset);
         //self.loaded_chunks.i
+        
         self.load_lines(offset);
 
         // Move the anchor to be as near as possible to the requested seek position:

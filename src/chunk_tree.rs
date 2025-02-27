@@ -98,6 +98,12 @@ impl ChunkTreeConfig {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub enum ChunkPiece<'a> {
+    Data { data: &'a [u8] },
+    Gap { size: usize },
+}
+
 impl<'a> ChunkTreeNode<'a> {
     fn from_slice(data: &'a [u8], config: ChunkTreeConfig) -> ChunkTreeNode<'a> {
         if data.len() <= config.chunk_size {
@@ -133,6 +139,27 @@ impl<'a> ChunkTreeNode<'a> {
 
     fn empty() -> ChunkTreeNode<'a> {
         ChunkTreeNode::Gap { size: 0 }
+    }
+
+    fn get(&self, index: usize) -> ChunkPiece<'a> {
+        assert!(index < self.len());
+        match self {
+            ChunkTreeNode::Leaf { data } => ChunkPiece::Data {
+                data: &data[index..],
+            },
+            ChunkTreeNode::Gap { size } => ChunkPiece::Gap { size: size - index },
+            ChunkTreeNode::Internal { children, size: _ } => {
+                let mut cur_offset = 0;
+                for child in children {
+                    let next_offset = cur_offset + child.len();
+                    if index < next_offset {
+                        return child.get(index - cur_offset);
+                    }
+                    cur_offset = next_offset;
+                }
+                panic!("out of range index should have been caught by assert above");
+            }
+        }
     }
 
     /// Concatenates two trees with optional gap
@@ -406,12 +433,6 @@ impl<'a> ChunkTreeNode<'a> {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum ChunkPiece<'a> {
-    Data { data: &'a [u8] },
-    Gap { size: usize },
-}
-
 impl<'a> Iterator for ChunkTreeIterator<'a> {
     type Item = ChunkPiece<'a>;
 
@@ -465,6 +486,10 @@ impl<'a> ChunkTree<'a> {
 
     pub fn is_empty(&self) -> bool {
         self.root.is_empty()
+    }
+
+    pub fn get(&self, index: usize) -> ChunkPiece<'a> {
+        self.root.get(index)
     }
 
     pub fn insert(&self, index: usize, data: &'a [u8]) -> ChunkTree<'a> {
@@ -938,5 +963,47 @@ mod tests {
     #[should_panic]
     fn test_zero_size_chunk() {
         let _config = ChunkTreeConfig::new(0, 1);
+    }
+
+    #[test]
+    fn test_get_empty() {
+        let tree = ChunkTree::new(SMALL_CONFIG);
+
+        // Empty tree should panic on get
+        let result = std::panic::catch_unwind(|| {
+            tree.get(0);
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get() {
+        // Test get on simple tree
+        let tree = ChunkTree::from_slice(b"Hello", SMALL_CONFIG);
+        assert_eq!(tree.get(0), ChunkPiece::Data { data: b"He" });
+        assert_eq!(tree.get(2), ChunkPiece::Data { data: b"l" });
+
+        // Test get on tree with gaps
+        let tree = tree.insert(7, b"World");
+        assert_eq!(tree.get(5), ChunkPiece::Gap { size: 2 });
+        assert_eq!(tree.get(7), ChunkPiece::Data { data: b"Wo" });
+
+        // Test get on complex tree
+        let tree = ChunkTree::new(ChunkTreeConfig::new(100, 3))
+            .insert(0, b"start")
+            .insert(10, b"middle")
+            .insert(20, b"end");
+
+        assert_eq!(tree.get(0), ChunkPiece::Data { data: b"start" });
+        assert_eq!(tree.get(5), ChunkPiece::Gap { size: 5 });
+        assert_eq!(tree.get(10), ChunkPiece::Data { data: b"middle" });
+        assert_eq!(tree.get(16), ChunkPiece::Gap { size: 4 });
+        assert_eq!(tree.get(20), ChunkPiece::Data { data: b"end" });
+
+        // Out of bounds should panic
+        let result = std::panic::catch_unwind(|| {
+            tree.get(100);
+        });
+        assert!(result.is_err());
     }
 }
