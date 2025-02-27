@@ -235,7 +235,7 @@ impl<'a> ChunkTreeNode<'a> {
             }
             ChunkTreeNode::Internal { children, size } => {
                 let mut current_pos = 0;
-                let mut data_index = 0;
+
                 let mut new_children = Vec::new();
 
                 for child in children {
@@ -249,30 +249,36 @@ impl<'a> ChunkTreeNode<'a> {
                         continue;
                     }
                     // Already finished filling up, rest of children left as-is
-                    if data_index == data.len() {
+                    if child_pos >= index + data.len() {
                         new_children.push(child.clone());
                         continue;
                     }
 
                     // child overlaps fill range
-                    assert!(index + data_index >= child_pos);
-                    let child_relative_index = index + data_index - child_pos;
-                    if index < child_pos {
-                        assert!(index + data_index == child_pos);
-                    }
-
+                    let child_relative_index = index.saturating_sub(child_pos);
+                    let data_index = child_pos.saturating_sub(index);
                     let data_end = std::cmp::min(data.len(), child.len() - child_relative_index);
-                    let data_slice = &data[data_index..data_end];
-                    log!("index: {}, data_index: {}", index, data_index);
-                    data_index += data_slice.len();
-
-                    log!(
-                        "child_pos: {}, child_relative_index: {}, data_slice.len(): {:?}, child: {:?}",
+                    if data_index >= data_end {
+                        new_children.push(child.clone());
+                        continue;
+                    }
+                    log!("index: {}, data_index: {}, data_end: {}, child_pos: {}, child_relative_index: {}, data.len(): {}, child: {:?}",
+                        index,
+                        data_index,
+                        data_end,
                         child_pos,
                         child_relative_index,
-                        data_slice.len(),
+                        data.len(),
                         child
                     );
+
+                    let data_slice = &data[data_index..data_end];
+                    log!(
+                        "data_slice.len(): {:?}, data_slice: {:?}",
+                        data_slice.len(),
+                        data_slice
+                    );
+
                     let new_child = child.fill(child_relative_index, data_slice, config);
                     new_children.push(Arc::new(new_child));
                 }
@@ -1126,8 +1132,8 @@ mod tests {
             .insert(6, b"cd")
             .insert(10, b"ef");
         assert_eq!(tree.collect_bytes(b'_'), b"__ab__cd__ef");
-        let tree = tree.fill(0, b"123456");
-        assert_eq!(tree.collect_bytes(b'_'), b"12ab34cd56ef");
+        let tree = tree.fill(0, b"123456789");
+        assert_eq!(tree.collect_bytes(b'_'), b"12ab56cd9_ef");
     }
 
     #[test]
