@@ -556,9 +556,41 @@ impl<'a> ChunkTree<'a> {
 
     /// Fills gaps with given data starting at 'index' (inserting if tree.len() is surpassed)
     pub fn fill(&self, index: usize, data: &'a [u8]) -> ChunkTree<'a> {
-        ChunkTree {
-            root: Arc::new(self.root.fill(index, data, self.config)),
-            config: self.config,
+        if data.len() == 0 {
+            ChunkTree {
+                root: self.root.clone(),
+                config: self.config,
+            }
+        } else if index <= self.len() {
+            let data_end = std::cmp::min(self.root.len() - index, data.len());
+            let filled = self.root.fill(index, &data[..data_end], self.config);
+            assert_eq!(filled.len(), self.root.len());
+            let new_root = if index + data.len() <= self.root.len() {
+                filled
+            } else {
+                filled.append(
+                    0,
+                    Arc::new(ChunkTreeNode::from_slice(
+                        &data[(self.root.len() - index)..],
+                        self.config,
+                    )),
+                    self.config,
+                )
+            };
+            ChunkTree {
+                root: Arc::new(new_root),
+                config: self.config,
+            }
+        } else {
+            // sparse fill
+            ChunkTree {
+                root: Arc::new(self.root.append(
+                    index - self.len(),
+                    Arc::new(ChunkTreeNode::from_slice(&data, self.config)),
+                    self.config,
+                )),
+                config: self.config,
+            }
         }
     }
 
@@ -1124,26 +1156,26 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn test_fill_invalid_index() {
-        // Test invalid fills
+    fn test_fill_sparse_index() {
         let tree = ChunkTree::from_slice(b"abc", SMALL_CONFIG);
-        // Fill beyond length should panic
+        // Fill beyond length
         tree.fill(4, b"xyz");
+        assert_eq!(tree.collect_bytes(b'_'), b"abc_xyz");
     }
 
     #[test]
-    #[should_panic]
-    fn test_fill_invalid_len() {
+    fn test_fill_beyond_end() {
         // Test invalid fills
         let tree = ChunkTree::from_slice(b"abc", SMALL_CONFIG);
         // Fill that would overflow length should panic
-        tree.fill(2, b"toolong");
+        let tree = tree.fill(2, b"toolong");
+        assert_eq!(tree.collect_bytes(b'_'), b"abcoolong");
     }
 
     #[test]
-    #[should_panic]
-    fn test_fill_sparse() {
+    fn test_fill_empty() {
         let tree = ChunkTree::from_slice(b"abc", SMALL_CONFIG);
-        tree.fill(0, b"");
+        let tree = tree.fill(0, b"");
+        assert_eq!(tree.collect_bytes(b'_'), b"abc");
     }
 }
