@@ -150,14 +150,14 @@ impl<'a> VirtualFile<'a> {
     pub fn seek(&mut self, from: SeekFrom) -> LineCursor {
         let offset = self.resolve_offset(from);
         log!("seek: from: {:?} => offset: {:?}", from, offset);
-        //self.loaded_chunks.i
-        match self.loaded_chunks.get(offset as usize) {
-            crate::chunk_tree::ChunkPiece::Data { data } => { /* already loaded */ }
-            crate::chunk_tree::ChunkPiece::Gap { size } => {
-                let chunk = self.memstore.get(&ChunkIndex::new(offset, self.chunk_size));
+
+        let chunk = self.memstore.get(&ChunkIndex::new(offset, self.chunk_size));
+        match chunk {
+            Chunk::Loaded { data, need_store } => {
+                self.loaded_chunks = self.loaded_chunks.fill(offset as usize, data);
             }
-        }
-        self.load_lines(offset);
+            Chunk::Empty => {}
+        };
 
         // Move the anchor to be as near as possible to the requested seek position:
         for (index, line) in self.chunk_lines.iter().enumerate() {
