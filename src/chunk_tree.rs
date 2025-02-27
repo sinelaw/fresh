@@ -241,6 +241,7 @@ impl<'a> ChunkTreeNode<'a> {
                 for child in children {
                     let child_len = child.len();
                     let child_pos = current_pos;
+
                     current_pos += child_len;
 
                     // Child before index
@@ -257,28 +258,13 @@ impl<'a> ChunkTreeNode<'a> {
                     // child overlaps fill range
                     let child_relative_index = index.saturating_sub(child_pos);
                     let data_index = child_pos.saturating_sub(index);
-                    let data_end = std::cmp::min(data.len(), child.len() - child_relative_index);
+                    let data_end =
+                        std::cmp::min(data.len(), data_index + child.len() - child_relative_index);
                     if data_index >= data_end {
                         new_children.push(child.clone());
                         continue;
                     }
-                    log!("index: {}, data_index: {}, data_end: {}, child_pos: {}, child_relative_index: {}, data.len(): {}, child: {:?}",
-                        index,
-                        data_index,
-                        data_end,
-                        child_pos,
-                        child_relative_index,
-                        data.len(),
-                        child
-                    );
-
                     let data_slice = &data[data_index..data_end];
-                    log!(
-                        "data_slice.len(): {:?}, data_slice: {:?}",
-                        data_slice.len(),
-                        data_slice
-                    );
-
                     let new_child = child.fill(child_relative_index, data_slice, config);
                     new_children.push(Arc::new(new_child));
                 }
