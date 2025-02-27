@@ -151,7 +151,12 @@ impl<'a> VirtualFile<'a> {
         let offset = self.resolve_offset(from);
         log!("seek: from: {:?} => offset: {:?}", from, offset);
         //self.loaded_chunks.i
-        
+        match self.loaded_chunks.get(offset as usize) {
+            crate::chunk_tree::ChunkPiece::Data { data } => { /* already loaded */ }
+            crate::chunk_tree::ChunkPiece::Gap { size } => {
+                let chunk = self.memstore.get(&ChunkIndex::new(offset, self.chunk_size));
+            }
+        }
         self.load_lines(offset);
 
         // Move the anchor to be as near as possible to the requested seek position:

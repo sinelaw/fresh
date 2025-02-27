@@ -207,6 +207,83 @@ impl<'a> ChunkTreeNode<'a> {
         }
     }
 
+    /// Fills gaps with given data starting at 'index'
+    ///
+    /// panics if `index > self.len()` or `index + data.len() > self.len()`
+    /// panics if data.is_empty()
+    fn fill(&self, index: usize, data: &'a [u8], config: ChunkTreeConfig) -> ChunkTreeNode<'a> {
+        assert!(index <= self.len());
+        assert!(index + data.len() <= self.len());
+        assert!(!data.is_empty());
+
+        match self {
+            ChunkTreeNode::Leaf { data: leaf_data } => ChunkTreeNode::Leaf { data: leaf_data },
+            ChunkTreeNode::Gap { size } => {
+                let mut children = Vec::new();
+                if index > 0 {
+                    children.push(Arc::new(ChunkTreeNode::Gap { size: index }));
+                }
+                children.push(Arc::new(Self::from_slice(data, config)));
+                let end = index + data.len();
+                if end < *size {
+                    children.push(Arc::new(ChunkTreeNode::Gap { size: size - end }));
+                }
+                ChunkTreeNode::Internal {
+                    children,
+                    size: *size,
+                }
+            }
+            ChunkTreeNode::Internal { children, size } => {
+                let mut current_pos = 0;
+                let mut data_index = 0;
+                let mut new_children = Vec::new();
+
+                for child in children {
+                    let child_len = child.len();
+                    let child_pos = current_pos;
+                    current_pos += child_len;
+
+                    // Child before index
+                    if child_pos + child_len <= index {
+                        new_children.push(child.clone());
+                        continue;
+                    }
+                    // Already finished filling up, rest of children left as-is
+                    if data_index == data.len() {
+                        new_children.push(child.clone());
+                        continue;
+                    }
+
+                    // child overlaps fill range
+                    assert!(index + data_index >= child_pos);
+                    let child_relative_index = index + data_index - child_pos;
+                    if index < child_pos {
+                        assert!(index + data_index == child_pos);
+                    }
+                    log!("index: {}, data_index: {}", index, data_index);
+
+                    let data_slice = &data[data_index..std::cmp::min(data.len(), child.len())];
+                    data_index += data_slice.len();
+
+                    log!(
+                        "child_pos: {}, child_relative_index: {}, data_slice.len(): {:?}, child: {:?}",
+                        child_pos,
+                        child_relative_index,
+                        data_slice.len(),
+                        child
+                    );
+                    let new_child = child.fill(child_relative_index, data_slice, config);
+                    new_children.push(Arc::new(new_child));
+                }
+
+                ChunkTreeNode::Internal {
+                    children: new_children,
+                    size: *size,
+                }
+            }
+        }
+    }
+
     /// Inserts bytes in between existing data - growing the tree by data.len() bytes
     ///
     /// panics if `index > self.len()` (sparse insert)
@@ -396,14 +473,6 @@ impl<'a> ChunkTreeNode<'a> {
         }
     }
 
-    fn range_shift_left(range: &Range<usize>, amount: usize) -> Range<usize> {
-        (range.start.saturating_sub(amount))..(range.end.saturating_sub(amount))
-    }
-
-    fn range_cap(range: &Range<usize>, max: usize) -> Range<usize> {
-        (std::cmp::min(range.start, max))..(std::cmp::min(range.end, max))
-    }
-
     fn collect_bytes_into(&self, gap_value: u8, output: &mut Vec<u8>) {
         match self {
             ChunkTreeNode::Leaf { data } => output.extend_from_slice(data),
@@ -490,6 +559,14 @@ impl<'a> ChunkTree<'a> {
 
     pub fn get(&self, index: usize) -> ChunkPiece<'a> {
         self.root.get(index)
+    }
+
+    /// Fills gaps with given data starting at 'index' (inserting if tree.len() is surpassed)
+    pub fn fill(&self, index: usize, data: &'a [u8]) -> ChunkTree<'a> {
+        ChunkTree {
+            root: Arc::new(self.root.fill(index, data, self.config)),
+            config: self.config,
+        }
     }
 
     pub fn insert(&self, index: usize, data: &'a [u8]) -> ChunkTree<'a> {
@@ -857,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_sparse() {
+    fn test_insert_sparse() {
         for chunk_size in 1..15 {
             for max_children in 3..15 {
                 let tree = ChunkTree::new(ChunkTreeConfig::new(chunk_size, max_children));
@@ -1005,5 +1082,75 @@ mod tests {
             tree.get(100);
         });
         assert!(result.is_err());
+    }
+    #[test]
+    fn test_fill_basic() {
+        let tree = ChunkTree::from_slice(b"abcdef", SMALL_CONFIG);
+        let tree = tree.insert(10, b"xyz");
+        assert_eq!(tree.collect_bytes(b'_'), b"abcdef____xyz");
+        let tree = tree.fill(6, b"123");
+        assert_eq!(tree.collect_bytes(b'_'), b"abcdef123_xyz");
+    }
+
+    #[test]
+    fn test_fill_start_of_gap() {
+        let tree = ChunkTree::from_slice(b"abc", SMALL_CONFIG);
+        let tree = tree.insert(5, b"xyz");
+        assert_eq!(tree.collect_bytes(b'_'), b"abc__xyz");
+        let tree = tree.fill(3, b"12");
+        assert_eq!(tree.collect_bytes(b'_'), b"abc12xyz");
+    }
+
+    #[test]
+    fn test_fill_end_of_gap() {
+        let tree = ChunkTree::from_slice(b"abc", SMALL_CONFIG);
+        let tree = tree.insert(5, b"xyz");
+        assert_eq!(tree.collect_bytes(b'_'), b"abc__xyz");
+        let tree = tree.fill(4, b"12");
+        assert_eq!(tree.collect_bytes(b'_'), b"abc_1xyz");
+    }
+
+    #[test]
+    fn test_fill_entire_gap() {
+        let tree = ChunkTree::from_slice(b"abc", SMALL_CONFIG);
+        let tree = tree.insert(5, b"xyz");
+        let tree = tree.fill(3, b"12");
+        assert_eq!(tree.collect_bytes(b'_'), b"abc12xyz");
+    }
+
+    #[test]
+    fn test_fill_multiple_gaps() {
+        let tree = ChunkTree::new(SMALL_CONFIG)
+            .insert(2, b"ab")
+            .insert(6, b"cd")
+            .insert(10, b"ef");
+        assert_eq!(tree.collect_bytes(b'_'), b"__ab__cd__ef");
+        let tree = tree.fill(0, b"123456");
+        assert_eq!(tree.collect_bytes(b'_'), b"12ab34cd56ef");
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_fill_invalid_index() {
+        // Test invalid fills
+        let tree = ChunkTree::from_slice(b"abc", SMALL_CONFIG);
+        // Fill beyond length should panic
+        tree.fill(4, b"xyz");
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_fill_invalid_len() {
+        // Test invalid fills
+        let tree = ChunkTree::from_slice(b"abc", SMALL_CONFIG);
+        // Fill that would overflow length should panic
+        tree.fill(2, b"toolong");
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_fill_sparse() {
+        let tree = ChunkTree::from_slice(b"abc", SMALL_CONFIG);
+        tree.fill(0, b"");
     }
 }
