@@ -260,9 +260,10 @@ impl<'a> ChunkTreeNode<'a> {
                     if index < child_pos {
                         assert!(index + data_index == child_pos);
                     }
-                    log!("index: {}, data_index: {}", index, data_index);
 
-                    let data_slice = &data[data_index..std::cmp::min(data.len(), child.len())];
+                    let data_end = std::cmp::min(data.len(), child.len() - child_relative_index);
+                    let data_slice = &data[data_index..data_end];
+                    log!("index: {}, data_index: {}", index, data_index);
                     data_index += data_slice.len();
 
                     log!(
