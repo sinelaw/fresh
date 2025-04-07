@@ -5,7 +5,7 @@ authors = ["Noam Lewis"]
 edition = "2021"
 
 [dependencies]
-crossterm = "0.28.1"
+crossterm = "0.29.0"
 ratatui = "0.29.0"
 tempfile = "3.15.0"
 
