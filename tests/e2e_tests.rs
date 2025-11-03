@@ -937,10 +937,11 @@ fn test_vertical_scroll_when_typing_to_bottom() {
         }
     }
 
-    // Verify we have the right number of lines
+    // Verify cursor is on the expected line
     let buffer = &harness.editor().active_state().buffer;
-    let line_count = buffer.line_count();
-    assert_eq!(line_count, total_lines, "Should have {} lines", total_lines);
+    let cursor_line = buffer.byte_to_line(harness.cursor_position());
+    // We typed total_lines lines, so last line should be total_lines - 1
+    assert_eq!(cursor_line, total_lines - 1, "Cursor should be on last line");
 
     // The viewport should have scrolled down
     let top_line = harness.editor().active_state().viewport.top_line;

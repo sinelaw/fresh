@@ -471,14 +471,6 @@ impl Buffer {
         self.line_cache.borrow().byte_to_line(byte)
     }
 
-    /// Get the number of lines in the buffer
-    /// WARNING: This scans the entire file and can be slow for large files (1.2s for 61MB)
-    /// Consider using approximate_line_count() or byte_to_line() for better performance
-    pub fn line_count(&self) -> usize {
-        self.ensure_line_cache();
-        self.line_cache.borrow().line_count()
-    }
-
     /// Get an approximate or cached line count without forcing a full scan
     /// Returns None if the full scan hasn't been done yet
     pub fn approximate_line_count(&self) -> Option<usize> {
@@ -609,23 +601,6 @@ impl LineNumber {
 }
 
 impl Buffer {
-    /// Get the content of a specific line
-    /// For large files, this may trigger a full scan on first call
-    /// Consider using line_content_by_byte if you know the byte position
-    pub fn line_content(&self, line: usize) -> String {
-        self.ensure_line_cache();
-        let cache = self.line_cache.borrow();
-        let start = cache.line_to_byte(line).unwrap_or(self.len());
-        let end = cache.line_to_byte(line + 1).unwrap_or(self.len());
-
-        let mut content = self.slice(start..end);
-        // Remove trailing newline if present
-        if content.ends_with('\n') {
-            content.pop();
-        }
-        content
-    }
-
     /// Get line content starting from a byte position (no full scan needed)
     /// Scans forward from byte_pos to the next newline
     pub fn line_content_at_byte(&self, byte_pos: usize) -> String {
@@ -658,18 +633,6 @@ impl Buffer {
         }
 
         self.slice(line_start..line_end)
-    }
-
-    /// Get multiple lines as strings
-    pub fn lines_in_range(&mut self, start_line: usize, count: usize) -> Vec<String> {
-        let mut lines = Vec::new();
-        for line in start_line..(start_line + count) {
-            if line >= self.line_count() {
-                break;
-            }
-            lines.push(self.line_content(line));
-        }
-        lines
     }
 
     /// Find the previous UTF-8 character boundary before the given position
@@ -861,6 +824,30 @@ mod tests {
     use super::*;
     use tempfile::NamedTempFile;
 
+    // Test-only helper methods that trigger full scans
+    impl Buffer {
+        /// Get line count - triggers full scan, only for tests
+        pub(in crate::buffer) fn test_line_count(&self) -> usize {
+            self.ensure_line_cache();
+            self.line_cache.borrow().line_count()
+        }
+
+        /// Get line content - triggers full scan, only for tests
+        pub(in crate::buffer) fn test_line_content(&self, line: usize) -> String {
+            self.ensure_line_cache();
+            let cache = self.line_cache.borrow();
+            let start = cache.line_to_byte(line).unwrap_or(self.len());
+            let end = cache.line_to_byte(line + 1).unwrap_or(self.len());
+
+            let mut content = self.slice(start..end);
+            // Remove trailing newline if present
+            if content.ends_with('\n') {
+                content.pop();
+            }
+            content
+        }
+    }
+
     // Property-based tests using proptest
     #[cfg(test)]
     mod property_tests {
@@ -898,7 +885,7 @@ mod tests {
             #[test]
             fn line_cache_consistency(text in ".{0,200}\n*.{0,200}") {
                 let buffer = Buffer::from_str(&text);
-                let line_count = buffer.line_count();
+                let line_count = buffer.test_line_count();
 
                 // For each line, byte_to_line(line_to_byte(n)) should equal n
                 for line_num in 0..line_count {
@@ -924,7 +911,7 @@ mod tests {
                 end in 0usize..100
             ) {
                 let mut buffer = Buffer::from_str(&text);
-                let original_lines = buffer.line_count();
+                let original_lines = buffer.test_line_count();
 
                 let start = start.min(buffer.len());
                 let end = end.min(buffer.len());
@@ -932,9 +919,9 @@ mod tests {
 
                 if !range.is_empty() {
                     buffer.delete(range);
-                    assert!(buffer.line_count() <= original_lines,
+                    assert!(buffer.test_line_count() <= original_lines,
                         "Delete increased line count: {} -> {}",
-                        original_lines, buffer.line_count());
+                        original_lines, buffer.test_line_count());
                 }
             }
 
@@ -967,9 +954,9 @@ mod tests {
     fn test_buffer_from_str() {
         let buffer = Buffer::from_str("hello\nworld");
         assert_eq!(buffer.len(), 11);
-        assert_eq!(buffer.line_count(), 2);
-        assert_eq!(buffer.line_content(0), "hello");
-        assert_eq!(buffer.line_content(1), "world");
+        assert_eq!(buffer.test_line_count(), 2);
+        assert_eq!(buffer.test_line_content(0), "hello");
+        assert_eq!(buffer.test_line_content(1), "world");
     }
 
     #[test]
@@ -1008,11 +995,11 @@ mod tests {
     #[test]
     fn test_line_cache_invalidation() {
         let mut buffer = Buffer::from_str("line1\nline2");
-        assert_eq!(buffer.line_count(), 2);
+        assert_eq!(buffer.test_line_count(), 2);
 
         buffer.insert(6, "inserted\n");
-        assert_eq!(buffer.line_count(), 3);
-        assert_eq!(buffer.line_content(1), "inserted");
+        assert_eq!(buffer.test_line_count(), 3);
+        assert_eq!(buffer.test_line_content(1), "inserted");
     }
 
     #[test]
@@ -1062,12 +1049,12 @@ mod tests {
         println!("✓ Length ({} bytes) in: {:?}", len, len_time);
 
         let start = Instant::now();
-        let line_count = buffer.line_count();
+        let line_count = buffer.test_line_count();
         let count_time = start.elapsed();
         println!("✓ Line count ({} lines) in: {:?}", line_count, count_time);
 
         let start = Instant::now();
-        let first_line = buffer.line_content(0);
+        let first_line = buffer.test_line_content(0);
         let first_line_time = start.elapsed();
         println!("✓ First line content in: {:?}", first_line_time);
         println!("  First line: {:?}", &first_line[..first_line.len().min(50)]);

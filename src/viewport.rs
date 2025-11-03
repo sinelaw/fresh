@@ -187,18 +187,6 @@ impl Viewport {
         }
     }
 
-    /// Get the visible content as lines with their line numbers
-    pub fn visible_content(&self, buffer: &mut Buffer) -> Vec<(usize, String)> {
-        let visible_count = self.visible_line_count();
-        let lines = buffer.lines_in_range(self.top_line, visible_count);
-
-        lines
-            .into_iter()
-            .enumerate()
-            .map(|(i, content)| (self.top_line + i, content))
-            .collect()
-    }
-
     /// Convert a screen row to a buffer line number
     pub fn screen_row_to_line(&self, row: u16) -> usize {
         self.top_line + row as usize
