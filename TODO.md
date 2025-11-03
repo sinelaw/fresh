@@ -25,7 +25,7 @@ Building a high-performance terminal text editor from scratch with:
 
 ## Progress Summary
 
-**Current Status**: Phase 2.1 Complete ✅
+**Current Status**: Phase 2.2 Complete ✅
 
 **Commits**:
 - ✅ Phase 0: Foundational modules complete
@@ -34,6 +34,7 @@ Building a high-performance terminal text editor from scratch with:
 - ✅ Added comprehensive E2E tests and benchmarks
 - ✅ Added help page with Ctrl+H showing all keybindings
 - ✅ Phase 2.1: Multi-cursor support (Ctrl+D, Ctrl+Alt+Up/Down, Esc)
+- ✅ Phase 2.2: Horizontal scrolling keeps cursor visible on long lines
 
 ---
 
@@ -168,13 +169,13 @@ Building a high-performance terminal text editor from scratch with:
   - Delete with multiple cursors
   - Move all cursors together
 
-### 2.2 Horizontal Scrolling
-- [ ] Add `left_column` field to Viewport (tracks horizontal scroll offset)
-- [ ] Extend `ensure_visible()` to scroll horizontally when cursor moves beyond screen width
-- [ ] Update rendering to show content from `left_column` offset
-- [ ] Add scroll margin for smooth horizontal scrolling (similar to vertical scroll_offset)
-- [ ] Write E2E tests for horizontal scrolling behavior
-- [ ] Handle edge cases: line numbers gutter, tab characters, unicode width
+### 2.2 Horizontal Scrolling ✅ COMPLETE
+- ✅ Add `left_column` field to Viewport (tracks horizontal scroll offset)
+- ✅ Extend `ensure_visible()` to scroll horizontally when cursor moves beyond screen width
+- ✅ Update rendering to show content from `left_column` offset
+- ✅ Add scroll margin for smooth horizontal scrolling (similar to vertical scroll_offset)
+- ✅ Write E2E tests for horizontal scrolling behavior
+- [ ] Handle edge cases: tab characters, unicode width (future enhancement)
 
 ### 2.3 Advanced Selection
 - [ ] Implement select word (double-click or Ctrl+W)
@@ -468,11 +469,11 @@ notify = "6.0"      # File watching (config hot reload)
 - ✅ Esc removes secondary cursors
 - ✅ All tests passing
 
-### Phase 2.2 (Next)
-- [ ] Horizontal scrolling when cursor moves beyond screen width
-- [ ] All tests passing
+### Phase 2.2 ✅ COMPLETE
+- ✅ Horizontal scrolling when cursor moves beyond screen width
+- ✅ All tests passing (274 tests)
 
-### Phase 2.3-2.4 (Future)
+### Phase 2.3-2.4 (Next)
 - [ ] Advanced selection features
 - [ ] Smart editing features
 - [ ] All tests passing
@@ -510,4 +511,4 @@ notify = "6.0"      # File watching (config hot reload)
 
 ## Current Focus
 
-**Next Task**: Phase 2.2 - Implement horizontal scrolling so cursor stays visible when typing beyond screen width
+**Next Task**: Phase 2.3-2.4 - Advanced Selection & Smart Editing features
