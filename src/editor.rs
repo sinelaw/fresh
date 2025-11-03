@@ -987,14 +987,41 @@ impl Editor {
                 }
             }
 
-            // Actions that don't generate events yet
+            // Multi-cursor operations
+            Action::RemoveSecondaryCursors => {
+                // Remove all cursors except the primary
+                for (cursor_id, _) in state.cursors.iter() {
+                    if cursor_id != state.cursors.primary_id() {
+                        events.push(Event::RemoveCursor { cursor_id });
+                    }
+                }
+            }
+
+            // Scroll operations
+            Action::ScrollUp => {
+                events.push(Event::Scroll { line_offset: -1 });
+            }
+
+            Action::ScrollDown => {
+                events.push(Event::Scroll { line_offset: 1 });
+            }
+
+            // No-op action
+            Action::None => {
+                return None;
+            }
+
+            // Actions that don't generate events - handled by main event loop
             Action::Copy | Action::Cut | Action::Paste |
             Action::AddCursorAbove | Action::AddCursorBelow |
-            Action::AddCursorNextMatch | Action::RemoveSecondaryCursors |
+            Action::AddCursorNextMatch |
             Action::Save | Action::SaveAs | Action::Open | Action::New | Action::Close |
-            Action::Quit | Action::Undo | Action::Redo |
-            Action::ScrollUp | Action::ScrollDown | Action::None => {
-                // TODO: Implement these actions
+            Action::Quit | Action::Undo | Action::Redo => {
+                // These actions need special handling in the event loop:
+                // - Clipboard operations need system clipboard access
+                // - File operations need Editor-level state changes
+                // - Undo/Redo need EventLog manipulation
+                // - Multi-cursor add operations need visual line calculations
                 return None;
             }
         }
@@ -1318,5 +1345,101 @@ mod tests {
             }
             _ => panic!("Expected MoveCursor event"),
         }
+    }
+
+    #[test]
+    fn test_action_to_events_remove_secondary_cursors() {
+        use crate::event::CursorId;
+
+        let config = Config::default();
+        let mut editor = Editor::new(config).unwrap();
+
+        // Insert some text first to have positions to place cursors
+        {
+            let state = editor.active_state_mut();
+            state.apply(&Event::Insert {
+                position: 0,
+                text: "hello world test".to_string(),
+                cursor_id: state.cursors.primary_id(),
+            });
+        }
+
+        // Add secondary cursors at different positions to avoid normalization merging
+        {
+            let state = editor.active_state_mut();
+            state.apply(&Event::AddCursor {
+                cursor_id: CursorId(1),
+                position: 5,
+                anchor: None,
+            });
+            state.apply(&Event::AddCursor {
+                cursor_id: CursorId(2),
+                position: 10,
+                anchor: None,
+            });
+
+            assert_eq!(state.cursors.count(), 3);
+        }
+
+        // Save primary ID before calling action_to_events
+        let primary_id = editor.active_state().cursors.primary_id();
+
+        // RemoveSecondaryCursors should generate RemoveCursor events
+        let events = editor.action_to_events(Action::RemoveSecondaryCursors);
+        assert!(events.is_some());
+
+        let events = events.unwrap();
+        // Should have events for the two secondary cursors
+        assert_eq!(events.len(), 2);
+
+        for event in &events {
+            match event {
+                Event::RemoveCursor { cursor_id } => {
+                    // Should not be the primary cursor
+                    assert_ne!(*cursor_id, primary_id);
+                }
+                _ => panic!("Expected RemoveCursor event"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_action_to_events_scroll() {
+        let config = Config::default();
+        let editor = Editor::new(config).unwrap();
+
+        // Test ScrollUp
+        let events = editor.action_to_events(Action::ScrollUp);
+        assert!(events.is_some());
+        let events = events.unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Scroll { line_offset } => {
+                assert_eq!(*line_offset, -1);
+            }
+            _ => panic!("Expected Scroll event"),
+        }
+
+        // Test ScrollDown
+        let events = editor.action_to_events(Action::ScrollDown);
+        assert!(events.is_some());
+        let events = events.unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Scroll { line_offset } => {
+                assert_eq!(*line_offset, 1);
+            }
+            _ => panic!("Expected Scroll event"),
+        }
+    }
+
+    #[test]
+    fn test_action_to_events_none() {
+        let config = Config::default();
+        let editor = Editor::new(config).unwrap();
+
+        // None action should return None
+        let events = editor.action_to_events(Action::None);
+        assert!(events.is_none());
     }
 }
