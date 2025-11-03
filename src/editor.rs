@@ -419,21 +419,7 @@ impl Editor {
 
     /// Convert an action into a list of events to apply to the active buffer
     /// Returns None for actions that don't generate events (like Quit)
-    ///
-    /// TODO: This function is incomplete due to borrow checker issues.
-    /// The Buffer's line cache methods require &mut self, which conflicts with
-    /// reading cursor state. Need to refactor Buffer to use interior mutability
-    /// for the line cache (RefCell or similar).
-    #[allow(unused_variables, unreachable_code)]
-    pub fn action_to_events(&mut self, action: Action) -> Option<Vec<Event>> {
-        // Temporarily return None until Buffer refactoring is complete
-        return None;
-
-        #[allow(unreachable_code)]
-        {
-        // Ensure line cache is built before we start (avoids mutable borrow issues)
-        let _ = self.active_state_mut().buffer.byte_to_line(0);
-
+    pub fn action_to_events(&self, action: Action) -> Option<Vec<Event>> {
         let state = self.active_state();
         let mut events = Vec::new();
 
@@ -618,7 +604,6 @@ impl Editor {
         } else {
             Some(events)
         }
-        }  // End of #[allow(unreachable_code)] block
     }
 }
 
@@ -658,5 +643,118 @@ mod tests {
 
         let content = editor.active_state().buffer.to_string();
         assert_eq!(content, "test");
+    }
+
+    #[test]
+    fn test_action_to_events_insert_char() {
+        let config = Config::default();
+        let editor = Editor::new(config).unwrap();
+
+        let events = editor.action_to_events(Action::InsertChar('a'));
+        assert!(events.is_some());
+
+        let events = events.unwrap();
+        assert_eq!(events.len(), 1);
+
+        match &events[0] {
+            Event::Insert { position, text, .. } => {
+                assert_eq!(*position, 0);
+                assert_eq!(text, "a");
+            }
+            _ => panic!("Expected Insert event"),
+        }
+    }
+
+    #[test]
+    fn test_action_to_events_move_right() {
+        let config = Config::default();
+        let mut editor = Editor::new(config).unwrap();
+
+        // Insert some text first
+        let state = editor.active_state_mut();
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "hello".to_string(),
+            cursor_id: state.cursors.primary_id(),
+        });
+
+        let events = editor.action_to_events(Action::MoveRight);
+        assert!(events.is_some());
+
+        let events = events.unwrap();
+        assert_eq!(events.len(), 1);
+
+        match &events[0] {
+            Event::MoveCursor { position, anchor, .. } => {
+                // Cursor was at 5 (end of "hello"), stays at 5 (can't move beyond end)
+                assert_eq!(*position, 5);
+                assert_eq!(*anchor, None); // No selection
+            }
+            _ => panic!("Expected MoveCursor event"),
+        }
+    }
+
+    #[test]
+    fn test_action_to_events_move_up_down() {
+        let config = Config::default();
+        let mut editor = Editor::new(config).unwrap();
+
+        // Insert multi-line text
+        let state = editor.active_state_mut();
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "line1\nline2\nline3".to_string(),
+            cursor_id: state.cursors.primary_id(),
+        });
+
+        // Move cursor to start of line 2
+        state.apply(&Event::MoveCursor {
+            cursor_id: state.cursors.primary_id(),
+            position: 6, // Start of "line2"
+            anchor: None,
+        });
+
+        // Test move up
+        let events = editor.action_to_events(Action::MoveUp);
+        assert!(events.is_some());
+        let events = events.unwrap();
+        assert_eq!(events.len(), 1);
+
+        match &events[0] {
+            Event::MoveCursor { position, .. } => {
+                assert_eq!(*position, 0); // Should be at start of line 1
+            }
+            _ => panic!("Expected MoveCursor event"),
+        }
+    }
+
+    #[test]
+    fn test_action_to_events_insert_newline() {
+        let config = Config::default();
+        let editor = Editor::new(config).unwrap();
+
+        let events = editor.action_to_events(Action::InsertNewline);
+        assert!(events.is_some());
+
+        let events = events.unwrap();
+        assert_eq!(events.len(), 1);
+
+        match &events[0] {
+            Event::Insert { text, .. } => {
+                assert_eq!(text, "\n");
+            }
+            _ => panic!("Expected Insert event"),
+        }
+    }
+
+    #[test]
+    fn test_action_to_events_unimplemented() {
+        let config = Config::default();
+        let editor = Editor::new(config).unwrap();
+
+        // These actions should return None (not yet implemented)
+        assert!(editor.action_to_events(Action::Save).is_none());
+        assert!(editor.action_to_events(Action::Quit).is_none());
+        assert!(editor.action_to_events(Action::Undo).is_none());
     }
 }
