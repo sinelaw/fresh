@@ -25,7 +25,7 @@ Building a high-performance terminal text editor from scratch with:
 
 ## Progress Summary
 
-**Current Status**: Phase 2.1 Complete ✅ (267 tests passing)
+**Current Status**: Phase 2.1 Complete ✅
 
 **Commits**:
 - ✅ Phase 0: Foundational modules complete
@@ -99,7 +99,7 @@ Building a high-performance terminal text editor from scratch with:
 - ✅ Implement cursor adjustment on Insert/Delete
 - ✅ Write unit tests (7 tests passing)
 
-**Phase 0 Milestone**: All foundation complete. 86 tests passing. ✅
+**Phase 0 Milestone**: All foundation complete ✅
 
 ---
 
@@ -148,7 +148,7 @@ Building a high-performance terminal text editor from scratch with:
 - ✅ Write E2E tests (16 tests)
 - ✅ Set up benchmarks in `benches/` (9 benchmark suites)
 
-**Phase 1 Milestone**: ✅ COMPLETE - Can open file, edit text, move cursor, save, quit. Basic usable editor. 258 tests passing.
+**Phase 1 Milestone**: ✅ COMPLETE - Can open file, edit text, move cursor, save, quit. Basic usable editor.
 
 ---
 
@@ -373,20 +373,21 @@ Building a high-performance terminal text editor from scratch with:
 3. **End-to-End TUI Tests** - Virtual terminal with TestBackend
 
 ### Current Test Status
-- Event system (5 tests ✅)
-- Config loading (4 tests ✅)
-- Keybindings (4 tests ✅)
-- Buffer operations (9 tests ✅)
-- Cursor management (7 tests ✅)
-- Viewport scrolling (6 tests ✅)
-- State application (7 tests ✅)
-- ChunkTree (79 tests ✅)
-- Buffer property tests (5 tests ✅)
-- EventLog property tests (2 tests ✅)
-- Integration tests (9 tests ✅)
-- E2E tests (25 tests ✅)
-- Editor action tests (23 tests ✅)
-- **Total: 267 tests passing ✅**
+- Event system ✅
+- Config loading ✅
+- Keybindings ✅
+- Buffer operations ✅
+- Cursor management ✅
+- Viewport scrolling ✅
+- State application ✅
+- ChunkTree ✅
+- Buffer property tests ✅
+- EventLog property tests ✅
+- Integration tests ✅
+- E2E tests ✅
+- Editor action tests ✅
+- Multi-cursor tests ✅
+- Help page tests ✅
 
 ### Phase 1 Testing Tasks ✅ COMPLETE
 - ✅ Set up E2E test harness with TestBackend
@@ -395,9 +396,9 @@ Building a high-performance terminal text editor from scratch with:
 - ✅ Write integration tests for Buffer + Cursor adjustment
 - ✅ Write E2E tests for basic editing workflow
 - ✅ Write E2E tests for file operations (open/save/quit)
-- ✅ Add benchmarks for insert/delete operations (9 benchmark suites)
-- ✅ Write E2E tests for help page (4 tests)
-- ✅ Write E2E tests for multi-cursor operations (5 tests)
+- ✅ Add benchmarks for insert/delete operations
+- ✅ Write E2E tests for help page
+- ✅ Write E2E tests for multi-cursor operations
 
 ### Testing Tools
 - `cargo test --lib` - Unit tests
@@ -446,18 +447,18 @@ notify = "6.0"      # File watching (config hot reload)
 ## Success Criteria
 
 ### Phase 1 ✅ COMPLETE
-- ✅ 258 tests passing
 - ✅ Can open, edit, save, quit
 - ✅ Responsive (no lag)
 - ✅ Handles errors gracefully
+- ✅ All tests passing
 
 ### Phase 2.1 ✅ COMPLETE
 - ✅ Multi-cursor editing works smoothly
 - ✅ Undo/redo with multiple cursors
-- ✅ 267 tests passing
 - ✅ Ctrl+D adds cursor at next match
 - ✅ Ctrl+Alt+Up/Down adds cursors above/below
 - ✅ Esc removes secondary cursors
+- ✅ All tests passing
 
 ### Phase 2.2-2.3 (In Progress)
 - [ ] Advanced selection features
@@ -479,7 +480,7 @@ notify = "6.0"      # File watching (config hot reload)
 - [ ] Opens 1GB+ files instantly
 - [ ] <1ms keystroke latency
 - [ ] No crashes in normal use
-- [ ] All 150+ tests passing
+- [ ] All tests passing
 
 ---
 
