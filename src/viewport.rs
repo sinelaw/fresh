@@ -146,6 +146,25 @@ impl Viewport {
 
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {
+            // Special case: if we're at the top (byte 0) and the entire buffer fits in the viewport,
+            // don't scroll - just keep showing from the top
+            if self.top_byte == 0 {
+                // Count total lines from beginning to see if everything fits
+                let mut line_count = 0;
+                let mut iter = buffer.line_iterator(0);
+                while iter.next().is_some() {
+                    line_count += 1;
+                    if line_count > visible_count {
+                        break; // Too many lines to fit
+                    }
+                }
+
+                // If all content fits in viewport, don't scroll
+                if line_count <= visible_count {
+                    return; // Keep top_byte at 0, cursor is technically visible
+                }
+            }
+
             // Position cursor in the middle of the viewport with scroll offset
             let target_line_from_top = (visible_count / 2).min(self.scroll_offset);
 
