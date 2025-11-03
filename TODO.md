@@ -168,13 +168,21 @@ Building a high-performance terminal text editor from scratch with:
   - Delete with multiple cursors
   - Move all cursors together
 
-### 2.2 Advanced Selection
+### 2.2 Horizontal Scrolling
+- [ ] Add `left_column` field to Viewport (tracks horizontal scroll offset)
+- [ ] Extend `ensure_visible()` to scroll horizontally when cursor moves beyond screen width
+- [ ] Update rendering to show content from `left_column` offset
+- [ ] Add scroll margin for smooth horizontal scrolling (similar to vertical scroll_offset)
+- [ ] Write E2E tests for horizontal scrolling behavior
+- [ ] Handle edge cases: line numbers gutter, tab characters, unicode width
+
+### 2.3 Advanced Selection
 - [ ] Implement select word (double-click or Ctrl+W)
 - [ ] Implement select line (Ctrl+L)
 - [ ] Implement expand selection (Ctrl+Shift+→)
 - [ ] Implement rectangular selection (Alt+drag)
 
-### 2.3 Smart Editing
+### 2.4 Smart Editing
 - [ ] Implement auto-indent on newline
 - [ ] Implement bracket matching/auto-close
 - [ ] Implement smart home (toggle between line start and first non-whitespace)
@@ -460,7 +468,11 @@ notify = "6.0"      # File watching (config hot reload)
 - ✅ Esc removes secondary cursors
 - ✅ All tests passing
 
-### Phase 2.2-2.3 (In Progress)
+### Phase 2.2 (Next)
+- [ ] Horizontal scrolling when cursor moves beyond screen width
+- [ ] All tests passing
+
+### Phase 2.3-2.4 (Future)
 - [ ] Advanced selection features
 - [ ] Smart editing features
 - [ ] All tests passing
@@ -498,4 +510,4 @@ notify = "6.0"      # File watching (config hot reload)
 
 ## Current Focus
 
-**Next Task**: Continue Phase 2 - Advanced Selection & Smart Editing (Phase 2.2-2.3)
+**Next Task**: Phase 2.2 - Implement horizontal scrolling so cursor stays visible when typing beyond screen width
