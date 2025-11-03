@@ -168,7 +168,7 @@ impl Viewport {
         }
     }
 
-    /// Get the cursor screen position (row, col) for rendering
+    /// Get the cursor screen position (x, y) which is (col, row) for rendering
     pub fn cursor_screen_position(&self, buffer: &mut Buffer, cursor: &Cursor) -> (u16, u16) {
         let line = buffer.byte_to_line(cursor.position);
         let line_start = buffer.line_to_byte(line);
@@ -177,7 +177,8 @@ impl Viewport {
         let screen_row = line.saturating_sub(self.top_line) as u16;
         let screen_col = column.min(self.width as usize) as u16;
 
-        (screen_row, screen_col)
+        // Return (x, y) which is (col, row)
+        (screen_col, screen_row)
     }
 }
 
@@ -249,8 +250,9 @@ mod tests {
         let vp = Viewport::new(80, 24);
 
         let cursor = Cursor::new(6); // Start of line 1 ("line2")
-        let (row, col) = vp.cursor_screen_position(&mut buffer, &cursor);
-        assert_eq!(row, 1);
-        assert_eq!(col, 0);
+        let (x, y) = vp.cursor_screen_position(&mut buffer, &cursor);
+        // x is column (horizontal), y is row (vertical)
+        assert_eq!(x, 0); // Column 0 (start of line)
+        assert_eq!(y, 1); // Row 1 (second line, since top_line is 0)
     }
 }

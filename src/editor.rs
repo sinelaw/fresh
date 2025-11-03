@@ -379,7 +379,11 @@ impl Editor {
         let cursor_positions = state.cursor_positions();
         if let Some(&(x, y)) = cursor_positions.first() {
             // Adjust for line numbers (4 digits + " │ " = 7 chars)
-            frame.set_cursor_position((x.saturating_add(7), y));
+            // and adjust Y for the content area offset (area.y accounts for tab bar)
+            frame.set_cursor_position((
+                area.x.saturating_add(x).saturating_add(7),
+                area.y.saturating_add(y)
+            ));
         }
     }
 
