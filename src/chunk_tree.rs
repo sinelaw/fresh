@@ -15,9 +15,9 @@
 //!
 //! # Examples
 //! ```
-//! use chunk_tree::{ChunkTree, ChunkTreeConfig};
+//! use editor::chunk_tree::{ChunkTree, ChunkTreeConfig};
 //!
-//! let config = ChunkTreeConfig::new(2, 2);
+//! let config = ChunkTreeConfig::new(4, 4);
 //! let tree = ChunkTree::new(config);
 //! let tree = tree.insert(0, b"Hello");      // Creates a new tree, original remains unchanged
 //! let tree = tree.insert(5, b" World!");    // Creates another new version
