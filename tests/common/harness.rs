@@ -203,6 +203,12 @@ impl EditorTestHarness {
     pub fn cursor_count(&self) -> usize {
         self.editor.active_state().cursors.count()
     }
+
+    /// Get the screen cursor position (x, y) from the terminal
+    pub fn screen_cursor_position(&mut self) -> (u16, u16) {
+        let pos = self.terminal.get_cursor_position().unwrap_or_default();
+        (pos.x, pos.y)
+    }
 }
 
 #[cfg(test)]

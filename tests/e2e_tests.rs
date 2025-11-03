@@ -259,3 +259,75 @@ fn test_multiline_editing() {
     harness.type_text(">>> ").unwrap();
     harness.assert_buffer_content("Line 1\n>>> Line 2\nLine 3");
 }
+
+/// Test that screen cursor position matches actual cursor position
+#[test]
+fn test_screen_cursor_position() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type "abc" on first line
+    harness.type_text("abc").unwrap();
+    harness.assert_buffer_content("abc");
+
+    // Render and check cursor position
+    harness.render().unwrap();
+
+    // Get the actual screen cursor position from the terminal
+    let cursor_pos = harness.screen_cursor_position();
+
+    // After typing "abc", cursor should be at column 10:
+    // "   1 │ abc" - the cursor should be after 'c'
+    // Line numbers are 4 chars wide: "   1"
+    // Then " │ " = 3 chars
+    // Then "abc" = 3 chars
+    // Total: 4 + 3 + 3 = 10
+    // So cursor X should be at column 10 (0-indexed)
+    // And cursor Y should be at row 1 (0-indexed, because row 0 is the tab bar)
+
+    println!("Cursor position after typing 'abc': {:?}", cursor_pos);
+    println!("Expected: x=10 (4 + 3 + 3), y=1");
+
+    assert_eq!(cursor_pos.1, 1, "Cursor Y should be at row 1 (below tab bar)");
+    assert_eq!(cursor_pos.0, 10, "Cursor X should be at column 10 (after 'abc')");
+}
+
+/// Test cursor position as we type more characters
+#[test]
+fn test_cursor_x_position_advances() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Start with empty buffer
+    harness.render().unwrap();
+    let pos0 = harness.screen_cursor_position();
+    println!("Initial cursor position: {:?}", pos0);
+
+    // Type first character
+    harness.type_text("a").unwrap();
+    harness.render().unwrap();
+    let pos1 = harness.screen_cursor_position();
+    println!("After 'a': {:?}", pos1);
+
+    // Type second character
+    harness.type_text("b").unwrap();
+    harness.render().unwrap();
+    let pos2 = harness.screen_cursor_position();
+    println!("After 'ab': {:?}", pos2);
+
+    // Type third character
+    harness.type_text("c").unwrap();
+    harness.render().unwrap();
+    let pos3 = harness.screen_cursor_position();
+    println!("After 'abc': {:?}", pos3);
+
+    // Y position should stay constant (row 1)
+    assert_eq!(pos0.1, 1, "Initial Y should be 1");
+    assert_eq!(pos1.1, 1, "Y should stay at 1 after 'a'");
+    assert_eq!(pos2.1, 1, "Y should stay at 1 after 'ab'");
+    assert_eq!(pos3.1, 1, "Y should stay at 1 after 'abc'");
+
+    // X position should advance by 1 each time
+    assert_eq!(pos1.0, pos0.0 + 1, "X should advance by 1 after 'a'");
+    assert_eq!(pos2.0, pos1.0 + 1, "X should advance by 1 after 'b'");
+    assert_eq!(pos3.0, pos2.0 + 1, "X should advance by 1 after 'c'");
+}
