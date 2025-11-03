@@ -360,7 +360,7 @@ impl<'a> ChunkTreeNode<'a> {
         assert!(range.end <= self.len());
         assert!(!range.is_empty());
 
-        if self.len() == 0 {
+        if self.is_empty() {
             return ChunkTreeNode::empty();
         }
 
@@ -374,11 +374,9 @@ impl<'a> ChunkTreeNode<'a> {
                 ],
                 size: data.len() - range.len(),
             },
-            ChunkTreeNode::Gap { size } => {
-                return ChunkTreeNode::Gap {
-                    size: *size - range.len(),
-                };
-            }
+            ChunkTreeNode::Gap { size } => ChunkTreeNode::Gap {
+                size: *size - range.len(),
+            },
             ChunkTreeNode::Internal { children, size } => {
                 let mut next_pos = 0;
                 let mut new_children = Vec::new();
@@ -500,7 +498,7 @@ impl<'a> Iterator for ChunkTreeIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((node, child_idx)) = self.stack.pop() {
-            if node.len() == 0 {
+            if node.is_empty() {
                 // hide empty data / empty gaps
                 continue;
             }
@@ -514,7 +512,7 @@ impl<'a> Iterator for ChunkTreeIterator<'a> {
                         }
                         self.stack.push((&children[child_idx], 0));
                     } else {
-                        panic!("invalid child_idx: {:?}", child_idx);
+                        panic!("invalid child_idx: {child_idx:?}");
                     }
                 }
             }
@@ -556,7 +554,7 @@ impl<'a> ChunkTree<'a> {
 
     /// Fills gaps with given data starting at 'index' (inserting if tree.len() is surpassed)
     pub fn fill(&self, index: usize, data: &'a [u8]) -> ChunkTree<'a> {
-        if data.len() == 0 {
+        if data.is_empty() {
             ChunkTree {
                 root: self.root.clone(),
                 config: self.config,
@@ -586,7 +584,7 @@ impl<'a> ChunkTree<'a> {
             ChunkTree {
                 root: Arc::new(self.root.append(
                     index - self.len(),
-                    Arc::new(ChunkTreeNode::from_slice(&data, self.config)),
+                    Arc::new(ChunkTreeNode::from_slice(data, self.config)),
                     self.config,
                 )),
                 config: self.config,
@@ -595,7 +593,7 @@ impl<'a> ChunkTree<'a> {
     }
 
     pub fn insert(&self, index: usize, data: &'a [u8]) -> ChunkTree<'a> {
-        if data.len() == 0 {
+        if data.is_empty() {
             ChunkTree {
                 root: self.root.clone(),
                 config: self.config,
@@ -610,7 +608,7 @@ impl<'a> ChunkTree<'a> {
             ChunkTree {
                 root: Arc::new(self.root.append(
                     index - self.len(),
-                    Arc::new(ChunkTreeNode::from_slice(&data, self.config)),
+                    Arc::new(ChunkTreeNode::from_slice(data, self.config)),
                     self.config,
                 )),
                 config: self.config,
@@ -682,7 +680,7 @@ mod tests {
         let data = b"Hello World!";
         let tree = ChunkTree::from_slice(data, ChunkTreeConfig::new(20, 20));
         assert!(!tree.is_empty());
-        println!("tree: {:?}", tree);
+        println!("tree: {tree:?}");
         assert_eq!(tree.len(), data.len());
         assert_eq!(tree.collect_bytes(0), b"Hello World!");
     }
@@ -698,7 +696,7 @@ mod tests {
     fn test_insert_sparse_big() {
         let tree = ChunkTree::new(ChunkTreeConfig::new(20, 20));
         let tree = tree.insert(5, b"ahem, ahem");
-        println!("tree: {:?}", tree);
+        println!("tree: {tree:?}");
         assert_eq!(tree.collect_bytes(b'_'), b"_____ahem, ahem");
     }
 
@@ -871,12 +869,12 @@ mod tests {
                     ChunkTree::from_slice(initial, ChunkTreeConfig::new(chunk_size, max_children));
                 for pos in 0..=initial.len() {
                     for len in 0..=initial.len() {
-                        let data = ("0123456789abcdefgh"[0..len]).as_bytes();
+                        let data = &"0123456789abcdefgh".as_bytes()[0..len];
 
                         // Test insert
                         let mut reference = Vec::from(&initial[..]);
                         reference.splice(pos..pos, data.iter().cloned());
-                        let modified_tree = tree.insert(pos, &data);
+                        let modified_tree = tree.insert(pos, data);
                         assert_eq!(modified_tree.collect_bytes(0), reference);
                         if len > 0 {
                             assert_ne!(modified_tree.collect_bytes(0), tree.collect_bytes(0));
@@ -938,7 +936,7 @@ mod tests {
         let tree = ChunkTreeNode::from_slice(b"Hello", SMALL_CONFIG);
         let tree = tree.insert(5, b" World!", SMALL_CONFIG);
 
-        let expected = vec![
+        let expected = [
             ChunkPiece::Data { data: b"He" },
             ChunkPiece::Data { data: b"l" },
             ChunkPiece::Data { data: b"lo" },
@@ -951,10 +949,10 @@ mod tests {
         let actual: Vec<_> = tree.iter().collect();
 
         for (index, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-            println!("index: {}, actual: {:?}, expected: {:?}", index, a, e);
+            println!("index: {index}, actual: {a:?}, expected: {e:?}");
             assert_eq!(a, e);
         }
-        println!("actual: {:?}", actual);
+        println!("actual: {actual:?}");
         assert_eq!(actual.len(), expected.len());
     }
 
@@ -988,12 +986,12 @@ mod tests {
 
                 // Test removing gaps
                 let tree = tree.remove(5..12);
-                println!("tree: {:?}", tree);
+                println!("tree: {tree:?}");
                 assert_eq!(tree.collect_bytes(b'_'), b"_____llo");
 
                 // Test complex insert chain
                 let tree = tree.insert(2, b"ABC");
-                println!("tree: {:?}", tree);
+                println!("tree: {tree:?}");
                 assert_eq!(tree.collect_bytes(b'_'), b"__ABC___llo");
                 let tree = tree.insert(8, b"XYZ");
                 assert_eq!(tree.collect_bytes(b'_'), b"__ABC___XYZllo");
@@ -1021,16 +1019,16 @@ mod tests {
             chunk_size: 10,
             max_children: 10,
         });
-        println!("tree: {:?}", tree);
+        println!("tree: {tree:?}");
         let tree = tree.insert(5, b"middle");
-        println!("tree: {:?}", tree);
+        println!("tree: {tree:?}");
         let tree = tree.insert(0, b"start");
-        println!("tree: {:?}", tree);
+        println!("tree: {tree:?}");
         let tree = tree.insert(20, b"end");
-        println!("tree: {:?}", tree);
+        println!("tree: {tree:?}");
 
         let pieces: Vec<ChunkPiece> = tree.root.iter().collect();
-        assert!(pieces.len() > 0);
+        assert!(!pieces.is_empty());
 
         // Verify the structure contains expected data and gaps
         let mut found_start = false;
@@ -1041,7 +1039,7 @@ mod tests {
             match piece {
                 ChunkPiece::Data { data } => {
                     let str = String::from_utf8_lossy(data);
-                    println!("data: {:?}", str);
+                    println!("data: {str:?}");
                     if data == b"start" {
                         found_start = true;
                     }

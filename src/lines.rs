@@ -30,7 +30,7 @@ impl EditLine {
         self.chars.remove(index);
     }
     pub fn extend(&mut self, line: EditLine) {
-        self.chars.extend(line.chars.chars());
+        self.chars.push_str(&line.chars);
     }
     /*  pub fn char_get_mut(&mut self, index: usize) -> Option<&mut char> {
         self.chars.as_bytes_mut().get_mut(index).map(|u| u as char)

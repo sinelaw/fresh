@@ -44,19 +44,16 @@ where
 
     pub fn get(&mut self, chunk_index: &ChunkIndex) -> &Chunk {
         let load_store = &self.load_store;
-        return self
-            .chunks
-            .entry(chunk_index.clone())
-            .or_insert_with_key(|index| {
-                if let Some(data) = load_store.load(index.offset, index.chunk_size) {
-                    Chunk::Loaded {
-                        data,
-                        need_store: false,
-                    }
-                } else {
-                    Chunk::Empty
+        self.chunks.entry(*chunk_index).or_insert_with_key(|index| {
+            if let Some(data) = load_store.load(index.offset, index.chunk_size) {
+                Chunk::Loaded {
+                    data,
+                    need_store: false,
                 }
-            });
+            } else {
+                Chunk::Empty
+            }
+        })
     }
 
     pub fn store_all(&mut self) {
@@ -146,7 +143,7 @@ mod tests {
 
         let chunk_index = ChunkIndex::new(0, 4);
         memstore.chunks.insert(
-            chunk_index.clone(),
+            chunk_index,
             Chunk::Loaded {
                 data: vec![1, 2, 3, 4],
                 need_store: true,

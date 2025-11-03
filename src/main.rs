@@ -3,9 +3,14 @@ mod chunk_tree;
 mod lines;
 mod logs;
 mod memstore;
-//mod virtual_file;
-/* //mod virtual_file;
+mod virtual_file;
 
+fn main() {
+    println!("Editor - work in progress");
+    println!("The main editor functionality is currently under development.");
+}
+
+/*
 extern crate crossterm;
 extern crate ratatui;
 extern crate tempfile;
@@ -17,7 +22,7 @@ use std::{
 };
 
 use crate::lines::EditLine;
-//use crate::virtual_file::{LineCursor, VirtualFile};
+use crate::virtual_file::{LineCursor, LoadedLine, VirtualFile};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Position, Rect, Size},
@@ -26,7 +31,6 @@ use ratatui::{
     DefaultTerminal, Frame,
 };
 use tree_sitter_highlight::{Highlight, HighlightConfiguration, HighlightEvent, Highlighter};
-//use virtual_file::LoadedLine;
 
 // TODO
 // How to represent edited content?
@@ -738,4 +742,4 @@ fn main() -> io::Result<()> {
     ratatui::restore();
     result
 }
- */
+*/
