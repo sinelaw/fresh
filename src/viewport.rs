@@ -1,4 +1,4 @@
-use crate::buffer::Buffer;
+use crate::buffer::{Buffer, LineNumber};
 use crate::cursor::Cursor;
 
 /// The viewport - what portion of the buffer is visible
@@ -98,36 +98,17 @@ impl Viewport {
 
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)
     pub fn ensure_visible(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
-        // Optimization: For large files (>1MB), when cursor is near EOF,
-        // skip expensive line calculations and just scroll to end
-        let buffer_len = buffer.len();
-        let large_file_threshold = 1024 * 1024; // 1MB
-        let near_eof_threshold = 10000; // Within 10KB of EOF
+        // Use lazy line lookup - buffer layer handles caching vs estimation transparently
+        let cursor_line_number = buffer.byte_to_line_lazy(cursor.position);
+        let cursor_line = cursor_line_number.value();
 
-        if buffer_len > large_file_threshold
-            && cursor.position >= buffer_len.saturating_sub(near_eof_threshold) {
-            // Cursor is near EOF in a large file - scroll to show last page
-            // Use a very large line number to ensure we scroll to bottom
-            let visible_count = self.visible_line_count();
-            self.top_line = usize::MAX.saturating_sub(visible_count);
-
-            // For horizontal scrolling, find line start by scanning backwards (only a few KB at most)
-            let line_start = buffer.find_line_start_at_byte(cursor.position);
-            let cursor_column = cursor.position.saturating_sub(line_start);
-            self.ensure_column_visible(cursor_column);
-            return;
-        }
-
-        // Normal case: cursor is not near EOF
-        // Use lazy line lookup to avoid forcing full scans on large files
-        let cursor_line = buffer.byte_to_line_lazy(cursor.position);
         // Use approximate line count if available, otherwise use a very large number
         // This is safe because ensure_line_visible will naturally clamp when scrolling
         let total_lines = buffer.approximate_line_count().unwrap_or(usize::MAX);
         self.ensure_line_visible(cursor_line, total_lines);
 
-        // Horizontal scrolling
-        let line_start = buffer.line_to_byte(cursor_line);
+        // Horizontal scrolling - use byte-based approach to avoid line number conversion
+        let line_start = buffer.find_line_start_at_byte(cursor.position);
         let cursor_column = cursor.position.saturating_sub(line_start);
         self.ensure_column_visible(cursor_column);
     }
@@ -199,7 +180,10 @@ impl Viewport {
         // Convert cursor positions to line numbers
         let mut cursor_lines: Vec<(usize, usize)> = cursors
             .iter()
-            .map(|(priority, cursor)| (*priority, buffer.byte_to_line_lazy(cursor.position)))
+            .map(|(priority, cursor)| {
+                let line_number = buffer.byte_to_line_lazy(cursor.position);
+                (*priority, line_number.value())
+            })
             .collect();
 
         // Sort by priority (primary cursor first)
@@ -241,8 +225,11 @@ impl Viewport {
     /// Get the cursor screen position (x, y) which is (col, row) for rendering
     /// This returns the position relative to the viewport, accounting for horizontal scrolling
     pub fn cursor_screen_position(&self, buffer: &mut Buffer, cursor: &Cursor) -> (u16, u16) {
-        let line = buffer.byte_to_line_lazy(cursor.position);
-        let line_start = buffer.line_to_byte(line);
+        let line_number = buffer.byte_to_line_lazy(cursor.position);
+        let line = line_number.value();
+
+        // Use byte-based approach for finding line start to avoid conversion
+        let line_start = buffer.find_line_start_at_byte(cursor.position);
         let column = cursor.position.saturating_sub(line_start);
 
         let screen_row = line.saturating_sub(self.top_line) as u16;
@@ -312,8 +299,8 @@ mod tests {
         let cursor = Cursor::new(cursor_pos);
         vp.ensure_visible(&mut buffer, &cursor);
 
-        let cursor_line = buffer.byte_to_line_lazy(cursor_pos);
-        assert!(vp.is_line_visible(cursor_line));
+        let cursor_line_number = buffer.byte_to_line_lazy(cursor_pos);
+        assert!(vp.is_line_visible(cursor_line_number.value()));
     }
 
     #[test]

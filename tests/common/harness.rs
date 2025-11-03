@@ -169,6 +169,11 @@ impl EditorTestHarness {
         self.editor.active_state().cursors.primary().position
     }
 
+    /// Get the buffer length in bytes
+    pub fn buffer_len(&self) -> usize {
+        self.editor.active_state().buffer.len()
+    }
+
     /// Get the number of cursors
     pub fn cursor_count(&self) -> usize {
         self.editor.active_state().cursors.count()

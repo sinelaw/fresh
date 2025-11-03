@@ -4,6 +4,54 @@ use std::io::{self, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+/// Represents a line number that may be absolute (known/cached) or relative (estimated)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineNumber {
+    /// Absolute line number - this is the actual line number in the file
+    /// The line cache has been scanned up to at least this position
+    Absolute(usize),
+
+    /// Relative/estimated line number - calculated from last known cached position
+    /// This is used when we don't want to force an expensive scan
+    /// The number is still correct, but indicates it was computed on-demand
+    Relative {
+        /// The estimated line number
+        line: usize,
+        /// The last cached line number we used as a base
+        from_cached_line: usize,
+    },
+}
+
+impl LineNumber {
+    /// Get the line number value regardless of whether it's absolute or relative
+    pub fn value(&self) -> usize {
+        match self {
+            LineNumber::Absolute(line) => *line,
+            LineNumber::Relative { line, .. } => *line,
+        }
+    }
+
+    /// Check if this is an absolute (cached) line number
+    pub fn is_absolute(&self) -> bool {
+        matches!(self, LineNumber::Absolute(_))
+    }
+
+    /// Check if this is a relative (estimated) line number
+    pub fn is_relative(&self) -> bool {
+        matches!(self, LineNumber::Relative { .. })
+    }
+
+    /// Format the line number for display
+    /// Absolute line numbers are shown as-is (1-indexed)
+    /// Relative line numbers are shown with "+" prefix (1-indexed)
+    pub fn format(&self) -> String {
+        match self {
+            LineNumber::Absolute(line) => format!("{}", line + 1), // 1-indexed for display
+            LineNumber::Relative { line, .. } => format!("+{}", line + 1), // "+" prefix for relative
+        }
+    }
+}
+
 /// Default configuration for ChunkTree
 const DEFAULT_CONFIG: ChunkTreeConfig = ChunkTreeConfig::new(64, 128);
 
@@ -463,13 +511,13 @@ impl Buffer {
     /// Get line number for a byte position without forcing a scan
     /// Returns an estimate by counting newlines from last known position
     /// This is much faster for large files but less accurate
-    pub fn byte_to_line_lazy(&self, byte: usize) -> usize {
+    pub fn byte_to_line_lazy(&self, byte: usize) -> LineNumber {
         let byte = byte.min(self.len());
         let cache = self.line_cache.borrow();
 
         // If we've already scanned past this point, use the cached value
         if cache.fully_scanned || byte <= cache.scanned_up_to {
-            cache.byte_to_line(byte)
+            LineNumber::Absolute(cache.byte_to_line(byte))
         } else {
             // Estimate by counting from last known position
             let last_known_line = cache.line_starts.len().saturating_sub(1);
@@ -480,7 +528,10 @@ impl Buffer {
 
             // Count newlines from last known position to target
             let additional_lines = self.count_newlines_in_range(last_known_byte, byte);
-            last_known_line + additional_lines
+            LineNumber::Relative {
+                line: last_known_line + additional_lines,
+                from_cached_line: last_known_line,
+            }
         }
     }
 
@@ -604,11 +655,18 @@ impl Buffer {
             LineNumber::Absolute(cache.byte_to_line(byte_pos))
         } else {
             // We haven't scanned this far yet - return relative to last known line
+            let last_known_line = cache.line_starts.len().saturating_sub(1);
             let last_known_byte = cache.line_starts.last().copied().unwrap_or(0);
 
+            // Drop the borrow before counting newlines
+            drop(cache);
+
             // Count newlines from last known position (locally, without full scan)
-            let relative_offset = self.count_newlines_in_range(last_known_byte, byte_pos);
-            LineNumber::Relative(relative_offset)
+            let additional_lines = self.count_newlines_in_range(last_known_byte, byte_pos);
+            LineNumber::Relative {
+                line: last_known_line + additional_lines,
+                from_cached_line: last_known_line,
+            }
         }
     }
 
@@ -632,25 +690,6 @@ impl Buffer {
         }
 
         count
-    }
-}
-
-/// Represents a line number for display purposes
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LineNumber {
-    /// Absolute line number (we've scanned this far)
-    Absolute(usize),
-    /// Relative offset from viewport start (haven't scanned this far)
-    Relative(usize),
-}
-
-impl LineNumber {
-    /// Format for display (e.g., "42" or "+5")
-    pub fn format(&self) -> String {
-        match self {
-            LineNumber::Absolute(n) => format!("{}", n + 1), // 1-indexed for display
-            LineNumber::Relative(offset) => format!("+{}", offset),
-        }
     }
 }
 
@@ -1065,10 +1104,10 @@ mod tests {
     #[test]
     fn test_byte_to_line() {
         let buffer = Buffer::from_str("line0\nline1\nline2");
-        assert_eq!(buffer.byte_to_line_lazy(0), 0);
-        assert_eq!(buffer.byte_to_line_lazy(5), 0);
-        assert_eq!(buffer.byte_to_line_lazy(6), 1);
-        assert_eq!(buffer.byte_to_line_lazy(12), 2);
+        assert_eq!(buffer.byte_to_line_lazy(0).value(), 0);
+        assert_eq!(buffer.byte_to_line_lazy(5).value(), 0);
+        assert_eq!(buffer.byte_to_line_lazy(6).value(), 1);
+        assert_eq!(buffer.byte_to_line_lazy(12).value(), 2);
     }
 
     #[test]

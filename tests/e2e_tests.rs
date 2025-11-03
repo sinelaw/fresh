@@ -940,7 +940,7 @@ fn test_vertical_scroll_when_typing_to_bottom() {
 
     // Verify cursor is on the expected line
     let buffer = &harness.editor().active_state().buffer;
-    let cursor_line = buffer.byte_to_line_lazy(harness.cursor_position());
+    let cursor_line = buffer.byte_to_line_lazy(harness.cursor_position()).value();
     // We typed total_lines lines, so last line should be total_lines - 1
     assert_eq!(cursor_line, total_lines - 1, "Cursor should be on last line");
 
@@ -953,7 +953,7 @@ fn test_vertical_scroll_when_typing_to_bottom() {
     );
 
     // The cursor should be on the last line
-    let cursor_line = buffer.byte_to_line_lazy(harness.cursor_position());
+    let cursor_line = buffer.byte_to_line_lazy(harness.cursor_position()).value();
     assert_eq!(
         cursor_line, total_lines - 1,
         "Cursor should be on the last line (line {})",
@@ -2317,6 +2317,56 @@ fn test_load_big_file_e2e() {
 
     println!("\nTotal time: {:?}", harness_time + open_time);
     println!("Note: This includes the full editor flow + first render");
+}
+
+/// Test jumping to EOF in large file (Ctrl+End) without hang
+/// Bug: Previously byte_to_line_lazy() would call count_newlines_in_range()
+/// which loops through every byte from last known position to EOF, causing
+/// a hang when jumping to end of 60MB file.
+/// Fix: LineNumber enum allows buffer to return relative line numbers without
+/// forcing expensive scans, and viewport handles this transparently.
+#[test]
+#[ignore] // This test uses the 61MB BIG.txt file
+fn test_jump_to_eof_large_file() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use std::time::Instant;
+
+    // Generate BIG.txt if it doesn't exist
+    let big_txt_path = TestFixture::big_txt().unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&big_txt_path).unwrap();
+
+    println!("\n=== Testing Ctrl+End on 61MB file ===");
+
+    // Jump to EOF with Ctrl+End - this should NOT hang
+    let start = Instant::now();
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    let jump_time = start.elapsed();
+
+    println!("✓ Ctrl+End completed in: {:?}", jump_time);
+
+    // Verify we jumped to near EOF
+    let cursor_pos = harness.cursor_position();
+    let buffer_len = harness.buffer_len();
+
+    // Cursor should be very close to EOF (within last line)
+    assert!(
+        cursor_pos > buffer_len.saturating_sub(1000),
+        "Cursor should be near EOF. Position: {}, Buffer length: {}",
+        cursor_pos,
+        buffer_len
+    );
+
+    // The jump should be fast (< 100ms even in debug mode)
+    // If it takes longer, we're likely doing expensive line scans
+    assert!(
+        jump_time.as_millis() < 100,
+        "Ctrl+End took too long: {:?}. This suggests expensive line scanning.",
+        jump_time
+    );
+
+    println!("✓ Cursor at position {} (buffer len: {})", cursor_pos, buffer_len);
 }
 
 /// Test cursor positioning with large line numbers (100000+)

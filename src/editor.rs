@@ -420,7 +420,7 @@ impl Editor {
     pub fn add_cursor_above(&mut self) {
         let state = self.active_state();
         let primary = state.cursors.primary();
-        let current_line = state.buffer.byte_to_line_lazy(primary.position);
+        let current_line = state.buffer.byte_to_line_lazy(primary.position).value();
 
         if current_line == 0 {
             self.status_message = Some("Already at first line".to_string());
@@ -451,7 +451,7 @@ impl Editor {
     pub fn add_cursor_below(&mut self) {
         let state = self.active_state();
         let primary = state.cursors.primary();
-        let current_line = state.buffer.byte_to_line_lazy(primary.position);
+        let current_line = state.buffer.byte_to_line_lazy(primary.position).value();
 
         if state.buffer.is_last_line(current_line) {
             self.status_message = Some("Already at last line".to_string());
@@ -1223,7 +1223,7 @@ impl Editor {
             };
 
             let cursor = *state.primary_cursor();
-            let line = state.buffer.byte_to_line_lazy(cursor.position) + 1;
+            let line = state.buffer.byte_to_line_lazy(cursor.position).value() + 1;
             let col = cursor.position - state.buffer.line_to_byte(line - 1);
 
             (filename, modified, line, col)
@@ -1709,7 +1709,7 @@ impl Editor {
 
             Action::DeleteLine => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let line = state.buffer.byte_to_line_lazy(cursor.position);
+                    let line = state.buffer.byte_to_line_lazy(cursor.position).value();
                     let line_start = state.buffer.line_to_byte(line);
                     let line_end = state.buffer.line_end_byte_with_newline(line);
 
@@ -1794,7 +1794,7 @@ impl Editor {
             Action::SelectLineStart => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let line = state.buffer.byte_to_line_lazy(cursor.position);
+                    let line = state.buffer.byte_to_line_lazy(cursor.position).value();
                     let line_start = state.buffer.line_to_byte(line);
                     events.push(Event::MoveCursor {
                         cursor_id,
@@ -1807,7 +1807,7 @@ impl Editor {
             Action::SelectLineEnd => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let line = state.buffer.byte_to_line_lazy(cursor.position);
+                    let line = state.buffer.byte_to_line_lazy(cursor.position).value();
                     let line_end = state.buffer.line_end_byte(line);
                     events.push(Event::MoveCursor {
                         cursor_id,
@@ -1843,7 +1843,7 @@ impl Editor {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let current_line = state.buffer.byte_to_line_lazy(cursor.position);
+                    let current_line = state.buffer.byte_to_line_lazy(cursor.position).value();
                     let target_line = current_line.saturating_sub(lines_per_page);
                     let new_pos = state.buffer.line_to_byte(target_line);
                     events.push(Event::MoveCursor {
@@ -1858,7 +1858,7 @@ impl Editor {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let current_line = state.buffer.byte_to_line_lazy(cursor.position);
+                    let current_line = state.buffer.byte_to_line_lazy(cursor.position).value();
                     let target_line = current_line + lines_per_page;
                     let target_byte = state.buffer.line_to_byte(target_line);
                     // Clamp to EOF if we went past the end
@@ -1899,7 +1899,7 @@ impl Editor {
             Action::SelectLine => {
                 // Select the entire line for each cursor
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let line = state.buffer.byte_to_line_lazy(cursor.position);
+                    let line = state.buffer.byte_to_line_lazy(cursor.position).value();
                     let line_start = state.buffer.line_to_byte(line);
                     let line_end = state.buffer.line_end_byte_with_newline(line);
 
@@ -2073,7 +2073,7 @@ impl Editor {
             Action::MovePageUp => {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let current_line = state.buffer.byte_to_line_lazy(cursor.position);
+                    let current_line = state.buffer.byte_to_line_lazy(cursor.position).value();
                     let target_line = current_line.saturating_sub(lines_per_page);
                     let line_start = state.buffer.line_to_byte(current_line);
                     let col_offset = cursor.position - line_start;
@@ -2095,7 +2095,7 @@ impl Editor {
             Action::MovePageDown => {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let current_line = state.buffer.byte_to_line_lazy(cursor.position);
+                    let current_line = state.buffer.byte_to_line_lazy(cursor.position).value();
                     let target_line = current_line + lines_per_page;
                     let line_start = state.buffer.line_to_byte(current_line);
                     let col_offset = cursor.position - line_start;
