@@ -1372,8 +1372,18 @@ impl Editor {
             return 0;
         }
 
-        let bytes = buffer.slice_bytes(0..buffer.len());
-        let mut new_pos = pos;
+        let buf_len = buffer.len();
+        if pos >= buf_len {
+            return buf_len;
+        }
+
+        // Only read a small window around the position for efficiency
+        let start = pos.saturating_sub(1000);
+        let end = (pos + 1).min(buf_len);
+        let bytes = buffer.slice_bytes(start..end);
+        let offset = pos - start;
+
+        let mut new_pos = offset;
 
         // If we're at a non-word character, scan left to find a word
         if let Some(&b) = bytes.get(new_pos) {
@@ -1394,22 +1404,25 @@ impl Editor {
             }
         }
 
-        new_pos
+        start + new_pos
     }
 
     /// Helper: Find the end of the word at or after the given position
     fn find_word_end(&self, buffer: &crate::buffer::Buffer, pos: usize) -> usize {
-        let bytes = buffer.slice_bytes(0..buffer.len());
-        let len = bytes.len();
-
-        if pos >= len {
-            return len;
+        let buf_len = buffer.len();
+        if pos >= buf_len {
+            return buf_len;
         }
 
-        let mut new_pos = pos;
+        // Only read a small window around the position for efficiency
+        let start = pos;
+        let end = (pos + 1000).min(buf_len);
+        let bytes = buffer.slice_bytes(start..end);
+
+        let mut new_pos = 0;
 
         // Find end of current word
-        while new_pos < len {
+        while new_pos < bytes.len() {
             if let Some(&byte) = bytes.get(new_pos) {
                 if !Self::is_word_char(byte) {
                     break;
@@ -1420,7 +1433,7 @@ impl Editor {
             }
         }
 
-        new_pos
+        start + new_pos
     }
 
     /// Helper: Find the start of the word to the left of the given position
@@ -1429,8 +1442,15 @@ impl Editor {
             return 0;
         }
 
-        let bytes = buffer.slice_bytes(0..buffer.len());
-        let mut new_pos = pos.saturating_sub(1);
+        let buf_len = buffer.len();
+        let actual_pos = pos.min(buf_len);
+
+        // Only read a small window around the position for efficiency
+        let start = actual_pos.saturating_sub(1000);
+        let end = actual_pos;
+        let bytes = buffer.slice_bytes(start..end);
+
+        let mut new_pos = bytes.len().saturating_sub(1);
 
         // Skip whitespace
         while new_pos > 0 && bytes.get(new_pos).is_some_and(|&b| b.is_ascii_whitespace()) {
@@ -1453,31 +1473,34 @@ impl Editor {
             }
         }
 
-        new_pos
+        start + new_pos
     }
 
     /// Helper: Find the start of the word to the right of the given position
     fn find_word_start_right(&self, buffer: &crate::buffer::Buffer, pos: usize) -> usize {
-        let bytes = buffer.slice_bytes(0..buffer.len());
-        let len = bytes.len();
-
-        if pos >= len {
-            return len;
+        let buf_len = buffer.len();
+        if pos >= buf_len {
+            return buf_len;
         }
 
-        let mut new_pos = pos;
+        // Only read a small window around the position for efficiency
+        let start = pos;
+        let end = (pos + 1000).min(buf_len);
+        let bytes = buffer.slice_bytes(start..end);
+
+        let mut new_pos = 0;
 
         // Skip current word
-        while new_pos < len && bytes.get(new_pos).is_some_and(|&b| Self::is_word_char(b)) {
+        while new_pos < bytes.len() && bytes.get(new_pos).is_some_and(|&b| Self::is_word_char(b)) {
             new_pos += 1;
         }
 
         // Skip whitespace
-        while new_pos < len && bytes.get(new_pos).is_some_and(|&b| b.is_ascii_whitespace()) {
+        while new_pos < bytes.len() && bytes.get(new_pos).is_some_and(|&b| b.is_ascii_whitespace()) {
             new_pos += 1;
         }
 
-        new_pos
+        start + new_pos
     }
 
     /// Convert an action into a list of events to apply to the active buffer

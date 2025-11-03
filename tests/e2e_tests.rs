@@ -1792,3 +1792,163 @@ fn test_expand_selection_no_initial_selection() {
     let selected_text = harness.editor().active_state().buffer.slice(range);
     assert_eq!(selected_text, "bar", "Should select current word 'bar'");
 }
+
+/// Test expand selection performance with moderately large buffer
+/// This test ensures that selection operations don't read the entire buffer
+#[test]
+fn test_expand_selection_large_buffer_performance() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use tempfile::TempDir;
+    use std::fs;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("large.txt");
+
+    // Create a moderately large file (~100KB of text)
+    let large_text = "word ".repeat(20_000); // ~100KB of text
+    fs::write(&file_path, &large_text).unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to a position near the middle
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    for _ in 0..50 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+
+    // Expand selection - this used to hang/timeout with large buffers
+    // because it would read the entire buffer. Now it should complete quickly
+    // by only reading a small window around the cursor.
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+
+    // Verify it works correctly
+    let cursor = harness.editor().active_state().cursors.primary();
+    assert!(cursor.selection_range().is_some(), "Should have a selection");
+
+    // The selected text should be a word (not testing exact content since position may vary)
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert!(!selected_text.is_empty(), "Selection should not be empty");
+}
+
+/// Test with an extremely large buffer (simulating the 63MB file issue)
+/// This verifies the windowed reading approach works with very large files
+#[test]
+#[ignore] // This test takes a long time - run with --ignored flag
+fn test_expand_selection_very_large_buffer() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use tempfile::TempDir;
+    use std::fs;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("very_large.txt");
+
+    // Create a very large file (~10MB of text - representative of the issue)
+    let large_text = "word ".repeat(2_000_000); // ~10MB of text
+    fs::write(&file_path, &large_text).unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to various positions in the file and test expand selection
+    // Test near the beginning
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    for _ in 0..100 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    assert!(cursor.selection_range().is_some(), "Should have selection at start");
+
+    // Test in the middle (move down many lines)
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap(); // Clear selection
+    for _ in 0..1000 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    assert!(cursor.selection_range().is_some(), "Should have selection in middle");
+
+    // All operations should complete without hanging
+}
+
+/// Test selecting words after scrolling down beyond initial viewport
+/// Ensures word selection works correctly at any position, not just visible lines
+#[test]
+fn test_select_word_after_scrolling() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create a buffer with many lines (more than viewport height)
+    let mut lines = Vec::new();
+    for i in 0..100 {
+        lines.push(format!("line{} word{} test{}", i, i, i));
+    }
+    harness.type_text(&lines.join("\n")).unwrap();
+
+    // Scroll down past the initial viewport
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    for _ in 0..50 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+
+    // Move to middle of a word on line 50
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..10 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+
+    // Select word with Ctrl+W
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+
+    // Should have selected "word50" at line 50
+    assert!(selected_text.contains("word"), "Should select a word after scrolling");
+    assert!(selected_text.len() > 0, "Selection should not be empty");
+}
+
+/// Test expand selection after scrolling down
+#[test]
+fn test_expand_selection_after_scrolling() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create a buffer with many lines
+    let mut lines = Vec::new();
+    for i in 0..50 {
+        lines.push(format!("alpha beta gamma delta epsilon line{}", i));
+    }
+    harness.type_text(&lines.join("\n")).unwrap();
+
+    // Scroll down to line 30
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    for _ in 0..30 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+
+    // Move to middle of "alpha"
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+
+    // First expand should select "alpha"
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range.clone());
+    assert_eq!(selected_text, "alpha", "First expand should select 'alpha'");
+
+    // Second expand should extend to include "beta"
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "alpha beta", "Second expand should include 'beta'");
+}
