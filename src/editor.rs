@@ -618,6 +618,21 @@ impl Editor {
                 action: Action::SelectAll,
             },
             Command {
+                name: "Select Word".to_string(),
+                description: "Select the word under the cursor".to_string(),
+                action: Action::SelectWord,
+            },
+            Command {
+                name: "Select Line".to_string(),
+                description: "Select the current line".to_string(),
+                action: Action::SelectLine,
+            },
+            Command {
+                name: "Expand Selection".to_string(),
+                description: "Expand the current selection by one word".to_string(),
+                action: Action::ExpandSelection,
+            },
+            Command {
                 name: "Add Cursor Above".to_string(),
                 description: "Add a cursor on the line above".to_string(),
                 action: Action::AddCursorAbove,
@@ -773,7 +788,7 @@ impl Editor {
                                         Action::AddCursorAbove => self.add_cursor_above(),
                                         Action::AddCursorBelow => self.add_cursor_below(),
                                         Action::RemoveSecondaryCursors => self.active_state_mut().cursors.remove_secondary(),
-                                        Action::SelectAll => {
+                                        Action::SelectAll | Action::SelectWord | Action::SelectLine | Action::ExpandSelection => {
                                             if let Some(events) = self.action_to_events(action) {
                                                 for event in events {
                                                     self.active_event_log_mut().append(event.clone());
@@ -1351,6 +1366,63 @@ impl Editor {
         byte.is_ascii_alphanumeric() || byte == b'_'
     }
 
+    /// Helper: Find the start of the word at or before the given position
+    fn find_word_start(&self, buffer: &crate::buffer::Buffer, pos: usize) -> usize {
+        if pos == 0 {
+            return 0;
+        }
+
+        let bytes = buffer.slice_bytes(0..buffer.len());
+        let mut new_pos = pos;
+
+        // If we're at a non-word character, scan left to find a word
+        if let Some(&b) = bytes.get(new_pos) {
+            if !Self::is_word_char(b) && new_pos > 0 {
+                new_pos = new_pos.saturating_sub(1);
+            }
+        }
+
+        // Find start of current word
+        while new_pos > 0 {
+            if let Some(&prev_byte) = bytes.get(new_pos.saturating_sub(1)) {
+                if !Self::is_word_char(prev_byte) {
+                    break;
+                }
+                new_pos = new_pos.saturating_sub(1);
+            } else {
+                break;
+            }
+        }
+
+        new_pos
+    }
+
+    /// Helper: Find the end of the word at or after the given position
+    fn find_word_end(&self, buffer: &crate::buffer::Buffer, pos: usize) -> usize {
+        let bytes = buffer.slice_bytes(0..buffer.len());
+        let len = bytes.len();
+
+        if pos >= len {
+            return len;
+        }
+
+        let mut new_pos = pos;
+
+        // Find end of current word
+        while new_pos < len {
+            if let Some(&byte) = bytes.get(new_pos) {
+                if !Self::is_word_char(byte) {
+                    break;
+                }
+                new_pos += 1;
+            } else {
+                break;
+            }
+        }
+
+        new_pos
+    }
+
     /// Helper: Find the start of the word to the left of the given position
     fn find_word_start_left(&self, buffer: &crate::buffer::Buffer, pos: usize) -> usize {
         if pos == 0 {
@@ -1751,6 +1823,66 @@ impl Editor {
                     position: state.buffer.len(),
                     anchor: Some(0),
                 });
+            }
+
+            Action::SelectWord => {
+                // Select the word under each cursor
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let word_start = self.find_word_start(&state.buffer, cursor.position);
+                    let word_end = self.find_word_end(&state.buffer, cursor.position);
+
+                    // Move cursor to word end with anchor at word start
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: word_end,
+                        anchor: Some(word_start),
+                    });
+                }
+            }
+
+            Action::SelectLine => {
+                // Select the entire line for each cursor
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let line = state.buffer.byte_to_line(cursor.position);
+                    let line_start = state.buffer.line_to_byte(line);
+                    let line_end = if line + 1 < state.buffer.line_count() {
+                        state.buffer.line_to_byte(line + 1) // Include newline
+                    } else {
+                        state.buffer.len()
+                    };
+
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: line_end,
+                        anchor: Some(line_start),
+                    });
+                }
+            }
+
+            Action::ExpandSelection => {
+                // Expand selection for each cursor
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    if let Some(anchor) = cursor.anchor {
+                        // Already have a selection - expand by one word to the right
+                        // First move to the start of the next word, then to its end
+                        let next_word_start = self.find_word_start_right(&state.buffer, cursor.position);
+                        let new_end = self.find_word_end(&state.buffer, next_word_start);
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            position: new_end,
+                            anchor: Some(anchor),
+                        });
+                    } else {
+                        // No selection - select current word
+                        let word_start = self.find_word_start(&state.buffer, cursor.position);
+                        let word_end = self.find_word_end(&state.buffer, cursor.position);
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            position: word_end,
+                            anchor: Some(word_start),
+                        });
+                    }
+                }
             }
 
             // Document navigation

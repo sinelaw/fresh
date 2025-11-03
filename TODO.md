@@ -13,25 +13,26 @@
 - **Help system**: Ctrl+H shows all keybindings
 - **Minibuffer/Prompt system**: Ctrl+O for file open, Escape to cancel, typing support
 - **Command palette**: Ctrl+P with fuzzy matching, autocomplete, and all editor commands
+- **Advanced selection**: Ctrl+W (select word), Ctrl+L (select line), Ctrl+Shift+→ (expand selection)
 - **Configuration**: JSON-based config with keybindings, theme, editor settings
 - **High performance**: ChunkTree buffer, line cache, <1ms operations
-- **Testing**: 47 E2E tests, property tests, benchmarks
+- **Testing**: 59 E2E tests, property tests, benchmarks
 
 ## Current Status
 
-**Phase**: 2.2.2 Complete ✅ (Command Palette)
-**Tests**: 47 passing (47 E2E + unit + property tests)
-**Next**: Phase 2.3 - Advanced Selection (or Phase 3 - Syntax Highlighting)
+**Phase**: 2.3 Partially Complete ✅ (Advanced Selection - word/line/expand)
+**Tests**: 59 passing (59 E2E + unit + property tests)
+**Next**: Phase 2.4 - Smart Editing (or continue with rectangular selection)
 
 ---
 
 ## Phase 2: Multi-Cursor & Advanced Editing
 
 ### 2.3 Advanced Selection
-- [ ] Implement select word (double-click or Ctrl+W)
-- [ ] Implement select line (Ctrl+L)
-- [ ] Implement expand selection (Ctrl+Shift+→)
-- [ ] Implement rectangular selection (Alt+drag)
+- [x] Implement select word (Ctrl+W) ✅
+- [x] Implement select line (Ctrl+L) ✅
+- [x] Implement expand selection (Ctrl+Shift+→) ✅
+- [ ] Implement rectangular selection (Alt+drag) - requires mouse event handling infrastructure
 
 ### 2.4 Smart Editing
 - [ ] Implement auto-indent on newline

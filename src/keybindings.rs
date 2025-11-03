@@ -34,6 +34,9 @@ pub enum Action {
     SelectLineStart,
     SelectLineEnd,
     SelectAll,
+    SelectWord,
+    SelectLine,
+    ExpandSelection,
 
     // Editing
     DeleteBackward,
@@ -111,6 +114,9 @@ impl Action {
             "select_line_start" => Some(Action::SelectLineStart),
             "select_line_end" => Some(Action::SelectLineEnd),
             "select_all" => Some(Action::SelectAll),
+            "select_word" => Some(Action::SelectWord),
+            "select_line" => Some(Action::SelectLine),
+            "expand_selection" => Some(Action::ExpandSelection),
 
             "delete_backward" => Some(Action::DeleteBackward),
             "delete_forward" => Some(Action::DeleteForward),
@@ -330,6 +336,18 @@ impl KeybindingResolver {
             (KeyCode::Char('a'), KeyModifiers::CONTROL),
             Action::SelectAll,
         );
+        bindings.insert(
+            (KeyCode::Char('w'), KeyModifiers::CONTROL),
+            Action::SelectWord,
+        );
+        bindings.insert(
+            (KeyCode::Char('l'), KeyModifiers::CONTROL),
+            Action::SelectLine,
+        );
+        bindings.insert(
+            (KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            Action::ExpandSelection,
+        );
 
         // Multi-cursor
         bindings.insert(
@@ -458,6 +476,9 @@ impl KeybindingResolver {
             Action::SelectLineStart => "Select to line start".to_string(),
             Action::SelectLineEnd => "Select to line end".to_string(),
             Action::SelectAll => "Select all".to_string(),
+            Action::SelectWord => "Select word under cursor".to_string(),
+            Action::SelectLine => "Select current line".to_string(),
+            Action::ExpandSelection => "Expand selection".to_string(),
             Action::DeleteBackward => "Delete backward".to_string(),
             Action::DeleteForward => "Delete forward".to_string(),
             Action::DeleteWordBackward => "Delete word backward".to_string(),

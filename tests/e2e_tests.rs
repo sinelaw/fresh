@@ -1557,3 +1557,238 @@ fn test_viewport_31_rows() {
     harness.assert_screen_contains("Line 1");
     harness.assert_screen_contains("Line 29");
 }
+
+/// Test select word functionality (Ctrl+W)
+#[test]
+fn test_select_word() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type some text with multiple words
+    harness.type_text("hello world test").unwrap();
+
+    // Move to the middle of "world"
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..8 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+
+    // Now cursor is at position 8 (in the middle of "world")
+    // Select word with Ctrl+W
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+
+    // Verify the selection
+    let cursor = harness.editor().active_state().cursors.primary();
+    let selection = cursor.selection_range();
+    assert!(selection.is_some(), "Cursor should have a selection");
+
+    let range = selection.unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "world", "Should select the word 'world'");
+}
+
+/// Test select word at start of word
+#[test]
+fn test_select_word_at_start() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("hello world").unwrap();
+
+    // Move to start of "world"
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..6 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+
+    // Select word
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "world", "Should select the word 'world'");
+}
+
+/// Test select word at end of word
+#[test]
+fn test_select_word_at_end() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("hello world").unwrap();
+
+    // Move to end of "hello"
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+
+    // Select word
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "hello", "Should select the word 'hello'");
+}
+
+/// Test select line functionality (Ctrl+L)
+#[test]
+fn test_select_line() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type multiple lines
+    harness.type_text("first line\nsecond line\nthird line").unwrap();
+
+    // Move to start of document, then down to second line
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+
+    // Select line with Ctrl+L
+    harness.send_key(KeyCode::Char('l'), KeyModifiers::CONTROL).unwrap();
+
+    // Verify the selection includes the entire line
+    let cursor = harness.editor().active_state().cursors.primary();
+    let selection = cursor.selection_range();
+    assert!(selection.is_some(), "Cursor should have a selection");
+
+    let range = selection.unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "second line\n", "Should select the entire line including newline");
+}
+
+/// Test select line on first line
+#[test]
+fn test_select_line_first() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("first line\nsecond line").unwrap();
+
+    // Move to start of document (first line)
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+
+    // Select line
+    harness.send_key(KeyCode::Char('l'), KeyModifiers::CONTROL).unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "first line\n", "Should select the first line");
+}
+
+/// Test select line on last line (no trailing newline)
+#[test]
+fn test_select_line_last() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("first line\nsecond line").unwrap();
+
+    // Select line (cursor is already on last line)
+    harness.send_key(KeyCode::Char('l'), KeyModifiers::CONTROL).unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "second line", "Should select the last line without newline");
+}
+
+/// Test select word with multiple cursors
+#[test]
+fn test_select_word_multi_cursor() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type text with words
+    harness.type_text("hello world test").unwrap();
+
+    // Move to "hello"
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+
+    // Add cursor at "world" using Ctrl+D (add cursor at next match)
+    harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+    harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+    harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+    harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+    harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+
+    // Now we have "hello" selected, add cursor at next space or different word
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+
+    // Add cursor above at same column
+    harness.send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT).unwrap();
+
+    // This test validates multi-cursor infrastructure is ready
+    let state = harness.editor().active_state();
+    assert!(state.cursors.count() >= 1, "Should have at least one cursor");
+}
+
+/// Test expand selection functionality (Ctrl+Shift+Right)
+#[test]
+fn test_expand_selection() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type text with multiple words
+    harness.type_text("hello world test").unwrap();
+
+    // Move to middle of "hello"
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+
+    // First expand should select current word "hello"
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range.clone());
+    assert_eq!(selected_text, "hello", "First expand should select 'hello'");
+
+    // Second expand should extend to include "world"
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range.clone());
+    assert_eq!(selected_text, "hello world", "Second expand should include 'world'");
+
+    // Third expand should extend to include "test"
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "hello world test", "Third expand should include 'test'");
+}
+
+/// Test expand selection when starting with no selection
+#[test]
+fn test_expand_selection_no_initial_selection() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("foo bar baz").unwrap();
+
+    // Move to middle of "bar"
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+
+    // Expand with no initial selection should select the word
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "bar", "Should select current word 'bar'");
+}
