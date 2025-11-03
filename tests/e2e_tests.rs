@@ -2271,6 +2271,14 @@ fn test_select_prev_word_with_special_chars() {
 fn test_load_big_file_e2e() {
     use std::time::Instant;
     use std::path::Path;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    // Initialize tracing
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .try_init();
 
     println!("\n=== E2E Test: Loading BIG.txt through full editor ===");
 
@@ -2287,6 +2295,20 @@ fn test_load_big_file_e2e() {
     // Verify the file is actually loaded
     let screen = harness.screen_to_string();
     assert!(screen.contains("Editor Implementation Plan"), "First line should be visible");
+
+    // Test pagedown performance (this is where we had issues)
+    let start = Instant::now();
+    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    let pagedown_time = start.elapsed();
+    println!("✓ First PageDown in: {:?}", pagedown_time);
+
+    // Do a few more pagedowns to ensure consistent performance
+    for i in 1..5 {
+        let start = Instant::now();
+        harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+        let time = start.elapsed();
+        println!("✓ PageDown #{} in: {:?}", i + 1, time);
+    }
 
     println!("\nTotal time: {:?}", harness_time + open_time);
     println!("Note: This includes the full editor flow + first render");

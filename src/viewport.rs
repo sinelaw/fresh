@@ -84,7 +84,10 @@ impl Viewport {
     pub fn ensure_visible(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
         // Vertical scrolling
         let cursor_line = buffer.byte_to_line(cursor.position);
-        self.ensure_line_visible(cursor_line, buffer.line_count());
+        // Use approximate line count if available, otherwise use a very large number
+        // This is safe because ensure_line_visible will naturally clamp when scrolling
+        let total_lines = buffer.approximate_line_count().unwrap_or(usize::MAX);
+        self.ensure_line_visible(cursor_line, total_lines);
 
         // Horizontal scrolling
         let line_start = buffer.line_to_byte(cursor_line);

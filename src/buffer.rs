@@ -299,6 +299,9 @@ impl Buffer {
     /// Ensure the line cache is valid UP TO a certain byte position
     /// This allows lazy scanning - only scan what's needed
     fn ensure_line_cache_to(&self, min_byte_pos: usize) {
+        use std::time::Instant;
+        let start = Instant::now();
+
         let mut cache = self.line_cache.borrow_mut();
 
         if cache.fully_scanned {
@@ -321,49 +324,80 @@ impl Buffer {
         // Scan incrementally from where we left off using chunk iterator
         let scan_from = cache.scanned_up_to;
         let scan_to = min_byte_pos.min(self.len());
+        tracing::debug!(scan_from, scan_to, file_len = self.len(), "Scanning line cache");
 
         let mut current_pos = 0;
+        let mut chunks_visited = 0;
+        let mut chunks_skipped = 0;
+        let mut chunks_scanned = 0;
         for piece in self.content.iter() {
+            chunks_visited += 1;
             match piece {
                 crate::chunk_tree::ChunkPiece::Data { data } => {
                     let chunk_end = current_pos + data.len();
 
-                    // Only scan this chunk if it overlaps with our scan range
-                    if chunk_end > scan_from {
-                        let start_in_chunk = scan_from.saturating_sub(current_pos);
-                        let end_in_chunk = (scan_to - current_pos).min(data.len());
+                    // Skip chunks entirely before our scan range
+                    if chunk_end <= scan_from {
+                        chunks_skipped += 1;
+                        current_pos = chunk_end;
+                        continue;
+                    }
 
-                        for i in start_in_chunk..end_in_chunk {
-                            if data[i] == b'\n' {
-                                cache.line_starts.push(current_pos + i + 1);
-                            }
+                    // Stop if we've scanned past our target
+                    if current_pos >= scan_to {
+                        break;
+                    }
+
+                    // Scan this chunk
+                    chunks_scanned += 1;
+                    let start_in_chunk = scan_from.saturating_sub(current_pos);
+                    let end_in_chunk = (scan_to - current_pos).min(data.len());
+
+                    for i in start_in_chunk..end_in_chunk {
+                        if data[i] == b'\n' {
+                            cache.line_starts.push(current_pos + i + 1);
                         }
+                    }
 
-                        cache.scanned_up_to = current_pos + end_in_chunk;
+                    cache.scanned_up_to = current_pos + end_in_chunk;
 
-                        if cache.scanned_up_to >= scan_to {
-                            cache.fully_scanned = cache.scanned_up_to >= self.len();
-                            return;
-                        }
+                    if cache.scanned_up_to >= scan_to {
+                        cache.fully_scanned = cache.scanned_up_to >= self.len();
+                        return;
                     }
 
                     current_pos = chunk_end;
                 }
                 crate::chunk_tree::ChunkPiece::Gap { size } => {
-                    current_pos += size;
-                    if current_pos > scan_from {
-                        cache.scanned_up_to = cache.scanned_up_to.max(current_pos.min(scan_to));
-                    }
-                }
-            }
+                    let gap_end = current_pos + size;
 
-            if current_pos >= scan_to {
-                cache.scanned_up_to = scan_to;
-                break;
+                    // Skip gaps entirely before our scan range
+                    if gap_end <= scan_from {
+                        chunks_skipped += 1;
+                        current_pos = gap_end;
+                        continue;
+                    }
+
+                    // Stop if we've scanned past our target
+                    if current_pos >= scan_to {
+                        break;
+                    }
+
+                    current_pos = gap_end;
+                    cache.scanned_up_to = cache.scanned_up_to.max(current_pos.min(scan_to));
+                }
             }
         }
 
         cache.fully_scanned = cache.scanned_up_to >= self.len();
+        let elapsed = start.elapsed();
+        tracing::debug!(
+            chunks_visited,
+            chunks_skipped,
+            chunks_scanned,
+            elapsed_ms = elapsed.as_millis(),
+            "Line cache scan complete"
+        );
     }
 
     /// Ensure the line cache is fully valid
@@ -375,35 +409,55 @@ impl Buffer {
     /// Convert a line number to a byte offset
     /// For small line numbers, this only scans a small portion of the file
     pub fn line_to_byte(&self, line: usize) -> usize {
+        tracing::trace!(line, "line_to_byte called");
+
         // Quick check: if we already have this line cached, return it
         {
             let cache = self.line_cache.borrow();
             if cache.valid && line < cache.line_count() {
                 if let Some(byte_pos) = cache.line_to_byte(line) {
+                    tracing::trace!(line, byte_pos, "Found in cache");
                     return byte_pos;
                 }
             }
+            tracing::debug!(
+                line,
+                cache_lines = cache.line_count(),
+                scanned_up_to = cache.scanned_up_to,
+                "Line not in cache, need to scan"
+            );
         }
 
-        // We need to scan further - estimate how many bytes we need to scan
-        // Average line length is roughly 50 bytes, so scan (line + 100) * 50 to be safe
-        let estimated_bytes = (line + 100) * 50;
-        self.ensure_line_cache_to(estimated_bytes);
+        // We need to scan further - scan incrementally in chunks until we find it
+        // Start with a reasonable chunk size (e.g., 64KB at a time)
+        const SCAN_CHUNK_SIZE: usize = 64 * 1024; // 64KB
 
-        // Try again
-        {
-            let cache = self.line_cache.borrow();
-            if let Some(byte_pos) = cache.line_to_byte(line) {
-                return byte_pos;
-            }
+        let mut iteration = 0;
+        loop {
+            iteration += 1;
+            let scan_target = {
+                let cache = self.line_cache.borrow();
+
+                // Check if we already have the line
+                if let Some(byte_pos) = cache.line_to_byte(line) {
+                    tracing::debug!(line, byte_pos, iteration, "Found after scanning");
+                    return byte_pos;
+                }
+
+                // If we've fully scanned and still don't have it, the line doesn't exist
+                if cache.fully_scanned {
+                    tracing::warn!(line, "Line not found after full scan");
+                    return self.len();
+                }
+
+                // Scan another chunk
+                let target = cache.scanned_up_to + SCAN_CHUNK_SIZE;
+                tracing::debug!(line, iteration, from = cache.scanned_up_to, to = target, "Need to scan more for line");
+                target
+            };
+
+            self.ensure_line_cache_to(scan_target);
         }
-
-        // Still don't have it - need full scan
-        self.ensure_line_cache();
-        self.line_cache
-            .borrow()
-            .line_to_byte(line)
-            .unwrap_or(self.len())
     }
 
     /// Convert a byte offset to a line number

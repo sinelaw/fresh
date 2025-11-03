@@ -2111,11 +2111,8 @@ impl Editor {
                     let col_offset = cursor.position - line_start;
 
                     let target_line_start = state.buffer.line_to_byte(target_line);
-                    let target_line_end = if target_line + 1 < state.buffer.line_count() {
-                        state.buffer.line_to_byte(target_line + 1).saturating_sub(1)
-                    } else {
-                        state.buffer.len()
-                    };
+                    // Get the next line start (or EOF) to calculate line length
+                    let target_line_end = state.buffer.line_to_byte(target_line + 1).saturating_sub(1);
                     let target_line_len = target_line_end - target_line_start;
 
                     let new_pos = target_line_start + col_offset.min(target_line_len);
@@ -2131,17 +2128,25 @@ impl Editor {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let current_line = state.buffer.byte_to_line(cursor.position);
-                    let target_line = (current_line + lines_per_page)
-                        .min(state.buffer.line_count().saturating_sub(1));
+                    let target_line = current_line + lines_per_page;
                     let line_start = state.buffer.line_to_byte(current_line);
                     let col_offset = cursor.position - line_start;
 
+                    // line_to_byte will return EOF if target_line doesn't exist
                     let target_line_start = state.buffer.line_to_byte(target_line);
-                    let target_line_end = if target_line + 1 < state.buffer.line_count() {
-                        state.buffer.line_to_byte(target_line + 1).saturating_sub(1)
-                    } else {
-                        state.buffer.len()
-                    };
+
+                    // If we're at EOF, clamp to EOF
+                    if target_line_start >= state.buffer.len() {
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            position: state.buffer.len(),
+                            anchor: None,
+                        });
+                        continue;
+                    }
+
+                    // Get the next line start (or EOF) to calculate line length
+                    let target_line_end = state.buffer.line_to_byte(target_line + 1).saturating_sub(1);
                     let target_line_len = target_line_end - target_line_start;
 
                     let new_pos = target_line_start + col_offset.min(target_line_len);
