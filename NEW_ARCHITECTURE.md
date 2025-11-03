@@ -356,16 +356,11 @@ Total:                <14ms ✓
 
 ## Simplifications vs. Traditional Editors
 
-### What We DON'T Do
-1. **No undo/redo** (phase 1) - add later using ChunkTree persistence
-2. **No clipboard** (phase 1) - just selections
-3. **No search** (phase 1) - add later
-4. **No config files** - hardcoded keybindings
-5. **No plugins** - monolithic binary
-6. **No LSP** - just syntax highlighting
-7. **No line wrapping** (phase 1) - horizontal scroll only
-8. **No Unicode bidi** - left-to-right only
-9. **No fancy rendering** - monospace terminal only
+### What We DON'T Do (Phase 1)
+1. **No line wrapping** (phase 1) - horizontal scroll only
+2. **No Unicode bidi** - left-to-right only
+3. **No fancy rendering** - monospace terminal only
+4. **No plugins** - monolithic binary
 
 ### What We DO Well
 1. ✓ Open any file size instantly
@@ -373,27 +368,33 @@ Total:                <14ms ✓
 3. ✓ Edit with ultra-low latency
 4. ✓ Multiple cursors everywhere
 5. ✓ Pretty syntax colors
-6. ✓ Stable, no crashes
+6. ✓ Undo/redo with event log
+7. ✓ JSON config system with hot reload
+8. ✓ Multiple file support
+9. ✓ Clipboard (copy/paste)
+10. ✓ LSP support (code completion, diagnostics, go-to-definition)
+11. ✓ Stable, no crashes
 
 ## File Structure
 
 ```
 src/
 ├── main.rs           # Entry point, CLI arg parsing
-├── editor.rs         # Editor struct, event loop, rendering
-├── buffer.rs         # Buffer struct, line cache, file I/O
-├── cursor.rs         # Cursor, Cursors multi-cursor logic
-├── viewport.rs       # Viewport, scrolling logic
+├── editor.rs         # Editor struct, event loop, rendering, clipboard
+├── buffer.rs         # ✓ Buffer struct, line cache, file I/O
+├── state.rs          # ✓ EditorState with event application
+├── cursor.rs         # ✓ Cursor, Cursors multi-cursor logic
+├── viewport.rs       # ✓ Viewport, scrolling logic
+├── event.rs          # ✓ Event enum, EventLog, undo/redo
+├── config.rs         # ✓ Config struct, JSON loading
+├── keybindings.rs    # ✓ Action enum, KeybindingResolver
 ├── highlighter.rs    # Syntax highlighting with tree-sitter
-├── chunk_tree.rs     # (keep existing) Rope implementation
-├── keybindings.rs    # Key event -> action mapping
+├── lsp.rs            # LSP client integration
+├── chunk_tree.rs     # ✓ (keep existing) Rope implementation
 └── render.rs         # Terminal rendering helpers
 
-# Delete these:
-- lines.rs          # (obsolete - buffer handles this)
-- logs.rs           # (use proper logging crate if needed)
-- memstore.rs       # (obsolete - buffer handles chunk loading)
-- virtual_file.rs   # (replaced by buffer.rs)
+# Deleted (obsolete):
+- lines.rs, logs.rs, memstore.rs, virtual_file.rs
 ```
 
 ## Implementation Strategy
