@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::event::{Event, EventLog, CursorId};
+use crate::event::{Event, EventLog};
 use crate::keybindings::{Action, KeybindingResolver};
 use crate::state::EditorState;
 use ratatui::{
@@ -417,6 +417,68 @@ impl Editor {
         frame.render_widget(status_line, area);
     }
 
+    /// Helper: Check if a byte is a word character (alphanumeric or underscore)
+    fn is_word_char(byte: u8) -> bool {
+        byte.is_ascii_alphanumeric() || byte == b'_'
+    }
+
+    /// Helper: Find the start of the word to the left of the given position
+    fn find_word_start_left(&self, buffer: &crate::buffer::Buffer, pos: usize) -> usize {
+        if pos == 0 {
+            return 0;
+        }
+
+        let bytes = buffer.slice_bytes(0..buffer.len());
+        let mut new_pos = pos.saturating_sub(1);
+
+        // Skip whitespace
+        while new_pos > 0 && bytes.get(new_pos).map_or(false, |&b| b.is_ascii_whitespace()) {
+            new_pos = new_pos.saturating_sub(1);
+        }
+
+        // Find start of word
+        while new_pos > 0 {
+            let prev_byte = bytes.get(new_pos.saturating_sub(1));
+            let curr_byte = bytes.get(new_pos);
+
+            match (prev_byte, curr_byte) {
+                (Some(&prev), Some(&curr)) => {
+                    if Self::is_word_char(prev) != Self::is_word_char(curr) {
+                        break;
+                    }
+                    new_pos = new_pos.saturating_sub(1);
+                }
+                _ => break,
+            }
+        }
+
+        new_pos
+    }
+
+    /// Helper: Find the start of the word to the right of the given position
+    fn find_word_start_right(&self, buffer: &crate::buffer::Buffer, pos: usize) -> usize {
+        let bytes = buffer.slice_bytes(0..buffer.len());
+        let len = bytes.len();
+
+        if pos >= len {
+            return len;
+        }
+
+        let mut new_pos = pos;
+
+        // Skip current word
+        while new_pos < len && bytes.get(new_pos).map_or(false, |&b| Self::is_word_char(b)) {
+            new_pos += 1;
+        }
+
+        // Skip whitespace
+        while new_pos < len && bytes.get(new_pos).map_or(false, |&b| b.is_ascii_whitespace()) {
+            new_pos += 1;
+        }
+
+        new_pos
+    }
+
     /// Convert an action into a list of events to apply to the active buffer
     /// Returns None for actions that don't generate events (like Quit)
     pub fn action_to_events(&self, action: Action) -> Option<Vec<Event>> {
@@ -777,11 +839,155 @@ impl Editor {
                 }
             }
 
+            // Word movement
+            Action::MoveWordLeft => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let new_pos = self.find_word_start_left(&state.buffer, cursor.position);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos,
+                        anchor: None,
+                    });
+                }
+            }
+
+            Action::MoveWordRight => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let new_pos = self.find_word_start_right(&state.buffer, cursor.position);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos,
+                        anchor: None,
+                    });
+                }
+            }
+
+            // Word selection
+            Action::SelectWordLeft => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let anchor = cursor.anchor.unwrap_or(cursor.position);
+                    let new_pos = self.find_word_start_left(&state.buffer, cursor.position);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos,
+                        anchor: Some(anchor),
+                    });
+                }
+            }
+
+            Action::SelectWordRight => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let anchor = cursor.anchor.unwrap_or(cursor.position);
+                    let new_pos = self.find_word_start_right(&state.buffer, cursor.position);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos,
+                        anchor: Some(anchor),
+                    });
+                }
+            }
+
+            // Word deletion
+            Action::DeleteWordBackward => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    if let Some(range) = cursor.selection_range() {
+                        // Delete selection
+                        events.push(Event::Delete {
+                            range: range.clone(),
+                            deleted_text: state.buffer.slice(range),
+                            cursor_id,
+                        });
+                    } else {
+                        // Delete word to the left
+                        let word_start = self.find_word_start_left(&state.buffer, cursor.position);
+                        if word_start < cursor.position {
+                            let range = word_start..cursor.position;
+                            events.push(Event::Delete {
+                                range: range.clone(),
+                                deleted_text: state.buffer.slice(range),
+                                cursor_id,
+                            });
+                        }
+                    }
+                }
+            }
+
+            Action::DeleteWordForward => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    if let Some(range) = cursor.selection_range() {
+                        // Delete selection
+                        events.push(Event::Delete {
+                            range: range.clone(),
+                            deleted_text: state.buffer.slice(range),
+                            cursor_id,
+                        });
+                    } else {
+                        // Delete word to the right
+                        let word_end = self.find_word_start_right(&state.buffer, cursor.position);
+                        if cursor.position < word_end {
+                            let range = cursor.position..word_end;
+                            events.push(Event::Delete {
+                                range: range.clone(),
+                                deleted_text: state.buffer.slice(range),
+                                cursor_id,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Page navigation
+            Action::MovePageUp => {
+                let lines_per_page = state.viewport.height as usize;
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let current_line = state.buffer.byte_to_line(cursor.position);
+                    let target_line = current_line.saturating_sub(lines_per_page);
+                    let line_start = state.buffer.line_to_byte(current_line);
+                    let col_offset = cursor.position - line_start;
+
+                    let target_line_start = state.buffer.line_to_byte(target_line);
+                    let target_line_end = if target_line + 1 < state.buffer.line_count() {
+                        state.buffer.line_to_byte(target_line + 1).saturating_sub(1)
+                    } else {
+                        state.buffer.len()
+                    };
+                    let target_line_len = target_line_end - target_line_start;
+
+                    let new_pos = target_line_start + col_offset.min(target_line_len);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos,
+                        anchor: None,
+                    });
+                }
+            }
+
+            Action::MovePageDown => {
+                let lines_per_page = state.viewport.height as usize;
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let current_line = state.buffer.byte_to_line(cursor.position);
+                    let target_line = (current_line + lines_per_page).min(state.buffer.line_count().saturating_sub(1));
+                    let line_start = state.buffer.line_to_byte(current_line);
+                    let col_offset = cursor.position - line_start;
+
+                    let target_line_start = state.buffer.line_to_byte(target_line);
+                    let target_line_end = if target_line + 1 < state.buffer.line_count() {
+                        state.buffer.line_to_byte(target_line + 1).saturating_sub(1)
+                    } else {
+                        state.buffer.len()
+                    };
+                    let target_line_len = target_line_end - target_line_start;
+
+                    let new_pos = target_line_start + col_offset.min(target_line_len);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos,
+                        anchor: None,
+                    });
+                }
+            }
+
             // Actions that don't generate events yet
-            Action::MoveWordLeft | Action::MoveWordRight |
-            Action::MovePageUp | Action::MovePageDown |
-            Action::SelectWordLeft | Action::SelectWordRight |
-            Action::DeleteWordBackward | Action::DeleteWordForward |
             Action::Copy | Action::Cut | Action::Paste |
             Action::AddCursorAbove | Action::AddCursorBelow |
             Action::AddCursorNextMatch | Action::RemoveSecondaryCursors |
