@@ -134,10 +134,7 @@ impl Buffer {
             self.modified = false;
             Ok(())
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "No file path set for buffer",
-            ))
+            Err(io::Error::other("No file path set for buffer"))
         }
     }
 
@@ -238,7 +235,10 @@ impl Buffer {
     /// Convert a line number to a byte offset
     pub fn line_to_byte(&self, line: usize) -> usize {
         self.ensure_line_cache();
-        self.line_cache.borrow().line_to_byte(line).unwrap_or(self.len())
+        self.line_cache
+            .borrow()
+            .line_to_byte(line)
+            .unwrap_or(self.len())
     }
 
     /// Convert a byte offset to a line number
@@ -258,9 +258,7 @@ impl Buffer {
         self.ensure_line_cache();
         let cache = self.line_cache.borrow();
         let start = cache.line_to_byte(line).unwrap_or(self.len());
-        let end = cache
-            .line_to_byte(line + 1)
-            .unwrap_or(self.len());
+        let end = cache.line_to_byte(line + 1).unwrap_or(self.len());
 
         let mut content = self.slice(start..end);
         // Remove trailing newline if present
@@ -353,7 +351,7 @@ impl Buffer {
             i -= 1;
         }
 
-        if i > 0 || chars.get(0).map_or(false, |c| c.is_whitespace()) {
+        if i > 0 || chars.first().is_some_and(|c| c.is_whitespace()) {
             i += 1;
         }
 
@@ -464,7 +462,7 @@ mod tests {
             /// Line cache should be consistent with byte positions
             #[test]
             fn line_cache_consistency(text in ".{0,200}\n*.{0,200}") {
-                let mut buffer = Buffer::from_str(&text);
+                let buffer = Buffer::from_str(&text);
                 let line_count = buffer.line_count();
 
                 // For each line, byte_to_line(line_to_byte(n)) should equal n
@@ -472,8 +470,7 @@ mod tests {
                     let byte_offset = buffer.line_to_byte(line_num);
                     let recovered_line = buffer.byte_to_line(byte_offset);
                     assert_eq!(recovered_line, line_num,
-                        "Line {} -> byte {} -> line {} (should be {})",
-                        line_num, byte_offset, recovered_line, line_num);
+                        "Line {line_num} -> byte {byte_offset} -> line {recovered_line} (should be {line_num})");
                 }
             }
 
@@ -533,7 +530,7 @@ mod tests {
 
     #[test]
     fn test_buffer_from_str() {
-        let mut buffer = Buffer::from_str("hello\nworld");
+        let buffer = Buffer::from_str("hello\nworld");
         assert_eq!(buffer.len(), 11);
         assert_eq!(buffer.line_count(), 2);
         assert_eq!(buffer.line_content(0), "hello");
@@ -558,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_line_to_byte() {
-        let mut buffer = Buffer::from_str("line0\nline1\nline2");
+        let buffer = Buffer::from_str("line0\nline1\nline2");
         assert_eq!(buffer.line_to_byte(0), 0);
         assert_eq!(buffer.line_to_byte(1), 6);
         assert_eq!(buffer.line_to_byte(2), 12);
@@ -566,7 +563,7 @@ mod tests {
 
     #[test]
     fn test_byte_to_line() {
-        let mut buffer = Buffer::from_str("line0\nline1\nline2");
+        let buffer = Buffer::from_str("line0\nline1\nline2");
         assert_eq!(buffer.byte_to_line(0), 0);
         assert_eq!(buffer.byte_to_line(5), 0);
         assert_eq!(buffer.byte_to_line(6), 1);

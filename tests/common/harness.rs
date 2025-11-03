@@ -111,7 +111,10 @@ impl EditorTestHarness {
     pub fn get_cell(&self, x: u16, y: u16) -> Option<String> {
         let buffer = self.buffer();
         let pos = buffer.index_of(x, y);
-        buffer.content.get(pos).map(|cell| cell.symbol().to_string())
+        buffer
+            .content
+            .get(pos)
+            .map(|cell| cell.symbol().to_string())
     }
 
     /// Get entire screen as string (for debugging)
@@ -140,9 +143,7 @@ impl EditorTestHarness {
         let screen = self.screen_to_string();
         assert!(
             screen.contains(text),
-            "Expected screen to contain '{}'\nScreen content:\n{}",
-            text,
-            screen
+            "Expected screen to contain '{text}'\nScreen content:\n{screen}"
         );
     }
 
@@ -151,9 +152,7 @@ impl EditorTestHarness {
         let screen = self.screen_to_string();
         assert!(
             !screen.contains(text),
-            "Expected screen to not contain '{}'\nScreen content:\n{}",
-            text,
-            screen
+            "Expected screen to not contain '{text}'\nScreen content:\n{screen}"
         );
     }
 
@@ -167,8 +166,7 @@ impl EditorTestHarness {
         let actual = self.get_buffer_content();
         assert_eq!(
             actual, expected,
-            "Buffer content mismatch\nExpected: {:?}\nActual: {:?}",
-            expected, actual
+            "Buffer content mismatch\nExpected: {expected:?}\nActual: {actual:?}"
         );
     }
 

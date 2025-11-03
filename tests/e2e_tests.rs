@@ -139,7 +139,7 @@ fn test_large_file_viewport() {
     // Create a file with many lines (more than viewport height)
     let mut content = String::new();
     for i in 0..100 {
-        content.push_str(&format!("Line {}\n", i));
+        content.push_str(&format!("Line {i}\n"));
     }
     std::fs::write(&file_path, &content).unwrap();
 
@@ -189,7 +189,9 @@ fn test_typing_and_cursor_movement() {
 
     // Press Enter to create a new line
     use crossterm::event::{KeyCode, KeyModifiers};
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.assert_buffer_content("Hello World!\n");
     assert_eq!(harness.cursor_position(), 13); // After newline
 
@@ -199,7 +201,9 @@ fn test_typing_and_cursor_movement() {
     assert_eq!(harness.cursor_position(), 24); // 13 + 11
 
     // Test backspace
-    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
     harness.assert_buffer_content("Hello World!\nSecond lin");
     assert_eq!(harness.cursor_position(), 23);
 
@@ -229,9 +233,13 @@ fn test_multiline_editing() {
 
     // Create multiple lines
     harness.type_text("Line 1").unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.type_text("Line 2").unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.type_text("Line 3").unwrap();
 
     harness.assert_buffer_content("Line 1\nLine 2\nLine 3");
@@ -263,7 +271,6 @@ fn test_multiline_editing() {
 /// Test that screen cursor position matches actual cursor position
 #[test]
 fn test_screen_cursor_position() {
-    use crossterm::event::{KeyCode, KeyModifiers};
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Type "abc" on first line
@@ -285,11 +292,17 @@ fn test_screen_cursor_position() {
     // So cursor X should be at column 10 (0-indexed)
     // And cursor Y should be at row 1 (0-indexed, because row 0 is the tab bar)
 
-    println!("Cursor position after typing 'abc': {:?}", cursor_pos);
+    println!("Cursor position after typing 'abc': {cursor_pos:?}");
     println!("Expected: x=10 (4 + 3 + 3), y=1");
 
-    assert_eq!(cursor_pos.1, 1, "Cursor Y should be at row 1 (below tab bar)");
-    assert_eq!(cursor_pos.0, 10, "Cursor X should be at column 10 (after 'abc')");
+    assert_eq!(
+        cursor_pos.1, 1,
+        "Cursor Y should be at row 1 (below tab bar)"
+    );
+    assert_eq!(
+        cursor_pos.0, 10,
+        "Cursor X should be at column 10 (after 'abc')"
+    );
 }
 
 /// Test cursor position as we type more characters
@@ -300,25 +313,25 @@ fn test_cursor_x_position_advances() {
     // Start with empty buffer
     harness.render().unwrap();
     let pos0 = harness.screen_cursor_position();
-    println!("Initial cursor position: {:?}", pos0);
+    println!("Initial cursor position: {pos0:?}");
 
     // Type first character
     harness.type_text("a").unwrap();
     harness.render().unwrap();
     let pos1 = harness.screen_cursor_position();
-    println!("After 'a': {:?}", pos1);
+    println!("After 'a': {pos1:?}");
 
     // Type second character
     harness.type_text("b").unwrap();
     harness.render().unwrap();
     let pos2 = harness.screen_cursor_position();
-    println!("After 'ab': {:?}", pos2);
+    println!("After 'ab': {pos2:?}");
 
     // Type third character
     harness.type_text("c").unwrap();
     harness.render().unwrap();
     let pos3 = harness.screen_cursor_position();
-    println!("After 'abc': {:?}", pos3);
+    println!("After 'abc': {pos3:?}");
 
     // Y position should stay constant (row 1)
     assert_eq!(pos0.1, 1, "Initial Y should be 1");

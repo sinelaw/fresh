@@ -139,13 +139,15 @@ impl Cursors {
 
     /// Get the primary cursor
     pub fn primary(&self) -> &Cursor {
-        self.cursors.get(&self.primary_id)
+        self.cursors
+            .get(&self.primary_id)
             .expect("Primary cursor should always exist")
     }
 
     /// Get the primary cursor mutably
     pub fn primary_mut(&mut self) -> &mut Cursor {
-        self.cursors.get_mut(&self.primary_id)
+        self.cursors
+            .get_mut(&self.primary_id)
             .expect("Primary cursor should always exist")
     }
 
@@ -184,7 +186,10 @@ impl Cursors {
 
         // If we removed the primary cursor, pick a new primary
         if id == self.primary_id {
-            self.primary_id = *self.cursors.keys().next()
+            self.primary_id = *self
+                .cursors
+                .keys()
+                .next()
                 .expect("Should have at least one cursor remaining");
         }
 
@@ -194,9 +199,10 @@ impl Cursors {
     /// Remove all cursors except the primary one
     pub fn remove_secondary(&mut self) {
         let primary = self.primary_id;
-        let primary_cursor = self.cursors.get(&primary)
-            .expect("Primary cursor should exist")
-            .clone();
+        let primary_cursor = *self
+            .cursors
+            .get(&primary)
+            .expect("Primary cursor should exist");
 
         self.cursors.clear();
         self.cursors.insert(primary, primary_cursor);
@@ -237,17 +243,13 @@ impl Cursors {
     /// Normalize cursors: merge overlapping selections, remove duplicates
     pub fn normalize(&mut self) {
         // Collect all cursors sorted by position
-        let mut cursor_list: Vec<(CursorId, Cursor)> = self.cursors
-            .iter()
-            .map(|(id, c)| (*id, *c))
-            .collect();
+        let mut cursor_list: Vec<(CursorId, Cursor)> =
+            self.cursors.iter().map(|(id, c)| (*id, *c)).collect();
 
         cursor_list.sort_by_key(|(_, c)| c.selection_start());
 
         // Remove exact duplicates
-        cursor_list.dedup_by(|(_, a), (_, b)| {
-            a.position == b.position && a.anchor == b.anchor
-        });
+        cursor_list.dedup_by(|(_, a), (_, b)| a.position == b.position && a.anchor == b.anchor);
 
         // Rebuild cursors map
         self.cursors.clear();

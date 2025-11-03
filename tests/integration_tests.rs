@@ -2,7 +2,10 @@
 
 mod common;
 
-use editor::{event::{Event, EventLog, CursorId}, state::EditorState};
+use editor::{
+    event::{CursorId, Event, EventLog},
+    state::EditorState,
+};
 
 /// Test that cursor positions are correctly adjusted after buffer edits
 #[test]
@@ -40,7 +43,7 @@ fn test_buffer_cursor_adjustment_on_insert() {
     state.apply(&Event::Insert {
         position: 0,
         text: "INSERTED ".to_string(),
-        cursor_id: original_primary,  // Using original cursor, not the new primary
+        cursor_id: original_primary, // Using original cursor, not the new primary
     });
 
     // The cursor that made the edit (original_primary) should be at position 0 + insert_len = 9
@@ -210,7 +213,7 @@ fn test_viewport_tracks_cursor_through_edits() {
     for i in 0..20 {
         let event = Event::Insert {
             position: state.buffer.len(),
-            text: format!("Line {}\n", i),
+            text: format!("Line {i}\n"),
             cursor_id,
         };
         state.apply(&event);
@@ -226,9 +229,7 @@ fn test_viewport_tracks_cursor_through_edits() {
 
     assert!(
         visible_range.contains(&cursor_line),
-        "Cursor at line {} should be in visible range {:?}",
-        cursor_line,
-        visible_range
+        "Cursor at line {cursor_line} should be in visible range {visible_range:?}"
     );
 }
 
@@ -295,8 +296,6 @@ fn test_viewport_resize_maintains_cursor() {
 
     assert!(
         visible_range.contains(&cursor_line),
-        "After resize, cursor at line {} should be in visible range {:?}",
-        cursor_line,
-        visible_range
+        "After resize, cursor at line {cursor_line} should be in visible range {visible_range:?}"
     );
 }

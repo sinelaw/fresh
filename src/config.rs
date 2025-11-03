@@ -197,8 +197,8 @@ impl Config {
         let contents = std::fs::read_to_string(path.as_ref())
             .map_err(|e| ConfigError::IoError(e.to_string()))?;
 
-        let config: Config = serde_json::from_str(&contents)
-            .map_err(|e| ConfigError::ParseError(e.to_string()))?;
+        let config: Config =
+            serde_json::from_str(&contents).map_err(|e| ConfigError::ParseError(e.to_string()))?;
 
         Ok(config)
     }
@@ -208,8 +208,7 @@ impl Config {
         let contents = serde_json::to_string_pretty(self)
             .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
 
-        std::fs::write(path.as_ref(), contents)
-            .map_err(|e| ConfigError::IoError(e.to_string()))?;
+        std::fs::write(path.as_ref(), contents).map_err(|e| ConfigError::IoError(e.to_string()))?;
 
         Ok(())
     }
@@ -402,10 +401,10 @@ pub enum ConfigError {
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigError::IoError(msg) => write!(f, "IO error: {}", msg),
-            ConfigError::ParseError(msg) => write!(f, "Parse error: {}", msg),
-            ConfigError::SerializeError(msg) => write!(f, "Serialize error: {}", msg),
-            ConfigError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
+            ConfigError::IoError(msg) => write!(f, "IO error: {msg}"),
+            ConfigError::ParseError(msg) => write!(f, "Parse error: {msg}"),
+            ConfigError::SerializeError(msg) => write!(f, "Serialize error: {msg}"),
+            ConfigError::ValidationError(msg) => write!(f, "Validation error: {msg}"),
         }
     }
 }
@@ -444,10 +443,7 @@ mod tests {
 
         let loaded = Config::load_from_file(&config_path).unwrap();
         assert_eq!(config.editor.tab_size, loaded.editor.tab_size);
-        assert_eq!(
-            config.theme.foreground,
-            loaded.theme.foreground
-        );
+        assert_eq!(config.theme.foreground, loaded.theme.foreground);
     }
 
     #[test]

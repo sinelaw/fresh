@@ -115,19 +115,13 @@ impl Editor {
     pub fn close_buffer(&mut self, id: BufferId) -> io::Result<()> {
         // Can't close if it's the only buffer
         if self.buffers.len() == 1 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Cannot close last buffer",
-            ));
+            return Err(io::Error::other("Cannot close last buffer"));
         }
 
         // Check for unsaved changes
         if let Some(state) = self.buffers.get(&id) {
             if state.buffer.is_modified() {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Buffer has unsaved changes",
-                ));
+                return Err(io::Error::other("Buffer has unsaved changes"));
             }
         }
 
@@ -333,7 +327,7 @@ impl Editor {
 
                 let modified = if state.buffer.is_modified() { "*" } else { "" };
 
-                format!(" {}{} ", name, modified)
+                format!(" {name}{modified} ")
             })
             .collect();
 
@@ -346,7 +340,11 @@ impl Editor {
         let tabs = Tabs::new(titles)
             .select(selected)
             .style(Style::default().fg(Color::White))
-            .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            );
 
         frame.render_widget(tabs, area);
     }
@@ -382,7 +380,7 @@ impl Editor {
             // and adjust Y for the content area offset (area.y accounts for tab bar)
             frame.set_cursor_position((
                 area.x.saturating_add(x).saturating_add(7),
-                area.y.saturating_add(y)
+                area.y.saturating_add(y),
             ));
         }
     }
@@ -400,9 +398,13 @@ impl Editor {
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "[No Name]".to_string());
 
-            let modified = if state.buffer.is_modified() { " [+]" } else { "" };
+            let modified = if state.buffer.is_modified() {
+                " [+]"
+            } else {
+                ""
+            };
 
-            let cursor = state.primary_cursor().clone();
+            let cursor = *state.primary_cursor();
             let line = state.buffer.byte_to_line(cursor.position) + 1;
             let col = cursor.position - state.buffer.line_to_byte(line - 1);
 
@@ -410,13 +412,13 @@ impl Editor {
         };
 
         let status = if let Some(msg) = &self.status_message {
-            format!("{}{} | Ln {}, Col {} | {}", filename, modified, line, col, msg)
+            format!("{filename}{modified} | Ln {line}, Col {col} | {msg}")
         } else {
-            format!("{}{} | Ln {}, Col {}", filename, modified, line, col)
+            format!("{filename}{modified} | Ln {line}, Col {col}")
         };
 
-        let status_line = Paragraph::new(status)
-            .style(Style::default().fg(Color::Black).bg(Color::White));
+        let status_line =
+            Paragraph::new(status).style(Style::default().fg(Color::Black).bg(Color::White));
 
         frame.render_widget(status_line, area);
     }
@@ -436,7 +438,7 @@ impl Editor {
         let mut new_pos = pos.saturating_sub(1);
 
         // Skip whitespace
-        while new_pos > 0 && bytes.get(new_pos).map_or(false, |&b| b.is_ascii_whitespace()) {
+        while new_pos > 0 && bytes.get(new_pos).is_some_and(|&b| b.is_ascii_whitespace()) {
             new_pos = new_pos.saturating_sub(1);
         }
 
@@ -471,12 +473,12 @@ impl Editor {
         let mut new_pos = pos;
 
         // Skip current word
-        while new_pos < len && bytes.get(new_pos).map_or(false, |&b| Self::is_word_char(b)) {
+        while new_pos < len && bytes.get(new_pos).is_some_and(|&b| Self::is_word_char(b)) {
             new_pos += 1;
         }
 
         // Skip whitespace
-        while new_pos < len && bytes.get(new_pos).map_or(false, |&b| b.is_ascii_whitespace()) {
+        while new_pos < len && bytes.get(new_pos).is_some_and(|&b| b.is_ascii_whitespace()) {
             new_pos += 1;
         }
 
@@ -601,7 +603,10 @@ impl Editor {
 
                         let next_line_start = state.buffer.line_to_byte(current_line + 1);
                         let next_line_end = if current_line + 2 < state.buffer.line_count() {
-                            state.buffer.line_to_byte(current_line + 2).saturating_sub(1)
+                            state
+                                .buffer
+                                .line_to_byte(current_line + 2)
+                                .saturating_sub(1)
                         } else {
                             state.buffer.len()
                         };
@@ -766,7 +771,10 @@ impl Editor {
 
                         let next_line_start = state.buffer.line_to_byte(current_line + 1);
                         let next_line_end = if current_line + 2 < state.buffer.line_count() {
-                            state.buffer.line_to_byte(current_line + 2).saturating_sub(1)
+                            state
+                                .buffer
+                                .line_to_byte(current_line + 2)
+                                .saturating_sub(1)
                         } else {
                             state.buffer.len()
                         };
@@ -970,7 +978,8 @@ impl Editor {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let current_line = state.buffer.byte_to_line(cursor.position);
-                    let target_line = (current_line + lines_per_page).min(state.buffer.line_count().saturating_sub(1));
+                    let target_line = (current_line + lines_per_page)
+                        .min(state.buffer.line_count().saturating_sub(1));
                     let line_start = state.buffer.line_to_byte(current_line);
                     let col_offset = cursor.position - line_start;
 
@@ -1016,11 +1025,20 @@ impl Editor {
             }
 
             // Actions that don't generate events - handled by main event loop
-            Action::Copy | Action::Cut | Action::Paste |
-            Action::AddCursorAbove | Action::AddCursorBelow |
-            Action::AddCursorNextMatch |
-            Action::Save | Action::SaveAs | Action::Open | Action::New | Action::Close |
-            Action::Quit | Action::Undo | Action::Redo => {
+            Action::Copy
+            | Action::Cut
+            | Action::Paste
+            | Action::AddCursorAbove
+            | Action::AddCursorBelow
+            | Action::AddCursorNextMatch
+            | Action::Save
+            | Action::SaveAs
+            | Action::Open
+            | Action::New
+            | Action::Close
+            | Action::Quit
+            | Action::Undo
+            | Action::Redo => {
                 // These actions need special handling in the event loop:
                 // - Clipboard operations need system clipboard access
                 // - File operations need Editor-level state changes
@@ -1116,7 +1134,9 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         match &events[0] {
-            Event::MoveCursor { position, anchor, .. } => {
+            Event::MoveCursor {
+                position, anchor, ..
+            } => {
                 // Cursor was at 5 (end of "hello"), stays at 5 (can't move beyond end)
                 assert_eq!(*position, 5);
                 assert_eq!(*anchor, None); // No selection
@@ -1209,7 +1229,11 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         match &events[0] {
-            Event::Delete { range, deleted_text, .. } => {
+            Event::Delete {
+                range,
+                deleted_text,
+                ..
+            } => {
                 assert_eq!(range.clone(), 4..5); // Delete 'o'
                 assert_eq!(deleted_text, "o");
             }
@@ -1244,7 +1268,11 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         match &events[0] {
-            Event::Delete { range, deleted_text, .. } => {
+            Event::Delete {
+                range,
+                deleted_text,
+                ..
+            } => {
                 assert_eq!(range.clone(), 0..1); // Delete 'h'
                 assert_eq!(deleted_text, "h");
             }
@@ -1279,7 +1307,9 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         match &events[0] {
-            Event::MoveCursor { position, anchor, .. } => {
+            Event::MoveCursor {
+                position, anchor, ..
+            } => {
                 assert_eq!(*position, 1); // Moved to position 1
                 assert_eq!(*anchor, Some(0)); // Anchor at start
             }
@@ -1307,7 +1337,9 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         match &events[0] {
-            Event::MoveCursor { position, anchor, .. } => {
+            Event::MoveCursor {
+                position, anchor, ..
+            } => {
                 assert_eq!(*position, 11); // At end of buffer
                 assert_eq!(*anchor, Some(0)); // Anchor at start
             }

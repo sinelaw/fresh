@@ -9,7 +9,10 @@ mod state;
 mod viewport;
 
 use crossterm::{
-    event::{poll as event_poll, read as event_read, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers},
+    event::{
+        poll as event_poll, read as event_read, Event as CrosstermEvent, KeyCode, KeyEvent,
+        KeyModifiers,
+    },
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };

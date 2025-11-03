@@ -1,5 +1,5 @@
-use std::ops::Range;
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 
 /// Unique identifier for a cursor
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -37,31 +37,27 @@ pub enum Event {
     },
 
     /// Remove a cursor
-    RemoveCursor {
-        cursor_id: CursorId,
-    },
+    RemoveCursor { cursor_id: CursorId },
 
     /// Scroll the viewport
-    Scroll {
-        line_offset: isize,
-    },
+    Scroll { line_offset: isize },
 
     /// Set viewport to specific position
-    SetViewport {
-        top_line: usize,
-    },
+    SetViewport { top_line: usize },
 
     /// Change mode (if implementing modal editing)
-    ChangeMode {
-        mode: String,
-    },
+    ChangeMode { mode: String },
 }
 
 impl Event {
     /// Returns the inverse event for undo functionality
     pub fn inverse(&self) -> Option<Event> {
         match self {
-            Event::Insert { position, text, cursor_id } => {
+            Event::Insert {
+                position,
+                text,
+                cursor_id,
+            } => {
                 let range = *position..(position + text.len());
                 Some(Event::Delete {
                     range,
@@ -69,13 +65,15 @@ impl Event {
                     cursor_id: *cursor_id,
                 })
             }
-            Event::Delete { range, deleted_text, cursor_id } => {
-                Some(Event::Insert {
-                    position: range.start,
-                    text: deleted_text.clone(),
-                    cursor_id: *cursor_id,
-                })
-            }
+            Event::Delete {
+                range,
+                deleted_text,
+                cursor_id,
+            } => Some(Event::Insert {
+                position: range.start,
+                text: deleted_text.clone(),
+                cursor_id: *cursor_id,
+            }),
             // MoveCursor, AddCursor, RemoveCursor are not automatically invertible
             // They would need to store the previous state
             _ => None,
@@ -261,7 +259,7 @@ impl EventLog {
 
         for entry in &self.entries {
             let json = serde_json::to_string(entry)?;
-            writeln!(writer, "{}", json)?;
+            writeln!(writer, "{json}")?;
         }
 
         Ok(())
@@ -472,7 +470,11 @@ mod tests {
 
         let inverse = insert.inverse().unwrap();
         match inverse {
-            Event::Delete { range, deleted_text, .. } => {
+            Event::Delete {
+                range,
+                deleted_text,
+                ..
+            } => {
                 assert_eq!(range, 5..10);
                 assert_eq!(deleted_text, "hello");
             }

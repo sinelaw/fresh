@@ -243,16 +243,19 @@ impl KeybindingResolver {
         bindings.insert((KeyCode::Up, KeyModifiers::empty()), Action::MoveUp);
         bindings.insert((KeyCode::Down, KeyModifiers::empty()), Action::MoveDown);
 
-        bindings.insert((KeyCode::Home, KeyModifiers::empty()), Action::MoveLineStart);
+        bindings.insert(
+            (KeyCode::Home, KeyModifiers::empty()),
+            Action::MoveLineStart,
+        );
         bindings.insert((KeyCode::End, KeyModifiers::empty()), Action::MoveLineEnd);
         bindings.insert((KeyCode::PageUp, KeyModifiers::empty()), Action::MovePageUp);
-        bindings.insert((KeyCode::PageDown, KeyModifiers::empty()), Action::MovePageDown);
+        bindings.insert(
+            (KeyCode::PageDown, KeyModifiers::empty()),
+            Action::MovePageDown,
+        );
 
         // Word movement
-        bindings.insert(
-            (KeyCode::Left, KeyModifiers::CONTROL),
-            Action::MoveWordLeft,
-        );
+        bindings.insert((KeyCode::Left, KeyModifiers::CONTROL), Action::MoveWordLeft);
         bindings.insert(
             (KeyCode::Right, KeyModifiers::CONTROL),
             Action::MoveWordRight,
@@ -273,7 +276,10 @@ impl KeybindingResolver {
             (KeyCode::Delete, KeyModifiers::empty()),
             Action::DeleteForward,
         );
-        bindings.insert((KeyCode::Enter, KeyModifiers::empty()), Action::InsertNewline);
+        bindings.insert(
+            (KeyCode::Enter, KeyModifiers::empty()),
+            Action::InsertNewline,
+        );
         bindings.insert((KeyCode::Tab, KeyModifiers::empty()), Action::InsertTab);
 
         // Delete word
@@ -302,14 +308,20 @@ impl KeybindingResolver {
         bindings.insert((KeyCode::Char('v'), KeyModifiers::CONTROL), Action::Paste);
 
         // Selection
-        bindings.insert((KeyCode::Char('a'), KeyModifiers::CONTROL), Action::SelectAll);
+        bindings.insert(
+            (KeyCode::Char('a'), KeyModifiers::CONTROL),
+            Action::SelectAll,
+        );
 
         // Multi-cursor
         bindings.insert(
             (KeyCode::Char('d'), KeyModifiers::CONTROL),
             Action::AddCursorNextMatch,
         );
-        bindings.insert((KeyCode::Esc, KeyModifiers::empty()), Action::RemoveSecondaryCursors);
+        bindings.insert(
+            (KeyCode::Esc, KeyModifiers::empty()),
+            Action::RemoveSecondaryCursors,
+        );
 
         bindings
     }
@@ -334,18 +346,12 @@ mod tests {
 
     #[test]
     fn test_parse_key() {
-        assert_eq!(
-            KeybindingResolver::parse_key("enter"),
-            Some(KeyCode::Enter)
-        );
+        assert_eq!(KeybindingResolver::parse_key("enter"), Some(KeyCode::Enter));
         assert_eq!(
             KeybindingResolver::parse_key("backspace"),
             Some(KeyCode::Backspace)
         );
-        assert_eq!(
-            KeybindingResolver::parse_key("a"),
-            Some(KeyCode::Char('a'))
-        );
+        assert_eq!(KeybindingResolver::parse_key("a"), Some(KeyCode::Char('a')));
     }
 
     #[test]
@@ -378,14 +384,8 @@ mod tests {
     #[test]
     fn test_action_from_str() {
         let args = HashMap::new();
-        assert_eq!(
-            Action::from_str("move_left", &args),
-            Some(Action::MoveLeft)
-        );
-        assert_eq!(
-            Action::from_str("save", &args),
-            Some(Action::Save)
-        );
+        assert_eq!(Action::from_str("move_left", &args), Some(Action::MoveLeft));
+        assert_eq!(Action::from_str("save", &args), Some(Action::Save));
         assert_eq!(Action::from_str("unknown", &args), None);
     }
 }

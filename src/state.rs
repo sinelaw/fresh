@@ -44,7 +44,11 @@ impl EditorState {
     /// This is the heart of the event-driven architecture
     pub fn apply(&mut self, event: &Event) {
         match event {
-            Event::Insert { position, text, cursor_id } => {
+            Event::Insert {
+                position,
+                text,
+                cursor_id,
+            } => {
                 // Insert text into buffer
                 self.buffer.insert(*position, text);
 
@@ -63,7 +67,9 @@ impl EditorState {
                 }
             }
 
-            Event::Delete { range, cursor_id, .. } => {
+            Event::Delete {
+                range, cursor_id, ..
+            } => {
                 let len = range.len();
 
                 // Delete from buffer
@@ -84,7 +90,11 @@ impl EditorState {
                 }
             }
 
-            Event::MoveCursor { cursor_id, position, anchor } => {
+            Event::MoveCursor {
+                cursor_id,
+                position,
+                anchor,
+            } => {
                 if let Some(cursor) = self.cursors.get_mut(*cursor_id) {
                     cursor.position = *position;
                     cursor.anchor = *anchor;
@@ -94,7 +104,11 @@ impl EditorState {
                 }
             }
 
-            Event::AddCursor { cursor_id, position, anchor } => {
+            Event::AddCursor {
+                cursor_id,
+                position,
+                anchor,
+            } => {
                 let cursor = if let Some(anchor) = anchor {
                     Cursor::with_selection(*anchor, *position)
                 } else {
@@ -117,9 +131,10 @@ impl EditorState {
 
             Event::Scroll { line_offset } => {
                 if *line_offset > 0 {
-                    self.viewport.scroll_down(*line_offset as usize, self.buffer.line_count());
+                    self.viewport
+                        .scroll_down(*line_offset as usize, self.buffer.line_count());
                 } else {
-                    self.viewport.scroll_up(line_offset.unsigned_abs() as usize);
+                    self.viewport.scroll_up(line_offset.unsigned_abs());
                 }
             }
 
@@ -154,7 +169,9 @@ impl EditorState {
     pub fn cursor_positions(&mut self) -> Vec<(u16, u16)> {
         let mut positions = Vec::new();
         for (_, cursor) in self.cursors.iter() {
-            let pos = self.viewport.cursor_screen_position(&mut self.buffer, cursor);
+            let pos = self
+                .viewport
+                .cursor_screen_position(&mut self.buffer, cursor);
             positions.push(pos);
         }
         positions
@@ -165,7 +182,7 @@ impl EditorState {
         self.viewport.resize(width, height);
 
         // Ensure primary cursor is still visible after resize
-        let primary = self.cursors.primary().clone();
+        let primary = *self.cursors.primary();
         self.viewport.ensure_visible(&mut self.buffer, &primary);
     }
 }
