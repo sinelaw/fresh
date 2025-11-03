@@ -4,8 +4,14 @@ use crate::cursor::Cursor;
 /// The viewport - what portion of the buffer is visible
 #[derive(Debug, Clone)]
 pub struct Viewport {
-    /// Top-left corner (line number of first visible line)
-    pub top_line: usize,
+    /// Byte position of the first visible line
+    /// **This is the authoritative source of truth for all viewport operations**
+    pub top_byte: usize,
+
+    /// Line number of first visible line (for display/debugging only)
+    /// May be Absolute (known) or Relative (estimated)
+    /// **Never use this for logic - always use top_byte**
+    pub top_line: LineNumber,
 
     /// Left column offset (horizontal scroll position)
     pub left_column: usize,
@@ -25,7 +31,8 @@ impl Viewport {
     /// Create a new viewport
     pub fn new(width: u16, height: u16) -> Self {
         Self {
-            top_line: 0,
+            top_byte: 0,
+            top_line: LineNumber::Absolute(0),
             left_column: 0,
             width,
             height,
@@ -50,14 +57,15 @@ impl Viewport {
         self.height as usize
     }
 
-    /// Get the bottom line (exclusive)
+    /// Get the bottom line (exclusive) - uses top_line which may be estimated
     pub fn bottom_line(&self) -> usize {
-        self.top_line + self.visible_line_count()
+        self.top_line.value() + self.visible_line_count()
     }
 
-    /// Get the range of visible lines
+    /// Get the range of visible lines - returns line numbers for compatibility
+    /// Note: This uses top_line which may be estimated for large files
     pub fn visible_range(&self) -> std::ops::Range<usize> {
-        self.top_line..self.bottom_line()
+        self.top_line.value()..self.bottom_line()
     }
 
     /// Calculate the gutter width based on the maximum visible line number
@@ -78,66 +86,131 @@ impl Viewport {
 
     /// Check if a line is visible
     pub fn is_line_visible(&self, line: usize) -> bool {
-        line >= self.top_line && line < self.bottom_line()
+        line >= self.top_line.value() && line < self.bottom_line()
     }
 
-    /// Scroll up by N lines
-    pub fn scroll_up(&mut self, lines: usize) {
-        self.top_line = self.top_line.saturating_sub(lines);
+    /// Scroll up by N lines (byte-based)
+    pub fn scroll_up(&mut self, buffer: &Buffer, lines: usize) {
+        let mut iter = buffer.line_iterator(self.top_byte);
+        for _ in 0..lines {
+            if iter.prev().is_none() {
+                break;
+            }
+        }
+        self.top_byte = iter.current_position();
+        self.top_line = buffer.byte_to_line_lazy(self.top_byte);
     }
 
-    /// Scroll down by N lines
-    pub fn scroll_down(&mut self, lines: usize, max_line: usize) {
-        self.top_line = (self.top_line + lines).min(max_line.saturating_sub(1));
+    /// Scroll down by N lines (byte-based)
+    pub fn scroll_down(&mut self, buffer: &Buffer, lines: usize) {
+        let mut iter = buffer.line_iterator(self.top_byte);
+        for _ in 0..lines {
+            if iter.next().is_none() {
+                break;
+            }
+        }
+        self.top_byte = iter.current_position();
+        self.top_line = buffer.byte_to_line_lazy(self.top_byte);
     }
 
-    /// Scroll to a specific line
-    pub fn scroll_to(&mut self, line: usize, max_line: usize) {
-        self.top_line = line.min(max_line.saturating_sub(1));
+    /// Scroll to a specific line (byte-based)
+    /// This will scroll to the byte position of that line if cached, or estimate
+    pub fn scroll_to(&mut self, buffer: &Buffer, line: usize) {
+        // Try to get byte position for this line
+        let byte_pos = buffer.line_to_byte(line);
+        self.top_byte = byte_pos;
+        self.top_line = buffer.byte_to_line_lazy(self.top_byte);
     }
 
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)
     pub fn ensure_visible(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
-        // Use lazy line lookup - buffer layer handles caching vs estimation transparently
-        let cursor_line_number = buffer.byte_to_line_lazy(cursor.position);
-        let cursor_line = cursor_line_number.value();
+        // Find the start of the line containing the cursor
+        let cursor_line_start = buffer.find_line_start_at_byte(cursor.position);
 
-        // Use approximate line count if available, otherwise use a very large number
-        // This is safe because ensure_line_visible will naturally clamp when scrolling
-        let total_lines = buffer.approximate_line_count().unwrap_or(usize::MAX);
-        self.ensure_line_visible(cursor_line, total_lines);
+        // Check if cursor line is visible by iterating from top_byte
+        let visible_count = self.visible_line_count();
+        let mut iter = buffer.line_iterator(self.top_byte);
+        let mut lines_from_top = 0;
+        let mut cursor_is_visible = false;
 
-        // Horizontal scrolling - use byte-based approach to avoid line number conversion
-        let line_start = buffer.find_line_start_at_byte(cursor.position);
-        let cursor_column = cursor.position.saturating_sub(line_start);
+        while let Some((line_byte, _)) = iter.next() {
+            if line_byte == cursor_line_start {
+                cursor_is_visible = lines_from_top < visible_count;
+                break;
+            }
+            lines_from_top += 1;
+            if lines_from_top >= visible_count {
+                break;
+            }
+        }
+
+        // If cursor is not visible, scroll to make it visible
+        if !cursor_is_visible {
+            // Position cursor in the middle of the viewport with scroll offset
+            let target_line_from_top = (visible_count / 2).min(self.scroll_offset);
+
+            // Move backwards from cursor to find the new top_byte
+            let mut iter = buffer.line_iterator(cursor_line_start);
+            for _ in 0..target_line_from_top {
+                if iter.prev().is_none() {
+                    break;
+                }
+            }
+            self.top_byte = iter.current_position();
+        }
+
+        // Update top_line for display/debugging (may be absolute or relative)
+        self.top_line = buffer.byte_to_line_lazy(self.top_byte);
+
+        // Horizontal scrolling
+        let cursor_column = cursor.position.saturating_sub(cursor_line_start);
         self.ensure_column_visible(cursor_column);
     }
 
     /// Ensure a line is visible with scroll offset applied
-    pub fn ensure_line_visible(&mut self, line: usize, total_lines: usize) {
+    /// This is a legacy method kept for backward compatibility with tests
+    /// In practice, use ensure_visible() which works directly with cursors and bytes
+    pub fn ensure_line_visible(&mut self, buffer: &Buffer, line: usize) {
+        // Convert line number to byte position
+        let target_byte = buffer.line_to_byte(line);
+
+        // Check if the line is already visible by iterating from top_byte
         let visible_count = self.visible_line_count();
+        let mut iter = buffer.line_iterator(self.top_byte);
+        let mut lines_from_top = 0;
+        let mut target_is_visible = false;
 
-        // If viewport is too small for scroll offset, use what we can
-        let effective_offset = self.scroll_offset.min(visible_count / 2);
+        // Find the actual line start for the target
+        let target_line_byte = buffer.find_line_start_at_byte(target_byte);
 
-        // Calculate the ideal top and bottom boundaries with scroll offset
-        let ideal_top = self.top_line + effective_offset;
-        let ideal_bottom = self.top_line + visible_count.saturating_sub(effective_offset);
-
-        if line < ideal_top {
-            // Cursor is above the ideal zone - scroll up
-            self.top_line = line.saturating_sub(effective_offset);
-        } else if line >= ideal_bottom {
-            // Cursor is below the ideal zone - scroll down
-            self.top_line = line
-                .saturating_sub(visible_count.saturating_sub(effective_offset))
-                .min(total_lines.saturating_sub(1));
+        while let Some((line_byte, _)) = iter.next() {
+            if line_byte == target_line_byte {
+                target_is_visible = lines_from_top < visible_count;
+                break;
+            }
+            lines_from_top += 1;
+            if lines_from_top >= visible_count {
+                break;
+            }
         }
 
-        // Ensure we don't scroll past the end
-        if self.top_line + visible_count > total_lines {
-            self.top_line = total_lines.saturating_sub(visible_count);
+        // If not visible, scroll to show it with scroll offset
+        if !target_is_visible {
+            let effective_offset = self.scroll_offset.min(visible_count / 2);
+            let target_line_from_top = effective_offset;
+
+            // Move backwards from target to find new top_byte
+            let mut iter = buffer.line_iterator(target_line_byte);
+            for _ in 0..target_line_from_top {
+                if iter.prev().is_none() {
+                    break;
+                }
+            }
+            self.top_byte = iter.current_position();
         }
+
+        // Update top_line for display
+        self.top_line = buffer.byte_to_line_lazy(self.top_byte);
     }
 
     /// Ensure a column is visible with horizontal scroll offset applied
@@ -177,46 +250,61 @@ impl Viewport {
             return;
         }
 
-        // Convert cursor positions to line numbers
-        let mut cursor_lines: Vec<(usize, usize)> = cursors
+        // Sort cursors by priority (primary cursor first)
+        let mut sorted_cursors: Vec<_> = cursors.iter().copied().collect();
+        sorted_cursors.sort_by_key(|(priority, _)| *priority);
+
+        // Get byte positions for all cursors (at line starts)
+        let cursor_line_bytes: Vec<usize> = sorted_cursors
             .iter()
-            .map(|(priority, cursor)| {
-                let line_number = buffer.byte_to_line_lazy(cursor.position);
-                (*priority, line_number.value())
-            })
+            .map(|(_, cursor)| buffer.find_line_start_at_byte(cursor.position))
             .collect();
 
-        // Sort by priority (primary cursor first)
-        cursor_lines.sort_by_key(|(priority, _)| *priority);
+        // Count how many lines span between min and max cursors
+        let min_byte = *cursor_line_bytes.iter().min().unwrap();
+        let max_byte = *cursor_line_bytes.iter().max().unwrap();
 
-        // Try to fit as many cursors as possible, prioritizing primary
+        // Count lines between min and max using iterator
+        let mut iter = buffer.line_iterator(min_byte);
+        let mut line_span = 0;
+        while let Some((line_byte, _)) = iter.next() {
+            if line_byte >= max_byte {
+                break;
+            }
+            line_span += 1;
+        }
+
         let visible_count = self.visible_line_count();
-        let min_line = cursor_lines.iter().map(|(_, line)| *line).min().unwrap();
-        let max_line = cursor_lines.iter().map(|(_, line)| *line).max().unwrap();
 
         // If all cursors fit in the viewport, center them
-        if max_line - min_line < visible_count {
-            let center = (min_line + max_line) / 2;
-            let new_top = center.saturating_sub(visible_count / 2);
-            let approx_total = buffer.approximate_line_count().unwrap_or(usize::MAX);
-            self.top_line = new_top.min(approx_total.saturating_sub(visible_count));
+        if line_span < visible_count {
+            let lines_to_go_back = visible_count / 2;
+            let mut iter = buffer.line_iterator(min_byte);
+            for _ in 0..lines_to_go_back {
+                if iter.prev().is_none() {
+                    break;
+                }
+            }
+            self.top_byte = iter.current_position();
         } else {
-            // Can't fit all cursors, ensure primary is visible with scroll offset
-            let (_, primary_line) = cursor_lines[0];
-            let approx_total = buffer.approximate_line_count().unwrap_or(usize::MAX);
-            self.ensure_line_visible(primary_line, approx_total);
+            // Can't fit all cursors, ensure primary is visible
+            let primary_cursor = sorted_cursors[0].1;
+            self.ensure_visible(buffer, primary_cursor);
         }
+
+        // Update top_line for display
+        self.top_line = buffer.byte_to_line_lazy(self.top_byte);
     }
 
     /// Convert a screen row to a buffer line number
     pub fn screen_row_to_line(&self, row: u16) -> usize {
-        self.top_line + row as usize
+        self.top_line.value() + row as usize
     }
 
     /// Convert a buffer line number to a screen row (if visible)
     pub fn line_to_screen_row(&self, line: usize) -> Option<u16> {
         if self.is_line_visible(line) {
-            Some((line - self.top_line) as u16)
+            Some((line - self.top_line.value()) as u16)
         } else {
             None
         }
@@ -232,7 +320,7 @@ impl Viewport {
         let line_start = buffer.find_line_start_at_byte(cursor.position);
         let column = cursor.position.saturating_sub(line_start);
 
-        let screen_row = line.saturating_sub(self.top_line) as u16;
+        let screen_row = line.saturating_sub(self.top_line.value()) as u16;
         // Account for horizontal scrolling - subtract left_column offset
         let screen_col = column.saturating_sub(self.left_column) as u16;
 
@@ -252,7 +340,8 @@ mod tests {
         let vp = Viewport::new(80, 24);
         assert_eq!(vp.width, 80);
         assert_eq!(vp.height, 24);
-        assert_eq!(vp.top_line, 0);
+        assert_eq!(vp.top_line.value(), 0);
+        assert_eq!(vp.top_byte, 0);
     }
 
     #[test]
@@ -263,29 +352,32 @@ mod tests {
 
     #[test]
     fn test_scroll_up_down() {
+        let mut buffer = Buffer::from_str("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15");
         let mut vp = Viewport::new(80, 24);
-        vp.scroll_down(10, 100);
-        assert_eq!(vp.top_line, 10);
 
-        vp.scroll_up(5);
-        assert_eq!(vp.top_line, 5);
+        vp.scroll_down(&buffer, 10);
+        assert_eq!(vp.top_line.value(), 10);
 
-        vp.scroll_up(10);
-        assert_eq!(vp.top_line, 0); // Can't scroll past 0
+        vp.scroll_up(&buffer, 5);
+        assert_eq!(vp.top_line.value(), 5);
+
+        vp.scroll_up(&buffer, 10);
+        assert_eq!(vp.top_line.value(), 0); // Can't scroll past 0
     }
 
     #[test]
     fn test_ensure_line_visible() {
+        let buffer = Buffer::from_str("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51");
         let mut vp = Viewport::new(80, 24);
         vp.scroll_offset = 3;
 
         // Line within scroll offset should adjust viewport
-        vp.ensure_line_visible(2, 100);
-        assert!(vp.top_line < 2);
+        vp.ensure_line_visible(&buffer, 2);
+        assert!(vp.top_line.value() <= 2);
 
         // Line far below should scroll down
-        vp.ensure_line_visible(50, 100);
-        assert!(vp.top_line > 0);
+        vp.ensure_line_visible(&buffer, 50);
+        assert!(vp.top_line.value() > 0);
         assert!(vp.is_line_visible(50));
     }
 

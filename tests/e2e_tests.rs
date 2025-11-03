@@ -923,7 +923,7 @@ fn test_vertical_scroll_when_typing_to_bottom() {
 
     // Start with viewport at top
     let viewport = &harness.editor().active_state().viewport;
-    assert_eq!(viewport.top_line, 0, "Should start at top");
+    assert_eq!(viewport.top_line.value(), 0, "Should start at top");
 
     // Type enough lines to fill the visible area and go beyond
     // We'll type (visible_lines + 10) lines to ensure scrolling happens
@@ -945,7 +945,7 @@ fn test_vertical_scroll_when_typing_to_bottom() {
     assert_eq!(cursor_line, total_lines - 1, "Cursor should be on last line");
 
     // The viewport should have scrolled down
-    let top_line = harness.editor().active_state().viewport.top_line;
+    let top_line = harness.editor().active_state().viewport.top_line.value();
     assert!(
         top_line > 0,
         "Viewport should have scrolled down, top_line = {}",
@@ -996,7 +996,7 @@ fn test_vertical_scroll_offset() {
     }
 
     // Cursor should be at bottom, viewport scrolled
-    let initial_top_line = harness.editor().active_state().viewport.top_line;
+    let initial_top_line = harness.editor().active_state().viewport.top_line.value();
     assert!(initial_top_line > 0, "Should be scrolled down");
 
     // Move up by many lines to trigger viewport scroll
@@ -1008,7 +1008,7 @@ fn test_vertical_scroll_offset() {
 
     // The viewport should have scrolled up to keep cursor visible
     // with the scroll offset (default 3 lines)
-    let new_top_line = harness.editor().active_state().viewport.top_line;
+    let new_top_line = harness.editor().active_state().viewport.top_line.value();
 
     // We moved up 20 lines, so viewport should have adjusted
     assert!(
@@ -2326,12 +2326,11 @@ fn test_load_big_file_e2e() {
 /// Fix: LineNumber enum allows buffer to return relative line numbers without
 /// forcing expensive scans, and viewport handles this transparently.
 #[test]
-#[ignore] // This test uses the 61MB BIG.txt file
 fn test_jump_to_eof_large_file() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use std::time::Instant;
 
-    // Generate BIG.txt if it doesn't exist
+    // Generate BIG.txt if it doesn't exist (this is cached across test runs)
     let big_txt_path = TestFixture::big_txt().unwrap();
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -2367,6 +2366,84 @@ fn test_jump_to_eof_large_file() {
     );
 
     println!("✓ Cursor at position {} (buffer len: {})", cursor_pos, buffer_len);
+
+    // Now test Page Up after jumping to EOF - this tests backward iteration
+    println!("\n=== Testing Page Up after EOF ===");
+
+    let start = Instant::now();
+    harness.send_key(KeyCode::PageUp, KeyModifiers::NONE).unwrap();
+    let pageup_time = start.elapsed();
+
+    println!("✓ Page Up completed in: {:?}", pageup_time);
+
+    // Cursor should have moved backwards
+    let new_cursor_pos = harness.cursor_position();
+    assert!(
+        new_cursor_pos < cursor_pos,
+        "Cursor should have moved up. Was: {}, Now: {}",
+        cursor_pos,
+        new_cursor_pos
+    );
+
+    // Page Up should also be fast (< 100ms)
+    assert!(
+        pageup_time.as_millis() < 100,
+        "Page Up took too long: {:?}. This suggests expensive operations.",
+        pageup_time
+    );
+
+    println!("✓ Cursor moved from {} to {}", cursor_pos, new_cursor_pos);
+
+    // Test multiple Page Ups in sequence - should all be fast
+    println!("\n=== Testing multiple Page Ups ===");
+    let start = Instant::now();
+    for i in 0..5 {
+        harness.send_key(KeyCode::PageUp, KeyModifiers::NONE).unwrap();
+        let pos = harness.cursor_position();
+        println!("  Page Up {}: cursor at {}", i + 1, pos);
+    }
+    let multi_pageup_time = start.elapsed();
+
+    println!("✓ 5 Page Ups completed in: {:?}", multi_pageup_time);
+
+    // All page ups should complete quickly (< 250ms for 5 page ups in debug mode)
+    assert!(
+        multi_pageup_time.as_millis() < 250,
+        "Multiple Page Ups took too long: {:?}",
+        multi_pageup_time
+    );
+
+    // Test line up movements - should also be fast
+    println!("\n=== Testing line up movements ===");
+    let start = Instant::now();
+    for i in 0..20 {
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+        if i % 5 == 4 {
+            let pos = harness.cursor_position();
+            println!("  After {} ups: cursor at {}", i + 1, pos);
+        }
+    }
+    let line_up_time = start.elapsed();
+
+    println!("✓ 20 line ups completed in: {:?}", line_up_time);
+
+    // Line movements should be fast (< 550ms for 20 movements in debug mode)
+    // This is slower than page up because each movement triggers a render
+    assert!(
+        line_up_time.as_millis() < 550,
+        "Line up movements took too long: {:?}",
+        line_up_time
+    );
+
+    // Final sanity check: cursor should be well before EOF now
+    let final_pos = harness.cursor_position();
+    assert!(
+        final_pos < buffer_len - 1000,
+        "After scrolling up, cursor should be well before EOF"
+    );
+
+    println!("✓ Final cursor position: {} (moved {} bytes from EOF)",
+        final_pos, buffer_len - final_pos);
 }
 
 /// Test cursor positioning with large line numbers (100000+)
@@ -2387,9 +2464,10 @@ fn test_cursor_position_with_large_line_numbers() {
     // Test with 7-digit line number (1,000,000) - this should trigger the bug
     // The hardcoded gutter_width=7 won't be enough
     {
+        use editor::buffer::LineNumber;
         let editor = harness.editor_mut();
         let state = editor.active_state_mut();
-        state.viewport.top_line = 1_000_000;
+        state.viewport.top_line = LineNumber::Absolute(1_000_000);
         state.cursors.primary_mut().position = 0;
     }
 

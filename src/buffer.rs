@@ -43,11 +43,11 @@ impl LineNumber {
 
     /// Format the line number for display
     /// Absolute line numbers are shown as-is (1-indexed)
-    /// Relative line numbers are shown with "+" prefix (1-indexed)
+    /// Relative line numbers are shown with "~" prefix to indicate estimation (1-indexed)
     pub fn format(&self) -> String {
         match self {
             LineNumber::Absolute(line) => format!("{}", line + 1), // 1-indexed for display
-            LineNumber::Relative { line, .. } => format!("+{}", line + 1), // "+" prefix for relative
+            LineNumber::Relative { line, .. } => format!("~{}", line + 1), // "~" prefix for estimated/relative
         }
     }
 }
@@ -519,17 +519,27 @@ impl Buffer {
         if cache.fully_scanned || byte <= cache.scanned_up_to {
             LineNumber::Absolute(cache.byte_to_line(byte))
         } else {
-            // Estimate by counting from last known position
+            // Estimate line number based on average line length from scanned portion
             let last_known_line = cache.line_starts.len().saturating_sub(1);
-            let last_known_byte = cache.line_starts.last().copied().unwrap_or(0);
+            let last_known_byte = cache.scanned_up_to;
 
-            // Drop the borrow before counting newlines (which needs to borrow content)
-            drop(cache);
+            // Calculate average line length from what we've scanned
+            let avg_line_length = if last_known_line > 0 {
+                last_known_byte / last_known_line
+            } else {
+                80 // Default assumption: 80 chars per line
+            };
 
-            // Count newlines from last known position to target
-            let additional_lines = self.count_newlines_in_range(last_known_byte, byte);
+            // Estimate remaining lines based on average
+            let remaining_bytes = byte.saturating_sub(last_known_byte);
+            let estimated_remaining_lines = if avg_line_length > 0 {
+                remaining_bytes / avg_line_length
+            } else {
+                0
+            };
+
             LineNumber::Relative {
-                line: last_known_line + additional_lines,
+                line: last_known_line + estimated_remaining_lines,
                 from_cached_line: last_known_line,
             }
         }
@@ -646,7 +656,7 @@ impl Buffer {
     /// Get line number for display purposes
     /// Returns either:
     /// - LineNumber::Absolute(n) if we have scanned up to this line
-    /// - LineNumber::Relative(offset) if we haven't scanned this far yet
+    /// - LineNumber::Relative(offset) if we haven't scanned this far yet (estimated)
     pub fn display_line_number(&self, byte_pos: usize) -> LineNumber {
         let cache = self.line_cache.borrow();
 
@@ -654,17 +664,27 @@ impl Buffer {
         if cache.fully_scanned || byte_pos <= cache.scanned_up_to {
             LineNumber::Absolute(cache.byte_to_line(byte_pos))
         } else {
-            // We haven't scanned this far yet - return relative to last known line
+            // We haven't scanned this far yet - estimate based on average line length
             let last_known_line = cache.line_starts.len().saturating_sub(1);
-            let last_known_byte = cache.line_starts.last().copied().unwrap_or(0);
+            let last_known_byte = cache.scanned_up_to;
 
-            // Drop the borrow before counting newlines
-            drop(cache);
+            // Calculate average line length from what we've scanned
+            let avg_line_length = if last_known_line > 0 {
+                last_known_byte / last_known_line
+            } else {
+                80 // Default assumption
+            };
 
-            // Count newlines from last known position (locally, without full scan)
-            let additional_lines = self.count_newlines_in_range(last_known_byte, byte_pos);
+            // Estimate additional lines based on remaining bytes
+            let remaining_bytes = byte_pos.saturating_sub(last_known_byte);
+            let estimated_additional_lines = if avg_line_length > 0 {
+                remaining_bytes / avg_line_length
+            } else {
+                0
+            };
+
             LineNumber::Relative {
-                line: last_known_line + additional_lines,
+                line: last_known_line + estimated_additional_lines,
                 from_cached_line: last_known_line,
             }
         }
@@ -693,7 +713,72 @@ impl Buffer {
     }
 }
 
+/// Bidirectional line iterator that works with byte positions
+/// Uses the chunk tree for efficient iteration without forcing line cache scans
+pub struct LineIterator<'a> {
+    buffer: &'a Buffer,
+    current_byte: usize,
+}
+
+impl<'a> LineIterator<'a> {
+    /// Create a new line iterator starting at the given byte position
+    /// The byte position should be at the start of a line (after a newline or at position 0)
+    pub fn new(buffer: &'a Buffer, start_byte: usize) -> Self {
+        Self {
+            buffer,
+            current_byte: start_byte.min(buffer.len()),
+        }
+    }
+
+    /// Get the next line going forward
+    /// Returns (line_start_byte, line_content) or None if at EOF
+    pub fn next(&mut self) -> Option<(usize, String)> {
+        if self.current_byte >= self.buffer.len() {
+            return None;
+        }
+
+        let line_start = self.current_byte;
+        let line_content = self.buffer.line_content_at_byte(line_start);
+
+        // Move to start of next line
+        let line_end = self.buffer.find_line_end_at_byte(line_start);
+        self.current_byte = if line_end < self.buffer.len() {
+            line_end + 1 // Skip past the newline
+        } else {
+            self.buffer.len()
+        };
+
+        Some((line_start, line_content))
+    }
+
+    /// Get the previous line going backward
+    /// Returns (line_start_byte, line_content) or None if at start
+    pub fn prev(&mut self) -> Option<(usize, String)> {
+        if self.current_byte == 0 {
+            return None;
+        }
+
+        // Find start of previous line
+        let prev_line_start = self.buffer.find_prev_line_start_from_byte(self.current_byte)?;
+        let line_content = self.buffer.line_content_at_byte(prev_line_start);
+
+        self.current_byte = prev_line_start;
+
+        Some((prev_line_start, line_content))
+    }
+
+    /// Get current byte position
+    pub fn current_position(&self) -> usize {
+        self.current_byte
+    }
+}
+
 impl Buffer {
+    /// Create a line iterator starting at the given byte position
+    pub fn line_iterator(&self, start_byte: usize) -> LineIterator {
+        LineIterator::new(self, start_byte)
+    }
+
     /// Get line content starting from a byte position (no full scan needed)
     /// Scans forward from byte_pos to the next newline
     pub fn line_content_at_byte(&self, byte_pos: usize) -> String {

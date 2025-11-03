@@ -1078,10 +1078,6 @@ impl Editor {
 
         tracing::debug!("Render content area: {}x{}, viewport height: {}", area.width, area.height, state.viewport.height);
 
-        // Get visible lines
-        let visible_lines = state.viewport.visible_range();
-        tracing::debug!("Visible lines range: {:?}", visible_lines);
-
         // Calculate gutter width dynamically based on max line number
         let gutter_width = state.viewport.gutter_width();
         let line_number_digits = gutter_width.saturating_sub(3); // Subtract " │ "
@@ -1102,20 +1098,16 @@ impl Editor {
             .map(|(_, cursor)| cursor.position)
             .collect();
 
-        for line_num in visible_lines.clone() {
-            // Check if we've run out of lines (use approximate_line_count to avoid full scan)
-            if let Some(total_lines) = state.buffer.approximate_line_count() {
-                if line_num >= total_lines {
-                    break;
-                }
+        // Use line iterator starting from top_byte to render visible lines
+        let visible_count = state.viewport.visible_line_count();
+        let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
+        let mut lines_rendered = 0;
+
+        while let Some((line_start, line_content)) = iter.next() {
+            if lines_rendered >= visible_count {
+                break;
             }
-
-            // Get line start byte position
-            // For first few lines this is fast, for later lines we may need to scan
-            let line_start = state.buffer.line_to_byte(line_num);
-
-            // Use byte-based line content to avoid triggering full file scan
-            let line_content = state.buffer.line_content_at_byte(line_start);
+            lines_rendered += 1;
 
             // Apply horizontal scrolling - skip characters before left_column
             let left_col = state.viewport.left_column;
@@ -1224,7 +1216,9 @@ impl Editor {
 
             let cursor = *state.primary_cursor();
             let line = state.buffer.byte_to_line_lazy(cursor.position).value() + 1;
-            let col = cursor.position - state.buffer.line_to_byte(line - 1);
+            // Calculate column by finding the line start from cursor position (byte-based, no scan)
+            let line_start = state.buffer.find_line_start_at_byte(cursor.position);
+            let col = cursor.position - line_start;
 
             (filename, modified, line, col)
         };
@@ -2073,15 +2067,27 @@ impl Editor {
             Action::MovePageUp => {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let current_line = state.buffer.byte_to_line_lazy(cursor.position).value();
-                    let target_line = current_line.saturating_sub(lines_per_page);
-                    let line_start = state.buffer.line_to_byte(current_line);
-                    let col_offset = cursor.position - line_start;
+                    // Find current line start and calculate column offset
+                    let current_line_start = state.buffer.find_line_start_at_byte(cursor.position);
+                    let col_offset = cursor.position - current_line_start;
 
-                    let target_line_start = state.buffer.line_to_byte(target_line);
-                    // Get the next line start (or EOF) to calculate line length
-                    let target_line_end = state.buffer.line_to_byte(target_line + 1).saturating_sub(1);
-                    let target_line_len = target_line_end - target_line_start;
+                    // Use line iterator to go backwards by lines_per_page
+                    let mut iter = state.buffer.line_iterator(current_line_start);
+                    let mut target_line_start = current_line_start;
+
+                    for _ in 0..lines_per_page {
+                        if let Some((line_byte, _)) = iter.prev() {
+                            target_line_start = line_byte;
+                        } else {
+                            // Hit beginning of file
+                            target_line_start = 0;
+                            break;
+                        }
+                    }
+
+                    // Calculate target line length to clamp column offset
+                    let target_line_end = state.buffer.find_line_end_at_byte(target_line_start);
+                    let target_line_len = target_line_end.saturating_sub(target_line_start);
 
                     let new_pos = target_line_start + col_offset.min(target_line_len);
                     events.push(Event::MoveCursor {
@@ -2095,15 +2101,27 @@ impl Editor {
             Action::MovePageDown => {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let current_line = state.buffer.byte_to_line_lazy(cursor.position).value();
-                    let target_line = current_line + lines_per_page;
-                    let line_start = state.buffer.line_to_byte(current_line);
-                    let col_offset = cursor.position - line_start;
+                    // Find current line start and calculate column offset
+                    let current_line_start = state.buffer.find_line_start_at_byte(cursor.position);
+                    let col_offset = cursor.position - current_line_start;
 
-                    // line_to_byte will return EOF if target_line doesn't exist
-                    let target_line_start = state.buffer.line_to_byte(target_line);
+                    // Use line iterator to go forward by lines_per_page
+                    let mut iter = state.buffer.line_iterator(current_line_start);
+                    let mut target_line_start = current_line_start;
 
-                    // If we're at EOF, clamp to EOF
+                    // Skip current line, then go forward
+                    iter.next();
+                    for _ in 0..lines_per_page {
+                        if let Some((line_byte, _)) = iter.next() {
+                            target_line_start = line_byte;
+                        } else {
+                            // Hit end of file - go to EOF
+                            target_line_start = state.buffer.len();
+                            break;
+                        }
+                    }
+
+                    // Clamp to EOF
                     if target_line_start >= state.buffer.len() {
                         events.push(Event::MoveCursor {
                             cursor_id,
@@ -2113,9 +2131,9 @@ impl Editor {
                         continue;
                     }
 
-                    // Get the next line start (or EOF) to calculate line length
-                    let target_line_end = state.buffer.line_to_byte(target_line + 1).saturating_sub(1);
-                    let target_line_len = target_line_end - target_line_start;
+                    // Calculate target line length to clamp column offset
+                    let target_line_end = state.buffer.find_line_end_at_byte(target_line_start);
+                    let target_line_len = target_line_end.saturating_sub(target_line_start);
 
                     let new_pos = target_line_start + col_offset.min(target_line_len);
                     events.push(Event::MoveCursor {
