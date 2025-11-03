@@ -690,6 +690,68 @@ impl Buffer {
         }
     }
 
+    /// Get the byte position up to which the line cache has been scanned
+    /// This is useful for debugging and testing
+    pub fn line_cache_scanned_up_to(&self) -> usize {
+        self.line_cache.borrow().scanned_up_to
+    }
+
+    /// Get the number of line starts cached
+    /// This is useful for debugging and testing
+    pub fn line_cache_count(&self) -> usize {
+        self.line_cache.borrow().line_starts.len()
+    }
+
+    /// Register a line in the cache if it's sequential from what we've already scanned
+    /// This allows the cache to grow incrementally as we view different parts of the file
+    /// Only caches if this line extends the scanned region forward from position 0
+    pub fn register_line_in_cache(&self, line_start_byte: usize) {
+        let mut cache = self.line_cache.borrow_mut();
+
+        // Initialize cache if not valid
+        if !cache.valid {
+            cache.line_starts.clear();
+            cache.line_starts.push(0);
+            cache.scanned_up_to = 0;
+            cache.valid = true;
+        }
+
+        // Only register if this extends our sequential scan from the beginning
+        // This ensures we maintain accurate line numbers for the beginning of the file
+        if cache.fully_scanned {
+            return; // Already have everything
+        }
+
+        // Only scan if this line is within a reasonable distance of what we've already scanned
+        // This prevents scanning huge gaps in the file
+        if line_start_byte <= cache.scanned_up_to + 10000 {  // Within 10KB of scanned region
+            // Scan forward to include this line
+            if line_start_byte > cache.scanned_up_to {
+                // Find the end of this line
+                let line_end = self.find_line_end_at_byte(line_start_byte);
+                let scan_to = line_end.min(self.len().saturating_sub(1));
+
+                // Find all newlines between scanned_up_to and the end of this line
+                for i in cache.scanned_up_to..scan_to {
+                    if i < self.len() {
+                        let piece = self.content.get(i);
+                        if let crate::chunk_tree::ChunkPiece::Data { data } = piece {
+                            if !data.is_empty() && data[0] == b'\n' {
+                                cache.line_starts.push(i + 1);
+                            }
+                        }
+                    }
+                }
+                cache.scanned_up_to = scan_to;
+
+                // Check if we've reached EOF
+                if cache.scanned_up_to >= self.len() {
+                    cache.fully_scanned = true;
+                }
+            }
+        }
+    }
+
     /// Count newlines in a byte range without caching
     /// This is used for relative line numbers
     fn count_newlines_in_range(&self, start: usize, end: usize) -> usize {

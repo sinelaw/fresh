@@ -2446,6 +2446,124 @@ fn test_jump_to_eof_large_file() {
         final_pos, buffer_len - final_pos);
 }
 
+/// Test that line numbers become absolute after jumping back to beginning
+/// When we jump to EOF in a large file, line numbers are estimated (~800000).
+/// After jumping back to the beginning, line numbers should be absolute (1,2,3...)
+/// as we scan through the file from the top.
+#[test]
+fn test_line_numbers_absolute_after_jump_to_beginning() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use editor::buffer::LineNumber;
+
+    println!("\n=== Testing line number accuracy after EOF -> Home ===");
+
+    // Use the big file
+    let big_txt_path = TestFixture::big_txt().unwrap();
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&big_txt_path).unwrap();
+
+    println!("✓ Opened 61MB file");
+
+    // Jump to EOF - this will show estimated line numbers
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    println!("✓ Jumped to EOF");
+
+    // Check that the top line shown is estimated (relative)
+    {
+        let state = harness.editor().active_state();
+        let top_line = &state.viewport.top_line;
+        println!("  Top line after EOF jump: {} (type: {})",
+            top_line.format(),
+            match top_line {
+                LineNumber::Absolute(_) => "Absolute",
+                LineNumber::Relative { .. } => "Relative/Estimated"
+            }
+        );
+
+        // After jumping to EOF, we should see estimated line numbers
+        assert!(
+            matches!(top_line, LineNumber::Relative { .. }),
+            "Line numbers at EOF should be estimated (Relative), got: {:?}",
+            top_line
+        );
+    }
+
+    // Now jump back to beginning
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    println!("✓ Jumped back to beginning");
+
+    // Check cursor is at start
+    let cursor_pos = harness.cursor_position();
+    assert_eq!(cursor_pos, 0, "Cursor should be at position 0");
+
+    // Check that the top line is now absolute (scanned from beginning)
+    {
+        let state = harness.editor().active_state();
+        let top_line = &state.viewport.top_line;
+        println!("  Top line after Home: {} (type: {})",
+            top_line.format(),
+            match top_line {
+                LineNumber::Absolute(_) => "Absolute",
+                LineNumber::Relative { .. } => "Relative/Estimated"
+            }
+        );
+
+        // After jumping to beginning, line numbers should be absolute
+        assert!(
+            matches!(top_line, LineNumber::Absolute(_)),
+            "Line numbers at beginning should be absolute, got: {:?}",
+            top_line
+        );
+
+        // And it should be line 0 (0-indexed internally)
+        if let LineNumber::Absolute(line) = top_line {
+            assert_eq!(*line, 0, "Top line should be 0 (line 1 in display)");
+        }
+    }
+
+    // Check a few lines by rendering and examining viewport
+    let state = harness.editor().active_state();
+
+    // Debug: Check what's in the line cache
+    {
+        println!("\n  Line cache state:");
+        println!("    scanned_up_to: {} bytes", state.buffer.line_cache_scanned_up_to());
+        println!("    cached lines: {}", state.buffer.line_cache_count());
+    }
+
+    // Get line numbers for first few visible lines
+    println!("\n  Checking first few line numbers:");
+    let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
+    for i in 0..5 {
+        if let Some((byte_pos, _)) = iter.next() {
+            let line_num = state.buffer.display_line_number(byte_pos);
+            println!("    Visible line {} at byte {}: {} (type: {})",
+                i,
+                byte_pos,
+                line_num.format(),
+                match line_num {
+                    LineNumber::Absolute(_) => "Absolute",
+                    LineNumber::Relative { .. } => "Relative"
+                }
+            );
+
+            // All lines at the beginning should be absolute
+            assert!(
+                matches!(line_num, LineNumber::Absolute(_)),
+                "Line {} should be absolute at beginning of file",
+                i
+            );
+
+            // And they should match the expected line number
+            if let LineNumber::Absolute(line) = line_num {
+                assert_eq!(line, i, "Line number mismatch at position {}", i);
+            }
+        }
+    }
+
+    println!("\n✓ All line numbers are absolute and correct (1, 2, 3, ...) at beginning");
+}
+
 /// Test cursor positioning with large line numbers (100000+)
 /// Bug: When line numbers grow to 6+ digits, the gutter width increases,
 /// but cursor position calculation uses hardcoded gutter width of 7 chars.

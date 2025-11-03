@@ -1109,6 +1109,10 @@ impl Editor {
             }
             lines_rendered += 1;
 
+            // Register this line in the cache if it extends the scanned region
+            // This ensures line numbers for visible lines are accurate when possible
+            state.buffer.register_line_in_cache(line_start);
+
             // Apply horizontal scrolling - skip characters before left_column
             let left_col = state.viewport.left_column;
 
