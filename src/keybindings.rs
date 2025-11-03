@@ -69,6 +69,7 @@ pub enum Action {
     ScrollUp,
     ScrollDown,
     ShowHelp,
+    CommandPalette,
 
     // No-op
     None,
@@ -138,6 +139,8 @@ impl Action {
 
             "scroll_up" => Some(Action::ScrollUp),
             "scroll_down" => Some(Action::ScrollDown),
+            "show_help" => Some(Action::ShowHelp),
+            "command_palette" => Some(Action::CommandPalette),
 
             _ => None,
         }
@@ -330,6 +333,12 @@ impl KeybindingResolver {
             Action::ShowHelp,
         );
 
+        // Command palette (Shift+P produces uppercase 'P')
+        bindings.insert(
+            (KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            Action::CommandPalette,
+        );
+
         bindings
     }
 
@@ -450,6 +459,7 @@ impl KeybindingResolver {
             Action::ScrollUp => "Scroll up".to_string(),
             Action::ScrollDown => "Scroll down".to_string(),
             Action::ShowHelp => "Show help".to_string(),
+            Action::CommandPalette => "Command palette".to_string(),
             Action::None => "No action".to_string(),
         }
     }

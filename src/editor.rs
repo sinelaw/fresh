@@ -32,6 +32,39 @@ pub enum PromptType {
     Command,
 }
 
+/// A single suggestion item for autocomplete
+#[derive(Debug, Clone, PartialEq)]
+pub struct Suggestion {
+    /// The text to display
+    pub text: String,
+    /// Optional description
+    pub description: Option<String>,
+    /// The value to use when selected (defaults to text if None)
+    pub value: Option<String>,
+}
+
+impl Suggestion {
+    pub fn new(text: String) -> Self {
+        Self {
+            text,
+            description: None,
+            value: None,
+        }
+    }
+
+    pub fn with_description(text: String, description: String) -> Self {
+        Self {
+            text,
+            description: Some(description),
+            value: None,
+        }
+    }
+
+    pub fn get_value(&self) -> &str {
+        self.value.as_ref().unwrap_or(&self.text)
+    }
+}
+
 /// Prompt state for the minibuffer
 #[derive(Debug, Clone)]
 pub struct Prompt {
@@ -43,6 +76,21 @@ pub struct Prompt {
     pub cursor_pos: usize,
     /// What to do when user confirms
     pub prompt_type: PromptType,
+    /// Autocomplete suggestions
+    pub suggestions: Vec<Suggestion>,
+    /// Currently selected suggestion index
+    pub selected_suggestion: Option<usize>,
+}
+
+/// A command that can be executed from the command palette
+#[derive(Debug, Clone)]
+pub struct Command {
+    /// Command name (e.g., "Open File")
+    pub name: String,
+    /// Command description
+    pub description: String,
+    /// The action to trigger
+    pub action: Action,
 }
 
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
@@ -454,11 +502,19 @@ impl Editor {
 
     /// Start a new prompt (enter minibuffer mode)
     pub fn start_prompt(&mut self, message: String, prompt_type: PromptType) {
+        self.start_prompt_with_suggestions(message, prompt_type, Vec::new());
+    }
+
+    /// Start a new prompt with autocomplete suggestions
+    pub fn start_prompt_with_suggestions(&mut self, message: String, prompt_type: PromptType, suggestions: Vec<Suggestion>) {
+        let selected_suggestion = if suggestions.is_empty() { None } else { Some(0) };
         self.prompt = Some(Prompt {
             message,
             input: String::new(),
             cursor_pos: 0,
             prompt_type,
+            suggestions,
+            selected_suggestion,
         });
     }
 
@@ -495,6 +551,135 @@ impl Editor {
     /// Set a status message to display in the status bar
     pub fn set_status_message(&mut self, message: String) {
         self.status_message = Some(message);
+    }
+
+    /// Get all available commands for the command palette
+    pub fn get_all_commands() -> Vec<Command> {
+        use crate::keybindings::Action;
+
+        vec![
+            Command {
+                name: "Open File".to_string(),
+                description: "Open a file in a new or existing buffer".to_string(),
+                action: Action::Open,
+            },
+            Command {
+                name: "Save File".to_string(),
+                description: "Save the current buffer to disk".to_string(),
+                action: Action::Save,
+            },
+            Command {
+                name: "Quit".to_string(),
+                description: "Exit the editor".to_string(),
+                action: Action::Quit,
+            },
+            Command {
+                name: "Show Help".to_string(),
+                description: "Display the help page with all keybindings".to_string(),
+                action: Action::ShowHelp,
+            },
+            Command {
+                name: "Undo".to_string(),
+                description: "Undo the last edit".to_string(),
+                action: Action::Undo,
+            },
+            Command {
+                name: "Redo".to_string(),
+                description: "Redo the last undone edit".to_string(),
+                action: Action::Redo,
+            },
+            Command {
+                name: "Copy".to_string(),
+                description: "Copy selection to clipboard".to_string(),
+                action: Action::Copy,
+            },
+            Command {
+                name: "Cut".to_string(),
+                description: "Cut selection to clipboard".to_string(),
+                action: Action::Cut,
+            },
+            Command {
+                name: "Paste".to_string(),
+                description: "Paste from clipboard".to_string(),
+                action: Action::Paste,
+            },
+            Command {
+                name: "Select All".to_string(),
+                description: "Select all text in the buffer".to_string(),
+                action: Action::SelectAll,
+            },
+            Command {
+                name: "Add Cursor Above".to_string(),
+                description: "Add a cursor on the line above".to_string(),
+                action: Action::AddCursorAbove,
+            },
+            Command {
+                name: "Add Cursor Below".to_string(),
+                description: "Add a cursor on the line below".to_string(),
+                action: Action::AddCursorBelow,
+            },
+            Command {
+                name: "Add Cursor at Next Match".to_string(),
+                description: "Add a cursor at the next occurrence of the selection".to_string(),
+                action: Action::AddCursorNextMatch,
+            },
+            Command {
+                name: "Remove Secondary Cursors".to_string(),
+                description: "Remove all cursors except the primary".to_string(),
+                action: Action::RemoveSecondaryCursors,
+            },
+        ]
+    }
+
+    /// Filter commands by fuzzy matching the query
+    pub fn filter_commands(query: &str) -> Vec<Suggestion> {
+        let query_lower = query.to_lowercase();
+        let commands = Self::get_all_commands();
+
+        if query.is_empty() {
+            // Show all commands when no filter
+            return commands
+                .into_iter()
+                .map(|cmd| Suggestion::with_description(cmd.name.clone(), cmd.description))
+                .collect();
+        }
+
+        // Simple fuzzy matching: check if all characters appear in order
+        commands
+            .into_iter()
+            .filter(|cmd| {
+                let name_lower = cmd.name.to_lowercase();
+                let mut query_chars = query_lower.chars();
+                let mut current_char = query_chars.next();
+
+                for name_char in name_lower.chars() {
+                    if let Some(qc) = current_char {
+                        if qc == name_char {
+                            current_char = query_chars.next();
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                current_char.is_none() // All query characters matched
+            })
+            .map(|cmd| Suggestion::with_description(cmd.name.clone(), cmd.description))
+            .collect()
+    }
+
+    /// Update prompt suggestions based on current input
+    pub fn update_prompt_suggestions(&mut self) {
+        if let Some(prompt) = &mut self.prompt {
+            if matches!(prompt.prompt_type, PromptType::Command) {
+                prompt.suggestions = Self::filter_commands(&prompt.input);
+                prompt.selected_suggestion = if prompt.suggestions.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                };
+            }
+        }
     }
 
     /// Handle a key event and return whether it was handled
@@ -545,7 +730,60 @@ impl Editor {
                                 self.set_status_message(format!("Replace not yet implemented: {}", input));
                             }
                             PromptType::Command => {
-                                self.set_status_message(format!("Command palette not yet implemented: {}", input));
+                                // Find the command by name and execute it
+                                let commands = Self::get_all_commands();
+                                if let Some(cmd) = commands.iter().find(|c| c.name == input) {
+                                    // Execute the action (we'll handle it below after returning from this match)
+                                    // For now, trigger the action through the normal action handling
+                                    let action = cmd.action.clone();
+                                    self.set_status_message(format!("Executing: {}", cmd.name));
+
+                                    // Handle the action immediately
+                                    match action {
+                                        Action::Quit => self.quit(),
+                                        Action::Save => { let _ = self.save(); }
+                                        Action::Open => self.start_prompt("Find file: ".to_string(), PromptType::OpenFile),
+                                        Action::Copy => self.copy_selection(),
+                                        Action::Cut => self.cut_selection(),
+                                        Action::Paste => self.paste(),
+                                        Action::Undo => {
+                                            if let Some(event) = self.active_event_log_mut().undo() {
+                                                if let Some(inverse) = event.inverse() {
+                                                    self.active_state_mut().apply(&inverse);
+                                                }
+                                            }
+                                        }
+                                        Action::Redo => {
+                                            let event_opt = self.active_event_log_mut().redo().cloned();
+                                            if let Some(event) = event_opt {
+                                                self.active_state_mut().apply(&event);
+                                            }
+                                        }
+                                        Action::ShowHelp => self.toggle_help(),
+                                        Action::AddCursorNextMatch => self.add_cursor_at_next_match(),
+                                        Action::AddCursorAbove => self.add_cursor_above(),
+                                        Action::AddCursorBelow => self.add_cursor_below(),
+                                        Action::RemoveSecondaryCursors => self.active_state_mut().cursors.remove_secondary(),
+                                        Action::SelectAll => {
+                                            if let Some(events) = self.action_to_events(action) {
+                                                for event in events {
+                                                    self.active_event_log_mut().append(event.clone());
+                                                    self.active_state_mut().apply(&event);
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            if let Some(events) = self.action_to_events(action) {
+                                                for event in events {
+                                                    self.active_event_log_mut().append(event.clone());
+                                                    self.active_state_mut().apply(&event);
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    self.set_status_message(format!("Unknown command: {}", input));
+                                }
                             }
                         }
                     }
@@ -562,6 +800,8 @@ impl Editor {
                         prompt.input.insert(prompt.cursor_pos, c);
                         prompt.cursor_pos += c.len_utf8();
                     }
+                    // Update suggestions if this is a command palette
+                    self.update_prompt_suggestions();
                     return Ok(());
                 }
                 // Backspace in prompt
@@ -575,6 +815,45 @@ impl Editor {
                             }
                             prompt.input.remove(char_start);
                             prompt.cursor_pos = char_start;
+                        }
+                    }
+                    // Update suggestions if this is a command palette
+                    self.update_prompt_suggestions();
+                    return Ok(());
+                }
+                // Navigate suggestions with Up/Down
+                (KeyCode::Up, KeyModifiers::NONE) => {
+                    if let Some(prompt) = self.prompt_mut() {
+                        if !prompt.suggestions.is_empty() {
+                            if let Some(selected) = prompt.selected_suggestion {
+                                prompt.selected_suggestion = if selected == 0 {
+                                    Some(prompt.suggestions.len() - 1)
+                                } else {
+                                    Some(selected - 1)
+                                };
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+                (KeyCode::Down, KeyModifiers::NONE) => {
+                    if let Some(prompt) = self.prompt_mut() {
+                        if !prompt.suggestions.is_empty() {
+                            if let Some(selected) = prompt.selected_suggestion {
+                                prompt.selected_suggestion = Some((selected + 1) % prompt.suggestions.len());
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+                // Tab to accept current suggestion
+                (KeyCode::Tab, KeyModifiers::NONE) => {
+                    if let Some(prompt) = self.prompt_mut() {
+                        if let Some(selected) = prompt.selected_suggestion {
+                            if let Some(suggestion) = prompt.suggestions.get(selected) {
+                                prompt.input = suggestion.get_value().to_string();
+                                prompt.cursor_pos = prompt.input.len();
+                            }
                         }
                     }
                     return Ok(());
@@ -657,6 +936,7 @@ impl Editor {
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => Action::Open,
             (KeyCode::Char('q'), KeyModifiers::CONTROL) => Action::Quit,
             (KeyCode::Char('h'), KeyModifiers::CONTROL) => Action::ShowHelp,
+            (KeyCode::Char('P'), m) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::SHIFT) => Action::CommandPalette,
             (KeyCode::Char('d'), KeyModifiers::CONTROL) => Action::AddCursorNextMatch,
             (KeyCode::Up, m) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::ALT) => Action::AddCursorAbove,
             (KeyCode::Down, m) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::ALT) => Action::AddCursorBelow,
@@ -692,6 +972,15 @@ impl Editor {
                 }
             }
             Action::ShowHelp => self.toggle_help(),
+            Action::CommandPalette => {
+                // Start the command palette prompt with all commands as suggestions
+                let suggestions = Self::filter_commands("");
+                self.start_prompt_with_suggestions(
+                    "Command: ".to_string(),
+                    PromptType::Command,
+                    suggestions,
+                );
+            }
             Action::AddCursorNextMatch => self.add_cursor_at_next_match(),
             Action::AddCursorAbove => self.add_cursor_above(),
             Action::AddCursorBelow => self.add_cursor_below(),
@@ -721,14 +1010,33 @@ impl Editor {
             return;
         }
 
-        // Split into tabs, content, and status bar
+        // Check if we need space for suggestions popup
+        let suggestion_lines = if let Some(prompt) = &self.prompt {
+            if !prompt.suggestions.is_empty() {
+                // Show up to 10 suggestions
+                prompt.suggestions.len().min(10)
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        // Split into tabs, content, suggestions (if any), and status bar
+        let mut constraints = vec![
+            Constraint::Length(1), // Tabs
+            Constraint::Min(0),    // Content
+        ];
+
+        if suggestion_lines > 0 {
+            constraints.push(Constraint::Length(suggestion_lines as u16)); // Suggestions popup
+        }
+
+        constraints.push(Constraint::Length(1)); // Status bar
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1), // Tabs
-                Constraint::Min(0),    // Content
-                Constraint::Length(1), // Status bar
-            ])
+            .constraints(constraints)
             .split(size);
 
         // Render tabs
@@ -737,8 +1045,15 @@ impl Editor {
         // Render content
         self.render_content(frame, chunks[1]);
 
-        // Render status bar
-        self.render_status_bar(frame, chunks[2]);
+        // Render suggestions popup if present
+        if suggestion_lines > 0 {
+            self.render_suggestions(frame, chunks[2]);
+            // Status bar is in chunks[3]
+            self.render_status_bar(frame, chunks[3]);
+        } else {
+            // Status bar is in chunks[2]
+            self.render_status_bar(frame, chunks[2]);
+        }
     }
 
     /// Render the tab bar
@@ -930,6 +1245,47 @@ impl Editor {
             Paragraph::new(status).style(Style::default().fg(Color::Black).bg(Color::White));
 
         frame.render_widget(status_line, area);
+    }
+
+    /// Render the suggestions popup (autocomplete)
+    fn render_suggestions(&self, frame: &mut Frame, area: Rect) {
+        let Some(prompt) = &self.prompt else {
+            return;
+        };
+
+        if prompt.suggestions.is_empty() {
+            return;
+        }
+
+        let mut lines = Vec::new();
+        let visible_count = area.height as usize;
+        let start_idx = 0;
+        let end_idx = visible_count.min(prompt.suggestions.len());
+
+        for (idx, suggestion) in prompt.suggestions[start_idx..end_idx].iter().enumerate() {
+            let actual_idx = start_idx + idx;
+            let is_selected = prompt.selected_suggestion == Some(actual_idx);
+
+            // Format: "Command Name - description"
+            let text = if let Some(desc) = &suggestion.description {
+                format!("  {}  -  {}", suggestion.text, desc)
+            } else {
+                format!("  {}", suggestion.text)
+            };
+
+            let style = if is_selected {
+                // Highlight selected suggestion with cyan background
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                // Normal suggestion with dark gray background
+                Style::default().fg(Color::White).bg(Color::DarkGray)
+            };
+
+            lines.push(Line::from(Span::styled(text, style)));
+        }
+
+        let paragraph = Paragraph::new(lines);
+        frame.render_widget(paragraph, area);
     }
 
     /// Render the help page
@@ -1636,13 +1992,15 @@ impl Editor {
             | Action::Quit
             | Action::Undo
             | Action::Redo
-            | Action::ShowHelp => {
+            | Action::ShowHelp
+            | Action::CommandPalette => {
                 // These actions need special handling in the event loop:
                 // - Clipboard operations need system clipboard access
                 // - File operations need Editor-level state changes
                 // - Undo/Redo need EventLog manipulation
                 // - Multi-cursor add operations need visual line calculations
                 // - ShowHelp toggles help view
+                // - CommandPalette opens the command palette prompt
                 return None;
             }
         }

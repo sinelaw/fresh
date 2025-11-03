@@ -1,6 +1,8 @@
 # Editor Implementation Plan
 
-## Implemented Features (Phase 0-2.2 Complete)
+> **Maintenance Note**: When features are completed, remove detailed implementation sections and keep only a single-line summary in "Implemented Features" at the top. This keeps the TODO file focused on what's next, not what's done.
+
+## Implemented Features ✅
 
 - **Event-driven architecture**: Lossless history with undo/redo
 - **Multiple cursors**: Ctrl+D (next match), Ctrl+Alt+Up/Down (add above/below), Esc (remove secondary)
@@ -9,53 +11,17 @@
 - **Multiple buffers**: Tab-based interface
 - **Clipboard**: Copy/paste between buffers and cursors
 - **Help system**: Ctrl+H shows all keybindings
+- **Minibuffer/Prompt system**: Ctrl+O for file open, Escape to cancel, typing support
+- **Command palette**: Ctrl+Shift+P with fuzzy matching, autocomplete, and all editor commands
 - **Configuration**: JSON-based config with keybindings, theme, editor settings
 - **High performance**: ChunkTree buffer, line cache, <1ms operations
-- **Testing**: 34 E2E tests, property tests, benchmarks
+- **Testing**: 47 E2E tests, property tests, benchmarks
 
 ## Current Status
 
-**Phase**: 2.2.1 Complete ✅
-**Tests**: 40 passing (40 E2E + unit + property tests)
+**Phase**: 2.2.2 Complete ✅ (Command Palette)
+**Tests**: 47 passing (47 E2E + unit + property tests)
 **Next**: Phase 2.3 - Advanced Selection (or Phase 3 - Syntax Highlighting)
-
----
-
-## Phase 2.2.1: Minibuffer/Prompt Infrastructure ✅ COMPLETE
-
-**Implemented**: Full minibuffer/prompt system following Emacs philosophy.
-
-### What Was Built
-
-**Core Infrastructure:**
-- ✅ `PromptType` enum with OpenFile, SaveFileAs, Search, Replace, Command
-- ✅ `Prompt` struct with message, input, cursor_pos, prompt_type
-- ✅ `prompt: Option<Prompt>` field in Editor
-- ✅ Prompt control methods (start, cancel, confirm, is_prompting, prompt_input, prompt_mut)
-- ✅ Prompt rendering with yellow background in status bar
-- ✅ Prompt input handling (typing, backspace, cursor movement, Home/End)
-
-**Key Refactoring:**
-- ✅ Centralized `Editor::handle_key()` method consolidates all key handling
-- ✅ Main.rs and test harness now delegate to Editor, ensuring identical behavior
-- ✅ Eliminated ~200 lines of duplicated code
-
-**Interactive Commands:**
-- ✅ Open file (Ctrl+O) - prompts for filename, opens on Enter, cancels on Escape
-- ✅ Error handling for non-existent files
-
-**Tests:**
-- ✅ test_prompt_rendering - verifies yellow background and message display
-- ✅ test_prompt_input_handling - tests typing, backspace, Home/End, cursor movement
-- ✅ test_prompt_cancel - ensures Escape cancels and shows "Canceled" message
-- ✅ test_open_file_workflow - end-to-end test of Ctrl+O → type path → Enter → file opens
-- ✅ test_open_nonexistent_file - verifies error message for invalid paths
-
-**Future Commands (TODO):**
-- [ ] Save as (Ctrl+Shift+S) - save active buffer to new path
-- [ ] Search (Ctrl+F) - find text in buffer
-- [ ] Replace (Ctrl+H) - find and replace text
-- [ ] Command palette (Ctrl+Shift+P) - fuzzy search all commands
 
 ---
 
@@ -122,18 +88,23 @@
 - [ ] Replace (Ctrl+H) with preview
 
 ### 5.2 Command Palette
-- [ ] Fuzzy search all actions (Ctrl+Shift+P)
-- [ ] Show keybindings
+- [x] Fuzzy search all actions (Ctrl+Shift+P) ✅ Complete
+- [x] Show keybindings ✅ Complete (via Show Help command)
 
-### 5.3 File Explorer
+### 5.3 Keybinding System Refactoring
+- [ ] Replace hardcoded key event handlers in `Editor::handle_key()` with `KeybindingResolver`
+- [ ] Eliminate duplicated key matching logic
+- [ ] Make all keybindings customizable via config.json
+
+### 5.4 File Explorer
 - [ ] Simple file tree in sidebar (Ctrl+B)
 
-### 5.4 Performance Optimization
+### 5.5 Performance Optimization
 - [ ] Profile hot paths
 - [ ] Test with 1GB+ files
 - [ ] Measure keystroke latency (<1ms target)
 
-### 5.5 User Experience
+### 5.6 User Experience
 - [ ] Improve error messages
 - [ ] Confirmation dialogs (quit without saving)
 - [ ] Progress indicators (loading large files)
@@ -143,7 +114,14 @@
 
 ## Phase 6: Advanced Features (Future)
 
-- [ ] Themes (load from JSON)
+### 6.1 Theme System
+- [ ] Create Theme struct with all color definitions (background, foreground, selection, cursor, status bar, prompt, suggestions, etc.)
+- [ ] Replace all hardcoded Color/Style references throughout codebase with theme lookups
+- [ ] Make theme replaceable at runtime (store in Editor context)
+- [ ] Load themes from JSON configuration
+- [ ] Support multiple built-in themes (dark, light, high contrast)
+
+### 6.2 Other Advanced Features
 - [ ] Macros (record/play)
 - [ ] Split views (horizontal/vertical)
 - [ ] Git integration (status, blame, stage hunks)
