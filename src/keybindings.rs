@@ -33,6 +33,10 @@ pub enum Action {
     SelectWordRight,
     SelectLineStart,
     SelectLineEnd,
+    SelectDocumentStart,
+    SelectDocumentEnd,
+    SelectPageUp,
+    SelectPageDown,
     SelectAll,
     SelectWord,
     SelectLine,
@@ -113,6 +117,10 @@ impl Action {
             "select_word_right" => Some(Action::SelectWordRight),
             "select_line_start" => Some(Action::SelectLineStart),
             "select_line_end" => Some(Action::SelectLineEnd),
+            "select_document_start" => Some(Action::SelectDocumentStart),
+            "select_document_end" => Some(Action::SelectDocumentEnd),
+            "select_page_up" => Some(Action::SelectPageUp),
+            "select_page_down" => Some(Action::SelectPageDown),
             "select_all" => Some(Action::SelectAll),
             "select_word" => Some(Action::SelectWord),
             "select_line" => Some(Action::SelectLine),
@@ -290,6 +298,16 @@ impl KeybindingResolver {
         bindings.insert((KeyCode::Down, KeyModifiers::SHIFT), Action::SelectDown);
         bindings.insert((KeyCode::Home, KeyModifiers::SHIFT), Action::SelectLineStart);
         bindings.insert((KeyCode::End, KeyModifiers::SHIFT), Action::SelectLineEnd);
+        bindings.insert((KeyCode::PageUp, KeyModifiers::SHIFT), Action::SelectPageUp);
+        bindings.insert((KeyCode::PageDown, KeyModifiers::SHIFT), Action::SelectPageDown);
+        bindings.insert(
+            (KeyCode::Home, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            Action::SelectDocumentStart,
+        );
+        bindings.insert(
+            (KeyCode::End, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            Action::SelectDocumentEnd,
+        );
 
         // Editing
         bindings.insert(
@@ -347,6 +365,10 @@ impl KeybindingResolver {
         bindings.insert(
             (KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
             Action::ExpandSelection,
+        );
+        bindings.insert(
+            (KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            Action::SelectWordLeft,
         );
 
         // Multi-cursor
@@ -475,6 +497,10 @@ impl KeybindingResolver {
             Action::SelectWordRight => "Select word right".to_string(),
             Action::SelectLineStart => "Select to line start".to_string(),
             Action::SelectLineEnd => "Select to line end".to_string(),
+            Action::SelectDocumentStart => "Select to document start".to_string(),
+            Action::SelectDocumentEnd => "Select to document end".to_string(),
+            Action::SelectPageUp => "Select page up".to_string(),
+            Action::SelectPageDown => "Select page down".to_string(),
             Action::SelectAll => "Select all".to_string(),
             Action::SelectWord => "Select word under cursor".to_string(),
             Action::SelectLine => "Select current line".to_string(),

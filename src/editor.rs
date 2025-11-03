@@ -1452,8 +1452,8 @@ impl Editor {
 
         let mut new_pos = bytes.len().saturating_sub(1);
 
-        // Skip whitespace
-        while new_pos > 0 && bytes.get(new_pos).is_some_and(|&b| b.is_ascii_whitespace()) {
+        // Skip non-word characters (whitespace and punctuation)
+        while new_pos > 0 && bytes.get(new_pos).is_some_and(|&b| !Self::is_word_char(b)) {
             new_pos = new_pos.saturating_sub(1);
         }
 
@@ -1495,8 +1495,8 @@ impl Editor {
             new_pos += 1;
         }
 
-        // Skip whitespace
-        while new_pos < bytes.len() && bytes.get(new_pos).is_some_and(|&b| b.is_ascii_whitespace()) {
+        // Skip non-word characters (whitespace and punctuation)
+        while new_pos < bytes.len() && bytes.get(new_pos).is_some_and(|&b| !Self::is_word_char(b)) {
             new_pos += 1;
         }
 
@@ -1838,6 +1838,59 @@ impl Editor {
                 }
             }
 
+            Action::SelectDocumentStart => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let anchor = cursor.anchor.unwrap_or(cursor.position);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: 0,
+                        anchor: Some(anchor),
+                    });
+                }
+            }
+
+            Action::SelectDocumentEnd => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let anchor = cursor.anchor.unwrap_or(cursor.position);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: state.buffer.len(),
+                        anchor: Some(anchor),
+                    });
+                }
+            }
+
+            Action::SelectPageUp => {
+                let lines_per_page = state.viewport.height as usize;
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let anchor = cursor.anchor.unwrap_or(cursor.position);
+                    let current_line = state.buffer.byte_to_line(cursor.position);
+                    let target_line = current_line.saturating_sub(lines_per_page);
+                    let new_pos = state.buffer.line_to_byte(target_line);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos,
+                        anchor: Some(anchor),
+                    });
+                }
+            }
+
+            Action::SelectPageDown => {
+                let lines_per_page = state.viewport.height as usize;
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let anchor = cursor.anchor.unwrap_or(cursor.position);
+                    let current_line = state.buffer.byte_to_line(cursor.position);
+                    let target_line = (current_line + lines_per_page)
+                        .min(state.buffer.line_count().saturating_sub(1));
+                    let new_pos = state.buffer.line_to_byte(target_line);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos,
+                        anchor: Some(anchor),
+                    });
+                }
+            }
+
             Action::SelectAll => {
                 // Select entire buffer for primary cursor
                 let primary = state.cursors.primary_id();
@@ -1896,13 +1949,27 @@ impl Editor {
                             anchor: Some(anchor),
                         });
                     } else {
-                        // No selection - select current word
+                        // No selection - select from cursor to end of current word
                         let word_start = self.find_word_start(&state.buffer, cursor.position);
                         let word_end = self.find_word_end(&state.buffer, cursor.position);
+
+                        // If cursor is on non-word char OR at the end of a word,
+                        // select from current position to end of next word
+                        let (final_start, final_end) = if word_start == word_end || cursor.position == word_end {
+                            // Find the next word (skip non-word characters to find it)
+                            let next_start = self.find_word_start_right(&state.buffer, cursor.position);
+                            let next_end = self.find_word_end(&state.buffer, next_start);
+                            // Select FROM cursor position TO the end of next word
+                            (cursor.position, next_end)
+                        } else {
+                            // On a word char - select from cursor to end of current word
+                            (cursor.position, word_end)
+                        };
+
                         events.push(Event::MoveCursor {
                             cursor_id,
-                            position: word_end,
-                            anchor: Some(word_start),
+                            position: final_end,
+                            anchor: Some(final_start),
                         });
                     }
                 }

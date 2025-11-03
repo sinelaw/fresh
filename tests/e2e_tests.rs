@@ -1739,35 +1739,35 @@ fn test_expand_selection() {
     // Type text with multiple words
     harness.type_text("hello world test").unwrap();
 
-    // Move to middle of "hello"
+    // Move to middle of "hello" (position 3, second 'l')
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..3 {
         harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
     }
 
-    // First expand should select current word "hello"
+    // First expand should select from cursor to end of current word
     harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range.clone());
-    assert_eq!(selected_text, "hello", "First expand should select 'hello'");
+    assert_eq!(selected_text, "lo", "First expand should select from cursor to end of word");
 
-    // Second expand should extend to include "world"
+    // Second expand should extend to include " world"
     harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range.clone());
-    assert_eq!(selected_text, "hello world", "Second expand should include 'world'");
+    assert_eq!(selected_text, "lo world", "Second expand should include next word");
 
-    // Third expand should extend to include "test"
+    // Third expand should extend to include " test"
     harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "hello world test", "Third expand should include 'test'");
+    assert_eq!(selected_text, "lo world test", "Third expand should include third word");
 }
 
 /// Test expand selection when starting with no selection
@@ -1778,19 +1778,19 @@ fn test_expand_selection_no_initial_selection() {
 
     harness.type_text("foo bar baz").unwrap();
 
-    // Move to middle of "bar"
+    // Move to middle of "bar" (position 5, on 'a')
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..5 {
         harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
     }
 
-    // Expand with no initial selection should select the word
+    // Expand with no initial selection should select from cursor to end of word
     harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "bar", "Should select current word 'bar'");
+    assert_eq!(selected_text, "ar", "Should select from cursor to end of word");
 }
 
 /// Test expand selection performance with moderately large buffer
@@ -1932,25 +1932,25 @@ fn test_expand_selection_after_scrolling() {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
 
-    // Move to middle of "alpha"
+    // Move to middle of "alpha" (position 3, 'h')
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..3 {
         harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
     }
 
-    // First expand should select "alpha"
+    // First expand should select from cursor to end of word
     harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range.clone());
-    assert_eq!(selected_text, "alpha", "First expand should select 'alpha'");
+    assert_eq!(selected_text, "ha", "First expand should select from cursor to end of word");
 
-    // Second expand should extend to include "beta"
+    // Second expand should extend to include " beta"
     harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "alpha beta", "Second expand should include 'beta'");
+    assert_eq!(selected_text, "ha beta", "Second expand should include next word");
 }
 
 /// Test expand selection (Ctrl+Shift+Right) across line boundaries
@@ -2005,18 +2005,15 @@ fn test_expand_selection_from_line_end() {
     harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
 
-    // First expand from end of line - behavior depends on if cursor is on newline or before it
+    // First expand from end of line - should jump to next word on next line
     harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range.clone());
 
-    // The selection should move forward from the end of the line
+    // The selection should include the newline and "second"
     assert!(!selected_text.is_empty(), "Should select something");
-
-    // If it contains "second", it successfully jumped to next line
-    // Otherwise it may have selected the newline or whitespace
-    println!("Selected from line end: {:?}", selected_text);
+    assert!(selected_text.contains("second"), "Should jump to next line and select 'second'");
 
     // Continue expanding to ensure we can reach the next line
     harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
@@ -2026,4 +2023,245 @@ fn test_expand_selection_from_line_end() {
 
     // After multiple expands, we should definitely reach "second" on the next line
     assert!(selected_text.contains("second"), "Should eventually reach 'second' on next line");
+}
+
+/// Test select word with hyphen - hyphen should be a word separator
+#[test]
+fn test_select_word_with_hyphen() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("foo-bar").unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "foo", "Hyphen should be a word separator, selecting 'foo'");
+}
+
+/// Test select word with underscore - underscore should be a word character
+#[test]
+fn test_select_word_with_underscore() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("baz_qux").unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "baz_qux", "Underscore should be a word char, selecting 'baz_qux'");
+}
+
+/// Test select word with numbers - alphanumeric should be a word
+#[test]
+fn test_select_word_with_numbers() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("test123").unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "test123", "Alphanumeric should be a single word");
+}
+
+/// Test select word with @ symbol - @ should be a word separator
+#[test]
+fn test_select_word_with_at_symbol() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("user@domain").unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "user", "@ should be a word separator, selecting 'user'");
+}
+
+/// Test select word with dot - dot should be a word separator
+#[test]
+fn test_select_word_with_dot() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("domain.com").unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "domain", ". should be a word separator, selecting 'domain'");
+}
+
+/// Test expand selection (Ctrl+Shift+Right) when cursor is on a non-word character
+/// Should select from cursor position through the next word (like Emacs)
+#[test]
+fn test_expand_selection_on_non_word_char() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Test case from user: cursor on first * in "**-word"
+    harness.type_text("**-word").unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+
+    // Cursor is now on the first *, press Ctrl+Shift+Right to expand selection
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range();
+
+    // Should select from cursor (position 0) through next word, which is "**-word"
+    assert!(range.is_some(), "Should have a selection after Ctrl+Shift+Right");
+
+    if let Some(range) = range {
+        let selected_text = harness.editor().active_state().buffer.slice(range);
+        assert_eq!(selected_text, "**-word", "Should select from cursor through end of next word");
+    }
+}
+
+/// Test expand selection starting on a word character
+#[test]
+fn test_expand_selection_on_word_char() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("hello world").unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+
+    // Cursor on 'h' in "hello", press Ctrl+Shift+Right
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "hello", "Should select the current word");
+}
+
+/// Test expand selection from middle of word
+/// Should select from cursor to end of current word only
+#[test]
+fn test_expand_selection_from_middle_of_word() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("Event").unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    // Move cursor to 'v' (second character)
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+
+    // Press Ctrl+Shift+Right from 'v' in "Event"
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    // Should select from 'v' to end: "vent", not the whole word "Event"
+    assert_eq!(selected_text, "vent", "Should select from cursor to end of word");
+}
+
+/// Test select word left (Ctrl+Shift+Left) when cursor is on a non-word character
+/// Should select backward from cursor through the previous word
+#[test]
+fn test_select_word_left_on_non_word_char() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("word**-").unwrap();
+    // Cursor is at end after typing (after the '-')
+
+    // Press Ctrl+Shift+Left to select backward
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range();
+
+    // Should select backward from cursor through "word"
+    assert!(range.is_some(), "Should have a selection after Ctrl+Shift+Left");
+
+    if let Some(range) = range {
+        let selected_text = harness.editor().active_state().buffer.slice(range);
+        // Should select backward from cursor through non-word chars to start of previous word
+        assert_eq!(selected_text, "word**-", "Should select backward from cursor to start of previous word");
+    }
+}
+
+/// Test select previous word with non-alphanumeric characters
+/// Moving backward should also respect word boundaries (alphanumeric + underscore)
+#[test]
+fn test_select_prev_word_with_special_chars() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Same test text but working backwards
+    harness.type_text("start foo-bar baz_qux test123 user@domain.com").unwrap();
+
+    // Cursor is at end of text after typing
+    // Move back one word and select "com" (. is a separator)
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "com", "Should select 'com' backwards");
+
+    // Move back and select "domain"
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "domain", "Should select 'domain' backwards");
+
+    // Move back and select "user"
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "user", "Should select 'user' backwards (@ is a separator)");
+
+    // Move back and select "test123"
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "test123", "Should select 'test123' backwards");
+
+    // Move back and select "baz_qux"
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "baz_qux", "Should select 'baz_qux' backwards (underscore is a word char)");
+
+    // Move back and select "bar"
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "bar", "Should select 'bar' backwards");
+
+    // Move back and select "foo"
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "foo", "Should select 'foo' backwards (hyphen is a separator)");
 }
