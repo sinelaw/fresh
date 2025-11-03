@@ -158,3 +158,104 @@ fn test_large_file_viewport() {
     // - Scroll down
     // - Verify different lines are visible
 }
+
+/// Test typing characters and cursor movement
+#[test]
+fn test_typing_and_cursor_movement() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Initial state: empty buffer, cursor at position 0
+    harness.assert_buffer_content("");
+    assert_eq!(harness.cursor_position(), 0);
+
+    // Type "Hello"
+    harness.type_text("Hello").unwrap();
+
+    // Buffer should contain "Hello"
+    harness.assert_buffer_content("Hello");
+
+    // Cursor should be at position 5 (after "Hello")
+    assert_eq!(harness.cursor_position(), 5);
+
+    // Type a space
+    harness.type_text(" ").unwrap();
+    harness.assert_buffer_content("Hello ");
+    assert_eq!(harness.cursor_position(), 6);
+
+    // Type "World!"
+    harness.type_text("World!").unwrap();
+    harness.assert_buffer_content("Hello World!");
+    assert_eq!(harness.cursor_position(), 12);
+
+    // Press Enter to create a new line
+    use crossterm::event::{KeyCode, KeyModifiers};
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.assert_buffer_content("Hello World!\n");
+    assert_eq!(harness.cursor_position(), 13); // After newline
+
+    // Type on second line
+    harness.type_text("Second line").unwrap();
+    harness.assert_buffer_content("Hello World!\nSecond line");
+    assert_eq!(harness.cursor_position(), 24); // 13 + 11
+
+    // Test backspace
+    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    harness.assert_buffer_content("Hello World!\nSecond lin");
+    assert_eq!(harness.cursor_position(), 23);
+
+    // Test cursor movement - move left
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    assert_eq!(harness.cursor_position(), 22);
+
+    // Type while cursor is in the middle
+    harness.type_text("X").unwrap();
+    harness.assert_buffer_content("Hello World!\nSecond liXn");
+    assert_eq!(harness.cursor_position(), 23); // After X
+
+    // Move to start of line
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    assert_eq!(harness.cursor_position(), 13); // Start of "Second liXn"
+
+    // Move to end of line
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    assert_eq!(harness.cursor_position(), 24); // End of "Second liXn"
+}
+
+/// Test multi-line editing and navigation
+#[test]
+fn test_multiline_editing() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create multiple lines
+    harness.type_text("Line 1").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.type_text("Line 2").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.type_text("Line 3").unwrap();
+
+    harness.assert_buffer_content("Line 1\nLine 2\nLine 3");
+
+    // Cursor should be at end of Line 3
+    assert_eq!(harness.cursor_position(), 20); // "Line 1\n" (7) + "Line 2\n" (7) + "Line 3" (6)
+
+    // Move up to Line 2
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    assert_eq!(harness.cursor_position(), 13); // End of Line 2
+
+    // Move up to Line 1
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    assert_eq!(harness.cursor_position(), 6); // End of Line 1
+
+    // Move down to Line 2
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    assert_eq!(harness.cursor_position(), 13); // End of Line 2
+
+    // Move to start of Line 2
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    assert_eq!(harness.cursor_position(), 7); // Start of Line 2 (after "Line 1\n")
+
+    // Type at start of Line 2
+    harness.type_text(">>> ").unwrap();
+    harness.assert_buffer_content("Line 1\n>>> Line 2\nLine 3");
+}

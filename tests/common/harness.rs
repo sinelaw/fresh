@@ -51,9 +51,37 @@ impl EditorTestHarness {
     }
 
     /// Simulate a key press
-    pub fn send_key(&mut self, _code: KeyCode, _modifiers: KeyModifiers) -> io::Result<()> {
-        // TODO: Convert key to action and apply
-        // For now this is a placeholder
+    pub fn send_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> io::Result<()> {
+        use editor::keybindings::Action;
+
+        // Convert key code to action (simplified version of main.rs logic)
+        let action = match (code, modifiers) {
+            (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                Action::InsertChar(c)
+            }
+            (KeyCode::Enter, KeyModifiers::NONE) => Action::InsertNewline,
+            (KeyCode::Tab, KeyModifiers::NONE) => Action::InsertTab,
+            (KeyCode::Left, KeyModifiers::NONE) => Action::MoveLeft,
+            (KeyCode::Right, KeyModifiers::NONE) => Action::MoveRight,
+            (KeyCode::Up, KeyModifiers::NONE) => Action::MoveUp,
+            (KeyCode::Down, KeyModifiers::NONE) => Action::MoveDown,
+            (KeyCode::Home, KeyModifiers::NONE) => Action::MoveLineStart,
+            (KeyCode::End, KeyModifiers::NONE) => Action::MoveLineEnd,
+            (KeyCode::Backspace, KeyModifiers::NONE) => Action::DeleteBackward,
+            (KeyCode::Delete, KeyModifiers::NONE) => Action::DeleteForward,
+            _ => Action::None,
+        };
+
+        // Convert action to events and apply them
+        if let Some(events) = self.editor.action_to_events(action) {
+            for event in events {
+                // Record in event log
+                self.editor.active_event_log_mut().append(event.clone());
+                // Apply to state
+                self.editor.active_state_mut().apply(&event);
+            }
+        }
+
         self.render()?;
         Ok(())
     }
@@ -164,6 +192,16 @@ impl EditorTestHarness {
     /// Check if editor wants to quit
     pub fn should_quit(&self) -> bool {
         self.editor.should_quit()
+    }
+
+    /// Get the primary cursor position
+    pub fn cursor_position(&self) -> usize {
+        self.editor.active_state().cursors.primary().position
+    }
+
+    /// Get the number of cursors
+    pub fn cursor_count(&self) -> usize {
+        self.editor.active_state().cursors.count()
     }
 }
 
