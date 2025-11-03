@@ -1027,3 +1027,81 @@ fn test_vertical_scroll_offset() {
         screen_pos.1
     );
 }
+
+/// Test that selections are visually visible on screen
+#[test]
+fn test_selection_visual_rendering() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type some text
+    harness.type_text("Hello World").unwrap();
+
+    // Move to start of line
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+
+    // Select the word "Hello" using Shift+Right (5 times)
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+    }
+
+    // Verify the cursor has a selection in the buffer
+    let cursor = harness.editor().active_state().cursors.primary();
+    let cursor_pos = cursor.position;
+    let selection = cursor.selection_range();
+    assert!(selection.is_some(), "Cursor should have a selection");
+
+    let range = selection.unwrap();
+    assert_eq!(range.start, 0, "Selection should start at position 0");
+    assert_eq!(range.end, 5, "Selection should end at position 5");
+
+    println!("Cursor position: {}, Selection: {:?}", cursor_pos, range);
+
+    // Verify the selected text is "Hello"
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "Hello", "Selected text should be 'Hello'");
+
+    // Get the screen rendering
+    let screen = harness.screen_to_string();
+
+    // The screen should contain the text "Hello World"
+    harness.assert_screen_contains("Hello World");
+
+    // Check that the selected characters have cyan background
+    // Line numbers take up 7 characters: "   1 │ "
+    // So "Hello" starts at column 7
+    let buffer = harness.buffer();
+
+    // Check first character 'H' at position (7, 1) - should have cyan background
+    let h_pos = buffer.index_of(7, 1);
+    let h_cell = &buffer.content[h_pos];
+    assert_eq!(h_cell.symbol(), "H");
+    assert_eq!(h_cell.bg, ratatui::style::Color::Cyan,
+        "Selected character 'H' should have cyan background");
+
+    // Check fourth character 'l' at position (10, 1) - should have cyan background
+    let l_pos = buffer.index_of(10, 1);
+    let l_cell = &buffer.content[l_pos];
+    assert_eq!(l_cell.symbol(), "l");
+    assert_eq!(l_cell.bg, ratatui::style::Color::Cyan,
+        "Selected character 'l' should have cyan background");
+
+    // Check fifth character 'o' at position (11, 1) - byte position 4, IN selection
+    let o_pos = buffer.index_of(11, 1);
+    let o_cell = &buffer.content[o_pos];
+    assert_eq!(o_cell.symbol(), "o");
+    // This 'o' is at byte position 4, which is in the selection range 0..5
+    // But the cursor is at position 5, not 4, so this should have cyan background
+    assert_eq!(o_cell.bg, ratatui::style::Color::Cyan,
+        "Selected character 'o' (byte 4) should have cyan background");
+
+    // Check character ' ' (space) at position (12, 1) - byte position 5, cursor position
+    let space_pos = buffer.index_of(12, 1);
+    let space_cell = &buffer.content[space_pos];
+    assert_eq!(space_cell.symbol(), " ");
+    // This space is at byte position 5, which is the cursor position
+    // It should NOT have cyan background (cursor takes precedence over selection)
+    // Also, position 5 is not in the selection range 0..5 anyway
+    assert_ne!(space_cell.bg, ratatui::style::Color::Cyan,
+        "Cursor position (byte 5, space) should NOT have cyan background");
+}

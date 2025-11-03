@@ -494,24 +494,70 @@ impl Editor {
         let visible_lines = state.viewport.visible_range();
         let mut lines = Vec::new();
 
+        // Collect all selection ranges from all cursors
+        let selection_ranges: Vec<std::ops::Range<usize>> = state
+            .cursors
+            .iter()
+            .filter_map(|(_, cursor)| cursor.selection_range())
+            .collect();
+
+        // Collect all cursor positions (to avoid highlighting the cursor itself)
+        let cursor_positions: Vec<usize> = state
+            .cursors
+            .iter()
+            .map(|(_, cursor)| cursor.position)
+            .collect();
+
         for line_num in visible_lines.clone() {
             if line_num >= state.buffer.line_count() {
                 break;
             }
 
             let line_content = state.buffer.line_content(line_num);
+            let line_start = state.buffer.line_to_byte(line_num);
 
             // Apply horizontal scrolling - skip characters before left_column
             let left_col = state.viewport.left_column;
-            let visible_content: String = line_content.chars().skip(left_col).collect();
 
-            let line_text = format!("{:4} │ {}", line_num + 1, visible_content);
-            lines.push(Line::from(line_text));
+            // Build line with selection highlighting
+            let mut line_spans = Vec::new();
+
+            // Line number prefix
+            line_spans.push(Span::styled(
+                format!("{:4} │ ", line_num + 1),
+                Style::default().fg(Color::DarkGray),
+            ));
+
+            // Check if this line has any selected text
+            let mut char_index = 0;
+            for ch in line_content.chars() {
+                let byte_pos = line_start + char_index;
+
+                // Skip characters before left_column
+                if char_index >= left_col {
+                    // Check if this character is at a cursor position
+                    let is_cursor = cursor_positions.contains(&byte_pos);
+
+                    // Check if this character is in any selection range (but not at cursor position)
+                    let is_selected = !is_cursor && selection_ranges.iter().any(|range| range.contains(&byte_pos));
+
+                    let style = if is_selected {
+                        Style::default().fg(Color::Black).bg(Color::Cyan)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+
+                    line_spans.push(Span::styled(ch.to_string(), style));
+                }
+
+                char_index += ch.len_utf8();
+            }
+
+            lines.push(Line::from(line_spans));
         }
 
         let paragraph = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::NONE))
-            .style(Style::default().fg(Color::White));
+            .block(Block::default().borders(Borders::NONE));
 
         frame.render_widget(paragraph, area);
 
