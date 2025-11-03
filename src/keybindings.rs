@@ -333,9 +333,9 @@ impl KeybindingResolver {
             Action::ShowHelp,
         );
 
-        // Command palette (Shift+P produces uppercase 'P')
+        // Command palette (Ctrl+P)
         bindings.insert(
-            (KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            (KeyCode::Char('p'), KeyModifiers::CONTROL),
             Action::CommandPalette,
         );
 

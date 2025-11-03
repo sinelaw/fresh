@@ -1249,8 +1249,8 @@ fn test_command_palette_trigger() {
     use crossterm::event::{KeyCode, KeyModifiers};
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    // Trigger the command palette with Ctrl+Shift+P (Shift+P produces 'P')
-    harness.send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    // Trigger the command palette with Ctrl+P
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
 
     // Check that the command prompt is visible
     harness.assert_screen_contains("Command: ");
@@ -1268,7 +1268,7 @@ fn test_command_palette_autocomplete() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the command palette
-    harness.send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
 
     // Type "open" to filter commands
     harness.type_text("open").unwrap();
@@ -1287,7 +1287,7 @@ fn test_command_palette_navigation() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the command palette
-    harness.send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
     harness.assert_screen_contains("Command: ");
 
     // Navigate down
@@ -1307,7 +1307,7 @@ fn test_command_palette_tab_completion() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the command palette
-    harness.send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
 
     // Type partial text
     harness.type_text("op").unwrap();
@@ -1326,7 +1326,7 @@ fn test_command_palette_cancel() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the command palette
-    harness.send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
     harness.assert_screen_contains("Command: ");
 
     // Cancel with Escape
@@ -1344,7 +1344,7 @@ fn test_command_palette_execute() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the command palette
-    harness.send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
 
     // Type the command name
     harness.type_text("Show Help").unwrap();
@@ -1363,7 +1363,7 @@ fn test_command_palette_fuzzy_matching() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the command palette
-    harness.send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
 
     // Type "sf" which should match "Save File" (fuzzy match)
     harness.type_text("sf").unwrap();

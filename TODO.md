@@ -12,7 +12,7 @@
 - **Clipboard**: Copy/paste between buffers and cursors
 - **Help system**: Ctrl+H shows all keybindings
 - **Minibuffer/Prompt system**: Ctrl+O for file open, Escape to cancel, typing support
-- **Command palette**: Ctrl+Shift+P with fuzzy matching, autocomplete, and all editor commands
+- **Command palette**: Ctrl+P with fuzzy matching, autocomplete, and all editor commands
 - **Configuration**: JSON-based config with keybindings, theme, editor settings
 - **High performance**: ChunkTree buffer, line cache, <1ms operations
 - **Testing**: 47 E2E tests, property tests, benchmarks
@@ -88,7 +88,7 @@
 - [ ] Replace (Ctrl+H) with preview
 
 ### 5.2 Command Palette
-- [x] Fuzzy search all actions (Ctrl+Shift+P) ✅ Complete
+- [x] Fuzzy search all actions (Ctrl+P) ✅ Complete
 - [x] Show keybindings ✅ Complete (via Show Help command)
 
 ### 5.3 Keybinding System Refactoring

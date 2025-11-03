@@ -936,7 +936,7 @@ impl Editor {
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => Action::Open,
             (KeyCode::Char('q'), KeyModifiers::CONTROL) => Action::Quit,
             (KeyCode::Char('h'), KeyModifiers::CONTROL) => Action::ShowHelp,
-            (KeyCode::Char('P'), m) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::SHIFT) => Action::CommandPalette,
+            (KeyCode::Char('p'), KeyModifiers::CONTROL) => Action::CommandPalette,
             (KeyCode::Char('d'), KeyModifiers::CONTROL) => Action::AddCursorNextMatch,
             (KeyCode::Up, m) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::ALT) => Action::AddCursorAbove,
             (KeyCode::Down, m) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::ALT) => Action::AddCursorBelow,
