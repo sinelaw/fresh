@@ -177,11 +177,13 @@ impl Viewport {
         if max_line - min_line < visible_count {
             let center = (min_line + max_line) / 2;
             let new_top = center.saturating_sub(visible_count / 2);
-            self.top_line = new_top.min(buffer.line_count().saturating_sub(visible_count));
+            let approx_total = buffer.approximate_line_count().unwrap_or(usize::MAX);
+            self.top_line = new_top.min(approx_total.saturating_sub(visible_count));
         } else {
             // Can't fit all cursors, ensure primary is visible with scroll offset
             let (_, primary_line) = cursor_lines[0];
-            self.ensure_line_visible(primary_line, buffer.line_count());
+            let approx_total = buffer.approximate_line_count().unwrap_or(usize::MAX);
+            self.ensure_line_visible(primary_line, approx_total);
         }
     }
 

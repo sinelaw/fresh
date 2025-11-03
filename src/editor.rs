@@ -1619,19 +1619,12 @@ impl Editor {
             Action::MoveDown => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let current_line = state.buffer.byte_to_line(cursor.position);
-                    if current_line + 1 < state.buffer.line_count() {
+                    if !state.buffer.is_last_line(current_line) {
                         let line_start = state.buffer.line_to_byte(current_line);
                         let col_offset = cursor.position - line_start;
 
                         let next_line_start = state.buffer.line_to_byte(current_line + 1);
-                        let next_line_end = if current_line + 2 < state.buffer.line_count() {
-                            state
-                                .buffer
-                                .line_to_byte(current_line + 2)
-                                .saturating_sub(1)
-                        } else {
-                            state.buffer.len()
-                        };
+                        let next_line_end = state.buffer.line_end_byte(current_line + 1);
                         let next_line_len = next_line_end - next_line_start;
 
                         let new_pos = next_line_start + col_offset.min(next_line_len);
@@ -1779,19 +1772,12 @@ impl Editor {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
                     let current_line = state.buffer.byte_to_line(cursor.position);
-                    if current_line + 1 < state.buffer.line_count() {
+                    if !state.buffer.is_last_line(current_line) {
                         let line_start = state.buffer.line_to_byte(current_line);
                         let col_offset = cursor.position - line_start;
 
                         let next_line_start = state.buffer.line_to_byte(current_line + 1);
-                        let next_line_end = if current_line + 2 < state.buffer.line_count() {
-                            state
-                                .buffer
-                                .line_to_byte(current_line + 2)
-                                .saturating_sub(1)
-                        } else {
-                            state.buffer.len()
-                        };
+                        let next_line_end = state.buffer.line_end_byte(current_line + 1);
                         let next_line_len = next_line_end - next_line_start;
 
                         let new_pos = next_line_start + col_offset.min(next_line_len);
@@ -1872,9 +1858,10 @@ impl Editor {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
                     let current_line = state.buffer.byte_to_line(cursor.position);
-                    let target_line = (current_line + lines_per_page)
-                        .min(state.buffer.line_count().saturating_sub(1));
-                    let new_pos = state.buffer.line_to_byte(target_line);
+                    let target_line = current_line + lines_per_page;
+                    let target_byte = state.buffer.line_to_byte(target_line);
+                    // Clamp to EOF if we went past the end
+                    let new_pos = target_byte.min(state.buffer.len());
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: new_pos,

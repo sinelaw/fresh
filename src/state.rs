@@ -137,14 +137,14 @@ impl EditorState {
             Event::Scroll { line_offset } => {
                 if *line_offset > 0 {
                     self.viewport
-                        .scroll_down(*line_offset as usize, self.buffer.line_count());
+                        .scroll_down(*line_offset as usize, usize::MAX);
                 } else {
                     self.viewport.scroll_up(line_offset.unsigned_abs());
                 }
             }
 
             Event::SetViewport { top_line } => {
-                self.viewport.scroll_to(*top_line, self.buffer.line_count());
+                self.viewport.scroll_to(*top_line, usize::MAX);
             }
 
             Event::ChangeMode { mode } => {
