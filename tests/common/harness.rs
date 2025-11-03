@@ -67,8 +67,15 @@ impl EditorTestHarness {
             (KeyCode::Down, KeyModifiers::NONE) => Action::MoveDown,
             (KeyCode::Home, KeyModifiers::NONE) => Action::MoveLineStart,
             (KeyCode::End, KeyModifiers::NONE) => Action::MoveLineEnd,
+            (KeyCode::Home, KeyModifiers::CONTROL) => Action::MoveDocumentStart,
+            (KeyCode::End, KeyModifiers::CONTROL) => Action::MoveDocumentEnd,
             (KeyCode::Backspace, KeyModifiers::NONE) => Action::DeleteBackward,
             (KeyCode::Delete, KeyModifiers::NONE) => Action::DeleteForward,
+            // Selection
+            (KeyCode::Left, KeyModifiers::SHIFT) => Action::SelectLeft,
+            (KeyCode::Right, KeyModifiers::SHIFT) => Action::SelectRight,
+            (KeyCode::Up, KeyModifiers::SHIFT) => Action::SelectUp,
+            (KeyCode::Down, KeyModifiers::SHIFT) => Action::SelectDown,
             _ => Action::None,
         };
 

@@ -413,6 +413,49 @@ impl Buffer {
     pub fn clear_modified(&mut self) {
         self.modified = false;
     }
+
+    /// Find the next occurrence of a pattern starting from a given position
+    /// Returns the byte offset of the match, or None if not found
+    pub fn find_next(&self, pattern: &str, start_pos: usize) -> Option<usize> {
+        if pattern.is_empty() {
+            return None;
+        }
+
+        let text = self.to_string();
+        let bytes = text.as_bytes();
+        let pattern_bytes = pattern.as_bytes();
+
+        // Search from start_pos to end
+        if start_pos < bytes.len() {
+            if let Some(offset) = Self::find_pattern(&bytes[start_pos..], pattern_bytes) {
+                return Some(start_pos + offset);
+            }
+        }
+
+        // Wrap around: search from beginning to start_pos
+        if start_pos > 0 {
+            if let Some(offset) = Self::find_pattern(&bytes[..start_pos], pattern_bytes) {
+                return Some(offset);
+            }
+        }
+
+        None
+    }
+
+    /// Helper: Find pattern in haystack using naive string search
+    fn find_pattern(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        if needle.is_empty() || haystack.len() < needle.len() {
+            return None;
+        }
+
+        for i in 0..=(haystack.len() - needle.len()) {
+            if &haystack[i..i + needle.len()] == needle {
+                return Some(i);
+            }
+        }
+
+        None
+    }
 }
 
 impl Default for Buffer {

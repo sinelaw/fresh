@@ -201,6 +201,13 @@ fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> io::Result<()> 
         (KeyCode::Down, KeyModifiers::CONTROL) => Action::ScrollDown,
 
         // Multi-cursor
+        (KeyCode::Char('d'), KeyModifiers::CONTROL) => Action::AddCursorNextMatch,
+        (KeyCode::Up, m) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::ALT) => {
+            Action::AddCursorAbove
+        }
+        (KeyCode::Down, m) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::ALT) => {
+            Action::AddCursorBelow
+        }
         (KeyCode::Esc, KeyModifiers::NONE) => Action::RemoveSecondaryCursors,
 
         // Unknown
@@ -256,6 +263,22 @@ fn handle_action(editor: &mut Editor, action: Action) -> io::Result<()> {
 
         Action::ShowHelp => {
             editor.toggle_help();
+        }
+
+        Action::AddCursorNextMatch => {
+            editor.add_cursor_at_next_match();
+        }
+
+        Action::AddCursorAbove => {
+            editor.add_cursor_above();
+        }
+
+        Action::AddCursorBelow => {
+            editor.add_cursor_below();
+        }
+
+        Action::RemoveSecondaryCursors => {
+            editor.active_state_mut().cursors.remove_secondary();
         }
 
         Action::None => {
