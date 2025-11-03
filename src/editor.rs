@@ -1,6 +1,6 @@
 use crate::config::Config;
-use crate::event::{Event, EventLog};
-use crate::keybindings::KeybindingResolver;
+use crate::event::{Event, EventLog, CursorId};
+use crate::keybindings::{Action, KeybindingResolver};
 use crate::state::EditorState;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -415,6 +415,210 @@ impl Editor {
             .style(Style::default().fg(Color::Black).bg(Color::White));
 
         frame.render_widget(status_line, area);
+    }
+
+    /// Convert an action into a list of events to apply to the active buffer
+    /// Returns None for actions that don't generate events (like Quit)
+    ///
+    /// TODO: This function is incomplete due to borrow checker issues.
+    /// The Buffer's line cache methods require &mut self, which conflicts with
+    /// reading cursor state. Need to refactor Buffer to use interior mutability
+    /// for the line cache (RefCell or similar).
+    #[allow(unused_variables, unreachable_code)]
+    pub fn action_to_events(&mut self, action: Action) -> Option<Vec<Event>> {
+        // Temporarily return None until Buffer refactoring is complete
+        return None;
+
+        #[allow(unreachable_code)]
+        {
+        // Ensure line cache is built before we start (avoids mutable borrow issues)
+        let _ = self.active_state_mut().buffer.byte_to_line(0);
+
+        let state = self.active_state();
+        let mut events = Vec::new();
+
+        match action {
+            // Character input - insert at each cursor
+            Action::InsertChar(ch) => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    // If there's a selection, delete it first
+                    if let Some(range) = cursor.selection_range() {
+                        events.push(Event::Delete {
+                            range: range.clone(),
+                            deleted_text: state.buffer.slice(range),
+                            cursor_id,
+                        });
+                    }
+
+                    // Insert the character
+                    events.push(Event::Insert {
+                        position: cursor.position,
+                        text: ch.to_string(),
+                        cursor_id,
+                    });
+                }
+            }
+
+            Action::InsertNewline => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    if let Some(range) = cursor.selection_range() {
+                        events.push(Event::Delete {
+                            range: range.clone(),
+                            deleted_text: state.buffer.slice(range),
+                            cursor_id,
+                        });
+                    }
+
+                    events.push(Event::Insert {
+                        position: cursor.position,
+                        text: "\n".to_string(),
+                        cursor_id,
+                    });
+                }
+            }
+
+            Action::InsertTab => {
+                let tab_str = " ".repeat(self.config.editor.tab_size);
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    if let Some(range) = cursor.selection_range() {
+                        events.push(Event::Delete {
+                            range: range.clone(),
+                            deleted_text: state.buffer.slice(range),
+                            cursor_id,
+                        });
+                    }
+
+                    events.push(Event::Insert {
+                        position: cursor.position,
+                        text: tab_str.clone(),
+                        cursor_id,
+                    });
+                }
+            }
+
+            // Basic movement - move each cursor
+            Action::MoveLeft => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let new_pos = cursor.position.saturating_sub(1);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos,
+                        anchor: None, // No selection
+                    });
+                }
+            }
+
+            Action::MoveRight => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let new_pos = (cursor.position + 1).min(state.buffer.len());
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos,
+                        anchor: None,
+                    });
+                }
+            }
+
+            Action::MoveUp => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let current_line = state.buffer.byte_to_line(cursor.position);
+                    if current_line > 0 {
+                        let line_start = state.buffer.line_to_byte(current_line);
+                        let col_offset = cursor.position - line_start;
+
+                        let prev_line_start = state.buffer.line_to_byte(current_line - 1);
+                        let prev_line_end = line_start.saturating_sub(1); // Exclude newline
+                        let prev_line_len = prev_line_end - prev_line_start;
+
+                        let new_pos = prev_line_start + col_offset.min(prev_line_len);
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            position: new_pos,
+                            anchor: None,
+                        });
+                    }
+                }
+            }
+
+            Action::MoveDown => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let current_line = state.buffer.byte_to_line(cursor.position);
+                    if current_line + 1 < state.buffer.line_count() {
+                        let line_start = state.buffer.line_to_byte(current_line);
+                        let col_offset = cursor.position - line_start;
+
+                        let next_line_start = state.buffer.line_to_byte(current_line + 1);
+                        let next_line_end = if current_line + 2 < state.buffer.line_count() {
+                            state.buffer.line_to_byte(current_line + 2).saturating_sub(1)
+                        } else {
+                            state.buffer.len()
+                        };
+                        let next_line_len = next_line_end - next_line_start;
+
+                        let new_pos = next_line_start + col_offset.min(next_line_len);
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            position: new_pos,
+                            anchor: None,
+                        });
+                    }
+                }
+            }
+
+            Action::MoveLineStart => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let line = state.buffer.byte_to_line(cursor.position);
+                    let line_start = state.buffer.line_to_byte(line);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: line_start,
+                        anchor: None,
+                    });
+                }
+            }
+
+            Action::MoveLineEnd => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let line = state.buffer.byte_to_line(cursor.position);
+                    let line_end = if line + 1 < state.buffer.line_count() {
+                        state.buffer.line_to_byte(line + 1).saturating_sub(1)
+                    } else {
+                        state.buffer.len()
+                    };
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: line_end,
+                        anchor: None,
+                    });
+                }
+            }
+
+            // Actions that don't generate events yet
+            Action::MoveWordLeft | Action::MoveWordRight |
+            Action::MovePageUp | Action::MovePageDown |
+            Action::MoveDocumentStart | Action::MoveDocumentEnd |
+            Action::SelectLeft | Action::SelectRight | Action::SelectUp | Action::SelectDown |
+            Action::SelectWordLeft | Action::SelectWordRight |
+            Action::SelectLineStart | Action::SelectLineEnd | Action::SelectAll |
+            Action::DeleteBackward | Action::DeleteForward |
+            Action::DeleteWordBackward | Action::DeleteWordForward | Action::DeleteLine |
+            Action::Copy | Action::Cut | Action::Paste |
+            Action::AddCursorAbove | Action::AddCursorBelow |
+            Action::AddCursorNextMatch | Action::RemoveSecondaryCursors |
+            Action::Save | Action::SaveAs | Action::Open | Action::New | Action::Close |
+            Action::Quit | Action::Undo | Action::Redo |
+            Action::ScrollUp | Action::ScrollDown | Action::None => {
+                // TODO: Implement these actions
+                return None;
+            }
+        }
+
+        if events.is_empty() {
+            None
+        } else {
+            Some(events)
+        }
+        }  // End of #[allow(unreachable_code)] block
     }
 }
 
