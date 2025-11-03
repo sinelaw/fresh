@@ -19,6 +19,7 @@ Building a high-performance terminal text editor from scratch with:
 - [EVENT_LOG_ARCHITECTURE.md](EVENT_LOG_ARCHITECTURE.md) - Event system and smart scrolling
 - [CONFIG_SYSTEM.md](CONFIG_SYSTEM.md) - Configuration and keybindings
 - [LSP_ARCHITECTURE.md](LSP_ARCHITECTURE.md) - LSP client integration
+- [TESTING.md](TESTING.md) - Testing strategy (sanity, property, E2E)
 - [ARCHITECTURE_ANALYSIS.md](ARCHITECTURE_ANALYSIS.md) - Analysis of old code (reference)
 - [DETAILS.md](DETAILS.md) - Technical summary of original codebase
 
@@ -187,7 +188,38 @@ Building a high-performance terminal text editor from scratch with:
   - Check for unsaved changes
   - Prompt user (Save/Discard/Cancel)
 
-**Phase 1 Milestone**: Can open file, edit text, move cursor, save, quit. Basic usable editor.
+### 1.6 Testing Infrastructure
+- [ ] Add `proptest` to dev-dependencies
+- [ ] Create `tests/common/` with test utilities
+- [ ] Implement `EditorTestHarness` with `TestBackend`:
+  - Virtual terminal (no actual rendering)
+  - Simulate keyboard input
+  - Capture terminal output
+  - Assert on screen content and buffer state
+- [ ] Write property tests for Buffer:
+  - Insert-Delete inverse property
+  - Line cache consistency
+  - Save-Load round-trip
+- [ ] Write property tests for EventLog:
+  - Undo-Redo inverse property
+  - Event serialization round-trip
+- [ ] Write integration tests:
+  - Buffer + Cursor adjustment on edits
+  - EditorState + EventLog undo/redo
+  - Viewport + Buffer scrolling
+- [ ] Write E2E tests (using harness):
+  - Open file, type text, verify on screen and in buffer
+  - Save file, verify on disk
+  - Undo/redo editing sequence
+  - Multi-cursor typing
+  - Quit with unsaved changes dialog
+- [ ] Set up benchmarks in `benches/`:
+  - Buffer insert/delete operations
+  - Cursor adjustment with many cursors
+  - Line cache rebuilding
+  - Full editing workflow latency
+
+**Phase 1 Milestone**: Can open file, edit text, move cursor, save, quit. Basic usable editor. Full test coverage with E2E tests.
 
 ---
 
@@ -404,7 +436,14 @@ Building a high-performance terminal text editor from scratch with:
 
 ## Testing Strategy
 
-### Unit Tests (Continuous)
+**See [TESTING.md](TESTING.md) for complete testing plan.**
+
+### Testing Levels
+1. **Unit Tests (Sanity + Property)** - 80%+ coverage, no mocks
+2. **Integration Tests** - Module interaction tests
+3. **End-to-End TUI Tests** - Virtual terminal with TestBackend
+
+### Current Test Status
 - Event system (5 tests ✅)
 - Config loading (4 tests ✅)
 - Keybindings (4 tests ✅)
@@ -412,20 +451,24 @@ Building a high-performance terminal text editor from scratch with:
 - Cursor management (7 tests ✅)
 - Viewport scrolling (6 tests ✅)
 - State application (7 tests ✅)
-- **Target: 90%+ coverage**
+- ChunkTree (79 tests ✅)
+- **Total: 121 tests passing ✅**
 
-### Integration Tests
-- [ ] Open file, edit, save, verify on disk
-- [ ] Multi-cursor editing across multiple lines
-- [ ] Undo/redo complex edit sequences
-- [ ] LSP completion and diagnostics
-- [ ] Large file performance (1GB file)
+### Phase 1 Testing Tasks
+- [ ] Set up E2E test harness with TestBackend
+- [ ] Write property tests for Buffer (insert-delete inverse)
+- [ ] Write property tests for EventLog (undo-redo inverse)
+- [ ] Write integration tests for Buffer + Cursor adjustment
+- [ ] Write E2E tests for basic editing workflow
+- [ ] Write E2E tests for file operations (open/save/quit)
+- [ ] Add benchmarks for insert/delete operations
 
-### Manual Testing
-- [ ] Test with various file types (Rust, JS, Python, etc.)
-- [ ] Test error recovery (LSP crash, disk full, etc.)
-- [ ] Test on different terminals (iTerm, Alacritty, Terminal.app)
-- [ ] Test on different platforms (Linux, macOS)
+### Testing Tools
+- `cargo test --lib` - Unit tests
+- `cargo test --test integration_tests` - Integration tests
+- `cargo test --test e2e` - End-to-end TUI tests
+- `cargo bench` - Performance benchmarks
+- `proptest` - Property-based testing (Phase 1.6)
 
 ---
 
