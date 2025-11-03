@@ -252,6 +252,14 @@ impl KeybindingResolver {
             Action::MoveLineStart,
         );
         bindings.insert((KeyCode::End, KeyModifiers::empty()), Action::MoveLineEnd);
+        bindings.insert(
+            (KeyCode::Home, KeyModifiers::CONTROL),
+            Action::MoveDocumentStart,
+        );
+        bindings.insert(
+            (KeyCode::End, KeyModifiers::CONTROL),
+            Action::MoveDocumentEnd,
+        );
         bindings.insert((KeyCode::PageUp, KeyModifiers::empty()), Action::MovePageUp);
         bindings.insert(
             (KeyCode::PageDown, KeyModifiers::empty()),
@@ -265,11 +273,17 @@ impl KeybindingResolver {
             Action::MoveWordRight,
         );
 
+        // Scrolling
+        bindings.insert((KeyCode::Up, KeyModifiers::CONTROL), Action::ScrollUp);
+        bindings.insert((KeyCode::Down, KeyModifiers::CONTROL), Action::ScrollDown);
+
         // Selection
         bindings.insert((KeyCode::Left, KeyModifiers::SHIFT), Action::SelectLeft);
         bindings.insert((KeyCode::Right, KeyModifiers::SHIFT), Action::SelectRight);
         bindings.insert((KeyCode::Up, KeyModifiers::SHIFT), Action::SelectUp);
         bindings.insert((KeyCode::Down, KeyModifiers::SHIFT), Action::SelectDown);
+        bindings.insert((KeyCode::Home, KeyModifiers::SHIFT), Action::SelectLineStart);
+        bindings.insert((KeyCode::End, KeyModifiers::SHIFT), Action::SelectLineEnd);
 
         // Editing
         bindings.insert(
@@ -321,6 +335,14 @@ impl KeybindingResolver {
         bindings.insert(
             (KeyCode::Char('d'), KeyModifiers::CONTROL),
             Action::AddCursorNextMatch,
+        );
+        bindings.insert(
+            (KeyCode::Up, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            Action::AddCursorAbove,
+        );
+        bindings.insert(
+            (KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            Action::AddCursorBelow,
         );
         bindings.insert(
             (KeyCode::Esc, KeyModifiers::empty()),

@@ -903,52 +903,9 @@ impl Editor {
             }
         }
 
-        // Normal mode: convert key to action
-        let action = match (code, modifiers) {
-            (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => Action::InsertChar(c),
-            (KeyCode::Enter, KeyModifiers::NONE) => Action::InsertNewline,
-            (KeyCode::Tab, KeyModifiers::NONE) => Action::InsertTab,
-            (KeyCode::Left, KeyModifiers::NONE) => Action::MoveLeft,
-            (KeyCode::Right, KeyModifiers::NONE) => Action::MoveRight,
-            (KeyCode::Up, KeyModifiers::NONE) => Action::MoveUp,
-            (KeyCode::Down, KeyModifiers::NONE) => Action::MoveDown,
-            (KeyCode::Home, KeyModifiers::NONE) => Action::MoveLineStart,
-            (KeyCode::End, KeyModifiers::NONE) => Action::MoveLineEnd,
-            (KeyCode::Home, KeyModifiers::CONTROL) => Action::MoveDocumentStart,
-            (KeyCode::End, KeyModifiers::CONTROL) => Action::MoveDocumentEnd,
-            (KeyCode::Backspace, KeyModifiers::NONE) => Action::DeleteBackward,
-            (KeyCode::Delete, KeyModifiers::NONE) => Action::DeleteForward,
-            (KeyCode::Backspace, KeyModifiers::CONTROL) => Action::DeleteWordBackward,
-            (KeyCode::Delete, KeyModifiers::CONTROL) => Action::DeleteWordForward,
-            (KeyCode::Left, KeyModifiers::SHIFT) => Action::SelectLeft,
-            (KeyCode::Right, KeyModifiers::SHIFT) => Action::SelectRight,
-            (KeyCode::Up, KeyModifiers::SHIFT) => Action::SelectUp,
-            (KeyCode::Down, KeyModifiers::SHIFT) => Action::SelectDown,
-            (KeyCode::Home, KeyModifiers::SHIFT) => Action::SelectLineStart,
-            (KeyCode::End, KeyModifiers::SHIFT) => Action::SelectLineEnd,
-            (KeyCode::Char('a'), KeyModifiers::CONTROL) => Action::SelectAll,
-            (KeyCode::Char('c'), KeyModifiers::CONTROL) => Action::Copy,
-            (KeyCode::Char('x'), KeyModifiers::CONTROL) => Action::Cut,
-            (KeyCode::Char('v'), KeyModifiers::CONTROL) => Action::Paste,
-            (KeyCode::Char('z'), KeyModifiers::CONTROL) => Action::Undo,
-            (KeyCode::Char('y'), KeyModifiers::CONTROL) => Action::Redo,
-            (KeyCode::Char('s'), KeyModifiers::CONTROL) => Action::Save,
-            (KeyCode::Char('o'), KeyModifiers::CONTROL) => Action::Open,
-            (KeyCode::Char('q'), KeyModifiers::CONTROL) => Action::Quit,
-            (KeyCode::Char('h'), KeyModifiers::CONTROL) => Action::ShowHelp,
-            (KeyCode::Char('p'), KeyModifiers::CONTROL) => Action::CommandPalette,
-            (KeyCode::Char('d'), KeyModifiers::CONTROL) => Action::AddCursorNextMatch,
-            (KeyCode::Up, m) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::ALT) => Action::AddCursorAbove,
-            (KeyCode::Down, m) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::ALT) => Action::AddCursorBelow,
-            (KeyCode::Esc, KeyModifiers::NONE) => Action::RemoveSecondaryCursors,
-            (KeyCode::Left, KeyModifiers::CONTROL) => Action::MoveWordLeft,
-            (KeyCode::Right, KeyModifiers::CONTROL) => Action::MoveWordRight,
-            (KeyCode::PageUp, KeyModifiers::NONE) => Action::MovePageUp,
-            (KeyCode::PageDown, KeyModifiers::NONE) => Action::MovePageDown,
-            (KeyCode::Up, KeyModifiers::CONTROL) => Action::ScrollUp,
-            (KeyCode::Down, KeyModifiers::CONTROL) => Action::ScrollDown,
-            _ => Action::None,
-        };
+        // Normal mode: use keybinding resolver to convert key to action
+        let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+        let action = self.keybindings.resolve(&key_event);
 
         // Handle special actions
         match action {

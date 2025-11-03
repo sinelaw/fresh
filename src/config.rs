@@ -305,6 +305,20 @@ impl Config {
                 args: HashMap::new(),
                 when: None,
             },
+            Keybinding {
+                key: "Up".to_string(),
+                modifiers: vec!["ctrl".to_string(), "alt".to_string()],
+                action: "add_cursor_above".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
+            Keybinding {
+                key: "Down".to_string(),
+                modifiers: vec!["ctrl".to_string(), "alt".to_string()],
+                action: "add_cursor_below".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
         ]
     }
 
