@@ -54,8 +54,8 @@ pub struct Editor {
 }
 
 impl Editor {
-    /// Create a new editor with the given configuration
-    pub fn new(config: Config) -> io::Result<Self> {
+    /// Create a new editor with the given configuration and terminal dimensions
+    pub fn new(config: Config, width: u16, height: u16) -> io::Result<Self> {
         let keybindings = KeybindingResolver::new(&config);
 
         // Create an empty initial buffer
@@ -63,7 +63,7 @@ impl Editor {
         let mut event_logs = HashMap::new();
 
         let buffer_id = BufferId(0);
-        buffers.insert(buffer_id, EditorState::new(80, 24));
+        buffers.insert(buffer_id, EditorState::new(width, height));
         event_logs.insert(buffer_id, EventLog::new());
 
         Ok(Editor {
@@ -79,6 +79,22 @@ impl Editor {
             help_visible: false,
             help_scroll: 0,
         })
+    }
+
+    /// Enable event log streaming to a file
+    pub fn enable_event_streaming<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
+        // Enable streaming for all existing event logs
+        for event_log in self.event_logs.values_mut() {
+            event_log.enable_streaming(&path)?;
+        }
+        Ok(())
+    }
+
+    /// Log keystroke for debugging
+    pub fn log_keystroke(&mut self, key_code: &str, modifiers: &str) {
+        if let Some(event_log) = self.event_logs.get_mut(&self.active_buffer) {
+            event_log.log_keystroke(key_code, modifiers);
+        }
     }
 
     /// Open a file and return its buffer ID
@@ -499,10 +515,16 @@ impl Editor {
         if let Some(&(x, y)) = cursor_positions.first() {
             // Adjust for line numbers (4 digits + " │ " = 7 chars)
             // and adjust Y for the content area offset (area.y accounts for tab bar)
-            frame.set_cursor_position((
-                area.x.saturating_add(x).saturating_add(7),
-                area.y.saturating_add(y),
-            ));
+            let screen_x = area.x.saturating_add(x).saturating_add(7);
+            let screen_y = area.y.saturating_add(y);
+            frame.set_cursor_position((screen_x, screen_y));
+
+            // Log rendering state for debugging
+            let cursor_pos = state.cursors.primary().position;
+            let buffer_len = state.buffer.len();
+            if let Some(event_log) = self.event_logs.get_mut(&self.active_buffer) {
+                event_log.log_render_state(cursor_pos, screen_x, screen_y, buffer_len);
+            }
         }
     }
 
@@ -1274,7 +1296,7 @@ mod tests {
     #[test]
     fn test_editor_new() {
         let config = Config::default();
-        let editor = Editor::new(config).unwrap();
+        let editor = Editor::new(config, 80, 24).unwrap();
 
         assert_eq!(editor.buffers.len(), 1);
         assert!(!editor.should_quit());
@@ -1283,7 +1305,7 @@ mod tests {
     #[test]
     fn test_new_buffer() {
         let config = Config::default();
-        let mut editor = Editor::new(config).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         let id = editor.new_buffer();
         assert_eq!(editor.buffers.len(), 2);
@@ -1293,7 +1315,7 @@ mod tests {
     #[test]
     fn test_clipboard() {
         let config = Config::default();
-        let mut editor = Editor::new(config).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         // Manually set clipboard
         editor.clipboard = "test".to_string();
@@ -1308,7 +1330,7 @@ mod tests {
     #[test]
     fn test_action_to_events_insert_char() {
         let config = Config::default();
-        let editor = Editor::new(config).unwrap();
+        let editor = Editor::new(config, 80, 24).unwrap();
 
         let events = editor.action_to_events(Action::InsertChar('a'));
         assert!(events.is_some());
@@ -1328,7 +1350,7 @@ mod tests {
     #[test]
     fn test_action_to_events_move_right() {
         let config = Config::default();
-        let mut editor = Editor::new(config).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -1359,7 +1381,7 @@ mod tests {
     #[test]
     fn test_action_to_events_move_up_down() {
         let config = Config::default();
-        let mut editor = Editor::new(config).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         // Insert multi-line text
         let state = editor.active_state_mut();
@@ -1393,7 +1415,7 @@ mod tests {
     #[test]
     fn test_action_to_events_insert_newline() {
         let config = Config::default();
-        let editor = Editor::new(config).unwrap();
+        let editor = Editor::new(config, 80, 24).unwrap();
 
         let events = editor.action_to_events(Action::InsertNewline);
         assert!(events.is_some());
@@ -1412,7 +1434,7 @@ mod tests {
     #[test]
     fn test_action_to_events_unimplemented() {
         let config = Config::default();
-        let editor = Editor::new(config).unwrap();
+        let editor = Editor::new(config, 80, 24).unwrap();
 
         // These actions should return None (not yet implemented)
         assert!(editor.action_to_events(Action::Save).is_none());
@@ -1423,7 +1445,7 @@ mod tests {
     #[test]
     fn test_action_to_events_delete_backward() {
         let config = Config::default();
-        let mut editor = Editor::new(config).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -1455,7 +1477,7 @@ mod tests {
     #[test]
     fn test_action_to_events_delete_forward() {
         let config = Config::default();
-        let mut editor = Editor::new(config).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -1494,7 +1516,7 @@ mod tests {
     #[test]
     fn test_action_to_events_select_right() {
         let config = Config::default();
-        let mut editor = Editor::new(config).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -1531,7 +1553,7 @@ mod tests {
     #[test]
     fn test_action_to_events_select_all() {
         let config = Config::default();
-        let mut editor = Editor::new(config).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -1561,7 +1583,7 @@ mod tests {
     #[test]
     fn test_action_to_events_document_nav() {
         let config = Config::default();
-        let mut editor = Editor::new(config).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         // Insert multi-line text
         let state = editor.active_state_mut();
@@ -1599,7 +1621,7 @@ mod tests {
         use crate::event::CursorId;
 
         let config = Config::default();
-        let mut editor = Editor::new(config).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         // Insert some text first to have positions to place cursors
         {
@@ -1653,7 +1675,7 @@ mod tests {
     #[test]
     fn test_action_to_events_scroll() {
         let config = Config::default();
-        let editor = Editor::new(config).unwrap();
+        let editor = Editor::new(config, 80, 24).unwrap();
 
         // Test ScrollUp
         let events = editor.action_to_events(Action::ScrollUp);
@@ -1683,7 +1705,7 @@ mod tests {
     #[test]
     fn test_action_to_events_none() {
         let config = Config::default();
-        let editor = Editor::new(config).unwrap();
+        let editor = Editor::new(config, 80, 24).unwrap();
 
         // None action should return None
         let events = editor.action_to_events(Action::None);

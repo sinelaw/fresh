@@ -8,6 +8,7 @@ mod keybindings;
 mod state;
 mod viewport;
 
+use clap::Parser;
 use crossterm::{
     event::{
         poll as event_poll, read as event_read, Event as CrosstermEvent, KeyCode, KeyEvent,
@@ -25,7 +26,24 @@ use std::{
     time::Duration,
 };
 
+/// A high-performance terminal text editor
+#[derive(Parser, Debug)]
+#[command(name = "editor")]
+#[command(about = "A terminal text editor with multi-cursor support", long_about = None)]
+struct Args {
+    /// File to open
+    #[arg(value_name = "FILE")]
+    file: Option<PathBuf>,
+
+    /// Enable event logging to the specified file
+    #[arg(long, value_name = "LOG_FILE")]
+    event_log: Option<PathBuf>,
+}
+
 fn main() -> io::Result<()> {
+    // Parse command-line arguments
+    let args = Args::parse();
+
     // Set up panic hook to restore terminal
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
@@ -34,26 +52,29 @@ fn main() -> io::Result<()> {
         original_hook(panic);
     }));
 
-    // Parse command-line arguments
-    let args: Vec<String> = std::env::args().collect();
-    let file_path = args.get(1).map(PathBuf::from);
-
     // Load configuration
     let config = config::Config::default();
 
-    // Create editor
-    let mut editor = Editor::new(config)?;
-
-    // Open file if provided
-    if let Some(path) = file_path {
-        editor.open_file(&path)?;
-    }
-
-    // Set up terminal
+    // Set up terminal first to get the size
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let backend = ratatui::backend::CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
+    let size = terminal.size()?;
+
+    // Create editor with actual terminal size
+    let mut editor = Editor::new(config, size.width, size.height)?;
+
+    // Enable event log streaming if requested
+    if let Some(log_path) = &args.event_log {
+        eprintln!("Event logging enabled: {}", log_path.display());
+        editor.enable_event_streaming(log_path)?;
+    }
+
+    // Open file if provided
+    if let Some(path) = &args.file {
+        editor.open_file(path)?;
+    }
 
     // Run the editor
     let result = run_event_loop(&mut editor, &mut terminal);
@@ -100,6 +121,11 @@ fn run_event_loop(
 
 /// Handle a keyboard event
 fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> io::Result<()> {
+    // Log the keystroke
+    let key_code = format!("{:?}", key_event.code);
+    let modifiers = format!("{:?}", key_event.modifiers);
+    editor.log_keystroke(&key_code, &modifiers);
+
     // Special handling for help page
     if editor.is_help_visible() {
         match (key_event.code, key_event.modifiers) {

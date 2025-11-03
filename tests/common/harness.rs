@@ -22,7 +22,7 @@ impl EditorTestHarness {
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
         let config = Config::default();
-        let editor = Editor::new(config)?;
+        let editor = Editor::new(config, width, height)?;
 
         Ok(EditorTestHarness { editor, terminal })
     }
@@ -31,7 +31,7 @@ impl EditorTestHarness {
     pub fn with_config(width: u16, height: u16, config: Config) -> io::Result<Self> {
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
-        let editor = Editor::new(config)?;
+        let editor = Editor::new(config, width, height)?;
 
         Ok(EditorTestHarness { editor, terminal })
     }

@@ -175,7 +175,9 @@ impl Viewport {
         let column = cursor.position.saturating_sub(line_start);
 
         let screen_row = line.saturating_sub(self.top_line) as u16;
-        let screen_col = column.min(self.width as usize) as u16;
+        // Don't clamp column to viewport width - the cursor can be positioned
+        // beyond the visible area, and the terminal/rendering layer will handle it
+        let screen_col = column as u16;
 
         // Return (x, y) which is (col, row)
         (screen_col, screen_row)

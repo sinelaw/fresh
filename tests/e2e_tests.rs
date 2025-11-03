@@ -600,3 +600,217 @@ fn test_remove_secondary_cursors() {
     // Should have only 1 cursor now
     assert_eq!(harness.editor().active_state().cursors.iter().count(), 1);
 }
+
+/// Test rapid typing in the middle of a line to detect cursor sync issues
+/// This reproduces a bug where typing quickly in the middle of a line causes
+/// the cursor to get out of sync with where characters are being added
+#[test]
+fn test_rapid_typing_middle_of_line_cursor_sync() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Set up initial text: "Hello World"
+    harness.type_text("Hello World").unwrap();
+    harness.assert_buffer_content("Hello World");
+    assert_eq!(harness.cursor_position(), 11); // After "Hello World"
+
+    // Move cursor to middle of line (after "Hello ")
+    // Current position: 11, target position: 6 (after "Hello ")
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    }
+    assert_eq!(harness.cursor_position(), 6, "Cursor should be after 'Hello '");
+    harness.assert_buffer_content("Hello World");
+
+    // Get initial screen cursor position
+    let initial_screen_pos = harness.screen_cursor_position();
+    println!("Initial screen cursor position (after 'Hello '): {:?}", initial_screen_pos);
+
+    // Expected: Line numbers (4 chars) + " │ " (3 chars) + "Hello " (6 chars) = 13
+    assert_eq!(initial_screen_pos.0, 13, "Screen cursor X should be at column 13 after 'Hello '");
+
+    // Rapidly type multiple characters in the middle
+    // This simulates quick typing which might cause sync issues
+    let chars_to_type = "ABCDEFGHIJ"; // Type 10 characters rapidly
+
+    for (i, ch) in chars_to_type.chars().enumerate() {
+        // Type the character
+        harness.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+
+        // After each character insertion:
+        // 1. Verify buffer content is correct
+        let expected_buffer = format!("Hello {}World", &chars_to_type[..=i]);
+        harness.assert_buffer_content(&expected_buffer);
+
+        // 2. Verify logical cursor position is correct (should advance by 1)
+        let expected_cursor_pos = 6 + i + 1;
+        let actual_cursor_pos = harness.cursor_position();
+        assert_eq!(
+            actual_cursor_pos, expected_cursor_pos,
+            "After typing '{}', cursor position should be {} but is {}",
+            ch, expected_cursor_pos, actual_cursor_pos
+        );
+
+        // 3. Verify screen cursor position matches logical position
+        let screen_pos = harness.screen_cursor_position();
+        let expected_screen_x = 13 + i as u16 + 1; // Initial (13) + characters typed so far
+        assert_eq!(
+            screen_pos.0, expected_screen_x,
+            "After typing '{}' (char {} of {}), screen cursor X should be {} but is {}.\nBuffer: '{}'",
+            ch, i + 1, chars_to_type.len(), expected_screen_x, screen_pos.0, expected_buffer
+        );
+
+        // Screen cursor Y should remain on line 1 (row 1, 0-indexed)
+        assert_eq!(
+            screen_pos.1, 1,
+            "Screen cursor Y should stay at row 1"
+        );
+    }
+
+    // Final verification
+    harness.assert_buffer_content("Hello ABCDEFGHIJWorld");
+    assert_eq!(harness.cursor_position(), 16); // After "Hello ABCDEFGHIJ"
+
+    let final_screen_pos = harness.screen_cursor_position();
+    assert_eq!(final_screen_pos.0, 23, "Final screen cursor X should be at column 23");
+    assert_eq!(final_screen_pos.1, 1, "Final screen cursor Y should be at row 1");
+}
+
+/// Test rapid typing with multiple insertions at different positions
+/// This tests whether cursor tracking remains accurate across multiple
+/// position changes and rapid insertions
+#[test]
+fn test_rapid_typing_multiple_positions() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create initial text with a longer line
+    harness.type_text("The quick brown fox").unwrap();
+    harness.assert_buffer_content("The quick brown fox");
+
+    // Move to position after "The " (position 4)
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+    assert_eq!(harness.cursor_position(), 4);
+
+    // Insert "very " rapidly
+    harness.type_text("very ").unwrap();
+    harness.assert_buffer_content("The very quick brown fox");
+    assert_eq!(harness.cursor_position(), 9);
+
+    // Verify screen cursor position
+    let screen_pos = harness.screen_cursor_position();
+    // Line numbers (4) + " │ " (3) + "The very " (9) = 16
+    assert_eq!(screen_pos.0, 16, "Screen cursor should be at column 16 after 'The very '");
+
+    // Move to after "quick " (position 15 now, was 10 before insertion)
+    for _ in 0..6 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+    assert_eq!(harness.cursor_position(), 15);
+
+    // Insert "and " rapidly
+    harness.type_text("and ").unwrap();
+    harness.assert_buffer_content("The very quick and brown fox");
+    assert_eq!(harness.cursor_position(), 19);
+
+    // Verify screen cursor position again
+    let screen_pos2 = harness.screen_cursor_position();
+    // Line numbers (4) + " │ " (3) + "The very quick and " (19) = 26
+    assert_eq!(screen_pos2.0, 26, "Screen cursor should be at column 26");
+}
+
+/// Test cursor sync when typing then immediately deleting
+/// This tests a different pattern that might expose sync issues
+#[test]
+fn test_rapid_type_delete_cursor_sync() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create initial text
+    harness.type_text("Start End").unwrap();
+
+    // Move to middle (after "Start ")
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..6 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+    assert_eq!(harness.cursor_position(), 6);
+
+    // Rapidly type and delete
+    for i in 0..5 {
+        // Type 'X'
+        harness.send_key(KeyCode::Char('X'), KeyModifiers::NONE).unwrap();
+        let pos_after_insert = harness.cursor_position();
+        assert_eq!(pos_after_insert, 7, "After insert {}, cursor should be at 7", i);
+
+        let screen_pos = harness.screen_cursor_position();
+        println!("After insert {}: screen cursor = {:?}, buffer pos = {}", i, screen_pos, pos_after_insert);
+
+        // Verify buffer content has the X
+        harness.assert_buffer_content("Start XEnd");
+
+        // Delete it
+        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+        let pos_after_delete = harness.cursor_position();
+        assert_eq!(pos_after_delete, 6, "After delete {}, cursor should be back at 6", i);
+
+        let screen_pos2 = harness.screen_cursor_position();
+        println!("After delete {}: screen cursor = {:?}, buffer pos = {}", i, screen_pos2, pos_after_delete);
+
+        // Verify buffer is back to original
+        harness.assert_buffer_content("Start End");
+    }
+
+    // Should be back to original state
+    harness.assert_buffer_content("Start End");
+    assert_eq!(harness.cursor_position(), 6);
+}
+
+/// Test cursor doesn't get stuck when typing beyond viewport width
+/// This reproduces a bug where the screen cursor position stops advancing
+/// when the line gets longer than the viewport width (80 characters)
+#[test]
+fn test_cursor_advances_beyond_viewport_width() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type a very long line - longer than the viewport width of 80
+    // We'll type 100 characters to ensure we go beyond the viewport width
+    let long_text = "a".repeat(100);
+
+    for (i, ch) in long_text.chars().enumerate() {
+        harness.send_key(crossterm::event::KeyCode::Char(ch), crossterm::event::KeyModifiers::NONE).unwrap();
+
+        // Verify buffer position keeps advancing
+        let buffer_pos = harness.cursor_position();
+        assert_eq!(
+            buffer_pos, i + 1,
+            "After typing {} characters, buffer cursor should be at position {}, but is at {}",
+            i + 1, i + 1, buffer_pos
+        );
+
+        // Verify screen cursor position keeps advancing
+        let screen_pos = harness.screen_cursor_position();
+        let expected_screen_x = 7 + (i as u16 + 1); // 7 for line number gutter + characters typed
+
+        // This is the bug: screen cursor X gets clamped at viewport width (80)
+        // So when we type character 74 (screen position would be 81), it gets stuck at 80
+        // But it should keep advancing beyond viewport width
+        assert_eq!(
+            screen_pos.0, expected_screen_x,
+            "After typing {} characters (total screen column should be {}), screen cursor X is {} (STUCK!)\n\
+             Buffer position: {}\n\
+             This happens because viewport.cursor_screen_position() clamps to viewport width",
+            i + 1, expected_screen_x, screen_pos.0, buffer_pos
+        );
+    }
+
+    // Final verification
+    harness.assert_buffer_content(&long_text);
+    assert_eq!(harness.cursor_position(), 100);
+
+    let final_screen_pos = harness.screen_cursor_position();
+    assert_eq!(final_screen_pos.0, 107, "Final screen cursor X should be 107 (7 + 100)");
+}
