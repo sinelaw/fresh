@@ -305,6 +305,114 @@ impl Default for EventLog {
 mod tests {
     use super::*;
 
+    // Property-based tests
+    #[cfg(test)]
+    mod property_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Helper to generate random events
+        fn arb_event() -> impl Strategy<Value = Event> {
+            prop_oneof![
+                // Insert events
+                (0usize..1000, ".{1,50}").prop_map(|(pos, text)| Event::Insert {
+                    position: pos,
+                    text,
+                    cursor_id: CursorId(0),
+                }),
+                // Delete events
+                (0usize..1000, 1usize..50).prop_map(|(pos, len)| Event::Delete {
+                    range: pos..pos + len,
+                    deleted_text: "x".repeat(len),
+                    cursor_id: CursorId(0),
+                }),
+            ]
+        }
+
+        proptest! {
+            /// Event inverse should be truly inverse
+            #[test]
+            fn event_inverse_property(event in arb_event()) {
+                if let Some(inverse) = event.inverse() {
+                    // The inverse of an inverse should be the original
+                    // (for commutative operations)
+                    if let Some(double_inverse) = inverse.inverse() {
+                        match (&event, &double_inverse) {
+                            (Event::Insert { position: p1, text: t1, .. },
+                             Event::Insert { position: p2, text: t2, .. }) => {
+                                assert_eq!(p1, p2);
+                                assert_eq!(t1, t2);
+                            }
+                            (Event::Delete { range: r1, deleted_text: dt1, .. },
+                             Event::Delete { range: r2, deleted_text: dt2, .. }) => {
+                                assert_eq!(r1, r2);
+                                assert_eq!(dt1, dt2);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            /// Undo then redo should restore state
+            #[test]
+            fn undo_redo_inverse(events in prop::collection::vec(arb_event(), 1..20)) {
+                let mut log = EventLog::new();
+
+                // Append all events
+                for event in &events {
+                    log.append(event.clone());
+                }
+
+                let after_append = log.current_index();
+
+                // Undo all
+                let mut undo_count = 0;
+                while log.can_undo() {
+                    log.undo();
+                    undo_count += 1;
+                }
+
+                assert_eq!(log.current_index(), 0);
+                assert_eq!(undo_count, events.len());
+
+                // Redo all
+                let mut redo_count = 0;
+                while log.can_redo() {
+                    log.redo();
+                    redo_count += 1;
+                }
+
+                assert_eq!(log.current_index(), after_append);
+                assert_eq!(redo_count, events.len());
+            }
+
+            /// Appending after undo should truncate redo history
+            #[test]
+            fn append_after_undo_truncates(
+                initial_events in prop::collection::vec(arb_event(), 2..10),
+                new_event in arb_event()
+            ) {
+                let mut log = EventLog::new();
+
+                for event in &initial_events {
+                    log.append(event.clone());
+                }
+
+                // Undo at least one
+                log.undo();
+                let index_after_undo = log.current_index();
+
+                // Append new event
+                log.append(new_event);
+
+                // Should not be able to redo past the new event
+                assert_eq!(log.current_index(), index_after_undo + 1);
+                assert!(!log.can_redo());
+            }
+        }
+    }
+
     #[test]
     fn test_event_log_append() {
         let mut log = EventLog::new();

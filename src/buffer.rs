@@ -423,6 +423,103 @@ impl Default for Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::NamedTempFile;
+
+    // Property-based tests using proptest
+    #[cfg(test)]
+    mod property_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Insert then delete should restore original state
+            #[test]
+            fn insert_delete_inverse(
+                initial in ".{0,100}",
+                pos in 0usize..100,
+                text in ".{1,50}"
+            ) {
+                let mut buffer = Buffer::from_str(&initial);
+                let original = buffer.to_string();
+
+                // Clamp position to valid range
+                let pos = pos.min(buffer.len());
+
+                // Insert
+                buffer.insert(pos, &text);
+
+                // Verify it was inserted
+                assert_eq!(buffer.len(), original.len() + text.len());
+
+                // Delete what we inserted
+                buffer.delete(pos..pos + text.len());
+
+                // Should be back to original
+                assert_eq!(buffer.to_string(), original);
+            }
+
+            /// Line cache should be consistent with byte positions
+            #[test]
+            fn line_cache_consistency(text in ".{0,200}\n*.{0,200}") {
+                let mut buffer = Buffer::from_str(&text);
+                let line_count = buffer.line_count();
+
+                // For each line, byte_to_line(line_to_byte(n)) should equal n
+                for line_num in 0..line_count {
+                    let byte_offset = buffer.line_to_byte(line_num);
+                    let recovered_line = buffer.byte_to_line(byte_offset);
+                    assert_eq!(recovered_line, line_num,
+                        "Line {} -> byte {} -> line {} (should be {})",
+                        line_num, byte_offset, recovered_line, line_num);
+                }
+            }
+
+            /// Content length should always match input length
+            #[test]
+            fn content_length_invariant(text in ".{0,500}") {
+                let buffer = Buffer::from_str(&text);
+                assert_eq!(buffer.len(), text.len());
+            }
+
+            /// Deleting text should never increase line count
+            #[test]
+            fn delete_monotonic_lines(
+                text in ".{10,200}",
+                start in 0usize..100,
+                end in 0usize..100
+            ) {
+                let mut buffer = Buffer::from_str(&text);
+                let original_lines = buffer.line_count();
+
+                let start = start.min(buffer.len());
+                let end = end.min(buffer.len());
+                let range = start.min(end)..start.max(end);
+
+                if !range.is_empty() {
+                    buffer.delete(range);
+                    assert!(buffer.line_count() <= original_lines,
+                        "Delete increased line count: {} -> {}",
+                        original_lines, buffer.line_count());
+                }
+            }
+
+            /// Save then load should preserve content
+            #[test]
+            fn save_load_roundtrip(text in ".{0,1000}") {
+                let mut buffer = Buffer::from_str(&text);
+
+                // Save to temp file
+                let temp_file = NamedTempFile::new().unwrap();
+                buffer.set_file_path(temp_file.path().to_path_buf());
+                buffer.save().unwrap();
+
+                // Load it back
+                let loaded = Buffer::load_from_file(temp_file.path()).unwrap();
+
+                assert_eq!(loaded.to_string(), text);
+            }
+        }
+    }
 
     #[test]
     fn test_buffer_new() {
