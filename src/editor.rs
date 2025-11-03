@@ -500,7 +500,12 @@ impl Editor {
             }
 
             let line_content = state.buffer.line_content(line_num);
-            let line_text = format!("{:4} │ {}", line_num + 1, line_content);
+
+            // Apply horizontal scrolling - skip characters before left_column
+            let left_col = state.viewport.left_column;
+            let visible_content: String = line_content.chars().skip(left_col).collect();
+
+            let line_text = format!("{:4} │ {}", line_num + 1, visible_content);
             lines.push(Line::from(line_text));
         }
 

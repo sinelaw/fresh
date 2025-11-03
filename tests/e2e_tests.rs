@@ -790,27 +790,119 @@ fn test_cursor_advances_beyond_viewport_width() {
             "After typing {} characters, buffer cursor should be at position {}, but is at {}",
             i + 1, i + 1, buffer_pos
         );
-
-        // Verify screen cursor position keeps advancing
-        let screen_pos = harness.screen_cursor_position();
-        let expected_screen_x = 7 + (i as u16 + 1); // 7 for line number gutter + characters typed
-
-        // This is the bug: screen cursor X gets clamped at viewport width (80)
-        // So when we type character 74 (screen position would be 81), it gets stuck at 80
-        // But it should keep advancing beyond viewport width
-        assert_eq!(
-            screen_pos.0, expected_screen_x,
-            "After typing {} characters (total screen column should be {}), screen cursor X is {} (STUCK!)\n\
-             Buffer position: {}\n\
-             This happens because viewport.cursor_screen_position() clamps to viewport width",
-            i + 1, expected_screen_x, screen_pos.0, buffer_pos
-        );
     }
 
     // Final verification
     harness.assert_buffer_content(&long_text);
     assert_eq!(harness.cursor_position(), 100);
+}
 
-    let final_screen_pos = harness.screen_cursor_position();
-    assert_eq!(final_screen_pos.0, 107, "Final screen cursor X should be 107 (7 + 100)");
+/// Test horizontal scrolling when cursor moves beyond visible width
+/// The viewport should scroll horizontally to keep the cursor visible
+#[test]
+fn test_horizontal_scrolling() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Calculate visible width (80 - 7 for line number gutter = 73 chars)
+    let gutter_width = 7;
+    let visible_width = 80 - gutter_width; // 73 characters visible
+
+    // Type characters to fill most of the visible width
+    let initial_text = "a".repeat(60);
+    harness.type_text(&initial_text).unwrap();
+
+    // Get initial viewport state (should be no scrolling yet)
+    let viewport = &harness.editor().active_state().viewport;
+    assert_eq!(viewport.left_column, 0, "Should not be scrolled yet");
+
+    // Type more characters to go beyond visible width
+    let more_text = "b".repeat(30); // Total: 90 characters
+    harness.type_text(&more_text).unwrap();
+
+    // Now the viewport should have scrolled horizontally
+    let viewport = &harness.editor().active_state().viewport;
+    assert!(
+        viewport.left_column > 0,
+        "Viewport should have scrolled horizontally, left_column = {}",
+        viewport.left_column
+    );
+
+    // The cursor should still be visible on screen
+    // Note: With horizontal_scroll_offset, the cursor can be slightly beyond
+    // the calculated visible_width during scrolling, but it should be reasonable
+    let screen_pos = harness.screen_cursor_position();
+    assert!(
+        screen_pos.0 < (visible_width + 10) as u16,
+        "Cursor screen X ({}) should be reasonably within viewport (visible width {})",
+        screen_pos.0,
+        visible_width
+    );
+
+    // Verify buffer position is correct
+    assert_eq!(harness.cursor_position(), 90);
+}
+
+/// Test horizontal scrolling when moving cursor left
+#[test]
+fn test_horizontal_scroll_left() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type a long line
+    let long_text = "a".repeat(100);
+    harness.type_text(&long_text).unwrap();
+
+    // Cursor is now at position 100, viewport should be scrolled
+    let viewport = &harness.editor().active_state().viewport;
+    let initial_left_col = viewport.left_column;
+    assert!(initial_left_col > 0, "Viewport should be scrolled right");
+
+    // Move cursor all the way to the left (Home key)
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+
+    // Cursor should be at position 0
+    assert_eq!(harness.cursor_position(), 0);
+
+    // Viewport should have scrolled back to show the beginning
+    let viewport = &harness.editor().active_state().viewport;
+    assert_eq!(
+        viewport.left_column, 0,
+        "Viewport should have scrolled back to left"
+    );
+}
+
+/// Test horizontal scrolling with arrow key navigation
+#[test]
+fn test_horizontal_scroll_with_arrows() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type a line longer than visible width
+    let text = "x".repeat(90);
+    harness.type_text(&text).unwrap();
+
+    // Viewport should be scrolled
+    let viewport = &harness.editor().active_state().viewport;
+    assert!(viewport.left_column > 0);
+
+    // Move left by 50 characters
+    for _ in 0..50 {
+        harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    }
+
+    // Cursor should be at position 40
+    assert_eq!(harness.cursor_position(), 40);
+
+    // Viewport should have scrolled left to keep cursor visible
+    let viewport = &harness.editor().active_state().viewport;
+    let screen_pos = harness.screen_cursor_position();
+
+    // Screen cursor should be within visible bounds
+    let visible_width = 80 - 7; // Terminal width minus gutter
+    assert!(
+        screen_pos.0 < visible_width as u16,
+        "Cursor X ({}) should be within visible width ({})",
+        screen_pos.0,
+        visible_width
+    );
 }

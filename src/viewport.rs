@@ -7,12 +7,18 @@ pub struct Viewport {
     /// Top-left corner (line number of first visible line)
     pub top_line: usize,
 
+    /// Left column offset (horizontal scroll position)
+    pub left_column: usize,
+
     /// Terminal dimensions
     pub width: u16,
     pub height: u16,
 
     /// Scroll offset (lines to keep visible above/below cursor)
     pub scroll_offset: usize,
+
+    /// Horizontal scroll offset (columns to keep visible left/right of cursor)
+    pub horizontal_scroll_offset: usize,
 }
 
 impl Viewport {
@@ -20,9 +26,11 @@ impl Viewport {
     pub fn new(width: u16, height: u16) -> Self {
         Self {
             top_line: 0,
+            left_column: 0,
             width,
             height,
             scroll_offset: 3,
+            horizontal_scroll_offset: 5,
         }
     }
 
@@ -74,8 +82,14 @@ impl Viewport {
 
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)
     pub fn ensure_visible(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
+        // Vertical scrolling
         let cursor_line = buffer.byte_to_line(cursor.position);
         self.ensure_line_visible(cursor_line, buffer.line_count());
+
+        // Horizontal scrolling
+        let line_start = buffer.line_to_byte(cursor_line);
+        let cursor_column = cursor.position.saturating_sub(line_start);
+        self.ensure_column_visible(cursor_column);
     }
 
     /// Ensure a line is visible with scroll offset applied
@@ -102,6 +116,32 @@ impl Viewport {
         // Ensure we don't scroll past the end
         if self.top_line + visible_count > total_lines {
             self.top_line = total_lines.saturating_sub(visible_count);
+        }
+    }
+
+    /// Ensure a column is visible with horizontal scroll offset applied
+    pub fn ensure_column_visible(&mut self, column: usize) {
+        // Calculate visible width (accounting for line numbers gutter: 7 chars)
+        let gutter_width = 7;
+        let visible_width = (self.width as usize).saturating_sub(gutter_width);
+
+        if visible_width == 0 {
+            return; // Terminal too narrow
+        }
+
+        // If viewport is too small for scroll offset, use what we can
+        let effective_offset = self.horizontal_scroll_offset.min(visible_width / 2);
+
+        // Calculate the ideal left and right boundaries with scroll offset
+        let ideal_left = self.left_column + effective_offset;
+        let ideal_right = self.left_column + visible_width.saturating_sub(effective_offset);
+
+        if column < ideal_left {
+            // Cursor is to the left of the ideal zone - scroll left
+            self.left_column = column.saturating_sub(effective_offset);
+        } else if column >= ideal_right {
+            // Cursor is to the right of the ideal zone - scroll right
+            self.left_column = column.saturating_sub(visible_width.saturating_sub(effective_offset));
         }
     }
 
@@ -169,15 +209,15 @@ impl Viewport {
     }
 
     /// Get the cursor screen position (x, y) which is (col, row) for rendering
+    /// This returns the position relative to the viewport, accounting for horizontal scrolling
     pub fn cursor_screen_position(&self, buffer: &mut Buffer, cursor: &Cursor) -> (u16, u16) {
         let line = buffer.byte_to_line(cursor.position);
         let line_start = buffer.line_to_byte(line);
         let column = cursor.position.saturating_sub(line_start);
 
         let screen_row = line.saturating_sub(self.top_line) as u16;
-        // Don't clamp column to viewport width - the cursor can be positioned
-        // beyond the visible area, and the terminal/rendering layer will handle it
-        let screen_col = column as u16;
+        // Account for horizontal scrolling - subtract left_column offset
+        let screen_col = column.saturating_sub(self.left_column) as u16;
 
         // Return (x, y) which is (col, row)
         (screen_col, screen_row)
