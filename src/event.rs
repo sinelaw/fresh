@@ -156,6 +156,9 @@ pub struct EventLog {
 
     /// How often to create snapshots (every N events)
     snapshot_interval: usize,
+
+    /// Optional file for streaming events to disk
+    stream_file: Option<std::fs::File>,
 }
 
 impl EventLog {
@@ -166,6 +169,75 @@ impl EventLog {
             current_index: 0,
             snapshots: Vec::new(),
             snapshot_interval: 100,
+            stream_file: None,
+        }
+    }
+
+    /// Enable streaming events to a file
+    pub fn enable_streaming<P: AsRef<std::path::Path>>(&mut self, path: P) -> std::io::Result<()> {
+        use std::io::Write;
+
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
+
+        // Write header
+        writeln!(file, "# Event Log Stream")?;
+        writeln!(file, "# Started at: {}", chrono::Local::now())?;
+        writeln!(file, "# Format: JSON Lines (one event per line)")?;
+        writeln!(file, "#")?;
+
+        self.stream_file = Some(file);
+        Ok(())
+    }
+
+    /// Disable streaming
+    pub fn disable_streaming(&mut self) {
+        self.stream_file = None;
+    }
+
+    /// Log rendering state (for debugging)
+    pub fn log_render_state(&mut self, cursor_pos: usize, screen_cursor_x: u16, screen_cursor_y: u16, buffer_len: usize) {
+        if let Some(ref mut file) = self.stream_file {
+            use std::io::Write;
+
+            let render_info = serde_json::json!({
+                "type": "render",
+                "timestamp": chrono::Local::now().to_rfc3339(),
+                "cursor_position": cursor_pos,
+                "screen_cursor": {"x": screen_cursor_x, "y": screen_cursor_y},
+                "buffer_length": buffer_len,
+            });
+
+            if let Err(e) = writeln!(file, "{}", render_info) {
+                eprintln!("Warning: Failed to write render info to stream: {}", e);
+            }
+            if let Err(e) = file.flush() {
+                eprintln!("Warning: Failed to flush event stream: {}", e);
+            }
+        }
+    }
+
+    /// Log keystroke (for debugging)
+    pub fn log_keystroke(&mut self, key_code: &str, modifiers: &str) {
+        if let Some(ref mut file) = self.stream_file {
+            use std::io::Write;
+
+            let keystroke_info = serde_json::json!({
+                "type": "keystroke",
+                "timestamp": chrono::Local::now().to_rfc3339(),
+                "key": key_code,
+                "modifiers": modifiers,
+            });
+
+            if let Err(e) = writeln!(file, "{}", keystroke_info) {
+                eprintln!("Warning: Failed to write keystroke to stream: {}", e);
+            }
+            if let Err(e) = file.flush() {
+                eprintln!("Warning: Failed to flush event stream: {}", e);
+            }
         }
     }
 
@@ -174,6 +246,25 @@ impl EventLog {
         // If we're not at the end, truncate future events
         if self.current_index < self.entries.len() {
             self.entries.truncate(self.current_index);
+        }
+
+        // Stream event to file if enabled
+        if let Some(ref mut file) = self.stream_file {
+            use std::io::Write;
+
+            let stream_entry = serde_json::json!({
+                "index": self.entries.len(),
+                "timestamp": chrono::Local::now().to_rfc3339(),
+                "event": event,
+            });
+
+            // Write JSON line and flush immediately for real-time logging
+            if let Err(e) = writeln!(file, "{}", stream_entry) {
+                eprintln!("Warning: Failed to write to event stream: {}", e);
+            }
+            if let Err(e) = file.flush() {
+                eprintln!("Warning: Failed to flush event stream: {}", e);
+            }
         }
 
         let entry = LogEntry::new(event);
