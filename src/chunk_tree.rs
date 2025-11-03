@@ -65,7 +65,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::logs::log;
+// Removed logs module dependency
 
 #[derive(Debug, Clone)]
 enum ChunkTreeNode<'a> {
@@ -364,7 +364,8 @@ impl<'a> ChunkTreeNode<'a> {
             return ChunkTreeNode::empty();
         }
 
-        log!("range: {:?}", range);
+        // Debug logging removed
+        // log!("range: {:?}", range);
 
         match self {
             ChunkTreeNode::Leaf { data } => ChunkTreeNode::Internal {
@@ -404,12 +405,13 @@ impl<'a> ChunkTreeNode<'a> {
                     let end = std::cmp::min(child_pos + child_len, remaining_range.end);
                     let remove_relative_range =
                         (remaining_range.start - child_pos)..(end - child_pos);
-                    log!(
-                        "remaining_range: {:?}, remove_relative_range: {:?}, child: {:?}",
-                        remaining_range,
-                        remove_relative_range,
-                        child
-                    );
+                    // Debug logging removed
+                    // log!(
+                    //     "remaining_range: {:?}, remove_relative_range: {:?}, child: {:?}",
+                    //     remaining_range,
+                    //     remove_relative_range,
+                    //     child
+                    // );
                     let new_child = child.remove(remove_relative_range, config);
                     if !new_child.is_empty() {
                         new_children.push(Arc::new(new_child));
@@ -656,7 +658,7 @@ mod tests {
         let tree = ChunkTree::new(SMALL_CONFIG);
         assert!(tree.is_empty());
         assert_eq!(tree.len(), 0);
-        assert_eq!(tree.collect_bytes(0), vec![]);
+        assert_eq!(tree.collect_bytes(0), Vec::<u8>::new());
     }
 
     #[test]

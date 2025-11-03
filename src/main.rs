@@ -1,9 +1,11 @@
 #![allow(dead_code)]
+mod buffer;
 mod chunk_tree;
-mod lines;
-mod logs;
-mod memstore;
-mod virtual_file;
+mod config;
+mod cursor;
+mod event;
+mod keybindings;
+mod viewport;
 
 fn main() {
     println!("Editor - work in progress");
