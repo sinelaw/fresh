@@ -2,6 +2,7 @@
 
 mod common;
 
+use common::fixtures::TestFixture;
 use common::harness::EditorTestHarness;
 use tempfile::TempDir;
 
@@ -2283,13 +2284,16 @@ fn test_load_big_file_e2e() {
 
     println!("\n=== E2E Test: Loading BIG.txt through full editor ===");
 
+    // Generate BIG.txt if it doesn't exist
+    let big_txt_path = TestFixture::big_txt().unwrap();
+
     let start = Instant::now();
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
     let harness_time = start.elapsed();
     println!("✓ Harness created in: {:?}", harness_time);
 
     let start = Instant::now();
-    harness.open_file(Path::new("tests/BIG.txt")).unwrap();
+    harness.open_file(&big_txt_path).unwrap();
     let open_time = start.elapsed();
     println!("✓ File opened (with render) in: {:?}", open_time);
 
