@@ -645,6 +645,11 @@ impl<'a> ChunkTree<'a> {
     pub fn collect_bytes_into(&self, gap_value: u8, output: &mut Vec<u8>) {
         self.root.collect_bytes_into(gap_value, output);
     }
+
+    /// Returns an iterator over chunks in the tree
+    pub fn iter(&self) -> ChunkTreeIterator {
+        self.root.iter()
+    }
 }
 
 #[cfg(test)]

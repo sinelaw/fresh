@@ -9,3 +9,6 @@ pub mod event;
 pub mod keybindings;
 pub mod state;
 pub mod viewport;
+
+// Re-export commonly used types
+pub use buffer::LineNumber;

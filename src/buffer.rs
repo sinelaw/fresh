@@ -25,6 +25,7 @@ pub struct Buffer {
 }
 
 /// Cache of line start positions for fast lookups
+/// Can be partially built (lazy) - scans regions on-demand
 struct LineCache {
     /// Byte offset where each line starts
     /// line_starts[0] = 0 (first line starts at byte 0)
@@ -33,6 +34,13 @@ struct LineCache {
 
     /// Is the cache currently valid?
     valid: bool,
+
+    /// Is this a full scan or partial?
+    /// If false, line_starts may be incomplete and needs extension
+    fully_scanned: bool,
+
+    /// Last byte position we've scanned up to
+    scanned_up_to: usize,
 }
 
 impl LineCache {
@@ -40,18 +48,22 @@ impl LineCache {
         Self {
             line_starts: vec![0],
             valid: true,
+            fully_scanned: true,
+            scanned_up_to: 0,
         }
     }
 
     fn invalidate(&mut self) {
         self.valid = false;
+        self.fully_scanned = false;
+        self.scanned_up_to = 0;
     }
 
     fn is_valid(&self) -> bool {
         self.valid
     }
 
-    /// Rebuild the line cache from text
+    /// Rebuild the line cache from text (full scan)
     fn rebuild(&mut self, text: &[u8]) {
         self.line_starts.clear();
         self.line_starts.push(0);
@@ -62,6 +74,30 @@ impl LineCache {
             }
         }
 
+        self.valid = true;
+        self.fully_scanned = true;
+        self.scanned_up_to = text.len();
+    }
+
+    /// Extend the line cache up to at least the given byte position
+    /// Only scans the portion that hasn't been scanned yet
+    fn ensure_scanned_to(&mut self, text: &[u8], min_byte_pos: usize) {
+        if self.fully_scanned || min_byte_pos <= self.scanned_up_to {
+            return; // Already scanned enough
+        }
+
+        let scan_from = self.scanned_up_to;
+        let scan_to = min_byte_pos.min(text.len());
+
+        // Scan from where we left off to the target position
+        for i in scan_from..scan_to {
+            if text[i] == b'\n' {
+                self.line_starts.push(i + 1);
+            }
+        }
+
+        self.scanned_up_to = scan_to;
+        self.fully_scanned = scan_to >= text.len();
         self.valid = true;
     }
 
@@ -114,17 +150,54 @@ impl Buffer {
     }
 
     /// Load a buffer from a file
+    /// Uses chunked reading to avoid loading the entire file into memory at once
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let path = path.as_ref();
-        let mut file = std::fs::File::open(path)?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
+        let file = std::fs::File::open(path)?;
+        let metadata = file.metadata()?;
+        let file_size = metadata.len() as usize;
 
-        let mut buffer = Self::from_str(&contents);
-        buffer.file_path = Some(path.to_path_buf());
-        buffer.modified = false;
+        // For small files, use the fast path
+        if file_size < 1024 * 1024 {
+            // < 1MB, read all at once
+            let mut file = file;
+            let mut contents = String::new();
+            file.read_to_string(&mut contents)?;
 
-        Ok(buffer)
+            let mut buffer = Self::from_str(&contents);
+            buffer.file_path = Some(path.to_path_buf());
+            buffer.modified = false;
+            return Ok(buffer);
+        }
+
+        // For large files, read in chunks
+        const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
+        let mut content = ChunkTree::new(DEFAULT_CONFIG);
+        let mut reader = std::io::BufReader::with_capacity(CHUNK_SIZE, file);
+        let mut chunk_buf = vec![0u8; CHUNK_SIZE];
+
+        loop {
+            let bytes_read = reader.read(&mut chunk_buf)?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            // Leak the chunk to get 'static lifetime
+            let leaked: &'static [u8] =
+                Box::leak(chunk_buf[..bytes_read].to_vec().into_boxed_slice());
+            content = content.insert(content.len(), leaked);
+        }
+
+        // Line cache starts invalid - will be built lazily on first access
+        let line_cache = RefCell::new(LineCache::new());
+        line_cache.borrow_mut().invalidate();
+
+        Ok(Self {
+            content,
+            line_cache,
+            file_path: Some(path.to_path_buf()),
+            modified: false,
+        })
     }
 
     /// Save the buffer to its file path
@@ -223,17 +296,109 @@ impl Buffer {
         self.len() == 0
     }
 
-    /// Ensure the line cache is valid
-    fn ensure_line_cache(&self) {
+    /// Ensure the line cache is valid UP TO a certain byte position
+    /// This allows lazy scanning - only scan what's needed
+    fn ensure_line_cache_to(&self, min_byte_pos: usize) {
         let mut cache = self.line_cache.borrow_mut();
-        if !cache.is_valid() {
-            let bytes = self.content.collect_bytes(b' ');
-            cache.rebuild(&bytes);
+
+        if cache.fully_scanned {
+            return; // Already have everything
         }
+
+        if !cache.valid {
+            // First time - start scanning from beginning
+            cache.line_starts.clear();
+            cache.line_starts.push(0);
+            cache.scanned_up_to = 0;
+            cache.valid = true;
+        }
+
+        // If we've already scanned far enough, we're done
+        if min_byte_pos <= cache.scanned_up_to {
+            return;
+        }
+
+        // Scan incrementally from where we left off using chunk iterator
+        let scan_from = cache.scanned_up_to;
+        let scan_to = min_byte_pos.min(self.len());
+
+        let mut current_pos = 0;
+        for piece in self.content.iter() {
+            match piece {
+                crate::chunk_tree::ChunkPiece::Data { data } => {
+                    let chunk_end = current_pos + data.len();
+
+                    // Only scan this chunk if it overlaps with our scan range
+                    if chunk_end > scan_from {
+                        let start_in_chunk = scan_from.saturating_sub(current_pos);
+                        let end_in_chunk = (scan_to - current_pos).min(data.len());
+
+                        for i in start_in_chunk..end_in_chunk {
+                            if data[i] == b'\n' {
+                                cache.line_starts.push(current_pos + i + 1);
+                            }
+                        }
+
+                        cache.scanned_up_to = current_pos + end_in_chunk;
+
+                        if cache.scanned_up_to >= scan_to {
+                            cache.fully_scanned = cache.scanned_up_to >= self.len();
+                            return;
+                        }
+                    }
+
+                    current_pos = chunk_end;
+                }
+                crate::chunk_tree::ChunkPiece::Gap { size } => {
+                    current_pos += size;
+                    if current_pos > scan_from {
+                        cache.scanned_up_to = cache.scanned_up_to.max(current_pos.min(scan_to));
+                    }
+                }
+            }
+
+            if current_pos >= scan_to {
+                cache.scanned_up_to = scan_to;
+                break;
+            }
+        }
+
+        cache.fully_scanned = cache.scanned_up_to >= self.len();
+    }
+
+    /// Ensure the line cache is fully valid
+    /// For large files, this is expensive (~1.2s for 61MB in debug mode)
+    fn ensure_line_cache(&self) {
+        self.ensure_line_cache_to(self.len());
     }
 
     /// Convert a line number to a byte offset
+    /// For small line numbers, this only scans a small portion of the file
     pub fn line_to_byte(&self, line: usize) -> usize {
+        // Quick check: if we already have this line cached, return it
+        {
+            let cache = self.line_cache.borrow();
+            if cache.valid && line < cache.line_count() {
+                if let Some(byte_pos) = cache.line_to_byte(line) {
+                    return byte_pos;
+                }
+            }
+        }
+
+        // We need to scan further - estimate how many bytes we need to scan
+        // Average line length is roughly 50 bytes, so scan (line + 100) * 50 to be safe
+        let estimated_bytes = (line + 100) * 50;
+        self.ensure_line_cache_to(estimated_bytes);
+
+        // Try again
+        {
+            let cache = self.line_cache.borrow();
+            if let Some(byte_pos) = cache.line_to_byte(line) {
+                return byte_pos;
+            }
+        }
+
+        // Still don't have it - need full scan
         self.ensure_line_cache();
         self.line_cache
             .borrow()
@@ -242,18 +407,106 @@ impl Buffer {
     }
 
     /// Convert a byte offset to a line number
+    /// Only scans up to the given byte position
     pub fn byte_to_line(&self, byte: usize) -> usize {
-        self.ensure_line_cache();
-        self.line_cache.borrow().byte_to_line(byte.min(self.len()))
+        let byte = byte.min(self.len());
+
+        // Ensure we've scanned at least up to this byte position
+        self.ensure_line_cache_to(byte);
+
+        self.line_cache.borrow().byte_to_line(byte)
     }
 
     /// Get the number of lines in the buffer
+    /// WARNING: This scans the entire file and can be slow for large files (1.2s for 61MB)
+    /// Consider using approximate_line_count() or byte_to_line() for better performance
     pub fn line_count(&self) -> usize {
         self.ensure_line_cache();
         self.line_cache.borrow().line_count()
     }
 
+    /// Get an approximate or cached line count without forcing a full scan
+    /// Returns None if the full scan hasn't been done yet
+    pub fn approximate_line_count(&self) -> Option<usize> {
+        let cache = self.line_cache.borrow();
+        if cache.fully_scanned {
+            Some(cache.line_count())
+        } else {
+            None
+        }
+    }
+
+    /// Check if we're at or past the end of the file (by bytes)
+    pub fn is_at_eof(&self, byte_pos: usize) -> bool {
+        byte_pos >= self.len()
+    }
+
+    /// Get line number for display purposes
+    /// Returns either:
+    /// - LineNumber::Absolute(n) if we have scanned up to this line
+    /// - LineNumber::Relative(offset) if we haven't scanned this far yet
+    pub fn display_line_number(&self, byte_pos: usize) -> LineNumber {
+        let cache = self.line_cache.borrow();
+
+        // If we've scanned past this position, we know the absolute line number
+        if cache.fully_scanned || byte_pos <= cache.scanned_up_to {
+            LineNumber::Absolute(cache.byte_to_line(byte_pos))
+        } else {
+            // We haven't scanned this far yet - return relative to last known line
+            let last_known_byte = cache.line_starts.last().copied().unwrap_or(0);
+
+            // Count newlines from last known position (locally, without full scan)
+            let relative_offset = self.count_newlines_in_range(last_known_byte, byte_pos);
+            LineNumber::Relative(relative_offset)
+        }
+    }
+
+    /// Count newlines in a byte range without caching
+    /// This is used for relative line numbers
+    fn count_newlines_in_range(&self, start: usize, end: usize) -> usize {
+        if start >= end || start >= self.len() {
+            return 0;
+        }
+
+        let mut count = 0;
+        let actual_end = end.min(self.len());
+
+        for i in start..actual_end {
+            let piece = self.content.get(i);
+            if let crate::chunk_tree::ChunkPiece::Data { data } = piece {
+                if !data.is_empty() && data[0] == b'\n' {
+                    count += 1;
+                }
+            }
+        }
+
+        count
+    }
+}
+
+/// Represents a line number for display purposes
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineNumber {
+    /// Absolute line number (we've scanned this far)
+    Absolute(usize),
+    /// Relative offset from viewport start (haven't scanned this far)
+    Relative(usize),
+}
+
+impl LineNumber {
+    /// Format for display (e.g., "42" or "+5")
+    pub fn format(&self) -> String {
+        match self {
+            LineNumber::Absolute(n) => format!("{}", n + 1), // 1-indexed for display
+            LineNumber::Relative(offset) => format!("+{}", offset),
+        }
+    }
+}
+
+impl Buffer {
     /// Get the content of a specific line
+    /// For large files, this may trigger a full scan on first call
+    /// Consider using line_content_by_byte if you know the byte position
     pub fn line_content(&self, line: usize) -> String {
         self.ensure_line_cache();
         let cache = self.line_cache.borrow();
@@ -266,6 +519,40 @@ impl Buffer {
             content.pop();
         }
         content
+    }
+
+    /// Get line content starting from a byte position (no full scan needed)
+    /// Scans forward from byte_pos to the next newline
+    pub fn line_content_at_byte(&self, byte_pos: usize) -> String {
+        if byte_pos >= self.len() {
+            return String::new();
+        }
+
+        // Find the start of the line (scan backward to previous newline or start)
+        let mut line_start = byte_pos;
+        while line_start > 0 {
+            let piece = self.content.get(line_start - 1);
+            if let crate::chunk_tree::ChunkPiece::Data { data } = piece {
+                if !data.is_empty() && data[0] == b'\n' {
+                    break;
+                }
+            }
+            line_start -= 1;
+        }
+
+        // Find the end of the line (scan forward to next newline or end)
+        let mut line_end = byte_pos;
+        while line_end < self.len() {
+            let piece = self.content.get(line_end);
+            if let crate::chunk_tree::ChunkPiece::Data { data } = piece {
+                if !data.is_empty() && data[0] == b'\n' {
+                    break;
+                }
+            }
+            line_end += 1;
+        }
+
+        self.slice(line_start..line_end)
     }
 
     /// Get multiple lines as strings
@@ -650,5 +937,75 @@ mod tests {
         let loaded = Buffer::load_from_file(&file_path).unwrap();
         assert_eq!(loaded.to_string(), "test content");
         assert!(!loaded.is_modified());
+    }
+
+    #[test]
+    #[ignore] // Run with: cargo test test_load_big_file -- --ignored --nocapture
+    fn test_load_big_file() {
+        use std::time::Instant;
+
+        println!("\n=== Testing BIG.txt loading ===");
+
+        let start = Instant::now();
+        let buffer = Buffer::load_from_file("tests/BIG.txt").unwrap();
+        let load_time = start.elapsed();
+        println!("✓ File loaded in: {:?}", load_time);
+
+        let start = Instant::now();
+        let len = buffer.len();
+        let len_time = start.elapsed();
+        println!("✓ Length ({} bytes) in: {:?}", len, len_time);
+
+        let start = Instant::now();
+        let line_count = buffer.line_count();
+        let count_time = start.elapsed();
+        println!("✓ Line count ({} lines) in: {:?}", line_count, count_time);
+
+        let start = Instant::now();
+        let first_line = buffer.line_content(0);
+        let first_line_time = start.elapsed();
+        println!("✓ First line content in: {:?}", first_line_time);
+        println!("  First line: {:?}", &first_line[..first_line.len().min(50)]);
+
+        println!("\nTotal time: {:?}", load_time + len_time + count_time + first_line_time);
+    }
+
+    #[test]
+    #[ignore] // Run with: cargo test test_load_big_file_instant -- --ignored --nocapture
+    fn test_load_big_file_instant() {
+        use std::time::Instant;
+
+        println!("\n=== Testing BIG.txt INSTANT loading (no line_count) ===");
+
+        let start = Instant::now();
+        let buffer = Buffer::load_from_file("tests/BIG.txt").unwrap();
+        let load_time = start.elapsed();
+        println!("✓ File loaded in: {:?}", load_time);
+
+        // Test that we can get display line numbers WITHOUT triggering full scan
+        let start = Instant::now();
+        let display_num_0 = buffer.display_line_number(0);
+        let display_num_100 = buffer.display_line_number(100);
+        let display_time = start.elapsed();
+        println!("✓ Display line numbers in: {:?}", display_time);
+        println!("  Line 0: {}", display_num_0.format());
+        println!("  Byte 100: {}", display_num_100.format());
+
+        // Check that we haven't scanned the full file
+        let approx_count = buffer.approximate_line_count();
+        println!("✓ Approximate line count: {:?} (None = not scanned)", approx_count);
+
+        let start = Instant::now();
+        let first_line = buffer.line_content_at_byte(0);
+        let first_line_time = start.elapsed();
+        println!("✓ First line content (no scan) in: {:?}", first_line_time);
+        println!("  First line: {:?}", &first_line[..first_line.len().min(50)]);
+
+        println!("\nTotal time (INSTANT): {:?}", load_time + display_time + first_line_time);
+        println!("Expected: < 500ms on fast machine (vs ~1.7s with full line_count scan)");
+
+        // The key assertion: we should NOT have scanned the full file
+        assert!(approx_count.is_none(),
+            "File should not be fully scanned yet, but approximate_line_count returned {:?}", approx_count);
     }
 }

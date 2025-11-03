@@ -1102,12 +1102,19 @@ impl Editor {
             .collect();
 
         for line_num in visible_lines.clone() {
-            if line_num >= state.buffer.line_count() {
-                break;
+            // Check if we've run out of lines (use approximate_line_count to avoid full scan)
+            if let Some(total_lines) = state.buffer.approximate_line_count() {
+                if line_num >= total_lines {
+                    break;
+                }
             }
 
-            let line_content = state.buffer.line_content(line_num);
+            // Get line start byte position
+            // For first few lines this is fast, for later lines we may need to scan
             let line_start = state.buffer.line_to_byte(line_num);
+
+            // Use byte-based line content to avoid triggering full file scan
+            let line_content = state.buffer.line_content_at_byte(line_start);
 
             // Apply horizontal scrolling - skip characters before left_column
             let left_col = state.viewport.left_column;
@@ -1115,9 +1122,10 @@ impl Editor {
             // Build line with selection highlighting
             let mut line_spans = Vec::new();
 
-            // Line number prefix
+            // Line number prefix - use smart display (absolute or relative)
+            let display_num = state.buffer.display_line_number(line_start);
             line_spans.push(Span::styled(
-                format!("{:4} │ ", line_num + 1),
+                format!("{:>4} │ ", display_num.format()),
                 Style::default().fg(Color::DarkGray),
             ));
 

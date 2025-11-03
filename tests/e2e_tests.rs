@@ -2265,3 +2265,29 @@ fn test_select_prev_word_with_special_chars() {
     let selected_text = harness.editor().active_state().buffer.slice(range);
     assert_eq!(selected_text, "foo", "Should select 'foo' backwards (hyphen is a separator)");
 }
+
+#[test]
+#[ignore] // Run with: cargo test test_load_big_file_e2e -- --ignored --nocapture
+fn test_load_big_file_e2e() {
+    use std::time::Instant;
+    use std::path::Path;
+
+    println!("\n=== E2E Test: Loading BIG.txt through full editor ===");
+
+    let start = Instant::now();
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let harness_time = start.elapsed();
+    println!("✓ Harness created in: {:?}", harness_time);
+
+    let start = Instant::now();
+    harness.open_file(Path::new("tests/BIG.txt")).unwrap();
+    let open_time = start.elapsed();
+    println!("✓ File opened (with render) in: {:?}", open_time);
+
+    // Verify the file is actually loaded
+    let screen = harness.screen_to_string();
+    assert!(screen.contains("Editor Implementation Plan"), "First line should be visible");
+
+    println!("\nTotal time: {:?}", harness_time + open_time);
+    println!("Note: This includes the full editor flow + first render");
+}
