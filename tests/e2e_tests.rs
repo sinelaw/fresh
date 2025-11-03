@@ -906,3 +906,124 @@ fn test_horizontal_scroll_with_arrows() {
         visible_width
     );
 }
+
+/// Test vertical scrolling when typing lines to the bottom of screen
+/// The viewport should scroll down to keep the cursor visible
+#[test]
+fn test_vertical_scroll_when_typing_to_bottom() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Terminal height is 24, but we need to account for:
+    // - Tab bar (1 line)
+    // - Status bar (1 line)
+    // So visible content area is 22 lines
+    let visible_lines = 22;
+
+    // Start with viewport at top
+    let viewport = &harness.editor().active_state().viewport;
+    assert_eq!(viewport.top_line, 0, "Should start at top");
+
+    // Type enough lines to fill the visible area and go beyond
+    // We'll type (visible_lines + 10) lines to ensure scrolling happens
+    let total_lines = visible_lines + 10;
+
+    for i in 0..total_lines {
+        harness.type_text(&format!("Line {}", i)).unwrap();
+
+        // Add newline except for the last line
+        if i < total_lines - 1 {
+            harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        }
+    }
+
+    // Verify we have the right number of lines
+    let buffer = &harness.editor().active_state().buffer;
+    let line_count = buffer.line_count();
+    assert_eq!(line_count, total_lines, "Should have {} lines", total_lines);
+
+    // The viewport should have scrolled down
+    let top_line = harness.editor().active_state().viewport.top_line;
+    assert!(
+        top_line > 0,
+        "Viewport should have scrolled down, top_line = {}",
+        top_line
+    );
+
+    // The cursor should be on the last line
+    let cursor_line = buffer.byte_to_line(harness.cursor_position());
+    assert_eq!(
+        cursor_line, total_lines - 1,
+        "Cursor should be on the last line (line {})",
+        total_lines - 1
+    );
+
+    // The last line should be visible on screen
+    let screen_pos = harness.screen_cursor_position();
+    assert!(
+        screen_pos.1 <= visible_lines as u16,
+        "Cursor screen Y ({}) should be within visible lines ({})",
+        screen_pos.1,
+        visible_lines
+    );
+
+    // Verify the last line is visible: screen_row should be within viewport height
+    let last_line_screen_row = cursor_line.saturating_sub(top_line);
+    assert!(
+        last_line_screen_row < visible_lines,
+        "Last line (screen row {}) should be visible within {} lines",
+        last_line_screen_row,
+        visible_lines
+    );
+}
+
+/// Test vertical scrolling maintains cursor visibility with scroll offset
+#[test]
+fn test_vertical_scroll_offset() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    let visible_lines = 22; // Account for tab bar and status bar
+
+    // Type many lines
+    for i in 0..40 {
+        harness.type_text(&format!("Line {}", i)).unwrap();
+        if i < 39 {
+            harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        }
+    }
+
+    // Cursor should be at bottom, viewport scrolled
+    let initial_top_line = harness.editor().active_state().viewport.top_line;
+    assert!(initial_top_line > 0, "Should be scrolled down");
+
+    // Move up by many lines to trigger viewport scroll
+    // With 40 lines and 22 visible, viewport is at line 18
+    // Move up 20 lines (from 39 to 19) to trigger scroll offset
+    for _ in 0..20 {
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    }
+
+    // The viewport should have scrolled up to keep cursor visible
+    // with the scroll offset (default 3 lines)
+    let new_top_line = harness.editor().active_state().viewport.top_line;
+
+    // We moved up 20 lines, so viewport should have adjusted
+    assert!(
+        new_top_line < initial_top_line,
+        "Viewport should have scrolled up: was {}, now {}",
+        initial_top_line,
+        new_top_line
+    );
+
+    // Cursor should still be visible with some margin
+    let screen_pos = harness.screen_cursor_position();
+    let scroll_offset = harness.editor().active_state().viewport.scroll_offset;
+
+    assert!(
+        screen_pos.1 >= scroll_offset as u16,
+        "Cursor should have at least {} lines of scroll offset above, screen Y = {}",
+        scroll_offset,
+        screen_pos.1
+    );
+}

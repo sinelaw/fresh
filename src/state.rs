@@ -21,21 +21,25 @@ pub struct EditorState {
 impl EditorState {
     /// Create a new editor state with an empty buffer
     pub fn new(width: u16, height: u16) -> Self {
+        // Account for tab bar (1 line) and status bar (1 line)
+        let content_height = height.saturating_sub(2);
         Self {
             buffer: Buffer::new(),
             cursors: Cursors::new(),
-            viewport: Viewport::new(width, height),
+            viewport: Viewport::new(width, content_height),
             mode: "insert".to_string(),
         }
     }
 
     /// Create an editor state from a file
     pub fn from_file(path: &std::path::Path, width: u16, height: u16) -> std::io::Result<Self> {
+        // Account for tab bar (1 line) and status bar (1 line)
+        let content_height = height.saturating_sub(2);
         let buffer = Buffer::load_from_file(path)?;
         Ok(Self {
             buffer,
             cursors: Cursors::new(),
-            viewport: Viewport::new(width, height),
+            viewport: Viewport::new(width, content_height),
             mode: "insert".to_string(),
         })
     }
@@ -179,7 +183,9 @@ impl EditorState {
 
     /// Resize the viewport
     pub fn resize(&mut self, width: u16, height: u16) {
-        self.viewport.resize(width, height);
+        // Account for tab bar (1 line) and status bar (1 line)
+        let content_height = height.saturating_sub(2);
+        self.viewport.resize(width, content_height);
 
         // Ensure primary cursor is still visible after resize
         let primary = *self.cursors.primary();
