@@ -98,7 +98,27 @@ impl Viewport {
 
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)
     pub fn ensure_visible(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
-        // Vertical scrolling
+        // Optimization: For large files (>1MB), when cursor is near EOF,
+        // skip expensive line calculations and just scroll to end
+        let buffer_len = buffer.len();
+        let large_file_threshold = 1024 * 1024; // 1MB
+        let near_eof_threshold = 10000; // Within 10KB of EOF
+
+        if buffer_len > large_file_threshold
+            && cursor.position >= buffer_len.saturating_sub(near_eof_threshold) {
+            // Cursor is near EOF in a large file - scroll to show last page
+            // Use a very large line number to ensure we scroll to bottom
+            let visible_count = self.visible_line_count();
+            self.top_line = usize::MAX.saturating_sub(visible_count);
+
+            // For horizontal scrolling, find line start by scanning backwards (only a few KB at most)
+            let line_start = buffer.find_line_start_at_byte(cursor.position);
+            let cursor_column = cursor.position.saturating_sub(line_start);
+            self.ensure_column_visible(cursor_column);
+            return;
+        }
+
+        // Normal case: cursor is not near EOF
         // Use lazy line lookup to avoid forcing full scans on large files
         let cursor_line = buffer.byte_to_line_lazy(cursor.position);
         // Use approximate line count if available, otherwise use a very large number
