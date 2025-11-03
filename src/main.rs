@@ -5,6 +5,7 @@ mod config;
 mod cursor;
 mod event;
 mod keybindings;
+mod state;
 mod viewport;
 
 fn main() {
