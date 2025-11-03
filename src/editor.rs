@@ -17,6 +17,34 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferId(usize);
 
+/// Type of prompt - determines what action to take when user confirms
+#[derive(Debug, Clone, PartialEq)]
+pub enum PromptType {
+    /// Open a file
+    OpenFile,
+    /// Save current buffer to a new file
+    SaveFileAs,
+    /// Search for text in buffer
+    Search,
+    /// Replace text in buffer
+    Replace { search: String },
+    /// Execute a command by name (M-x)
+    Command,
+}
+
+/// Prompt state for the minibuffer
+#[derive(Debug, Clone)]
+pub struct Prompt {
+    /// The prompt message (e.g., "Find file: ")
+    pub message: String,
+    /// User's current input
+    pub input: String,
+    /// Cursor position in the input
+    pub cursor_pos: usize,
+    /// What to do when user confirms
+    pub prompt_type: PromptType,
+}
+
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
 pub struct Editor {
     /// All open buffers
@@ -51,6 +79,9 @@ pub struct Editor {
 
     /// Scroll offset for help page
     help_scroll: usize,
+
+    /// Active prompt (minibuffer)
+    prompt: Option<Prompt>,
 }
 
 impl Editor {
@@ -78,6 +109,7 @@ impl Editor {
             status_message: None,
             help_visible: false,
             help_scroll: 0,
+            prompt: None,
         })
     }
 
@@ -418,6 +450,267 @@ impl Editor {
         }
     }
 
+    // Prompt/Minibuffer control methods
+
+    /// Start a new prompt (enter minibuffer mode)
+    pub fn start_prompt(&mut self, message: String, prompt_type: PromptType) {
+        self.prompt = Some(Prompt {
+            message,
+            input: String::new(),
+            cursor_pos: 0,
+            prompt_type,
+        });
+    }
+
+    /// Cancel the current prompt and return to normal mode
+    pub fn cancel_prompt(&mut self) {
+        self.prompt = None;
+        self.status_message = Some("Canceled".to_string());
+    }
+
+    /// Get the confirmed input and prompt type, consuming the prompt
+    pub fn confirm_prompt(&mut self) -> Option<(String, PromptType)> {
+        if let Some(prompt) = self.prompt.take() {
+            Some((prompt.input, prompt.prompt_type))
+        } else {
+            None
+        }
+    }
+
+    /// Check if currently in prompt mode
+    pub fn is_prompting(&self) -> bool {
+        self.prompt.is_some()
+    }
+
+    /// Get current prompt input (for display)
+    pub fn prompt_input(&self) -> Option<&str> {
+        self.prompt.as_ref().map(|p| p.input.as_str())
+    }
+
+    /// Get mutable reference to prompt (for input handling)
+    pub fn prompt_mut(&mut self) -> Option<&mut Prompt> {
+        self.prompt.as_mut()
+    }
+
+    /// Set a status message to display in the status bar
+    pub fn set_status_message(&mut self, message: String) {
+        self.status_message = Some(message);
+    }
+
+    /// Handle a key event and return whether it was handled
+    /// This is the central key handling logic used by both main.rs and tests
+    pub fn handle_key(&mut self, code: crossterm::event::KeyCode, modifiers: crossterm::event::KeyModifiers) -> std::io::Result<()> {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        use crate::keybindings::Action;
+        use std::path::Path;
+
+        // Handle help mode first
+        if self.is_help_visible() {
+            match (code, modifiers) {
+                (KeyCode::Esc, KeyModifiers::NONE) | (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
+                    self.toggle_help();
+                }
+                (KeyCode::Up, KeyModifiers::NONE) => self.scroll_help(-1),
+                (KeyCode::Down, KeyModifiers::NONE) => self.scroll_help(1),
+                (KeyCode::PageUp, KeyModifiers::NONE) => self.scroll_help(-10),
+                (KeyCode::PageDown, KeyModifiers::NONE) => self.scroll_help(10),
+                _ => {}
+            }
+            return Ok(());
+        }
+
+        // Handle prompt mode
+        if self.is_prompting() {
+            match (code, modifiers) {
+                // Confirm prompt with Enter
+                (KeyCode::Enter, KeyModifiers::NONE) => {
+                    if let Some((input, prompt_type)) = self.confirm_prompt() {
+                        // Handle the confirmed prompt
+                        match prompt_type {
+                            PromptType::OpenFile => {
+                                let path = Path::new(&input);
+                                if let Err(e) = self.open_file(path) {
+                                    self.set_status_message(format!("Error opening file: {}", e));
+                                } else {
+                                    self.set_status_message(format!("Opened: {}", input));
+                                }
+                            }
+                            PromptType::SaveFileAs => {
+                                self.set_status_message(format!("Save-as not yet implemented: {}", input));
+                            }
+                            PromptType::Search => {
+                                self.set_status_message(format!("Search not yet implemented: {}", input));
+                            }
+                            PromptType::Replace { search: _ } => {
+                                self.set_status_message(format!("Replace not yet implemented: {}", input));
+                            }
+                            PromptType::Command => {
+                                self.set_status_message(format!("Command palette not yet implemented: {}", input));
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+                // Cancel prompt with Escape
+                (KeyCode::Esc, KeyModifiers::NONE) => {
+                    self.cancel_prompt();
+                    return Ok(());
+                }
+                // Insert character into prompt
+                (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                    if let Some(prompt) = self.prompt_mut() {
+                        prompt.input.insert(prompt.cursor_pos, c);
+                        prompt.cursor_pos += c.len_utf8();
+                    }
+                    return Ok(());
+                }
+                // Backspace in prompt
+                (KeyCode::Backspace, KeyModifiers::NONE) => {
+                    if let Some(prompt) = self.prompt_mut() {
+                        if prompt.cursor_pos > 0 {
+                            let byte_pos = prompt.cursor_pos;
+                            let mut char_start = byte_pos - 1;
+                            while char_start > 0 && !prompt.input.is_char_boundary(char_start) {
+                                char_start -= 1;
+                            }
+                            prompt.input.remove(char_start);
+                            prompt.cursor_pos = char_start;
+                        }
+                    }
+                    return Ok(());
+                }
+                // Move cursor left in prompt
+                (KeyCode::Left, KeyModifiers::NONE) => {
+                    if let Some(prompt) = self.prompt_mut() {
+                        if prompt.cursor_pos > 0 {
+                            let mut new_pos = prompt.cursor_pos - 1;
+                            while new_pos > 0 && !prompt.input.is_char_boundary(new_pos) {
+                                new_pos -= 1;
+                            }
+                            prompt.cursor_pos = new_pos;
+                        }
+                    }
+                    return Ok(());
+                }
+                // Move cursor right in prompt
+                (KeyCode::Right, KeyModifiers::NONE) => {
+                    if let Some(prompt) = self.prompt_mut() {
+                        if prompt.cursor_pos < prompt.input.len() {
+                            let mut new_pos = prompt.cursor_pos + 1;
+                            while new_pos < prompt.input.len() && !prompt.input.is_char_boundary(new_pos) {
+                                new_pos += 1;
+                            }
+                            prompt.cursor_pos = new_pos;
+                        }
+                    }
+                    return Ok(());
+                }
+                // Move to start of prompt input
+                (KeyCode::Home, KeyModifiers::NONE) => {
+                    if let Some(prompt) = self.prompt_mut() {
+                        prompt.cursor_pos = 0;
+                    }
+                    return Ok(());
+                }
+                // Move to end of prompt input
+                (KeyCode::End, KeyModifiers::NONE) => {
+                    if let Some(prompt) = self.prompt_mut() {
+                        prompt.cursor_pos = prompt.input.len();
+                    }
+                    return Ok(());
+                }
+                // Ignore other keys in prompt mode
+                _ => return Ok(()),
+            }
+        }
+
+        // Normal mode: convert key to action
+        let action = match (code, modifiers) {
+            (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => Action::InsertChar(c),
+            (KeyCode::Enter, KeyModifiers::NONE) => Action::InsertNewline,
+            (KeyCode::Tab, KeyModifiers::NONE) => Action::InsertTab,
+            (KeyCode::Left, KeyModifiers::NONE) => Action::MoveLeft,
+            (KeyCode::Right, KeyModifiers::NONE) => Action::MoveRight,
+            (KeyCode::Up, KeyModifiers::NONE) => Action::MoveUp,
+            (KeyCode::Down, KeyModifiers::NONE) => Action::MoveDown,
+            (KeyCode::Home, KeyModifiers::NONE) => Action::MoveLineStart,
+            (KeyCode::End, KeyModifiers::NONE) => Action::MoveLineEnd,
+            (KeyCode::Home, KeyModifiers::CONTROL) => Action::MoveDocumentStart,
+            (KeyCode::End, KeyModifiers::CONTROL) => Action::MoveDocumentEnd,
+            (KeyCode::Backspace, KeyModifiers::NONE) => Action::DeleteBackward,
+            (KeyCode::Delete, KeyModifiers::NONE) => Action::DeleteForward,
+            (KeyCode::Backspace, KeyModifiers::CONTROL) => Action::DeleteWordBackward,
+            (KeyCode::Delete, KeyModifiers::CONTROL) => Action::DeleteWordForward,
+            (KeyCode::Left, KeyModifiers::SHIFT) => Action::SelectLeft,
+            (KeyCode::Right, KeyModifiers::SHIFT) => Action::SelectRight,
+            (KeyCode::Up, KeyModifiers::SHIFT) => Action::SelectUp,
+            (KeyCode::Down, KeyModifiers::SHIFT) => Action::SelectDown,
+            (KeyCode::Home, KeyModifiers::SHIFT) => Action::SelectLineStart,
+            (KeyCode::End, KeyModifiers::SHIFT) => Action::SelectLineEnd,
+            (KeyCode::Char('a'), KeyModifiers::CONTROL) => Action::SelectAll,
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => Action::Copy,
+            (KeyCode::Char('x'), KeyModifiers::CONTROL) => Action::Cut,
+            (KeyCode::Char('v'), KeyModifiers::CONTROL) => Action::Paste,
+            (KeyCode::Char('z'), KeyModifiers::CONTROL) => Action::Undo,
+            (KeyCode::Char('y'), KeyModifiers::CONTROL) => Action::Redo,
+            (KeyCode::Char('s'), KeyModifiers::CONTROL) => Action::Save,
+            (KeyCode::Char('o'), KeyModifiers::CONTROL) => Action::Open,
+            (KeyCode::Char('q'), KeyModifiers::CONTROL) => Action::Quit,
+            (KeyCode::Char('h'), KeyModifiers::CONTROL) => Action::ShowHelp,
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => Action::AddCursorNextMatch,
+            (KeyCode::Up, m) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::ALT) => Action::AddCursorAbove,
+            (KeyCode::Down, m) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::ALT) => Action::AddCursorBelow,
+            (KeyCode::Esc, KeyModifiers::NONE) => Action::RemoveSecondaryCursors,
+            (KeyCode::Left, KeyModifiers::CONTROL) => Action::MoveWordLeft,
+            (KeyCode::Right, KeyModifiers::CONTROL) => Action::MoveWordRight,
+            (KeyCode::PageUp, KeyModifiers::NONE) => Action::MovePageUp,
+            (KeyCode::PageDown, KeyModifiers::NONE) => Action::MovePageDown,
+            (KeyCode::Up, KeyModifiers::CONTROL) => Action::ScrollUp,
+            (KeyCode::Down, KeyModifiers::CONTROL) => Action::ScrollDown,
+            _ => Action::None,
+        };
+
+        // Handle special actions
+        match action {
+            Action::Quit => self.quit(),
+            Action::Save => self.save()?,
+            Action::Open => self.start_prompt("Find file: ".to_string(), PromptType::OpenFile),
+            Action::Copy => self.copy_selection(),
+            Action::Cut => self.cut_selection(),
+            Action::Paste => self.paste(),
+            Action::Undo => {
+                if let Some(event) = self.active_event_log_mut().undo() {
+                    if let Some(inverse) = event.inverse() {
+                        self.active_state_mut().apply(&inverse);
+                    }
+                }
+            }
+            Action::Redo => {
+                let event_opt = self.active_event_log_mut().redo().cloned();
+                if let Some(event) = event_opt {
+                    self.active_state_mut().apply(&event);
+                }
+            }
+            Action::ShowHelp => self.toggle_help(),
+            Action::AddCursorNextMatch => self.add_cursor_at_next_match(),
+            Action::AddCursorAbove => self.add_cursor_above(),
+            Action::AddCursorBelow => self.add_cursor_below(),
+            Action::RemoveSecondaryCursors => self.active_state_mut().cursors.remove_secondary(),
+            Action::None => {}
+            _ => {
+                // Convert action to events and apply them
+                if let Some(events) = self.action_to_events(action) {
+                    for event in events {
+                        self.active_event_log_mut().append(event.clone());
+                        self.active_state_mut().apply(&event);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Render the editor to the terminal
     pub fn render(&mut self, frame: &mut Frame) {
         let size = frame.area();
@@ -581,6 +874,28 @@ impl Editor {
 
     /// Render the status bar
     fn render_status_bar(&mut self, frame: &mut Frame, area: Rect) {
+        // If we're in prompt mode, render the prompt instead of the status bar
+        if let Some(prompt) = &self.prompt {
+            // Build prompt display: message + input + cursor
+            let prompt_text = format!("{}{}", prompt.message, prompt.input);
+
+            // Use a different style for prompt (yellow background to distinguish from status bar)
+            let prompt_line = Paragraph::new(prompt_text)
+                .style(Style::default().fg(Color::Black).bg(Color::Yellow));
+
+            frame.render_widget(prompt_line, area);
+
+            // Set cursor position in the prompt
+            // Cursor should be at: message.len() + cursor_pos
+            let cursor_x = (prompt.message.len() + prompt.cursor_pos) as u16;
+            if cursor_x < area.width {
+                frame.set_cursor_position((area.x + cursor_x, area.y));
+            }
+
+            return;
+        }
+
+        // Normal status bar rendering
         // Collect all data we need from state
         let (filename, modified, line, col) = {
             let state = self.active_state_mut();

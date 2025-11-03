@@ -52,43 +52,8 @@ impl EditorTestHarness {
 
     /// Simulate a key press
     pub fn send_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> io::Result<()> {
-        use editor::keybindings::Action;
-
-        // Convert key code to action (simplified version of main.rs logic)
-        let action = match (code, modifiers) {
-            (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
-                Action::InsertChar(c)
-            }
-            (KeyCode::Enter, KeyModifiers::NONE) => Action::InsertNewline,
-            (KeyCode::Tab, KeyModifiers::NONE) => Action::InsertTab,
-            (KeyCode::Left, KeyModifiers::NONE) => Action::MoveLeft,
-            (KeyCode::Right, KeyModifiers::NONE) => Action::MoveRight,
-            (KeyCode::Up, KeyModifiers::NONE) => Action::MoveUp,
-            (KeyCode::Down, KeyModifiers::NONE) => Action::MoveDown,
-            (KeyCode::Home, KeyModifiers::NONE) => Action::MoveLineStart,
-            (KeyCode::End, KeyModifiers::NONE) => Action::MoveLineEnd,
-            (KeyCode::Home, KeyModifiers::CONTROL) => Action::MoveDocumentStart,
-            (KeyCode::End, KeyModifiers::CONTROL) => Action::MoveDocumentEnd,
-            (KeyCode::Backspace, KeyModifiers::NONE) => Action::DeleteBackward,
-            (KeyCode::Delete, KeyModifiers::NONE) => Action::DeleteForward,
-            // Selection
-            (KeyCode::Left, KeyModifiers::SHIFT) => Action::SelectLeft,
-            (KeyCode::Right, KeyModifiers::SHIFT) => Action::SelectRight,
-            (KeyCode::Up, KeyModifiers::SHIFT) => Action::SelectUp,
-            (KeyCode::Down, KeyModifiers::SHIFT) => Action::SelectDown,
-            _ => Action::None,
-        };
-
-        // Convert action to events and apply them
-        if let Some(events) = self.editor.action_to_events(action) {
-            for event in events {
-                // Record in event log
-                self.editor.active_event_log_mut().append(event.clone());
-                // Apply to state
-                self.editor.active_state_mut().apply(&event);
-            }
-        }
-
+        // Delegate to the editor's handle_key method (just like main.rs does)
+        self.editor.handle_key(code, modifiers)?;
         self.render()?;
         Ok(())
     }
