@@ -25,13 +25,15 @@ Building a high-performance terminal text editor from scratch with:
 
 ## Progress Summary
 
-**Current Status**: Phase 1 Complete ✅ (258 tests passing)
+**Current Status**: Phase 2.1 Complete ✅ (267 tests passing)
 
 **Commits**:
 - ✅ Phase 0: Foundational modules complete
 - ✅ Phase 1: Core editor complete with full event loop, rendering, and file operations
 - ✅ Fixed cursor rendering bug (coordinate swap)
 - ✅ Added comprehensive E2E tests and benchmarks
+- ✅ Added help page with Ctrl+H showing all keybindings
+- ✅ Phase 2.1: Multi-cursor support (Ctrl+D, Ctrl+Alt+Up/Down, Esc)
 
 ---
 
@@ -152,16 +154,16 @@ Building a high-performance terminal text editor from scratch with:
 
 ## Phase 2: Multi-Cursor & Advanced Editing (1-2 days)
 
-### 2.1 Multi-Cursor Keybindings
-- [ ] Implement Ctrl+D (add cursor at next match):
+### 2.1 Multi-Cursor Keybindings ✅ COMPLETE
+- ✅ Implement Ctrl+D (add cursor at next match):
   - Find next occurrence of selected text
   - Add cursor there
   - Normalize cursors
-- [ ] Implement Ctrl+Alt+Up/Down (add cursor above/below):
+- ✅ Implement Ctrl+Alt+Up/Down (add cursor above/below):
   - Add cursor at same column on adjacent line
-- [ ] Implement Esc (remove secondary cursors):
+- ✅ Implement Esc (remove secondary cursors):
   - Keep only primary cursor
-- [ ] Test multi-cursor editing:
+- ✅ Test multi-cursor editing:
   - Type with multiple cursors
   - Delete with multiple cursors
   - Move all cursors together
@@ -382,9 +384,9 @@ Building a high-performance terminal text editor from scratch with:
 - Buffer property tests (5 tests ✅)
 - EventLog property tests (2 tests ✅)
 - Integration tests (9 tests ✅)
-- E2E tests (16 tests ✅)
+- E2E tests (25 tests ✅)
 - Editor action tests (23 tests ✅)
-- **Total: 258 tests passing ✅**
+- **Total: 267 tests passing ✅**
 
 ### Phase 1 Testing Tasks ✅ COMPLETE
 - ✅ Set up E2E test harness with TestBackend
@@ -394,11 +396,13 @@ Building a high-performance terminal text editor from scratch with:
 - ✅ Write E2E tests for basic editing workflow
 - ✅ Write E2E tests for file operations (open/save/quit)
 - ✅ Add benchmarks for insert/delete operations (9 benchmark suites)
+- ✅ Write E2E tests for help page (4 tests)
+- ✅ Write E2E tests for multi-cursor operations (5 tests)
 
 ### Testing Tools
 - `cargo test --lib` - Unit tests
 - `cargo test --test integration_tests` - Integration tests
-- `cargo test --test e2e` - End-to-end TUI tests
+- `cargo test --test e2e_tests` - End-to-end TUI tests
 - `cargo bench` - Performance benchmarks
 - `proptest` - Property-based testing (Phase 1.6)
 
@@ -447,10 +451,18 @@ notify = "6.0"      # File watching (config hot reload)
 - ✅ Responsive (no lag)
 - ✅ Handles errors gracefully
 
-### Phase 2
-- [ ] Multi-cursor editing works smoothly
-- [ ] Undo/redo with multiple cursors
-- [ ] All 100+ tests passing
+### Phase 2.1 ✅ COMPLETE
+- ✅ Multi-cursor editing works smoothly
+- ✅ Undo/redo with multiple cursors
+- ✅ 267 tests passing
+- ✅ Ctrl+D adds cursor at next match
+- ✅ Ctrl+Alt+Up/Down adds cursors above/below
+- ✅ Esc removes secondary cursors
+
+### Phase 2.2-2.3 (In Progress)
+- [ ] Advanced selection features
+- [ ] Smart editing features
+- [ ] All tests passing
 
 ### Phase 3
 - [ ] Syntax highlighting for Rust, JS, Python
@@ -485,4 +497,4 @@ notify = "6.0"      # File watching (config hot reload)
 
 ## Current Focus
 
-**Next Task**: Begin Phase 2 - Multi-Cursor & Advanced Editing
+**Next Task**: Continue Phase 2 - Advanced Selection & Smart Editing (Phase 2.2-2.3)
