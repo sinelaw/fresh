@@ -460,15 +460,28 @@ impl Buffer {
         }
     }
 
-    /// Convert a byte offset to a line number
-    /// Only scans up to the given byte position
-    pub fn byte_to_line(&self, byte: usize) -> usize {
+    /// Get line number for a byte position without forcing a scan
+    /// Returns an estimate by counting newlines from last known position
+    /// This is much faster for large files but less accurate
+    pub fn byte_to_line_lazy(&self, byte: usize) -> usize {
         let byte = byte.min(self.len());
+        let cache = self.line_cache.borrow();
 
-        // Ensure we've scanned at least up to this byte position
-        self.ensure_line_cache_to(byte);
+        // If we've already scanned past this point, use the cached value
+        if cache.fully_scanned || byte <= cache.scanned_up_to {
+            cache.byte_to_line(byte)
+        } else {
+            // Estimate by counting from last known position
+            let last_known_line = cache.line_starts.len().saturating_sub(1);
+            let last_known_byte = cache.line_starts.last().copied().unwrap_or(0);
 
-        self.line_cache.borrow().byte_to_line(byte)
+            // Drop the borrow before counting newlines (which needs to borrow content)
+            drop(cache);
+
+            // Count newlines from last known position to target
+            let additional_lines = self.count_newlines_in_range(last_known_byte, byte);
+            last_known_line + additional_lines
+        }
     }
 
     /// Get an approximate or cached line count without forcing a full scan
@@ -485,6 +498,66 @@ impl Buffer {
     /// Check if we're at or past the end of the file (by bytes)
     pub fn is_at_eof(&self, byte_pos: usize) -> bool {
         byte_pos >= self.len()
+    }
+
+    /// Find the start of the line containing the given byte position
+    /// Works backwards from byte_pos, no line number conversion needed
+    pub fn find_line_start_at_byte(&self, byte_pos: usize) -> usize {
+        let byte_pos = byte_pos.min(self.len());
+
+        // Search backwards for newline
+        for i in (0..byte_pos).rev() {
+            let piece = self.content.get(i);
+            if let crate::chunk_tree::ChunkPiece::Data { data } = piece {
+                if !data.is_empty() && data[0] == b'\n' {
+                    return i + 1; // Return position after the newline
+                }
+            }
+        }
+        0 // Start of file
+    }
+
+    /// Find the end of the line containing the given byte position
+    /// Works forwards from byte_pos, no line number conversion needed
+    /// Returns position just before the newline (or EOF)
+    pub fn find_line_end_at_byte(&self, byte_pos: usize) -> usize {
+        let byte_pos = byte_pos.min(self.len());
+        let file_len = self.len();
+
+        // Search forwards for newline
+        for i in byte_pos..file_len {
+            let piece = self.content.get(i);
+            if let crate::chunk_tree::ChunkPiece::Data { data } = piece {
+                if !data.is_empty() && data[0] == b'\n' {
+                    return i; // Return position of the newline
+                }
+            }
+        }
+        file_len // End of file
+    }
+
+    /// Find the start of the previous line from the given byte position
+    /// Returns None if already on the first line
+    pub fn find_prev_line_start_from_byte(&self, byte_pos: usize) -> Option<usize> {
+        let line_start = self.find_line_start_at_byte(byte_pos);
+        if line_start == 0 {
+            return None; // Already on first line
+        }
+
+        // Go back one character (to the newline of previous line) and find that line's start
+        Some(self.find_line_start_at_byte(line_start - 1))
+    }
+
+    /// Find the start of the next line from the given byte position
+    /// Returns None if on the last line
+    pub fn find_next_line_start_from_byte(&self, byte_pos: usize) -> Option<usize> {
+        let line_end = self.find_line_end_at_byte(byte_pos);
+        if line_end >= self.len() {
+            return None; // On last line
+        }
+
+        // Move past the newline to get to next line start
+        Some(line_end + 1)
     }
 
     /// Check if a line is the last line in the file (no full scan)
@@ -517,25 +590,6 @@ impl Buffer {
         } else {
             next_line_start
         }
-    }
-
-    /// Find the end of the line containing the given byte position (no full scan)
-    /// Returns the byte position just before the newline (or EOF)
-    pub fn find_line_end_from_byte(&self, byte_pos: usize) -> usize {
-        let line = self.byte_to_line(byte_pos);
-        self.line_end_byte(line)
-    }
-
-    /// Find the end of the line containing the given byte position INCLUDING newline (no full scan)
-    pub fn find_line_end_with_newline_from_byte(&self, byte_pos: usize) -> usize {
-        let line = self.byte_to_line(byte_pos);
-        self.line_end_byte_with_newline(line)
-    }
-
-    /// Check if the byte position is on the last line (no full scan)
-    pub fn is_on_last_line(&self, byte_pos: usize) -> bool {
-        let line = self.byte_to_line(byte_pos);
-        self.is_last_line(line)
     }
 
     /// Get line number for display purposes
@@ -846,6 +900,31 @@ mod tests {
             }
             content
         }
+
+        /// Convert byte offset to line number - triggers scan, only for tests
+        pub(in crate::buffer) fn byte_to_line(&self, byte: usize) -> usize {
+            let byte = byte.min(self.len());
+            self.ensure_line_cache_to(byte);
+            self.line_cache.borrow().byte_to_line(byte)
+        }
+
+        /// Find line end from byte position - triggers scan, only for tests
+        pub(in crate::buffer) fn find_line_end_from_byte(&self, byte_pos: usize) -> usize {
+            let line = self.byte_to_line(byte_pos);
+            self.line_end_byte(line)
+        }
+
+        /// Find line end with newline from byte position - triggers scan, only for tests
+        pub(in crate::buffer) fn find_line_end_with_newline_from_byte(&self, byte_pos: usize) -> usize {
+            let line = self.byte_to_line(byte_pos);
+            self.line_end_byte_with_newline(line)
+        }
+
+        /// Check if byte position is on last line - triggers scan, only for tests
+        pub(in crate::buffer) fn is_on_last_line(&self, byte_pos: usize) -> bool {
+            let line = self.byte_to_line(byte_pos);
+            self.is_last_line(line)
+        }
     }
 
     // Property-based tests using proptest
@@ -986,10 +1065,10 @@ mod tests {
     #[test]
     fn test_byte_to_line() {
         let buffer = Buffer::from_str("line0\nline1\nline2");
-        assert_eq!(buffer.byte_to_line(0), 0);
-        assert_eq!(buffer.byte_to_line(5), 0);
-        assert_eq!(buffer.byte_to_line(6), 1);
-        assert_eq!(buffer.byte_to_line(12), 2);
+        assert_eq!(buffer.byte_to_line_lazy(0), 0);
+        assert_eq!(buffer.byte_to_line_lazy(5), 0);
+        assert_eq!(buffer.byte_to_line_lazy(6), 1);
+        assert_eq!(buffer.byte_to_line_lazy(12), 2);
     }
 
     #[test]

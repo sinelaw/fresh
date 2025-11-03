@@ -940,7 +940,7 @@ fn test_vertical_scroll_when_typing_to_bottom() {
 
     // Verify cursor is on the expected line
     let buffer = &harness.editor().active_state().buffer;
-    let cursor_line = buffer.byte_to_line(harness.cursor_position());
+    let cursor_line = buffer.byte_to_line_lazy(harness.cursor_position());
     // We typed total_lines lines, so last line should be total_lines - 1
     assert_eq!(cursor_line, total_lines - 1, "Cursor should be on last line");
 
@@ -953,7 +953,7 @@ fn test_vertical_scroll_when_typing_to_bottom() {
     );
 
     // The cursor should be on the last line
-    let cursor_line = buffer.byte_to_line(harness.cursor_position());
+    let cursor_line = buffer.byte_to_line_lazy(harness.cursor_position());
     assert_eq!(
         cursor_line, total_lines - 1,
         "Cursor should be on the last line (line {})",

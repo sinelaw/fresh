@@ -99,7 +99,8 @@ impl Viewport {
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)
     pub fn ensure_visible(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
         // Vertical scrolling
-        let cursor_line = buffer.byte_to_line(cursor.position);
+        // Use lazy line lookup to avoid forcing full scans on large files
+        let cursor_line = buffer.byte_to_line_lazy(cursor.position);
         // Use approximate line count if available, otherwise use a very large number
         // This is safe because ensure_line_visible will naturally clamp when scrolling
         let total_lines = buffer.approximate_line_count().unwrap_or(usize::MAX);
@@ -178,7 +179,7 @@ impl Viewport {
         // Convert cursor positions to line numbers
         let mut cursor_lines: Vec<(usize, usize)> = cursors
             .iter()
-            .map(|(priority, cursor)| (*priority, buffer.byte_to_line(cursor.position)))
+            .map(|(priority, cursor)| (*priority, buffer.byte_to_line_lazy(cursor.position)))
             .collect();
 
         // Sort by priority (primary cursor first)
@@ -220,7 +221,7 @@ impl Viewport {
     /// Get the cursor screen position (x, y) which is (col, row) for rendering
     /// This returns the position relative to the viewport, accounting for horizontal scrolling
     pub fn cursor_screen_position(&self, buffer: &mut Buffer, cursor: &Cursor) -> (u16, u16) {
-        let line = buffer.byte_to_line(cursor.position);
+        let line = buffer.byte_to_line_lazy(cursor.position);
         let line_start = buffer.line_to_byte(line);
         let column = cursor.position.saturating_sub(line_start);
 
@@ -291,7 +292,7 @@ mod tests {
         let cursor = Cursor::new(cursor_pos);
         vp.ensure_visible(&mut buffer, &cursor);
 
-        let cursor_line = buffer.byte_to_line(cursor_pos);
+        let cursor_line = buffer.byte_to_line_lazy(cursor_pos);
         assert!(vp.is_line_visible(cursor_line));
     }
 

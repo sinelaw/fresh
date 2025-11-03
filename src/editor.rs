@@ -420,7 +420,7 @@ impl Editor {
     pub fn add_cursor_above(&mut self) {
         let state = self.active_state();
         let primary = state.cursors.primary();
-        let current_line = state.buffer.byte_to_line(primary.position);
+        let current_line = state.buffer.byte_to_line_lazy(primary.position);
 
         if current_line == 0 {
             self.status_message = Some("Already at first line".to_string());
@@ -451,7 +451,7 @@ impl Editor {
     pub fn add_cursor_below(&mut self) {
         let state = self.active_state();
         let primary = state.cursors.primary();
-        let current_line = state.buffer.byte_to_line(primary.position);
+        let current_line = state.buffer.byte_to_line_lazy(primary.position);
 
         if state.buffer.is_last_line(current_line) {
             self.status_message = Some("Already at last line".to_string());
@@ -1223,7 +1223,7 @@ impl Editor {
             };
 
             let cursor = *state.primary_cursor();
-            let line = state.buffer.byte_to_line(cursor.position) + 1;
+            let line = state.buffer.byte_to_line_lazy(cursor.position) + 1;
             let col = cursor.position - state.buffer.line_to_byte(line - 1);
 
             (filename, modified, line, col)
@@ -1602,13 +1602,12 @@ impl Editor {
 
             Action::MoveUp => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let current_line = state.buffer.byte_to_line(cursor.position);
-                    if current_line > 0 {
-                        let line_start = state.buffer.line_to_byte(current_line);
-                        let col_offset = cursor.position - line_start;
+                    // Use byte-based navigation - no line number conversion needed
+                    if let Some(prev_line_start) = state.buffer.find_prev_line_start_from_byte(cursor.position) {
+                        let current_line_start = state.buffer.find_line_start_at_byte(cursor.position);
+                        let col_offset = cursor.position - current_line_start;
 
-                        let prev_line_start = state.buffer.line_to_byte(current_line - 1);
-                        let prev_line_end = line_start.saturating_sub(1); // Exclude newline
+                        let prev_line_end = current_line_start.saturating_sub(1); // Position before newline
                         let prev_line_len = prev_line_end - prev_line_start;
 
                         let new_pos = prev_line_start + col_offset.min(prev_line_len);
@@ -1623,13 +1622,12 @@ impl Editor {
 
             Action::MoveDown => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let current_line = state.buffer.byte_to_line(cursor.position);
-                    if !state.buffer.is_last_line(current_line) {
-                        let line_start = state.buffer.line_to_byte(current_line);
-                        let col_offset = cursor.position - line_start;
+                    // Use byte-based navigation - no line number conversion needed
+                    if let Some(next_line_start) = state.buffer.find_next_line_start_from_byte(cursor.position) {
+                        let current_line_start = state.buffer.find_line_start_at_byte(cursor.position);
+                        let col_offset = cursor.position - current_line_start;
 
-                        let next_line_start = state.buffer.line_to_byte(current_line + 1);
-                        let next_line_end = state.buffer.line_end_byte(current_line + 1);
+                        let next_line_end = state.buffer.find_line_end_at_byte(next_line_start);
                         let next_line_len = next_line_end - next_line_start;
 
                         let new_pos = next_line_start + col_offset.min(next_line_len);
@@ -1644,8 +1642,8 @@ impl Editor {
 
             Action::MoveLineStart => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let line = state.buffer.byte_to_line(cursor.position);
-                    let line_start = state.buffer.line_to_byte(line);
+                    // Use byte-based navigation - no line number conversion needed
+                    let line_start = state.buffer.find_line_start_at_byte(cursor.position);
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: line_start,
@@ -1656,8 +1654,8 @@ impl Editor {
 
             Action::MoveLineEnd => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let line = state.buffer.byte_to_line(cursor.position);
-                    let line_end = state.buffer.line_end_byte(line);
+                    // Use byte-based navigation - no line number conversion needed
+                    let line_end = state.buffer.find_line_end_at_byte(cursor.position);
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: line_end,
@@ -1711,7 +1709,7 @@ impl Editor {
 
             Action::DeleteLine => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let line = state.buffer.byte_to_line(cursor.position);
+                    let line = state.buffer.byte_to_line_lazy(cursor.position);
                     let line_start = state.buffer.line_to_byte(line);
                     let line_end = state.buffer.line_end_byte_with_newline(line);
 
@@ -1754,13 +1752,12 @@ impl Editor {
             Action::SelectUp => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let current_line = state.buffer.byte_to_line(cursor.position);
-                    if current_line > 0 {
-                        let line_start = state.buffer.line_to_byte(current_line);
-                        let col_offset = cursor.position - line_start;
+                    // Use byte-based navigation - no line number conversion needed
+                    if let Some(prev_line_start) = state.buffer.find_prev_line_start_from_byte(cursor.position) {
+                        let current_line_start = state.buffer.find_line_start_at_byte(cursor.position);
+                        let col_offset = cursor.position - current_line_start;
 
-                        let prev_line_start = state.buffer.line_to_byte(current_line - 1);
-                        let prev_line_end = line_start.saturating_sub(1);
+                        let prev_line_end = current_line_start.saturating_sub(1);
                         let prev_line_len = prev_line_end - prev_line_start;
 
                         let new_pos = prev_line_start + col_offset.min(prev_line_len);
@@ -1776,13 +1773,12 @@ impl Editor {
             Action::SelectDown => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let current_line = state.buffer.byte_to_line(cursor.position);
-                    if !state.buffer.is_last_line(current_line) {
-                        let line_start = state.buffer.line_to_byte(current_line);
-                        let col_offset = cursor.position - line_start;
+                    // Use byte-based navigation - no line number conversion needed
+                    if let Some(next_line_start) = state.buffer.find_next_line_start_from_byte(cursor.position) {
+                        let current_line_start = state.buffer.find_line_start_at_byte(cursor.position);
+                        let col_offset = cursor.position - current_line_start;
 
-                        let next_line_start = state.buffer.line_to_byte(current_line + 1);
-                        let next_line_end = state.buffer.line_end_byte(current_line + 1);
+                        let next_line_end = state.buffer.find_line_end_at_byte(next_line_start);
                         let next_line_len = next_line_end - next_line_start;
 
                         let new_pos = next_line_start + col_offset.min(next_line_len);
@@ -1798,7 +1794,7 @@ impl Editor {
             Action::SelectLineStart => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let line = state.buffer.byte_to_line(cursor.position);
+                    let line = state.buffer.byte_to_line_lazy(cursor.position);
                     let line_start = state.buffer.line_to_byte(line);
                     events.push(Event::MoveCursor {
                         cursor_id,
@@ -1811,7 +1807,7 @@ impl Editor {
             Action::SelectLineEnd => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let line = state.buffer.byte_to_line(cursor.position);
+                    let line = state.buffer.byte_to_line_lazy(cursor.position);
                     let line_end = state.buffer.line_end_byte(line);
                     events.push(Event::MoveCursor {
                         cursor_id,
@@ -1847,7 +1843,7 @@ impl Editor {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let current_line = state.buffer.byte_to_line(cursor.position);
+                    let current_line = state.buffer.byte_to_line_lazy(cursor.position);
                     let target_line = current_line.saturating_sub(lines_per_page);
                     let new_pos = state.buffer.line_to_byte(target_line);
                     events.push(Event::MoveCursor {
@@ -1862,7 +1858,7 @@ impl Editor {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let current_line = state.buffer.byte_to_line(cursor.position);
+                    let current_line = state.buffer.byte_to_line_lazy(cursor.position);
                     let target_line = current_line + lines_per_page;
                     let target_byte = state.buffer.line_to_byte(target_line);
                     // Clamp to EOF if we went past the end
@@ -1903,7 +1899,7 @@ impl Editor {
             Action::SelectLine => {
                 // Select the entire line for each cursor
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let line = state.buffer.byte_to_line(cursor.position);
+                    let line = state.buffer.byte_to_line_lazy(cursor.position);
                     let line_start = state.buffer.line_to_byte(line);
                     let line_end = state.buffer.line_end_byte_with_newline(line);
 
@@ -2077,7 +2073,7 @@ impl Editor {
             Action::MovePageUp => {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let current_line = state.buffer.byte_to_line(cursor.position);
+                    let current_line = state.buffer.byte_to_line_lazy(cursor.position);
                     let target_line = current_line.saturating_sub(lines_per_page);
                     let line_start = state.buffer.line_to_byte(current_line);
                     let col_offset = cursor.position - line_start;
@@ -2099,7 +2095,7 @@ impl Editor {
             Action::MovePageDown => {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let current_line = state.buffer.byte_to_line(cursor.position);
+                    let current_line = state.buffer.byte_to_line_lazy(cursor.position);
                     let target_line = current_line + lines_per_page;
                     let line_start = state.buffer.line_to_byte(current_line);
                     let col_offset = cursor.position - line_start;

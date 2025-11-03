@@ -224,7 +224,7 @@ fn test_viewport_tracks_cursor_through_edits() {
     assert!(cursor_pos > 0);
 
     // Cursor should be visible (within viewport)
-    let cursor_line = state.buffer.byte_to_line(cursor_pos);
+    let cursor_line = state.buffer.byte_to_line_lazy(cursor_pos);
     let visible_range = state.viewport.visible_range();
 
     assert!(
@@ -291,7 +291,7 @@ fn test_viewport_resize_maintains_cursor() {
     state.resize(80, 5);
 
     // Cursor should still be visible
-    let cursor_line = state.buffer.byte_to_line(state.cursors.primary().position);
+    let cursor_line = state.buffer.byte_to_line_lazy(state.cursors.primary().position);
     let visible_range = state.viewport.visible_range();
 
     assert!(
