@@ -495,6 +495,57 @@ impl Buffer {
         byte_pos >= self.len()
     }
 
+    /// Check if a line is the last line in the file (no full scan)
+    /// Returns true if the next line would be at or past EOF
+    pub fn is_last_line(&self, line: usize) -> bool {
+        let next_line_start = self.line_to_byte(line + 1);
+        next_line_start >= self.len()
+    }
+
+    /// Get the byte position of the end of a line (no full scan)
+    /// This works even if we haven't scanned the entire file
+    /// Returns the byte position just before the newline (or EOF)
+    pub fn line_end_byte(&self, line: usize) -> usize {
+        let next_line_start = self.line_to_byte(line + 1);
+        if next_line_start >= self.len() {
+            // Last line - return EOF
+            self.len()
+        } else {
+            // Not last line - return position before newline
+            next_line_start.saturating_sub(1)
+        }
+    }
+
+    /// Get the byte position of the end of a line INCLUDING the newline (no full scan)
+    /// This is used for operations that want to include the newline character
+    pub fn line_end_byte_with_newline(&self, line: usize) -> usize {
+        let next_line_start = self.line_to_byte(line + 1);
+        if next_line_start >= self.len() {
+            self.len()
+        } else {
+            next_line_start
+        }
+    }
+
+    /// Find the end of the line containing the given byte position (no full scan)
+    /// Returns the byte position just before the newline (or EOF)
+    pub fn find_line_end_from_byte(&self, byte_pos: usize) -> usize {
+        let line = self.byte_to_line(byte_pos);
+        self.line_end_byte(line)
+    }
+
+    /// Find the end of the line containing the given byte position INCLUDING newline (no full scan)
+    pub fn find_line_end_with_newline_from_byte(&self, byte_pos: usize) -> usize {
+        let line = self.byte_to_line(byte_pos);
+        self.line_end_byte_with_newline(line)
+    }
+
+    /// Check if the byte position is on the last line (no full scan)
+    pub fn is_on_last_line(&self, byte_pos: usize) -> bool {
+        let line = self.byte_to_line(byte_pos);
+        self.is_last_line(line)
+    }
+
     /// Get line number for display purposes
     /// Returns either:
     /// - LineNumber::Absolute(n) if we have scanned up to this line

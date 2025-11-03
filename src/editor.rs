@@ -453,7 +453,7 @@ impl Editor {
         let primary = state.cursors.primary();
         let current_line = state.buffer.byte_to_line(primary.position);
 
-        if current_line + 1 >= state.buffer.line_count() {
+        if state.buffer.is_last_line(current_line) {
             self.status_message = Some("Already at last line".to_string());
             return;
         }
@@ -465,11 +465,7 @@ impl Editor {
         // Calculate position on line below
         let next_line = current_line + 1;
         let next_line_start = state.buffer.line_to_byte(next_line);
-        let next_line_end = if next_line + 1 < state.buffer.line_count() {
-            state.buffer.line_to_byte(next_line + 1).saturating_sub(1)
-        } else {
-            state.buffer.len()
-        };
+        let next_line_end = state.buffer.line_end_byte(next_line);
         let next_line_len = next_line_end - next_line_start;
 
         let new_pos = next_line_start + col_offset.min(next_line_len);
@@ -1663,11 +1659,7 @@ impl Editor {
             Action::MoveLineEnd => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let line = state.buffer.byte_to_line(cursor.position);
-                    let line_end = if line + 1 < state.buffer.line_count() {
-                        state.buffer.line_to_byte(line + 1).saturating_sub(1)
-                    } else {
-                        state.buffer.len()
-                    };
+                    let line_end = state.buffer.line_end_byte(line);
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: line_end,
@@ -1723,11 +1715,7 @@ impl Editor {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let line = state.buffer.byte_to_line(cursor.position);
                     let line_start = state.buffer.line_to_byte(line);
-                    let line_end = if line + 1 < state.buffer.line_count() {
-                        state.buffer.line_to_byte(line + 1) // Include newline
-                    } else {
-                        state.buffer.len()
-                    };
+                    let line_end = state.buffer.line_end_byte_with_newline(line);
 
                     if line_start < line_end {
                         let range = line_start..line_end;
@@ -1833,11 +1821,7 @@ impl Editor {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
                     let line = state.buffer.byte_to_line(cursor.position);
-                    let line_end = if line + 1 < state.buffer.line_count() {
-                        state.buffer.line_to_byte(line + 1).saturating_sub(1)
-                    } else {
-                        state.buffer.len()
-                    };
+                    let line_end = state.buffer.line_end_byte(line);
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: line_end,
@@ -1929,11 +1913,7 @@ impl Editor {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let line = state.buffer.byte_to_line(cursor.position);
                     let line_start = state.buffer.line_to_byte(line);
-                    let line_end = if line + 1 < state.buffer.line_count() {
-                        state.buffer.line_to_byte(line + 1) // Include newline
-                    } else {
-                        state.buffer.len()
-                    };
+                    let line_end = state.buffer.line_end_byte_with_newline(line);
 
                     events.push(Event::MoveCursor {
                         cursor_id,
