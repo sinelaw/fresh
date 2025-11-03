@@ -60,6 +60,22 @@ impl Viewport {
         self.top_line..self.bottom_line()
     }
 
+    /// Calculate the gutter width based on the maximum visible line number
+    /// Format is: "{:>N} │ " where N is the number of digits
+    /// Total width = N + 3 (for " │ ")
+    pub fn gutter_width(&self) -> usize {
+        let max_line = self.bottom_line();
+        let digits = if max_line == 0 {
+            1
+        } else {
+            // Calculate number of digits needed
+            // Line numbers are 1-indexed for display, so add 1
+            ((max_line as f64).log10().floor() as usize) + 1
+        };
+        // Minimum 4 digits for readability, plus " │ " = 3 chars
+        digits.max(4) + 3
+    }
+
     /// Check if a line is visible
     pub fn is_line_visible(&self, line: usize) -> bool {
         line >= self.top_line && line < self.bottom_line()
@@ -124,8 +140,8 @@ impl Viewport {
 
     /// Ensure a column is visible with horizontal scroll offset applied
     pub fn ensure_column_visible(&mut self, column: usize) {
-        // Calculate visible width (accounting for line numbers gutter: 7 chars)
-        let gutter_width = 7;
+        // Calculate visible width (accounting for line numbers gutter which is dynamic)
+        let gutter_width = self.gutter_width();
         let visible_width = (self.width as usize).saturating_sub(gutter_width);
 
         if visible_width == 0 {

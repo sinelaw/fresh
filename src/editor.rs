@@ -1081,6 +1081,11 @@ impl Editor {
         // Get visible lines
         let visible_lines = state.viewport.visible_range();
         tracing::debug!("Visible lines range: {:?}", visible_lines);
+
+        // Calculate gutter width dynamically based on max line number
+        let gutter_width = state.viewport.gutter_width();
+        let line_number_digits = gutter_width.saturating_sub(3); // Subtract " │ "
+
         let mut lines = Vec::new();
 
         // Collect all selection ranges from all cursors
@@ -1121,7 +1126,7 @@ impl Editor {
             // Line number prefix - use smart display (absolute or relative)
             let display_num = state.buffer.display_line_number(line_start);
             line_spans.push(Span::styled(
-                format!("{:>4} │ ", display_num.format()),
+                format!("{:>width$} │ ", display_num.format(), width = line_number_digits),
                 Style::default().fg(Color::DarkGray),
             ));
 
@@ -1161,9 +1166,9 @@ impl Editor {
         // Render cursor
         let cursor_positions = state.cursor_positions();
         if let Some(&(x, y)) = cursor_positions.first() {
-            // Adjust for line numbers (4 digits + " │ " = 7 chars)
+            // Adjust for line numbers (gutter width is dynamic based on max line number)
             // and adjust Y for the content area offset (area.y accounts for tab bar)
-            let screen_x = area.x.saturating_add(x).saturating_add(7);
+            let screen_x = area.x.saturating_add(x).saturating_add(gutter_width as u16);
             let screen_y = area.y.saturating_add(y);
             frame.set_cursor_position((screen_x, screen_y));
 

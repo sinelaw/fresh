@@ -2318,3 +2318,45 @@ fn test_load_big_file_e2e() {
     println!("\nTotal time: {:?}", harness_time + open_time);
     println!("Note: This includes the full editor flow + first render");
 }
+
+/// Test cursor positioning with large line numbers (100000+)
+/// Bug: When line numbers grow to 6+ digits, the gutter width increases,
+/// but cursor position calculation uses hardcoded gutter width of 7 chars.
+/// This causes the cursor to appear inside the line number column.
+#[test]
+fn test_cursor_position_with_large_line_numbers() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    // Create a small file, but then manually adjust the viewport to simulate
+    // being at line 100000 to test the rendering logic
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type some content
+    harness.type_text("Line 1\nLine 2\nLine 3\nLine 4\nLine 5").unwrap();
+
+    // Test with 7-digit line number (1,000,000) - this should trigger the bug
+    // The hardcoded gutter_width=7 won't be enough
+    {
+        let editor = harness.editor_mut();
+        let state = editor.active_state_mut();
+        state.viewport.top_line = 1_000_000;
+        state.cursors.primary_mut().position = 0;
+    }
+
+    harness.render().unwrap();
+    let screen_pos = harness.screen_cursor_position();
+    println!("\nWith 7-digit line number (1000000):");
+    println!("Screen cursor position: ({}, {})", screen_pos.0, screen_pos.1);
+
+    // Line number "1000000" = 7 digits + 1 space = 8 chars needed
+    // But if gutter_width is hardcoded to 7, cursor will be at x=0 (BUG!)
+    // Expected: cursor x should be >= 8
+    println!("Expected: cursor x >= 8 (for 7-digit line numbers)");
+    println!("Actual: cursor x = {}", screen_pos.0);
+
+    assert!(
+        screen_pos.0 >= 8,
+        "BUG REPRODUCED: Cursor x position {} is inside the line number gutter! Should be >= 8 for 7-digit line numbers",
+        screen_pos.0
+    );
+}
