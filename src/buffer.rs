@@ -1,4 +1,5 @@
 use crate::chunk_tree::{ChunkTree, ChunkTreeConfig};
+use std::cell::RefCell;
 use std::io::{self, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -13,7 +14,8 @@ pub struct Buffer {
     content: ChunkTree<'static>,
 
     /// Cached line boundaries for fast line<->byte conversion
-    line_cache: LineCache,
+    /// Uses RefCell for interior mutability - allows cache updates through &self
+    line_cache: RefCell<LineCache>,
 
     /// Optional file path for persistence
     file_path: Option<PathBuf>,
@@ -87,7 +89,7 @@ impl Buffer {
     pub fn new() -> Self {
         Self {
             content: ChunkTree::new(DEFAULT_CONFIG),
-            line_cache: LineCache::new(),
+            line_cache: RefCell::new(LineCache::new()),
             file_path: None,
             modified: false,
         }
@@ -105,7 +107,7 @@ impl Buffer {
 
         Self {
             content,
-            line_cache,
+            line_cache: RefCell::new(line_cache),
             file_path: None,
             modified: false,
         }
@@ -160,7 +162,7 @@ impl Buffer {
         // Leak the text to get 'static lifetime
         let leaked: &'static [u8] = Box::leak(text.as_bytes().to_vec().into_boxed_slice());
         self.content = self.content.insert(pos, leaked);
-        self.line_cache.invalidate();
+        self.line_cache.borrow_mut().invalidate();
         self.modified = true;
     }
 
@@ -171,7 +173,7 @@ impl Buffer {
         }
 
         self.content = self.content.remove(range);
-        self.line_cache.invalidate();
+        self.line_cache.borrow_mut().invalidate();
         self.modified = true;
     }
 
@@ -225,37 +227,38 @@ impl Buffer {
     }
 
     /// Ensure the line cache is valid
-    fn ensure_line_cache(&mut self) {
-        if !self.line_cache.is_valid() {
+    fn ensure_line_cache(&self) {
+        let mut cache = self.line_cache.borrow_mut();
+        if !cache.is_valid() {
             let bytes = self.content.collect_bytes(b' ');
-            self.line_cache.rebuild(&bytes);
+            cache.rebuild(&bytes);
         }
     }
 
     /// Convert a line number to a byte offset
-    pub fn line_to_byte(&mut self, line: usize) -> usize {
+    pub fn line_to_byte(&self, line: usize) -> usize {
         self.ensure_line_cache();
-        self.line_cache.line_to_byte(line).unwrap_or(self.len())
+        self.line_cache.borrow().line_to_byte(line).unwrap_or(self.len())
     }
 
     /// Convert a byte offset to a line number
-    pub fn byte_to_line(&mut self, byte: usize) -> usize {
+    pub fn byte_to_line(&self, byte: usize) -> usize {
         self.ensure_line_cache();
-        self.line_cache.byte_to_line(byte.min(self.len()))
+        self.line_cache.borrow().byte_to_line(byte.min(self.len()))
     }
 
     /// Get the number of lines in the buffer
-    pub fn line_count(&mut self) -> usize {
+    pub fn line_count(&self) -> usize {
         self.ensure_line_cache();
-        self.line_cache.line_count()
+        self.line_cache.borrow().line_count()
     }
 
     /// Get the content of a specific line
-    pub fn line_content(&mut self, line: usize) -> String {
+    pub fn line_content(&self, line: usize) -> String {
         self.ensure_line_cache();
-        let start = self.line_cache.line_to_byte(line).unwrap_or(self.len());
-        let end = self
-            .line_cache
+        let cache = self.line_cache.borrow();
+        let start = cache.line_to_byte(line).unwrap_or(self.len());
+        let end = cache
             .line_to_byte(line + 1)
             .unwrap_or(self.len());
 
