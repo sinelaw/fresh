@@ -17,3 +17,7 @@ tree-sitter-rust = "0.23.2"
 proptest = "1.0"
 criterion = "0.5"
 tempfile = "3.15.0"
+
+[[bench]]
+name = "editor_benchmarks"
+harness = false
