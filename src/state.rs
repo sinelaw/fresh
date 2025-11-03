@@ -1,6 +1,6 @@
 use crate::buffer::Buffer;
 use crate::cursor::{Cursor, Cursors};
-use crate::event::{CursorId, Event};
+use crate::event::Event;
 use crate::viewport::Viewport;
 
 /// The complete editor state - everything needed to represent the current editing session
@@ -173,6 +173,7 @@ impl EditorState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::CursorId;
 
     #[test]
     fn test_state_new() {
