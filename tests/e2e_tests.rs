@@ -1952,3 +1952,78 @@ fn test_expand_selection_after_scrolling() {
     let selected_text = harness.editor().active_state().buffer.slice(range);
     assert_eq!(selected_text, "alpha beta", "Second expand should include 'beta'");
 }
+
+/// Test expand selection (Ctrl+Shift+Right) across line boundaries
+/// Ensures selection can expand from end of one line to beginning of next
+#[test]
+fn test_expand_selection_across_lines() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create multi-line content with words at line boundaries
+    harness.type_text("first line ending\nsecond line starting here").unwrap();
+
+    // Position cursor at "ending" on first line
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    // Move back to start of "ending"
+    for _ in 0..6 {
+        harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    }
+
+    // First expand: select "ending"
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "ending", "Should select 'ending' on first line");
+
+    // Second expand: should cross the newline and select "second" on next line
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "ending\nsecond", "Should cross line boundary and select 'second'");
+
+    // Third expand: should continue to "line"
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+    assert_eq!(selected_text, "ending\nsecond line", "Should include 'line' from second line");
+}
+
+/// Test expand selection starting at end of line
+#[test]
+fn test_expand_selection_from_line_end() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("first line\nsecond word here").unwrap();
+
+    // Position cursor at end of first line (before newline)
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+
+    // First expand from end of line - behavior depends on if cursor is on newline or before it
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range.clone());
+
+    // The selection should move forward from the end of the line
+    assert!(!selected_text.is_empty(), "Should select something");
+
+    // If it contains "second", it successfully jumped to next line
+    // Otherwise it may have selected the newline or whitespace
+    println!("Selected from line end: {:?}", selected_text);
+
+    // Continue expanding to ensure we can reach the next line
+    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    let cursor = harness.editor().active_state().cursors.primary();
+    let range = cursor.selection_range().unwrap();
+    let selected_text = harness.editor().active_state().buffer.slice(range);
+
+    // After multiple expands, we should definitely reach "second" on the next line
+    assert!(selected_text.contains("second"), "Should eventually reach 'second' on next line");
+}
