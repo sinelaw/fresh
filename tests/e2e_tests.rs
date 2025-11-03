@@ -1,0 +1,160 @@
+// End-to-end tests - testing complete user workflows
+
+mod common;
+
+use common::harness::EditorTestHarness;
+use tempfile::TempDir;
+
+/// Test basic file creation and editing workflow
+#[test]
+fn test_basic_editing_workflow() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // New buffer should be empty
+    harness.assert_buffer_content("");
+
+    // Status bar should show "[No Name]"
+    harness.render().unwrap();
+    harness.assert_screen_contains("[No Name]");
+
+    // TODO: When action_to_events() is implemented, we can simulate typing:
+    // harness.type_text("Hello, World!").unwrap();
+    // harness.assert_buffer_content("Hello, World!");
+}
+
+/// Test file open and save workflow
+#[test]
+fn test_file_open_save_workflow() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Create a test file with some content
+    std::fs::write(&file_path, "Initial content").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open the file
+    harness.open_file(&file_path).unwrap();
+
+    // Should display the filename
+    harness.render().unwrap();
+    harness.assert_screen_contains("test.txt");
+
+    // Should show the file content in the buffer
+    harness.assert_buffer_content("Initial content");
+
+    // TODO: When action_to_events() is implemented:
+    // - Edit the file
+    // - Save it
+    // - Verify the file on disk has the new content
+}
+
+/// Test multi-buffer workflow
+#[test]
+fn test_multi_buffer_workflow() {
+    let temp_dir = TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("file1.txt");
+    let file2 = temp_dir.path().join("file2.txt");
+
+    std::fs::write(&file1, "File 1 content").unwrap();
+    std::fs::write(&file2, "File 2 content").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open first file
+    harness.open_file(&file1).unwrap();
+    harness.assert_buffer_content("File 1 content");
+
+    // Open second file
+    harness.open_file(&file2).unwrap();
+    harness.assert_buffer_content("File 2 content");
+
+    // Should show tabs for both files
+    harness.render().unwrap();
+    harness.assert_screen_contains("file1.txt");
+    harness.assert_screen_contains("file2.txt");
+
+    // TODO: When action_to_events() is implemented:
+    // - Switch between buffers
+    // - Edit both files
+    // - Verify buffer switching works correctly
+}
+
+/// Test rendering of empty buffer
+#[test]
+fn test_empty_buffer_rendering() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // Should have some output (status bar, etc.)
+    assert!(!screen.is_empty());
+
+    // Should show empty buffer indicator
+    harness.assert_screen_contains("[No Name]");
+}
+
+/// Test rendering of file with content
+#[test]
+fn test_file_content_rendering() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("render_test.txt");
+
+    // Create a test file with multiple lines
+    std::fs::write(&file_path, "Line 1\nLine 2\nLine 3\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Should show file content on screen
+    harness.assert_screen_contains("Line 1");
+    harness.assert_screen_contains("Line 2");
+    harness.assert_screen_contains("Line 3");
+
+    // Should show filename in status bar
+    harness.assert_screen_contains("render_test.txt");
+}
+
+/// Test that editor doesn't quit prematurely
+#[test]
+fn test_editor_lifecycle() {
+    let harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // New editor should not want to quit
+    assert!(!harness.should_quit());
+
+    // TODO: When action_to_events() is implemented:
+    // - Send quit command
+    // - Verify should_quit() returns true
+}
+
+/// Test viewport scrolling with large file
+#[test]
+fn test_large_file_viewport() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("large.txt");
+
+    // Create a file with many lines (more than viewport height)
+    let mut content = String::new();
+    for i in 0..100 {
+        content.push_str(&format!("Line {}\n", i));
+    }
+    std::fs::write(&file_path, &content).unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Should show first few lines
+    harness.assert_screen_contains("Line 0");
+    harness.assert_screen_contains("Line 1");
+
+    // Should NOT show lines beyond viewport
+    harness.assert_screen_not_contains("Line 50");
+
+    // TODO: When action_to_events() is implemented:
+    // - Scroll down
+    // - Verify different lines are visible
+}
