@@ -100,6 +100,37 @@ fn run_event_loop(
 
 /// Handle a keyboard event
 fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> io::Result<()> {
+    // Special handling for help page
+    if editor.is_help_visible() {
+        match (key_event.code, key_event.modifiers) {
+            // Close help with Esc or Ctrl+H
+            (KeyCode::Esc, KeyModifiers::NONE) | (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
+                editor.toggle_help();
+                return Ok(());
+            }
+            // Scroll help with Up/Down
+            (KeyCode::Up, KeyModifiers::NONE) => {
+                editor.scroll_help(-1);
+                return Ok(());
+            }
+            (KeyCode::Down, KeyModifiers::NONE) => {
+                editor.scroll_help(1);
+                return Ok(());
+            }
+            // Scroll help with PageUp/PageDown
+            (KeyCode::PageUp, KeyModifiers::NONE) => {
+                editor.scroll_help(-10);
+                return Ok(());
+            }
+            (KeyCode::PageDown, KeyModifiers::NONE) => {
+                editor.scroll_help(10);
+                return Ok(());
+            }
+            // Ignore other keys in help mode
+            _ => return Ok(()),
+        }
+    }
+
     // Convert the key event to an Action using the keybinding resolver
     // For now, we'll implement a simple direct mapping
     // TODO: Use editor's keybinding resolver
@@ -107,6 +138,9 @@ fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> io::Result<()> 
     let action = match (key_event.code, key_event.modifiers) {
         // Quit
         (KeyCode::Char('q'), KeyModifiers::CONTROL) => Action::Quit,
+
+        // Help
+        (KeyCode::Char('h'), KeyModifiers::CONTROL) => Action::ShowHelp,
 
         // Character insertion
         (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
@@ -218,6 +252,10 @@ fn handle_action(editor: &mut Editor, action: Action) -> io::Result<()> {
             if let Some(event) = event_opt {
                 editor.active_state_mut().apply(&event);
             }
+        }
+
+        Action::ShowHelp => {
+            editor.toggle_help();
         }
 
         Action::None => {

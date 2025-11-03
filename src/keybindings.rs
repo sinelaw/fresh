@@ -68,6 +68,7 @@ pub enum Action {
     // View
     ScrollUp,
     ScrollDown,
+    ShowHelp,
 
     // No-op
     None,
@@ -323,7 +324,134 @@ impl KeybindingResolver {
             Action::RemoveSecondaryCursors,
         );
 
+        // Help
+        bindings.insert(
+            (KeyCode::Char('h'), KeyModifiers::CONTROL),
+            Action::ShowHelp,
+        );
+
         bindings
+    }
+
+    /// Get all keybindings (for help display)
+    /// Returns a Vec of (key_description, action_description)
+    pub fn get_all_bindings(&self) -> Vec<(String, String)> {
+        let mut bindings = Vec::new();
+
+        // Collect all bindings (custom + defaults)
+        let mut all_keys: HashMap<(KeyCode, KeyModifiers), Action> = HashMap::new();
+
+        // Start with defaults
+        for (key, action) in &self.default_bindings {
+            all_keys.insert(*key, action.clone());
+        }
+
+        // Override with custom bindings
+        for (key, action) in &self.bindings {
+            all_keys.insert(*key, action.clone());
+        }
+
+        // Convert to readable format
+        for ((key_code, modifiers), action) in all_keys {
+            let key_str = Self::format_key(key_code, modifiers);
+            let action_str = Self::format_action(&action);
+            bindings.push((key_str, action_str));
+        }
+
+        // Sort by action description for easier browsing
+        bindings.sort_by(|a, b| a.1.cmp(&b.1));
+
+        bindings
+    }
+
+    /// Format a key combination as a readable string
+    fn format_key(key_code: KeyCode, modifiers: KeyModifiers) -> String {
+        let mut parts = Vec::new();
+
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            parts.push("Ctrl");
+        }
+        if modifiers.contains(KeyModifiers::ALT) {
+            parts.push("Alt");
+        }
+        if modifiers.contains(KeyModifiers::SHIFT) {
+            parts.push("Shift");
+        }
+
+        let key_name = match key_code {
+            KeyCode::Char(c) => c.to_uppercase().to_string(),
+            KeyCode::Enter => "Enter".to_string(),
+            KeyCode::Tab => "Tab".to_string(),
+            KeyCode::Backspace => "Backspace".to_string(),
+            KeyCode::Delete => "Delete".to_string(),
+            KeyCode::Left => "Left".to_string(),
+            KeyCode::Right => "Right".to_string(),
+            KeyCode::Up => "Up".to_string(),
+            KeyCode::Down => "Down".to_string(),
+            KeyCode::Home => "Home".to_string(),
+            KeyCode::End => "End".to_string(),
+            KeyCode::PageUp => "PageUp".to_string(),
+            KeyCode::PageDown => "PageDown".to_string(),
+            KeyCode::Esc => "Esc".to_string(),
+            _ => format!("{:?}", key_code),
+        };
+
+        parts.push(&key_name);
+        parts.join("+")
+    }
+
+    /// Format an action as a readable description
+    fn format_action(action: &Action) -> String {
+        match action {
+            Action::InsertChar(c) => format!("Insert character '{}'", c),
+            Action::InsertNewline => "Insert newline".to_string(),
+            Action::InsertTab => "Insert tab".to_string(),
+            Action::MoveLeft => "Move cursor left".to_string(),
+            Action::MoveRight => "Move cursor right".to_string(),
+            Action::MoveUp => "Move cursor up".to_string(),
+            Action::MoveDown => "Move cursor down".to_string(),
+            Action::MoveWordLeft => "Move word left".to_string(),
+            Action::MoveWordRight => "Move word right".to_string(),
+            Action::MoveLineStart => "Move to line start".to_string(),
+            Action::MoveLineEnd => "Move to line end".to_string(),
+            Action::MovePageUp => "Move page up".to_string(),
+            Action::MovePageDown => "Move page down".to_string(),
+            Action::MoveDocumentStart => "Move to document start".to_string(),
+            Action::MoveDocumentEnd => "Move to document end".to_string(),
+            Action::SelectLeft => "Select left".to_string(),
+            Action::SelectRight => "Select right".to_string(),
+            Action::SelectUp => "Select up".to_string(),
+            Action::SelectDown => "Select down".to_string(),
+            Action::SelectWordLeft => "Select word left".to_string(),
+            Action::SelectWordRight => "Select word right".to_string(),
+            Action::SelectLineStart => "Select to line start".to_string(),
+            Action::SelectLineEnd => "Select to line end".to_string(),
+            Action::SelectAll => "Select all".to_string(),
+            Action::DeleteBackward => "Delete backward".to_string(),
+            Action::DeleteForward => "Delete forward".to_string(),
+            Action::DeleteWordBackward => "Delete word backward".to_string(),
+            Action::DeleteWordForward => "Delete word forward".to_string(),
+            Action::DeleteLine => "Delete line".to_string(),
+            Action::Copy => "Copy".to_string(),
+            Action::Cut => "Cut".to_string(),
+            Action::Paste => "Paste".to_string(),
+            Action::AddCursorAbove => "Add cursor above".to_string(),
+            Action::AddCursorBelow => "Add cursor below".to_string(),
+            Action::AddCursorNextMatch => "Add cursor at next match".to_string(),
+            Action::RemoveSecondaryCursors => "Remove secondary cursors".to_string(),
+            Action::Save => "Save file".to_string(),
+            Action::SaveAs => "Save file as...".to_string(),
+            Action::Open => "Open file".to_string(),
+            Action::New => "New file".to_string(),
+            Action::Close => "Close file".to_string(),
+            Action::Quit => "Quit editor".to_string(),
+            Action::Undo => "Undo".to_string(),
+            Action::Redo => "Redo".to_string(),
+            Action::ScrollUp => "Scroll up".to_string(),
+            Action::ScrollDown => "Scroll down".to_string(),
+            Action::ShowHelp => "Show help".to_string(),
+            Action::None => "No action".to_string(),
+        }
     }
 
     /// Reload bindings from config (for hot reload)

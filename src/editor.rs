@@ -5,7 +5,7 @@ use crate::state::EditorState;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::Line,
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Tabs},
     Frame,
 };
@@ -45,6 +45,12 @@ pub struct Editor {
 
     /// Status message (shown in status bar)
     status_message: Option<String>,
+
+    /// Is the help page visible?
+    help_visible: bool,
+
+    /// Scroll offset for help page
+    help_scroll: usize,
 }
 
 impl Editor {
@@ -70,6 +76,8 @@ impl Editor {
             clipboard: String::new(),
             should_quit: false,
             status_message: None,
+            help_visible: false,
+            help_scroll: 0,
         })
     }
 
@@ -291,6 +299,12 @@ impl Editor {
     pub fn render(&mut self, frame: &mut Frame) {
         let size = frame.area();
 
+        // If help is visible, render help page instead
+        if self.help_visible {
+            self.render_help(frame, size);
+            return;
+        }
+
         // Split into tabs, content, and status bar
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -421,6 +435,94 @@ impl Editor {
             Paragraph::new(status).style(Style::default().fg(Color::Black).bg(Color::White));
 
         frame.render_widget(status_line, area);
+    }
+
+    /// Render the help page
+    fn render_help(&self, frame: &mut Frame, area: Rect) {
+        // Get all keybindings
+        let bindings = self.keybindings.get_all_bindings();
+
+        // Calculate visible range based on scroll
+        let visible_height = area.height.saturating_sub(4) as usize; // Leave space for header and footer
+        let start_idx = self.help_scroll;
+        let end_idx = (start_idx + visible_height).min(bindings.len());
+
+        // Build help text
+        let mut lines = vec![];
+
+        // Header
+        lines.push(Line::from(vec![
+            Span::styled(
+                " KEYBOARD SHORTCUTS ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        lines.push(Line::from(""));
+
+        // Find max key width for alignment
+        let max_key_width = bindings
+            .iter()
+            .map(|(key, _)| key.len())
+            .max()
+            .unwrap_or(20);
+
+        // Render visible bindings
+        for (key, action) in bindings.iter().skip(start_idx).take(end_idx - start_idx) {
+            let line_text = format!("  {:<width$}  {}", key, action, width = max_key_width);
+            lines.push(Line::from(line_text));
+        }
+
+        // Footer
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!(
+                    " Showing {}-{} of {} | Use Up/Down to scroll | Press Ctrl+H or Esc to close ",
+                    start_idx + 1,
+                    end_idx,
+                    bindings.len()
+                ),
+                Style::default().fg(Color::Black).bg(Color::White),
+            ),
+        ]));
+
+        let help = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Yellow))
+                    .title(" Help ")
+                    .title_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true });
+
+        frame.render_widget(help, area);
+    }
+
+    /// Toggle help page visibility
+    pub fn toggle_help(&mut self) {
+        self.help_visible = !self.help_visible;
+        self.help_scroll = 0; // Reset scroll when toggling
+    }
+
+    /// Check if help page is visible
+    pub fn is_help_visible(&self) -> bool {
+        self.help_visible
+    }
+
+    /// Scroll help page
+    pub fn scroll_help(&mut self, delta: isize) {
+        let bindings = self.keybindings.get_all_bindings();
+        let max_scroll = bindings.len().saturating_sub(1);
+
+        if delta > 0 {
+            self.help_scroll = (self.help_scroll + delta as usize).min(max_scroll);
+        } else {
+            self.help_scroll = self.help_scroll.saturating_sub(delta.abs() as usize);
+        }
     }
 
     /// Helper: Check if a byte is a word character (alphanumeric or underscore)
@@ -1038,12 +1140,14 @@ impl Editor {
             | Action::Close
             | Action::Quit
             | Action::Undo
-            | Action::Redo => {
+            | Action::Redo
+            | Action::ShowHelp => {
                 // These actions need special handling in the event loop:
                 // - Clipboard operations need system clipboard access
                 // - File operations need Editor-level state changes
                 // - Undo/Redo need EventLog manipulation
                 // - Multi-cursor add operations need visual line calculations
+                // - ShowHelp toggles help view
                 return None;
             }
         }
