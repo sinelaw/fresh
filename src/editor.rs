@@ -579,15 +579,209 @@ impl Editor {
                 }
             }
 
+            // Delete actions
+            Action::DeleteBackward => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    if let Some(range) = cursor.selection_range() {
+                        // If there's a selection, delete it
+                        events.push(Event::Delete {
+                            range: range.clone(),
+                            deleted_text: state.buffer.slice(range),
+                            cursor_id,
+                        });
+                    } else if cursor.position > 0 {
+                        // Delete the character before the cursor
+                        let range = (cursor.position - 1)..cursor.position;
+                        events.push(Event::Delete {
+                            range: range.clone(),
+                            deleted_text: state.buffer.slice(range),
+                            cursor_id,
+                        });
+                    }
+                }
+            }
+
+            Action::DeleteForward => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    if let Some(range) = cursor.selection_range() {
+                        // If there's a selection, delete it
+                        events.push(Event::Delete {
+                            range: range.clone(),
+                            deleted_text: state.buffer.slice(range),
+                            cursor_id,
+                        });
+                    } else if cursor.position < state.buffer.len() {
+                        // Delete the character after the cursor
+                        let range = cursor.position..(cursor.position + 1);
+                        events.push(Event::Delete {
+                            range: range.clone(),
+                            deleted_text: state.buffer.slice(range),
+                            cursor_id,
+                        });
+                    }
+                }
+            }
+
+            Action::DeleteLine => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let line = state.buffer.byte_to_line(cursor.position);
+                    let line_start = state.buffer.line_to_byte(line);
+                    let line_end = if line + 1 < state.buffer.line_count() {
+                        state.buffer.line_to_byte(line + 1) // Include newline
+                    } else {
+                        state.buffer.len()
+                    };
+
+                    if line_start < line_end {
+                        let range = line_start..line_end;
+                        events.push(Event::Delete {
+                            range: range.clone(),
+                            deleted_text: state.buffer.slice(range),
+                            cursor_id,
+                        });
+                    }
+                }
+            }
+
+            // Selection actions - extend selection while moving
+            Action::SelectLeft => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let anchor = cursor.anchor.unwrap_or(cursor.position);
+                    let new_pos = cursor.position.saturating_sub(1);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos,
+                        anchor: Some(anchor),
+                    });
+                }
+            }
+
+            Action::SelectRight => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let anchor = cursor.anchor.unwrap_or(cursor.position);
+                    let new_pos = (cursor.position + 1).min(state.buffer.len());
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos,
+                        anchor: Some(anchor),
+                    });
+                }
+            }
+
+            Action::SelectUp => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let anchor = cursor.anchor.unwrap_or(cursor.position);
+                    let current_line = state.buffer.byte_to_line(cursor.position);
+                    if current_line > 0 {
+                        let line_start = state.buffer.line_to_byte(current_line);
+                        let col_offset = cursor.position - line_start;
+
+                        let prev_line_start = state.buffer.line_to_byte(current_line - 1);
+                        let prev_line_end = line_start.saturating_sub(1);
+                        let prev_line_len = prev_line_end - prev_line_start;
+
+                        let new_pos = prev_line_start + col_offset.min(prev_line_len);
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            position: new_pos,
+                            anchor: Some(anchor),
+                        });
+                    }
+                }
+            }
+
+            Action::SelectDown => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let anchor = cursor.anchor.unwrap_or(cursor.position);
+                    let current_line = state.buffer.byte_to_line(cursor.position);
+                    if current_line + 1 < state.buffer.line_count() {
+                        let line_start = state.buffer.line_to_byte(current_line);
+                        let col_offset = cursor.position - line_start;
+
+                        let next_line_start = state.buffer.line_to_byte(current_line + 1);
+                        let next_line_end = if current_line + 2 < state.buffer.line_count() {
+                            state.buffer.line_to_byte(current_line + 2).saturating_sub(1)
+                        } else {
+                            state.buffer.len()
+                        };
+                        let next_line_len = next_line_end - next_line_start;
+
+                        let new_pos = next_line_start + col_offset.min(next_line_len);
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            position: new_pos,
+                            anchor: Some(anchor),
+                        });
+                    }
+                }
+            }
+
+            Action::SelectLineStart => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let anchor = cursor.anchor.unwrap_or(cursor.position);
+                    let line = state.buffer.byte_to_line(cursor.position);
+                    let line_start = state.buffer.line_to_byte(line);
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: line_start,
+                        anchor: Some(anchor),
+                    });
+                }
+            }
+
+            Action::SelectLineEnd => {
+                for (cursor_id, cursor) in state.cursors.iter() {
+                    let anchor = cursor.anchor.unwrap_or(cursor.position);
+                    let line = state.buffer.byte_to_line(cursor.position);
+                    let line_end = if line + 1 < state.buffer.line_count() {
+                        state.buffer.line_to_byte(line + 1).saturating_sub(1)
+                    } else {
+                        state.buffer.len()
+                    };
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: line_end,
+                        anchor: Some(anchor),
+                    });
+                }
+            }
+
+            Action::SelectAll => {
+                // Select entire buffer for primary cursor
+                let primary = state.cursors.primary_id();
+                events.push(Event::MoveCursor {
+                    cursor_id: primary,
+                    position: state.buffer.len(),
+                    anchor: Some(0),
+                });
+            }
+
+            // Document navigation
+            Action::MoveDocumentStart => {
+                for (cursor_id, _) in state.cursors.iter() {
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: 0,
+                        anchor: None,
+                    });
+                }
+            }
+
+            Action::MoveDocumentEnd => {
+                for (cursor_id, _) in state.cursors.iter() {
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: state.buffer.len(),
+                        anchor: None,
+                    });
+                }
+            }
+
             // Actions that don't generate events yet
             Action::MoveWordLeft | Action::MoveWordRight |
             Action::MovePageUp | Action::MovePageDown |
-            Action::MoveDocumentStart | Action::MoveDocumentEnd |
-            Action::SelectLeft | Action::SelectRight | Action::SelectUp | Action::SelectDown |
             Action::SelectWordLeft | Action::SelectWordRight |
-            Action::SelectLineStart | Action::SelectLineEnd | Action::SelectAll |
-            Action::DeleteBackward | Action::DeleteForward |
-            Action::DeleteWordBackward | Action::DeleteWordForward | Action::DeleteLine |
+            Action::DeleteWordBackward | Action::DeleteWordForward |
             Action::Copy | Action::Cut | Action::Paste |
             Action::AddCursorAbove | Action::AddCursorBelow |
             Action::AddCursorNextMatch | Action::RemoveSecondaryCursors |
@@ -756,5 +950,167 @@ mod tests {
         assert!(editor.action_to_events(Action::Save).is_none());
         assert!(editor.action_to_events(Action::Quit).is_none());
         assert!(editor.action_to_events(Action::Undo).is_none());
+    }
+
+    #[test]
+    fn test_action_to_events_delete_backward() {
+        let config = Config::default();
+        let mut editor = Editor::new(config).unwrap();
+
+        // Insert some text first
+        let state = editor.active_state_mut();
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "hello".to_string(),
+            cursor_id: state.cursors.primary_id(),
+        });
+
+        let events = editor.action_to_events(Action::DeleteBackward);
+        assert!(events.is_some());
+
+        let events = events.unwrap();
+        assert_eq!(events.len(), 1);
+
+        match &events[0] {
+            Event::Delete { range, deleted_text, .. } => {
+                assert_eq!(range.clone(), 4..5); // Delete 'o'
+                assert_eq!(deleted_text, "o");
+            }
+            _ => panic!("Expected Delete event"),
+        }
+    }
+
+    #[test]
+    fn test_action_to_events_delete_forward() {
+        let config = Config::default();
+        let mut editor = Editor::new(config).unwrap();
+
+        // Insert some text first
+        let state = editor.active_state_mut();
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "hello".to_string(),
+            cursor_id: state.cursors.primary_id(),
+        });
+
+        // Move cursor to position 0
+        state.apply(&Event::MoveCursor {
+            cursor_id: state.cursors.primary_id(),
+            position: 0,
+            anchor: None,
+        });
+
+        let events = editor.action_to_events(Action::DeleteForward);
+        assert!(events.is_some());
+
+        let events = events.unwrap();
+        assert_eq!(events.len(), 1);
+
+        match &events[0] {
+            Event::Delete { range, deleted_text, .. } => {
+                assert_eq!(range.clone(), 0..1); // Delete 'h'
+                assert_eq!(deleted_text, "h");
+            }
+            _ => panic!("Expected Delete event"),
+        }
+    }
+
+    #[test]
+    fn test_action_to_events_select_right() {
+        let config = Config::default();
+        let mut editor = Editor::new(config).unwrap();
+
+        // Insert some text first
+        let state = editor.active_state_mut();
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "hello".to_string(),
+            cursor_id: state.cursors.primary_id(),
+        });
+
+        // Move cursor to position 0
+        state.apply(&Event::MoveCursor {
+            cursor_id: state.cursors.primary_id(),
+            position: 0,
+            anchor: None,
+        });
+
+        let events = editor.action_to_events(Action::SelectRight);
+        assert!(events.is_some());
+
+        let events = events.unwrap();
+        assert_eq!(events.len(), 1);
+
+        match &events[0] {
+            Event::MoveCursor { position, anchor, .. } => {
+                assert_eq!(*position, 1); // Moved to position 1
+                assert_eq!(*anchor, Some(0)); // Anchor at start
+            }
+            _ => panic!("Expected MoveCursor event"),
+        }
+    }
+
+    #[test]
+    fn test_action_to_events_select_all() {
+        let config = Config::default();
+        let mut editor = Editor::new(config).unwrap();
+
+        // Insert some text first
+        let state = editor.active_state_mut();
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "hello world".to_string(),
+            cursor_id: state.cursors.primary_id(),
+        });
+
+        let events = editor.action_to_events(Action::SelectAll);
+        assert!(events.is_some());
+
+        let events = events.unwrap();
+        assert_eq!(events.len(), 1);
+
+        match &events[0] {
+            Event::MoveCursor { position, anchor, .. } => {
+                assert_eq!(*position, 11); // At end of buffer
+                assert_eq!(*anchor, Some(0)); // Anchor at start
+            }
+            _ => panic!("Expected MoveCursor event"),
+        }
+    }
+
+    #[test]
+    fn test_action_to_events_document_nav() {
+        let config = Config::default();
+        let mut editor = Editor::new(config).unwrap();
+
+        // Insert multi-line text
+        let state = editor.active_state_mut();
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "line1\nline2\nline3".to_string(),
+            cursor_id: state.cursors.primary_id(),
+        });
+
+        // Test MoveDocumentStart
+        let events = editor.action_to_events(Action::MoveDocumentStart);
+        assert!(events.is_some());
+        let events = events.unwrap();
+        match &events[0] {
+            Event::MoveCursor { position, .. } => {
+                assert_eq!(*position, 0);
+            }
+            _ => panic!("Expected MoveCursor event"),
+        }
+
+        // Test MoveDocumentEnd
+        let events = editor.action_to_events(Action::MoveDocumentEnd);
+        assert!(events.is_some());
+        let events = events.unwrap();
+        match &events[0] {
+            Event::MoveCursor { position, .. } => {
+                assert_eq!(*position, 17); // End of buffer
+            }
+            _ => panic!("Expected MoveCursor event"),
+        }
     }
 }
