@@ -130,11 +130,16 @@ pub struct Editor {
 
     /// Active prompt (minibuffer)
     prompt: Option<Prompt>,
+
+    /// Terminal dimensions (for creating new buffers)
+    terminal_width: u16,
+    terminal_height: u16,
 }
 
 impl Editor {
     /// Create a new editor with the given configuration and terminal dimensions
     pub fn new(config: Config, width: u16, height: u16) -> io::Result<Self> {
+        tracing::info!("Editor::new called with width={}, height={}", width, height);
         let keybindings = KeybindingResolver::new(&config);
 
         // Create an empty initial buffer
@@ -142,7 +147,9 @@ impl Editor {
         let mut event_logs = HashMap::new();
 
         let buffer_id = BufferId(0);
-        buffers.insert(buffer_id, EditorState::new(width, height));
+        let state = EditorState::new(width, height);
+        tracing::info!("EditorState created with viewport height: {}", state.viewport.height);
+        buffers.insert(buffer_id, state);
         event_logs.insert(buffer_id, EventLog::new());
 
         Ok(Editor {
@@ -158,6 +165,8 @@ impl Editor {
             help_visible: false,
             help_scroll: 0,
             prompt: None,
+            terminal_width: width,
+            terminal_height: height,
         })
     }
 
@@ -191,7 +200,7 @@ impl Editor {
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
 
-        let state = EditorState::from_file(path, 80, 24)?;
+        let state = EditorState::from_file(path, self.terminal_width, self.terminal_height)?;
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
 
@@ -206,7 +215,7 @@ impl Editor {
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
 
-        self.buffers.insert(buffer_id, EditorState::new(80, 24));
+        self.buffers.insert(buffer_id, EditorState::new(self.terminal_width, self.terminal_height));
         self.event_logs.insert(buffer_id, EventLog::new());
 
         self.active_buffer = buffer_id;
@@ -960,6 +969,7 @@ impl Editor {
     /// Render the editor to the terminal
     pub fn render(&mut self, frame: &mut Frame) {
         let size = frame.area();
+        tracing::debug!("Render frame area: {}x{}", size.width, size.height);
 
         // If help is visible, render help page instead
         if self.help_visible {
@@ -1055,8 +1065,11 @@ impl Editor {
     fn render_content(&mut self, frame: &mut Frame, area: Rect) {
         let state = self.active_state_mut();
 
+        tracing::debug!("Render content area: {}x{}, viewport height: {}", area.width, area.height, state.viewport.height);
+
         // Get visible lines
         let visible_lines = state.viewport.visible_range();
+        tracing::debug!("Visible lines range: {:?}", visible_lines);
         let mut lines = Vec::new();
 
         // Collect all selection ranges from all cursors

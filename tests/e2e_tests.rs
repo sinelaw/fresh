@@ -1371,3 +1371,189 @@ fn test_command_palette_fuzzy_matching() {
     // Should show "Save File" in suggestions
     harness.assert_screen_contains("Save File");
 }
+
+/// Test that viewport displays all available lines when content is larger than minimum
+#[test]
+fn test_viewport_displays_all_lines() {
+    // Create a harness with 80 columns and 40 rows
+    // This gives us: 1 line for tabs + 38 lines for content + 1 line for status = 40 total
+    let mut harness = EditorTestHarness::new(80, 40).unwrap();
+
+    // Create content with 35 lines (should all be visible in a 38-line viewport)
+    let mut content = String::new();
+    for i in 1..=35 {
+        if i > 1 {
+            content.push('\n');
+        }
+        content.push_str(&format!("This is line number {}", i));
+    }
+
+    harness.type_text(&content).unwrap();
+
+    // Check the viewport state
+    let editor = harness.editor();
+    let state = editor.active_state();
+    let viewport_height = state.viewport.height;
+
+    // Viewport should be 38 lines tall (40 - 2 for tab bar and status bar)
+    assert_eq!(viewport_height, 38, "Viewport height should be 38 (40 total - 2 for UI chrome)");
+
+    // Get visible range
+    let visible_range = state.viewport.visible_range();
+    let visible_line_count = visible_range.end - visible_range.start;
+
+    // All 35 lines should fit in the 38-line viewport
+    assert!(visible_line_count >= 35,
+        "Expected to see at least 35 lines, but visible range is only {} lines ({}..{})",
+        visible_line_count, visible_range.start, visible_range.end);
+
+    // Render and check that lines are actually displayed on screen
+    harness.render().unwrap();
+
+    // Check that we can see line 1 and line 35 on the screen
+    harness.assert_screen_contains("This is line number 1");
+    harness.assert_screen_contains("This is line number 35");
+
+    // Also check some lines in the middle
+    harness.assert_screen_contains("This is line number 15");
+    harness.assert_screen_contains("This is line number 25");
+}
+
+/// Test that opening a file creates viewport with correct dimensions
+/// This test captures a bug where open_file() creates the EditorState with
+/// hardcoded dimensions (80, 24) instead of using actual terminal dimensions
+#[test]
+fn test_open_file_viewport_dimensions() {
+    use tempfile::TempDir;
+
+    // Create a temp file with some content
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "Line 1\nLine 2\nLine 3\n").unwrap();
+
+    // Create editor with 131x31 terminal (matching user's scenario)
+    let mut harness = EditorTestHarness::new(131, 31).unwrap();
+
+    // Initially, the default buffer has correct viewport dimensions
+    let initial_viewport_height = harness.editor().active_state().viewport.height;
+    assert_eq!(initial_viewport_height, 29, "Initial viewport should be 29 (31 - 2)");
+
+    // Open a file
+    harness.open_file(&file_path).unwrap();
+
+    // After opening file, viewport height should still match terminal dimensions
+    let viewport_height_after_open = harness.editor().active_state().viewport.height;
+    assert_eq!(
+        viewport_height_after_open, 29,
+        "After opening file, viewport height should be 29 (31 - 2), but got {}. \
+         This indicates the file was opened with hardcoded dimensions instead of actual terminal size.",
+        viewport_height_after_open
+    );
+
+    // Render and verify the viewport displays the correct number of lines
+    harness.render().unwrap();
+
+    let visible_range = harness.editor().active_state().viewport.visible_range();
+    let visible_count = visible_range.end - visible_range.start;
+
+    assert_eq!(
+        visible_count, 29,
+        "Visible range should be 29 lines, but got {}",
+        visible_count
+    );
+}
+
+/// Test viewport with 31-row terminal (matching user's scenario)
+#[test]
+fn test_viewport_31_rows() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    // Create a harness with 131 columns and 31 rows (matching user's terminal)
+    // This gives us: 1 line for tabs + 29 lines for content + 1 line for status = 31 total
+    let mut harness = EditorTestHarness::new(131, 31).unwrap();
+
+    // Create content with 29 lines (should all be visible in a 29-line viewport)
+    let mut content = String::new();
+    for i in 1..=29 {
+        if i > 1 {
+            content.push('\n');
+        }
+        content.push_str(&format!("Line {}", i));
+    }
+
+    harness.type_text(&content).unwrap();
+
+    // Check the viewport state
+    let editor = harness.editor();
+    let state = editor.active_state();
+    let viewport_height = state.viewport.height;
+
+    // Viewport should be 29 lines tall (31 - 2 for tab bar and status bar)
+    assert_eq!(viewport_height, 29, "Viewport height should be 29 (31 total - 2 for UI chrome)");
+
+    // Get visible range
+    let visible_range = state.viewport.visible_range();
+    let visible_line_count = visible_range.end - visible_range.start;
+
+    // All 29 lines should be visible
+    assert_eq!(visible_line_count, 29,
+        "Expected to see all 29 lines, but visible range is only {} lines ({}..{})",
+        visible_line_count, visible_range.start, visible_range.end);
+
+    // Render and verify lines are displayed
+    harness.render().unwrap();
+
+    // Check that we can see first and last lines
+    harness.assert_screen_contains("Line 1");
+    harness.assert_screen_contains("Line 29");
+
+    // Check lines throughout
+    harness.assert_screen_contains("Line 10");
+    harness.assert_screen_contains("Line 20");
+
+    // Now open the command palette (which shows suggestions)
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Command palette should be visible
+    harness.assert_screen_contains("Command:");
+
+    // Suggestions popup should be visible with commands
+    harness.assert_screen_contains("Open File");
+    harness.assert_screen_contains("Save File");
+    harness.assert_screen_contains("Quit");
+
+    // The viewport height should be unchanged (suggestions take screen space, not viewport space)
+    let editor = harness.editor();
+    let state = editor.active_state();
+    let viewport_height_with_palette = state.viewport.height;
+
+    assert_eq!(viewport_height_with_palette, 29,
+        "Viewport height should still be 29 even with command palette open, but got {}",
+        viewport_height_with_palette);
+
+    // Close the command palette
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // After closing palette, viewport should still be at full height
+    let editor = harness.editor();
+    let state = editor.active_state();
+    let viewport_height_after = state.viewport.height;
+
+    assert_eq!(viewport_height_after, 29,
+        "Viewport height should still be 29 after closing command palette, but got {}",
+        viewport_height_after);
+
+    // Get visible range after closing palette
+    let visible_range_after = state.viewport.visible_range();
+    let visible_line_count_after = visible_range_after.end - visible_range_after.start;
+
+    assert_eq!(visible_line_count_after, 29,
+        "Expected to see all 29 lines after closing palette, but visible range is only {} lines ({}..{})",
+        visible_line_count_after, visible_range_after.start, visible_range_after.end);
+
+    // All lines should still be visible on screen
+    harness.assert_screen_contains("Line 1");
+    harness.assert_screen_contains("Line 29");
+}

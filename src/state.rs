@@ -23,6 +23,7 @@ impl EditorState {
     pub fn new(width: u16, height: u16) -> Self {
         // Account for tab bar (1 line) and status bar (1 line)
         let content_height = height.saturating_sub(2);
+        tracing::info!("EditorState::new: width={}, height={}, content_height={}", width, height, content_height);
         Self {
             buffer: Buffer::new(),
             cursors: Cursors::new(),

@@ -11,7 +11,7 @@ mod viewport;
 use clap::Parser;
 use crossterm::{
     event::{poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{disable_raw_mode, enable_raw_mode, size as terminal_size, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
 use editor::Editor;
@@ -21,6 +21,7 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 /// A high-performance terminal text editor
 #[derive(Parser, Debug)]
@@ -40,6 +41,17 @@ fn main() -> io::Result<()> {
     // Parse command-line arguments
     let args = Args::parse();
 
+    // Initialize tracing - log to a file to avoid interfering with terminal UI
+    let log_file = std::fs::File::create("/tmp/editor.log")
+        .expect("Failed to create log file");
+
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_writer(std::sync::Arc::new(log_file)))
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .init();
+
+    tracing::info!("Editor starting");
+
     // Set up panic hook to restore terminal
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
@@ -51,12 +63,18 @@ fn main() -> io::Result<()> {
     // Load configuration
     let config = config::Config::default();
 
-    // Set up terminal first to get the size
+    // Set up terminal first
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
+
     let backend = ratatui::backend::CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
+
+    // Clear the terminal to ensure proper initialization
+    terminal.clear()?;
+
     let size = terminal.size()?;
+    tracing::info!("Terminal size: {}x{}", size.width, size.height);
 
     // Create editor with actual terminal size
     let mut editor = Editor::new(config, size.width, size.height)?;
@@ -103,6 +121,7 @@ fn run_event_loop(
                     handle_key_event(editor, key_event)?;
                 }
                 CrosstermEvent::Resize(width, height) => {
+                    tracing::info!("Terminal resize event: {}x{}", width, height);
                     editor.resize(width, height);
                 }
                 _ => {
