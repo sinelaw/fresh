@@ -423,7 +423,7 @@ impl Editor {
 
         // Find the start of the current line using iterator
         let mut iter = state.buffer.line_iterator(primary.position);
-        let Some((line_start, _)) = iter.next() else {
+        let Some((line_start, _line_content)) = iter.next() else {
             self.status_message = Some("Unable to find current line".to_string());
             return;
         };
@@ -437,11 +437,16 @@ impl Editor {
         // Calculate column offset from line start
         let col_offset = primary.position - line_start;
 
-        // Get the previous line (iterator is already positioned at current line)
+        // After next(), iterator is positioned after current line
+        // Call prev() twice: once to get back to current line, once more to get previous line
+        iter.prev(); // Move back to current line
+
+        // Get the previous line
         if let Some((prev_line_start, prev_line_content)) = iter.prev() {
             // Calculate new position on previous line, capping at line length
             let prev_line_len = prev_line_content.len();
             let new_pos = prev_line_start + col_offset.min(prev_line_len);
+
             let new_cursor = crate::cursor::Cursor::new(new_pos);
 
             let state_mut = self.active_state_mut();

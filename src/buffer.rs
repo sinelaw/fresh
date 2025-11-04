@@ -380,15 +380,17 @@ impl Default for Buffer {
     }
 }
 
-/// Line iterator that uses VirtualBuffer's byte iterator
-/// Automatically finds line boundaries and returns line content
+/// Bidirectional cursor-based line iterator.
+///
+/// Semantics: `next()` reads forward and advances cursor, `prev()` reads backward and retreats cursor.
+/// Unlike `DoubleEndedIterator`, calling `next()` then `prev()` returns the same line twice.
 pub struct LineIterator {
     byte_iter: crate::virtual_buffer::ByteIterator,
 }
 
 impl LineIterator {
-    /// Create a line iterator at any byte position
-    /// Automatically finds the start of the line containing byte_pos
+    /// Create a line iterator at any byte position.
+    /// Automatically positions cursor at the start of the line containing byte_pos.
     pub fn new(vbuf: &VirtualBuffer, byte_pos: usize) -> Self {
         let mut byte_iter = vbuf.iter_at(byte_pos.min(vbuf.len()));
 
@@ -404,8 +406,8 @@ impl LineIterator {
         Self { byte_iter }
     }
 
-    /// Get next line: (line_start_byte, line_content)
-    /// line_content includes newline if present
+    /// Read next line forward and advance cursor.
+    /// Returns (line_start_byte, line_content). Line content includes newline if present.
     pub fn next(&mut self) -> Option<(usize, String)> {
         let line_start = self.byte_iter.position();
         let buffer_len = self.byte_iter.buffer_len();
@@ -433,7 +435,8 @@ impl LineIterator {
         Some((line_start, String::from_utf8_lossy(&content).to_string()))
     }
 
-    /// Get previous line
+    /// Read previous line backward and retreat cursor.
+    /// Returns (line_start_byte, line_content). Line content includes newline if present.
     pub fn prev(&mut self) -> Option<(usize, String)> {
         let current_pos = self.byte_iter.position();
 
@@ -562,5 +565,55 @@ mod tests {
         assert_eq!(buffer.find_next("hello", 1), Some(12));
         assert_eq!(buffer.find_next("hello", 13), Some(0)); // Wraps around
         assert_eq!(buffer.find_next("xyz", 0), None);
+    }
+
+    #[test]
+    fn test_line_iterator_next_then_prev() {
+        // Correct semantics for cursor-based bidirectional iterator:
+        // If items are [a, b, c] and cursor is between a and b:
+        // - next() returns b, cursor moves between b and c
+        // - prev() returns b again, cursor moves back between a and b
+        //
+        // This is like a bidirectional cursor where:
+        // - next() reads forward and advances
+        // - prev() reads backward and retreats
+
+        let buffer = Buffer::from_str("Line 1\nLine 2\nLine 3");
+        let mut iter = buffer.line_iterator(10); // Middle of Line 2
+
+        // Cursor is at Line 2
+        // next() should return Line 2 and advance past it
+        let (line_start, line_content) = iter.next().unwrap();
+        assert_eq!(line_start, 7);
+        assert_eq!(line_content, "Line 2\n");
+
+        // Cursor is now after Line 2 (before Line 3)
+        // prev() should return Line 2 again and move cursor back before Line 2
+        let (prev_line_start, prev_line_content) = iter.prev().unwrap();
+        assert_eq!(prev_line_start, 7, "prev() should return same Line 2");
+        assert_eq!(prev_line_content, "Line 2\n");
+
+        // Cursor is now before Line 2
+        // prev() again should return Line 1
+        let (prev_line_start, prev_line_content) = iter.prev().unwrap();
+        assert_eq!(prev_line_start, 0);
+        assert_eq!(prev_line_content, "Line 1\n");
+
+        // Test 2: From last line (no trailing newline) - this was the failing case!
+        let mut iter = buffer.line_iterator(20);
+        let (line_start, line_content) = iter.next().unwrap();
+        assert_eq!(line_start, 14);
+        assert_eq!(line_content, "Line 3");
+
+        // Cursor should be at EOF (position 20)
+        // prev() should return Line 3 again
+        let (prev_line_start, prev_line_content) = iter.prev().unwrap();
+        assert_eq!(prev_line_start, 14, "prev() should return Line 3 again");
+        assert_eq!(prev_line_content, "Line 3");
+
+        // prev() again should return Line 2
+        let (prev_line_start, prev_line_content) = iter.prev().unwrap();
+        assert_eq!(prev_line_start, 7, "second prev() should return Line 2");
+        assert_eq!(prev_line_content, "Line 2\n");
     }
 }
