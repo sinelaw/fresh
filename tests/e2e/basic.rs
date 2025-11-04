@@ -102,30 +102,42 @@ fn test_buffer_switching() {
     harness.assert_screen_contains("alpha.txt");
     harness.assert_screen_contains("beta.txt");
 
-    // Switch to previous buffer (alpha) using Alt+[
+    // Switch to previous buffer (alpha) using Ctrl+Shift+B
     harness
-        .send_key(KeyCode::Char('['), KeyModifiers::ALT)
+        .send_key(
+            KeyCode::Char('b'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
     harness.assert_buffer_content("Content of alpha");
 
-    // Switch to next buffer (beta) using Alt+]
+    // Switch to next buffer (beta) using Ctrl+Shift+N
     harness
-        .send_key(KeyCode::Char(']'), KeyModifiers::ALT)
+        .send_key(
+            KeyCode::Char('n'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
     harness.assert_buffer_content("Content of beta");
 
     // Test cycling: next from beta should go to alpha
     harness
-        .send_key(KeyCode::Char(']'), KeyModifiers::ALT)
+        .send_key(
+            KeyCode::Char('n'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
     harness.assert_buffer_content("Content of alpha");
 
     // Test cycling backwards: prev from alpha should go to beta
     harness
-        .send_key(KeyCode::Char('['), KeyModifiers::ALT)
+        .send_key(
+            KeyCode::Char('b'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
     harness.assert_buffer_content("Content of beta");
