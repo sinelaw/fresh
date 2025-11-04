@@ -1581,6 +1581,38 @@ impl Editor {
                 Self::render_buffer_in_split_static(frame, state, event_log_opt, split_area, is_active);
             }
         }
+
+        // Render split separators
+        let separators = self.split_manager.get_separators(area);
+        for (direction, x, y, length) in separators {
+            Self::render_separator(frame, direction, x, y, length);
+        }
+    }
+
+    /// Render a split separator line
+    fn render_separator(frame: &mut Frame, direction: crate::event::SplitDirection, x: u16, y: u16, length: u16) {
+        use ratatui::widgets::{Block, Borders};
+        use ratatui::style::{Color, Style};
+
+        match direction {
+            crate::event::SplitDirection::Horizontal => {
+                // Draw horizontal line
+                let line_area = Rect::new(x, y, length, 1);
+                let line_text = "─".repeat(length as usize);
+                let paragraph = ratatui::widgets::Paragraph::new(line_text)
+                    .style(Style::default().fg(Color::DarkGray));
+                frame.render_widget(paragraph, line_area);
+            }
+            crate::event::SplitDirection::Vertical => {
+                // Draw vertical line
+                for offset in 0..length {
+                    let cell_area = Rect::new(x, y + offset, 1, 1);
+                    let paragraph = ratatui::widgets::Paragraph::new("│")
+                        .style(Style::default().fg(Color::DarkGray));
+                    frame.render_widget(paragraph, cell_area);
+                }
+            }
+        }
     }
 
     /// Render a single buffer in a split pane (static to avoid borrow issues)

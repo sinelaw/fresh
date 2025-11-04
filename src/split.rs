@@ -148,6 +148,53 @@ impl SplitNode {
         }
     }
 
+    /// Get all split separator lines (for rendering borders)
+    /// Returns (direction, x, y, length) tuples
+    pub fn get_separators(&self, rect: Rect) -> Vec<(SplitDirection, u16, u16, u16)> {
+        match self {
+            SplitNode::Leaf { .. } => vec![],
+            SplitNode::Split {
+                direction,
+                first,
+                second,
+                ratio,
+                ..
+            } => {
+                let (first_rect, second_rect) = split_rect(rect, *direction, *ratio);
+                let mut separators = Vec::new();
+
+                // Add separator for this split (in the 1-char gap between first and second)
+                match direction {
+                    SplitDirection::Horizontal => {
+                        // Horizontal split: separator line is between first and second
+                        // y position is at the end of first rect (the gap line)
+                        separators.push((
+                            SplitDirection::Horizontal,
+                            rect.x,
+                            first_rect.y + first_rect.height,
+                            rect.width,
+                        ));
+                    }
+                    SplitDirection::Vertical => {
+                        // Vertical split: separator line is between first and second
+                        // x position is at the end of first rect (the gap column)
+                        separators.push((
+                            SplitDirection::Vertical,
+                            first_rect.x + first_rect.width,
+                            rect.y,
+                            rect.height,
+                        ));
+                    }
+                }
+
+                // Recursively get separators from children
+                separators.extend(first.get_separators(first_rect));
+                separators.extend(second.get_separators(second_rect));
+                separators
+            }
+        }
+    }
+
     /// Collect all split IDs in the tree
     pub fn all_split_ids(&self) -> Vec<SplitId> {
         let mut ids = vec![self.id()];
@@ -173,12 +220,14 @@ impl SplitNode {
 }
 
 /// Split a rectangle into two parts based on direction and ratio
+/// Leaves 1 character space for the separator line between splits
 fn split_rect(rect: Rect, direction: SplitDirection, ratio: f32) -> (Rect, Rect) {
     match direction {
         SplitDirection::Horizontal => {
-            // Split into top and bottom
-            let first_height = (rect.height as f32 * ratio).round() as u16;
-            let second_height = rect.height.saturating_sub(first_height);
+            // Split into top and bottom, with 1 line for separator
+            let total_height = rect.height.saturating_sub(1); // Reserve 1 line for separator
+            let first_height = (total_height as f32 * ratio).round() as u16;
+            let second_height = total_height.saturating_sub(first_height);
 
             let first = Rect {
                 x: rect.x,
@@ -189,7 +238,7 @@ fn split_rect(rect: Rect, direction: SplitDirection, ratio: f32) -> (Rect, Rect)
 
             let second = Rect {
                 x: rect.x,
-                y: rect.y + first_height,
+                y: rect.y + first_height + 1, // +1 for separator
                 width: rect.width,
                 height: second_height,
             };
@@ -197,9 +246,10 @@ fn split_rect(rect: Rect, direction: SplitDirection, ratio: f32) -> (Rect, Rect)
             (first, second)
         }
         SplitDirection::Vertical => {
-            // Split into left and right
-            let first_width = (rect.width as f32 * ratio).round() as u16;
-            let second_width = rect.width.saturating_sub(first_width);
+            // Split into left and right, with 1 column for separator
+            let total_width = rect.width.saturating_sub(1); // Reserve 1 column for separator
+            let first_width = (total_width as f32 * ratio).round() as u16;
+            let second_width = total_width.saturating_sub(first_width);
 
             let first = Rect {
                 x: rect.x,
@@ -209,7 +259,7 @@ fn split_rect(rect: Rect, direction: SplitDirection, ratio: f32) -> (Rect, Rect)
             };
 
             let second = Rect {
-                x: rect.x + first_width,
+                x: rect.x + first_width + 1, // +1 for separator
                 y: rect.y,
                 width: second_width,
                 height: rect.height,
@@ -429,6 +479,12 @@ impl SplitManager {
         self.root.get_leaves_with_rects(viewport_rect)
     }
 
+    /// Get all split separator positions for rendering borders
+    /// Returns (direction, x, y, length) tuples
+    pub fn get_separators(&self, viewport_rect: Rect) -> Vec<(SplitDirection, u16, u16, u16)> {
+        self.root.get_separators(viewport_rect)
+    }
+
     /// Navigate to the next split (circular)
     pub fn next_split(&mut self) {
         let all_ids = self.root.all_split_ids();
@@ -548,12 +604,13 @@ mod tests {
 
         let (first, second) = split_rect(rect, SplitDirection::Horizontal, 0.5);
 
+        // With 1 line reserved for separator: (100-1)/2 = 49.5 rounds to 50 and 49
         assert_eq!(first.height, 50);
-        assert_eq!(second.height, 50);
+        assert_eq!(second.height, 49);
         assert_eq!(first.width, 100);
         assert_eq!(second.width, 100);
         assert_eq!(first.y, 0);
-        assert_eq!(second.y, 50);
+        assert_eq!(second.y, 51); // first.y + first.height + 1 (separator)
     }
 
     #[test]
@@ -567,11 +624,12 @@ mod tests {
 
         let (first, second) = split_rect(rect, SplitDirection::Vertical, 0.5);
 
+        // With 1 column reserved for separator: (100-1)/2 = 49.5 rounds to 50 and 49
         assert_eq!(first.width, 50);
-        assert_eq!(second.width, 50);
+        assert_eq!(second.width, 49);
         assert_eq!(first.height, 100);
         assert_eq!(second.height, 100);
         assert_eq!(first.x, 0);
-        assert_eq!(second.x, 50);
+        assert_eq!(second.x, 51); // first.x + first.width + 1 (separator)
     }
 }
