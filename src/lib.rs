@@ -12,6 +12,7 @@ pub mod highlighter;
 pub mod keybindings;
 pub mod line_cache;
 pub mod lsp;
+pub mod lsp_diagnostics;
 pub mod overlay;
 pub mod persistence;
 pub mod popup;

@@ -438,10 +438,10 @@ fn test_popup_events() {
 #[test]
 fn test_overlay_undo_redo() {
     use editor::event::{OverlayFace, UnderlineStyle};
-    
+
     let mut log = EventLog::new();
     let mut state = EditorState::new(80, 24);
-    
+
     // Insert text and add overlay
     let event1 = Event::Insert {
         position: 0,
@@ -450,7 +450,7 @@ fn test_overlay_undo_redo() {
     };
     log.append(event1.clone());
     state.apply(&event1);
-    
+
     let event2 = Event::AddOverlay {
         overlay_id: "test".to_string(),
         range: 0..5,
@@ -463,10 +463,10 @@ fn test_overlay_undo_redo() {
     };
     log.append(event2.clone());
     state.apply(&event2);
-    
+
     // Verify overlay exists
     assert_eq!(state.overlays.at_position(2).len(), 1);
-    
+
     // Undo the overlay addition
     log.undo();
     let mut new_state = EditorState::new(80, 24);
@@ -475,10 +475,10 @@ fn test_overlay_undo_redo() {
             new_state.apply(&entry.event);
         }
     }
-    
+
     // Overlay should be gone
     assert_eq!(new_state.overlays.at_position(2).len(), 0);
-    
+
     // Redo
     log.redo();
     let mut final_state = EditorState::new(80, 24);
@@ -487,7 +487,108 @@ fn test_overlay_undo_redo() {
             final_state.apply(&entry.event);
         }
     }
-    
+
     // Overlay should be back
     assert_eq!(final_state.overlays.at_position(2).len(), 1);
+}
+
+/// Test LSP diagnostic to overlay conversion
+#[test]
+fn test_lsp_diagnostic_to_overlay() {
+    use editor::{buffer::Buffer, lsp_diagnostics::diagnostic_to_overlay};
+    use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
+
+    let buffer = Buffer::from_str("let x = 5;\nlet y = 10;");
+
+    // Create an error diagnostic on first line
+    let diagnostic = Diagnostic {
+        range: Range {
+            start: Position {
+                line: 0,
+                character: 4,
+            },
+            end: Position {
+                line: 0,
+                character: 5,
+            },
+        },
+        severity: Some(DiagnosticSeverity::ERROR),
+        code: None,
+        code_description: None,
+        source: Some("rust-analyzer".to_string()),
+        message: "unused variable: `x`".to_string(),
+        related_information: None,
+        tags: None,
+        data: None,
+    };
+
+    let result = diagnostic_to_overlay(&diagnostic, &buffer);
+    assert!(result.is_some());
+
+    let (range, face, priority) = result.unwrap();
+
+    // Check range: "let x = 5;\n" - position 4 is 'x'
+    assert_eq!(range.start, 4);
+    assert_eq!(range.end, 5);
+
+    // Check priority (error should be highest)
+    assert_eq!(priority, 100);
+
+    // Check face (should be red wavy underline)
+    match face {
+        editor::event::OverlayFace::Underline { color, style } => {
+            assert_eq!(color, (255, 0, 0));
+            assert_eq!(style, editor::event::UnderlineStyle::Wavy);
+        }
+        _ => panic!("Expected underline face for error diagnostic"),
+    }
+}
+
+/// Test overlay rendering with multiple priorities
+#[test]
+fn test_overlay_priority_layering() {
+    use editor::event::{OverlayFace, UnderlineStyle};
+
+    let mut state = EditorState::new(80, 24);
+
+    // Insert text
+    state.apply(&Event::Insert {
+        position: 0,
+        text: "hello world".to_string(),
+        cursor_id: CursorId(0),
+    });
+
+    // Add low priority overlay (hint)
+    state.apply(&Event::AddOverlay {
+        overlay_id: "hint".to_string(),
+        range: 0..5,
+        face: OverlayFace::Underline {
+            color: (128, 128, 128),
+            style: UnderlineStyle::Dotted,
+        },
+        priority: 10,
+        message: Some("Hint message".to_string()),
+    });
+
+    // Add high priority overlay (error) overlapping
+    state.apply(&Event::AddOverlay {
+        overlay_id: "error".to_string(),
+        range: 2..7,
+        face: OverlayFace::Underline {
+            color: (255, 0, 0),
+            style: UnderlineStyle::Wavy,
+        },
+        priority: 100,
+        message: Some("Error message".to_string()),
+    });
+
+    // Position 3 should have both overlays, sorted by priority
+    let overlays = state.overlays.at_position(3);
+    assert_eq!(overlays.len(), 2);
+    assert_eq!(overlays[0].priority, 10);  // Hint (lower priority first)
+    assert_eq!(overlays[1].priority, 100); // Error (higher priority second)
+
+    // Verify IDs
+    assert_eq!(overlays[0].id, Some("hint".to_string()));
+    assert_eq!(overlays[1].id, Some("error".to_string()));
 }

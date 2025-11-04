@@ -98,7 +98,7 @@ pub enum OverlayFace {
 }
 
 /// Underline style for overlays
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnderlineStyle {
     Straight,
     Wavy,

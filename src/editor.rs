@@ -1350,16 +1350,45 @@ impl Editor {
                         .find(|span| span.range.contains(&byte_pos))
                         .map(|span| span.color);
 
-                    let style = if is_selected {
-                        // Selection overrides syntax highlighting
-                        Style::default().fg(Color::Black).bg(Color::Cyan)
-                    } else if let Some(color) = highlight_color {
+                    // Find overlays at this position (sorted by priority, low to high)
+                    let overlays = state.overlays.at_position(byte_pos);
+
+                    // Build style by layering: base -> syntax -> overlays -> selection
+                    let mut style = if let Some(color) = highlight_color {
                         // Apply syntax highlighting
                         Style::default().fg(color)
                     } else {
                         // Default color
                         Style::default().fg(Color::White)
                     };
+
+                    // Apply overlay styles (in priority order, so higher priority overlays override)
+                    use crate::overlay::OverlayFace;
+                    for overlay in &overlays {
+                        match &overlay.face {
+                            OverlayFace::Underline { color, style: _underline_style } => {
+                                // For now, we'll use color modifiers since ratatui doesn't have
+                                // native wavy underlines. We'll add a colored underline modifier.
+                                // TODO: Render actual wavy/dotted underlines in a second pass
+                                style = style.add_modifier(Modifier::UNDERLINED).fg(*color);
+                            }
+                            OverlayFace::Background { color } => {
+                                style = style.bg(*color);
+                            }
+                            OverlayFace::Foreground { color } => {
+                                style = style.fg(*color);
+                            }
+                            OverlayFace::Style { style: overlay_style } => {
+                                // Merge the overlay style
+                                style = style.patch(*overlay_style);
+                            }
+                        }
+                    }
+
+                    // Selection overrides everything
+                    if is_selected {
+                        style = Style::default().fg(Color::Black).bg(Color::Cyan);
+                    }
 
                     line_spans.push(Span::styled(ch.to_string(), style));
                 }
@@ -1683,6 +1712,78 @@ impl Editor {
         let event = Event::PopupPageUp;
         self.active_event_log_mut().append(event.clone());
         self.active_state_mut().apply(&event);
+    }
+
+    // === LSP Diagnostics Display ===
+
+    /// Update diagnostics display for the active buffer
+    /// Converts LSP diagnostics to overlay decorations
+    pub fn update_diagnostics_display(&mut self) {
+        // Get the file path for the active buffer
+        let file_path = match self.active_state().buffer.file_path() {
+            Some(path) => path.to_path_buf(),
+            None => return, // No file path, can't get diagnostics
+        };
+
+        // Convert path to URI
+        let uri = match lsp_types::Url::from_file_path(&file_path) {
+            Ok(uri) => uri,
+            Err(_) => return,
+        };
+
+        // Get diagnostics from LSP manager (if available)
+        let diagnostics = match &self.lsp {
+            Some(lsp) => lsp.diagnostics(&uri),
+            None => return, // No LSP, can't get diagnostics
+        };
+
+        // Clear existing diagnostic overlays (those with "lsp-diag-" prefix)
+        self.clear_diagnostic_overlays();
+
+        // Convert diagnostics to overlays in a separate scope to avoid borrow issues
+        let overlays_to_add: Vec<(String, Range<usize>, crate::event::OverlayFace, i32, String)> = {
+            let buffer = &self.active_state().buffer;
+            diagnostics
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, diagnostic)| {
+                    let (range, face, priority) =
+                        crate::lsp_diagnostics::diagnostic_to_overlay(diagnostic, buffer)?;
+                    let overlay_id = format!("lsp-diag-{}", idx);
+                    let message = diagnostic.message.clone();
+                    Some((overlay_id, range, face, priority, message))
+                })
+                .collect()
+        };
+
+        // Apply all overlays
+        for (overlay_id, range, face, priority, message) in overlays_to_add {
+            self.add_overlay(overlay_id, range, face, priority, Some(message));
+        }
+    }
+
+    /// Clear all diagnostic overlays (those with "lsp-diag-" prefix)
+    fn clear_diagnostic_overlays(&mut self) {
+        // Get all overlays and remove those with diagnostic IDs
+        let state = self.active_state();
+        let diagnostic_ids: Vec<String> = state
+            .overlays
+            .all()
+            .iter()
+            .filter_map(|overlay| {
+                overlay.id.as_ref().and_then(|id| {
+                    if id.starts_with("lsp-diag-") {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        for id in diagnostic_ids {
+            self.remove_overlay(id);
+        }
     }
 
     /// Helper: Check if a byte is a word character (alphanumeric or underscore)

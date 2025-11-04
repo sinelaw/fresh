@@ -22,11 +22,11 @@
 
 ## Current Status
 
-**Phase**: 3.5 Complete ✅ (Core UI Primitives)
-**Tests**: 85 passing (59 original + 11 overlay/popup unit tests + 15 integration tests)
-**Completed**: Overlay system ✅, Popup system ✅, Event-driven API ✅, Editor integration ✅, Navigation keybindings ✅
-**Next**: Use primitives for LSP diagnostics display (Phase 4.2)
-**Philosophy**: Emacs-style general-purpose primitives enable multiple use cases (LSP, search, selections)
+**Phase**: 4.2 In Progress (LSP Diagnostics Display)
+**Tests**: 178 passing (161 unit tests + 17 integration tests)
+**Completed**: Overlay rendering ✅, LSP diagnostic conversion ✅, Integration tests ✅
+**Next**: Call update_diagnostics_display() when receiving diagnostics from LSP
+**Philosophy**: LSP diagnostics displayed via general-purpose overlay primitives (following Emacs philosophy)
 
 ---
 
@@ -106,8 +106,10 @@
 
 ### 4.2 Basic LSP Features (Using Core UI Primitives)
 - [x] Diagnostics receiving (stored in LspClient) ✅
-- [ ] Diagnostics display via overlays (squiggly underlines)
-- [ ] Diagnostics in gutter (error/warning icons)
+- [x] Diagnostics display via overlays (squiggly underlines) ✅
+- [x] LSP diagnostic to overlay conversion (lsp_diagnostics.rs) ✅
+- [x] Overlay rendering in viewport (red/yellow/blue underlines) ✅
+- [ ] Diagnostics in gutter (error/warning icons) - deferred
 - [ ] Completion via popup system
 - [x] Convert events to LSP changes (full document sync) ✅
 
