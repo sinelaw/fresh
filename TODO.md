@@ -23,8 +23,9 @@
 
 **Phase**: 4.1 Complete ✅ (LSP Client - Basic Integration)
 **Tests**: 59 passing (59 E2E + unit + property tests)
-**Next**: Phase 4.2 - Diagnostics Display & Completion UI
+**Next**: Phase 3.5 - Core UI Primitives (Overlay & Popup systems)
 **LSP**: rust-analyzer integration working - didOpen/didChange notifications functional
+**Philosophy**: Building Emacs-style general-purpose primitives before specialized LSP UI
 
 ---
 
@@ -59,7 +60,33 @@
 
 ---
 
-## Phase 4: LSP Integration
+## Phase 3.5: Core UI Primitives (Emacs Philosophy)
+
+**Goal**: Build general-purpose UI primitives that are LSP-agnostic and reusable
+
+### 3.5.1 Overlay System (`overlay.rs`)
+- [ ] Overlay struct: position range, priority, face (styling)
+- [ ] OverlayManager: add, remove, query overlays by position
+- [ ] Render overlays in viewport (underlines, highlights, backgrounds)
+- [ ] Support multiple overlay types: underline, background, text-decoration
+- [ ] Z-ordering by priority for overlapping overlays
+
+### 3.5.2 Popup/Floating Window System (`popup.rs`)
+- [ ] Popup struct: position, size, content, border style
+- [ ] PopupManager: show, hide, position relative to cursor/point
+- [ ] Render popup with border and scrolling support
+- [ ] Handle popup input/navigation (arrow keys, page up/down)
+- [ ] Auto-positioning to keep popup on screen
+
+### 3.5.3 Annotation/Margin System (`margin.rs`)
+- [ ] Left margin support for line numbers, symbols, etc.
+- [ ] Right margin for additional metadata
+- [ ] Gutter annotations (breakpoints, errors, warnings, info)
+- [ ] Configurable margin width and content
+
+---
+
+## Phase 4: LSP Integration (Built on Core UI)
 
 ### 4.1 LSP Client (`lsp.rs`) ✅
 - [x] Implement JSON-RPC protocol over stdin/stdout ✅
@@ -67,16 +94,17 @@
 - [x] Handle request/response tracking ✅
 - [x] Handle server lifecycle (crash detection, restart) ✅
 
-### 4.2 Basic LSP Features
+### 4.2 Basic LSP Features (Using Core UI Primitives)
 - [x] Diagnostics receiving (stored in LspClient) ✅
-- [ ] Diagnostics display (inline squiggly underlines) - rendering not yet implemented
-- [ ] Completion (popup with fuzzy filter) - not yet implemented
+- [ ] Diagnostics display via overlays (squiggly underlines)
+- [ ] Diagnostics in gutter (error/warning icons)
+- [ ] Completion via popup system
 - [x] Convert events to LSP changes (full document sync) ✅
 
 ### 4.3 Advanced LSP Features
 - [ ] Go-to-definition (Ctrl+B or F12)
-- [ ] Hover documentation (Ctrl+K Ctrl+I)
-- [ ] Code actions (lightbulb menu)
+- [ ] Hover documentation via popup
+- [ ] Code actions via popup menu
 
 ### 4.4 LSP Manager ✅
 - [x] One server per language ✅
@@ -148,9 +176,10 @@
 
 - **Phase 0-2.2**: ✅ Complete
 - **Phase 2.3**: ✅ Complete (Advanced Selection)
-- **Phase 2.4**: 1 day (Smart Editing - next for multi-cursor features)
-- **Phase 3**: 1 day (Syntax Highlighting)
+- **Phase 2.4**: 1 day (Smart Editing - deferred)
+- **Phase 3**: 1 day (Syntax Highlighting - deferred)
+- **Phase 3.5**: 2-3 days (Core UI Primitives - overlays, popups, margins) **← CURRENT**
 - **Phase 4.1**: ✅ Complete (LSP Client & Basic Integration)
-- **Phase 4.2-4.3**: 2-3 days (Diagnostics UI, Completion, Advanced LSP)
+- **Phase 4.2-4.3**: 1-2 days (LSP UI built on primitives)
 - **Phase 5**: 1-2 days (Polish & Optimization)
-- **Total to production**: ~5-7 days remaining
+- **Total to production**: ~5-8 days remaining
