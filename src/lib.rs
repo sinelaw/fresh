@@ -8,6 +8,7 @@ pub mod cursor;
 pub mod edit;
 pub mod editor;
 pub mod event;
+pub mod highlighter;
 pub mod keybindings;
 pub mod line_cache;
 pub mod persistence;

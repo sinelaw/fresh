@@ -1,6 +1,7 @@
 use crate::buffer::{Buffer, LineNumber};
 use crate::cursor::{Cursor, Cursors};
 use crate::event::Event;
+use crate::highlighter::{Highlighter, Language};
 use crate::viewport::Viewport;
 
 /// The complete editor state - everything needed to represent the current editing session
@@ -13,6 +14,9 @@ pub struct EditorState {
 
     /// The viewport
     pub viewport: Viewport,
+
+    /// Syntax highlighter (optional - only created if language is detected)
+    pub highlighter: Option<Highlighter>,
 
     /// Cached line number for primary cursor (0-indexed)
     /// Maintained incrementally to avoid O(n) scanning on every render
@@ -37,6 +41,7 @@ impl EditorState {
             buffer: Buffer::new(),
             cursors: Cursors::new(),
             viewport: Viewport::new(width, content_height),
+            highlighter: None, // No file path, so no syntax highlighting
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
         }
@@ -47,10 +52,23 @@ impl EditorState {
         // Account for tab bar (1 line) and status bar (1 line)
         let content_height = height.saturating_sub(2);
         let buffer = Buffer::load_from_file(path)?;
+
+        // Try to create a highlighter based on file extension
+        let highlighter = Language::from_path(path)
+            .and_then(|lang| {
+                Highlighter::new(lang)
+                    .map_err(|e| {
+                        tracing::warn!("Failed to create highlighter: {}", e);
+                        e
+                    })
+                    .ok()
+            });
+
         Ok(Self {
             buffer,
             cursors: Cursors::new(),
             viewport: Viewport::new(width, content_height),
+            highlighter,
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
         })
@@ -70,6 +88,11 @@ impl EditorState {
 
                 // Insert text into buffer
                 self.buffer.insert(*position, text);
+
+                // Invalidate highlight cache for edited range
+                if let Some(highlighter) = &mut self.highlighter {
+                    highlighter.invalidate_range(*position..*position + text.len());
+                }
 
                 // Adjust all cursors after the edit
                 self.cursors.adjust_for_edit(*position, 0, text.len());
@@ -113,6 +136,11 @@ impl EditorState {
 
                 // Delete from buffer
                 self.buffer.delete(range.clone());
+
+                // Invalidate highlight cache for edited range
+                if let Some(highlighter) = &mut self.highlighter {
+                    highlighter.invalidate_range(range.clone());
+                }
 
                 // Adjust all cursors after the edit
                 self.cursors.adjust_for_edit(range.start, len, 0);

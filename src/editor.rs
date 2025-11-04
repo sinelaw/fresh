@@ -1182,6 +1182,24 @@ impl Editor {
             .buffer
             .populate_line_cache(state.viewport.top_byte, visible_count);
 
+        // Compute syntax highlighting for the visible viewport (if highlighter exists)
+        let viewport_start = state.viewport.top_byte;
+        let mut iter_temp = state.buffer.line_iterator(viewport_start);
+        let mut viewport_end = viewport_start;
+        for _ in 0..visible_count {
+            if let Some((line_start, line_content)) = iter_temp.next() {
+                viewport_end = line_start + line_content.len();
+            } else {
+                break;
+            }
+        }
+
+        let highlight_spans = if let Some(highlighter) = &mut state.highlighter {
+            highlighter.highlight_viewport(&state.buffer, viewport_start, viewport_end)
+        } else {
+            Vec::new()
+        };
+
         let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
         let mut lines_rendered = 0;
 
@@ -1225,9 +1243,20 @@ impl Editor {
                             .iter()
                             .any(|range| range.contains(&byte_pos));
 
+                    // Find syntax highlight color for this position
+                    let highlight_color = highlight_spans
+                        .iter()
+                        .find(|span| span.range.contains(&byte_pos))
+                        .map(|span| span.color);
+
                     let style = if is_selected {
+                        // Selection overrides syntax highlighting
                         Style::default().fg(Color::Black).bg(Color::Cyan)
+                    } else if let Some(color) = highlight_color {
+                        // Apply syntax highlighting
+                        Style::default().fg(color)
                     } else {
+                        // Default color
                         Style::default().fg(Color::White)
                     };
 

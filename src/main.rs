@@ -1,18 +1,3 @@
-mod buffer;
-mod cache;
-mod chunk_tree;
-mod config;
-mod cursor;
-mod edit;
-mod editor;
-mod event;
-mod keybindings;
-mod line_cache;
-mod persistence;
-mod state;
-mod viewport;
-mod virtual_buffer;
-
 use clap::Parser;
 use crossterm::{
     event::{poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent},
@@ -22,7 +7,7 @@ use crossterm::{
     },
     ExecutableCommand,
 };
-use editor::Editor;
+use editor::{config, editor::Editor};
 use ratatui::Terminal;
 use std::{
     io::{self, stdout},
