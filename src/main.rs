@@ -1,6 +1,9 @@
 use clap::Parser;
 use crossterm::{
-    event::{poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent},
+    event::{
+        poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
@@ -44,6 +47,7 @@ fn main() -> io::Result<()> {
     // Set up panic hook to restore terminal
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
+        let _ = stdout().execute(PopKeyboardEnhancementFlags);
         let _ = disable_raw_mode();
         let _ = stdout().execute(LeaveAlternateScreen);
         original_hook(panic);
@@ -55,6 +59,13 @@ fn main() -> io::Result<()> {
     // Set up terminal first
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
+
+    // Enable keyboard enhancement flags to support Shift+Up/Down and other modifier combinations
+    // This uses the Kitty keyboard protocol for better key detection in supported terminals
+    let keyboard_flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS;
+    let _ = stdout().execute(PushKeyboardEnhancementFlags(keyboard_flags));
+    tracing::info!("Enabled keyboard enhancement flags: {:?}", keyboard_flags);
 
     let backend = ratatui::backend::CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -83,6 +94,7 @@ fn main() -> io::Result<()> {
     let result = run_event_loop(&mut editor, &mut terminal);
 
     // Clean up terminal
+    let _ = stdout().execute(PopKeyboardEnhancementFlags);
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
 
@@ -128,6 +140,15 @@ fn run_event_loop(
 
 /// Handle a keyboard event
 fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> io::Result<()> {
+    // Debug trace the full key event
+    tracing::debug!(
+        "Key event received: code={:?}, modifiers={:?}, kind={:?}, state={:?}",
+        key_event.code,
+        key_event.modifiers,
+        key_event.kind,
+        key_event.state
+    );
+
     // Log the keystroke
     let key_code = format!("{:?}", key_event.code);
     let modifiers = format!("{:?}", key_event.modifiers);

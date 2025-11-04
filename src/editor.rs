@@ -910,6 +910,8 @@ impl Editor {
         use crossterm::event::{KeyCode, KeyModifiers};
         use std::path::Path;
 
+        tracing::debug!("Editor.handle_key: code={:?}, modifiers={:?}", code, modifiers);
+
         // Handle help mode first
         if self.is_help_visible() {
             match (code, modifiers) {
@@ -1195,6 +1197,9 @@ impl Editor {
         // Normal mode: use keybinding resolver to convert key to action
         let key_event = crossterm::event::KeyEvent::new(code, modifiers);
         let action = self.keybindings.resolve(&key_event);
+
+        // Debug logging for selection actions
+        tracing::debug!("Key: {:?} + {:?} -> Action: {:?}", code, modifiers, action);
 
         // Handle special actions
         match action {

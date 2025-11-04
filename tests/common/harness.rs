@@ -193,6 +193,40 @@ impl EditorTestHarness {
             .buffer
             .get_line_number(top_byte)
     }
+
+    /// Get the primary cursor's selection range, if any
+    pub fn get_selection_range(&self) -> Option<std::ops::Range<usize>> {
+        self.editor.active_state().cursors.primary().selection_range()
+    }
+
+    /// Check if there's an active selection
+    pub fn has_selection(&self) -> bool {
+        !self.editor.active_state().cursors.primary().collapsed()
+    }
+
+    /// Get the selected text (if any)
+    pub fn get_selected_text(&self) -> String {
+        if let Some(range) = self.get_selection_range() {
+            self.editor.active_state().buffer.slice(range).to_string()
+        } else {
+            String::new()
+        }
+    }
+
+    /// Assert that a selection exists and contains the expected text
+    pub fn assert_selection_text(&self, expected: &str) {
+        assert!(self.has_selection(), "Expected a selection but none exists");
+        let selected = self.get_selected_text();
+        assert_eq!(
+            selected, expected,
+            "Selection mismatch\nExpected: {expected:?}\nActual: {selected:?}"
+        );
+    }
+
+    /// Assert that no selection exists
+    pub fn assert_no_selection(&self) {
+        assert!(!self.has_selection(), "Expected no selection but found one");
+    }
 }
 
 #[cfg(test)]

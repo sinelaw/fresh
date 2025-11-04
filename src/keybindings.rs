@@ -193,23 +193,34 @@ impl KeybindingResolver {
 
     /// Resolve a key event to an action
     pub fn resolve(&self, event: &KeyEvent) -> Action {
+        tracing::debug!(
+            "KeybindingResolver.resolve: code={:?}, modifiers={:?} (raw bits: {:?})",
+            event.code,
+            event.modifiers,
+            event.modifiers.bits()
+        );
+
         // Try custom bindings first
         if let Some(action) = self.bindings.get(&(event.code, event.modifiers)) {
+            tracing::debug!("  -> Found in custom bindings: {:?}", action);
             return action.clone();
         }
 
         // Fall back to default bindings
         if let Some(action) = self.default_bindings.get(&(event.code, event.modifiers)) {
+            tracing::debug!("  -> Found in default bindings: {:?}", action);
             return action.clone();
         }
 
         // Handle regular character input
         if event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT {
             if let KeyCode::Char(c) = event.code {
+                tracing::debug!("  -> Character input: '{}'", c);
                 return Action::InsertChar(c);
             }
         }
 
+        tracing::debug!("  -> No binding found, returning Action::None");
         Action::None
     }
 
