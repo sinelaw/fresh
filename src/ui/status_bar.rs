@@ -1,6 +1,6 @@
 //! Status bar and prompt/minibuffer rendering
 
-use crate::editor::Prompt;
+use crate::prompt::Prompt;
 use crate::state::EditorState;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};

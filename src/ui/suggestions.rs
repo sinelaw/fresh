@@ -1,6 +1,6 @@
 //! Autocomplete suggestions and command palette UI rendering
 
-use crate::editor::Prompt;
+use crate::prompt::Prompt;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
