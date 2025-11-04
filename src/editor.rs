@@ -4,6 +4,7 @@ use crate::event::{Event, EventLog};
 use crate::keybindings::{Action, KeybindingResolver};
 use crate::lsp_diagnostics;
 use crate::lsp_manager::{detect_language, LspManager};
+use crate::split::SplitManager;
 use crate::state::EditorState;
 use lsp_types::{TextDocumentContentChangeEvent, Url};
 use ratatui::{
@@ -18,9 +19,8 @@ use std::io;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-/// Unique identifier for a buffer
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BufferId(usize);
+// Re-export BufferId from event module for backward compatibility
+pub use crate::event::BufferId;
 
 /// Metadata associated with a buffer
 #[derive(Debug, Clone)]
@@ -207,6 +207,9 @@ pub struct Editor {
 
     /// Bridge for async messages from tokio tasks to main loop
     async_bridge: Option<AsyncBridge>,
+
+    /// Split view manager
+    split_manager: SplitManager,
 }
 
 impl Editor {
@@ -261,6 +264,9 @@ impl Editor {
             lsp.set_language_config(language.clone(), lsp_config.clone());
         }
 
+        // Initialize split manager with the initial buffer
+        let split_manager = SplitManager::new(buffer_id);
+
         Ok(Editor {
             buffers,
             active_buffer: buffer_id,
@@ -280,6 +286,7 @@ impl Editor {
             buffer_metadata: HashMap::new(),
             tokio_runtime,
             async_bridge: Some(async_bridge),
+            split_manager,
         })
     }
 
@@ -462,6 +469,75 @@ impl Editor {
         if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer) {
             let prev_idx = if idx == 0 { ids.len() - 1 } else { idx - 1 };
             self.active_buffer = ids[prev_idx];
+        }
+    }
+
+    /// Split the current pane horizontally
+    pub fn split_pane_horizontal(&mut self) {
+        // Create a new buffer for the new split
+        let new_buffer_id = self.new_buffer();
+
+        // Split the pane
+        if let Err(e) = self.split_manager.split_active(
+            crate::event::SplitDirection::Horizontal,
+            new_buffer_id,
+            0.5,
+        ) {
+            self.set_status_message(format!("Error splitting pane: {}", e));
+        } else {
+            self.set_status_message("Split pane horizontally".to_string());
+        }
+    }
+
+    /// Split the current pane vertically
+    pub fn split_pane_vertical(&mut self) {
+        // Create a new buffer for the new split
+        let new_buffer_id = self.new_buffer();
+
+        // Split the pane
+        if let Err(e) = self.split_manager.split_active(
+            crate::event::SplitDirection::Vertical,
+            new_buffer_id,
+            0.5,
+        ) {
+            self.set_status_message(format!("Error splitting pane: {}", e));
+        } else {
+            self.set_status_message("Split pane vertically".to_string());
+        }
+    }
+
+    /// Close the active split
+    pub fn close_active_split(&mut self) {
+        let active_split = self.split_manager.active_split();
+        match self.split_manager.close_split(active_split) {
+            Ok(_) => {
+                self.set_status_message("Closed split".to_string());
+            }
+            Err(e) => {
+                self.set_status_message(format!("Cannot close split: {}", e));
+            }
+        }
+    }
+
+    /// Switch to next split
+    pub fn next_split(&mut self) {
+        self.split_manager.next_split();
+        self.set_status_message("Switched to next split".to_string());
+    }
+
+    /// Switch to previous split
+    pub fn prev_split(&mut self) {
+        self.split_manager.prev_split();
+        self.set_status_message("Switched to previous split".to_string());
+    }
+
+    /// Adjust the size of the active split
+    pub fn adjust_split_size(&mut self, delta: f32) {
+        let active_split = self.split_manager.active_split();
+        if let Err(e) = self.split_manager.adjust_ratio(active_split, delta) {
+            self.set_status_message(format!("Cannot adjust split size: {}", e));
+        } else {
+            self.set_status_message(format!("Adjusted split size by {:.0}%", delta * 100.0));
         }
     }
 
@@ -1338,6 +1414,13 @@ impl Editor {
             Action::RemoveSecondaryCursors => self.active_state_mut().cursors.remove_secondary(),
             Action::NextBuffer => self.next_buffer(),
             Action::PrevBuffer => self.prev_buffer(),
+            Action::SplitHorizontal => self.split_pane_horizontal(),
+            Action::SplitVertical => self.split_pane_vertical(),
+            Action::CloseSplit => self.close_active_split(),
+            Action::NextSplit => self.next_split(),
+            Action::PrevSplit => self.prev_split(),
+            Action::IncreaseSplitSize => self.adjust_split_size(0.05),
+            Action::DecreaseSplitSize => self.adjust_split_size(-0.05),
             Action::None => {}
             _ => {
                 // Convert action to events and apply them
@@ -1481,7 +1564,28 @@ impl Editor {
     /// Render the main content area
     fn render_content(&mut self, frame: &mut Frame, area: Rect) {
         let _span = tracing::trace_span!("render_content").entered();
-        let state = self.active_state_mut();
+
+        // Get all visible splits with their areas
+        let visible_buffers = self.split_manager.get_visible_buffers(area);
+        let active_split_id = self.split_manager.active_split();
+
+        // Render each split
+        for (split_id, buffer_id, split_area) in visible_buffers {
+            let is_active = split_id == active_split_id;
+
+            // Get references separately to avoid double borrow
+            let state_opt = self.buffers.get_mut(&buffer_id);
+            let event_log_opt = self.event_logs.get_mut(&buffer_id);
+
+            if let Some(state) = state_opt {
+                Self::render_buffer_in_split_static(frame, state, event_log_opt, split_area, is_active);
+            }
+        }
+    }
+
+    /// Render a single buffer in a split pane (static to avoid borrow issues)
+    fn render_buffer_in_split_static(frame: &mut Frame, state: &mut EditorState, event_log: Option<&mut EventLog>, area: Rect, is_active: bool) {
+        let _span = tracing::trace_span!("render_buffer_in_split").entered();
 
         // Debug: Log overlay count for diagnostics
         let overlay_count = state.overlays.all().len();
@@ -1638,20 +1742,22 @@ impl Editor {
 
         frame.render_widget(paragraph, area);
 
-        // Render cursor
-        let cursor_positions = state.cursor_positions();
-        if let Some(&(x, y)) = cursor_positions.first() {
-            // Adjust for line numbers (gutter width is dynamic based on max line number)
-            // and adjust Y for the content area offset (area.y accounts for tab bar)
-            let screen_x = area.x.saturating_add(x).saturating_add(gutter_width as u16);
-            let screen_y = area.y.saturating_add(y);
-            frame.set_cursor_position((screen_x, screen_y));
+        // Render cursor and log state (only for active split)
+        if is_active {
+            let cursor_positions = state.cursor_positions();
+            if let Some(&(x, y)) = cursor_positions.first() {
+                // Adjust for line numbers (gutter width is dynamic based on max line number)
+                // and adjust Y for the content area offset (area.y accounts for tab bar)
+                let screen_x = area.x.saturating_add(x).saturating_add(gutter_width as u16);
+                let screen_y = area.y.saturating_add(y);
+                frame.set_cursor_position((screen_x, screen_y));
 
-            // Log rendering state for debugging
-            let cursor_pos = state.cursors.primary().position;
-            let buffer_len = state.buffer.len();
-            if let Some(event_log) = self.event_logs.get_mut(&self.active_buffer) {
-                event_log.log_render_state(cursor_pos, screen_x, screen_y, buffer_len);
+                // Log rendering state for debugging
+                if let Some(event_log) = event_log {
+                    let cursor_pos = state.cursors.primary().position;
+                    let buffer_len = state.buffer.len();
+                    event_log.log_render_state(cursor_pos, screen_x, screen_y, buffer_len);
+                }
             }
         }
     }
@@ -2944,7 +3050,14 @@ impl Editor {
             | Action::ShowHelp
             | Action::CommandPalette
             | Action::NextBuffer
-            | Action::PrevBuffer => {
+            | Action::PrevBuffer
+            | Action::SplitHorizontal
+            | Action::SplitVertical
+            | Action::CloseSplit
+            | Action::NextSplit
+            | Action::PrevSplit
+            | Action::IncreaseSplitSize
+            | Action::DecreaseSplitSize => {
                 // These actions need special handling in the event loop:
                 // - Clipboard operations need system clipboard access
                 // - File operations need Editor-level state changes

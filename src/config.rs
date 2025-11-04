@@ -324,6 +324,56 @@ impl Config {
                 args: HashMap::new(),
                 when: None,
             },
+            // Split view operations
+            Keybinding {
+                key: "\\".to_string(),
+                modifiers: vec!["ctrl".to_string()],
+                action: "split_vertical".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
+            Keybinding {
+                key: "-".to_string(),
+                modifiers: vec!["ctrl".to_string()],
+                action: "split_horizontal".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
+            Keybinding {
+                key: "w".to_string(),
+                modifiers: vec!["ctrl".to_string()],
+                action: "close_split".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
+            Keybinding {
+                key: "o".to_string(),
+                modifiers: vec!["ctrl".to_string()],
+                action: "next_split".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
+            Keybinding {
+                key: "o".to_string(),
+                modifiers: vec!["ctrl".to_string(), "shift".to_string()],
+                action: "prev_split".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
+            Keybinding {
+                key: "=".to_string(),
+                modifiers: vec!["ctrl".to_string()],
+                action: "increase_split_size".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
+            Keybinding {
+                key: "-".to_string(),
+                modifiers: vec!["ctrl".to_string(), "shift".to_string()],
+                action: "decrease_split_size".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
         ]
     }
 

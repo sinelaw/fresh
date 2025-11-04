@@ -318,6 +318,17 @@ impl EditorState {
                     popup.page_up();
                 }
             }
+
+            // Split events are handled at the Editor level, not at EditorState level
+            // These are no-ops here as they affect the split layout, not buffer state
+            Event::SplitPane { .. }
+            | Event::CloseSplit { .. }
+            | Event::SetActiveSplit { .. }
+            | Event::AdjustSplitRatio { .. }
+            | Event::NextSplit
+            | Event::PrevSplit => {
+                // No-op: split events are handled by Editor, not EditorState
+            }
         }
     }
 

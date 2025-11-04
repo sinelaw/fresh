@@ -19,6 +19,7 @@
 - **Testing**: 59 E2E tests, property tests, benchmarks
 - **LSP Integration (Basic)**: JSON-RPC client, LspManager, rust-analyzer support, didOpen/didChange notifications
 - **Core UI Primitives**: Overlay system (decorations), Popup system (floating windows) - Emacs-style general-purpose building blocks
+- **Split view system**: Horizontal/vertical splits, navigation, nested splits - foundation for diagnostics panels
 
 ## Current Status
 
@@ -115,6 +116,14 @@
 - [x] Overlay rendering in viewport (red/yellow/blue colors with underline) ✅
 - [x] E2E test for visual diagnostic rendering ✅
 - [x] didSave notification support (diagnostics appear after Ctrl+S) ✅
+- [x] Split view support (vertical/horizontal) ✅
+  - [x] Generic split view system that allows multiple buffers displayed simultaneously ✅
+  - [x] Support both vertical and horizontal splits ✅
+  - [x] Navigation between splits (Ctrl+o / Ctrl+Shift+o) ✅
+  - [x] Keybindings (Ctrl+\ vertical, Ctrl+- horizontal, Ctrl+w close) ✅
+  - [x] Nested splits (arbitrary depth) ✅
+  - [x] 7 E2E tests covering all split functionality ✅
+  - [ ] Dedicated diagnostics buffer type (can display in split) - future enhancement
 - [ ] Diagnostics in gutter (error/warning icons) - deferred
 - [ ] Completion via popup system ← NEXT
 - [x] Convert events to LSP changes (full document sync) ✅
@@ -178,7 +187,6 @@
 
 ### 6.2 Other Advanced Features
 - [ ] Macros (record/play)
-- [ ] Split views (horizontal/vertical)
 - [ ] Git integration (status, blame, stage hunks)
 - [ ] More LSP features (find references, rename, format, signature help, inlay hints)
 

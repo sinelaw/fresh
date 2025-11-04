@@ -9,3 +9,4 @@ pub mod prompt;
 pub mod rendering;
 pub mod scrolling;
 pub mod selection;
+pub mod split_view;

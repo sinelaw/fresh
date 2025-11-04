@@ -5,6 +5,23 @@ use std::ops::Range;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CursorId(pub usize);
 
+/// Unique identifier for a split pane (re-exported from split.rs)
+/// Note: This is defined in split.rs and re-exported here for events
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SplitId(pub usize);
+
+/// Unique identifier for a buffer (re-exported from editor.rs)
+/// Note: This is defined in editor.rs and re-exported here for events
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BufferId(pub usize);
+
+/// Direction of a split (re-exported from split.rs for events)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SplitDirection {
+    Horizontal,
+    Vertical,
+}
+
 /// Core event types representing all possible state changes
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
@@ -80,6 +97,29 @@ pub enum Event {
     PopupSelectPrev,
     PopupPageDown,
     PopupPageUp,
+
+    /// Split view events
+    /// Split the active pane
+    SplitPane {
+        direction: SplitDirection,
+        new_buffer_id: BufferId,
+        ratio: f32,
+    },
+
+    /// Close a split pane
+    CloseSplit { split_id: SplitId },
+
+    /// Set the active split pane
+    SetActiveSplit { split_id: SplitId },
+
+    /// Adjust the split ratio
+    AdjustSplitRatio { split_id: SplitId, delta: f32 },
+
+    /// Navigate to next split
+    NextSplit,
+
+    /// Navigate to previous split
+    PrevSplit,
 }
 
 /// Overlay face data for events (must be serializable)

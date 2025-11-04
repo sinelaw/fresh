@@ -82,6 +82,15 @@ pub enum Action {
     NextBuffer,
     PrevBuffer,
 
+    // Split view operations
+    SplitHorizontal,
+    SplitVertical,
+    CloseSplit,
+    NextSplit,
+    PrevSplit,
+    IncreaseSplitSize,
+    DecreaseSplitSize,
+
     // No-op
     None,
 }
@@ -162,6 +171,14 @@ impl Action {
 
             "next_buffer" => Some(Action::NextBuffer),
             "prev_buffer" => Some(Action::PrevBuffer),
+
+            "split_horizontal" => Some(Action::SplitHorizontal),
+            "split_vertical" => Some(Action::SplitVertical),
+            "close_split" => Some(Action::CloseSplit),
+            "next_split" => Some(Action::NextSplit),
+            "prev_split" => Some(Action::PrevSplit),
+            "increase_split_size" => Some(Action::IncreaseSplitSize),
+            "decrease_split_size" => Some(Action::DecreaseSplitSize),
 
             _ => None,
         }
@@ -565,6 +582,13 @@ impl KeybindingResolver {
             Action::CommandPalette => "Command palette".to_string(),
             Action::NextBuffer => "Next buffer".to_string(),
             Action::PrevBuffer => "Previous buffer".to_string(),
+            Action::SplitHorizontal => "Split horizontally".to_string(),
+            Action::SplitVertical => "Split vertically".to_string(),
+            Action::CloseSplit => "Close split".to_string(),
+            Action::NextSplit => "Next split".to_string(),
+            Action::PrevSplit => "Previous split".to_string(),
+            Action::IncreaseSplitSize => "Increase split size".to_string(),
+            Action::DecreaseSplitSize => "Decrease split size".to_string(),
             Action::None => "No action".to_string(),
         }
     }
