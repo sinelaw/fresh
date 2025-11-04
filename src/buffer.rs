@@ -1,9 +1,11 @@
 use crate::chunk_tree::{ChunkTree, ChunkTreeConfig};
 use crate::persistence::ChunkTreePersistence;
 use crate::virtual_buffer::VirtualBuffer;
+use crate::line_cache::{LineCache, LineInfo};
 use std::io::{self, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+
 
 /// Default configuration for ChunkTree
 const DEFAULT_CONFIG: ChunkTreeConfig = ChunkTreeConfig::new(64, 128);
@@ -63,6 +65,9 @@ pub struct Buffer {
 
     /// Has the buffer been modified since last save?
     modified: bool,
+
+    /// Cache of line number to byte offset mappings
+    line_cache: LineCache,
 }
 
 impl Buffer {
@@ -73,6 +78,7 @@ impl Buffer {
             virtual_buffer: VirtualBuffer::new(persistence),
             file_path: None,
             modified: false,
+            line_cache: LineCache::new(),
         }
     }
 
@@ -87,6 +93,7 @@ impl Buffer {
             virtual_buffer: VirtualBuffer::new(persistence),
             file_path: None,
             modified: false,
+            line_cache: LineCache::new(),
         }
     }
 
@@ -106,6 +113,7 @@ impl Buffer {
             virtual_buffer: VirtualBuffer::new(persistence),
             file_path: Some(path.to_path_buf()),
             modified: false,
+            line_cache: LineCache::new(),
         })
     }
 
@@ -371,6 +379,118 @@ impl Buffer {
         }
 
         len
+    }
+
+    // LineCache API - The ONLY way to get line number information
+
+    /// Get the line number for a given byte offset.
+    /// This will populate the cache if needed by iterating from the nearest known point.
+    pub fn get_line_number(&mut self, byte_offset: usize) -> usize {
+        // Check if already cached
+        if let Some(info) = self.line_cache.entries.get(&byte_offset) {
+            return info.line_number;
+        }
+
+        // Find nearest cached entry before this offset
+        let (start_byte, start_line) = if let Some(info) = self.line_cache.get_nearest_before(byte_offset) {
+            (info.byte_offset, info.line_number)
+        } else {
+            (0, 0) // Start from beginning
+        };
+
+        // Iterate forward from start_byte to byte_offset, building cache
+        let mut iter = self.line_iterator(start_byte);
+        let mut current_line = start_line;
+
+        // Cache the starting position if not already cached
+        if !self.line_cache.entries.contains_key(&start_byte) {
+            self.line_cache.entries.insert(start_byte, LineInfo {
+                line_number: start_line,
+                byte_offset: start_byte,
+            });
+        }
+
+        while let Some((line_byte, _)) = iter.next() {
+            if line_byte > byte_offset {
+                break;
+            }
+
+            // Cache this line
+            self.line_cache.entries.insert(line_byte, LineInfo {
+                line_number: current_line,
+                byte_offset: line_byte,
+            });
+
+            if line_byte == byte_offset {
+                return current_line;
+            }
+
+            current_line += 1;
+        }
+
+        // If we get here, byte_offset is beyond what we found
+        current_line.saturating_sub(1)
+    }
+
+    /// Populate the line cache for a range of lines starting from a byte offset.
+    /// This is useful for pre-populating the viewport area.
+    /// Returns the line number of the starting byte offset.
+    pub fn populate_line_cache(&mut self, start_byte: usize, line_count: usize) -> usize {
+        let start_line = self.get_line_number(start_byte);
+
+        // Now iterate forward to populate more lines
+        let mut iter = self.line_iterator(start_byte);
+        let mut current_line = start_line;
+        let mut lines_added = 0;
+
+        while let Some((line_byte, _)) = iter.next() {
+            if lines_added >= line_count {
+                break;
+            }
+
+            // Cache this line if not already cached
+            self.line_cache.entries.entry(line_byte).or_insert_with(|| LineInfo {
+                line_number: current_line,
+                byte_offset: line_byte,
+            });
+
+            current_line += 1;
+            lines_added += 1;
+        }
+
+        start_line
+    }
+
+    /// Get the byte offset for a line number if it's cached.
+    /// Returns None if the line is not in the cache.
+    /// This is a read-only operation that doesn't trigger cache population.
+    pub fn get_cached_byte_offset_for_line(&self, line_number: usize) -> Option<usize> {
+        self.line_cache.entries.iter()
+            .find(|(_, info)| info.line_number == line_number)
+            .map(|(_, info)| info.byte_offset)
+    }
+
+    /// Invalidate line cache from a byte offset onwards.
+    /// This should be called after any edit operation.
+    pub fn invalidate_line_cache_from(&mut self, byte_offset: usize) {
+        self.line_cache.invalidate_from(byte_offset);
+    }
+
+    /// Handle an insertion in the line cache.
+    /// Call this after inserting text to update cached line info.
+    pub fn handle_line_cache_insertion(&mut self, insert_byte: usize, inserted_bytes: usize, inserted_newlines: usize) {
+        self.line_cache.handle_insertion(insert_byte, inserted_bytes, inserted_newlines);
+    }
+
+    /// Handle a deletion in the line cache.
+    /// Call this after deleting text to update cached line info.
+    pub fn handle_line_cache_deletion(&mut self, delete_start: usize, deleted_bytes: usize, deleted_newlines: usize) {
+        self.line_cache.handle_deletion(delete_start, deleted_bytes, deleted_newlines);
+    }
+
+    /// Clear the entire line cache (useful when reloading a file).
+    pub fn clear_line_cache(&mut self) {
+        self.line_cache.clear();
     }
 }
 

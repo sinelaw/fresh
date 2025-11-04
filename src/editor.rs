@@ -1115,12 +1115,11 @@ impl Editor {
 
         // Use line iterator starting from top_byte to render visible lines
         let visible_count = state.viewport.visible_line_count();
+
+        // Pre-populate the line cache for the visible area
+        let starting_line_num = state.buffer.populate_line_cache(state.viewport.top_byte, visible_count);
+
         let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
-
-        // Get starting line number from viewport's cached value
-        // This is maintained incrementally during scrolling to avoid O(n) scanning
-        let starting_line_num = state.viewport.top_line_number.value();
-
         let mut lines_rendered = 0;
 
         while let Some((line_start, line_content)) = iter.next() {

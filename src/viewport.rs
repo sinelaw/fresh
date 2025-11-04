@@ -1,4 +1,4 @@
-use crate::buffer::{Buffer, LineNumber};
+use crate::buffer::Buffer;
 use crate::cursor::Cursor;
 
 /// The viewport - what portion of the buffer is visible
@@ -6,13 +6,8 @@ use crate::cursor::Cursor;
 pub struct Viewport {
     /// Byte position of the first visible line
     /// **This is the authoritative source of truth for all viewport operations**
+    /// The line number for this byte is obtained from Buffer's LineCache
     pub top_byte: usize,
-
-    /// Line number corresponding to top_byte (0-indexed)
-    /// Absolute when known (scrolled from beginning or counted)
-    /// Relative when estimated (jumped to EOF, derived from other Relative)
-    /// Maintained incrementally when scrolling to avoid rescanning
-    pub top_line_number: LineNumber,
 
     /// Left column offset (horizontal scroll position)
     pub left_column: usize,
@@ -33,7 +28,6 @@ impl Viewport {
     pub fn new(width: u16, height: u16) -> Self {
         Self {
             top_byte: 0,
-            top_line_number: LineNumber::Absolute(0), // We know we start at line 0
             left_column: 0,
             width,
             height,
@@ -75,47 +69,27 @@ impl Viewport {
     }
 
     /// Scroll up by N lines (byte-based)
+    /// LineCache automatically tracks line numbers
     pub fn scroll_up(&mut self, buffer: &Buffer, lines: usize) {
         let mut iter = buffer.line_iterator(self.top_byte);
-        let mut lines_moved = 0;
         for _ in 0..lines {
             if iter.prev().is_none() {
                 break;
             }
-            lines_moved += 1;
         }
         self.top_byte = iter.current_position();
-
-        // Update line number incrementally
-        self.top_line_number = match self.top_line_number {
-            LineNumber::Absolute(line) => LineNumber::Absolute(line.saturating_sub(lines_moved)),
-            LineNumber::Relative { line, from_cached_line } => LineNumber::Relative {
-                line: line.saturating_sub(lines_moved),
-                from_cached_line,
-            },
-        };
     }
 
     /// Scroll down by N lines (byte-based)
+    /// LineCache automatically tracks line numbers
     pub fn scroll_down(&mut self, buffer: &Buffer, lines: usize) {
         let mut iter = buffer.line_iterator(self.top_byte);
-        let mut lines_moved = 0;
         for _ in 0..lines {
             if iter.next().is_none() {
                 break;
             }
-            lines_moved += 1;
         }
         self.top_byte = iter.current_position();
-
-        // Update line number incrementally
-        self.top_line_number = match self.top_line_number {
-            LineNumber::Absolute(line) => LineNumber::Absolute(line + lines_moved),
-            LineNumber::Relative { line, from_cached_line } => LineNumber::Relative {
-                line: line + lines_moved,
-                from_cached_line,
-            },
-        };
     }
 
     /// Scroll to a specific line (byte-based)
@@ -129,7 +103,6 @@ impl Viewport {
             if let Some((line_start, _)) = iter.next() {
                 if current_line + 1 == line {
                     self.top_byte = line_start;
-                    self.top_line_number = LineNumber::Absolute(line);
                     return;
                 }
                 current_line += 1;
@@ -141,83 +114,41 @@ impl Viewport {
 
         // If we didn't find the line, stay at the last valid position
         self.top_byte = iter.current_position();
-        self.top_line_number = LineNumber::Absolute(current_line);
     }
 
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)
+    /// This now uses ONLY the LineCache - no manual line counting
     pub fn ensure_visible(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
         // Find the start of the line containing the cursor using iterator
         let cursor_iter = buffer.line_iterator(cursor.position);
         let cursor_line_start = cursor_iter.current_position();
 
-        // Check if cursor line is visible by iterating from top_byte
-        let visible_count = self.visible_line_count();
-        let mut iter = buffer.line_iterator(self.top_byte);
-        let mut lines_from_top = 0;
-        let mut cursor_is_visible = false;
+        // Get line numbers from the cache
+        let top_line_number = buffer.get_line_number(self.top_byte);
+        let cursor_line_number = buffer.get_line_number(cursor_line_start);
 
-        while let Some((line_byte, _)) = iter.next() {
-            if line_byte == cursor_line_start {
-                cursor_is_visible = lines_from_top < visible_count;
-                break;
-            }
-            lines_from_top += 1;
-            if lines_from_top >= visible_count {
-                break;
-            }
-        }
+        // Check if cursor line is visible
+        let visible_count = self.visible_line_count();
+        let lines_from_top = cursor_line_number.saturating_sub(top_line_number);
+
+        let cursor_is_visible = lines_from_top >= self.scroll_offset
+            && lines_from_top < visible_count.saturating_sub(self.scroll_offset);
 
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {
-            // Special case: if we're at the top (byte 0) and the entire buffer fits in the viewport,
-            // don't scroll - just keep showing from the top
-            if self.top_byte == 0 {
-                // Count total lines from beginning to see if everything fits
-                let mut line_count = 0;
-                let mut iter = buffer.line_iterator(0);
-                while iter.next().is_some() {
-                    line_count += 1;
-                    if line_count > visible_count {
-                        break; // Too many lines to fit
-                    }
-                }
-
-                // If all content fits in viewport, don't scroll
-                if line_count <= visible_count {
-                    return; // Keep top_byte at 0, cursor is technically visible
-                }
-            }
-
-            // Position cursor in the middle of the viewport with scroll offset
-            let target_line_from_top = (visible_count / 2).min(self.scroll_offset);
+            // Position cursor at scroll_offset lines from top
+            let target_line_from_top = self.scroll_offset;
 
             // Move backwards from cursor to find the new top_byte
             let mut iter = buffer.line_iterator(cursor_line_start);
+
             for _ in 0..target_line_from_top {
                 if iter.prev().is_none() {
-                    break;
+                    break; // Hit beginning of buffer
                 }
             }
-            self.top_byte = iter.current_position();
 
-            // Update line number - we don't know the absolute line number of cursor_line_start,
-            // so we use Relative if we weren't already Absolute
-            self.top_line_number = match self.top_line_number {
-                LineNumber::Absolute(_) => {
-                    // We lost track of absolute position by jumping to cursor, use Relative
-                    LineNumber::Relative {
-                        line: 0,
-                        from_cached_line: 0,
-                    }
-                }
-                LineNumber::Relative { .. } => {
-                    // Already relative, reset to 0 since we jumped to a new location
-                    LineNumber::Relative {
-                        line: 0,
-                        from_cached_line: 0,
-                    }
-                }
-            };
+            self.top_byte = iter.current_position();
         }
 
         // Horizontal scrolling
@@ -271,19 +202,13 @@ impl Viewport {
 
             // Move backwards from target to find new top_byte
             let mut iter = buffer.line_iterator(target_line_byte);
-            let mut lines_moved = 0;
             for _ in 0..target_line_from_top {
                 if iter.prev().is_none() {
                     break;
                 }
-                lines_moved += 1;
             }
             self.top_byte = iter.current_position();
-
-            // Update line number - we jumped to a specific line number (parameter),
-            // so we can set Absolute
-            let new_top_line = line.saturating_sub(lines_moved);
-            self.top_line_number = LineNumber::Absolute(new_top_line);
+            // Line number is now tracked automatically via LineCache
         }
     }
 
@@ -363,12 +288,7 @@ impl Viewport {
                 }
             }
             self.top_byte = iter.current_position();
-
-            // Update line number - we jumped to cursor position, use Relative
-            self.top_line_number = LineNumber::Relative {
-                line: 0,
-                from_cached_line: 0,
-            };
+            // Line number is now tracked automatically via LineCache
         } else {
             // Can't fit all cursors, ensure primary is visible
             let primary_cursor = sorted_cursors[0].1;

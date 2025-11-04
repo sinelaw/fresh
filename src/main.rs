@@ -7,6 +7,7 @@ mod edit;
 mod editor;
 mod event;
 mod keybindings;
+mod line_cache;
 mod persistence;
 mod state;
 mod viewport;

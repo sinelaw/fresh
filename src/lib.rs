@@ -9,10 +9,9 @@ pub mod edit;
 pub mod editor;
 pub mod event;
 pub mod keybindings;
+pub mod line_cache;
 pub mod persistence;
 pub mod state;
 pub mod viewport;
 pub mod virtual_buffer;
 
-// Re-export commonly used types
-pub use buffer::LineNumber;

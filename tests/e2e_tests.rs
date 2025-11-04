@@ -2506,3 +2506,112 @@ fn test_cursor_position_with_large_line_numbers() {
         screen_pos.0
     );
 }
+
+/// Test that page down correctly updates line numbers in the viewport
+/// This test loads a buffer with more lines than visible, presses page down twice,
+/// and verifies that the top line number is updated correctly and content changes
+#[test]
+fn test_page_down_line_numbers() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Create a file with 100 lines, each with unique content like "x1", "x2", etc.
+    let content: String = (1..=100).map(|i| format!("x{}\n", i)).collect();
+    std::fs::write(&file_path, content).unwrap();
+
+    // Create harness with 24 lines visible (minus status bar and tabs)
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Initial state: should be at line 0 (first line)
+    let initial_line = harness.top_line_number();
+    assert_eq!(initial_line, 0, "Should start at line 0");
+
+    // Verify the first line is visible on screen
+    harness.assert_screen_contains("x1");
+    let initial_cursor = harness.cursor_position();
+    println!("Initial state: line {}, cursor at {}, screen contains x1", initial_line, initial_cursor);
+    println!("Initial screen:\n{}", harness.screen_to_string());
+
+    // Press page down once
+    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    let after_first_pagedown = harness.top_line_number();
+    let cursor_after_first = harness.cursor_position();
+
+    println!("\nAfter first PageDown: line {}, cursor at {}", after_first_pagedown, cursor_after_first);
+    println!("Screen after first PageDown:\n{}", harness.screen_to_string());
+
+    assert!(
+        after_first_pagedown > 0,
+        "After first PageDown, should have scrolled down from line 0, but got line {}",
+        after_first_pagedown
+    );
+
+    // Verify content has changed - we should see a line number greater than what was initially visible
+    let expected_first_content = format!("x{}", after_first_pagedown + 1); // +1 because line numbers are 0-indexed
+    harness.assert_screen_contains(&expected_first_content);
+    println!("After first PageDown: screen contains {}", expected_first_content);
+
+    // Press page down again to ensure scroll is triggered
+    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    let after_second_pagedown = harness.top_line_number();
+    let cursor_after_second = harness.cursor_position();
+
+    println!("\nAfter second PageDown: line {}, cursor at {}", after_second_pagedown, cursor_after_second);
+    println!("Screen after second PageDown:\n{}", harness.screen_to_string());
+
+    assert!(
+        after_second_pagedown > after_first_pagedown,
+        "After second PageDown, should have scrolled down more (from {} to {})",
+        after_first_pagedown,
+        after_second_pagedown
+    );
+
+    // Verify we can see content from later in the file
+    let expected_second_content = format!("x{}", after_second_pagedown + 1); // +1 because line numbers are 0-indexed
+    harness.assert_screen_contains(&expected_second_content);
+    println!("After second PageDown: screen contains {}", expected_second_content);
+
+    // Verify we no longer see the initial content
+    harness.assert_screen_not_contains("x1");
+
+    // Now move up multiple times to trigger scrolling back up
+    println!("\n=== Testing upward movement ===");
+    let line_before_up = harness.top_line_number();
+
+    // Move up enough times to go past the scroll offset and trigger upward scrolling
+    // We need to move up more than scroll_offset (3) lines to trigger scroll
+    for i in 0..10 {
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+        let current_line = harness.top_line_number();
+        let cursor_pos = harness.cursor_position();
+
+        if current_line < line_before_up {
+            println!("After {} Up presses: line {} (scrolled up!), cursor at {}",
+                     i + 1, current_line, cursor_pos);
+
+            // Verify the line number decreased
+            assert!(
+                current_line < line_before_up,
+                "Line number should decrease when scrolling up"
+            );
+
+            // Verify content changed - we should see earlier content
+            let expected_content = format!("x{}", current_line + 1);
+            harness.assert_screen_contains(&expected_content);
+            println!("Screen now shows {}", expected_content);
+            break;
+        }
+    }
+
+    let final_line = harness.top_line_number();
+    assert!(
+        final_line < after_second_pagedown,
+        "After moving up, viewport should have scrolled up from line {} to {}",
+        after_second_pagedown,
+        final_line
+    );
+}
