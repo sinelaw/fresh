@@ -31,32 +31,29 @@ pub fn diagnostic_to_overlay(
     let end_byte = line_char_to_byte(buffer, end_line, end_char)?;
 
     // Determine overlay face based on diagnostic severity
+    // Use background colors to make diagnostics more visible
     let (face, priority) = match diagnostic.severity {
         Some(DiagnosticSeverity::ERROR) => (
-            OverlayFace::Underline {
-                color: Color::Red,
-                style: UnderlineStyle::Wavy,
+            OverlayFace::Background {
+                color: Color::Rgb(60, 20, 20), // Dark red background
             },
             100, // Highest priority
         ),
         Some(DiagnosticSeverity::WARNING) => (
-            OverlayFace::Underline {
-                color: Color::Yellow,
-                style: UnderlineStyle::Wavy,
+            OverlayFace::Background {
+                color: Color::Rgb(60, 50, 0), // Dark yellow/brown background
             },
             50, // Medium priority
         ),
         Some(DiagnosticSeverity::INFORMATION) => (
-            OverlayFace::Underline {
-                color: Color::Blue,
-                style: UnderlineStyle::Wavy,
+            OverlayFace::Background {
+                color: Color::Rgb(0, 30, 60), // Dark blue background
             },
             30, // Lower priority
         ),
         Some(DiagnosticSeverity::HINT) | None => (
-            OverlayFace::Underline {
-                color: Color::Gray,
-                style: UnderlineStyle::Dotted,
+            OverlayFace::Background {
+                color: Color::Rgb(30, 30, 30), // Dark gray background
             },
             10, // Lowest priority
         ),

@@ -952,29 +952,31 @@ impl Editor {
                         uri
                     );
 
-                    // Find the buffer for this URI
-                    if let Ok(url) = Url::parse(&uri) {
-                        if let Ok(path) = url.to_file_path() {
-                            // Find buffer ID for this path
-                            if let Some((buffer_id, _)) = self
-                                .buffer_metadata
-                                .iter()
-                                .find(|(_, m)| m.file_path.as_ref().map(|p| p.as_path()) == Some(path.as_path()))
-                            {
-                                // Convert diagnostics to overlays
-                                if let Some(state) = self.buffers.get_mut(buffer_id) {
-                                    lsp_diagnostics::apply_diagnostics_to_state(
-                                        state,
-                                        &diagnostics,
-                                    );
-                                    tracing::info!(
-                                        "Applied {} diagnostics to buffer {:?}",
-                                        diagnostics.len(),
-                                        buffer_id
-                                    );
-                                }
+                    // Find the buffer for this URI by comparing URIs directly
+                    if let Ok(diagnostic_url) = Url::parse(&uri) {
+                        // Find buffer ID by matching URI
+                        if let Some((buffer_id, _)) = self
+                            .buffer_metadata
+                            .iter()
+                            .find(|(_, m)| m.file_uri.as_ref() == Some(&diagnostic_url))
+                        {
+                            // Convert diagnostics to overlays
+                            if let Some(state) = self.buffers.get_mut(buffer_id) {
+                                lsp_diagnostics::apply_diagnostics_to_state(
+                                    state,
+                                    &diagnostics,
+                                );
+                                tracing::info!(
+                                    "Applied {} diagnostics to buffer {:?}",
+                                    diagnostics.len(),
+                                    buffer_id
+                                );
                             }
+                        } else {
+                            tracing::debug!("No buffer found for diagnostic URI: {}", uri);
                         }
+                    } else {
+                        tracing::warn!("Could not parse diagnostic URI: {}", uri);
                     }
                 }
                 AsyncMessage::LspInitialized { language } => {
