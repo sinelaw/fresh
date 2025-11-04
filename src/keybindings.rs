@@ -425,15 +425,13 @@ impl KeybindingResolver {
             Action::CommandPalette,
         );
 
-        // Buffer navigation
-        // Note: Ctrl+Tab doesn't work reliably in terminals, so we use Ctrl+Shift+N/P
-        // (like Emacs buffer switching: Ctrl+X B, but simplified to single chord)
+        // Buffer navigation (Ctrl+PageUp/PageDown - standard in terminals and browsers)
         bindings.insert(
-            (KeyCode::Char('b'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            (KeyCode::PageUp, KeyModifiers::CONTROL),
             Action::PrevBuffer,
         );
         bindings.insert(
-            (KeyCode::Char('n'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            (KeyCode::PageDown, KeyModifiers::CONTROL),
             Action::NextBuffer,
         );
 
