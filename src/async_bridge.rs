@@ -186,4 +186,155 @@ mod tests {
         let messages = bridge.try_recv_all();
         assert_eq!(messages.len(), 2);
     }
+
+    #[test]
+    fn test_async_bridge_diagnostics() {
+        let bridge = AsyncBridge::new();
+        let sender = bridge.sender();
+
+        // Send diagnostic message
+        let diagnostics = vec![
+            lsp_types::Diagnostic {
+                range: lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: lsp_types::Position {
+                        line: 0,
+                        character: 5,
+                    },
+                },
+                severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+                code: None,
+                code_description: None,
+                source: Some("rust-analyzer".to_string()),
+                message: "test error".to_string(),
+                related_information: None,
+                tags: None,
+                data: None,
+            },
+        ];
+
+        sender
+            .send(AsyncMessage::LspDiagnostics {
+                uri: "file:///test.rs".to_string(),
+                diagnostics: diagnostics.clone(),
+            })
+            .unwrap();
+
+        let messages = bridge.try_recv_all();
+        assert_eq!(messages.len(), 1);
+
+        match &messages[0] {
+            AsyncMessage::LspDiagnostics { uri, diagnostics: diags } => {
+                assert_eq!(uri, "file:///test.rs");
+                assert_eq!(diags.len(), 1);
+                assert_eq!(diags[0].message, "test error");
+            }
+            _ => panic!("Expected LspDiagnostics message"),
+        }
+    }
+
+    #[test]
+    fn test_async_bridge_error_message() {
+        let bridge = AsyncBridge::new();
+        let sender = bridge.sender();
+
+        sender
+            .send(AsyncMessage::LspError {
+                language: "rust".to_string(),
+                error: "Failed to initialize".to_string(),
+            })
+            .unwrap();
+
+        let messages = bridge.try_recv_all();
+        assert_eq!(messages.len(), 1);
+
+        match &messages[0] {
+            AsyncMessage::LspError { language, error } => {
+                assert_eq!(language, "rust");
+                assert_eq!(error, "Failed to initialize");
+            }
+            _ => panic!("Expected LspError message"),
+        }
+    }
+
+    #[test]
+    fn test_async_bridge_clone_bridge() {
+        let bridge = AsyncBridge::new();
+        let bridge_clone = bridge.clone();
+        let sender = bridge.sender();
+
+        // Send via original bridge's sender
+        sender
+            .send(AsyncMessage::LspInitialized {
+                language: "rust".to_string(),
+            })
+            .unwrap();
+
+        // Receive via cloned bridge
+        let messages = bridge_clone.try_recv_all();
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
+    fn test_async_bridge_multiple_calls_to_try_recv_all() {
+        let bridge = AsyncBridge::new();
+        let sender = bridge.sender();
+
+        sender
+            .send(AsyncMessage::LspInitialized {
+                language: "rust".to_string(),
+            })
+            .unwrap();
+
+        // First call gets the message
+        let messages1 = bridge.try_recv_all();
+        assert_eq!(messages1.len(), 1);
+
+        // Second call gets nothing
+        let messages2 = bridge.try_recv_all();
+        assert_eq!(messages2.len(), 0);
+    }
+
+    #[test]
+    fn test_async_bridge_ordering() {
+        let bridge = AsyncBridge::new();
+        let sender = bridge.sender();
+
+        // Send messages in order
+        sender
+            .send(AsyncMessage::LspInitialized {
+                language: "rust".to_string(),
+            })
+            .unwrap();
+        sender
+            .send(AsyncMessage::LspInitialized {
+                language: "typescript".to_string(),
+            })
+            .unwrap();
+        sender
+            .send(AsyncMessage::LspInitialized {
+                language: "python".to_string(),
+            })
+            .unwrap();
+
+        // Messages should be received in same order
+        let messages = bridge.try_recv_all();
+        assert_eq!(messages.len(), 3);
+
+        match (&messages[0], &messages[1], &messages[2]) {
+            (
+                AsyncMessage::LspInitialized { language: l1 },
+                AsyncMessage::LspInitialized { language: l2 },
+                AsyncMessage::LspInitialized { language: l3 },
+            ) => {
+                assert_eq!(l1, "rust");
+                assert_eq!(l2, "typescript");
+                assert_eq!(l3, "python");
+            }
+            _ => panic!("Expected ordered LspInitialized messages"),
+        }
+    }
 }

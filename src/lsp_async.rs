@@ -657,6 +657,277 @@ impl LspHandle {
 
 impl Drop for LspHandle {
     fn drop(&mut self) {
-        let _ = self.shutdown();
+        // Best-effort shutdown on drop
+        // Use try_send instead of blocking_send to avoid panicking if:
+        // 1. The tokio runtime is shut down
+        // 2. The channel is full or closed
+        // 3. We're dropping during a panic
+        let _ = self.command_tx.try_send(LspCommand::Shutdown);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_json_rpc_request_serialization() {
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 1,
+            method: "initialize".to_string(),
+            params: Some(serde_json::json!({"rootUri": "file:///test"})),
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"jsonrpc\":\"2.0\""));
+        assert!(json.contains("\"id\":1"));
+        assert!(json.contains("\"method\":\"initialize\""));
+        assert!(json.contains("\"rootUri\":\"file:///test\""));
+    }
+
+    #[test]
+    fn test_json_rpc_response_serialization() {
+        let response = JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: 1,
+            result: Some(serde_json::json!({"success": true})),
+            error: None,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"jsonrpc\":\"2.0\""));
+        assert!(json.contains("\"id\":1"));
+        assert!(json.contains("\"success\":true"));
+        assert!(!json.contains("\"error\""));
+    }
+
+    #[test]
+    fn test_json_rpc_error_response() {
+        let response = JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: 1,
+            result: None,
+            error: Some(JsonRpcError {
+                code: -32600,
+                message: "Invalid request".to_string(),
+                data: None,
+            }),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"error\""));
+        assert!(json.contains("\"code\":-32600"));
+        assert!(json.contains("\"message\":\"Invalid request\""));
+    }
+
+    #[test]
+    fn test_json_rpc_notification_serialization() {
+        let notification = JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "textDocument/didOpen".to_string(),
+            params: Some(serde_json::json!({"uri": "file:///test.rs"})),
+        };
+
+        let json = serde_json::to_string(&notification).unwrap();
+        assert!(json.contains("\"jsonrpc\":\"2.0\""));
+        assert!(json.contains("\"method\":\"textDocument/didOpen\""));
+        assert!(json.contains("\"uri\":\"file:///test.rs\""));
+        assert!(!json.contains("\"id\"")); // Notifications have no ID
+    }
+
+    #[test]
+    fn test_json_rpc_message_deserialization_request() {
+        let json = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file:///test"}}"#;
+        let message: JsonRpcMessage = serde_json::from_str(json).unwrap();
+
+        match message {
+            JsonRpcMessage::Request(request) => {
+                assert_eq!(request.jsonrpc, "2.0");
+                assert_eq!(request.id, 1);
+                assert_eq!(request.method, "initialize");
+                assert!(request.params.is_some());
+            }
+            _ => panic!("Expected Request"),
+        }
+    }
+
+    #[test]
+    fn test_json_rpc_message_deserialization_response() {
+        let json = r#"{"jsonrpc":"2.0","id":1,"result":{"success":true}}"#;
+        let message: JsonRpcMessage = serde_json::from_str(json).unwrap();
+
+        match message {
+            JsonRpcMessage::Response(response) => {
+                assert_eq!(response.jsonrpc, "2.0");
+                assert_eq!(response.id, 1);
+                assert!(response.result.is_some());
+                assert!(response.error.is_none());
+            }
+            _ => panic!("Expected Response"),
+        }
+    }
+
+    #[test]
+    fn test_json_rpc_message_deserialization_notification() {
+        let json = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"uri":"file:///test.rs"}}"#;
+        let message: JsonRpcMessage = serde_json::from_str(json).unwrap();
+
+        match message {
+            JsonRpcMessage::Notification(notification) => {
+                assert_eq!(notification.jsonrpc, "2.0");
+                assert_eq!(notification.method, "textDocument/didOpen");
+                assert!(notification.params.is_some());
+            }
+            _ => panic!("Expected Notification"),
+        }
+    }
+
+    #[test]
+    fn test_json_rpc_error_deserialization() {
+        let json = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"Invalid request"}}"#;
+        let message: JsonRpcMessage = serde_json::from_str(json).unwrap();
+
+        match message {
+            JsonRpcMessage::Response(response) => {
+                assert_eq!(response.jsonrpc, "2.0");
+                assert_eq!(response.id, 1);
+                assert!(response.result.is_none());
+                assert!(response.error.is_some());
+                let error = response.error.unwrap();
+                assert_eq!(error.code, -32600);
+                assert_eq!(error.message, "Invalid request");
+            }
+            _ => panic!("Expected Response with error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lsp_handle_spawn_and_drop() {
+        // This test spawns a mock LSP server (cat command that echoes input)
+        // and tests the spawn/drop lifecycle
+        let runtime = tokio::runtime::Handle::current();
+        let async_bridge = AsyncBridge::new();
+
+        // Use 'cat' as a mock LSP server (it will just echo stdin to stdout)
+        // This will fail to initialize but allows us to test the spawn mechanism
+        let result = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge);
+
+        // Should succeed in spawning
+        assert!(result.is_ok());
+
+        let handle = result.unwrap();
+
+        // Let handle drop (which calls shutdown via Drop impl)
+        drop(handle);
+
+        // Give task time to receive shutdown and exit
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+
+    #[tokio::test]
+    async fn test_lsp_handle_did_open_requires_initialization() {
+        let runtime = tokio::runtime::Handle::current();
+        let async_bridge = AsyncBridge::new();
+
+        let handle = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge)
+            .unwrap();
+
+        // did_open should fail because server is not initialized
+        let result = handle.did_open(
+            Url::parse("file:///test.rs").unwrap(),
+            "fn main() {}".to_string(),
+            "rust".to_string(),
+        );
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("LSP client not initialized"));
+    }
+
+    #[tokio::test]
+    async fn test_lsp_handle_did_change_requires_initialization() {
+        let runtime = tokio::runtime::Handle::current();
+        let async_bridge = AsyncBridge::new();
+
+        let handle = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge)
+            .unwrap();
+
+        // did_change should fail because server is not initialized
+        let result = handle.did_change(
+            Url::parse("file:///test.rs").unwrap(),
+            vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "fn main() {}".to_string(),
+            }],
+        );
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("LSP client not initialized"));
+    }
+
+    #[tokio::test]
+    async fn test_lsp_handle_spawn_invalid_command() {
+        let runtime = tokio::runtime::Handle::current();
+        let async_bridge = AsyncBridge::new();
+
+        // Try to spawn with an invalid command
+        let result = LspHandle::spawn(
+            &runtime,
+            "this-command-does-not-exist-12345",
+            &[],
+            "test".to_string(),
+            &async_bridge,
+        );
+
+        // Should succeed in creating handle (error happens asynchronously)
+        // The error will be sent to async_bridge
+        assert!(result.is_ok());
+
+        // Give the task time to fail
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Check that we received an error message
+        let messages = async_bridge.try_recv_all();
+        assert!(!messages.is_empty());
+
+        let has_error = messages.iter().any(|msg| matches!(msg, AsyncMessage::LspError { .. }));
+        assert!(has_error, "Expected LspError message");
+    }
+
+    #[test]
+    fn test_lsp_handle_shutdown_from_sync_context() {
+        // Test shutdown from a synchronous context (requires spawning a separate thread)
+        // This simulates how shutdown is called from the main editor loop
+        std::thread::spawn(|| {
+            // Create a tokio runtime for this thread
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let async_bridge = AsyncBridge::new();
+
+            let handle = rt.block_on(async {
+                let runtime = tokio::runtime::Handle::current();
+                LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge).unwrap()
+            });
+
+            // This should succeed from a non-async context
+            assert!(handle.shutdown().is_ok());
+
+            // Give task time to exit
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn test_lsp_command_debug_format() {
+        // Test that LspCommand has Debug implementation
+        let cmd = LspCommand::Shutdown;
+        let debug_str = format!("{:?}", cmd);
+        assert!(debug_str.contains("Shutdown"));
     }
 }

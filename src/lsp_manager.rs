@@ -144,3 +144,222 @@ pub fn detect_language(path: &std::path::Path) -> Option<String> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_lsp_manager_new() {
+        let root_uri = Url::parse("file:///test").ok();
+        let manager = LspManager::new(root_uri.clone());
+
+        // Manager should start with no handles
+        assert_eq!(manager.handles.len(), 0);
+        assert_eq!(manager.config.len(), 0);
+        assert!(manager.root_uri.is_some());
+        assert!(manager.runtime.is_none());
+        assert!(manager.async_bridge.is_none());
+    }
+
+    #[test]
+    fn test_lsp_manager_set_language_config() {
+        let mut manager = LspManager::new(None);
+
+        let config = LspServerConfig {
+            enabled: true,
+            command: "rust-analyzer".to_string(),
+            args: vec![],
+        };
+
+        manager.set_language_config("rust".to_string(), config);
+
+        assert_eq!(manager.config.len(), 1);
+        assert!(manager.config.contains_key("rust"));
+        assert!(manager.config.get("rust").unwrap().enabled);
+    }
+
+    #[test]
+    fn test_lsp_manager_get_or_spawn_no_runtime() {
+        let mut manager = LspManager::new(None);
+
+        // Add config for rust
+        manager.set_language_config(
+            "rust".to_string(),
+            LspServerConfig {
+                enabled: true,
+                command: "rust-analyzer".to_string(),
+                args: vec![],
+            },
+        );
+
+        // get_or_spawn should return None without runtime
+        let result = manager.get_or_spawn("rust");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_lsp_manager_get_or_spawn_no_config() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut manager = LspManager::new(None);
+        let async_bridge = AsyncBridge::new();
+
+        manager.set_runtime(rt.handle().clone(), async_bridge);
+
+        // get_or_spawn should return None for unconfigured language
+        let result = manager.get_or_spawn("rust");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_lsp_manager_get_or_spawn_disabled_language() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut manager = LspManager::new(None);
+        let async_bridge = AsyncBridge::new();
+
+        manager.set_runtime(rt.handle().clone(), async_bridge);
+
+        // Add disabled config
+        manager.set_language_config(
+            "rust".to_string(),
+            LspServerConfig {
+                enabled: false,
+                command: "rust-analyzer".to_string(),
+                args: vec![],
+            },
+        );
+
+        // get_or_spawn should return None for disabled language
+        let result = manager.get_or_spawn("rust");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_lsp_manager_shutdown_all() {
+        let mut manager = LspManager::new(None);
+
+        // shutdown_all should not panic even with no handles
+        manager.shutdown_all();
+        assert_eq!(manager.handles.len(), 0);
+    }
+
+    #[test]
+    fn test_detect_language_rust() {
+        assert_eq!(detect_language(Path::new("main.rs")), Some("rust".to_string()));
+        assert_eq!(detect_language(Path::new("lib.rs")), Some("rust".to_string()));
+        assert_eq!(
+            detect_language(Path::new("/path/to/file.rs")),
+            Some("rust".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_language_javascript() {
+        assert_eq!(
+            detect_language(Path::new("index.js")),
+            Some("javascript".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("App.jsx")),
+            Some("javascript".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("module.mjs")),
+            Some("javascript".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("config.cjs")),
+            Some("javascript".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_language_typescript() {
+        assert_eq!(
+            detect_language(Path::new("index.ts")),
+            Some("typescript".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("App.tsx")),
+            Some("typescript".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_language_python() {
+        assert_eq!(
+            detect_language(Path::new("main.py")),
+            Some("python".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("types.pyi")),
+            Some("python".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_language_c_cpp() {
+        assert_eq!(detect_language(Path::new("main.c")), Some("c".to_string()));
+        assert_eq!(detect_language(Path::new("header.h")), Some("c".to_string()));
+        assert_eq!(detect_language(Path::new("main.cpp")), Some("cpp".to_string()));
+        assert_eq!(detect_language(Path::new("main.cc")), Some("cpp".to_string()));
+        assert_eq!(detect_language(Path::new("main.cxx")), Some("cpp".to_string()));
+        assert_eq!(detect_language(Path::new("header.hpp")), Some("cpp".to_string()));
+        assert_eq!(detect_language(Path::new("header.hxx")), Some("cpp".to_string()));
+    }
+
+    #[test]
+    fn test_detect_language_markup() {
+        assert_eq!(
+            detect_language(Path::new("README.md")),
+            Some("markdown".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("index.html")),
+            Some("html".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("styles.css")),
+            Some("css".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_language_config_files() {
+        assert_eq!(
+            detect_language(Path::new("Cargo.toml")),
+            Some("toml".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("config.yaml")),
+            Some("yaml".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("config.yml")),
+            Some("yaml".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("package.json")),
+            Some("json".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_language_go() {
+        assert_eq!(detect_language(Path::new("main.go")), Some("go".to_string()));
+    }
+
+    #[test]
+    fn test_detect_language_unknown() {
+        assert_eq!(detect_language(Path::new("file.xyz")), None);
+        assert_eq!(detect_language(Path::new("file.unknown")), None);
+        assert_eq!(detect_language(Path::new("file")), None); // No extension
+    }
+
+    #[test]
+    fn test_detect_language_no_extension() {
+        assert_eq!(detect_language(Path::new("README")), None);
+        assert_eq!(detect_language(Path::new("Makefile")), None);
+    }
+}

@@ -536,9 +536,9 @@ fn test_lsp_diagnostic_to_overlay() {
 
     // Check face (should be red wavy underline)
     match face {
-        editor::event::OverlayFace::Underline { color, style } => {
-            assert_eq!(color, (255, 0, 0));
-            assert_eq!(style, editor::event::UnderlineStyle::Wavy);
+        editor::overlay::OverlayFace::Underline { color, style } => {
+            assert_eq!(color, ratatui::style::Color::Red);
+            assert_eq!(style, editor::overlay::UnderlineStyle::Wavy);
         }
         _ => panic!("Expected underline face for error diagnostic"),
     }
