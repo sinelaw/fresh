@@ -22,3 +22,6 @@ Cargo.lock
 
 # Large test files (generated on demand)
 tests/BIG.txt
+flamegraph.svg
+perf.data
+perf.data.old
