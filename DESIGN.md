@@ -191,85 +191,68 @@ pub enum EditKind {
 
 The ByteIterator now holds an Arc\<InnerBuffer> and automatically registers/unregisters its version for garbage collection.
 
+**Performance Optimization:** To avoid excessive locking (4 locks per byte), the iterator uses a two-level caching strategy:
+
+1. **ChunkTree Snapshot:** Gets a cheap clone of the underlying ChunkTree via `PersistenceLayer::get_chunk_tree_snapshot()`
+2. **Internal 4KB Buffer:** Reads chunks from the snapshot, reducing iterator creation from O(n) to O(n/4096)
+3. **Lazy Invalidation:** When `adjust_for_edits()` detects version changes, it invalidates both snapshot and buffer
+
 ```rust
 
-pub struct ByteIterator {  
-    // Shared reference to \*inner\* buffer  
+pub struct ByteIterator {
     buffer: Arc\<InnerBuffer\>,
-
-    // Current position  
     position: usize,
+    version\_at\_creation: u64,
 
-    // Track what version this iterator has "caught up" to  
-    version\_at\_creation: u64, //  
+    // Performance optimizations
+    tree\_snapshot: Option\<ChunkTree\<'static\>\>,  // Invalidated on edits
+    chunk\_buffer: Option\<(usize, Vec\<u8\>)\>,      // 4KB internal buffer
 }
 
-impl ByteIterator {  
-    pub fn next(\&mut self) \-\> Option\<u8\> {  
-        self.adjust\_for\_edits(); //
+impl ByteIterator {
+    pub fn next(\&mut self) \-\> Option\<u8\> {
+        self.adjust\_for\_edits();  // Fast: just atomic load if no edits
 
-        // Ensure region is cached (locks cache internally)  
-        self.buffer.cache.lock().unwrap().ensure\_cached(self.position, 1).ok()?; //
-
-        // Read from cache  
-        let byte \= self.buffer.cache.lock().unwrap().read(self.position, 1)?\[0\];  
-        self.position \+= 1;  
-        Some(byte)  
-    }
-
-    pub fn prev(\&mut self) \-\> Option\<u8\> {  
-        // ... (Similar logic)  
-        unimplemented\!()  
-    }
-
-    fn adjust\_for\_edits(\&mut self) {  
-        let current\_version \= self.buffer.edit\_version.load(Ordering::Relaxed);  
-        if self.version\_at\_creation \== current\_version {  
-            return; // Already up-to-date  
+        // Fast path: check internal buffer (no locks)
+        if let Some((chunk\_start, data)) \= \&self.chunk\_buffer {
+            let offset \= self.position.saturating\_sub(\*chunk\_start);
+            if offset \< data.len() {
+                let byte \= data\[offset\];
+                self.position \+= 1;
+                return Some(byte);
+            }
         }
 
-        // Get read lock on edit log  
-        let edit\_log \= self.buffer.edit\_log.read().unwrap();  
-          
-        // Find first edit \*after\* our version  
-        let first\_edit\_index \= edit\_log  
-            .binary\_search\_by\_key(\&self.version\_at\_creation, |e| e.version)  
-            .map(|i| i \+ 1\) // We want edits \*after\* our version  
-            .unwrap\_or\_else(|e| e); // \`e\` is insertion point for our version
+        // Buffer miss: load 4KB chunk from snapshot
+        if let Some(tree) \= \&self.tree\_snapshot {
+            let mut iter \= tree.bytes\_at(self.position);  // O(log n) once per 4KB
+            let chunk\_data \= iter.take(4096).collect();
+            // ... store in chunk\_buffer and return first byte
+        }
 
-        // Apply all edits since version\_at\_creation to adjust position  
-        for edit in \&edit\_log\[first\_edit\_index..\] {  
-            match edit.kind {  
-                EditKind::Insert { offset, len } if offset \<= self.position \=\> {  
-                    self.position \+= len;  
-                } //  
-                EditKind::Delete { offset, len } if offset \<= self.position \=\> {  
-                    self.position \= self.position.saturating\_sub(len);  
-                } //  
-                \_ \=\> {} //  
-            }  
-        }  
-          
-        // \*\*\* NEW: Update version tracking for GC \*\*\*  
-        let mut versions \= self.buffer.active\_iterator\_versions.lock().unwrap();  
-        versions.remove(\&self.version\_at\_creation);  
-        self.version\_at\_creation \= current\_version; // Bump our version  
-        versions.insert(self.version\_at\_creation);  
-    }  
-}
+        None
+    }
 
-/// NEW: Implement Drop to unregister the iterator  
-impl Drop for ByteIterator {  
-    fn drop(\&mut self) {  
-        // Remove this iterator's version from the active set  
-        self.buffer  
-            .active\_iterator\_versions  
-            .lock()  
-            .unwrap()  
-            .remove(\&self.version\_at\_creation);  
-    }  
+    fn adjust\_for\_edits(\&mut self) {
+        let current\_version \= self.buffer.edit\_version.load(Ordering::Relaxed);
+        if self.version\_at\_creation \== current\_version {
+            return; // Fast path: no edits
+        }
+
+        // Apply position adjustments from edit log
+        // ...
+
+        // CRITICAL: Invalidate cached data
+        self.tree\_snapshot \= None;
+        self.chunk\_buffer \= None;
+
+        // Update version tracking for GC
+        // ...
+    }
 }
 ```
+
+**Performance:** ~4096x fewer locks and iterator creations compared to per-byte access.
 
 ______________________________________________________________________
 
