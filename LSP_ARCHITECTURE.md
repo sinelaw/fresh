@@ -11,7 +11,172 @@ Language Server Protocol (LSP) support enables IDE-like features:
 - Code actions (quick fixes)
 - Document formatting
 
-## Architecture
+## LSP in the Wild: Learning from Established Implementations
+
+### Vim/Neovim LSP Clients
+
+**coc.nvim** (Conquer of Completion)
+- Architecture: Node.js-based extension host, similar to VSCode
+- Configuration: JSON-based, mirrors VSCode extension configuration
+- Features: Full LSP support + off-spec functionality for each server
+- Philosophy: "Headless VSCode" - maximum compatibility with VSCode ecosystem
+
+**Neovim Native LSP** (v0.5.0+)
+- Architecture: Built-in Lua-based LSP client
+- Configuration: Via nvim-lspconfig plugin
+- Key Concept: `root_dir` determines workspace root for language server
+- Philosophy: Minimal core + plugin ecosystem for features
+- Debouncing: Built-in 150ms debounce for didChange notifications (`debounce_text_changes`)
+
+**vim-lsp**
+- Architecture: Async LSP protocol plugin
+- Philosophy: Asynchronous operation to avoid blocking editor
+
+### Emacs LSP Clients
+
+**Eglot** (Built-in to Emacs 29+)
+- Architecture: Lightweight, integrates with built-in Emacs tools
+- Integration: Uses Flymake for diagnostics, xref for navigation, eldoc for hover
+- Philosophy: "Stays out of your way" - minimal configuration
+- Design: Translates between Emacs internal representations and LSP protocol
+- Key Advantage: No external dependencies beyond Emacs
+
+**lsp-mode**
+- Architecture: Feature-rich, separate sub-packages per language server
+- Integration: Optional integration with company, flycheck, projectile
+- Features: Bespoke UI, dap-mode integration, multiple servers per file
+- Philosophy: IDE-like experience with comprehensive LSP spec support
+- Configuration: Per-server quirks handling
+
+### VSCode LSP Architecture
+
+**Core Components:**
+- `vscode-languageclient`: npm module for VSCode extensions to communicate with LSP servers
+- `vscode-languageserver`: npm module for implementing LSP servers in Node.js
+- `vscode-languageserver-protocol`: TypeScript definition of LSP protocol
+- `vscode-jsonrpc`: Underlying message protocol
+
+**Architecture:**
+- Language Client runs in Node.js Extension Host context
+- Language Servers run in separate process (any language)
+- Communication: IPC or sockets via vscode-languageclient
+- Philosophy: Language-agnostic base layer, servers avoid performance cost via separate processes
+
+## Critical Implementation Lessons
+
+### 1. Position Encoding (UTF-8 vs UTF-16)
+
+**The Problem:**
+- LSP mandates line/column pairs where "column" is an index into **UTF-16-encoded** text
+- Text contents are transmitted in **UTF-8**
+- Most modern editors (Rust, Go) store strings in UTF-8 internally
+- Example: In `a𐐀b`, character offset of `𐐀` is 1, but offset of `b` is 3 in UTF-16 (𐐀 uses 2 code units)
+
+**LSP 3.17+ Solution:**
+- Client announces supported encodings via `general.positionEncodings` capability
+- Three encoding kinds:
+  - `UTF-8`: Character offsets count UTF-8 code units (bytes) - preferred for Rust
+  - `UTF-16`: Character offsets count UTF-16 code units - default, must be supported
+  - `UTF-32`: Character offsets count UTF-32 code units (Unicode code points)
+
+**Implementation Strategy:**
+- Keep two positions per source location:
+  - UTF-8 byte position (for indexing Rust `str` and `[u8]`)
+  - UTF-16 code unit position (for LSP protocol)
+- Use `lsp-positions` crate or similar for conversion utilities
+- Always negotiate UTF-8 encoding in initialize if server supports it
+
+### 2. Diagnostics Lifecycle
+
+**Server Responsibilities:**
+- When file is updated, server MUST re-compute and push diagnostics to client
+- Even if diagnostics are unchanged, server must push them (to confirm they're current)
+- Empty diagnostic array clears previous diagnostics
+- **No merging on client side** - new diagnostics always replace old ones completely
+
+**Client Handling:**
+- Diagnostics arrive asynchronously via `textDocument/publishDiagnostics` notification
+- Can arrive at any time, not just after didChange/didSave
+- Client has **no control** over when diagnostics are sent
+- Must handle out-of-order notifications gracefully
+
+**Best Practice:**
+- Store diagnostics by URI, replace entire diagnostic set per file
+- Clear diagnostics when file is closed
+- Display diagnostics via UI primitives (overlays for underlines, popups for details)
+
+### 3. Async vs Sync Notification Handling
+
+**Protocol Semantics:**
+- **Requests**: Can be processed concurrently (async)
+- **Notifications**: MUST be processed in order (sync)
+- Notifications change state and affect semantics of later requests/notifications
+
+**Common Anti-Pattern (tower-lsp):**
+- Handles notifications asynchronously → out-of-order issues
+- Example: `didChange` notification processed after `completion` request
+
+**Correct Pattern (async-lsp):**
+- Execute notification handlers synchronously
+- Maintain main loop control for exit/error conditions
+- Allow async processing of requests (completion, hover, etc.)
+
+### 4. Performance: Debouncing & Throttling
+
+**The Problem:**
+- Typing generates rapid `didChange` notifications
+- Each notification triggers expensive re-analysis
+- Too many requests can overwhelm language server
+
+**Solutions:**
+
+**Debouncing** (wait before sending):
+- Neovim: 150ms default debounce for didChange
+- Emacs lsp-mode: Configurable debounce for full-sync servers
+- Strategy: Wait for user to pause typing before notifying server
+
+**Throttling** (limit rate):
+- Ensure function executes at most once per time period
+- Useful for completion requests during continuous typing
+
+**Best Practice:**
+- Debounce didChange notifications (100-150ms typical)
+- Throttle completion requests (triggered by special characters)
+- Always allow immediate notification on file save
+- Make debounce interval configurable
+
+### 5. Text Synchronization Strategies
+
+**Full Document Sync:**
+- Send entire file content on every change
+- Simple to implement, works well for small files
+- Current implementation: `TextDocumentContentChangeEvent { range: None, text: full_content }`
+
+**Incremental Sync:**
+- Send only changed ranges
+- Better performance for large files
+- More complex: requires accurate position tracking
+- Must handle multi-cursor edits atomically
+
+**Recommendation:**
+- Start with full sync (simpler, sufficient for most cases)
+- Add incremental sync later if profiling shows it's needed
+- Measure before optimizing - full sync is often fast enough
+
+### 6. Workspace Root Detection
+
+**Critical for LSP:**
+- `root_dir` (Neovim) or `rootUri` (LSP) determines workspace context
+- Affects import resolution, symbol search, etc.
+- Usually: nearest directory with `.git`, `Cargo.toml`, `package.json`, etc.
+
+**Implementation:**
+- Walk up directory tree from file path
+- Look for language-specific markers
+- Fall back to file's parent directory
+- Cache per-workspace to avoid repeated lookups
+
+## Our Architecture
 
 ```
 ┌─────────────────────────────────────────┐
