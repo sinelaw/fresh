@@ -18,14 +18,15 @@
 - **High performance**: ChunkTree buffer, line cache, <1ms operations
 - **Testing**: 59 E2E tests, property tests, benchmarks
 - **LSP Integration (Basic)**: JSON-RPC client, LspManager, rust-analyzer support, didOpen/didChange notifications
+- **Core UI Primitives**: Overlay system (decorations), Popup system (floating windows) - Emacs-style general-purpose building blocks
 
 ## Current Status
 
-**Phase**: 4.1 Complete ✅ (LSP Client - Basic Integration)
-**Tests**: 59 passing (59 E2E + unit + property tests)
-**Next**: Phase 3.5 - Core UI Primitives (Overlay & Popup systems)
-**LSP**: rust-analyzer integration working - didOpen/didChange notifications functional
-**Philosophy**: Building Emacs-style general-purpose primitives before specialized LSP UI
+**Phase**: 3.5 In Progress (Core UI Primitives)
+**Tests**: 70 passing (59 original + 11 new overlay/popup tests)
+**Completed**: Overlay system ✅, Popup system ✅
+**Next**: Integrate popups into Editor, render overlays in viewport
+**Philosophy**: Emacs-style general-purpose primitives enable multiple use cases (LSP, search, selections)
 
 ---
 
@@ -64,19 +65,23 @@
 
 **Goal**: Build general-purpose UI primitives that are LSP-agnostic and reusable
 
-### 3.5.1 Overlay System (`overlay.rs`)
-- [ ] Overlay struct: position range, priority, face (styling)
-- [ ] OverlayManager: add, remove, query overlays by position
-- [ ] Render overlays in viewport (underlines, highlights, backgrounds)
-- [ ] Support multiple overlay types: underline, background, text-decoration
-- [ ] Z-ordering by priority for overlapping overlays
+### 3.5.1 Overlay System (`overlay.rs`) ✅
+- [x] Overlay struct: position range, priority, face (styling) ✅
+- [x] OverlayManager: add, remove, query overlays by position ✅
+- [x] Support multiple overlay types: underline (wavy/dotted/dashed), background, foreground ✅
+- [x] Z-ordering by priority for overlapping overlays ✅
+- [x] Helper methods for common cases (error, warning, info, hint, selection) ✅
+- [x] Integrated into EditorState ✅
+- [ ] Render overlays in viewport (underlines, highlights, backgrounds) - next
 
-### 3.5.2 Popup/Floating Window System (`popup.rs`)
-- [ ] Popup struct: position, size, content, border style
-- [ ] PopupManager: show, hide, position relative to cursor/point
-- [ ] Render popup with border and scrolling support
-- [ ] Handle popup input/navigation (arrow keys, page up/down)
-- [ ] Auto-positioning to keep popup on screen
+### 3.5.2 Popup/Floating Window System (`popup.rs`) ✅
+- [x] Popup struct: position, size, content, border style ✅
+- [x] PopupManager: show, hide, position relative to cursor/point ✅
+- [x] Render popup with border and scrolling support ✅
+- [x] Handle popup input/navigation (arrow keys, page up/down) ✅
+- [x] Auto-positioning to keep popup on screen ✅
+- [x] List support with selection and icons ✅
+- [ ] Integrate PopupManager into Editor - next
 
 ### 3.5.3 Annotation/Margin System (`margin.rs`)
 - [ ] Left margin support for line numbers, symbols, etc.
