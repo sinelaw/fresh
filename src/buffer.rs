@@ -392,7 +392,30 @@ impl Buffer {
                 (0, 0) // Start from beginning
             };
 
-        // Iterate forward from start_byte to byte_offset, building cache
+        let distance = byte_offset.saturating_sub(start_byte);
+
+        // For large jumps (> 100KB), use estimation instead of iterating
+        // This prevents hanging when jumping to the end of large files
+        const ESTIMATION_THRESHOLD: usize = 100_000; // 100KB
+
+        if distance > ESTIMATION_THRESHOLD {
+            // Estimate line number based on average line length (80 chars)
+            let estimated_lines = distance / 80;
+            let estimated_line_number = start_line + estimated_lines;
+
+            // Cache this estimate so subsequent calls near this location are fast
+            self.line_cache.entries.insert(
+                byte_offset,
+                LineInfo {
+                    line_number: estimated_line_number,
+                    byte_offset,
+                },
+            );
+
+            return estimated_line_number;
+        }
+
+        // For small jumps, iterate to get exact line number
         let mut iter = self.line_iterator(start_byte);
         let mut current_line = start_line;
 
