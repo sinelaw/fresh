@@ -4,8 +4,11 @@
 ///! Diagnostics are displayed as colored underlines (red for errors, yellow for warnings, etc.)
 
 use crate::buffer::Buffer;
-use crate::event::OverlayFace;
+use crate::event::OverlayFace as EventOverlayFace;
+use crate::overlay::{OverlayFace, UnderlineStyle};
+use crate::state::EditorState;
 use lsp_types::{Diagnostic, DiagnosticSeverity};
+use ratatui::style::Color;
 use std::ops::Range;
 
 /// Convert an LSP diagnostic to an overlay (range, face, priority)
@@ -31,29 +34,29 @@ pub fn diagnostic_to_overlay(
     let (face, priority) = match diagnostic.severity {
         Some(DiagnosticSeverity::ERROR) => (
             OverlayFace::Underline {
-                color: (255, 0, 0), // Red
-                style: crate::event::UnderlineStyle::Wavy,
+                color: Color::Red,
+                style: UnderlineStyle::Wavy,
             },
             100, // Highest priority
         ),
         Some(DiagnosticSeverity::WARNING) => (
             OverlayFace::Underline {
-                color: (255, 255, 0), // Yellow
-                style: crate::event::UnderlineStyle::Wavy,
+                color: Color::Yellow,
+                style: UnderlineStyle::Wavy,
             },
             50, // Medium priority
         ),
         Some(DiagnosticSeverity::INFORMATION) => (
             OverlayFace::Underline {
-                color: (0, 150, 255), // Blue
-                style: crate::event::UnderlineStyle::Wavy,
+                color: Color::Blue,
+                style: UnderlineStyle::Wavy,
             },
             30, // Lower priority
         ),
         Some(DiagnosticSeverity::HINT) | None => (
             OverlayFace::Underline {
-                color: (128, 128, 128), // Gray
-                style: crate::event::UnderlineStyle::Dotted,
+                color: Color::Gray,
+                style: UnderlineStyle::Dotted,
             },
             10, // Lowest priority
         ),
@@ -61,6 +64,51 @@ pub fn diagnostic_to_overlay(
     };
 
     Some((start_byte..end_byte, face, priority))
+}
+
+/// Apply LSP diagnostics to editor state as overlays
+///
+/// This function:
+/// 1. Clears existing diagnostic overlays (IDs starting with "lsp-diagnostic-")
+/// 2. Converts diagnostics to overlays
+/// 3. Adds overlays to the editor state
+pub fn apply_diagnostics_to_state(state: &mut EditorState, diagnostics: &[Diagnostic]) {
+    use crate::overlay::Overlay;
+
+    // Clear existing diagnostic overlays
+    // We'll use a special prefix for diagnostic overlay IDs
+    let overlay_ids: Vec<String> = state
+        .overlays
+        .all()
+        .iter()
+        .filter_map(|o| {
+            o.id.as_ref().and_then(|id| {
+                if id.starts_with("lsp-diagnostic-") {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+
+    for id in overlay_ids {
+        state.overlays.remove_by_id(&id);
+    }
+
+    // Add new diagnostic overlays
+    for (idx, diagnostic) in diagnostics.iter().enumerate() {
+        if let Some((range, face, priority)) = diagnostic_to_overlay(diagnostic, &state.buffer) {
+            let overlay_id = format!("lsp-diagnostic-{}", idx);
+            let message = diagnostic.message.clone();
+
+            let overlay = Overlay::with_id(range, face, overlay_id)
+                .with_priority_value(priority)
+                .with_message(message);
+
+            state.overlays.add(overlay);
+        }
+    }
 }
 
 /// Convert line/character position to byte offset
@@ -151,8 +199,8 @@ mod tests {
 
         match face {
             OverlayFace::Underline { color, style } => {
-                assert_eq!(color, (255, 0, 0)); // Red
-                assert_eq!(style, crate::event::UnderlineStyle::Wavy);
+                assert_eq!(color, Color::Red);
+                assert_eq!(style, UnderlineStyle::Wavy);
             }
             _ => panic!("Expected Underline face"),
         }
@@ -192,8 +240,8 @@ mod tests {
 
         match face {
             OverlayFace::Underline { color, style } => {
-                assert_eq!(color, (255, 255, 0)); // Yellow
-                assert_eq!(style, crate::event::UnderlineStyle::Wavy);
+                assert_eq!(color, Color::Yellow);
+                assert_eq!(style, UnderlineStyle::Wavy);
             }
             _ => panic!("Expected Underline face"),
         }

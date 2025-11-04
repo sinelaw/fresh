@@ -1,7 +1,9 @@
+use crate::async_bridge::{AsyncBridge, AsyncMessage};
 use crate::config::Config;
 use crate::event::{Event, EventLog};
 use crate::keybindings::{Action, KeybindingResolver};
-use crate::lsp::{detect_language, LspManager};
+use crate::lsp_diagnostics;
+use crate::lsp_manager::{detect_language, LspManager};
 use crate::state::EditorState;
 use lsp_types::{TextDocumentContentChangeEvent, Url};
 use ratatui::{
@@ -143,6 +145,12 @@ pub struct Editor {
 
     /// Map buffer IDs to file paths for LSP
     buffer_paths: HashMap<BufferId, PathBuf>,
+
+    /// Tokio runtime for async I/O tasks
+    tokio_runtime: Option<tokio::runtime::Runtime>,
+
+    /// Bridge for async messages from tokio tasks to main loop
+    async_bridge: Option<AsyncBridge>,
 }
 
 impl Editor {
@@ -169,7 +177,28 @@ impl Editor {
             .ok()
             .and_then(|path| Url::from_file_path(path).ok());
 
+        // Create Tokio runtime for async I/O (LSP, file watching, git, etc.)
+        let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2) // Small pool for I/O tasks
+            .thread_name("editor-async")
+            .enable_all()
+            .build()
+            .ok();
+
+        // Create async bridge for communication
+        let async_bridge = AsyncBridge::new();
+
+        if tokio_runtime.is_none() {
+            tracing::warn!("Failed to create Tokio runtime - async features disabled");
+        }
+
+        // Create LSP manager with async support
         let mut lsp = LspManager::new(root_uri);
+
+        // Configure runtime and bridge if available
+        if let Some(ref runtime) = tokio_runtime {
+            lsp.set_runtime(runtime.handle().clone(), async_bridge.clone());
+        }
 
         // Configure LSP servers from config
         for (language, lsp_config) in &config.lsp {
@@ -193,6 +222,8 @@ impl Editor {
             terminal_height: height,
             lsp: Some(lsp),
             buffer_paths: HashMap::new(),
+            tokio_runtime,
+            async_bridge: Some(async_bridge),
         })
     }
 
@@ -777,6 +808,74 @@ impl Editor {
                 } else {
                     Some(0)
                 };
+            }
+        }
+    }
+
+    /// Process pending async messages from the async bridge
+    ///
+    /// This should be called each frame in the main loop to handle:
+    /// - LSP diagnostics
+    /// - LSP initialization/errors
+    /// - File system changes (future)
+    /// - Git status updates (future)
+    pub fn process_async_messages(&mut self) {
+        let Some(bridge) = &self.async_bridge else {
+            return;
+        };
+
+        let messages = bridge.try_recv_all();
+
+        for message in messages {
+            match message {
+                AsyncMessage::LspDiagnostics { uri, diagnostics } => {
+                    tracing::debug!(
+                        "Processing {} LSP diagnostics for {}",
+                        diagnostics.len(),
+                        uri
+                    );
+
+                    // Find the buffer for this URI
+                    if let Ok(url) = Url::parse(&uri) {
+                        if let Ok(path) = url.to_file_path() {
+                            // Find buffer ID for this path
+                            if let Some((buffer_id, _)) = self
+                                .buffer_paths
+                                .iter()
+                                .find(|(_, p)| p.as_path() == path.as_path())
+                            {
+                                // Convert diagnostics to overlays
+                                if let Some(state) = self.buffers.get_mut(buffer_id) {
+                                    lsp_diagnostics::apply_diagnostics_to_state(
+                                        state,
+                                        &diagnostics,
+                                    );
+                                    tracing::info!(
+                                        "Applied {} diagnostics to buffer {:?}",
+                                        diagnostics.len(),
+                                        buffer_id
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                AsyncMessage::LspInitialized { language } => {
+                    tracing::info!("LSP server initialized for language: {}", language);
+                    self.status_message = Some(format!("LSP ({}) ready", language));
+                }
+                AsyncMessage::LspError { language, error } => {
+                    tracing::error!("LSP error for {}: {}", language, error);
+                    self.status_message = Some(format!("LSP error ({}): {}", language, error));
+                }
+                AsyncMessage::FileChanged { path } => {
+                    tracing::info!("File changed externally: {}", path);
+                    // TODO: Handle external file changes
+                }
+                AsyncMessage::GitStatusChanged { status } => {
+                    tracing::info!("Git status changed: {}", status);
+                    // TODO: Handle git status changes
+                }
             }
         }
     }
@@ -1715,76 +1814,8 @@ impl Editor {
     }
 
     // === LSP Diagnostics Display ===
-
-    /// Update diagnostics display for the active buffer
-    /// Converts LSP diagnostics to overlay decorations
-    pub fn update_diagnostics_display(&mut self) {
-        // Get the file path for the active buffer
-        let file_path = match self.active_state().buffer.file_path() {
-            Some(path) => path.to_path_buf(),
-            None => return, // No file path, can't get diagnostics
-        };
-
-        // Convert path to URI
-        let uri = match lsp_types::Url::from_file_path(&file_path) {
-            Ok(uri) => uri,
-            Err(_) => return,
-        };
-
-        // Get diagnostics from LSP manager (if available)
-        let diagnostics = match &self.lsp {
-            Some(lsp) => lsp.diagnostics(&uri),
-            None => return, // No LSP, can't get diagnostics
-        };
-
-        // Clear existing diagnostic overlays (those with "lsp-diag-" prefix)
-        self.clear_diagnostic_overlays();
-
-        // Convert diagnostics to overlays in a separate scope to avoid borrow issues
-        let overlays_to_add: Vec<(String, Range<usize>, crate::event::OverlayFace, i32, String)> = {
-            let buffer = &self.active_state().buffer;
-            diagnostics
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, diagnostic)| {
-                    let (range, face, priority) =
-                        crate::lsp_diagnostics::diagnostic_to_overlay(diagnostic, buffer)?;
-                    let overlay_id = format!("lsp-diag-{}", idx);
-                    let message = diagnostic.message.clone();
-                    Some((overlay_id, range, face, priority, message))
-                })
-                .collect()
-        };
-
-        // Apply all overlays
-        for (overlay_id, range, face, priority, message) in overlays_to_add {
-            self.add_overlay(overlay_id, range, face, priority, Some(message));
-        }
-    }
-
-    /// Clear all diagnostic overlays (those with "lsp-diag-" prefix)
-    fn clear_diagnostic_overlays(&mut self) {
-        // Get all overlays and remove those with diagnostic IDs
-        let state = self.active_state();
-        let diagnostic_ids: Vec<String> = state
-            .overlays
-            .all()
-            .iter()
-            .filter_map(|overlay| {
-                overlay.id.as_ref().and_then(|id| {
-                    if id.starts_with("lsp-diag-") {
-                        Some(id.clone())
-                    } else {
-                        None
-                    }
-                })
-            })
-            .collect();
-
-        for id in diagnostic_ids {
-            self.remove_overlay(id);
-        }
-    }
+    // NOTE: Diagnostics are now applied automatically via process_async_messages()
+    // when received from the LSP server asynchronously. No manual polling needed!
 
     /// Helper: Check if a byte is a word character (alphanumeric or underscore)
     fn is_word_char(byte: u8) -> bool {

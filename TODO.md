@@ -22,11 +22,11 @@
 
 ## Current Status
 
-**Phase**: 4.2 In Progress (LSP Diagnostics Display)
-**Tests**: 178 passing (161 unit tests + 17 integration tests)
-**Completed**: Overlay rendering ✅, LSP diagnostic conversion ✅, Integration tests ✅
-**Next**: Call update_diagnostics_display() when receiving diagnostics from LSP
-**Philosophy**: LSP diagnostics displayed via general-purpose overlay primitives (following Emacs philosophy)
+**Phase**: 4.2.5 Complete - Async I/O Architecture ✅
+**Tests**: 165 unit tests passing
+**Completed**: Tokio async architecture ✅, LSP async client ✅, Async message bridge ✅, LSP diagnostics via async notifications ✅
+**Architecture**: Hybrid sync/async - main loop stays synchronous (16ms polling ~60fps), I/O runs in tokio tasks
+**Next**: Test with real LSP server (rust-analyzer), then continue with more LSP features
 
 ---
 
@@ -105,7 +105,11 @@
 - [x] Handle server lifecycle (crash detection, restart) ✅
 
 ### 4.2 Basic LSP Features (Using Core UI Primitives)
-- [x] Diagnostics receiving (stored in LspClient) ✅
+- [x] Async I/O architecture with Tokio ✅
+- [x] AsyncBridge for sync/async communication ✅
+- [x] Async LSP client (lsp_async.rs) ✅
+- [x] LspManager with async handles ✅
+- [x] Diagnostics receiving (via async notifications) ✅
 - [x] Diagnostics display via overlays (squiggly underlines) ✅
 - [x] LSP diagnostic to overlay conversion (lsp_diagnostics.rs) ✅
 - [x] Overlay rendering in viewport (red/yellow/blue underlines) ✅

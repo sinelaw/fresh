@@ -95,6 +95,9 @@ fn run_event_loop(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
 ) -> io::Result<()> {
     loop {
+        // Process async messages from tokio tasks (LSP, file watching, etc.)
+        editor.process_async_messages();
+
         // Render the editor
         terminal.draw(|frame| editor.render(frame))?;
 
@@ -103,8 +106,8 @@ fn run_event_loop(
             break;
         }
 
-        // Poll for events with timeout
-        if event_poll(Duration::from_millis(100))? {
+        // Poll for events with shorter timeout for responsive UI (~60fps)
+        if event_poll(Duration::from_millis(16))? {
             match event_read()? {
                 CrosstermEvent::Key(key_event) => {
                     handle_key_event(editor, key_event)?;

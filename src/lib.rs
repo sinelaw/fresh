@@ -1,5 +1,6 @@
 // Editor library - exposes all core modules for testing
 
+pub mod async_bridge;
 pub mod buffer;
 pub mod cache;
 pub mod chunk_tree;
@@ -12,7 +13,9 @@ pub mod highlighter;
 pub mod keybindings;
 pub mod line_cache;
 pub mod lsp;
+pub mod lsp_async;
 pub mod lsp_diagnostics;
+pub mod lsp_manager;
 pub mod overlay;
 pub mod persistence;
 pub mod popup;

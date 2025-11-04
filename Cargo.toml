@@ -18,6 +18,7 @@ tree-sitter-highlight = "0.24.7"
 tree-sitter-rust = "0.23.2"
 
 lsp-types = "0.95"
+tokio = { version = "1.42", features = ["rt", "rt-multi-thread", "io-util", "sync", "process", "time", "macros"] }
 
 [dev-dependencies]
 proptest = "1.0"
