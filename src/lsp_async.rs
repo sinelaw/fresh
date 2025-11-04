@@ -101,6 +101,221 @@ enum LspCommand {
     Shutdown,
 }
 
+/// Mutable state for LSP command processing
+struct LspState {
+    /// Stdin for sending messages
+    stdin: ChildStdin,
+
+    /// Next request ID
+    next_id: i64,
+
+    /// Server capabilities
+    capabilities: Option<ServerCapabilities>,
+
+    /// Document versions
+    document_versions: HashMap<PathBuf, i64>,
+
+    /// Whether initialized
+    initialized: bool,
+
+    /// Sender for async messages to main loop
+    async_tx: std_mpsc::Sender<AsyncMessage>,
+
+    /// Language ID (for error reporting)
+    language: String,
+}
+
+impl LspState {
+    /// Write a message to stdin
+    async fn write_message<T: Serialize>(&mut self, message: &T) -> Result<(), String> {
+        let json =
+            serde_json::to_string(message).map_err(|e| format!("Serialization error: {}", e))?;
+
+        let content = format!("Content-Length: {}\r\n\r\n{}", json.len(), json);
+
+        tracing::debug!("Writing LSP message to stdin ({} bytes)", content.len());
+
+        self.stdin
+            .write_all(content.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to write to stdin: {}", e))?;
+
+        self.stdin
+            .flush()
+            .await
+            .map_err(|e| format!("Failed to flush stdin: {}", e))?;
+
+        tracing::debug!("Successfully sent LSP message");
+
+        Ok(())
+    }
+
+    /// Send a notification
+    async fn send_notification<P: Serialize>(
+        &mut self,
+        method: &str,
+        params: Option<P>,
+    ) -> Result<(), String> {
+        let notification = JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: method.to_string(),
+            params: params.map(|p| serde_json::to_value(p).expect("Failed to serialize params")),
+        };
+
+        self.write_message(&notification).await
+    }
+
+    /// Send request using shared pending map
+    async fn send_request_sequential<P: Serialize, R: for<'de> Deserialize<'de>>(
+        &mut self,
+        method: &str,
+        params: Option<P>,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<R, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id,
+            method: method.to_string(),
+            params: params.map(|p| serde_json::to_value(p).expect("Failed to serialize params")),
+        };
+
+        let (tx, rx) = oneshot::channel();
+        pending.lock().unwrap().insert(id, tx);
+
+        self.write_message(&request).await?;
+
+        tracing::debug!("Sent LSP request id={}, waiting for response...", id);
+
+        // Await response (this is OK now because the reader task will send it)
+        let result = rx
+            .await
+            .map_err(|_| "Response channel closed".to_string())??;
+
+        tracing::debug!("Received LSP response for request id={}", id);
+
+        serde_json::from_value(result).map_err(|e| format!("Failed to deserialize response: {}", e))
+    }
+
+    /// Handle initialize command
+    async fn handle_initialize_sequential(
+        &mut self,
+        root_uri: Option<Url>,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<InitializeResult, String> {
+        tracing::info!("Initializing async LSP server with root_uri: {:?}", root_uri);
+
+        let workspace_folders = root_uri.as_ref().map(|uri| {
+            vec![WorkspaceFolder {
+                uri: uri.clone(),
+                name: uri
+                    .path()
+                    .split('/')
+                    .last()
+                    .unwrap_or("workspace")
+                    .to_string(),
+            }]
+        });
+
+        let params = InitializeParams {
+            process_id: Some(std::process::id()),
+            root_uri: root_uri.clone(),
+            capabilities: ClientCapabilities::default(),
+            workspace_folders,
+            ..Default::default()
+        };
+
+        let result: InitializeResult = self.send_request_sequential(Initialize::METHOD, Some(params), pending).await?;
+
+        self.capabilities = Some(result.capabilities.clone());
+
+        // Send initialized notification
+        self.send_notification("initialized", Some(InitializedParams {})).await?;
+
+        self.initialized = true;
+
+        // Notify main loop
+        let _ = self.async_tx.send(AsyncMessage::LspInitialized {
+            language: self.language.clone(),
+        });
+
+        tracing::info!("Async LSP server initialized successfully");
+
+        Ok(result)
+    }
+
+    /// Handle did_open command
+    async fn handle_did_open_sequential(
+        &mut self,
+        uri: Url,
+        text: String,
+        language_id: String,
+        _pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        tracing::debug!("LSP: did_open for {}", uri);
+
+        let params = DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id,
+                version: 0,
+                text,
+            },
+        };
+
+        self.document_versions.insert(PathBuf::from(uri.path()), 0);
+
+        self.send_notification("textDocument/didOpen", Some(params)).await
+    }
+
+    /// Handle did_change command
+    async fn handle_did_change_sequential(
+        &mut self,
+        uri: Url,
+        content_changes: Vec<TextDocumentContentChangeEvent>,
+        _pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        tracing::debug!("LSP: did_change for {}", uri);
+
+        let path = PathBuf::from(uri.path());
+        let version = self.document_versions.entry(path).or_insert(0);
+        *version += 1;
+
+        let params = DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                uri: uri.clone(),
+                version: *version as i32,
+            },
+            content_changes,
+        };
+
+        self.send_notification("textDocument/didChange", Some(params)).await
+    }
+
+    /// Handle shutdown command
+    async fn handle_shutdown(&mut self) -> Result<(), String> {
+        tracing::info!("Shutting down async LSP server");
+
+        let notification = JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "shutdown".to_string(),
+            params: None,
+        };
+
+        self.write_message(&notification).await?;
+
+        let exit = JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "exit".to_string(),
+            params: None,
+        };
+
+        self.write_message(&exit).await
+    }
+}
+
 /// Async LSP task that handles all I/O
 struct LspTask {
     /// Process handle
@@ -181,50 +396,247 @@ impl LspTask {
 
     /// Run the task (processes commands and reads from stdout)
     async fn run(mut self, mut command_rx: mpsc::Receiver<LspCommand>) {
+        tracing::info!("LspTask::run() started for language: {}", self.language);
+
+        // Create state struct for command processing
+        let mut state = LspState {
+            stdin: self.stdin,
+            next_id: self.next_id,
+            capabilities: self.capabilities,
+            document_versions: self.document_versions,
+            initialized: self.initialized,
+            async_tx: self.async_tx.clone(),
+            language: self.language.clone(),
+        };
+
+        // Move stdout out, share pending
+        let mut stdout = self.stdout;
+        let pending = Arc::new(Mutex::new(self.pending));
+
+        let async_tx = state.async_tx.clone();
+        let language_clone = state.language.clone();
+
+        // Spawn stdout reader task - continuously reads and dispatches messages
+        let pending_clone = pending.clone();
+        tokio::spawn(async move {
+            tracing::info!("LSP stdout reader task started for {}", language_clone);
+            loop {
+                match read_message_from_stdout(&mut stdout).await {
+                    Ok(message) => {
+                        tracing::debug!("Read message from LSP server: {:?}", message);
+                        if let Err(e) = handle_message_dispatch(message, &pending_clone, &async_tx, &language_clone).await {
+                            tracing::error!("Error handling LSP message: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Error reading from LSP server: {}", e);
+                        let _ = async_tx.send(AsyncMessage::LspError {
+                            language: language_clone.clone(),
+                            error: format!("Read error: {}", e),
+                        });
+                        break;
+                    }
+                }
+            }
+            tracing::info!("LSP stdout reader task exiting for {}", language_clone);
+        });
+
+        // Sequential command processing loop
+        let mut pending_commands = Vec::new();
         loop {
-            tokio::select! {
-                // Handle commands from main loop
-                Some(cmd) = command_rx.recv() => {
+            match command_rx.recv().await {
+                Some(cmd) => {
+                    tracing::debug!("LspTask received command: {:?}", cmd);
                     match cmd {
                         LspCommand::Initialize { root_uri, response } => {
-                            let result = self.handle_initialize(root_uri).await;
+                            tracing::info!("Processing Initialize command");
+                            let result = state.handle_initialize_sequential(root_uri, &pending).await;
+                            let success = result.is_ok();
                             let _ = response.send(result);
+
+                            // After successful initialization, replay pending commands
+                            if success {
+                                let queued = std::mem::take(&mut pending_commands);
+                                if !queued.is_empty() {
+                                    tracing::info!("Replaying {} pending commands after initialization", queued.len());
+                                    for queued_cmd in queued {
+                                        match queued_cmd {
+                                            LspCommand::DidOpen { uri, text, language_id } => {
+                                                tracing::info!("Replaying DidOpen for {}", uri);
+                                                let _ = state.handle_did_open_sequential(uri, text, language_id, &pending).await;
+                                            }
+                                            LspCommand::DidChange { uri, content_changes } => {
+                                                tracing::info!("Replaying DidChange for {}", uri);
+                                                let _ = state.handle_did_change_sequential(uri, content_changes, &pending).await;
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
                         }
                         LspCommand::DidOpen { uri, text, language_id } => {
-                            let _ = self.handle_did_open(uri, text, language_id).await;
+                            if state.initialized {
+                                tracing::info!("Processing DidOpen for {}", uri);
+                                let _ = state.handle_did_open_sequential(uri, text, language_id, &pending).await;
+                            } else {
+                                tracing::debug!("Queueing DidOpen for {} until initialization completes", uri);
+                                pending_commands.push(LspCommand::DidOpen { uri, text, language_id });
+                            }
                         }
                         LspCommand::DidChange { uri, content_changes } => {
-                            let _ = self.handle_did_change(uri, content_changes).await;
+                            if state.initialized {
+                                tracing::debug!("Processing DidChange for {}", uri);
+                                let _ = state.handle_did_change_sequential(uri, content_changes, &pending).await;
+                            } else {
+                                tracing::debug!("Queueing DidChange for {} until initialization completes", uri);
+                                pending_commands.push(LspCommand::DidChange { uri, content_changes });
+                            }
                         }
                         LspCommand::Shutdown => {
-                            let _ = self.handle_shutdown().await;
+                            tracing::info!("Processing Shutdown command");
+                            let _ = state.handle_shutdown().await;
                             break;
                         }
                     }
                 }
-
-                // Read messages from server
-                result = self.read_message() => {
-                    match result {
-                        Ok(message) => {
-                            if let Err(e) = self.handle_message(message).await {
-                                tracing::error!("Error handling LSP message: {}", e);
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("Error reading from LSP server: {}", e);
-                            let _ = self.async_tx.send(AsyncMessage::LspError {
-                                language: self.language.clone(),
-                                error: format!("Read error: {}", e),
-                            });
-                            break;
-                        }
-                    }
+                None => {
+                    tracing::info!("Command channel closed");
+                    break;
                 }
             }
         }
 
         tracing::info!("LSP task exiting for language: {}", self.language);
+    }
+
+    /// Sequential version of handle_initialize that uses shared pending map
+    async fn handle_initialize_sequential(
+        &mut self,
+        root_uri: Option<Url>,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<InitializeResult, String> {
+        tracing::info!("Initializing async LSP server with root_uri: {:?}", root_uri);
+
+        let workspace_folders = root_uri.as_ref().map(|uri| {
+            vec![WorkspaceFolder {
+                uri: uri.clone(),
+                name: uri
+                    .path()
+                    .split('/')
+                    .last()
+                    .unwrap_or("workspace")
+                    .to_string(),
+            }]
+        });
+
+        let params = InitializeParams {
+            process_id: Some(std::process::id()),
+            root_uri: root_uri.clone(),
+            capabilities: ClientCapabilities::default(),
+            workspace_folders,
+            ..Default::default()
+        };
+
+        let result: InitializeResult = self.send_request_sequential(Initialize::METHOD, Some(params), pending).await?;
+
+        self.capabilities = Some(result.capabilities.clone());
+
+        // Send initialized notification
+        self.send_notification("initialized", Some(InitializedParams {})).await?;
+
+        self.initialized = true;
+
+        // Notify main loop
+        let _ = self.async_tx.send(AsyncMessage::LspInitialized {
+            language: self.language.clone(),
+        });
+
+        tracing::info!("Async LSP server initialized successfully");
+
+        Ok(result)
+    }
+
+    /// Sequential version of handle_did_open
+    async fn handle_did_open_sequential(
+        &mut self,
+        uri: Url,
+        text: String,
+        language_id: String,
+        _pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        tracing::debug!("LSP: did_open for {}", uri);
+
+        let params = DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id,
+                version: 0,
+                text,
+            },
+        };
+
+        self.document_versions.insert(PathBuf::from(uri.path()), 0);
+
+        self.send_notification("textDocument/didOpen", Some(params)).await
+    }
+
+    /// Sequential version of handle_did_change
+    async fn handle_did_change_sequential(
+        &mut self,
+        uri: Url,
+        content_changes: Vec<TextDocumentContentChangeEvent>,
+        _pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        tracing::debug!("LSP: did_change for {}", uri);
+
+        let path = PathBuf::from(uri.path());
+        let version = self.document_versions.entry(path).or_insert(0);
+        *version += 1;
+
+        let params = DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                uri: uri.clone(),
+                version: *version as i32,
+            },
+            content_changes,
+        };
+
+        self.send_notification("textDocument/didChange", Some(params)).await
+    }
+
+    /// Send request using shared pending map (for sequential command processing)
+    async fn send_request_sequential<P: Serialize, R: for<'de> Deserialize<'de>>(
+        &mut self,
+        method: &str,
+        params: Option<P>,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<R, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id,
+            method: method.to_string(),
+            params: params.map(|p| serde_json::to_value(p).expect("Failed to serialize params")),
+        };
+
+        let (tx, rx) = oneshot::channel();
+        pending.lock().unwrap().insert(id, tx);
+
+        self.write_message(&request).await?;
+
+        tracing::debug!("Sent LSP request id={}, waiting for response...", id);
+
+        // Await response (this is OK now because the reader task will send it)
+        let result = rx
+            .await
+            .map_err(|_| "Response channel closed".to_string())??;
+
+        tracing::debug!("Received LSP response for request id={}", id);
+
+        serde_json::from_value(result).map_err(|e| format!("Failed to deserialize response: {}", e))
     }
 
     /// Handle initialize command
@@ -543,6 +955,140 @@ impl LspTask {
     }
 }
 
+/// Standalone function to read a message from stdout (for reader task)
+async fn read_message_from_stdout(
+    stdout: &mut BufReader<ChildStdout>,
+) -> Result<JsonRpcMessage, String> {
+    // Read headers
+    let mut content_length: Option<usize> = None;
+
+    loop {
+        let mut line = String::new();
+        stdout
+            .read_line(&mut line)
+            .await
+            .map_err(|e| format!("Failed to read from stdout: {}", e))?;
+
+        if line == "\r\n" {
+            break;
+        }
+
+        if line.starts_with("Content-Length: ") {
+            content_length = Some(
+                line[16..]
+                    .trim()
+                    .parse()
+                    .map_err(|e| format!("Invalid Content-Length: {}", e))?,
+            );
+        }
+    }
+
+    let content_length =
+        content_length.ok_or_else(|| "Missing Content-Length header".to_string())?;
+
+    // Read content
+    let mut content = vec![0u8; content_length];
+    stdout
+        .read_exact(&mut content)
+        .await
+        .map_err(|e| format!("Failed to read content: {}", e))?;
+
+    let json = String::from_utf8(content).map_err(|e| format!("Invalid UTF-8: {}", e))?;
+
+    tracing::trace!("Received LSP message: {}", json);
+
+    serde_json::from_str(&json).map_err(|e| format!("Failed to deserialize message: {}", e))
+}
+
+/// Standalone function to handle and dispatch messages (for reader task)
+async fn handle_message_dispatch(
+    message: JsonRpcMessage,
+    pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    async_tx: &std_mpsc::Sender<AsyncMessage>,
+    language: &str,
+) -> Result<(), String> {
+    match message {
+        JsonRpcMessage::Response(response) => {
+            tracing::debug!("Received LSP response for request id={}", response.id);
+            if let Some(tx) = pending.lock().unwrap().remove(&response.id) {
+                let result = if let Some(error) = response.error {
+                    tracing::warn!("LSP response error: {} (code {})", error.message, error.code);
+                    Err(format!("LSP error: {} (code {})", error.message, error.code))
+                } else {
+                    tracing::debug!("LSP response success for request id={}", response.id);
+                    response
+                        .result
+                        .ok_or_else(|| "No result in response".to_string())
+                };
+                let _ = tx.send(result);
+            } else {
+                tracing::warn!("Received LSP response for unknown request id={}", response.id);
+            }
+        }
+        JsonRpcMessage::Notification(notification) => {
+            tracing::debug!("Received LSP notification: {}", notification.method);
+            handle_notification_dispatch(notification, async_tx, language).await?;
+        }
+        JsonRpcMessage::Request(_) => {
+            tracing::warn!("Received request from server, ignoring");
+        }
+    }
+    Ok(())
+}
+
+/// Standalone function to handle notifications (for reader task)
+async fn handle_notification_dispatch(
+    notification: JsonRpcNotification,
+    async_tx: &std_mpsc::Sender<AsyncMessage>,
+    language: &str,
+) -> Result<(), String> {
+    match notification.method.as_str() {
+        PublishDiagnostics::METHOD => {
+            if let Some(params) = notification.params {
+                let params: PublishDiagnosticsParams = serde_json::from_value(params)
+                    .map_err(|e| format!("Failed to deserialize diagnostics: {}", e))?;
+
+                tracing::debug!(
+                    "Received {} diagnostics for {}",
+                    params.diagnostics.len(),
+                    params.uri
+                );
+
+                // Send to main loop
+                let _ = async_tx.send(AsyncMessage::LspDiagnostics {
+                    uri: params.uri.to_string(),
+                    diagnostics: params.diagnostics,
+                });
+            }
+        }
+        "window/showMessage" | "window/logMessage" => {
+            if let Some(params) = notification.params {
+                if let Ok(msg) = serde_json::from_value::<serde_json::Map<String, Value>>(params)
+                {
+                    let message_type = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let message = msg
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(no message)");
+
+                    match message_type {
+                        1 => tracing::error!("LSP ({}): {}", language, message),
+                        2 => tracing::warn!("LSP ({}): {}", language, message),
+                        3 => tracing::info!("LSP ({}): {}", language, message),
+                        4 => tracing::debug!("LSP ({}): {}", language, message),
+                        _ => tracing::trace!("LSP ({}): {}", language, message),
+                    }
+                }
+            }
+        }
+        _ => {
+            tracing::debug!("Unhandled notification: {}", notification.method);
+        }
+    }
+
+    Ok(())
+}
+
 /// Synchronous handle to an async LSP task
 pub struct LspHandle {
     /// Channel for sending commands to the task
@@ -646,10 +1192,7 @@ impl LspHandle {
 
     /// Notify document opened
     pub fn did_open(&self, uri: Url, text: String, language_id: String) -> Result<(), String> {
-        if !*self.initialized.lock().unwrap() {
-            return Err("LSP client not initialized".to_string());
-        }
-
+        // Send command to LspTask which will queue it if not initialized yet
         self.command_tx
             .blocking_send(LspCommand::DidOpen {
                 uri,
@@ -665,10 +1208,7 @@ impl LspHandle {
         uri: Url,
         content_changes: Vec<TextDocumentContentChangeEvent>,
     ) -> Result<(), String> {
-        if !*self.initialized.lock().unwrap() {
-            return Err("LSP client not initialized".to_string());
-        }
-
+        // Send command to LspTask which will queue it if not initialized yet
         self.command_tx
             .blocking_send(LspCommand::DidChange {
                 uri,

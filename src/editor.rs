@@ -320,37 +320,66 @@ impl Editor {
         // Schedule LSP notification asynchronously to avoid blocking
         // This is especially important for large files
         if let Some(lsp) = &mut self.lsp {
+            tracing::debug!("LSP manager available for file: {}", path.display());
             if let Some(language) = detect_language(path) {
-                if let Ok(uri) = Url::from_file_path(path) {
-                    // Get file size to decide whether to send full content
-                    let file_size = std::fs::metadata(path).ok().map(|m| m.len()).unwrap_or(0);
-                    const MAX_LSP_FILE_SIZE: u64 = 1024 * 1024; // 1MB limit
+                tracing::debug!("Detected language: {} for file: {}", language, path.display());
 
-                    if file_size > MAX_LSP_FILE_SIZE {
-                        let reason = format!("File too large ({} bytes)", file_size);
-                        tracing::warn!(
-                            "Skipping LSP for large file: {} ({})",
-                            path.display(),
-                            reason
-                        );
-                        metadata.disable_lsp(reason);
-                    } else {
-                        // Get the text from the buffer we just loaded
-                        let text = if let Some(state) = self.buffers.get(&buffer_id) {
-                            state.buffer.to_string()
+                // Convert to absolute path if necessary (LSP requires absolute paths)
+                let absolute_path = if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    std::env::current_dir()
+                        .ok()
+                        .and_then(|cwd| cwd.join(path).canonicalize().ok())
+                        .unwrap_or_else(|| path.to_path_buf())
+                };
+
+                match Url::from_file_path(&absolute_path) {
+                    Ok(uri) => {
+                        tracing::debug!("Created URI: {} for file: {}", uri, absolute_path.display());
+                        // Get file size to decide whether to send full content
+                        let file_size = std::fs::metadata(path).ok().map(|m| m.len()).unwrap_or(0);
+                        const MAX_LSP_FILE_SIZE: u64 = 1024 * 1024; // 1MB limit
+
+                        if file_size > MAX_LSP_FILE_SIZE {
+                            let reason = format!("File too large ({} bytes)", file_size);
+                            tracing::warn!(
+                                "Skipping LSP for large file: {} ({})",
+                                path.display(),
+                                reason
+                            );
+                            metadata.disable_lsp(reason);
                         } else {
-                            String::new()
-                        };
+                            // Get the text from the buffer we just loaded
+                            let text = if let Some(state) = self.buffers.get(&buffer_id) {
+                                state.buffer.to_string()
+                            } else {
+                                String::new()
+                            };
 
-                        // Spawn or get existing LSP client (non-blocking now)
-                        if let Some(client) = lsp.get_or_spawn(&language) {
-                            if let Err(e) = client.did_open(uri, text, language) {
-                                tracing::warn!("Failed to send didOpen to LSP: {}", e);
+                            // Spawn or get existing LSP client (non-blocking now)
+                            tracing::debug!("Attempting to get or spawn LSP client for language: {}", language);
+                            if let Some(client) = lsp.get_or_spawn(&language) {
+                                tracing::info!("Sending didOpen to LSP for: {}", uri);
+                                if let Err(e) = client.did_open(uri, text, language) {
+                                    tracing::warn!("Failed to send didOpen to LSP: {}", e);
+                                } else {
+                                    tracing::info!("Successfully sent didOpen to LSP");
+                                }
+                            } else {
+                                tracing::warn!("Failed to get or spawn LSP client for language: {}", language);
                             }
                         }
                     }
+                    Err(()) => {
+                        tracing::warn!("Failed to create URI from file path: {} (path must be absolute)", path.display());
+                    }
                 }
+            } else {
+                tracing::debug!("No language detected for file: {}", path.display());
             }
+        } else {
+            tracing::debug!("No LSP manager available");
         }
 
         // Store metadata for this buffer

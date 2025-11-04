@@ -178,211 +178,160 @@ Language Server Protocol (LSP) support enables IDE-like features:
 
 ## Our Architecture
 
+We use a fully asynchronous, multi-threaded architecture with separate tasks for reading and writing:
+
 ```
-┌─────────────────────────────────────────┐
-│           Editor (main.rs)              │
-│  - Manages LSP lifecycle                │
-│  - Routes events to LSP                 │
-│  - Displays LSP results                 │
-└──────────┬──────────────────────────────┘
-           │
-           ↓
-┌─────────────────────────────────────────┐
-│         LSP Client (lsp.rs)             │
-│  - Spawn language servers               │
-│  - Send LSP requests                    │
-│  - Receive LSP notifications            │
-│  - Manage server lifecycle              │
-└──────────┬──────────────────────────────┘
-           │
-           ↓
-┌─────────────────────────────────────────┐
-│     Language Servers (external)         │
-│  - rust-analyzer                        │
-│  - typescript-language-server           │
-│  - pyright                              │
-│  - etc.                                 │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                        Editor (main.rs)                              │
+│  - Manages LSP lifecycle                                             │
+│  - Routes events to LSP via LspManager                               │
+│  - Displays LSP results (diagnostics)                                │
+│  - Processes async messages from AsyncBridge                         │
+└───────────────────────────┬──────────────────────────────────────────┘
+                            │
+                            ↓
+┌──────────────────────────────────────────────────────────────────────┐
+│                   LspManager (lsp_manager.rs)                        │
+│  - Manages multiple language servers (one per language)             │
+│  - Routes commands to appropriate LspHandle                          │
+│  - Handles language detection                                        │
+└───────────────────────────┬──────────────────────────────────────────┘
+                            │
+                            ↓
+┌──────────────────────────────────────────────────────────────────────┐
+│                      LspHandle (lsp_async.rs)                        │
+│  - Public API for sending commands to LSP server                     │
+│  - Non-blocking: sends commands via mpsc channel                     │
+│  - Methods: initialize(), did_open(), did_change(), shutdown()       │
+└───────────────────────────┬──────────────────────────────────────────┘
+                            │ mpsc::channel (commands)
+                            ↓
+┌──────────────────────────────────────────────────────────────────────┐
+│                       LspTask (lsp_async.rs)                         │
+│  Runs in dedicated Tokio task with two independent subtasks:        │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────┐    │
+│  │  Command Processing Loop (Sequential)                      │    │
+│  │  - Receives commands from mpsc channel                     │    │
+│  │  - Queues commands until initialization completes          │    │
+│  │  - Processes Initialize, DidOpen, DidChange sequentially   │    │
+│  │  - Uses LspState for mutable state                         │    │
+│  └────────────────────────────────────────────────────────────┘    │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────┐    │
+│  │  Stdout Reader Task (Continuous)                           │    │
+│  │  - Continuously reads from language server stdout          │    │
+│  │  - Dispatches responses to pending requests via HashMap    │    │
+│  │  - Forwards notifications to main loop via std_mpsc        │    │
+│  └────────────────────────────────────────────────────────────┘    │
+│                                                                      │
+│  Shared State:                                                       │
+│  - Arc<Mutex<HashMap<i64, oneshot::Sender>>> for pending requests   │
+└───────────────────────────┬──────────────────────────────────────────┘
+                            │ stdin/stdout pipes
+                            ↓
+┌──────────────────────────────────────────────────────────────────────┐
+│                  Language Servers (external)                         │
+│  - rust-analyzer (Rust)                                              │
+│  - typescript-language-server (TypeScript)                           │
+│  - pyright (Python)                                                  │
+└──────────────────────────────────────────────────────────────────────┘
 ```
+
+### Key Architectural Decisions
+
+**Two-Task Design**: Separate stdout reader from command processor to avoid deadlocks
+- **Stdout Reader**: Runs continuously in background, reads responses and notifications
+- **Command Processor**: Sequential processing, waits for Initialize before sending file notifications
+
+**Command Queueing**: Commands sent before initialization are queued and replayed after success
+- DidOpen and DidChange queue automatically if not initialized
+- After Initialize succeeds, all pending commands are replayed in order
+
+**Async Bridge**: std_mpsc channel bridges Tokio async world to main event loop
+- Notifications (diagnostics) flow from LspTask → AsyncBridge → Editor
+- Editor polls AsyncBridge during main event loop
+
+**Request/Response Matching**: Shared HashMap tracks pending requests
+- Command processor inserts oneshot::Sender before sending request
+- Stdout reader looks up and sends response through oneshot channel
+- Timeout handled with tokio::time::timeout
 
 ## Core Components
 
-### 1. LSP Client (lsp.rs)
+### 1. LspHandle (lsp_async.rs) - Public API
 
-```rust
-pub struct LspClient {
-    /// Process handle for the language server
-    process: Child,
+**Purpose**: Provides a non-blocking interface for the editor to communicate with LSP servers.
 
-    /// Stdin writer for sending requests
-    stdin: BufWriter<ChildStdin>,
+**Key Responsibilities**:
+- Sends commands to LspTask via mpsc channel (non-blocking)
+- Provides public methods: `initialize()`, `did_open()`, `did_change()`, `shutdown()`
+- Tracks initialization status for status checks
 
-    /// Stdout reader for receiving responses
-    stdout: BufReader<ChildStdout>,
+**Design**: Commands are sent asynchronously and never block the editor UI.
 
-    /// Next request ID
-    next_id: i64,
+### 2. LspTask (lsp_async.rs) - Async Worker
 
-    /// Pending requests waiting for response
-    pending: HashMap<i64, PendingRequest>,
+**Purpose**: Manages the actual LSP server process and communication.
 
-    /// Server capabilities
-    capabilities: ServerCapabilities,
+**Architecture**: Runs in a dedicated Tokio task with two independent subtasks:
 
-    /// Current document versions (for incremental sync)
-    document_versions: HashMap<PathBuf, i64>,
-}
+**Subtask 1 - Command Processing Loop (Sequential)**:
+- Receives commands from mpsc channel
+- Queues DidOpen/DidChange commands until initialization completes
+- Processes Initialize first, then replays queued commands
+- Uses LspState for all mutable state
 
-impl LspClient {
-    /// Spawn a language server
-    pub fn spawn(command: &str, args: &[String]) -> Result<Self>;
+**Subtask 2 - Stdout Reader Task (Continuous)**:
+- Continuously reads from language server stdout in background
+- Dispatches responses to pending requests via shared HashMap
+- Forwards notifications (diagnostics) to main loop via AsyncBridge
+- Never blocks command processing
 
-    /// Initialize the language server
-    pub fn initialize(&mut self, root_uri: &str) -> Result<()>;
+**Shared State**: Arc<Mutex<HashMap>> tracks pending requests between the two tasks.
 
-    /// Notify server of document open
-    pub fn did_open(&mut self, uri: &str, text: &str, language_id: &str);
+### 3. LspState (lsp_async.rs) - Mutable State
 
-    /// Notify server of document change (incremental)
-    pub fn did_change(&mut self, uri: &str, changes: Vec<TextDocumentContentChangeEvent>);
+**Purpose**: Encapsulates all mutable state needed for LSP communication.
 
-    /// Request completion at position
-    pub fn completion(&mut self, uri: &str, line: u32, character: u32)
-        -> Result<CompletionResponse>;
+**Key Responsibilities**:
+- Manages stdin writer for sending messages
+- Tracks request IDs and document versions
+- Stores server capabilities from initialization
+- Handles all protocol-level message construction
 
-    /// Request hover information
-    pub fn hover(&mut self, uri: &str, line: u32, character: u32)
-        -> Result<Option<Hover>>;
+**Design**: Extracted from LspTask to solve Rust ownership issues with split tasks.
 
-    /// Request goto definition
-    pub fn definition(&mut self, uri: &str, line: u32, character: u32)
-        -> Result<Vec<Location>>;
+### 4. LspManager (lsp_manager.rs) - Multi-Language Coordinator
 
-    /// Request diagnostics (errors/warnings)
-    pub fn diagnostics(&self, uri: &str) -> Vec<Diagnostic>;
+**Purpose**: Manages multiple language servers (one per language).
 
-    /// Shutdown and exit
-    pub fn shutdown(&mut self) -> Result<()>;
-}
-```
+**Key Responsibilities**:
+- Routes commands to appropriate LspHandle based on language
+- Handles language detection from file extensions
+- Spawns new language servers on demand
+- Coordinates shutdown of all servers
 
-### 2. LSP Manager (manages multiple language servers)
+**Design**: Single manager, multiple handles, each managing one language server process.
 
-```rust
-pub struct LspManager {
-    /// Map from language ID to LSP client
-    clients: HashMap<String, LspClient>,
+### 5. Integration with Editor
 
-    /// Config for server commands
-    config: HashMap<String, LspServerConfig>,
-}
+**AsyncBridge**: Bridges the async Tokio world with the synchronous main event loop.
+- LSP notifications flow through std_mpsc channel
+- Editor polls during main event loop via `process_async_messages()`
+- Diagnostics are received and stored per file URI
 
-struct LspServerConfig {
-    /// Command to spawn the server
-    command: String,
+**File Event Flow**:
+1. Editor opens file → LspManager detects language → spawns/gets LspHandle
+2. Editor calls `lsp.did_open()` → queued if not initialized
+3. LspTask processes Initialize → replays queued didOpen
+4. Diagnostics arrive asynchronously → displayed in editor
 
-    /// Arguments
-    args: Vec<String>,
-
-    /// Languages this server handles
-    languages: Vec<String>,
-}
-
-impl LspManager {
-    /// Get or spawn LSP client for language
-    pub fn get_or_spawn(&mut self, language: &str) -> Option<&mut LspClient>;
-
-    /// Shutdown all servers
-    pub fn shutdown_all(&mut self);
-}
-```
-
-### 3. Integration with Editor
-
-```rust
-pub struct Editor {
-    /// Current buffer states
-    buffers: HashMap<usize, EditorState>,
-
-    /// LSP manager
-    lsp: LspManager,
-
-    /// Completion popup state
-    completion: Option<CompletionPopup>,
-
-    /// Diagnostics per buffer
-    diagnostics: HashMap<usize, Vec<Diagnostic>>,
-
-    // ... other fields
-}
-
-impl Editor {
-    /// Handle text edit event - notify LSP
-    fn handle_edit(&mut self, buffer_id: usize, event: &Event) {
-        // Apply event to buffer
-        self.buffers.get_mut(&buffer_id).unwrap().apply(event);
-
-        // Notify LSP of change
-        if let Some(path) = self.buffers[&buffer_id].buffer.file_path() {
-            if let Some(language) = self.language_for_path(path) {
-                if let Some(lsp) = self.lsp.get_or_spawn(language) {
-                    let changes = self.event_to_lsp_change(event);
-                    lsp.did_change(&path.to_string_lossy(), changes);
-                }
-            }
-        }
-    }
-
-    /// Request completion at cursor
-    fn request_completion(&mut self, buffer_id: usize) {
-        let state = &self.buffers[&buffer_id];
-        let cursor_pos = state.primary_cursor().position;
-        let (line, col) = self.position_to_line_col(&state.buffer, cursor_pos);
-
-        if let Some(path) = state.buffer.file_path() {
-            if let Some(language) = self.language_for_path(path) {
-                if let Some(lsp) = self.lsp.get_or_spawn(language) {
-                    if let Ok(completions) = lsp.completion(
-                        &path.to_string_lossy(),
-                        line as u32,
-                        col as u32
-                    ) {
-                        self.show_completion_popup(completions);
-                    }
-                }
-            }
-        }
-    }
-}
-```
-
-### 4. Event → LSP Change Conversion
-
-```rust
-fn event_to_lsp_change(event: &Event) -> Vec<TextDocumentContentChangeEvent> {
-    match event {
-        Event::Insert { position, text, .. } => {
-            vec![TextDocumentContentChangeEvent {
-                range: Some(Range {
-                    start: byte_to_position(position),
-                    end: byte_to_position(position),
-                }),
-                text: text.clone(),
-            }]
-        }
-        Event::Delete { range, .. } => {
-            vec![TextDocumentContentChangeEvent {
-                range: Some(Range {
-                    start: byte_to_position(&range.start),
-                    end: byte_to_position(&range.end),
-                }),
-                text: String::new(),
-            }]
-        }
-        _ => vec![],
-    }
-}
-```
+**Text Change Flow** (future):
+1. User types → Editor applies change to buffer
+2. Editor calls `lsp.did_change()` with full document content
+3. LspTask sends notification to language server
+4. Diagnostics arrive asynchronously → updated in UI
 
 ## LSP Message Protocol
 
