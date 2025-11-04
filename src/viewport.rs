@@ -1,4 +1,4 @@
-use crate::buffer::Buffer;
+use crate::buffer::{Buffer, LineNumber};
 use crate::cursor::Cursor;
 
 /// The viewport - what portion of the buffer is visible
@@ -7,6 +7,12 @@ pub struct Viewport {
     /// Byte position of the first visible line
     /// **This is the authoritative source of truth for all viewport operations**
     pub top_byte: usize,
+
+    /// Line number corresponding to top_byte (0-indexed)
+    /// Absolute when known (scrolled from beginning or counted)
+    /// Relative when estimated (jumped to EOF, derived from other Relative)
+    /// Maintained incrementally when scrolling to avoid rescanning
+    pub top_line_number: LineNumber,
 
     /// Left column offset (horizontal scroll position)
     pub left_column: usize,
@@ -27,6 +33,7 @@ impl Viewport {
     pub fn new(width: u16, height: u16) -> Self {
         Self {
             top_byte: 0,
+            top_line_number: LineNumber::Absolute(0), // We know we start at line 0
             left_column: 0,
             width,
             height,
@@ -70,23 +77,45 @@ impl Viewport {
     /// Scroll up by N lines (byte-based)
     pub fn scroll_up(&mut self, buffer: &Buffer, lines: usize) {
         let mut iter = buffer.line_iterator(self.top_byte);
+        let mut lines_moved = 0;
         for _ in 0..lines {
             if iter.prev().is_none() {
                 break;
             }
+            lines_moved += 1;
         }
         self.top_byte = iter.current_position();
+
+        // Update line number incrementally
+        self.top_line_number = match self.top_line_number {
+            LineNumber::Absolute(line) => LineNumber::Absolute(line.saturating_sub(lines_moved)),
+            LineNumber::Relative { line, from_cached_line } => LineNumber::Relative {
+                line: line.saturating_sub(lines_moved),
+                from_cached_line,
+            },
+        };
     }
 
     /// Scroll down by N lines (byte-based)
     pub fn scroll_down(&mut self, buffer: &Buffer, lines: usize) {
         let mut iter = buffer.line_iterator(self.top_byte);
+        let mut lines_moved = 0;
         for _ in 0..lines {
             if iter.next().is_none() {
                 break;
             }
+            lines_moved += 1;
         }
         self.top_byte = iter.current_position();
+
+        // Update line number incrementally
+        self.top_line_number = match self.top_line_number {
+            LineNumber::Absolute(line) => LineNumber::Absolute(line + lines_moved),
+            LineNumber::Relative { line, from_cached_line } => LineNumber::Relative {
+                line: line + lines_moved,
+                from_cached_line,
+            },
+        };
     }
 
     /// Scroll to a specific line (byte-based)
@@ -100,6 +129,7 @@ impl Viewport {
             if let Some((line_start, _)) = iter.next() {
                 if current_line + 1 == line {
                     self.top_byte = line_start;
+                    self.top_line_number = LineNumber::Absolute(line);
                     return;
                 }
                 current_line += 1;
@@ -111,6 +141,7 @@ impl Viewport {
 
         // If we didn't find the line, stay at the last valid position
         self.top_byte = iter.current_position();
+        self.top_line_number = LineNumber::Absolute(current_line);
     }
 
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)
@@ -168,6 +199,25 @@ impl Viewport {
                 }
             }
             self.top_byte = iter.current_position();
+
+            // Update line number - we don't know the absolute line number of cursor_line_start,
+            // so we use Relative if we weren't already Absolute
+            self.top_line_number = match self.top_line_number {
+                LineNumber::Absolute(_) => {
+                    // We lost track of absolute position by jumping to cursor, use Relative
+                    LineNumber::Relative {
+                        line: 0,
+                        from_cached_line: 0,
+                    }
+                }
+                LineNumber::Relative { .. } => {
+                    // Already relative, reset to 0 since we jumped to a new location
+                    LineNumber::Relative {
+                        line: 0,
+                        from_cached_line: 0,
+                    }
+                }
+            };
         }
 
         // Horizontal scrolling
@@ -221,12 +271,19 @@ impl Viewport {
 
             // Move backwards from target to find new top_byte
             let mut iter = buffer.line_iterator(target_line_byte);
+            let mut lines_moved = 0;
             for _ in 0..target_line_from_top {
                 if iter.prev().is_none() {
                     break;
                 }
+                lines_moved += 1;
             }
             self.top_byte = iter.current_position();
+
+            // Update line number - we jumped to a specific line number (parameter),
+            // so we can set Absolute
+            let new_top_line = line.saturating_sub(lines_moved);
+            self.top_line_number = LineNumber::Absolute(new_top_line);
         }
     }
 
@@ -306,6 +363,12 @@ impl Viewport {
                 }
             }
             self.top_byte = iter.current_position();
+
+            // Update line number - we jumped to cursor position, use Relative
+            self.top_line_number = LineNumber::Relative {
+                line: 0,
+                from_cached_line: 0,
+            };
         } else {
             // Can't fit all cursors, ensure primary is visible
             let primary_cursor = sorted_cursors[0].1;

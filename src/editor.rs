@@ -1112,19 +1112,9 @@ impl Editor {
         let visible_count = state.viewport.visible_line_count();
         let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
 
-        // Calculate starting line number by counting lines from the beginning
-        // For now, use a simple line counter - TODO: optimize with caching if needed
-        let mut starting_line_num = {
-            let mut count_iter = state.buffer.line_iterator(0);
-            let mut line_num = 0;
-            while let Some((ls, _)) = count_iter.next() {
-                if ls >= state.viewport.top_byte {
-                    break;
-                }
-                line_num += 1;
-            }
-            line_num
-        };
+        // Get starting line number from viewport's cached value
+        // This is maintained incrementally during scrolling to avoid O(n) scanning
+        let starting_line_num = state.viewport.top_line_number.value();
 
         let mut lines_rendered = 0;
 
