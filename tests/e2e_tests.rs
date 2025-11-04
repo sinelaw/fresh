@@ -301,7 +301,9 @@ fn test_basic_editing_operations() {
     assert_eq!(harness.cursor_position(), 6);
 
     // Test 4: Delete character (Backspace)
-    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_buffer_content("Hello World");
     harness.assert_screen_contains("Hello World");
@@ -310,7 +312,9 @@ fn test_basic_editing_operations() {
 
     // Test 5: Delete character forward (Delete key)
     // Current position: 5 (after "Hello")
-    harness.send_key(KeyCode::Delete, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_buffer_content("HelloWorld");
     harness.assert_screen_contains("HelloWorld");
@@ -318,7 +322,9 @@ fn test_basic_editing_operations() {
     assert_eq!(harness.cursor_position(), 5);
 
     // Test 6: Insert newline
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_buffer_content("Hello\nWorld");
     // Verify both lines appear on screen
@@ -332,7 +338,9 @@ fn test_basic_editing_operations() {
     harness.assert_screen_contains("New LineWorld");
 
     // Test 8: Create another newline to separate properly
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_buffer_content("Hello\nNew Line\nWorld");
     // Verify all three lines are visible
@@ -356,7 +364,9 @@ fn test_basic_editing_operations() {
     assert_eq!(harness.cursor_position(), 5); // End of "Hello"
 
     // Delete the newline after "Hello" - should join lines
-    harness.send_key(KeyCode::Delete, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_buffer_content("HelloNew Line\nWorld!");
     // Verify the lines are joined on screen
@@ -370,7 +380,9 @@ fn test_basic_editing_operations() {
     harness.render().unwrap();
     let pos_before = harness.cursor_position();
 
-    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_buffer_content("HelloNew LineWorld!");
     // Verify everything is on one line on screen
@@ -398,7 +410,9 @@ fn test_edits_persist_through_scrolling() {
     harness.assert_buffer_content(&lines.join("\n"));
 
     // Go to the beginning of the document
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
     assert_eq!(harness.cursor_position(), 0);
 
@@ -408,7 +422,9 @@ fn test_edits_persist_through_scrolling() {
     harness.assert_screen_contains("EDITED Line 0");
 
     // Jump to the end of the document (well past the viewport)
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Verify we're at the end
@@ -429,11 +445,19 @@ fn test_edits_persist_through_scrolling() {
 
     // Verify both edits exist in the buffer
     let buffer_content = harness.get_buffer_content();
-    assert!(buffer_content.contains("EDITED Line 0"), "Edit at beginning should persist");
-    assert!(buffer_content.contains("END MARKER"), "Edit at end should persist");
+    assert!(
+        buffer_content.contains("EDITED Line 0"),
+        "Edit at beginning should persist"
+    );
+    assert!(
+        buffer_content.contains("END MARKER"),
+        "Edit at end should persist"
+    );
 
     // Now jump back to the beginning to verify the first edit persisted
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // The edit should still be visible on screen and in buffer
@@ -457,7 +481,9 @@ fn test_edits_persist_through_scrolling() {
     harness.assert_screen_contains("MIDDLE Line 4");
 
     // Jump back to end
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // End marker should still be visible
@@ -465,9 +491,18 @@ fn test_edits_persist_through_scrolling() {
 
     // Final verification: all three edits persist in buffer
     let final_content = harness.get_buffer_content();
-    assert!(final_content.contains("EDITED Line 0"), "Beginning edit persisted through all jumps");
-    assert!(final_content.contains("MIDDLE Line 4"), "Middle edit persisted through all jumps");
-    assert!(final_content.contains("END MARKER"), "End edit persisted through all jumps");
+    assert!(
+        final_content.contains("EDITED Line 0"),
+        "Beginning edit persisted through all jumps"
+    );
+    assert!(
+        final_content.contains("MIDDLE Line 4"),
+        "Middle edit persisted through all jumps"
+    );
+    assert!(
+        final_content.contains("END MARKER"),
+        "End edit persisted through all jumps"
+    );
 }
 
 /// Test that screen cursor position matches actual cursor position
@@ -851,9 +886,7 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
 
     // Get initial screen cursor position
     let initial_screen_pos = harness.screen_cursor_position();
-    println!(
-        "Initial screen cursor position (after 'Hello '): {initial_screen_pos:?}"
-    );
+    println!("Initial screen cursor position (after 'Hello '): {initial_screen_pos:?}");
 
     // Expected: Line numbers (4 chars) + " │ " (3 chars) + "Hello " (6 chars) = 13
     assert_eq!(
@@ -1486,7 +1519,7 @@ fn test_prompt_cancel() {
 fn test_open_file_workflow() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use std::fs;
-    
+
     use tempfile::TempDir;
 
     // Create a temporary directory and file
@@ -2883,7 +2916,7 @@ fn test_select_prev_word_with_special_chars() {
 #[ignore] // Run with: cargo test test_load_big_file_e2e -- --ignored --nocapture
 fn test_load_big_file_e2e() {
     use crossterm::event::{KeyCode, KeyModifiers};
-    
+
     use std::time::Instant;
 
     // Initialize tracing
@@ -2977,9 +3010,7 @@ fn test_jump_to_eof_large_file() {
 
     // Just log the time for informational purposes - don't assert on it
     // Machines can be slow, especially in CI or when running tests in parallel
-    println!(
-        "✓ Cursor at position {cursor_pos} (buffer len: {buffer_len})"
-    );
+    println!("✓ Cursor at position {cursor_pos} (buffer len: {buffer_len})");
 
     // Now test Page Up after jumping to EOF - this tests backward iteration
     println!("\n=== Testing Page Up after EOF ===");
@@ -3135,7 +3166,9 @@ fn test_cursor_position_with_large_line_numbers() {
     // Create ~81MB file with simple content (each line ~80 chars)
     let mut content = String::new();
     for i in 0..1_000_000 {
-        content.push_str(&format!("Line {:07} with some padding text to reach approximately 80 characters\n", i));
+        content.push_str(&format!(
+            "Line {i:07} with some padding text to reach approximately 80 characters\n"
+        ));
     }
     std::fs::write(&file_path, &content).unwrap();
 
@@ -3144,16 +3177,23 @@ fn test_cursor_position_with_large_line_numbers() {
 
     // Jump to end of file with Ctrl+End to see the large line numbers
     harness
-        .send_key(crossterm::event::KeyCode::End, crossterm::event::KeyModifiers::CONTROL)
+        .send_key(
+            crossterm::event::KeyCode::End,
+            crossterm::event::KeyModifiers::CONTROL,
+        )
         .unwrap();
 
     // Check buffer length and gutter width calculation
     let buffer_len = harness.editor().active_state().buffer.len();
-    let gutter_width = harness.editor().active_state().viewport.gutter_width(&harness.editor().active_state().buffer);
+    let gutter_width = harness
+        .editor()
+        .active_state()
+        .viewport
+        .gutter_width(&harness.editor().active_state().buffer);
 
-    println!("\nBuffer length: {} bytes", buffer_len);
+    println!("\nBuffer length: {buffer_len} bytes");
     println!("Estimated lines (buffer_len / 80): {}", buffer_len / 80);
-    println!("Calculated gutter_width: {}", gutter_width);
+    println!("Calculated gutter_width: {gutter_width}");
 
     harness.render().unwrap();
     let screen_pos = harness.screen_cursor_position();
@@ -3165,7 +3205,7 @@ fn test_cursor_position_with_large_line_numbers() {
     println!("\nWith 7-digit line numbers (file with 1,000,000 lines - at end of file):");
     println!("Full screen dump (last visible lines):");
     for (i, line) in lines.iter().take(5).enumerate() {
-        println!("Row {}: {:?}", i, line);
+        println!("Row {i}: {line:?}");
     }
 
     println!("\nVisual character position ruler:");
@@ -3173,7 +3213,11 @@ fn test_cursor_position_with_large_line_numbers() {
     println!("01234567890123456789012345678901234567890");
     if let Some(content_line) = lines.get(screen_pos.1 as usize) {
         println!("{}", &content_line.chars().take(40).collect::<String>());
-        println!("{}^ cursor is here (pos {})", " ".repeat(screen_pos.0 as usize), screen_pos.0);
+        println!(
+            "{}^ cursor is here (pos {})",
+            " ".repeat(screen_pos.0 as usize),
+            screen_pos.0
+        );
     }
 
     println!(
@@ -3182,7 +3226,8 @@ fn test_cursor_position_with_large_line_numbers() {
     );
 
     // First, verify that the line numbers are correct
-    let content_lines: Vec<&str> = lines.iter()
+    let content_lines: Vec<&str> = lines
+        .iter()
         .skip(1) // Skip tab bar
         .filter(|line| line.contains("│"))
         .copied()
@@ -3196,12 +3241,12 @@ fn test_cursor_position_with_large_line_numbers() {
     if let Some(last_line) = content_lines.last() {
         let line_num_part = last_line.split("│").next().unwrap_or("").trim();
         let line_num: usize = line_num_part.parse().unwrap_or(0);
-        println!("Last visible line number: {} (may be estimated)", line_num);
+        println!("Last visible line number: {line_num} (may be estimated)");
 
         // For a 73MB file (1M lines * 73 bytes avg), estimated lines ~= 912,500
         // This is correct behavior - we estimate rather than iterate all lines
         let expected_estimate = buffer_len / 80;
-        println!("Expected estimated line number: ~{}", expected_estimate);
+        println!("Expected estimated line number: ~{expected_estimate}");
 
         // Line number should be close to the estimate (within 10%)
         let lower_bound = expected_estimate.saturating_sub(expected_estimate / 10);
@@ -3209,15 +3254,15 @@ fn test_cursor_position_with_large_line_numbers() {
 
         assert!(
             line_num >= lower_bound && line_num <= upper_bound,
-            "Expected line number near {}, but got {}",
-            expected_estimate, line_num
+            "Expected line number near {expected_estimate}, but got {line_num}"
         );
 
         // Verify this is a 6-digit number (912,500 range)
         assert!(
             line_num.to_string().len() >= 6,
             "Expected 6+ digit line number, but {} has {} digits",
-            line_num, line_num.to_string().len()
+            line_num,
+            line_num.to_string().len()
         );
     } else {
         panic!("No content lines found!");
@@ -3227,16 +3272,15 @@ fn test_cursor_position_with_large_line_numbers() {
     // The gutter width is based on estimated lines (~912,500)
     // 6 digits + " │ " (3 chars) = 9 chars total
     println!("\nExpected gutter width: 9 (for 6-digit estimated line numbers)");
-    println!("Actual gutter_width: {}", gutter_width);
+    println!("Actual gutter_width: {gutter_width}");
 
     assert_eq!(
         gutter_width, 9,
-        "Gutter width {} doesn't match expected 9",
-        gutter_width
+        "Gutter width {gutter_width} doesn't match expected 9"
     );
 
     // The cursor should be positioned AFTER the gutter (at position gutter_width)
-    println!("Expected: cursor x = {} (at gutter width)", gutter_width);
+    println!("Expected: cursor x = {gutter_width} (at gutter width)");
     println!("Actual: cursor x = {}", screen_pos.0);
 
     assert_eq!(
@@ -3262,15 +3306,20 @@ fn test_line_numbers_rendered_correctly() {
     ];
 
     for (line_count, description) in test_cases {
-        println!("\n{}\nTesting: {}\n{}", "=".repeat(60), description, "=".repeat(60));
+        println!(
+            "\n{}\nTesting: {}\n{}",
+            "=".repeat(60),
+            description,
+            "=".repeat(60)
+        );
 
         let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join(format!("test_{}_lines.txt", line_count));
+        let file_path = temp_dir.path().join(format!("test_{line_count}_lines.txt"));
 
         // Create a file with the specified number of lines
         let mut content = String::new();
         for i in 1..=line_count {
-            content.push_str(&format!("Line {}\n", i));
+            content.push_str(&format!("Line {i}\n"));
         }
         std::fs::write(&file_path, &content).unwrap();
 
@@ -3290,51 +3339,43 @@ fn test_line_numbers_rendered_correctly() {
 
         println!("Full screen dump:");
         for (i, line) in lines.iter().enumerate() {
-            println!("Row {:2}: {:?}", i, line);
+            println!("Row {i:2}: {line:?}");
         }
 
         // Check that we can see the last line number
-        let content_lines: Vec<&str> = lines.iter()
+        let content_lines: Vec<&str> = lines
+            .iter()
             .skip(1) // Skip tab bar
             .filter(|line| line.contains("│"))
             .copied()
             .collect();
 
         if let Some(last_line) = content_lines.last() {
-            println!("\nLast content line: {:?}", last_line);
+            println!("\nLast content line: {last_line:?}");
 
             // Extract the line number
             let line_num_part = last_line.split("│").next().unwrap_or("").trim();
-            println!("Line number extracted: {:?}", line_num_part);
+            println!("Line number extracted: {line_num_part:?}");
 
             let line_num: usize = line_num_part.parse().unwrap_or(0);
-            println!("Parsed line number: {}", line_num);
+            println!("Parsed line number: {line_num}");
 
             // For files with more than 20 lines, we should see a line number
             // close to the total line count (within visible range)
-            let expected_min = if line_count > 20 {
-                line_count - 20
-            } else {
-                1
-            };
+            let expected_min = if line_count > 20 { line_count - 20 } else { 1 };
 
             assert!(
                 line_num >= expected_min && line_num <= line_count,
-                "{}: Expected to see line numbers between {} and {}, but got line {}",
-                description,
-                expected_min,
-                line_count,
-                line_num
+                "{description}: Expected to see line numbers between {expected_min} and {line_count}, but got line {line_num}"
             );
 
             // Verify the last visible line matches the expected line number
             assert_eq!(
                 line_num, line_count,
-                "{}: Expected last visible line to be {}, but got {}",
-                description, line_count, line_num
+                "{description}: Expected last visible line to be {line_count}, but got {line_num}"
             );
         } else {
-            panic!("{}: No content lines found on screen!", description);
+            panic!("{description}: No content lines found on screen!");
         }
     }
 }
@@ -3365,9 +3406,7 @@ fn test_page_down_line_numbers() {
     // Verify the first line is visible on screen
     harness.assert_screen_contains("x1");
     let initial_cursor = harness.cursor_position();
-    println!(
-        "Initial state: line {initial_line}, cursor at {initial_cursor}, screen contains x1"
-    );
+    println!("Initial state: line {initial_line}, cursor at {initial_cursor}, screen contains x1");
     println!("Initial screen:\n{}", harness.screen_to_string());
 
     // Press page down once
@@ -3378,9 +3417,7 @@ fn test_page_down_line_numbers() {
     let after_first_pagedown = harness.top_line_number();
     let cursor_after_first = harness.cursor_position();
 
-    println!(
-        "\nAfter first PageDown: line {after_first_pagedown}, cursor at {cursor_after_first}"
-    );
+    println!("\nAfter first PageDown: line {after_first_pagedown}, cursor at {cursor_after_first}");
     println!(
         "Screen after first PageDown:\n{}",
         harness.screen_to_string()
@@ -3399,7 +3436,9 @@ fn test_page_down_line_numbers() {
         screen.contains("x") && after_first_pagedown > 0,
         "Should see content after scrolling"
     );
-    println!("After first PageDown: screen contains lines starting from line {after_first_pagedown}");
+    println!(
+        "After first PageDown: screen contains lines starting from line {after_first_pagedown}"
+    );
 
     // Press page down again to ensure scroll is triggered
     harness
@@ -3428,7 +3467,9 @@ fn test_page_down_line_numbers() {
         screen.contains("x") && after_second_pagedown > after_first_pagedown,
         "Should see content after second page down"
     );
-    println!("After second PageDown: screen contains lines starting from line {after_second_pagedown}");
+    println!(
+        "After second PageDown: screen contains lines starting from line {after_second_pagedown}"
+    );
 
     // Verify we no longer see the initial content
     harness.assert_screen_not_contains("x1");

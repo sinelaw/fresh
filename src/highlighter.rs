@@ -53,7 +53,7 @@ impl Language {
                     "", // injections query
                     "", // locals query
                 )
-                .map_err(|e| format!("Failed to create Rust highlight config: {}", e))?;
+                .map_err(|e| format!("Failed to create Rust highlight config: {e}"))?;
 
                 // Configure highlight names
                 config.configure(&[
@@ -79,18 +79,18 @@ impl Language {
     fn highlight_color(&self, index: usize) -> Color {
         match self {
             Language::Rust => match index {
-                0 => Color::Cyan,        // attribute
-                1 => Color::DarkGray,    // comment
-                2 => Color::Magenta,     // constant
-                3 => Color::Yellow,      // function
-                4 => Color::Red,         // keyword
-                5 => Color::Magenta,     // number
-                6 => Color::White,       // operator
-                7 => Color::Cyan,        // property
-                8 => Color::Green,       // string
-                9 => Color::Blue,        // type
-                10 => Color::White,      // variable
-                _ => Color::White,       // default
+                0 => Color::Cyan,     // attribute
+                1 => Color::DarkGray, // comment
+                2 => Color::Magenta,  // constant
+                3 => Color::Yellow,   // function
+                4 => Color::Red,      // keyword
+                5 => Color::Magenta,  // number
+                6 => Color::White,    // operator
+                7 => Color::Cyan,     // property
+                8 => Color::Green,    // string
+                9 => Color::Blue,     // type
+                10 => Color::White,   // variable
+                _ => Color::White,    // default
             },
         }
     }
@@ -152,7 +152,9 @@ impl Highlighter {
                 return cache
                     .spans
                     .iter()
-                    .filter(|span| span.range.start < viewport_end && span.range.end > viewport_start)
+                    .filter(|span| {
+                        span.range.start < viewport_end && span.range.end > viewport_start
+                    })
                     .cloned()
                     .collect();
             }
@@ -183,7 +185,7 @@ impl Highlighter {
         match self.ts_highlighter.highlight(
             &self.config,
             &source,
-            None, // cancellation flag
+            None,     // cancellation flag
             |_| None, // injection callback
         ) {
             Ok(highlights) => {
@@ -293,7 +295,7 @@ mod tests {
         // Create a large buffer
         let mut content = String::new();
         for i in 0..1000 {
-            content.push_str(&format!("fn function_{}() {{}}\n", i));
+            content.push_str(&format!("fn function_{i}() {{}}\n"));
         }
         let buffer = Buffer::from_str(&content);
 

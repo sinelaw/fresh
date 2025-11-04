@@ -1,10 +1,7 @@
 use clap::Parser;
 use crossterm::{
     event::{poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent},
-    terminal::{
-        disable_raw_mode, enable_raw_mode, EnterAlternateScreen,
-        LeaveAlternateScreen,
-    },
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
 use editor::{config, editor::Editor};

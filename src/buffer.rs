@@ -420,10 +420,13 @@ impl Buffer {
         let mut current_line = start_line;
 
         // Cache the starting position if not already cached
-        self.line_cache.entries.entry(start_byte).or_insert(LineInfo {
-                    line_number: start_line,
-                    byte_offset: start_byte,
-                });
+        self.line_cache
+            .entries
+            .entry(start_byte)
+            .or_insert(LineInfo {
+                line_number: start_line,
+                byte_offset: start_byte,
+            });
 
         while let Some((line_byte, _)) = iter.next() {
             if line_byte > byte_offset {

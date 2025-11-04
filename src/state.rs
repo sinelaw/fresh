@@ -54,15 +54,14 @@ impl EditorState {
         let buffer = Buffer::load_from_file(path)?;
 
         // Try to create a highlighter based on file extension
-        let highlighter = Language::from_path(path)
-            .and_then(|lang| {
-                Highlighter::new(lang)
-                    .map_err(|e| {
-                        tracing::warn!("Failed to create highlighter: {}", e);
-                        e
-                    })
-                    .ok()
-            });
+        let highlighter = Language::from_path(path).and_then(|lang| {
+            Highlighter::new(lang)
+                .map_err(|e| {
+                    tracing::warn!("Failed to create highlighter: {}", e);
+                    e
+                })
+                .ok()
+        });
 
         Ok(Self {
             buffer,
