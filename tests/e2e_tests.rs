@@ -923,7 +923,7 @@ fn test_vertical_scroll_when_typing_to_bottom() {
 
     // Start with viewport at top
     let viewport = &harness.editor().active_state().viewport;
-    assert_eq!(viewport.top_line.value(), 0, "Should start at top");
+    assert_eq!(viewport.top_byte, 0, "Should start at top");
 
     // Type enough lines to fill the visible area and go beyond
     // We'll type (visible_lines + 10) lines to ensure scrolling happens
@@ -938,26 +938,26 @@ fn test_vertical_scroll_when_typing_to_bottom() {
         }
     }
 
-    // Verify cursor is on the expected line
+    // Count lines to verify cursor is on expected line
     let buffer = &harness.editor().active_state().buffer;
-    let cursor_line = buffer.byte_to_line_lazy(harness.cursor_position()).value();
-    // We typed total_lines lines, so last line should be total_lines - 1
-    assert_eq!(cursor_line, total_lines - 1, "Cursor should be on last line");
+    let cursor_pos = harness.cursor_position();
+    let mut iter = buffer.line_iterator(0);
+    let mut cursor_line = 0;
+    while let Some((line_start, _)) = iter.next() {
+        if line_start > cursor_pos {
+            break;
+        }
+        cursor_line += 1;
+    }
+    // We typed total_lines lines, so last line should be total_lines
+    assert_eq!(cursor_line, total_lines, "Cursor should be on last line");
 
-    // The viewport should have scrolled down
-    let top_line = harness.editor().active_state().viewport.top_line.value();
+    // The viewport should have scrolled down (top_byte > 0)
+    let top_byte = harness.editor().active_state().viewport.top_byte;
     assert!(
-        top_line > 0,
-        "Viewport should have scrolled down, top_line = {}",
-        top_line
-    );
-
-    // The cursor should be on the last line
-    let cursor_line = buffer.byte_to_line_lazy(harness.cursor_position()).value();
-    assert_eq!(
-        cursor_line, total_lines - 1,
-        "Cursor should be on the last line (line {})",
-        total_lines - 1
+        top_byte > 0,
+        "Viewport should have scrolled down, top_byte = {}",
+        top_byte
     );
 
     // The last line should be visible on screen
@@ -966,15 +966,6 @@ fn test_vertical_scroll_when_typing_to_bottom() {
         screen_pos.1 <= visible_lines as u16,
         "Cursor screen Y ({}) should be within visible lines ({})",
         screen_pos.1,
-        visible_lines
-    );
-
-    // Verify the last line is visible: screen_row should be within viewport height
-    let last_line_screen_row = cursor_line.saturating_sub(top_line);
-    assert!(
-        last_line_screen_row < visible_lines,
-        "Last line (screen row {}) should be visible within {} lines",
-        last_line_screen_row,
         visible_lines
     );
 }
@@ -996,8 +987,8 @@ fn test_vertical_scroll_offset() {
     }
 
     // Cursor should be at bottom, viewport scrolled
-    let initial_top_line = harness.editor().active_state().viewport.top_line.value();
-    assert!(initial_top_line > 0, "Should be scrolled down");
+    let initial_top_byte = harness.editor().active_state().viewport.top_byte;
+    assert!(initial_top_byte > 0, "Should be scrolled down");
 
     // Move up by many lines to trigger viewport scroll
     // With 40 lines and 22 visible, viewport is at line 18
@@ -1008,14 +999,14 @@ fn test_vertical_scroll_offset() {
 
     // The viewport should have scrolled up to keep cursor visible
     // with the scroll offset (default 3 lines)
-    let new_top_line = harness.editor().active_state().viewport.top_line.value();
+    let new_top_byte = harness.editor().active_state().viewport.top_byte;
 
-    // We moved up 20 lines, so viewport should have adjusted
+    // We moved up 20 lines, so viewport should have adjusted (top_byte should decrease)
     assert!(
-        new_top_line < initial_top_line,
+        new_top_byte < initial_top_byte,
         "Viewport should have scrolled up: was {}, now {}",
-        initial_top_line,
-        new_top_line
+        initial_top_byte,
+        new_top_byte
     );
 
     // Cursor should still be visible with some margin
@@ -1401,13 +1392,12 @@ fn test_viewport_displays_all_lines() {
     assert_eq!(viewport_height, 38, "Viewport height should be 38 (40 total - 2 for UI chrome)");
 
     // Get visible range
-    let visible_range = state.viewport.visible_range();
-    let visible_line_count = visible_range.end - visible_range.start;
+    let visible_line_count = state.viewport.visible_line_count();
 
     // All 35 lines should fit in the 38-line viewport
     assert!(visible_line_count >= 35,
-        "Expected to see at least 35 lines, but visible range is only {} lines ({}..{})",
-        visible_line_count, visible_range.start, visible_range.end);
+        "Expected to see at least 35 lines, but visible range is only {} lines",
+        visible_line_count);
 
     // Render and check that lines are actually displayed on screen
     harness.render().unwrap();
@@ -1455,8 +1445,7 @@ fn test_open_file_viewport_dimensions() {
     // Render and verify the viewport displays the correct number of lines
     harness.render().unwrap();
 
-    let visible_range = harness.editor().active_state().viewport.visible_range();
-    let visible_count = visible_range.end - visible_range.start;
+    let visible_count = harness.editor().active_state().viewport.visible_line_count();
 
     assert_eq!(
         visible_count, 29,
@@ -1494,13 +1483,12 @@ fn test_viewport_31_rows() {
     assert_eq!(viewport_height, 29, "Viewport height should be 29 (31 total - 2 for UI chrome)");
 
     // Get visible range
-    let visible_range = state.viewport.visible_range();
-    let visible_line_count = visible_range.end - visible_range.start;
+    let visible_line_count = state.viewport.visible_line_count();
 
     // All 29 lines should be visible
     assert_eq!(visible_line_count, 29,
-        "Expected to see all 29 lines, but visible range is only {} lines ({}..{})",
-        visible_line_count, visible_range.start, visible_range.end);
+        "Expected to see all 29 lines, but visible range is only {} lines",
+        visible_line_count);
 
     // Render and verify lines are displayed
     harness.render().unwrap();
@@ -1548,12 +1536,11 @@ fn test_viewport_31_rows() {
         viewport_height_after);
 
     // Get visible range after closing palette
-    let visible_range_after = state.viewport.visible_range();
-    let visible_line_count_after = visible_range_after.end - visible_range_after.start;
+    let visible_line_count_after = state.viewport.visible_line_count();
 
     assert_eq!(visible_line_count_after, 29,
-        "Expected to see all 29 lines after closing palette, but visible range is only {} lines ({}..{})",
-        visible_line_count_after, visible_range_after.start, visible_range_after.end);
+        "Expected to see all 29 lines after closing palette, but visible range is only {} lines",
+        visible_line_count_after);
 
     // All lines should still be visible on screen
     harness.assert_screen_contains("Line 1");
@@ -2418,16 +2405,13 @@ fn test_jump_to_eof_large_file() {
         final_pos, buffer_len - final_pos);
 }
 
-/// Test that line numbers become absolute after jumping back to beginning
-/// When we jump to EOF in a large file, line numbers are estimated (~800000).
-/// After jumping back to the beginning, line numbers should be absolute (1,2,3...)
-/// as we scan through the file from the top.
+/// Test that we can navigate to EOF and back to beginning in a large file
+/// Verifies that navigation works correctly and cursor ends up at the right positions
 #[test]
 fn test_line_numbers_absolute_after_jump_to_beginning() {
     use crossterm::event::{KeyCode, KeyModifiers};
-    use editor::buffer::LineNumber;
 
-    println!("\n=== Testing line number accuracy after EOF -> Home ===");
+    println!("\n=== Testing navigation: EOF -> Home ===");
 
     // Use the big file
     let big_txt_path = TestFixture::big_txt().unwrap();
@@ -2435,29 +2419,20 @@ fn test_line_numbers_absolute_after_jump_to_beginning() {
     harness.open_file(&big_txt_path).unwrap();
 
     println!("✓ Opened 61MB file");
+    let buffer_len = harness.editor().active_state().buffer.len();
 
-    // Jump to EOF - this will show estimated line numbers
+    // Jump to EOF
     harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
     println!("✓ Jumped to EOF");
 
-    // Check that the top line shown is estimated (relative)
+    // Verify we're at the end
+    let eof_pos = harness.cursor_position();
+    assert_eq!(eof_pos, buffer_len, "Should be at EOF");
+
+    // Check viewport scrolled
     {
         let state = harness.editor().active_state();
-        let top_line = &state.viewport.top_line;
-        println!("  Top line after EOF jump: {} (type: {})",
-            top_line.format(),
-            match top_line {
-                LineNumber::Absolute(_) => "Absolute",
-                LineNumber::Relative { .. } => "Relative/Estimated"
-            }
-        );
-
-        // After jumping to EOF, we should see estimated line numbers
-        assert!(
-            matches!(top_line, LineNumber::Relative { .. }),
-            "Line numbers at EOF should be estimated (Relative), got: {:?}",
-            top_line
-        );
+        assert!(state.viewport.top_byte > 0, "Viewport should have scrolled down");
     }
 
     // Now jump back to beginning
@@ -2468,72 +2443,26 @@ fn test_line_numbers_absolute_after_jump_to_beginning() {
     let cursor_pos = harness.cursor_position();
     assert_eq!(cursor_pos, 0, "Cursor should be at position 0");
 
-    // Check that the top line is now absolute (scanned from beginning)
+    // Check that viewport is at top
     {
         let state = harness.editor().active_state();
-        let top_line = &state.viewport.top_line;
-        println!("  Top line after Home: {} (type: {})",
-            top_line.format(),
-            match top_line {
-                LineNumber::Absolute(_) => "Absolute",
-                LineNumber::Relative { .. } => "Relative/Estimated"
-            }
-        );
-
-        // After jumping to beginning, line numbers should be absolute
-        assert!(
-            matches!(top_line, LineNumber::Absolute(_)),
-            "Line numbers at beginning should be absolute, got: {:?}",
-            top_line
-        );
-
-        // And it should be line 0 (0-indexed internally)
-        if let LineNumber::Absolute(line) = top_line {
-            assert_eq!(*line, 0, "Top line should be 0 (line 1 in display)");
-        }
+        assert_eq!(state.viewport.top_byte, 0, "Viewport should be at top");
     }
 
-    // Check a few lines by rendering and examining viewport
+    // Verify first few lines are readable via iterator
+    println!("\n  Verifying first few lines are readable:");
     let state = harness.editor().active_state();
-
-    // Debug: Check what's in the line cache
-    {
-        println!("\n  Line cache state:");
-        println!("    scanned_up_to: {} bytes", state.buffer.line_cache_scanned_up_to());
-        println!("    cached lines: {}", state.buffer.line_cache_count());
-    }
-
-    // Get line numbers for first few visible lines
-    println!("\n  Checking first few line numbers:");
     let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
+    let mut line_count = 0;
     for i in 0..5 {
-        if let Some((byte_pos, _)) = iter.next() {
-            let line_num = state.buffer.display_line_number(byte_pos);
-            println!("    Visible line {} at byte {}: {} (type: {})",
-                i,
-                byte_pos,
-                line_num.format(),
-                match line_num {
-                    LineNumber::Absolute(_) => "Absolute",
-                    LineNumber::Relative { .. } => "Relative"
-                }
-            );
-
-            // All lines at the beginning should be absolute
-            assert!(
-                matches!(line_num, LineNumber::Absolute(_)),
-                "Line {} should be absolute at beginning of file",
-                i
-            );
-
-            // And they should match the expected line number
-            if let LineNumber::Absolute(line) = line_num {
-                assert_eq!(line, i, "Line number mismatch at position {}", i);
-            }
+        if let Some((byte_pos, content)) = iter.next() {
+            println!("    Line {} at byte {}: {} bytes", i, byte_pos, content.len());
+            line_count += 1;
         }
     }
 
-    println!("\n✓ All line numbers are absolute and correct (1, 2, 3, ...) at beginning");
+    assert!(line_count >= 5, "Should be able to read at least 5 lines from beginning");
+    println!("\n✓ Navigation and line iteration working correctly");
 }
 
 /// Test cursor positioning with large line numbers (100000+)
@@ -2551,13 +2480,12 @@ fn test_cursor_position_with_large_line_numbers() {
     // Type some content
     harness.type_text("Line 1\nLine 2\nLine 3\nLine 4\nLine 5").unwrap();
 
-    // Test with 7-digit line number (1,000,000) - this should trigger the bug
-    // The hardcoded gutter_width=7 won't be enough
+    // Note: With the new design, line numbers are calculated on-demand
+    // and gutter width is based on buffer size estimation
+    // This test now just verifies cursor positioning works
     {
-        use editor::buffer::LineNumber;
         let editor = harness.editor_mut();
         let state = editor.active_state_mut();
-        state.viewport.top_line = LineNumber::Absolute(1_000_000);
         state.cursors.primary_mut().position = 0;
     }
 

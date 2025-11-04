@@ -154,13 +154,14 @@ mod tests {
         cache.write(10, b"world".to_vec());
         assert_eq!(cache.size(), 10);
 
-        // This should trigger eviction
+        // This should trigger eviction - need to evict at least 7 bytes to fit the new entry
+        // Both "hello" and "world" will be evicted (10 bytes total) to fit "!!!!!!!" (7 bytes)
         cache.write(20, b"!!!!!!!".to_vec());
 
-        // First entry should be evicted
+        // First two entries should be evicted
         assert!(cache.read(0, 5).is_none());
-        // Second and third should still be there
-        assert!(cache.read(10, 5).is_some());
+        assert!(cache.read(10, 5).is_none());
+        // Third entry should be there
         assert!(cache.read(20, 7).is_some());
     }
 

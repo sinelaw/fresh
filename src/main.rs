@@ -1,12 +1,16 @@
 mod buffer;
+mod cache;
 mod chunk_tree;
 mod config;
 mod cursor;
+mod edit;
 mod editor;
 mod event;
 mod keybindings;
+mod persistence;
 mod state;
 mod viewport;
+mod virtual_buffer;
 
 use clap::Parser;
 use crossterm::{

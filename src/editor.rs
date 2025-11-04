@@ -421,8 +421,12 @@ impl Editor {
         let state = self.active_state();
         let primary = state.cursors.primary();
 
-        // Find the start of the current line
-        let line_start = state.buffer.find_line_start_at_byte(primary.position);
+        // Find the start of the current line using iterator
+        let mut iter = state.buffer.line_iterator(primary.position);
+        let Some((line_start, _)) = iter.next() else {
+            self.status_message = Some("Unable to find current line".to_string());
+            return;
+        };
 
         // Check if we're on the first line
         if line_start == 0 {
@@ -433,8 +437,7 @@ impl Editor {
         // Calculate column offset from line start
         let col_offset = primary.position - line_start;
 
-        // Use iterator to get the previous line
-        let mut iter = state.buffer.line_iterator(line_start);
+        // Get the previous line (iterator is already positioned at current line)
         if let Some((prev_line_start, prev_line_content)) = iter.prev() {
             // Calculate new position on previous line, capping at line length
             let prev_line_len = prev_line_content.len();
@@ -456,17 +459,17 @@ impl Editor {
         let state = self.active_state();
         let primary = state.cursors.primary();
 
-        // Find the start of the current line
-        let line_start = state.buffer.find_line_start_at_byte(primary.position);
+        // Find the start of the current line using iterator
+        let mut iter = state.buffer.line_iterator(primary.position);
+        let Some((line_start, _)) = iter.next() else {
+            self.status_message = Some("Unable to find current line".to_string());
+            return;
+        };
 
         // Calculate column offset from line start
         let col_offset = primary.position - line_start;
 
-        // Use iterator to get the next line
-        let mut iter = state.buffer.line_iterator(line_start);
-        // Skip current line
-        iter.next();
-        // Get next line
+        // Get next line (we already consumed current line with first iter.next())
         if let Some((next_line_start, next_line_content)) = iter.next() {
             // Calculate new position on next line, capping at line length
             let next_line_len = next_line_content.len();
@@ -1085,8 +1088,8 @@ impl Editor {
 
         tracing::debug!("Render content area: {}x{}, viewport height: {}", area.width, area.height, state.viewport.height);
 
-        // Calculate gutter width dynamically based on max line number
-        let gutter_width = state.viewport.gutter_width();
+        // Calculate gutter width dynamically based on buffer size
+        let gutter_width = state.viewport.gutter_width(&state.buffer);
         let line_number_digits = gutter_width.saturating_sub(3); // Subtract " │ "
 
         let mut lines = Vec::new();
@@ -1108,12 +1111,29 @@ impl Editor {
         // Use line iterator starting from top_byte to render visible lines
         let visible_count = state.viewport.visible_line_count();
         let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
+
+        // Calculate starting line number by counting lines from the beginning
+        // For now, use a simple line counter - TODO: optimize with caching if needed
+        let mut starting_line_num = {
+            let mut count_iter = state.buffer.line_iterator(0);
+            let mut line_num = 0;
+            while let Some((ls, _)) = count_iter.next() {
+                if ls >= state.viewport.top_byte {
+                    break;
+                }
+                line_num += 1;
+            }
+            line_num
+        };
+
         let mut lines_rendered = 0;
 
         while let Some((line_start, line_content)) = iter.next() {
             if lines_rendered >= visible_count {
                 break;
             }
+
+            let current_line_num = starting_line_num + lines_rendered;
             lines_rendered += 1;
 
             // Apply horizontal scrolling - skip characters before left_column
@@ -1122,10 +1142,9 @@ impl Editor {
             // Build line with selection highlighting
             let mut line_spans = Vec::new();
 
-            // Line number prefix - use smart display (absolute or relative)
-            let display_num = state.buffer.display_line_number(line_start);
+            // Line number prefix (1-indexed for display)
             line_spans.push(Span::styled(
-                format!("{:>width$} │ ", display_num.format(), width = line_number_digits),
+                format!("{:>width$} │ ", current_line_num + 1, width = line_number_digits),
                 Style::default().fg(Color::DarkGray),
             ));
 
@@ -1222,10 +1241,26 @@ impl Editor {
             };
 
             let cursor = *state.primary_cursor();
-            let line = state.buffer.byte_to_line_lazy(cursor.position).value() + 1;
-            // Calculate column by finding the line start from cursor position (byte-based, no scan)
-            let line_start = state.buffer.find_line_start_at_byte(cursor.position);
-            let col = cursor.position - line_start;
+
+            // Use iterator to find line number and column
+            let (line, col) = {
+                let mut iter = state.buffer.line_iterator(0);
+                let mut line_num = 0;
+                let mut line_start = 0;
+
+                while let Some((ls, _)) = iter.next() {
+                    if ls > cursor.position {
+                        break;
+                    }
+                    line_start = ls;
+                    if ls <= cursor.position {
+                        line_num += 1;
+                    }
+                }
+
+                let col = cursor.position - line_start;
+                (line_num, col)
+            };
 
             (filename, modified, line, col)
         };
@@ -1603,15 +1638,18 @@ impl Editor {
 
             Action::MoveUp => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    // Use byte-based navigation - no line number conversion needed
-                    if let Some(prev_line_start) = state.buffer.find_prev_line_start_from_byte(cursor.position) {
-                        let current_line_start = state.buffer.find_line_start_at_byte(cursor.position);
-                        let col_offset = cursor.position - current_line_start;
+                    // Use iterator to navigate to previous line
+                    // line_iterator positions us at the start of the current line
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    let current_line_start = iter.current_position();
+                    let col_offset = cursor.position - current_line_start;
 
-                        let prev_line_end = current_line_start.saturating_sub(1); // Position before newline
-                        let prev_line_len = prev_line_end - prev_line_start;
-
+                    // Get previous line
+                    if let Some((prev_line_start, prev_line_content)) = iter.prev() {
+                        // Calculate length without trailing newline
+                        let prev_line_len = prev_line_content.trim_end_matches('\n').len();
                         let new_pos = prev_line_start + col_offset.min(prev_line_len);
+
                         events.push(Event::MoveCursor {
                             cursor_id,
                             position: new_pos,
@@ -1623,15 +1661,20 @@ impl Editor {
 
             Action::MoveDown => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    // Use byte-based navigation - no line number conversion needed
-                    if let Some(next_line_start) = state.buffer.find_next_line_start_from_byte(cursor.position) {
-                        let current_line_start = state.buffer.find_line_start_at_byte(cursor.position);
-                        let col_offset = cursor.position - current_line_start;
+                    // Use iterator to navigate to next line
+                    // line_iterator positions us at the start of the current line
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    let current_line_start = iter.current_position();
+                    let col_offset = cursor.position - current_line_start;
 
-                        let next_line_end = state.buffer.find_line_end_at_byte(next_line_start);
-                        let next_line_len = next_line_end - next_line_start;
-
+                    // Skip current line
+                    iter.next();
+                    // Get next line
+                    if let Some((next_line_start, next_line_content)) = iter.next() {
+                        // Calculate length without trailing newline
+                        let next_line_len = next_line_content.trim_end_matches('\n').len();
                         let new_pos = next_line_start + col_offset.min(next_line_len);
+
                         events.push(Event::MoveCursor {
                             cursor_id,
                             position: new_pos,
@@ -1643,25 +1686,33 @@ impl Editor {
 
             Action::MoveLineStart => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    // Use byte-based navigation - no line number conversion needed
-                    let line_start = state.buffer.find_line_start_at_byte(cursor.position);
-                    events.push(Event::MoveCursor {
-                        cursor_id,
-                        position: line_start,
-                        anchor: None,
-                    });
+                    // Use iterator to find line start
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    if let Some((line_start, _)) = iter.next() {
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            position: line_start,
+                            anchor: None,
+                        });
+                    }
                 }
             }
 
             Action::MoveLineEnd => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    // Use byte-based navigation - no line number conversion needed
-                    let line_end = state.buffer.find_line_end_at_byte(cursor.position);
-                    events.push(Event::MoveCursor {
-                        cursor_id,
-                        position: line_end,
-                        anchor: None,
-                    });
+                    // Use iterator to find line end
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    if let Some((line_start, line_content)) = iter.next() {
+                        // Calculate end position (exclude newline)
+                        let line_len = line_content.trim_end_matches('\n').len();
+                        let line_end = line_start + line_len;
+
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            position: line_end,
+                            anchor: None,
+                        });
+                    }
                 }
             }
 
@@ -1710,12 +1761,9 @@ impl Editor {
 
             Action::DeleteLine => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    // Find the start of the current line
-                    let line_start = state.buffer.find_line_start_at_byte(cursor.position);
-
-                    // Use iterator to get the current line content
-                    let mut iter = state.buffer.line_iterator(line_start);
-                    if let Some((_, line_content)) = iter.next() {
+                    // Use iterator to get the current line
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    if let Some((line_start, line_content)) = iter.next() {
                         // line_content includes newline if present
                         let line_end = line_start + line_content.len();
 
@@ -1759,20 +1807,24 @@ impl Editor {
             Action::SelectUp => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    // Use byte-based navigation - no line number conversion needed
-                    if let Some(prev_line_start) = state.buffer.find_prev_line_start_from_byte(cursor.position) {
-                        let current_line_start = state.buffer.find_line_start_at_byte(cursor.position);
+
+                    // Use iterator to navigate to previous line
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    if let Some((current_line_start, _)) = iter.next() {
                         let col_offset = cursor.position - current_line_start;
 
-                        let prev_line_end = current_line_start.saturating_sub(1);
-                        let prev_line_len = prev_line_end - prev_line_start;
+                        // Get previous line
+                        if let Some((prev_line_start, prev_line_content)) = iter.prev() {
+                            // Calculate length without trailing newline
+                            let prev_line_len = prev_line_content.trim_end_matches('\n').len();
+                            let new_pos = prev_line_start + col_offset.min(prev_line_len);
 
-                        let new_pos = prev_line_start + col_offset.min(prev_line_len);
-                        events.push(Event::MoveCursor {
-                            cursor_id,
-                            position: new_pos,
-                            anchor: Some(anchor),
-                        });
+                            events.push(Event::MoveCursor {
+                                cursor_id,
+                                position: new_pos,
+                                anchor: Some(anchor),
+                            });
+                        }
                     }
                 }
             }
@@ -1780,20 +1832,24 @@ impl Editor {
             Action::SelectDown => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    // Use byte-based navigation - no line number conversion needed
-                    if let Some(next_line_start) = state.buffer.find_next_line_start_from_byte(cursor.position) {
-                        let current_line_start = state.buffer.find_line_start_at_byte(cursor.position);
+
+                    // Use iterator to navigate to next line
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    if let Some((current_line_start, _)) = iter.next() {
                         let col_offset = cursor.position - current_line_start;
 
-                        let next_line_end = state.buffer.find_line_end_at_byte(next_line_start);
-                        let next_line_len = next_line_end - next_line_start;
+                        // Get next line (we already consumed current line)
+                        if let Some((next_line_start, next_line_content)) = iter.next() {
+                            // Calculate length without trailing newline
+                            let next_line_len = next_line_content.trim_end_matches('\n').len();
+                            let new_pos = next_line_start + col_offset.min(next_line_len);
 
-                        let new_pos = next_line_start + col_offset.min(next_line_len);
-                        events.push(Event::MoveCursor {
-                            cursor_id,
-                            position: new_pos,
-                            anchor: Some(anchor),
-                        });
+                            events.push(Event::MoveCursor {
+                                cursor_id,
+                                position: new_pos,
+                                anchor: Some(anchor),
+                            });
+                        }
                     }
                 }
             }
@@ -1801,26 +1857,36 @@ impl Editor {
             Action::SelectLineStart => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let line = state.buffer.byte_to_line_lazy(cursor.position).value();
-                    let line_start = state.buffer.line_to_byte(line);
-                    events.push(Event::MoveCursor {
-                        cursor_id,
-                        position: line_start,
-                        anchor: Some(anchor),
-                    });
+
+                    // Use iterator to find line start
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    if let Some((line_start, _)) = iter.next() {
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            position: line_start,
+                            anchor: Some(anchor),
+                        });
+                    }
                 }
             }
 
             Action::SelectLineEnd => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let line = state.buffer.byte_to_line_lazy(cursor.position).value();
-                    let line_end = state.buffer.line_end_byte(line);
-                    events.push(Event::MoveCursor {
-                        cursor_id,
-                        position: line_end,
-                        anchor: Some(anchor),
-                    });
+
+                    // Use iterator to find line end
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    if let Some((line_start, line_content)) = iter.next() {
+                        // Calculate end position (exclude newline)
+                        let line_len = line_content.trim_end_matches('\n').len();
+                        let line_end = line_start + line_len;
+
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            position: line_end,
+                            anchor: Some(anchor),
+                        });
+                    }
                 }
             }
 
@@ -1850,9 +1916,19 @@ impl Editor {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let current_line = state.buffer.byte_to_line_lazy(cursor.position).value();
-                    let target_line = current_line.saturating_sub(lines_per_page);
-                    let new_pos = state.buffer.line_to_byte(target_line);
+
+                    // Use iterator to move up by lines_per_page lines
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    let mut new_pos = cursor.position;
+
+                    for _ in 0..lines_per_page {
+                        if let Some((line_start, _)) = iter.prev() {
+                            new_pos = line_start;
+                        } else {
+                            break; // Hit beginning of file
+                        }
+                    }
+
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: new_pos,
@@ -1865,11 +1941,22 @@ impl Editor {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let current_line = state.buffer.byte_to_line_lazy(cursor.position).value();
-                    let target_line = current_line + lines_per_page;
-                    let target_byte = state.buffer.line_to_byte(target_line);
-                    // Clamp to EOF if we went past the end
-                    let new_pos = target_byte.min(state.buffer.len());
+
+                    // Use iterator to move down by lines_per_page lines
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    let mut new_pos = cursor.position;
+
+                    for _ in 0..lines_per_page {
+                        if let Some((line_start, _)) = iter.next() {
+                            new_pos = line_start;
+                        } else {
+                            break; // Hit end of file
+                        }
+                    }
+
+                    // Clamp to EOF
+                    new_pos = new_pos.min(state.buffer.len());
+
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: new_pos,
@@ -1906,15 +1993,18 @@ impl Editor {
             Action::SelectLine => {
                 // Select the entire line for each cursor
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let line = state.buffer.byte_to_line_lazy(cursor.position).value();
-                    let line_start = state.buffer.line_to_byte(line);
-                    let line_end = state.buffer.line_end_byte_with_newline(line);
+                    // Use iterator to get line bounds
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    if let Some((line_start, line_content)) = iter.next() {
+                        // Include newline if present
+                        let line_end = line_start + line_content.len();
 
-                    events.push(Event::MoveCursor {
-                        cursor_id,
-                        position: line_end,
-                        anchor: Some(line_start),
-                    });
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            position: line_end,
+                            anchor: Some(line_start),
+                        });
+                    }
                 }
             }
 
@@ -2081,11 +2171,13 @@ impl Editor {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
                     // Find current line start and calculate column offset
-                    let current_line_start = state.buffer.find_line_start_at_byte(cursor.position);
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    let Some((current_line_start, _)) = iter.next() else {
+                        continue;
+                    };
                     let col_offset = cursor.position - current_line_start;
 
-                    // Use line iterator to go backwards by lines_per_page
-                    let mut iter = state.buffer.line_iterator(current_line_start);
+                    // Go backwards by lines_per_page
                     let mut target_line_start = current_line_start;
 
                     for _ in 0..lines_per_page {
@@ -2099,8 +2191,12 @@ impl Editor {
                     }
 
                     // Calculate target line length to clamp column offset
-                    let target_line_end = state.buffer.find_line_end_at_byte(target_line_start);
-                    let target_line_len = target_line_end.saturating_sub(target_line_start);
+                    let mut target_iter = state.buffer.line_iterator(target_line_start);
+                    let target_line_len = if let Some((_, line_content)) = target_iter.next() {
+                        line_content.trim_end_matches('\n').len()
+                    } else {
+                        0
+                    };
 
                     let new_pos = target_line_start + col_offset.min(target_line_len);
                     events.push(Event::MoveCursor {
@@ -2115,15 +2211,14 @@ impl Editor {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
                     // Find current line start and calculate column offset
-                    let current_line_start = state.buffer.find_line_start_at_byte(cursor.position);
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    let Some((current_line_start, _)) = iter.next() else {
+                        continue;
+                    };
                     let col_offset = cursor.position - current_line_start;
 
-                    // Use line iterator to go forward by lines_per_page
-                    let mut iter = state.buffer.line_iterator(current_line_start);
+                    // Go forward by lines_per_page (we already consumed current line)
                     let mut target_line_start = current_line_start;
-
-                    // Skip current line, then go forward
-                    iter.next();
                     for _ in 0..lines_per_page {
                         if let Some((line_byte, _)) = iter.next() {
                             target_line_start = line_byte;
@@ -2145,8 +2240,12 @@ impl Editor {
                     }
 
                     // Calculate target line length to clamp column offset
-                    let target_line_end = state.buffer.find_line_end_at_byte(target_line_start);
-                    let target_line_len = target_line_end.saturating_sub(target_line_start);
+                    let mut target_iter = state.buffer.line_iterator(target_line_start);
+                    let target_line_len = if let Some((_, line_content)) = target_iter.next() {
+                        line_content.trim_end_matches('\n').len()
+                    } else {
+                        0
+                    };
 
                     let new_pos = target_line_start + col_offset.min(target_line_len);
                     events.push(Event::MoveCursor {
