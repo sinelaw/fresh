@@ -120,7 +120,7 @@
   - [x] Generic split view system that allows multiple buffers displayed simultaneously ✅
   - [x] Support both vertical and horizontal splits ✅
   - [x] Navigation between splits (Ctrl+o / Ctrl+Shift+o) ✅
-  - [x] Keybindings (Ctrl+\ vertical, Ctrl+- horizontal, Ctrl+w close) ✅
+  - [x] Keybindings (Ctrl+2 horizontal, Ctrl+3 vertical, Ctrl+0 close) - Emacs-inspired ✅
   - [x] Nested splits (arbitrary depth) ✅
   - [x] 7 E2E tests covering all split functionality ✅
   - [ ] Dedicated diagnostics buffer type (can display in split) - future enhancement

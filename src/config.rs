@@ -324,23 +324,23 @@ impl Config {
                 args: HashMap::new(),
                 when: None,
             },
-            // Split view operations
+            // Split view operations (using Ctrl+X prefix like Emacs)
             Keybinding {
-                key: "\\".to_string(),
-                modifiers: vec!["ctrl".to_string()],
-                action: "split_vertical".to_string(),
-                args: HashMap::new(),
-                when: None,
-            },
-            Keybinding {
-                key: "-".to_string(),
+                key: "2".to_string(),
                 modifiers: vec!["ctrl".to_string()],
                 action: "split_horizontal".to_string(),
                 args: HashMap::new(),
                 when: None,
             },
             Keybinding {
-                key: "w".to_string(),
+                key: "3".to_string(),
+                modifiers: vec!["ctrl".to_string()],
+                action: "split_vertical".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
+            Keybinding {
+                key: "0".to_string(),
                 modifiers: vec!["ctrl".to_string()],
                 action: "close_split".to_string(),
                 args: HashMap::new(),
@@ -361,15 +361,15 @@ impl Config {
                 when: None,
             },
             Keybinding {
-                key: "=".to_string(),
+                key: "+".to_string(),
                 modifiers: vec!["ctrl".to_string()],
                 action: "increase_split_size".to_string(),
                 args: HashMap::new(),
                 when: None,
             },
             Keybinding {
-                key: "-".to_string(),
-                modifiers: vec!["ctrl".to_string(), "shift".to_string()],
+                key: "_".to_string(),
+                modifiers: vec!["ctrl".to_string()],
                 action: "decrease_split_size".to_string(),
                 args: HashMap::new(),
                 when: None,
