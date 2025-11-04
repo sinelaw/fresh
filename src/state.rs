@@ -2,6 +2,7 @@ use crate::buffer::{Buffer, LineNumber};
 use crate::cursor::{Cursor, Cursors};
 use crate::event::Event;
 use crate::highlighter::{Highlighter, Language};
+use crate::overlay::OverlayManager;
 use crate::viewport::Viewport;
 
 /// The complete editor state - everything needed to represent the current editing session
@@ -17,6 +18,9 @@ pub struct EditorState {
 
     /// Syntax highlighter (optional - only created if language is detected)
     pub highlighter: Option<Highlighter>,
+
+    /// Overlays for visual decorations (underlines, highlights, etc.)
+    pub overlays: OverlayManager,
 
     /// Cached line number for primary cursor (0-indexed)
     /// Maintained incrementally to avoid O(n) scanning on every render
@@ -42,6 +46,7 @@ impl EditorState {
             cursors: Cursors::new(),
             viewport: Viewport::new(width, content_height),
             highlighter: None, // No file path, so no syntax highlighting
+            overlays: OverlayManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
         }
@@ -68,6 +73,7 @@ impl EditorState {
             cursors: Cursors::new(),
             viewport: Viewport::new(width, content_height),
             highlighter,
+            overlays: OverlayManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
         })
