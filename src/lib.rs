@@ -22,5 +22,6 @@ pub mod popup;
 pub mod signal_handler;
 pub mod split;
 pub mod state;
+pub mod ui;
 pub mod viewport;
 pub mod virtual_buffer;

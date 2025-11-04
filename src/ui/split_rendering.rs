@@ -1,0 +1,274 @@
+//! Split pane layout and buffer rendering
+
+use crate::event::{BufferId, EventLog, SplitDirection};
+use crate::split::SplitManager;
+use crate::state::EditorState;
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::Frame;
+use std::collections::HashMap;
+
+/// Renders split panes and their content
+pub struct SplitRenderer;
+
+impl SplitRenderer {
+    /// Render the main content area with all splits
+    ///
+    /// # Arguments
+    /// * `frame` - The ratatui frame to render to
+    /// * `area` - The rectangular area to render in
+    /// * `split_manager` - The split manager
+    /// * `buffers` - All open buffers
+    /// * `event_logs` - Event logs for each buffer
+    pub fn render_content(
+        frame: &mut Frame,
+        area: Rect,
+        split_manager: &SplitManager,
+        buffers: &mut HashMap<BufferId, EditorState>,
+        event_logs: &mut HashMap<BufferId, EventLog>,
+    ) {
+        let _span = tracing::trace_span!("render_content").entered();
+
+        // Get all visible splits with their areas
+        let visible_buffers = split_manager.get_visible_buffers(area);
+        let active_split_id = split_manager.active_split();
+
+        // Render each split
+        for (split_id, buffer_id, split_area) in visible_buffers {
+            let is_active = split_id == active_split_id;
+
+            // Get references separately to avoid double borrow
+            let state_opt = buffers.get_mut(&buffer_id);
+            let event_log_opt = event_logs.get_mut(&buffer_id);
+
+            if let Some(state) = state_opt {
+                Self::render_buffer_in_split(frame, state, event_log_opt, split_area, is_active);
+            }
+        }
+
+        // Render split separators
+        let separators = split_manager.get_separators(area);
+        for (direction, x, y, length) in separators {
+            Self::render_separator(frame, direction, x, y, length);
+        }
+    }
+
+    /// Render a split separator line
+    fn render_separator(frame: &mut Frame, direction: SplitDirection, x: u16, y: u16, length: u16) {
+        match direction {
+            SplitDirection::Horizontal => {
+                // Draw horizontal line
+                let line_area = Rect::new(x, y, length, 1);
+                let line_text = "─".repeat(length as usize);
+                let paragraph =
+                    Paragraph::new(line_text).style(Style::default().fg(Color::DarkGray));
+                frame.render_widget(paragraph, line_area);
+            }
+            SplitDirection::Vertical => {
+                // Draw vertical line
+                for offset in 0..length {
+                    let cell_area = Rect::new(x, y + offset, 1, 1);
+                    let paragraph =
+                        Paragraph::new("│").style(Style::default().fg(Color::DarkGray));
+                    frame.render_widget(paragraph, cell_area);
+                }
+            }
+        }
+    }
+
+    /// Render a single buffer in a split pane
+    fn render_buffer_in_split(
+        frame: &mut Frame,
+        state: &mut EditorState,
+        event_log: Option<&mut EventLog>,
+        area: Rect,
+        is_active: bool,
+    ) {
+        let _span = tracing::trace_span!("render_buffer_in_split").entered();
+
+        // Debug: Log overlay count for diagnostics
+        let overlay_count = state.overlays.all().len();
+        if overlay_count > 0 {
+            tracing::debug!("render_content: {} overlays present", overlay_count);
+        }
+
+        // Calculate gutter width dynamically based on buffer size
+        let gutter_width = state.viewport.gutter_width(&state.buffer);
+        let line_number_digits = gutter_width.saturating_sub(3); // Subtract " │ "
+
+        let mut lines = Vec::new();
+
+        // Collect all selection ranges from all cursors
+        let selection_ranges: Vec<std::ops::Range<usize>> = state
+            .cursors
+            .iter()
+            .filter_map(|(_, cursor)| cursor.selection_range())
+            .collect();
+
+        // Collect all cursor positions (to avoid highlighting the cursor itself)
+        let cursor_positions: Vec<usize> = state
+            .cursors
+            .iter()
+            .map(|(_, cursor)| cursor.position)
+            .collect();
+
+        // Use line iterator starting from top_byte to render visible lines
+        let visible_count = state.viewport.visible_line_count();
+
+        // Pre-populate the line cache for the visible area
+        let starting_line_num = state
+            .buffer
+            .populate_line_cache(state.viewport.top_byte, visible_count);
+
+        // Compute syntax highlighting for the visible viewport (if highlighter exists)
+        let viewport_start = state.viewport.top_byte;
+        let mut iter_temp = state.buffer.line_iterator(viewport_start);
+        let mut viewport_end = viewport_start;
+        for _ in 0..visible_count {
+            if let Some((line_start, line_content)) = iter_temp.next() {
+                viewport_end = line_start + line_content.len();
+            } else {
+                break;
+            }
+        }
+
+        let highlight_spans = if let Some(highlighter) = &mut state.highlighter {
+            highlighter.highlight_viewport(&state.buffer, viewport_start, viewport_end)
+        } else {
+            Vec::new()
+        };
+
+        let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
+        let mut lines_rendered = 0;
+
+        while let Some((line_start, line_content)) = iter.next() {
+            if lines_rendered >= visible_count {
+                break;
+            }
+
+            let current_line_num = starting_line_num + lines_rendered;
+            lines_rendered += 1;
+
+            // Apply horizontal scrolling - skip characters before left_column
+            let left_col = state.viewport.left_column;
+
+            // Build line with selection highlighting
+            let mut line_spans = Vec::new();
+
+            // Line number prefix (1-indexed for display)
+            line_spans.push(Span::styled(
+                format!(
+                    "{:>width$} │ ",
+                    current_line_num + 1,
+                    width = line_number_digits
+                ),
+                Style::default().fg(Color::DarkGray),
+            ));
+
+            // Check if this line has any selected text
+            let mut char_index = 0;
+            for ch in line_content.chars() {
+                let byte_pos = line_start + char_index;
+
+                // Skip characters before left_column
+                if char_index >= left_col {
+                    // Check if this character is at a cursor position
+                    let is_cursor = cursor_positions.contains(&byte_pos);
+
+                    // Check if this character is in any selection range (but not at cursor position)
+                    let is_selected = !is_cursor
+                        && selection_ranges
+                            .iter()
+                            .any(|range| range.contains(&byte_pos));
+
+                    // Find syntax highlight color for this position
+                    let highlight_color = highlight_spans
+                        .iter()
+                        .find(|span| span.range.contains(&byte_pos))
+                        .map(|span| span.color);
+
+                    // Find overlays at this position (sorted by priority, low to high)
+                    let overlays = state.overlays.at_position(byte_pos);
+
+                    // Build style by layering: base -> syntax -> overlays -> selection
+                    let mut style = if let Some(color) = highlight_color {
+                        // Apply syntax highlighting
+                        Style::default().fg(color)
+                    } else {
+                        // Default color
+                        Style::default().fg(Color::White)
+                    };
+
+                    // Apply overlay styles (in priority order, so higher priority overlays override)
+                    use crate::overlay::OverlayFace;
+                    for overlay in &overlays {
+                        match &overlay.face {
+                            OverlayFace::Underline {
+                                color,
+                                style: _underline_style,
+                            } => {
+                                // For now, we'll use color modifiers since ratatui doesn't have
+                                // native wavy underlines. We'll add a colored underline modifier.
+                                // TODO: Render actual wavy/dotted underlines in a second pass
+                                tracing::trace!(
+                                    "Applying underline overlay at byte {}: color={:?}",
+                                    byte_pos,
+                                    color
+                                );
+                                style = style.add_modifier(Modifier::UNDERLINED).fg(*color);
+                            }
+                            OverlayFace::Background { color } => {
+                                style = style.bg(*color);
+                            }
+                            OverlayFace::Foreground { color } => {
+                                style = style.fg(*color);
+                            }
+                            OverlayFace::Style {
+                                style: overlay_style,
+                            } => {
+                                // Merge the overlay style
+                                style = style.patch(*overlay_style);
+                            }
+                        }
+                    }
+
+                    // Selection overrides everything
+                    if is_selected {
+                        style = Style::default().fg(Color::Black).bg(Color::Cyan);
+                    }
+
+                    line_spans.push(Span::styled(ch.to_string(), style));
+                }
+
+                char_index += ch.len_utf8();
+            }
+
+            lines.push(Line::from(line_spans));
+        }
+
+        let paragraph = Paragraph::new(lines).block(Block::default().borders(Borders::NONE));
+
+        frame.render_widget(paragraph, area);
+
+        // Render cursor and log state (only for active split)
+        if is_active {
+            let cursor_positions = state.cursor_positions();
+            if let Some(&(x, y)) = cursor_positions.first() {
+                // Adjust for line numbers (gutter width is dynamic based on max line number)
+                // and adjust Y for the content area offset (area.y accounts for tab bar)
+                let screen_x = area.x.saturating_add(x).saturating_add(gutter_width as u16);
+                let screen_y = area.y.saturating_add(y);
+                frame.set_cursor_position((screen_x, screen_y));
+
+                // Log rendering state for debugging
+                if let Some(event_log) = event_log {
+                    let cursor_pos = state.cursors.primary().position;
+                    let buffer_len = state.buffer.len();
+                    event_log.log_render_state(cursor_pos, screen_x, screen_y, buffer_len);
+                }
+            }
+        }
+    }
+}

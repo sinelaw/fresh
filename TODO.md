@@ -202,14 +202,109 @@
 
 ---
 
+---
+
+## Phase 7: Code Organization & Refactoring
+
+### 7.1 Editor.rs Refactoring Plan
+**Goal**: Refactor `editor.rs` (3,535 lines) into focused modules separating single-buffer concerns from multi-buffer orchestration.
+
+#### Target Architecture
+1. **`editor.rs`** (~1000 lines) - Multi-buffer orchestrator
+   - Buffer lifecycle (open, close, switch)
+   - Active buffer tracking
+   - Global state (clipboard, quit flag, help)
+   - Config and keybindings
+   - Event logs (one per buffer)
+   - Buffer metadata
+   - LSP manager
+   - Tokio runtime and async bridge
+   - Split manager coordination
+
+2. **`buffer_view.rs`** (~500 lines) - Single buffer display & operations
+   - Single buffer rendering
+   - Cursor position calculations
+   - Action-to-events conversion
+   - Word boundary detection
+   - Selection operations for single buffer
+
+3. **`ui/mod.rs`** and submodules (~800 lines total)
+   - `ui/tabs.rs` - Tab bar rendering
+   - `ui/status_bar.rs` - Status bar and prompt display
+   - `ui/suggestions.rs` - Autocomplete/command palette UI
+   - `ui/help.rs` - Help page rendering
+   - `ui/split_rendering.rs` - Split layout and separators
+
+4. **`commands.rs`** (~300 lines) - Command system
+   - Command definitions
+   - Command filtering
+   - Command execution routing
+
+5. **`prompt.rs`** (~300 lines) - Prompt/minibuffer system
+   - Prompt lifecycle
+   - Input handling
+   - Suggestion management
+
+6. **`multi_cursor.rs`** (~200 lines) - Multi-cursor operations
+   - Add cursor at next match
+   - Add cursor above/below
+
+#### Implementation Phases
+
+**Phase 7.1.1: Extract Rendering (~Week 1)**
+- [ ] Create `ui/mod.rs` structure
+- [ ] Create `ui/tabs.rs` - Move `render_tabs`
+- [ ] Create `ui/status_bar.rs` - Move `render_status_bar`
+- [ ] Create `ui/suggestions.rs` - Move `render_suggestions`
+- [ ] Create `ui/help.rs` - Move `render_help`, `scroll_help`, help state
+- [ ] Create `ui/split_rendering.rs` - Move `render_content`, `render_separator`
+- [ ] Update `editor.rs` to use new UI modules
+- [ ] Test rendering still works
+
+**Phase 7.1.2: Extract Commands & Prompts (~Week 1)**
+- [ ] Create `commands.rs`
+- [ ] Move `Command` struct
+- [ ] Move `get_all_commands`
+- [ ] Move `filter_commands`
+- [ ] Create `prompt.rs`
+- [ ] Move `Prompt`, `PromptType`, `Suggestion` structs
+- [ ] Move prompt methods (start, cancel, confirm, update)
+- [ ] Update `editor.rs` to use CommandPalette and PromptManager
+- [ ] Test command palette and prompts work
+
+**Phase 7.1.3: Create BufferView (~Week 2)**
+- [ ] Create `buffer_view.rs`
+- [ ] Define `BufferView` struct
+- [ ] Move `action_to_events` to BufferView
+- [ ] Move word boundary helpers (find_word_start, find_word_end, etc.)
+- [ ] Move `render_buffer_in_split_static` as BufferView method
+- [ ] Update Editor to work with BufferViews
+- [ ] Test single buffer operations
+- [ ] Test multi-buffer switching
+
+**Phase 7.1.4: Polish & Additional Extractions (~Week 1)**
+- [ ] Create `multi_cursor.rs`
+- [ ] Move multi-cursor operations
+- [ ] Consider extracting LSP integration to `lsp_integration.rs`
+- [ ] Update all tests
+- [ ] Update documentation
+- [ ] Remove dead code
+- [ ] Final verification
+
+---
+
 ## Timeline Estimate
 
 - **Phase 0-2.2**: ✅ Complete
 - **Phase 2.3**: ✅ Complete (Advanced Selection)
 - **Phase 2.4**: 1 day (Smart Editing - deferred)
 - **Phase 3**: 1 day (Syntax Highlighting - deferred)
-- **Phase 3.5**: 2-3 days (Core UI Primitives - overlays, popups, margins) **← CURRENT**
+- **Phase 3.5**: ✅ Complete (Core UI Primitives)
 - **Phase 4.1**: ✅ Complete (LSP Client & Basic Integration)
-- **Phase 4.2-4.3**: 1-2 days (LSP UI built on primitives)
-- **Phase 5**: 1-2 days (Polish & Optimization)
-- **Total to production**: ~5-8 days remaining
+- **Phase 4.2**: ✅ Complete (LSP Diagnostics via overlays)
+- **Phase 4.2.5**: ✅ Complete (Async I/O Architecture)
+- **Phase 4.2.6**: ✅ Complete (Split View System)
+- **Phase 4.3**: 1-2 days (Advanced LSP features - deferred)
+- **Phase 5**: 1-2 days (Polish & Optimization - deferred)
+- **Phase 7**: 2-4 weeks (Code Organization & Refactoring) **← CURRENT**
+- **Total to production**: ~3-6 weeks remaining

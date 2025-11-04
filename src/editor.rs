@@ -6,12 +6,10 @@ use crate::lsp_diagnostics;
 use crate::lsp_manager::{detect_language, LspManager};
 use crate::split::SplitManager;
 use crate::state::EditorState;
+use crate::ui::{HelpRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer, TabsRenderer};
 use lsp_types::{TextDocumentContentChangeEvent, Url};
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    layout::{Constraint, Direction, Layout},
     Frame,
 };
 use std::collections::HashMap;
@@ -183,11 +181,8 @@ pub struct Editor {
     /// Status message (shown in status bar)
     status_message: Option<String>,
 
-    /// Is the help page visible?
-    help_visible: bool,
-
-    /// Scroll offset for help page
-    help_scroll: usize,
+    /// Help renderer
+    help_renderer: HelpRenderer,
 
     /// Active prompt (minibuffer)
     prompt: Option<Prompt>,
@@ -277,8 +272,7 @@ impl Editor {
             clipboard: String::new(),
             should_quit: false,
             status_message: None,
-            help_visible: false,
-            help_scroll: 0,
+            help_renderer: HelpRenderer::new(),
             prompt: None,
             terminal_width: width,
             terminal_height: height,
@@ -1089,16 +1083,16 @@ impl Editor {
         tracing::debug!("Editor.handle_key: code={:?}, modifiers={:?}", code, modifiers);
 
         // Handle help mode first
-        if self.is_help_visible() {
+        if self.help_renderer.is_visible() {
             match (code, modifiers) {
                 (KeyCode::Esc, KeyModifiers::NONE)
                 | (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
-                    self.toggle_help();
+                    self.help_renderer.toggle();
                 }
-                (KeyCode::Up, KeyModifiers::NONE) => self.scroll_help(-1),
-                (KeyCode::Down, KeyModifiers::NONE) => self.scroll_help(1),
-                (KeyCode::PageUp, KeyModifiers::NONE) => self.scroll_help(-10),
-                (KeyCode::PageDown, KeyModifiers::NONE) => self.scroll_help(10),
+                (KeyCode::Up, KeyModifiers::NONE) => self.help_renderer.scroll(-1, &self.keybindings),
+                (KeyCode::Down, KeyModifiers::NONE) => self.help_renderer.scroll(1, &self.keybindings),
+                (KeyCode::PageUp, KeyModifiers::NONE) => self.help_renderer.scroll(-10, &self.keybindings),
+                (KeyCode::PageDown, KeyModifiers::NONE) => self.help_renderer.scroll(10, &self.keybindings),
                 _ => {}
             }
             return Ok(());
@@ -1172,7 +1166,7 @@ impl Editor {
                                                 self.active_state_mut().apply(&event);
                                             }
                                         }
-                                        Action::ShowHelp => self.toggle_help(),
+                                        Action::ShowHelp => self.help_renderer.toggle(),
                                         Action::AddCursorNextMatch => {
                                             self.add_cursor_at_next_match()
                                         }
@@ -1398,7 +1392,7 @@ impl Editor {
                     self.active_state_mut().apply(&event);
                 }
             }
-            Action::ShowHelp => self.toggle_help(),
+            Action::ShowHelp => self.help_renderer.toggle(),
             Action::CommandPalette => {
                 // Start the command palette prompt with all commands as suggestions
                 let suggestions = Self::filter_commands("");
@@ -1444,8 +1438,8 @@ impl Editor {
         let size = frame.area();
 
         // If help is visible, render help page instead
-        if self.help_visible {
-            self.render_help(frame, size);
+        if self.help_renderer.is_visible() {
+            self.help_renderer.render(frame, size, &self.keybindings);
             return;
         }
 
@@ -1479,19 +1473,39 @@ impl Editor {
             .split(size);
 
         // Render tabs
-        self.render_tabs(frame, chunks[0]);
+        TabsRenderer::render(frame, chunks[0], &self.buffers, self.active_buffer);
 
         // Render content
-        self.render_content(frame, chunks[1]);
+        SplitRenderer::render_content(
+            frame,
+            chunks[1],
+            &self.split_manager,
+            &mut self.buffers,
+            &mut self.event_logs,
+        );
 
         // Render suggestions popup if present
         if suggestion_lines > 0 {
-            self.render_suggestions(frame, chunks[2]);
+            if let Some(prompt) = &self.prompt {
+                SuggestionsRenderer::render(frame, chunks[2], prompt);
+            }
             // Status bar is in chunks[3]
-            self.render_status_bar(frame, chunks[3]);
+            StatusBarRenderer::render(
+                frame,
+                chunks[3],
+                self.active_state(),
+                &self.status_message,
+                &self.prompt,
+            );
         } else {
             // Status bar is in chunks[2]
-            self.render_status_bar(frame, chunks[2]);
+            StatusBarRenderer::render(
+                frame,
+                chunks[2],
+                self.active_state(),
+                &self.status_message,
+                &self.prompt,
+            );
         }
 
         // Render popups from the active buffer state
@@ -1512,486 +1526,7 @@ impl Editor {
         }
     }
 
-    /// Render the tab bar
-    fn render_tabs(&self, frame: &mut Frame, area: Rect) {
-        // Build spans for each tab with individual background colors
-        let mut spans = Vec::new();
 
-        // Sort buffer IDs to ensure consistent tab order
-        let mut buffer_ids: Vec<_> = self.buffers.keys().copied().collect();
-        buffer_ids.sort_by_key(|id| id.0);
-
-        for (idx, id) in buffer_ids.iter().enumerate() {
-            let state = &self.buffers[id];
-            let name = state
-                .buffer
-                .file_path()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .unwrap_or("[No Name]");
-
-            let modified = if state.buffer.is_modified() { "*" } else { "" };
-            let tab_text = format!(" {name}{modified} ");
-
-            let is_active = *id == self.active_buffer;
-
-            // Active tab: bright yellow text on blue background with bold
-            // Inactive tabs: white text on dark gray background
-            let style = if is_active {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .bg(Color::Blue)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-                    .fg(Color::White)
-                    .bg(Color::DarkGray)
-            };
-
-            spans.push(Span::styled(tab_text, style));
-
-            // Add a small separator between tabs (single space with no background)
-            if idx < self.buffers.len() - 1 {
-                spans.push(Span::raw(" "));
-            }
-        }
-
-        let line = Line::from(spans);
-        let paragraph = Paragraph::new(line).style(Style::default().bg(Color::Black));
-        frame.render_widget(paragraph, area);
-    }
-
-    /// Render the main content area
-    fn render_content(&mut self, frame: &mut Frame, area: Rect) {
-        let _span = tracing::trace_span!("render_content").entered();
-
-        // Get all visible splits with their areas
-        let visible_buffers = self.split_manager.get_visible_buffers(area);
-        let active_split_id = self.split_manager.active_split();
-
-        // Render each split
-        for (split_id, buffer_id, split_area) in visible_buffers {
-            let is_active = split_id == active_split_id;
-
-            // Get references separately to avoid double borrow
-            let state_opt = self.buffers.get_mut(&buffer_id);
-            let event_log_opt = self.event_logs.get_mut(&buffer_id);
-
-            if let Some(state) = state_opt {
-                Self::render_buffer_in_split_static(frame, state, event_log_opt, split_area, is_active);
-            }
-        }
-
-        // Render split separators
-        let separators = self.split_manager.get_separators(area);
-        for (direction, x, y, length) in separators {
-            Self::render_separator(frame, direction, x, y, length);
-        }
-    }
-
-    /// Render a split separator line
-    fn render_separator(frame: &mut Frame, direction: crate::event::SplitDirection, x: u16, y: u16, length: u16) {
-        use ratatui::widgets::{Block, Borders};
-        use ratatui::style::{Color, Style};
-
-        match direction {
-            crate::event::SplitDirection::Horizontal => {
-                // Draw horizontal line
-                let line_area = Rect::new(x, y, length, 1);
-                let line_text = "─".repeat(length as usize);
-                let paragraph = ratatui::widgets::Paragraph::new(line_text)
-                    .style(Style::default().fg(Color::DarkGray));
-                frame.render_widget(paragraph, line_area);
-            }
-            crate::event::SplitDirection::Vertical => {
-                // Draw vertical line
-                for offset in 0..length {
-                    let cell_area = Rect::new(x, y + offset, 1, 1);
-                    let paragraph = ratatui::widgets::Paragraph::new("│")
-                        .style(Style::default().fg(Color::DarkGray));
-                    frame.render_widget(paragraph, cell_area);
-                }
-            }
-        }
-    }
-
-    /// Render a single buffer in a split pane (static to avoid borrow issues)
-    fn render_buffer_in_split_static(frame: &mut Frame, state: &mut EditorState, event_log: Option<&mut EventLog>, area: Rect, is_active: bool) {
-        let _span = tracing::trace_span!("render_buffer_in_split").entered();
-
-        // Debug: Log overlay count for diagnostics
-        let overlay_count = state.overlays.all().len();
-        if overlay_count > 0 {
-            tracing::debug!("render_content: {} overlays present", overlay_count);
-        }
-
-        // Calculate gutter width dynamically based on buffer size
-        let gutter_width = state.viewport.gutter_width(&state.buffer);
-        let line_number_digits = gutter_width.saturating_sub(3); // Subtract " │ "
-
-        let mut lines = Vec::new();
-
-        // Collect all selection ranges from all cursors
-        let selection_ranges: Vec<std::ops::Range<usize>> = state
-            .cursors
-            .iter()
-            .filter_map(|(_, cursor)| cursor.selection_range())
-            .collect();
-
-        // Collect all cursor positions (to avoid highlighting the cursor itself)
-        let cursor_positions: Vec<usize> = state
-            .cursors
-            .iter()
-            .map(|(_, cursor)| cursor.position)
-            .collect();
-
-        // Use line iterator starting from top_byte to render visible lines
-        let visible_count = state.viewport.visible_line_count();
-
-        // Pre-populate the line cache for the visible area
-        let starting_line_num = state
-            .buffer
-            .populate_line_cache(state.viewport.top_byte, visible_count);
-
-        // Compute syntax highlighting for the visible viewport (if highlighter exists)
-        let viewport_start = state.viewport.top_byte;
-        let mut iter_temp = state.buffer.line_iterator(viewport_start);
-        let mut viewport_end = viewport_start;
-        for _ in 0..visible_count {
-            if let Some((line_start, line_content)) = iter_temp.next() {
-                viewport_end = line_start + line_content.len();
-            } else {
-                break;
-            }
-        }
-
-        let highlight_spans = if let Some(highlighter) = &mut state.highlighter {
-            highlighter.highlight_viewport(&state.buffer, viewport_start, viewport_end)
-        } else {
-            Vec::new()
-        };
-
-        let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
-        let mut lines_rendered = 0;
-
-        while let Some((line_start, line_content)) = iter.next() {
-            if lines_rendered >= visible_count {
-                break;
-            }
-
-            let current_line_num = starting_line_num + lines_rendered;
-            lines_rendered += 1;
-
-            // Apply horizontal scrolling - skip characters before left_column
-            let left_col = state.viewport.left_column;
-
-            // Build line with selection highlighting
-            let mut line_spans = Vec::new();
-
-            // Line number prefix (1-indexed for display)
-            line_spans.push(Span::styled(
-                format!(
-                    "{:>width$} │ ",
-                    current_line_num + 1,
-                    width = line_number_digits
-                ),
-                Style::default().fg(Color::DarkGray),
-            ));
-
-            // Check if this line has any selected text
-            let mut char_index = 0;
-            for ch in line_content.chars() {
-                let byte_pos = line_start + char_index;
-
-                // Skip characters before left_column
-                if char_index >= left_col {
-                    // Check if this character is at a cursor position
-                    let is_cursor = cursor_positions.contains(&byte_pos);
-
-                    // Check if this character is in any selection range (but not at cursor position)
-                    let is_selected = !is_cursor
-                        && selection_ranges
-                            .iter()
-                            .any(|range| range.contains(&byte_pos));
-
-                    // Find syntax highlight color for this position
-                    let highlight_color = highlight_spans
-                        .iter()
-                        .find(|span| span.range.contains(&byte_pos))
-                        .map(|span| span.color);
-
-                    // Find overlays at this position (sorted by priority, low to high)
-                    let overlays = state.overlays.at_position(byte_pos);
-
-                    // Build style by layering: base -> syntax -> overlays -> selection
-                    let mut style = if let Some(color) = highlight_color {
-                        // Apply syntax highlighting
-                        Style::default().fg(color)
-                    } else {
-                        // Default color
-                        Style::default().fg(Color::White)
-                    };
-
-                    // Apply overlay styles (in priority order, so higher priority overlays override)
-                    use crate::overlay::OverlayFace;
-                    for overlay in &overlays {
-                        match &overlay.face {
-                            OverlayFace::Underline { color, style: _underline_style } => {
-                                // For now, we'll use color modifiers since ratatui doesn't have
-                                // native wavy underlines. We'll add a colored underline modifier.
-                                // TODO: Render actual wavy/dotted underlines in a second pass
-                                tracing::trace!("Applying underline overlay at byte {}: color={:?}", byte_pos, color);
-                                style = style.add_modifier(Modifier::UNDERLINED).fg(*color);
-                            }
-                            OverlayFace::Background { color } => {
-                                style = style.bg(*color);
-                            }
-                            OverlayFace::Foreground { color } => {
-                                style = style.fg(*color);
-                            }
-                            OverlayFace::Style { style: overlay_style } => {
-                                // Merge the overlay style
-                                style = style.patch(*overlay_style);
-                            }
-                        }
-                    }
-
-                    // Selection overrides everything
-                    if is_selected {
-                        style = Style::default().fg(Color::Black).bg(Color::Cyan);
-                    }
-
-                    line_spans.push(Span::styled(ch.to_string(), style));
-                }
-
-                char_index += ch.len_utf8();
-            }
-
-            lines.push(Line::from(line_spans));
-        }
-
-        let paragraph = Paragraph::new(lines).block(Block::default().borders(Borders::NONE));
-
-        frame.render_widget(paragraph, area);
-
-        // Render cursor and log state (only for active split)
-        if is_active {
-            let cursor_positions = state.cursor_positions();
-            if let Some(&(x, y)) = cursor_positions.first() {
-                // Adjust for line numbers (gutter width is dynamic based on max line number)
-                // and adjust Y for the content area offset (area.y accounts for tab bar)
-                let screen_x = area.x.saturating_add(x).saturating_add(gutter_width as u16);
-                let screen_y = area.y.saturating_add(y);
-                frame.set_cursor_position((screen_x, screen_y));
-
-                // Log rendering state for debugging
-                if let Some(event_log) = event_log {
-                    let cursor_pos = state.cursors.primary().position;
-                    let buffer_len = state.buffer.len();
-                    event_log.log_render_state(cursor_pos, screen_x, screen_y, buffer_len);
-                }
-            }
-        }
-    }
-
-    /// Render the status bar
-    fn render_status_bar(&mut self, frame: &mut Frame, area: Rect) {
-        // If we're in prompt mode, render the prompt instead of the status bar
-        if let Some(prompt) = &self.prompt {
-            // Build prompt display: message + input + cursor
-            let prompt_text = format!("{}{}", prompt.message, prompt.input);
-
-            // Use a different style for prompt (yellow background to distinguish from status bar)
-            let prompt_line = Paragraph::new(prompt_text)
-                .style(Style::default().fg(Color::Black).bg(Color::Yellow));
-
-            frame.render_widget(prompt_line, area);
-
-            // Set cursor position in the prompt
-            // Cursor should be at: message.len() + cursor_pos
-            let cursor_x = (prompt.message.len() + prompt.cursor_pos) as u16;
-            if cursor_x < area.width {
-                frame.set_cursor_position((area.x + cursor_x, area.y));
-            }
-
-            return;
-        }
-
-        // Normal status bar rendering
-        // Collect all data we need from state
-        let (filename, modified, line, col) = {
-            let state = self.active_state_mut();
-
-            let filename = state
-                .buffer
-                .file_path()
-                .and_then(|p| p.to_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "[No Name]".to_string());
-
-            let modified = if state.buffer.is_modified() {
-                " [+]"
-            } else {
-                ""
-            };
-
-            let cursor = *state.primary_cursor();
-
-            // Get line number and column efficiently using cached values
-            let (line, col) = {
-                // Find the start of the line containing the cursor
-                let cursor_iter = state.buffer.line_iterator(cursor.position);
-                let line_start = cursor_iter.current_position();
-                let col = cursor.position - line_start;
-
-                // Use cached line number from state
-                let line_num = state.primary_cursor_line_number.value();
-                (line_num, col)
-            };
-
-            (filename, modified, line, col)
-        };
-
-        let status = if let Some(msg) = &self.status_message {
-            format!("{filename}{modified} | Ln {line}, Col {col} | {msg}")
-        } else {
-            format!("{filename}{modified} | Ln {line}, Col {col}")
-        };
-
-        let status_line =
-            Paragraph::new(status).style(Style::default().fg(Color::Black).bg(Color::White));
-
-        frame.render_widget(status_line, area);
-    }
-
-    /// Render the suggestions popup (autocomplete)
-    fn render_suggestions(&self, frame: &mut Frame, area: Rect) {
-        let Some(prompt) = &self.prompt else {
-            return;
-        };
-
-        if prompt.suggestions.is_empty() {
-            return;
-        }
-
-        let mut lines = Vec::new();
-        let visible_count = area.height as usize;
-        let start_idx = 0;
-        let end_idx = visible_count.min(prompt.suggestions.len());
-
-        for (idx, suggestion) in prompt.suggestions[start_idx..end_idx].iter().enumerate() {
-            let actual_idx = start_idx + idx;
-            let is_selected = prompt.selected_suggestion == Some(actual_idx);
-
-            // Format: "Command Name - description"
-            let text = if let Some(desc) = &suggestion.description {
-                format!("  {}  -  {}", suggestion.text, desc)
-            } else {
-                format!("  {}", suggestion.text)
-            };
-
-            let style = if is_selected {
-                // Highlight selected suggestion with cyan background
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                // Normal suggestion with dark gray background
-                Style::default().fg(Color::White).bg(Color::DarkGray)
-            };
-
-            lines.push(Line::from(Span::styled(text, style)));
-        }
-
-        let paragraph = Paragraph::new(lines);
-        frame.render_widget(paragraph, area);
-    }
-
-    /// Render the help page
-    fn render_help(&self, frame: &mut Frame, area: Rect) {
-        // Get all keybindings
-        let bindings = self.keybindings.get_all_bindings();
-
-        // Calculate visible range based on scroll
-        let visible_height = area.height.saturating_sub(4) as usize; // Leave space for header and footer
-        let start_idx = self.help_scroll;
-        let end_idx = (start_idx + visible_height).min(bindings.len());
-
-        // Build help text
-        let mut lines = vec![];
-
-        // Header
-        lines.push(Line::from(vec![Span::styled(
-            " KEYBOARD SHORTCUTS ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )]));
-        lines.push(Line::from(""));
-
-        // Find max key width for alignment
-        let max_key_width = bindings
-            .iter()
-            .map(|(key, _)| key.len())
-            .max()
-            .unwrap_or(20);
-
-        // Render visible bindings
-        for (key, action) in bindings.iter().skip(start_idx).take(end_idx - start_idx) {
-            let line_text = format!("  {key:<max_key_width$}  {action}");
-            lines.push(Line::from(line_text));
-        }
-
-        // Footer
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![Span::styled(
-            format!(
-                " Showing {}-{} of {} | Use Up/Down to scroll | Press Ctrl+H or Esc to close ",
-                start_idx + 1,
-                end_idx,
-                bindings.len()
-            ),
-            Style::default().fg(Color::Black).bg(Color::White),
-        )]));
-
-        let help = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Yellow))
-                    .title(" Help ")
-                    .title_style(
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-            )
-            .wrap(ratatui::widgets::Wrap { trim: true });
-
-        frame.render_widget(help, area);
-    }
-
-    /// Toggle help page visibility
-    pub fn toggle_help(&mut self) {
-        self.help_visible = !self.help_visible;
-        self.help_scroll = 0; // Reset scroll when toggling
-    }
-
-    /// Check if help page is visible
-    pub fn is_help_visible(&self) -> bool {
-        self.help_visible
-    }
-
-    /// Scroll help page
-    pub fn scroll_help(&mut self, delta: isize) {
-        let bindings = self.keybindings.get_all_bindings();
-        let max_scroll = bindings.len().saturating_sub(1);
-
-        if delta > 0 {
-            self.help_scroll = (self.help_scroll + delta as usize).min(max_scroll);
-        } else {
-            self.help_scroll = self.help_scroll.saturating_sub(delta.unsigned_abs());
-        }
-    }
 
     // === Overlay Management (Event-Driven) ===
 
@@ -2085,6 +1620,23 @@ impl Editor {
         let event = Event::PopupPageUp;
         self.active_event_log_mut().append(event.clone());
         self.active_state_mut().apply(&event);
+    }
+
+    // === Help Page Management (Delegates to HelpRenderer) ===
+
+    /// Toggle help page visibility
+    pub fn toggle_help(&mut self) {
+        self.help_renderer.toggle();
+    }
+
+    /// Check if help page is visible
+    pub fn is_help_visible(&self) -> bool {
+        self.help_renderer.is_visible()
+    }
+
+    /// Scroll the help page
+    pub fn scroll_help(&mut self, delta: isize) {
+        self.help_renderer.scroll(delta, &self.keybindings);
     }
 
     // === LSP Diagnostics Display ===
