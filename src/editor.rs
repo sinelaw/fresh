@@ -420,62 +420,67 @@ impl Editor {
     pub fn add_cursor_above(&mut self) {
         let state = self.active_state();
         let primary = state.cursors.primary();
-        let current_line = state.buffer.byte_to_line_lazy(primary.position).value();
 
-        if current_line == 0 {
+        // Find the start of the current line
+        let line_start = state.buffer.find_line_start_at_byte(primary.position);
+
+        // Check if we're on the first line
+        if line_start == 0 {
             self.status_message = Some("Already at first line".to_string());
             return;
         }
 
         // Calculate column offset from line start
-        let line_start = state.buffer.line_to_byte(current_line);
         let col_offset = primary.position - line_start;
 
-        // Calculate position on line above
-        let prev_line = current_line - 1;
-        let prev_line_start = state.buffer.line_to_byte(prev_line);
-        let prev_line_end = line_start.saturating_sub(1); // Exclude newline
-        let prev_line_len = prev_line_end - prev_line_start;
+        // Use iterator to get the previous line
+        let mut iter = state.buffer.line_iterator(line_start);
+        if let Some((prev_line_start, prev_line_content)) = iter.prev() {
+            // Calculate new position on previous line, capping at line length
+            let prev_line_len = prev_line_content.len();
+            let new_pos = prev_line_start + col_offset.min(prev_line_len);
+            let new_cursor = crate::cursor::Cursor::new(new_pos);
 
-        let new_pos = prev_line_start + col_offset.min(prev_line_len);
-        let new_cursor = crate::cursor::Cursor::new(new_pos);
+            let state_mut = self.active_state_mut();
+            state_mut.cursors.add(new_cursor);
+            state_mut.cursors.normalize();
 
-        let state_mut = self.active_state_mut();
-        state_mut.cursors.add(new_cursor);
-        state_mut.cursors.normalize();
-
-        self.status_message = Some(format!("Added cursor above ({})", state_mut.cursors.iter().count()));
+            self.status_message = Some(format!("Added cursor above ({})", state_mut.cursors.iter().count()));
+        } else {
+            self.status_message = Some("Already at first line".to_string());
+        }
     }
 
     /// Add a cursor below the primary cursor at the same column
     pub fn add_cursor_below(&mut self) {
         let state = self.active_state();
         let primary = state.cursors.primary();
-        let current_line = state.buffer.byte_to_line_lazy(primary.position).value();
 
-        if state.buffer.is_last_line(current_line) {
-            self.status_message = Some("Already at last line".to_string());
-            return;
-        }
+        // Find the start of the current line
+        let line_start = state.buffer.find_line_start_at_byte(primary.position);
 
         // Calculate column offset from line start
-        let line_start = state.buffer.line_to_byte(current_line);
         let col_offset = primary.position - line_start;
 
-        // Calculate position on line below
-        let next_line = current_line + 1;
-        let next_line_start = state.buffer.line_to_byte(next_line);
-        let next_line_end = state.buffer.line_end_byte(next_line);
-        let next_line_len = next_line_end - next_line_start;
+        // Use iterator to get the next line
+        let mut iter = state.buffer.line_iterator(line_start);
+        // Skip current line
+        iter.next();
+        // Get next line
+        if let Some((next_line_start, next_line_content)) = iter.next() {
+            // Calculate new position on next line, capping at line length
+            let next_line_len = next_line_content.len();
+            let new_pos = next_line_start + col_offset.min(next_line_len);
+            let new_cursor = crate::cursor::Cursor::new(new_pos);
 
-        let new_pos = next_line_start + col_offset.min(next_line_len);
-        let new_cursor = crate::cursor::Cursor::new(new_pos);
+            let state_mut = self.active_state_mut();
+            state_mut.cursors.add(new_cursor);
+            state_mut.cursors.normalize();
 
-        let state_mut = self.active_state_mut();
-        state_mut.cursors.add(new_cursor);
-        state_mut.cursors.normalize();
-
-        self.status_message = Some(format!("Added cursor below ({})", state_mut.cursors.iter().count()));
+            self.status_message = Some(format!("Added cursor below ({})", state_mut.cursors.iter().count()));
+        } else {
+            self.status_message = Some("Already at last line".to_string());
+        }
     }
 
     /// Save the active buffer
@@ -1111,10 +1116,6 @@ impl Editor {
             }
             lines_rendered += 1;
 
-            // Register this line in the cache if it extends the scanned region
-            // This ensures line numbers for visible lines are accurate when possible
-            state.buffer.register_line_in_cache(line_start);
-
             // Apply horizontal scrolling - skip characters before left_column
             let left_col = state.viewport.left_column;
 
@@ -1709,17 +1710,23 @@ impl Editor {
 
             Action::DeleteLine => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let line = state.buffer.byte_to_line_lazy(cursor.position).value();
-                    let line_start = state.buffer.line_to_byte(line);
-                    let line_end = state.buffer.line_end_byte_with_newline(line);
+                    // Find the start of the current line
+                    let line_start = state.buffer.find_line_start_at_byte(cursor.position);
 
-                    if line_start < line_end {
-                        let range = line_start..line_end;
-                        events.push(Event::Delete {
-                            range: range.clone(),
-                            deleted_text: state.buffer.slice(range),
-                            cursor_id,
-                        });
+                    // Use iterator to get the current line content
+                    let mut iter = state.buffer.line_iterator(line_start);
+                    if let Some((_, line_content)) = iter.next() {
+                        // line_content includes newline if present
+                        let line_end = line_start + line_content.len();
+
+                        if line_start < line_end {
+                            let range = line_start..line_end;
+                            events.push(Event::Delete {
+                                range: range.clone(),
+                                deleted_text: state.buffer.slice(range),
+                                cursor_id,
+                            });
+                        }
                     }
                 }
             }
