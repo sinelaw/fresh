@@ -107,14 +107,16 @@
 ### 4.2 Basic LSP Features (Using Core UI Primitives)
 - [x] Async I/O architecture with Tokio ✅
 - [x] AsyncBridge for sync/async communication ✅
-- [x] Async LSP client (lsp_async.rs) ✅
+- [x] Async LSP client (lsp_async.rs) - refactored to use lsp-types properly ✅
 - [x] LspManager with async handles ✅
 - [x] Diagnostics receiving (via async notifications) ✅
-- [x] Diagnostics display via overlays (squiggly underlines) ✅
+- [x] Diagnostics display via overlays (colored text + underlines) ✅
 - [x] LSP diagnostic to overlay conversion (lsp_diagnostics.rs) ✅
-- [x] Overlay rendering in viewport (red/yellow/blue underlines) ✅
+- [x] Overlay rendering in viewport (red/yellow/blue colors with underline) ✅
+- [x] E2E test for visual diagnostic rendering ✅
+- [x] didSave notification support (diagnostics appear after Ctrl+S) ✅
 - [ ] Diagnostics in gutter (error/warning icons) - deferred
-- [ ] Completion via popup system
+- [ ] Completion via popup system ← NEXT
 - [x] Convert events to LSP changes (full document sync) ✅
 
 ### 4.3 Advanced LSP Features
@@ -126,7 +128,7 @@
 - [x] One server per language ✅
 - [x] Route requests to appropriate server ✅
 - [x] Configure in config.json ✅
-- [x] Integrated into Editor with didOpen/didChange ✅
+- [x] Integrated into Editor with didOpen/didChange/didSave ✅
 
 ---
 

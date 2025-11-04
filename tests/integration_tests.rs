@@ -592,3 +592,68 @@ fn test_overlay_priority_layering() {
     assert_eq!(overlays[0].id, Some("hint".to_string()));
     assert_eq!(overlays[1].id, Some("error".to_string()));
 }
+
+/// E2E test: Verify diagnostic overlays are visually rendered with correct colors
+#[test]
+fn test_diagnostic_overlay_visual_rendering() {
+    use common::harness::EditorTestHarness;
+    use editor::event::{OverlayFace, UnderlineStyle};
+    use ratatui::style::{Color, Modifier};
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Insert some text
+    harness.type_text("let x = 5;").unwrap();
+    harness.render().unwrap();
+
+    // Add an error diagnostic overlay on "x" (position 4)
+    // This simulates what LSP would do when it finds an error
+    // We use the overlay API directly, but convert the color to RGB format
+    // since that's what OverlayFace uses (u8, u8, u8) tuples
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::AddOverlay {
+        overlay_id: "lsp-diagnostic-0".to_string(),
+        range: 4..5, // "x"
+        face: OverlayFace::Underline {
+            color: (255, 0, 0), // Red as RGB
+            style: UnderlineStyle::Wavy,
+        },
+        priority: 100,
+        message: Some("unused variable: `x`".to_string()),
+    });
+
+    // Render again to apply the overlay styling
+    harness.render().unwrap();
+
+    // Now check that the character "x" at the expected position has red color
+    // The gutter is typically "   1 │ " (7 characters for single-digit line numbers)
+    // So the text starts at column 7
+    // "let x = 5;" -> "x" is at text position 4, which maps to screen column 7 + 4 = 11
+    let gutter_width = 7; // "   1 │ " for line 1
+    let x_column = gutter_width + 4; // Position of "x" in "let x = 5;"
+    let x_row = 1; // First line of content (row 0 is tab bar, row 1 is first text line)
+
+    // Get the style of the "x" character
+    let style = harness.get_cell_style(x_column, x_row);
+    assert!(style.is_some(), "Expected cell at ({}, {}) to have a style", x_column, x_row);
+
+    let style = style.unwrap();
+
+    // Verify the foreground color is red (indicating error)
+    // The color will be rendered as RGB(255, 0, 0) since that's what we passed in the overlay
+    assert_eq!(
+        style.fg,
+        Some(Color::Rgb(255, 0, 0)),
+        "Expected 'x' to be rendered in red (RGB 255,0,0) due to error diagnostic"
+    );
+
+    // Verify underline modifier is applied
+    assert!(
+        style.add_modifier.contains(Modifier::UNDERLINED),
+        "Expected 'x' to have underline modifier"
+    );
+
+    // Verify the text itself is correct
+    let text = harness.get_cell(x_column, x_row);
+    assert_eq!(text, Some("x".to_string()), "Expected 'x' character at position");
+}

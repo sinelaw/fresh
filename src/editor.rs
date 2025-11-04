@@ -696,6 +696,10 @@ impl Editor {
     pub fn save(&mut self) -> io::Result<()> {
         self.active_state_mut().buffer.save()?;
         self.status_message = Some("Saved".to_string());
+
+        // Notify LSP of save
+        self.notify_lsp_save();
+
         Ok(())
     }
 
@@ -1477,6 +1481,12 @@ impl Editor {
         let _span = tracing::trace_span!("render_content").entered();
         let state = self.active_state_mut();
 
+        // Debug: Log overlay count for diagnostics
+        let overlay_count = state.overlays.all().len();
+        if overlay_count > 0 {
+            tracing::debug!("render_content: {} overlays present", overlay_count);
+        }
+
         // Calculate gutter width dynamically based on buffer size
         let gutter_width = state.viewport.gutter_width(&state.buffer);
         let line_number_digits = gutter_width.saturating_sub(3); // Subtract " │ "
@@ -1592,6 +1602,7 @@ impl Editor {
                                 // For now, we'll use color modifiers since ratatui doesn't have
                                 // native wavy underlines. We'll add a colored underline modifier.
                                 // TODO: Render actual wavy/dotted underlines in a second pass
+                                tracing::trace!("Applying underline overlay at byte {}: color={:?}", byte_pos, color);
                                 style = style.add_modifier(Modifier::UNDERLINED).fg(*color);
                             }
                             OverlayFace::Background { color } => {
@@ -2157,6 +2168,68 @@ impl Editor {
             }
         } else {
             tracing::debug!("notify_lsp_change: no LSP manager available");
+        }
+    }
+
+    /// Notify LSP of a file save
+    fn notify_lsp_save(&mut self) {
+        // Check if LSP is enabled for this buffer
+        let metadata = match self.buffer_metadata.get(&self.active_buffer) {
+            Some(m) => m,
+            None => {
+                tracing::debug!("notify_lsp_save: no metadata for buffer {:?}", self.active_buffer);
+                return;
+            }
+        };
+
+        if !metadata.lsp_enabled {
+            tracing::debug!("notify_lsp_save: LSP disabled for this buffer");
+            return;
+        }
+
+        // Get the URI
+        let uri = match &metadata.file_uri {
+            Some(u) => u.clone(),
+            None => {
+                tracing::debug!("notify_lsp_save: no URI for buffer");
+                return;
+            }
+        };
+
+        // Get the file path for language detection
+        let path = match &metadata.file_path {
+            Some(p) => p,
+            None => {
+                tracing::debug!("notify_lsp_save: no file path for buffer");
+                return;
+            }
+        };
+
+        let language = match detect_language(path) {
+            Some(l) => l,
+            None => {
+                tracing::debug!("notify_lsp_save: no language detected for {:?}", path);
+                return;
+            }
+        };
+
+        // Get the full text to send with didSave
+        let full_text = self.active_state().buffer.to_string();
+        tracing::debug!("notify_lsp_save: sending didSave to {} (text length: {} bytes)", uri, full_text.len());
+
+        if let Some(lsp) = &mut self.lsp {
+            if let Some(client) = lsp.get_or_spawn(&language) {
+                // Send didSave with the full text content
+                if let Err(e) = client.did_save(uri, Some(full_text)) {
+                    tracing::warn!("Failed to send didSave to LSP: {}", e);
+                } else {
+                    tracing::info!("Successfully sent didSave to LSP");
+                }
+            } else {
+                tracing::warn!("notify_lsp_save: failed to get or spawn LSP client for {}", language);
+            }
+        } else {
+            tracing::debug!("notify_lsp_save: no LSP manager available");
         }
     }
 

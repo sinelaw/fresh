@@ -89,6 +89,16 @@ impl EditorTestHarness {
             .map(|cell| cell.symbol().to_string())
     }
 
+    /// Get the style (color, modifiers) of a specific cell
+    pub fn get_cell_style(&self, x: u16, y: u16) -> Option<ratatui::style::Style> {
+        let buffer = self.buffer();
+        let pos = buffer.index_of(x, y);
+        buffer
+            .content
+            .get(pos)
+            .map(|cell| cell.style())
+    }
+
     /// Get entire screen as string (for debugging)
     pub fn screen_to_string(&self) -> String {
         let buffer = self.buffer();

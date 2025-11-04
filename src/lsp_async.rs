@@ -13,12 +13,16 @@
 
 use crate::async_bridge::{AsyncBridge, AsyncMessage};
 use lsp_types::{
-    notification::{Notification, PublishDiagnostics},
+    notification::{
+        DidChangeTextDocument, DidOpenTextDocument, DidSaveTextDocument, Initialized,
+        Notification, PublishDiagnostics,
+    },
     request::{Initialize, Request, Shutdown},
-    ClientCapabilities, Diagnostic, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
-    InitializeParams, InitializeResult, InitializedParams, PublishDiagnosticsParams,
-    ServerCapabilities, TextDocumentContentChangeEvent, TextDocumentItem, Url,
-    VersionedTextDocumentIdentifier, WorkspaceFolder,
+    ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, InitializeParams, InitializeResult, InitializedParams,
+    PublishDiagnosticsParams, ServerCapabilities, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextDocumentItem, Url, VersionedTextDocumentIdentifier,
+    WorkspaceFolder,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -97,6 +101,12 @@ enum LspCommand {
         content_changes: Vec<TextDocumentContentChangeEvent>,
     },
 
+    /// Notify document saved
+    DidSave {
+        uri: Url,
+        text: Option<String>,
+    },
+
     /// Shutdown the server
     Shutdown,
 }
@@ -150,16 +160,15 @@ impl LspState {
         Ok(())
     }
 
-    /// Send a notification
-    async fn send_notification<P: Serialize>(
-        &mut self,
-        method: &str,
-        params: Option<P>,
-    ) -> Result<(), String> {
+    /// Send a notification using lsp-types Notification trait (type-safe)
+    async fn send_notification<N>(&mut self, params: N::Params) -> Result<(), String>
+    where
+        N: Notification,
+    {
         let notification = JsonRpcNotification {
             jsonrpc: "2.0".to_string(),
-            method: method.to_string(),
-            params: params.map(|p| serde_json::to_value(p).expect("Failed to serialize params")),
+            method: N::METHOD.to_string(),
+            params: Some(serde_json::to_value(params).expect("Failed to serialize params")),
         };
 
         self.write_message(&notification).await
@@ -232,7 +241,7 @@ impl LspState {
         self.capabilities = Some(result.capabilities.clone());
 
         // Send initialized notification
-        self.send_notification("initialized", Some(InitializedParams {})).await?;
+        self.send_notification::<Initialized>(InitializedParams {}).await?;
 
         self.initialized = true;
 
@@ -267,7 +276,7 @@ impl LspState {
 
         self.document_versions.insert(PathBuf::from(uri.path()), 0);
 
-        self.send_notification("textDocument/didOpen", Some(params)).await
+        self.send_notification::<DidOpenTextDocument>(params).await
     }
 
     /// Handle did_change command
@@ -291,7 +300,23 @@ impl LspState {
             content_changes,
         };
 
-        self.send_notification("textDocument/didChange", Some(params)).await
+        self.send_notification::<DidChangeTextDocument>(params).await
+    }
+
+    /// Handle did_save command
+    async fn handle_did_save(
+        &mut self,
+        uri: Url,
+        text: Option<String>,
+    ) -> Result<(), String> {
+        tracing::debug!("LSP: did_save for {}", uri);
+
+        let params = DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri },
+            text,
+        };
+
+        self.send_notification::<DidSaveTextDocument>(params).await
     }
 
     /// Handle shutdown command
@@ -469,6 +494,10 @@ impl LspTask {
                                                 tracing::info!("Replaying DidChange for {}", uri);
                                                 let _ = state.handle_did_change_sequential(uri, content_changes, &pending).await;
                                             }
+                                            LspCommand::DidSave { uri, text } => {
+                                                tracing::info!("Replaying DidSave for {}", uri);
+                                                let _ = state.handle_did_save(uri, text).await;
+                                            }
                                             _ => {}
                                         }
                                     }
@@ -491,6 +520,15 @@ impl LspTask {
                             } else {
                                 tracing::debug!("Queueing DidChange for {} until initialization completes", uri);
                                 pending_commands.push(LspCommand::DidChange { uri, content_changes });
+                            }
+                        }
+                        LspCommand::DidSave { uri, text } => {
+                            if state.initialized {
+                                tracing::info!("Processing DidSave for {}", uri);
+                                let _ = state.handle_did_save(uri, text).await;
+                            } else {
+                                tracing::debug!("Queueing DidSave for {} until initialization completes", uri);
+                                pending_commands.push(LspCommand::DidSave { uri, text });
                             }
                         }
                         LspCommand::Shutdown => {
@@ -543,7 +581,7 @@ impl LspTask {
         self.capabilities = Some(result.capabilities.clone());
 
         // Send initialized notification
-        self.send_notification("initialized", Some(InitializedParams {})).await?;
+        self.send_notification::<Initialized>(InitializedParams {}).await?;
 
         self.initialized = true;
 
@@ -578,7 +616,7 @@ impl LspTask {
 
         self.document_versions.insert(PathBuf::from(uri.path()), 0);
 
-        self.send_notification("textDocument/didOpen", Some(params)).await
+        self.send_notification::<DidOpenTextDocument>(params).await
     }
 
     /// Sequential version of handle_did_change
@@ -602,7 +640,7 @@ impl LspTask {
             content_changes,
         };
 
-        self.send_notification("textDocument/didChange", Some(params)).await
+        self.send_notification::<DidChangeTextDocument>(params).await
     }
 
     /// Send request using shared pending map (for sequential command processing)
@@ -639,116 +677,6 @@ impl LspTask {
         serde_json::from_value(result).map_err(|e| format!("Failed to deserialize response: {}", e))
     }
 
-    /// Handle initialize command
-    async fn handle_initialize(&mut self, root_uri: Option<Url>) -> Result<InitializeResult, String> {
-        tracing::info!("Initializing async LSP server with root_uri: {:?}", root_uri);
-
-        let workspace_folders = root_uri.as_ref().map(|uri| {
-            vec![WorkspaceFolder {
-                uri: uri.clone(),
-                name: uri
-                    .path()
-                    .split('/')
-                    .last()
-                    .unwrap_or("workspace")
-                    .to_string(),
-            }]
-        });
-
-        let params = InitializeParams {
-            process_id: Some(std::process::id()),
-            root_uri: root_uri.clone(),
-            capabilities: ClientCapabilities::default(),
-            workspace_folders,
-            ..Default::default()
-        };
-
-        let result: InitializeResult = self
-            .send_request(Initialize::METHOD, Some(params))
-            .await?;
-
-        self.capabilities = Some(result.capabilities.clone());
-
-        // Send initialized notification
-        self.send_notification("initialized", Some(InitializedParams {}))
-            .await?;
-
-        self.initialized = true;
-
-        // Notify main loop
-        let _ = self.async_tx.send(AsyncMessage::LspInitialized {
-            language: self.language.clone(),
-        });
-
-        tracing::info!("Async LSP server initialized successfully");
-
-        Ok(result)
-    }
-
-    /// Handle did_open command
-    async fn handle_did_open(
-        &mut self,
-        uri: Url,
-        text: String,
-        language_id: String,
-    ) -> Result<(), String> {
-        if !self.initialized {
-            return Err("LSP client not initialized".to_string());
-        }
-
-        tracing::debug!("LSP: did_open for {}", uri);
-
-        let version: i64 = 1;
-        if let Ok(path) = uri.to_file_path() {
-            self.document_versions.insert(path, version);
-        }
-
-        let params = DidOpenTextDocumentParams {
-            text_document: TextDocumentItem {
-                uri,
-                language_id,
-                version: version as i32,
-                text,
-            },
-        };
-
-        self.send_notification("textDocument/didOpen", Some(params))
-            .await
-    }
-
-    /// Handle did_change command
-    async fn handle_did_change(
-        &mut self,
-        uri: Url,
-        content_changes: Vec<TextDocumentContentChangeEvent>,
-    ) -> Result<(), String> {
-        if !self.initialized {
-            return Err("LSP client not initialized".to_string());
-        }
-
-        tracing::debug!("LSP: did_change for {}", uri);
-
-        // Increment version
-        let version = if let Ok(path) = uri.to_file_path() {
-            let v = self.document_versions.entry(path).or_insert(0);
-            *v += 1;
-            *v
-        } else {
-            1
-        };
-
-        let params = DidChangeTextDocumentParams {
-            text_document: VersionedTextDocumentIdentifier {
-                uri,
-                version: version as i32,
-            },
-            content_changes,
-        };
-
-        self.send_notification("textDocument/didChange", Some(params))
-            .await
-    }
-
     /// Handle shutdown command
     async fn handle_shutdown(&mut self) -> Result<(), String> {
         if !self.initialized {
@@ -762,8 +690,13 @@ impl LspTask {
             .send_request(Shutdown::METHOD, Option::<()>::None)
             .await?;
 
-        // Send exit notification
-        self.send_notification("exit", Option::<()>::None).await?;
+        // Send exit notification (manually, as Exit doesn't use the Notification trait)
+        let notification = JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "exit".to_string(),
+            params: None,
+        };
+        self.write_message(&notification).await?;
 
         // Kill process
         let _ = self.process.kill().await;
@@ -800,16 +733,15 @@ impl LspTask {
         serde_json::from_value(result).map_err(|e| format!("Failed to deserialize response: {}", e))
     }
 
-    /// Send a notification
-    async fn send_notification<P: Serialize>(
-        &mut self,
-        method: &str,
-        params: Option<P>,
-    ) -> Result<(), String> {
+    /// Send a notification using lsp-types Notification trait (type-safe)
+    async fn send_notification<N>(&mut self, params: N::Params) -> Result<(), String>
+    where
+        N: Notification,
+    {
         let notification = JsonRpcNotification {
             jsonrpc: "2.0".to_string(),
-            method: method.to_string(),
-            params: params.map(|p| serde_json::to_value(p).expect("Failed to serialize params")),
+            method: N::METHOD.to_string(),
+            params: Some(serde_json::to_value(params).expect("Failed to serialize params")),
         };
 
         self.write_message(&notification).await
@@ -1215,6 +1147,13 @@ impl LspHandle {
                 content_changes,
             })
             .map_err(|_| "Failed to send did_change command".to_string())
+    }
+
+    /// Send didSave notification
+    pub fn did_save(&self, uri: Url, text: Option<String>) -> Result<(), String> {
+        self.command_tx
+            .blocking_send(LspCommand::DidSave { uri, text })
+            .map_err(|_| "Failed to send did_save command".to_string())
     }
 
     /// Shutdown the server
