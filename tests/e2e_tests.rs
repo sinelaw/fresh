@@ -379,6 +379,97 @@ fn test_basic_editing_operations() {
     assert_eq!(harness.cursor_position(), pos_before - 1);
 }
 
+/// Test that edits persist when scrolling away and back
+/// Verifies the cache and persistence layer maintain edits correctly
+#[test]
+fn test_edits_persist_through_scrolling() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create content with many lines (more than viewport can show)
+    // This ensures we can scroll away from edited content
+    let mut lines = Vec::new();
+    for i in 0..100 {
+        lines.push(format!("Line {i}"));
+    }
+    harness.type_text(&lines.join("\n")).unwrap();
+
+    // Verify initial content
+    harness.assert_buffer_content(&lines.join("\n"));
+
+    // Go to the beginning of the document
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.cursor_position(), 0);
+
+    // Make an edit at the beginning: change "Line 0" to "EDITED Line 0"
+    harness.type_text("EDITED ").unwrap();
+    harness.assert_buffer_content(&format!("EDITED Line 0\n{}", lines[1..].join("\n")));
+    harness.assert_screen_contains("EDITED Line 0");
+
+    // Jump to the end of the document (well past the viewport)
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Verify we're at the end
+    let pos_at_end = harness.cursor_position();
+    assert!(pos_at_end > 500, "Should be at the end of the document");
+
+    // Verify Line 0 is not visible on screen anymore
+    harness.assert_screen_not_contains("Line 0");
+    harness.assert_screen_not_contains("EDITED Line 0");
+
+    // Verify we can see lines near the end
+    harness.assert_screen_contains("Line 9");
+
+    // Make an edit at the end
+    harness.type_text("\nEND MARKER").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("END MARKER");
+
+    // Verify both edits exist in the buffer
+    let buffer_content = harness.get_buffer_content();
+    assert!(buffer_content.contains("EDITED Line 0"), "Edit at beginning should persist");
+    assert!(buffer_content.contains("END MARKER"), "Edit at end should persist");
+
+    // Now jump back to the beginning to verify the first edit persisted
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // The edit should still be visible on screen and in buffer
+    harness.assert_screen_contains("EDITED Line 0");
+    harness.assert_buffer_content(&buffer_content);
+
+    // Verify cursor is at the beginning
+    assert_eq!(harness.cursor_position(), 0);
+
+    // Jump to somewhere in the middle of the document
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    for _ in 0..40 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // Make an edit in the middle section
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.type_text("MIDDLE ").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("MIDDLE Line 4");
+
+    // Jump back to end
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // End marker should still be visible
+    harness.assert_screen_contains("END MARKER");
+
+    // Final verification: all three edits persist in buffer
+    let final_content = harness.get_buffer_content();
+    assert!(final_content.contains("EDITED Line 0"), "Beginning edit persisted through all jumps");
+    assert!(final_content.contains("MIDDLE Line 4"), "Middle edit persisted through all jumps");
+    assert!(final_content.contains("END MARKER"), "End edit persisted through all jumps");
+}
+
 /// Test that screen cursor position matches actual cursor position
 #[test]
 fn test_screen_cursor_position() {
