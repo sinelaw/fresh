@@ -470,7 +470,7 @@ impl KeybindingResolver {
             KeyCode::PageUp => "PageUp".to_string(),
             KeyCode::PageDown => "PageDown".to_string(),
             KeyCode::Esc => "Esc".to_string(),
-            _ => format!("{:?}", key_code),
+            _ => format!("{key_code:?}"),
         };
 
         parts.push(&key_name);
@@ -480,7 +480,7 @@ impl KeybindingResolver {
     /// Format an action as a readable description
     fn format_action(action: &Action) -> String {
         match action {
-            Action::InsertChar(c) => format!("Insert character '{}'", c),
+            Action::InsertChar(c) => format!("Insert character '{c}'"),
             Action::InsertNewline => "Insert newline".to_string(),
             Action::InsertTab => "Insert tab".to_string(),
             Action::MoveLeft => "Move cursor left".to_string(),

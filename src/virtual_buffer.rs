@@ -693,7 +693,7 @@ mod tests {
 
         // Read 4KB - this should fill the internal buffer
         for i in 0..4096 {
-            assert_eq!(iter.next(), Some(b'x'), "Failed at position {}", i);
+            assert_eq!(iter.next(), Some(b'x'), "Failed at position {i}");
         }
 
         // Continue reading - should still work as we read the next chunk

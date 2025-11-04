@@ -386,7 +386,7 @@ fn test_help_page_shows_keybindings() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    println!("Help screen:\n{}", screen);
+    println!("Help screen:\n{screen}");
 
     // Should show common keybindings that appear on first page
     harness.assert_screen_contains("Ctrl+C"); // Copy
@@ -650,8 +650,7 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
     // Get initial screen cursor position
     let initial_screen_pos = harness.screen_cursor_position();
     println!(
-        "Initial screen cursor position (after 'Hello '): {:?}",
-        initial_screen_pos
+        "Initial screen cursor position (after 'Hello '): {initial_screen_pos:?}"
     );
 
     // Expected: Line numbers (4 chars) + " │ " (3 chars) + "Hello " (6 chars) = 13
@@ -680,8 +679,7 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
         let actual_cursor_pos = harness.cursor_position();
         assert_eq!(
             actual_cursor_pos, expected_cursor_pos,
-            "After typing '{}', cursor position should be {} but is {}",
-            ch, expected_cursor_pos, actual_cursor_pos
+            "After typing '{ch}', cursor position should be {expected_cursor_pos} but is {actual_cursor_pos}"
         );
 
         // 3. Verify screen cursor position matches logical position
@@ -793,14 +791,12 @@ fn test_rapid_type_delete_cursor_sync() {
         let pos_after_insert = harness.cursor_position();
         assert_eq!(
             pos_after_insert, 7,
-            "After insert {}, cursor should be at 7",
-            i
+            "After insert {i}, cursor should be at 7"
         );
 
         let screen_pos = harness.screen_cursor_position();
         println!(
-            "After insert {}: screen cursor = {:?}, buffer pos = {}",
-            i, screen_pos, pos_after_insert
+            "After insert {i}: screen cursor = {screen_pos:?}, buffer pos = {pos_after_insert}"
         );
 
         // Verify buffer content has the X
@@ -813,14 +809,12 @@ fn test_rapid_type_delete_cursor_sync() {
         let pos_after_delete = harness.cursor_position();
         assert_eq!(
             pos_after_delete, 6,
-            "After delete {}, cursor should be back at 6",
-            i
+            "After delete {i}, cursor should be back at 6"
         );
 
         let screen_pos2 = harness.screen_cursor_position();
         println!(
-            "After delete {}: screen cursor = {:?}, buffer pos = {}",
-            i, screen_pos2, pos_after_delete
+            "After delete {i}: screen cursor = {screen_pos2:?}, buffer pos = {pos_after_delete}"
         );
 
         // Verify buffer is back to original
@@ -1000,7 +994,7 @@ fn test_vertical_scroll_when_typing_to_bottom() {
     let total_lines = visible_lines + 10;
 
     for i in 0..total_lines {
-        harness.type_text(&format!("Line {}", i)).unwrap();
+        harness.type_text(&format!("Line {i}")).unwrap();
 
         // Add newline except for the last line
         if i < total_lines - 1 {
@@ -1028,8 +1022,7 @@ fn test_vertical_scroll_when_typing_to_bottom() {
     let top_byte = harness.editor().active_state().viewport.top_byte;
     assert!(
         top_byte > 0,
-        "Viewport should have scrolled down, top_byte = {}",
-        top_byte
+        "Viewport should have scrolled down, top_byte = {top_byte}"
     );
 
     // The last line should be visible on screen
@@ -1052,7 +1045,7 @@ fn test_vertical_scroll_offset() {
 
     // Type many lines
     for i in 0..40 {
-        harness.type_text(&format!("Line {}", i)).unwrap();
+        harness.type_text(&format!("Line {i}")).unwrap();
         if i < 39 {
             harness
                 .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -1078,9 +1071,7 @@ fn test_vertical_scroll_offset() {
     // We moved up 20 lines, so viewport should have adjusted (top_byte should decrease)
     assert!(
         new_top_byte < initial_top_byte,
-        "Viewport should have scrolled up: was {}, now {}",
-        initial_top_byte,
-        new_top_byte
+        "Viewport should have scrolled up: was {initial_top_byte}, now {new_top_byte}"
     );
 
     // Cursor should still be visible with some margin
@@ -1124,7 +1115,7 @@ fn test_selection_visual_rendering() {
     assert_eq!(range.start, 0, "Selection should start at position 0");
     assert_eq!(range.end, 5, "Selection should end at position 5");
 
-    println!("Cursor position: {}, Selection: {:?}", cursor_pos, range);
+    println!("Cursor position: {cursor_pos}, Selection: {range:?}");
 
     // Verify the selected text is "Hello"
     let selected_text = harness.editor().active_state().buffer.slice(range);
@@ -1285,7 +1276,7 @@ fn test_prompt_cancel() {
 fn test_open_file_workflow() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use std::fs;
-    use std::path::Path;
+    
     use tempfile::TempDir;
 
     // Create a temporary directory and file
@@ -1501,7 +1492,7 @@ fn test_viewport_displays_all_lines() {
         if i > 1 {
             content.push('\n');
         }
-        content.push_str(&format!("This is line number {}", i));
+        content.push_str(&format!("This is line number {i}"));
     }
 
     harness.type_text(&content).unwrap();
@@ -1523,8 +1514,7 @@ fn test_viewport_displays_all_lines() {
     // All 35 lines should fit in the 38-line viewport
     assert!(
         visible_line_count >= 35,
-        "Expected to see at least 35 lines, but visible range is only {} lines",
-        visible_line_count
+        "Expected to see at least 35 lines, but visible range is only {visible_line_count} lines"
     );
 
     // Render and check that lines are actually displayed on screen
@@ -1568,9 +1558,8 @@ fn test_open_file_viewport_dimensions() {
     let viewport_height_after_open = harness.editor().active_state().viewport.height;
     assert_eq!(
         viewport_height_after_open, 29,
-        "After opening file, viewport height should be 29 (31 - 2), but got {}. \
-         This indicates the file was opened with hardcoded dimensions instead of actual terminal size.",
-        viewport_height_after_open
+        "After opening file, viewport height should be 29 (31 - 2), but got {viewport_height_after_open}. \
+         This indicates the file was opened with hardcoded dimensions instead of actual terminal size."
     );
 
     // Render and verify the viewport displays the correct number of lines
@@ -1584,8 +1573,7 @@ fn test_open_file_viewport_dimensions() {
 
     assert_eq!(
         visible_count, 29,
-        "Visible range should be 29 lines, but got {}",
-        visible_count
+        "Visible range should be 29 lines, but got {visible_count}"
     );
 }
 
@@ -1604,7 +1592,7 @@ fn test_viewport_31_rows() {
         if i > 1 {
             content.push('\n');
         }
-        content.push_str(&format!("Line {}", i));
+        content.push_str(&format!("Line {i}"));
     }
 
     harness.type_text(&content).unwrap();
@@ -1626,8 +1614,7 @@ fn test_viewport_31_rows() {
     // All 29 lines should be visible
     assert_eq!(
         visible_line_count, 29,
-        "Expected to see all 29 lines, but visible range is only {} lines",
-        visible_line_count
+        "Expected to see all 29 lines, but visible range is only {visible_line_count} lines"
     );
 
     // Move cursor to the start of the document so all lines are in view
@@ -1667,8 +1654,7 @@ fn test_viewport_31_rows() {
 
     assert_eq!(
         viewport_height_with_palette, 29,
-        "Viewport height should still be 29 even with command palette open, but got {}",
-        viewport_height_with_palette
+        "Viewport height should still be 29 even with command palette open, but got {viewport_height_with_palette}"
     );
 
     // Close the command palette
@@ -1682,8 +1668,7 @@ fn test_viewport_31_rows() {
 
     assert_eq!(
         viewport_height_after, 29,
-        "Viewport height should still be 29 after closing command palette, but got {}",
-        viewport_height_after
+        "Viewport height should still be 29 after closing command palette, but got {viewport_height_after}"
     );
 
     // Get visible range after closing palette
@@ -1691,8 +1676,7 @@ fn test_viewport_31_rows() {
 
     assert_eq!(
         visible_line_count_after, 29,
-        "Expected to see all 29 lines after closing palette, but visible range is only {} lines",
-        visible_line_count_after
+        "Expected to see all 29 lines after closing palette, but visible range is only {visible_line_count_after} lines"
     );
 
     // All lines should still be visible on screen
@@ -2128,7 +2112,7 @@ fn test_select_word_after_scrolling() {
     // Create a buffer with many lines (more than viewport height)
     let mut lines = Vec::new();
     for i in 0..100 {
-        lines.push(format!("line{} word{} test{}", i, i, i));
+        lines.push(format!("line{i} word{i} test{i}"));
     }
     harness.type_text(&lines.join("\n")).unwrap();
 
@@ -2162,7 +2146,7 @@ fn test_select_word_after_scrolling() {
         selected_text.contains("word"),
         "Should select a word after scrolling"
     );
-    assert!(selected_text.len() > 0, "Selection should not be empty");
+    assert!(!selected_text.is_empty(), "Selection should not be empty");
 }
 
 /// Test expand selection after scrolling down
@@ -2174,7 +2158,7 @@ fn test_expand_selection_after_scrolling() {
     // Create a buffer with many lines
     let mut lines = Vec::new();
     for i in 0..50 {
-        lines.push(format!("alpha beta gamma delta epsilon line{}", i));
+        lines.push(format!("alpha beta gamma delta epsilon line{i}"));
     }
     harness.type_text(&lines.join("\n")).unwrap();
 
@@ -2671,7 +2655,7 @@ fn test_select_prev_word_with_special_chars() {
 #[ignore] // Run with: cargo test test_load_big_file_e2e -- --ignored --nocapture
 fn test_load_big_file_e2e() {
     use crossterm::event::{KeyCode, KeyModifiers};
-    use std::path::Path;
+    
     use std::time::Instant;
 
     // Initialize tracing
@@ -2689,12 +2673,12 @@ fn test_load_big_file_e2e() {
     let start = Instant::now();
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
     let harness_time = start.elapsed();
-    println!("✓ Harness created in: {:?}", harness_time);
+    println!("✓ Harness created in: {harness_time:?}");
 
     let start = Instant::now();
     harness.open_file(&big_txt_path).unwrap();
     let open_time = start.elapsed();
-    println!("✓ File opened (with render) in: {:?}", open_time);
+    println!("✓ File opened (with render) in: {open_time:?}");
 
     // Verify the file is actually loaded
     let screen = harness.screen_to_string();
@@ -2709,7 +2693,7 @@ fn test_load_big_file_e2e() {
         .send_key(KeyCode::PageDown, KeyModifiers::NONE)
         .unwrap();
     let pagedown_time = start.elapsed();
-    println!("✓ First PageDown in: {:?}", pagedown_time);
+    println!("✓ First PageDown in: {pagedown_time:?}");
 
     // Do a few more pagedowns to ensure consistent performance
     for i in 1..5 {
@@ -2751,7 +2735,7 @@ fn test_jump_to_eof_large_file() {
         .unwrap();
     let jump_time = start.elapsed();
 
-    println!("✓ Ctrl+End completed in: {:?}", jump_time);
+    println!("✓ Ctrl+End completed in: {jump_time:?}");
 
     // Verify we jumped to near EOF
     let cursor_pos = harness.cursor_position();
@@ -2760,16 +2744,13 @@ fn test_jump_to_eof_large_file() {
     // Cursor should be very close to EOF (within last line)
     assert!(
         cursor_pos > buffer_len.saturating_sub(1000),
-        "Cursor should be near EOF. Position: {}, Buffer length: {}",
-        cursor_pos,
-        buffer_len
+        "Cursor should be near EOF. Position: {cursor_pos}, Buffer length: {buffer_len}"
     );
 
     // Just log the time for informational purposes - don't assert on it
     // Machines can be slow, especially in CI or when running tests in parallel
     println!(
-        "✓ Cursor at position {} (buffer len: {})",
-        cursor_pos, buffer_len
+        "✓ Cursor at position {cursor_pos} (buffer len: {buffer_len})"
     );
 
     // Now test Page Up after jumping to EOF - this tests backward iteration
@@ -2781,18 +2762,16 @@ fn test_jump_to_eof_large_file() {
         .unwrap();
     let pageup_time = start.elapsed();
 
-    println!("✓ Page Up completed in: {:?}", pageup_time);
+    println!("✓ Page Up completed in: {pageup_time:?}");
 
     // Cursor should have moved backwards
     let new_cursor_pos = harness.cursor_position();
     assert!(
         new_cursor_pos < cursor_pos,
-        "Cursor should have moved up. Was: {}, Now: {}",
-        cursor_pos,
-        new_cursor_pos
+        "Cursor should have moved up. Was: {cursor_pos}, Now: {new_cursor_pos}"
     );
 
-    println!("✓ Cursor moved from {} to {}", cursor_pos, new_cursor_pos);
+    println!("✓ Cursor moved from {cursor_pos} to {new_cursor_pos}");
 
     // Test multiple Page Ups in sequence - should all be fast
     println!("\n=== Testing multiple Page Ups ===");
@@ -2806,7 +2785,7 @@ fn test_jump_to_eof_large_file() {
     }
     let multi_pageup_time = start.elapsed();
 
-    println!("✓ 5 Page Ups completed in: {:?}", multi_pageup_time);
+    println!("✓ 5 Page Ups completed in: {multi_pageup_time:?}");
 
     // Test line up movements - should also be fast
     println!("\n=== Testing line up movements ===");
@@ -2820,7 +2799,7 @@ fn test_jump_to_eof_large_file() {
     }
     let line_up_time = start.elapsed();
 
-    println!("✓ 20 line ups completed in: {:?}", line_up_time);
+    println!("✓ 20 line ups completed in: {line_up_time:?}");
 
     // Final sanity check: cursor should be well before EOF now
     let final_pos = harness.cursor_position();
@@ -2917,7 +2896,7 @@ fn test_line_numbers_absolute_after_jump_to_beginning() {
 /// This causes the cursor to appear inside the line number column.
 #[test]
 fn test_cursor_position_with_large_line_numbers() {
-    use crossterm::event::{KeyCode, KeyModifiers};
+    
 
     // Create a small file, but then manually adjust the viewport to simulate
     // being at line 100000 to test the rendering logic
@@ -2970,7 +2949,7 @@ fn test_page_down_line_numbers() {
     let file_path = temp_dir.path().join("test.txt");
 
     // Create a file with 100 lines, each with unique content like "x1", "x2", etc.
-    let content: String = (1..=100).map(|i| format!("x{}\n", i)).collect();
+    let content: String = (1..=100).map(|i| format!("x{i}\n")).collect();
     std::fs::write(&file_path, content).unwrap();
 
     // Create harness with 24 lines visible (minus status bar and tabs)
@@ -2985,8 +2964,7 @@ fn test_page_down_line_numbers() {
     harness.assert_screen_contains("x1");
     let initial_cursor = harness.cursor_position();
     println!(
-        "Initial state: line {}, cursor at {}, screen contains x1",
-        initial_line, initial_cursor
+        "Initial state: line {initial_line}, cursor at {initial_cursor}, screen contains x1"
     );
     println!("Initial screen:\n{}", harness.screen_to_string());
 
@@ -2998,8 +2976,7 @@ fn test_page_down_line_numbers() {
     let cursor_after_first = harness.cursor_position();
 
     println!(
-        "\nAfter first PageDown: line {}, cursor at {}",
-        after_first_pagedown, cursor_after_first
+        "\nAfter first PageDown: line {after_first_pagedown}, cursor at {cursor_after_first}"
     );
     println!(
         "Screen after first PageDown:\n{}",
@@ -3008,16 +2985,14 @@ fn test_page_down_line_numbers() {
 
     assert!(
         after_first_pagedown > 0,
-        "After first PageDown, should have scrolled down from line 0, but got line {}",
-        after_first_pagedown
+        "After first PageDown, should have scrolled down from line 0, but got line {after_first_pagedown}"
     );
 
     // Verify content has changed - we should see a line number greater than what was initially visible
     let expected_first_content = format!("x{}", after_first_pagedown + 1); // +1 because line numbers are 0-indexed
     harness.assert_screen_contains(&expected_first_content);
     println!(
-        "After first PageDown: screen contains {}",
-        expected_first_content
+        "After first PageDown: screen contains {expected_first_content}"
     );
 
     // Press page down again to ensure scroll is triggered
@@ -3028,8 +3003,7 @@ fn test_page_down_line_numbers() {
     let cursor_after_second = harness.cursor_position();
 
     println!(
-        "\nAfter second PageDown: line {}, cursor at {}",
-        after_second_pagedown, cursor_after_second
+        "\nAfter second PageDown: line {after_second_pagedown}, cursor at {cursor_after_second}"
     );
     println!(
         "Screen after second PageDown:\n{}",
@@ -3038,17 +3012,14 @@ fn test_page_down_line_numbers() {
 
     assert!(
         after_second_pagedown > after_first_pagedown,
-        "After second PageDown, should have scrolled down more (from {} to {})",
-        after_first_pagedown,
-        after_second_pagedown
+        "After second PageDown, should have scrolled down more (from {after_first_pagedown} to {after_second_pagedown})"
     );
 
     // Verify we can see content from later in the file
     let expected_second_content = format!("x{}", after_second_pagedown + 1); // +1 because line numbers are 0-indexed
     harness.assert_screen_contains(&expected_second_content);
     println!(
-        "After second PageDown: screen contains {}",
-        expected_second_content
+        "After second PageDown: screen contains {expected_second_content}"
     );
 
     // Verify we no longer see the initial content
@@ -3082,7 +3053,7 @@ fn test_page_down_line_numbers() {
             // Verify content changed - we should see earlier content
             let expected_content = format!("x{}", current_line + 1);
             harness.assert_screen_contains(&expected_content);
-            println!("Screen now shows {}", expected_content);
+            println!("Screen now shows {expected_content}");
             break;
         }
     }
@@ -3090,8 +3061,6 @@ fn test_page_down_line_numbers() {
     let final_line = harness.top_line_number();
     assert!(
         final_line < after_second_pagedown,
-        "After moving up, viewport should have scrolled up from line {} to {}",
-        after_second_pagedown,
-        final_line
+        "After moving up, viewport should have scrolled up from line {after_second_pagedown} to {final_line}"
     );
 }

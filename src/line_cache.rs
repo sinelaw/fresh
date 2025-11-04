@@ -78,15 +78,10 @@ impl LineCache {
         let mut current_line = start_line;
 
         // Cache the starting position if not already cached
-        if !self.entries.contains_key(&start_byte) {
-            self.entries.insert(
-                start_byte,
-                LineInfo {
+        self.entries.entry(start_byte).or_insert(LineInfo {
                     line_number: start_line,
                     byte_offset: start_byte,
-                },
-            );
-        }
+                });
 
         while let Some((line_byte, _)) = iter.next() {
             if line_byte > byte_offset {

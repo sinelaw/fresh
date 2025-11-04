@@ -778,27 +778,24 @@ impl Editor {
                             PromptType::OpenFile => {
                                 let path = Path::new(&input);
                                 if let Err(e) = self.open_file(path) {
-                                    self.set_status_message(format!("Error opening file: {}", e));
+                                    self.set_status_message(format!("Error opening file: {e}"));
                                 } else {
-                                    self.set_status_message(format!("Opened: {}", input));
+                                    self.set_status_message(format!("Opened: {input}"));
                                 }
                             }
                             PromptType::SaveFileAs => {
                                 self.set_status_message(format!(
-                                    "Save-as not yet implemented: {}",
-                                    input
+                                    "Save-as not yet implemented: {input}"
                                 ));
                             }
                             PromptType::Search => {
                                 self.set_status_message(format!(
-                                    "Search not yet implemented: {}",
-                                    input
+                                    "Search not yet implemented: {input}"
                                 ));
                             }
                             PromptType::Replace { search: _ } => {
                                 self.set_status_message(format!(
-                                    "Replace not yet implemented: {}",
-                                    input
+                                    "Replace not yet implemented: {input}"
                                 ));
                             }
                             PromptType::Command => {
@@ -870,7 +867,7 @@ impl Editor {
                                         }
                                     }
                                 } else {
-                                    self.set_status_message(format!("Unknown command: {}", input));
+                                    self.set_status_message(format!("Unknown command: {input}"));
                                 }
                             }
                         }
@@ -1408,7 +1405,7 @@ impl Editor {
 
         // Render visible bindings
         for (key, action) in bindings.iter().skip(start_idx).take(end_idx - start_idx) {
-            let line_text = format!("  {:<width$}  {}", key, action, width = max_key_width);
+            let line_text = format!("  {key:<max_key_width$}  {action}");
             lines.push(Line::from(line_text));
         }
 
@@ -1460,7 +1457,7 @@ impl Editor {
         if delta > 0 {
             self.help_scroll = (self.help_scroll + delta as usize).min(max_scroll);
         } else {
-            self.help_scroll = self.help_scroll.saturating_sub(delta.abs() as usize);
+            self.help_scroll = self.help_scroll.saturating_sub(delta.unsigned_abs());
         }
     }
 

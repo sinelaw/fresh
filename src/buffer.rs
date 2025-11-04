@@ -249,13 +249,7 @@ impl Buffer {
             return None;
         }
 
-        for i in 0..=(haystack.len() - needle.len()) {
-            if &haystack[i..i + needle.len()] == needle {
-                return Some(i);
-            }
-        }
-
-        None
+        (0..=(haystack.len() - needle.len())).find(|&i| &haystack[i..i + needle.len()] == needle)
     }
 
     // Utility methods for character and word boundaries
@@ -403,15 +397,10 @@ impl Buffer {
         let mut current_line = start_line;
 
         // Cache the starting position if not already cached
-        if !self.line_cache.entries.contains_key(&start_byte) {
-            self.line_cache.entries.insert(
-                start_byte,
-                LineInfo {
+        self.line_cache.entries.entry(start_byte).or_insert(LineInfo {
                     line_number: start_line,
                     byte_offset: start_byte,
-                },
-            );
-        }
+                });
 
         while let Some((line_byte, _)) = iter.next() {
             if line_byte > byte_offset {

@@ -85,7 +85,7 @@ impl Cache {
         // We load a larger chunk for better cache utilization
         const CHUNK_SIZE: usize = 4096;
         let chunk_start = (offset / CHUNK_SIZE) * CHUNK_SIZE;
-        let chunk_end = ((offset + len + CHUNK_SIZE - 1) / CHUNK_SIZE) * CHUNK_SIZE;
+        let chunk_end = (offset + len).div_ceil(CHUNK_SIZE) * CHUNK_SIZE;
         let chunk_len = chunk_end - chunk_start;
 
         let data = persistence.read(chunk_start, chunk_len)?;

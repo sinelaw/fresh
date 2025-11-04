@@ -251,7 +251,7 @@ impl Viewport {
         }
 
         // Sort cursors by priority (primary cursor first)
-        let mut sorted_cursors: Vec<_> = cursors.iter().copied().collect();
+        let mut sorted_cursors: Vec<_> = cursors.to_vec();
         sorted_cursors.sort_by_key(|(priority, _)| *priority);
 
         // Get byte positions for all cursors (at line starts)
