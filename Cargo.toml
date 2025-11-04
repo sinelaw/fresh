@@ -25,3 +25,8 @@ tempfile = "3.15.0"
 [[bench]]
 name = "editor_benchmarks"
 harness = false
+
+[profile.release]
+debug = true
+
+

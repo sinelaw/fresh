@@ -522,7 +522,7 @@ impl<'a> Iterator for ChunkTreeIterator<'a> {
         None
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChunkTree<'a> {
     root: Arc<ChunkTreeNode<'a>>,
     config: ChunkTreeConfig,

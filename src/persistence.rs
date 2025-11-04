@@ -21,6 +21,12 @@ pub trait PersistenceLayer: Send {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Get a snapshot of the underlying ChunkTree for efficient iteration
+    /// Returns None if the implementation doesn't support ChunkTree-based iteration
+    fn get_chunk_tree_snapshot(&self) -> Option<ChunkTree<'static>> {
+        None
+    }
 }
 
 /// ChunkTree-based persistence layer
@@ -86,6 +92,11 @@ impl PersistenceLayer for ChunkTreePersistence {
 
     fn len(&self) -> usize {
         self.tree.len()
+    }
+
+    fn get_chunk_tree_snapshot(&self) -> Option<ChunkTree<'static>> {
+        // ChunkTree is cheap to clone due to Arc-based sharing
+        Some(self.tree.clone())
     }
 }
 

@@ -165,10 +165,18 @@ impl VirtualBuffer {
             .unwrap()
             .insert(current_version);
 
+        // Try to get a ChunkTree snapshot for efficient iteration
+        let tree_snapshot = {
+            let persistence = self.inner.persistence.lock().unwrap();
+            persistence.get_chunk_tree_snapshot()
+        };
+
         ByteIterator {
             buffer: self.inner.clone(),
             position,
             version_at_creation: current_version,
+            tree_snapshot,
+            chunk_buffer: None,
         }
     }
 
@@ -199,46 +207,76 @@ pub struct ByteIterator {
     /// Shared reference to inner buffer
     buffer: Arc<InnerBuffer>,
 
-    /// Current position in the buffer
+    /// Current position in the buffer (adjusted for edits)
     position: usize,
 
     /// Track what version this iterator has "caught up" to
     version_at_creation: u64,
+
+    /// Optional ChunkTree snapshot for efficient iteration
+    /// When available, we read chunks from it
+    tree_snapshot: Option<crate::chunk_tree::ChunkTree<'static>>,
+
+    /// Internal buffer holding recently read bytes from the tree
+    /// (start_offset, data)
+    chunk_buffer: Option<(usize, Vec<u8>)>,
 }
 
 impl ByteIterator {
     /// Get the next byte, advancing forward
     pub fn next(&mut self) -> Option<u8> {
+        // Check for edits and adjust position if needed
+        // This is fast when no edits: just an atomic load
         self.adjust_for_edits();
 
-        let buffer_len = {
+        // Lazy refresh: only get new snapshot when needed
+        if self.tree_snapshot.is_none() {
             let persistence = self.buffer.persistence.lock().unwrap();
-            persistence.len()
-        };
-
-        if self.position >= buffer_len {
-            return None;
+            if let Some(tree) = persistence.get_chunk_tree_snapshot() {
+                self.tree_snapshot = Some(tree);
+            }
         }
 
-        // Ensure region is cached
-        {
-            let mut cache = self.buffer.cache.lock().unwrap();
-            let persistence = self.buffer.persistence.lock().unwrap();
-            cache.ensure_cached(persistence.as_ref(), self.position, 1).ok()?;
+        // Fast path: Check if we have buffered data containing this position
+        if let Some((chunk_start, data)) = &self.chunk_buffer {
+            let offset = self.position.saturating_sub(*chunk_start);
+            if offset < data.len() {
+                let byte = data[offset];
+                self.position += 1;
+                return Some(byte);
+            }
         }
 
-        // Read from cache
-        let byte = {
-            let mut cache = self.buffer.cache.lock().unwrap();
-            cache.read(self.position, 1)?.get(0).cloned()?
-        };
+        // Need to load new chunk
+        if let Some(tree) = &self.tree_snapshot {
+            // Read a 4KB chunk starting from current position
+            const CHUNK_SIZE: usize = 4096;
+            let mut iter = tree.bytes_at(self.position);
+            let mut chunk_data = Vec::with_capacity(CHUNK_SIZE);
 
-        self.position += 1;
-        Some(byte)
+            for _ in 0..CHUNK_SIZE {
+                if let Some(byte) = iter.next() {
+                    chunk_data.push(byte);
+                } else {
+                    break;
+                }
+            }
+
+            if !chunk_data.is_empty() {
+                let byte = chunk_data[0];
+                self.chunk_buffer = Some((self.position, chunk_data));
+                self.position += 1;
+                return Some(byte);
+            }
+        }
+
+        // No ChunkTree snapshot available or at end of buffer
+        None
     }
 
     /// Get the previous byte, moving backward
     pub fn prev(&mut self) -> Option<u8> {
+        // Check for edits and adjust position if needed
         self.adjust_for_edits();
 
         if self.position == 0 {
@@ -247,43 +285,63 @@ impl ByteIterator {
 
         self.position -= 1;
 
-        // Ensure region is cached
-        {
-            let mut cache = self.buffer.cache.lock().unwrap();
+        // Lazy refresh: only get new snapshot when needed
+        if self.tree_snapshot.is_none() {
             let persistence = self.buffer.persistence.lock().unwrap();
-            cache.ensure_cached(persistence.as_ref(), self.position, 1).ok()?;
+            if let Some(tree) = persistence.get_chunk_tree_snapshot() {
+                self.tree_snapshot = Some(tree);
+            }
         }
 
-        // Read from cache
-        let byte = {
-            let mut cache = self.buffer.cache.lock().unwrap();
-            cache.read(self.position, 1)?.get(0).cloned()?
-        };
+        // Fast path: Check if we have buffered data containing this position
+        if let Some((chunk_start, data)) = &self.chunk_buffer {
+            let offset = self.position.saturating_sub(*chunk_start);
+            if offset < data.len() {
+                return Some(data[offset]);
+            }
+        }
 
-        Some(byte)
+        // Need to load chunk containing this position
+        if let Some(tree) = &self.tree_snapshot {
+            // Read a 4KB chunk ending near current position
+            const CHUNK_SIZE: usize = 4096;
+            let chunk_start = self.position.saturating_sub(CHUNK_SIZE / 2);
+            let mut iter = tree.bytes_at(chunk_start);
+            let mut chunk_data = Vec::with_capacity(CHUNK_SIZE);
+
+            for _ in 0..CHUNK_SIZE {
+                if let Some(byte) = iter.next() {
+                    chunk_data.push(byte);
+                } else {
+                    break;
+                }
+            }
+
+            if !chunk_data.is_empty() {
+                self.chunk_buffer = Some((chunk_start, chunk_data));
+                // Retry with the buffered data
+                if let Some((chunk_start, data)) = &self.chunk_buffer {
+                    let offset = self.position.saturating_sub(*chunk_start);
+                    if offset < data.len() {
+                        return Some(data[offset]);
+                    }
+                }
+            }
+        }
+
+        // No ChunkTree snapshot available
+        None
     }
 
     /// Peek at the current byte without advancing
     pub fn peek(&self) -> Option<u8> {
-        let buffer_len = {
-            let persistence = self.buffer.persistence.lock().unwrap();
-            persistence.len()
-        };
-
-        if self.position >= buffer_len {
-            return None;
+        // Fast path: Use ChunkTree iterator if available
+        if let Some(tree) = &self.tree_snapshot {
+            let iter = tree.bytes_at(self.position);
+            return iter.peek();
         }
 
-        // Ensure region is cached
-        {
-            let mut cache = self.buffer.cache.lock().unwrap();
-            let persistence = self.buffer.persistence.lock().unwrap();
-            cache.ensure_cached(persistence.as_ref(), self.position, 1).ok()?;
-        }
-
-        // Read from cache
-        let mut cache = self.buffer.cache.lock().unwrap();
-        cache.read(self.position, 1)?.get(0).cloned()
+        None
     }
 
     /// Seek to a specific position
@@ -307,7 +365,7 @@ impl ByteIterator {
     fn adjust_for_edits(&mut self) {
         let current_version = self.buffer.edit_version.load(Ordering::Relaxed);
         if self.version_at_creation == current_version {
-            return; // Already up-to-date
+            return; // Fast path: Already up-to-date, no edits
         }
 
         // Get read lock on edit log
@@ -331,6 +389,11 @@ impl ByteIterator {
                 _ => {}
             }
         }
+
+        // CRITICAL: Invalidate the ChunkTree snapshot since edits occurred
+        // The next next()/prev() call will get a fresh snapshot
+        self.tree_snapshot = None;
+        self.chunk_buffer = None;
 
         // Update version tracking for GC
         let mut versions = self.buffer.active_iterator_versions.lock().unwrap();
