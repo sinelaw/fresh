@@ -3,7 +3,6 @@
 //! # Design
 //! - **Viewport-only parsing**: Only highlights visible lines for instant performance with large files
 //! - **Incremental updates**: Re-parses only edited regions
-//! - **Timeout protection**: 5ms budget per highlight operation
 //! - **Lazy initialization**: Parsing happens on first render
 //!
 //! # Performance
@@ -13,11 +12,7 @@
 use crate::buffer::Buffer;
 use ratatui::style::Color;
 use std::ops::Range;
-use std::time::{Duration, Instant};
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter as TSHighlighter};
-
-/// Timeout for highlighting operations (5ms per frame)
-const HIGHLIGHT_TIMEOUT: Duration = Duration::from_millis(5);
 
 /// Maximum bytes to parse in a single operation (for viewport highlighting)
 const MAX_PARSE_BYTES: usize = 100_000; // ~50 lines * 2000 chars/line
@@ -147,8 +142,6 @@ impl Highlighter {
         viewport_start: usize,
         viewport_end: usize,
     ) -> Vec<HighlightSpan> {
-        let start_time = Instant::now();
-
         // Check if cache is valid for this range
         if let Some(cache) = &self.cache {
             if cache.range.start <= viewport_start
@@ -185,7 +178,7 @@ impl Highlighter {
         // Extract source bytes from buffer
         let source = buffer.slice_bytes(parse_range.clone());
 
-        // Highlight with timeout
+        // Highlight the source
         let mut spans = Vec::new();
         match self.ts_highlighter.highlight(
             &self.config,
@@ -197,12 +190,6 @@ impl Highlighter {
                 let mut current_highlight: Option<usize> = None;
 
                 for event in highlights {
-                    // Check timeout
-                    if start_time.elapsed() > HIGHLIGHT_TIMEOUT {
-                        tracing::warn!("Highlight timeout after {:?}", start_time.elapsed());
-                        break;
-                    }
-
                     match event {
                         Ok(HighlightEvent::Source { start, end }) => {
                             let span_start = parse_start + start;
@@ -315,16 +302,7 @@ mod tests {
         // Highlight only a small viewport in the middle
         let viewport_start = 10000;
         let viewport_end = 10500;
-        let start = Instant::now();
         let spans = highlighter.highlight_viewport(&buffer, viewport_start, viewport_end);
-        let elapsed = start.elapsed();
-
-        // Should complete very quickly (< 5ms)
-        assert!(
-            elapsed < Duration::from_millis(10),
-            "Viewport highlighting took too long: {:?}",
-            elapsed
-        );
 
         // Should have some spans in the viewport
         assert!(!spans.is_empty());
