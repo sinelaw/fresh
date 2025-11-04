@@ -1490,6 +1490,9 @@ fn test_viewport_31_rows() {
         "Expected to see all 29 lines, but visible range is only {} lines",
         visible_line_count);
 
+    // Move cursor to the start of the document so all lines are in view
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+
     // Render and verify lines are displayed
     harness.render().unwrap();
 
