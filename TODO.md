@@ -251,26 +251,28 @@
 
 #### Implementation Phases
 
-**Phase 7.1.1: Extract Rendering (~Week 1)**
-- [ ] Create `ui/mod.rs` structure
-- [ ] Create `ui/tabs.rs` - Move `render_tabs`
-- [ ] Create `ui/status_bar.rs` - Move `render_status_bar`
-- [ ] Create `ui/suggestions.rs` - Move `render_suggestions`
-- [ ] Create `ui/help.rs` - Move `render_help`, `scroll_help`, help state
-- [ ] Create `ui/split_rendering.rs` - Move `render_content`, `render_separator`
-- [ ] Update `editor.rs` to use new UI modules
-- [ ] Test rendering still works
+**Phase 7.1.1: Extract Rendering (~Week 1)** ✅ COMPLETE
+- [x] Create `ui/mod.rs` structure
+- [x] Create `ui/tabs.rs` - Move `render_tabs`
+- [x] Create `ui/status_bar.rs` - Move `render_status_bar`
+- [x] Create `ui/suggestions.rs` - Move `render_suggestions`
+- [x] Create `ui/help.rs` - Move `render_help`, `scroll_help`, help state
+- [x] Create `ui/split_rendering.rs` - Move `render_content`, `render_separator`
+- [x] Update `editor.rs` to use new UI modules
+- [x] Test rendering still works
+**Result**: Extracted ~430 lines of rendering code into 6 focused UI modules
 
-**Phase 7.1.2: Extract Commands & Prompts (~Week 1)**
-- [ ] Create `commands.rs`
-- [ ] Move `Command` struct
-- [ ] Move `get_all_commands`
-- [ ] Move `filter_commands`
-- [ ] Create `prompt.rs`
-- [ ] Move `Prompt`, `PromptType`, `Suggestion` structs
-- [ ] Move prompt methods (start, cancel, confirm, update)
-- [ ] Update `editor.rs` to use CommandPalette and PromptManager
-- [ ] Test command palette and prompts work
+**Phase 7.1.2: Extract Commands & Prompts (~Week 1)** ✅ COMPLETE
+- [x] Create `commands.rs`
+- [x] Move `Command` struct
+- [x] Move `get_all_commands`
+- [x] Move `filter_commands`
+- [x] Create `prompt.rs`
+- [x] Move `Prompt`, `PromptType`, `Suggestion` structs
+- [x] Move prompt methods (start, cancel, confirm, update)
+- [x] Update `editor.rs` to use new modules
+- [x] Test command palette and prompts work
+**Result**: Extracted ~335 lines into commands.rs and prompt.rs modules
 
 **Phase 7.1.3: Create BufferView (~Week 2)**
 - [ ] Create `buffer_view.rs`
