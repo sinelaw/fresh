@@ -1232,23 +1232,15 @@ impl Editor {
 
             let cursor = *state.primary_cursor();
 
-            // Use iterator to find line number and column
+            // Get line number and column efficiently using cached values
             let (line, col) = {
-                let mut iter = state.buffer.line_iterator(0);
-                let mut line_num = 0;
-                let mut line_start = 0;
-
-                while let Some((ls, _)) = iter.next() {
-                    if ls > cursor.position {
-                        break;
-                    }
-                    line_start = ls;
-                    if ls <= cursor.position {
-                        line_num += 1;
-                    }
-                }
-
+                // Find the start of the line containing the cursor
+                let cursor_iter = state.buffer.line_iterator(cursor.position);
+                let line_start = cursor_iter.current_position();
                 let col = cursor.position - line_start;
+
+                // Use cached line number from state
+                let line_num = state.primary_cursor_line_number.value();
                 (line_num, col)
             };
 

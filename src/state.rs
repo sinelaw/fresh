@@ -1,4 +1,4 @@
-use crate::buffer::Buffer;
+use crate::buffer::{Buffer, LineNumber};
 use crate::cursor::{Cursor, Cursors};
 use crate::event::Event;
 use crate::viewport::Viewport;
@@ -14,6 +14,10 @@ pub struct EditorState {
     /// The viewport
     pub viewport: Viewport,
 
+    /// Cached line number for primary cursor (0-indexed)
+    /// Maintained incrementally to avoid O(n) scanning on every render
+    pub primary_cursor_line_number: LineNumber,
+
     /// Current mode (for modal editing, if implemented)
     pub mode: String,
 }
@@ -28,6 +32,7 @@ impl EditorState {
             buffer: Buffer::new(),
             cursors: Cursors::new(),
             viewport: Viewport::new(width, content_height),
+            primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
         }
     }
@@ -41,6 +46,7 @@ impl EditorState {
             buffer,
             cursors: Cursors::new(),
             viewport: Viewport::new(width, content_height),
+            primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
         })
     }
@@ -54,6 +60,9 @@ impl EditorState {
                 text,
                 cursor_id,
             } => {
+                // Count newlines in inserted text to update cursor line number
+                let newlines_inserted = text.matches('\n').count();
+
                 // Insert text into buffer
                 self.buffer.insert(*position, text);
 
@@ -66,6 +75,17 @@ impl EditorState {
                     cursor.clear_selection();
                 }
 
+                // Update primary cursor line number if this was the primary cursor
+                if *cursor_id == self.cursors.primary_id() {
+                    self.primary_cursor_line_number = match self.primary_cursor_line_number {
+                        LineNumber::Absolute(line) => LineNumber::Absolute(line + newlines_inserted),
+                        LineNumber::Relative { line, from_cached_line } => LineNumber::Relative {
+                            line: line + newlines_inserted,
+                            from_cached_line,
+                        },
+                    };
+                }
+
                 // Smart scroll to keep cursor visible
                 if let Some(cursor) = self.cursors.get(*cursor_id) {
                     self.viewport.ensure_visible(&mut self.buffer, cursor);
@@ -73,9 +93,11 @@ impl EditorState {
             }
 
             Event::Delete {
-                range, cursor_id, ..
+                range, cursor_id, deleted_text,
             } => {
                 let len = range.len();
+                // Count newlines in deleted text to update cursor line number
+                let newlines_deleted = deleted_text.matches('\n').count();
 
                 // Delete from buffer
                 self.buffer.delete(range.clone());
@@ -87,6 +109,17 @@ impl EditorState {
                 if let Some(cursor) = self.cursors.get_mut(*cursor_id) {
                     cursor.position = range.start;
                     cursor.clear_selection();
+                }
+
+                // Update primary cursor line number if this was the primary cursor
+                if *cursor_id == self.cursors.primary_id() {
+                    self.primary_cursor_line_number = match self.primary_cursor_line_number {
+                        LineNumber::Absolute(line) => LineNumber::Absolute(line.saturating_sub(newlines_deleted)),
+                        LineNumber::Relative { line, from_cached_line } => LineNumber::Relative {
+                            line: line.saturating_sub(newlines_deleted),
+                            from_cached_line,
+                        },
+                    };
                 }
 
                 // Smart scroll to keep cursor visible
@@ -106,6 +139,15 @@ impl EditorState {
 
                     // Smart scroll to keep cursor visible
                     self.viewport.ensure_visible(&mut self.buffer, cursor);
+                }
+
+                // Update primary cursor line number if this is the primary cursor
+                // For MoveCursor events, we lose absolute line tracking and switch to Relative
+                if *cursor_id == self.cursors.primary_id() {
+                    self.primary_cursor_line_number = LineNumber::Relative {
+                        line: 0,
+                        from_cached_line: 0,
+                    };
                 }
             }
 
