@@ -11,8 +11,8 @@ fn test_split_horizontal() {
     harness.type_text("Buffer 1").unwrap();
     harness.assert_buffer_content("Buffer 1");
 
-    // Split horizontally (Ctrl+2)
-    harness.send_key(KeyCode::Char('2'), KeyModifiers::CONTROL).unwrap();
+    // Split horizontally (Alt+h)
+    harness.send_key(KeyCode::Char('h'), KeyModifiers::ALT).unwrap();
 
     // Should see status message
     harness.render().unwrap();
@@ -31,8 +31,8 @@ fn test_split_vertical() {
     harness.type_text("Buffer 1").unwrap();
     harness.assert_buffer_content("Buffer 1");
 
-    // Split vertically (Ctrl+3)
-    harness.send_key(KeyCode::Char('3'), KeyModifiers::CONTROL).unwrap();
+    // Split vertically (Alt+v)
+    harness.send_key(KeyCode::Char('v'), KeyModifiers::ALT).unwrap();
 
     // Should see status message
     harness.render().unwrap();
@@ -49,21 +49,21 @@ fn test_split_navigation() {
 
     // Create a vertical split
     harness.type_text("First buffer").unwrap();
-    harness.send_key(KeyCode::Char('3'), KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Char('v'), KeyModifiers::ALT).unwrap();
 
     // Now in second split, type different text
     harness.type_text("Second buffer").unwrap();
     harness.assert_buffer_content("Second buffer");
 
-    // Navigate to next split (Ctrl+o)
-    harness.send_key(KeyCode::Char('o'), KeyModifiers::CONTROL).unwrap();
+    // Navigate to next split (Alt+o)
+    harness.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
 
     // Should see status message
     harness.render().unwrap();
     harness.assert_screen_contains("Switched to next split");
 
-    // Navigate to previous split (Ctrl+Shift+o)
-    harness.send_key(KeyCode::Char('o'), KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    // Navigate to previous split (Alt+Shift+o)
+    harness.send_key(KeyCode::Char('o'), KeyModifiers::ALT | KeyModifiers::SHIFT).unwrap();
 
     // Should see status message
     harness.render().unwrap();
@@ -76,10 +76,10 @@ fn test_close_split() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a split
-    harness.send_key(KeyCode::Char('3'), KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Char('v'), KeyModifiers::ALT).unwrap();
 
-    // Close the split (Ctrl+0)
-    harness.send_key(KeyCode::Char('0'), KeyModifiers::CONTROL).unwrap();
+    // Close the split (Alt+x)
+    harness.send_key(KeyCode::Char('x'), KeyModifiers::ALT).unwrap();
 
     // Should see status message
     harness.render().unwrap();
@@ -91,8 +91,8 @@ fn test_close_split() {
 fn test_cannot_close_last_split() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    // Try to close the only split (Ctrl+0)
-    harness.send_key(KeyCode::Char('0'), KeyModifiers::CONTROL).unwrap();
+    // Try to close the only split (Alt+x)
+    harness.send_key(KeyCode::Char('x'), KeyModifiers::ALT).unwrap();
 
     // Should see error message
     harness.render().unwrap();
@@ -109,17 +109,17 @@ fn test_split_size_adjustment() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a split
-    harness.send_key(KeyCode::Char('3'), KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Char('v'), KeyModifiers::ALT).unwrap();
 
-    // Increase split size (Ctrl++)
-    harness.send_key(KeyCode::Char('+'), KeyModifiers::CONTROL).unwrap();
+    // Increase split size (Alt+=)
+    harness.send_key(KeyCode::Char('='), KeyModifiers::ALT).unwrap();
 
     // Should see status message
     harness.render().unwrap();
     harness.assert_screen_contains("Adjusted split size by 5%");
 
-    // Decrease split size (Ctrl+_)
-    harness.send_key(KeyCode::Char('_'), KeyModifiers::CONTROL).unwrap();
+    // Decrease split size (Alt+-)
+    harness.send_key(KeyCode::Char('-'), KeyModifiers::ALT).unwrap();
 
     // Should see status message
     harness.render().unwrap();
@@ -133,13 +133,13 @@ fn test_nested_splits() {
 
     // Create first split (vertical)
     harness.type_text("Buffer 1").unwrap();
-    harness.send_key(KeyCode::Char('3'), KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Char('v'), KeyModifiers::ALT).unwrap();
 
     // Should be in buffer 2 now
     harness.type_text("Buffer 2").unwrap();
 
     // Create second split (horizontal)
-    harness.send_key(KeyCode::Char('2'), KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Char('h'), KeyModifiers::ALT).unwrap();
 
     // Should be in buffer 3 now
     harness.type_text("Buffer 3").unwrap();
@@ -165,7 +165,7 @@ fn test_split_with_file_operations() {
     harness.assert_buffer_content("File 1 content");
 
     // Create a split
-    harness.send_key(KeyCode::Char('3'), KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Char('v'), KeyModifiers::ALT).unwrap();
 
     // Open second file in the new split
     harness.open_file(&file2).unwrap();
