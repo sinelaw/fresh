@@ -224,7 +224,10 @@ fn test_viewport_tracks_cursor_through_edits() {
     assert!(cursor_pos > 0);
 
     // Cursor position should be within buffer bounds
-    assert!(cursor_pos <= state.buffer.len(), "Cursor should be within buffer bounds");
+    assert!(
+        cursor_pos <= state.buffer.len(),
+        "Cursor should be within buffer bounds"
+    );
 }
 
 /// Test multi-cursor normalization after overlapping edits
@@ -286,5 +289,8 @@ fn test_viewport_resize_maintains_cursor() {
 
     // Cursor should still be within buffer bounds
     let cursor_pos = state.cursors.primary().position;
-    assert!(cursor_pos <= state.buffer.len(), "After resize, cursor should be within buffer bounds");
+    assert!(
+        cursor_pos <= state.buffer.len(),
+        "After resize, cursor should be within buffer bounds"
+    );
 }

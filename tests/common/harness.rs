@@ -188,7 +188,10 @@ impl EditorTestHarness {
     /// Get the top line number currently visible in the viewport
     pub fn top_line_number(&mut self) -> usize {
         let top_byte = self.editor.active_state().viewport.top_byte;
-        self.editor.active_state_mut().buffer.get_line_number(top_byte)
+        self.editor
+            .active_state_mut()
+            .buffer
+            .get_line_number(top_byte)
     }
 }
 

@@ -148,7 +148,10 @@ impl Editor {
 
         let buffer_id = BufferId(0);
         let state = EditorState::new(width, height);
-        tracing::info!("EditorState created with viewport height: {}", state.viewport.height);
+        tracing::info!(
+            "EditorState created with viewport height: {}",
+            state.viewport.height
+        );
         buffers.insert(buffer_id, state);
         event_logs.insert(buffer_id, EventLog::new());
 
@@ -215,7 +218,10 @@ impl Editor {
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
 
-        self.buffers.insert(buffer_id, EditorState::new(self.terminal_width, self.terminal_height));
+        self.buffers.insert(
+            buffer_id,
+            EditorState::new(self.terminal_width, self.terminal_height),
+        );
         self.event_logs.insert(buffer_id, EventLog::new());
 
         self.active_buffer = buffer_id;
@@ -404,7 +410,8 @@ impl Editor {
         };
 
         // Create a new cursor at the match position with selection
-        let new_cursor = crate::cursor::Cursor::with_selection(match_pos, match_pos + pattern.len());
+        let new_cursor =
+            crate::cursor::Cursor::with_selection(match_pos, match_pos + pattern.len());
 
         // Add the cursor
         let state_mut = self.active_state_mut();
@@ -413,7 +420,10 @@ impl Editor {
         // Normalize cursors to merge overlapping ones
         state_mut.cursors.normalize();
 
-        self.status_message = Some(format!("Added cursor at match ({})", state_mut.cursors.iter().count()));
+        self.status_message = Some(format!(
+            "Added cursor at match ({})",
+            state_mut.cursors.iter().count()
+        ));
     }
 
     /// Add a cursor above the primary cursor at the same column
@@ -453,7 +463,10 @@ impl Editor {
             state_mut.cursors.add(new_cursor);
             state_mut.cursors.normalize();
 
-            self.status_message = Some(format!("Added cursor above ({})", state_mut.cursors.iter().count()));
+            self.status_message = Some(format!(
+                "Added cursor above ({})",
+                state_mut.cursors.iter().count()
+            ));
         } else {
             self.status_message = Some("Already at first line".to_string());
         }
@@ -485,7 +498,10 @@ impl Editor {
             state_mut.cursors.add(new_cursor);
             state_mut.cursors.normalize();
 
-            self.status_message = Some(format!("Added cursor below ({})", state_mut.cursors.iter().count()));
+            self.status_message = Some(format!(
+                "Added cursor below ({})",
+                state_mut.cursors.iter().count()
+            ));
         } else {
             self.status_message = Some("Already at last line".to_string());
         }
@@ -524,8 +540,17 @@ impl Editor {
     }
 
     /// Start a new prompt with autocomplete suggestions
-    pub fn start_prompt_with_suggestions(&mut self, message: String, prompt_type: PromptType, suggestions: Vec<Suggestion>) {
-        let selected_suggestion = if suggestions.is_empty() { None } else { Some(0) };
+    pub fn start_prompt_with_suggestions(
+        &mut self,
+        message: String,
+        prompt_type: PromptType,
+        suggestions: Vec<Suggestion>,
+    ) {
+        let selected_suggestion = if suggestions.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
         self.prompt = Some(Prompt {
             message,
             input: String::new(),
@@ -717,15 +742,20 @@ impl Editor {
 
     /// Handle a key event and return whether it was handled
     /// This is the central key handling logic used by both main.rs and tests
-    pub fn handle_key(&mut self, code: crossterm::event::KeyCode, modifiers: crossterm::event::KeyModifiers) -> std::io::Result<()> {
-        use crossterm::event::{KeyCode, KeyModifiers};
+    pub fn handle_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> std::io::Result<()> {
         use crate::keybindings::Action;
+        use crossterm::event::{KeyCode, KeyModifiers};
         use std::path::Path;
 
         // Handle help mode first
         if self.is_help_visible() {
             match (code, modifiers) {
-                (KeyCode::Esc, KeyModifiers::NONE) | (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
+                (KeyCode::Esc, KeyModifiers::NONE)
+                | (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
                     self.toggle_help();
                 }
                 (KeyCode::Up, KeyModifiers::NONE) => self.scroll_help(-1),
@@ -754,13 +784,22 @@ impl Editor {
                                 }
                             }
                             PromptType::SaveFileAs => {
-                                self.set_status_message(format!("Save-as not yet implemented: {}", input));
+                                self.set_status_message(format!(
+                                    "Save-as not yet implemented: {}",
+                                    input
+                                ));
                             }
                             PromptType::Search => {
-                                self.set_status_message(format!("Search not yet implemented: {}", input));
+                                self.set_status_message(format!(
+                                    "Search not yet implemented: {}",
+                                    input
+                                ));
                             }
                             PromptType::Replace { search: _ } => {
-                                self.set_status_message(format!("Replace not yet implemented: {}", input));
+                                self.set_status_message(format!(
+                                    "Replace not yet implemented: {}",
+                                    input
+                                ));
                             }
                             PromptType::Command => {
                                 // Find the command by name and execute it
@@ -774,33 +813,48 @@ impl Editor {
                                     // Handle the action immediately
                                     match action {
                                         Action::Quit => self.quit(),
-                                        Action::Save => { let _ = self.save(); }
-                                        Action::Open => self.start_prompt("Find file: ".to_string(), PromptType::OpenFile),
+                                        Action::Save => {
+                                            let _ = self.save();
+                                        }
+                                        Action::Open => self.start_prompt(
+                                            "Find file: ".to_string(),
+                                            PromptType::OpenFile,
+                                        ),
                                         Action::Copy => self.copy_selection(),
                                         Action::Cut => self.cut_selection(),
                                         Action::Paste => self.paste(),
                                         Action::Undo => {
-                                            if let Some(event) = self.active_event_log_mut().undo() {
+                                            if let Some(event) = self.active_event_log_mut().undo()
+                                            {
                                                 if let Some(inverse) = event.inverse() {
                                                     self.active_state_mut().apply(&inverse);
                                                 }
                                             }
                                         }
                                         Action::Redo => {
-                                            let event_opt = self.active_event_log_mut().redo().cloned();
+                                            let event_opt =
+                                                self.active_event_log_mut().redo().cloned();
                                             if let Some(event) = event_opt {
                                                 self.active_state_mut().apply(&event);
                                             }
                                         }
                                         Action::ShowHelp => self.toggle_help(),
-                                        Action::AddCursorNextMatch => self.add_cursor_at_next_match(),
+                                        Action::AddCursorNextMatch => {
+                                            self.add_cursor_at_next_match()
+                                        }
                                         Action::AddCursorAbove => self.add_cursor_above(),
                                         Action::AddCursorBelow => self.add_cursor_below(),
-                                        Action::RemoveSecondaryCursors => self.active_state_mut().cursors.remove_secondary(),
-                                        Action::SelectAll | Action::SelectWord | Action::SelectLine | Action::ExpandSelection => {
+                                        Action::RemoveSecondaryCursors => {
+                                            self.active_state_mut().cursors.remove_secondary()
+                                        }
+                                        Action::SelectAll
+                                        | Action::SelectWord
+                                        | Action::SelectLine
+                                        | Action::ExpandSelection => {
                                             if let Some(events) = self.action_to_events(action) {
                                                 for event in events {
-                                                    self.active_event_log_mut().append(event.clone());
+                                                    self.active_event_log_mut()
+                                                        .append(event.clone());
                                                     self.active_state_mut().apply(&event);
                                                 }
                                             }
@@ -808,7 +862,8 @@ impl Editor {
                                         _ => {
                                             if let Some(events) = self.action_to_events(action) {
                                                 for event in events {
-                                                    self.active_event_log_mut().append(event.clone());
+                                                    self.active_event_log_mut()
+                                                        .append(event.clone());
                                                     self.active_state_mut().apply(&event);
                                                 }
                                             }
@@ -828,7 +883,8 @@ impl Editor {
                     return Ok(());
                 }
                 // Insert character into prompt
-                (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                (KeyCode::Char(c), KeyModifiers::NONE)
+                | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
                     if let Some(prompt) = self.prompt_mut() {
                         prompt.input.insert(prompt.cursor_pos, c);
                         prompt.cursor_pos += c.len_utf8();
@@ -873,7 +929,8 @@ impl Editor {
                     if let Some(prompt) = self.prompt_mut() {
                         if !prompt.suggestions.is_empty() {
                             if let Some(selected) = prompt.selected_suggestion {
-                                prompt.selected_suggestion = Some((selected + 1) % prompt.suggestions.len());
+                                prompt.selected_suggestion =
+                                    Some((selected + 1) % prompt.suggestions.len());
                             }
                         }
                     }
@@ -909,7 +966,9 @@ impl Editor {
                     if let Some(prompt) = self.prompt_mut() {
                         if prompt.cursor_pos < prompt.input.len() {
                             let mut new_pos = prompt.cursor_pos + 1;
-                            while new_pos < prompt.input.len() && !prompt.input.is_char_boundary(new_pos) {
+                            while new_pos < prompt.input.len()
+                                && !prompt.input.is_char_boundary(new_pos)
+                            {
                                 new_pos += 1;
                             }
                             prompt.cursor_pos = new_pos;
@@ -1091,7 +1150,12 @@ impl Editor {
         let _span = tracing::trace_span!("render_content").entered();
         let state = self.active_state_mut();
 
-        tracing::debug!("Render content area: {}x{}, viewport height: {}", area.width, area.height, state.viewport.height);
+        tracing::debug!(
+            "Render content area: {}x{}, viewport height: {}",
+            area.width,
+            area.height,
+            state.viewport.height
+        );
 
         // Calculate gutter width dynamically based on buffer size
         let gutter_width = state.viewport.gutter_width(&state.buffer);
@@ -1117,7 +1181,9 @@ impl Editor {
         let visible_count = state.viewport.visible_line_count();
 
         // Pre-populate the line cache for the visible area
-        let starting_line_num = state.buffer.populate_line_cache(state.viewport.top_byte, visible_count);
+        let starting_line_num = state
+            .buffer
+            .populate_line_cache(state.viewport.top_byte, visible_count);
 
         let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
         let mut lines_rendered = 0;
@@ -1138,7 +1204,11 @@ impl Editor {
 
             // Line number prefix (1-indexed for display)
             line_spans.push(Span::styled(
-                format!("{:>width$} │ ", current_line_num + 1, width = line_number_digits),
+                format!(
+                    "{:>width$} │ ",
+                    current_line_num + 1,
+                    width = line_number_digits
+                ),
                 Style::default().fg(Color::DarkGray),
             ));
 
@@ -1153,7 +1223,10 @@ impl Editor {
                     let is_cursor = cursor_positions.contains(&byte_pos);
 
                     // Check if this character is in any selection range (but not at cursor position)
-                    let is_selected = !is_cursor && selection_ranges.iter().any(|range| range.contains(&byte_pos));
+                    let is_selected = !is_cursor
+                        && selection_ranges
+                            .iter()
+                            .any(|range| range.contains(&byte_pos));
 
                     let style = if is_selected {
                         Style::default().fg(Color::Black).bg(Color::Cyan)
@@ -1170,8 +1243,7 @@ impl Editor {
             lines.push(Line::from(line_spans));
         }
 
-        let paragraph = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::NONE));
+        let paragraph = Paragraph::new(lines).block(Block::default().borders(Borders::NONE));
 
         frame.render_widget(paragraph, area);
 
@@ -1318,15 +1390,13 @@ impl Editor {
         let mut lines = vec![];
 
         // Header
-        lines.push(Line::from(vec![
-            Span::styled(
-                " KEYBOARD SHORTCUTS ",
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            " KEYBOARD SHORTCUTS ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )]));
         lines.push(Line::from(""));
 
         // Find max key width for alignment
@@ -1344,17 +1414,15 @@ impl Editor {
 
         // Footer
         lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!(
-                    " Showing {}-{} of {} | Use Up/Down to scroll | Press Ctrl+H or Esc to close ",
-                    start_idx + 1,
-                    end_idx,
-                    bindings.len()
-                ),
-                Style::default().fg(Color::Black).bg(Color::White),
+        lines.push(Line::from(vec![Span::styled(
+            format!(
+                " Showing {}-{} of {} | Use Up/Down to scroll | Press Ctrl+H or Esc to close ",
+                start_idx + 1,
+                end_idx,
+                bindings.len()
             ),
-        ]));
+            Style::default().fg(Color::Black).bg(Color::White),
+        )]));
 
         let help = Paragraph::new(lines)
             .block(
@@ -1362,7 +1430,11 @@ impl Editor {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Yellow))
                     .title(" Help ")
-                    .title_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    .title_style(
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
             )
             .wrap(ratatui::widgets::Wrap { trim: true });
 
@@ -1999,7 +2071,8 @@ impl Editor {
                     if let Some(anchor) = cursor.anchor {
                         // Already have a selection - expand by one word to the right
                         // First move to the start of the next word, then to its end
-                        let next_word_start = self.find_word_start_right(&state.buffer, cursor.position);
+                        let next_word_start =
+                            self.find_word_start_right(&state.buffer, cursor.position);
                         let new_end = self.find_word_end(&state.buffer, next_word_start);
                         events.push(Event::MoveCursor {
                             cursor_id,
@@ -2013,16 +2086,18 @@ impl Editor {
 
                         // If cursor is on non-word char OR at the end of a word,
                         // select from current position to end of next word
-                        let (final_start, final_end) = if word_start == word_end || cursor.position == word_end {
-                            // Find the next word (skip non-word characters to find it)
-                            let next_start = self.find_word_start_right(&state.buffer, cursor.position);
-                            let next_end = self.find_word_end(&state.buffer, next_start);
-                            // Select FROM cursor position TO the end of next word
-                            (cursor.position, next_end)
-                        } else {
-                            // On a word char - select from cursor to end of current word
-                            (cursor.position, word_end)
-                        };
+                        let (final_start, final_end) =
+                            if word_start == word_end || cursor.position == word_end {
+                                // Find the next word (skip non-word characters to find it)
+                                let next_start =
+                                    self.find_word_start_right(&state.buffer, cursor.position);
+                                let next_end = self.find_word_end(&state.buffer, next_start);
+                                // Select FROM cursor position TO the end of next word
+                                (cursor.position, next_end)
+                            } else {
+                                // On a word char - select from cursor to end of current word
+                                (cursor.position, word_end)
+                            };
 
                         events.push(Event::MoveCursor {
                             cursor_id,

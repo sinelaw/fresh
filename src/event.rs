@@ -199,7 +199,13 @@ impl EventLog {
     }
 
     /// Log rendering state (for debugging)
-    pub fn log_render_state(&mut self, cursor_pos: usize, screen_cursor_x: u16, screen_cursor_y: u16, buffer_len: usize) {
+    pub fn log_render_state(
+        &mut self,
+        cursor_pos: usize,
+        screen_cursor_x: u16,
+        screen_cursor_y: u16,
+        buffer_len: usize,
+    ) {
         if let Some(ref mut file) = self.stream_file {
             use std::io::Write;
 

@@ -296,10 +296,16 @@ impl KeybindingResolver {
         bindings.insert((KeyCode::Right, KeyModifiers::SHIFT), Action::SelectRight);
         bindings.insert((KeyCode::Up, KeyModifiers::SHIFT), Action::SelectUp);
         bindings.insert((KeyCode::Down, KeyModifiers::SHIFT), Action::SelectDown);
-        bindings.insert((KeyCode::Home, KeyModifiers::SHIFT), Action::SelectLineStart);
+        bindings.insert(
+            (KeyCode::Home, KeyModifiers::SHIFT),
+            Action::SelectLineStart,
+        );
         bindings.insert((KeyCode::End, KeyModifiers::SHIFT), Action::SelectLineEnd);
         bindings.insert((KeyCode::PageUp, KeyModifiers::SHIFT), Action::SelectPageUp);
-        bindings.insert((KeyCode::PageDown, KeyModifiers::SHIFT), Action::SelectPageDown);
+        bindings.insert(
+            (KeyCode::PageDown, KeyModifiers::SHIFT),
+            Action::SelectPageDown,
+        );
         bindings.insert(
             (KeyCode::Home, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
             Action::SelectDocumentStart,

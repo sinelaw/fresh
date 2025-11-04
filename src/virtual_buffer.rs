@@ -523,10 +523,7 @@ mod tests {
         let data = "x".repeat(8192); // 8KB of data
         let leaked_data = Box::leak(data.into_bytes().into_boxed_slice());
 
-        let persistence = Box::new(ChunkTreePersistence::from_data(
-            leaked_data,
-            DEFAULT_CONFIG,
-        ));
+        let persistence = Box::new(ChunkTreePersistence::from_data(leaked_data, DEFAULT_CONFIG));
         let vbuf = VirtualBuffer::new(persistence);
 
         // Test forward iteration across chunk boundary
@@ -534,13 +531,21 @@ mod tests {
 
         // Read through the 4KB boundary
         for _ in 0..20 {
-            assert_eq!(iter.next(), Some(b'x'), "Should read 'x' across chunk boundary");
+            assert_eq!(
+                iter.next(),
+                Some(b'x'),
+                "Should read 'x' across chunk boundary"
+            );
         }
 
         // Test backward iteration across chunk boundary
         let mut iter = vbuf.iter_at(4100);
         for _ in 0..20 {
-            assert_eq!(iter.prev(), Some(b'x'), "Should read 'x' backwards across chunk boundary");
+            assert_eq!(
+                iter.prev(),
+                Some(b'x'),
+                "Should read 'x' backwards across chunk boundary"
+            );
         }
     }
 
@@ -550,10 +555,7 @@ mod tests {
         let data = "abcd".repeat(2000); // 8KB of "abcdabcd..."
         let leaked_data = Box::leak(data.clone().into_bytes().into_boxed_slice());
 
-        let persistence = Box::new(ChunkTreePersistence::from_data(
-            leaked_data,
-            DEFAULT_CONFIG,
-        ));
+        let persistence = Box::new(ChunkTreePersistence::from_data(leaked_data, DEFAULT_CONFIG));
         let vbuf = VirtualBuffer::new(persistence);
 
         // Reference implementation using Vec
@@ -584,8 +586,11 @@ mod tests {
         // The iterator was at position 3, insert at position 1 adjusts it to position 6
         // Position 6 in "aXYZbcdabcd..." is 'd'
         let expected = reference[ref_pos];
-        assert_eq!(iter.next(), Some(expected),
-            "After insert, iterator should read from new buffer at adjusted position");
+        assert_eq!(
+            iter.next(),
+            Some(expected),
+            "After insert, iterator should read from new buffer at adjusted position"
+        );
     }
 
     #[test]
@@ -599,8 +604,8 @@ mod tests {
         let mut iter = vbuf.iter_at(5);
 
         // Multiple inserts before iterator
-        vbuf.insert(2, b"AA").unwrap();  // "01AA23456789", iter at 7
-        vbuf.insert(0, b"BB").unwrap();  // "BB01AA23456789", iter at 9
+        vbuf.insert(2, b"AA").unwrap(); // "01AA23456789", iter at 7
+        vbuf.insert(0, b"BB").unwrap(); // "BB01AA23456789", iter at 9
 
         // Iterator should track position correctly
         assert_eq!(iter.next(), Some(b'5'));
@@ -618,7 +623,7 @@ mod tests {
         let mut iter = vbuf.iter_at(8);
 
         // Delete before iterator (removes "234")
-        vbuf.delete(2..5).unwrap();  // "01456789", iter should move to 5
+        vbuf.delete(2..5).unwrap(); // "01456789", iter should move to 5
 
         // Iterator should read from adjusted position
         assert_eq!(iter.next(), Some(b'8'));
@@ -681,10 +686,7 @@ mod tests {
         let data = "x".repeat(5000);
         let leaked_data = Box::leak(data.into_bytes().into_boxed_slice());
 
-        let persistence = Box::new(ChunkTreePersistence::from_data(
-            leaked_data,
-            DEFAULT_CONFIG,
-        ));
+        let persistence = Box::new(ChunkTreePersistence::from_data(leaked_data, DEFAULT_CONFIG));
         let vbuf = VirtualBuffer::new(persistence);
 
         let mut iter = vbuf.iter_at(0);

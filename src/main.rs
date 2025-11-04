@@ -16,7 +16,10 @@ mod virtual_buffer;
 use clap::Parser;
 use crossterm::{
     event::{poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent},
-    terminal::{disable_raw_mode, enable_raw_mode, size as terminal_size, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, size as terminal_size, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
     ExecutableCommand,
 };
 use editor::Editor;
@@ -47,8 +50,7 @@ fn main() -> io::Result<()> {
     let args = Args::parse();
 
     // Initialize tracing - log to a file to avoid interfering with terminal UI
-    let log_file = std::fs::File::create("/tmp/editor.log")
-        .expect("Failed to create log file");
+    let log_file = std::fs::File::create("/tmp/editor.log").expect("Failed to create log file");
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_writer(std::sync::Arc::new(log_file)))
@@ -151,4 +153,3 @@ fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> io::Result<()> 
 
     Ok(())
 }
-

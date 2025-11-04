@@ -887,7 +887,10 @@ impl<'a> ByteRangeIterator<'a> {
         Self::collect_chunks_in_range(&tree.root, start, end, 0, &mut chunks);
 
         let back_chunk_idx = chunks.len().saturating_sub(1);
-        let back_offset = chunks.get(back_chunk_idx).map(|(_, data)| data.len()).unwrap_or(0);
+        let back_offset = chunks
+            .get(back_chunk_idx)
+            .map(|(_, data)| data.len())
+            .unwrap_or(0);
 
         Self {
             chunks,
@@ -927,7 +930,10 @@ impl<'a> ByteRangeIterator<'a> {
 
         // Back cursor starts at the end
         let back_chunk_idx = chunks.len().saturating_sub(1);
-        let back_offset = chunks.get(back_chunk_idx).map(|(_, data)| data.len()).unwrap_or(0);
+        let back_offset = chunks
+            .get(back_chunk_idx)
+            .map(|(_, data)| data.len())
+            .unwrap_or(0);
 
         Self {
             chunks,

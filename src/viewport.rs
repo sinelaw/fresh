@@ -234,7 +234,8 @@ impl Viewport {
             self.left_column = column.saturating_sub(effective_offset);
         } else if column >= ideal_right {
             // Cursor is to the right of the ideal zone - scroll right
-            self.left_column = column.saturating_sub(visible_width.saturating_sub(effective_offset));
+            self.left_column =
+                column.saturating_sub(visible_width.saturating_sub(effective_offset));
         }
     }
 

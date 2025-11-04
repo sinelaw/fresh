@@ -1,11 +1,10 @@
 use crate::chunk_tree::{ChunkTree, ChunkTreeConfig};
+use crate::line_cache::{LineCache, LineInfo};
 use crate::persistence::ChunkTreePersistence;
 use crate::virtual_buffer::VirtualBuffer;
-use crate::line_cache::{LineCache, LineInfo};
 use std::io::{self, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-
 
 /// Default configuration for ChunkTree
 const DEFAULT_CONFIG: ChunkTreeConfig = ChunkTreeConfig::new(64, 128);
@@ -392,11 +391,12 @@ impl Buffer {
         }
 
         // Find nearest cached entry before this offset
-        let (start_byte, start_line) = if let Some(info) = self.line_cache.get_nearest_before(byte_offset) {
-            (info.byte_offset, info.line_number)
-        } else {
-            (0, 0) // Start from beginning
-        };
+        let (start_byte, start_line) =
+            if let Some(info) = self.line_cache.get_nearest_before(byte_offset) {
+                (info.byte_offset, info.line_number)
+            } else {
+                (0, 0) // Start from beginning
+            };
 
         // Iterate forward from start_byte to byte_offset, building cache
         let mut iter = self.line_iterator(start_byte);
@@ -404,10 +404,13 @@ impl Buffer {
 
         // Cache the starting position if not already cached
         if !self.line_cache.entries.contains_key(&start_byte) {
-            self.line_cache.entries.insert(start_byte, LineInfo {
-                line_number: start_line,
-                byte_offset: start_byte,
-            });
+            self.line_cache.entries.insert(
+                start_byte,
+                LineInfo {
+                    line_number: start_line,
+                    byte_offset: start_byte,
+                },
+            );
         }
 
         while let Some((line_byte, _)) = iter.next() {
@@ -416,10 +419,13 @@ impl Buffer {
             }
 
             // Cache this line
-            self.line_cache.entries.insert(line_byte, LineInfo {
-                line_number: current_line,
-                byte_offset: line_byte,
-            });
+            self.line_cache.entries.insert(
+                line_byte,
+                LineInfo {
+                    line_number: current_line,
+                    byte_offset: line_byte,
+                },
+            );
 
             if line_byte == byte_offset {
                 return current_line;
@@ -449,10 +455,13 @@ impl Buffer {
             }
 
             // Cache this line if not already cached
-            self.line_cache.entries.entry(line_byte).or_insert_with(|| LineInfo {
-                line_number: current_line,
-                byte_offset: line_byte,
-            });
+            self.line_cache
+                .entries
+                .entry(line_byte)
+                .or_insert_with(|| LineInfo {
+                    line_number: current_line,
+                    byte_offset: line_byte,
+                });
 
             current_line += 1;
             lines_added += 1;
@@ -465,7 +474,9 @@ impl Buffer {
     /// Returns None if the line is not in the cache.
     /// This is a read-only operation that doesn't trigger cache population.
     pub fn get_cached_byte_offset_for_line(&self, line_number: usize) -> Option<usize> {
-        self.line_cache.entries.iter()
+        self.line_cache
+            .entries
+            .iter()
             .find(|(_, info)| info.line_number == line_number)
             .map(|(_, info)| info.byte_offset)
     }
@@ -478,14 +489,26 @@ impl Buffer {
 
     /// Handle an insertion in the line cache.
     /// Call this after inserting text to update cached line info.
-    pub fn handle_line_cache_insertion(&mut self, insert_byte: usize, inserted_bytes: usize, inserted_newlines: usize) {
-        self.line_cache.handle_insertion(insert_byte, inserted_bytes, inserted_newlines);
+    pub fn handle_line_cache_insertion(
+        &mut self,
+        insert_byte: usize,
+        inserted_bytes: usize,
+        inserted_newlines: usize,
+    ) {
+        self.line_cache
+            .handle_insertion(insert_byte, inserted_bytes, inserted_newlines);
     }
 
     /// Handle a deletion in the line cache.
     /// Call this after deleting text to update cached line info.
-    pub fn handle_line_cache_deletion(&mut self, delete_start: usize, deleted_bytes: usize, deleted_newlines: usize) {
-        self.line_cache.handle_deletion(delete_start, deleted_bytes, deleted_newlines);
+    pub fn handle_line_cache_deletion(
+        &mut self,
+        delete_start: usize,
+        deleted_bytes: usize,
+        deleted_newlines: usize,
+    ) {
+        self.line_cache
+            .handle_deletion(delete_start, deleted_bytes, deleted_newlines);
     }
 
     /// Clear the entire line cache (useful when reloading a file).

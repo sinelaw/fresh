@@ -30,10 +30,7 @@ impl Cache {
     /// Returns None if the requested range is not fully cached
     pub fn read(&mut self, offset: usize, len: usize) -> Option<Vec<u8>> {
         // Find the region containing this offset
-        let region_start = self.regions
-            .range(..=offset)
-            .next_back()
-            .map(|(k, _)| *k)?;
+        let region_start = self.regions.range(..=offset).next_back().map(|(k, _)| *k)?;
 
         let (data, access_count) = self.regions.get_mut(&region_start)?;
 
@@ -106,7 +103,8 @@ impl Cache {
         }
 
         // Find entry with lowest access count
-        let (&offset_to_evict, _) = self.regions
+        let (&offset_to_evict, _) = self
+            .regions
             .iter()
             .min_by_key(|(_, (_, access_count))| access_count)
             .unwrap();

@@ -27,7 +27,12 @@ impl EditorState {
     pub fn new(width: u16, height: u16) -> Self {
         // Account for tab bar (1 line) and status bar (1 line)
         let content_height = height.saturating_sub(2);
-        tracing::info!("EditorState::new: width={}, height={}, content_height={}", width, height, content_height);
+        tracing::info!(
+            "EditorState::new: width={}, height={}, content_height={}",
+            width,
+            height,
+            content_height
+        );
         Self {
             buffer: Buffer::new(),
             cursors: Cursors::new(),
@@ -78,8 +83,13 @@ impl EditorState {
                 // Update primary cursor line number if this was the primary cursor
                 if *cursor_id == self.cursors.primary_id() {
                     self.primary_cursor_line_number = match self.primary_cursor_line_number {
-                        LineNumber::Absolute(line) => LineNumber::Absolute(line + newlines_inserted),
-                        LineNumber::Relative { line, from_cached_line } => LineNumber::Relative {
+                        LineNumber::Absolute(line) => {
+                            LineNumber::Absolute(line + newlines_inserted)
+                        }
+                        LineNumber::Relative {
+                            line,
+                            from_cached_line,
+                        } => LineNumber::Relative {
                             line: line + newlines_inserted,
                             from_cached_line,
                         },
@@ -93,7 +103,9 @@ impl EditorState {
             }
 
             Event::Delete {
-                range, cursor_id, deleted_text,
+                range,
+                cursor_id,
+                deleted_text,
             } => {
                 let len = range.len();
                 // Count newlines in deleted text to update cursor line number
@@ -114,8 +126,13 @@ impl EditorState {
                 // Update primary cursor line number if this was the primary cursor
                 if *cursor_id == self.cursors.primary_id() {
                     self.primary_cursor_line_number = match self.primary_cursor_line_number {
-                        LineNumber::Absolute(line) => LineNumber::Absolute(line.saturating_sub(newlines_deleted)),
-                        LineNumber::Relative { line, from_cached_line } => LineNumber::Relative {
+                        LineNumber::Absolute(line) => {
+                            LineNumber::Absolute(line.saturating_sub(newlines_deleted))
+                        }
+                        LineNumber::Relative {
+                            line,
+                            from_cached_line,
+                        } => LineNumber::Relative {
                             line: line.saturating_sub(newlines_deleted),
                             from_cached_line,
                         },

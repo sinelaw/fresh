@@ -428,7 +428,10 @@ fn test_help_page_scrolling() {
     let screen_top = harness.screen_to_string();
 
     // After scrolling back to top, should match the initial screen
-    assert_eq!(screen_top, screen_before, "Scrolling back to top should restore original view");
+    assert_eq!(
+        screen_top, screen_before,
+        "Scrolling back to top should restore original view"
+    );
 }
 
 /// Test help page resets scroll on toggle
@@ -464,9 +467,15 @@ fn test_add_cursor_next_match() {
 
     // Select the first "foo" (positions 0-3)
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
-    harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
-    harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
 
     // Verify selection
     let primary = harness.editor().active_state().cursors.primary();
@@ -528,7 +537,9 @@ fn test_add_cursor_below() {
     harness.type_text("Line 1\nLine 2\nLine 3").unwrap();
 
     // Position cursor on Line 1
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
 
     // Add cursor below (to Line 2)
     harness.editor_mut().add_cursor_below();
@@ -557,7 +568,9 @@ fn test_multi_cursor_typing() {
     harness.type_text("aaa\nbbb\nccc\nddd").unwrap();
 
     // Go to start
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
 
     // Add cursors - each time we add a cursor below, the new cursor becomes primary
     // So we can continue adding cursors below
@@ -576,7 +589,10 @@ fn test_multi_cursor_typing() {
 
     // Count how many X's were inserted
     let x_count = result.matches('X').count();
-    assert_eq!(x_count, 3, "Should have inserted exactly 3 X's, one per cursor");
+    assert_eq!(
+        x_count, 3,
+        "Should have inserted exactly 3 X's, one per cursor"
+    );
 }
 
 /// Test removing secondary cursors with Esc
@@ -595,7 +611,11 @@ fn test_remove_secondary_cursors() {
     assert_eq!(harness.editor().active_state().cursors.iter().count(), 3);
 
     // Remove secondary cursors
-    harness.editor_mut().active_state_mut().cursors.remove_secondary();
+    harness
+        .editor_mut()
+        .active_state_mut()
+        .cursors
+        .remove_secondary();
     harness.render().unwrap();
 
     // Should have only 1 cursor now
@@ -620,15 +640,25 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
     for _ in 0..5 {
         harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     }
-    assert_eq!(harness.cursor_position(), 6, "Cursor should be after 'Hello '");
+    assert_eq!(
+        harness.cursor_position(),
+        6,
+        "Cursor should be after 'Hello '"
+    );
     harness.assert_buffer_content("Hello World");
 
     // Get initial screen cursor position
     let initial_screen_pos = harness.screen_cursor_position();
-    println!("Initial screen cursor position (after 'Hello '): {:?}", initial_screen_pos);
+    println!(
+        "Initial screen cursor position (after 'Hello '): {:?}",
+        initial_screen_pos
+    );
 
     // Expected: Line numbers (4 chars) + " │ " (3 chars) + "Hello " (6 chars) = 13
-    assert_eq!(initial_screen_pos.0, 13, "Screen cursor X should be at column 13 after 'Hello '");
+    assert_eq!(
+        initial_screen_pos.0, 13,
+        "Screen cursor X should be at column 13 after 'Hello '"
+    );
 
     // Rapidly type multiple characters in the middle
     // This simulates quick typing which might cause sync issues
@@ -636,7 +666,9 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
 
     for (i, ch) in chars_to_type.chars().enumerate() {
         // Type the character
-        harness.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
 
         // After each character insertion:
         // 1. Verify buffer content is correct
@@ -662,10 +694,7 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
         );
 
         // Screen cursor Y should remain on line 1 (row 1, 0-indexed)
-        assert_eq!(
-            screen_pos.1, 1,
-            "Screen cursor Y should stay at row 1"
-        );
+        assert_eq!(screen_pos.1, 1, "Screen cursor Y should stay at row 1");
     }
 
     // Final verification
@@ -673,8 +702,14 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
     assert_eq!(harness.cursor_position(), 16); // After "Hello ABCDEFGHIJ"
 
     let final_screen_pos = harness.screen_cursor_position();
-    assert_eq!(final_screen_pos.0, 23, "Final screen cursor X should be at column 23");
-    assert_eq!(final_screen_pos.1, 1, "Final screen cursor Y should be at row 1");
+    assert_eq!(
+        final_screen_pos.0, 23,
+        "Final screen cursor X should be at column 23"
+    );
+    assert_eq!(
+        final_screen_pos.1, 1,
+        "Final screen cursor Y should be at row 1"
+    );
 }
 
 /// Test rapid typing with multiple insertions at different positions
@@ -692,7 +727,9 @@ fn test_rapid_typing_multiple_positions() {
     // Move to position after "The " (position 4)
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..4 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
     assert_eq!(harness.cursor_position(), 4);
 
@@ -704,11 +741,16 @@ fn test_rapid_typing_multiple_positions() {
     // Verify screen cursor position
     let screen_pos = harness.screen_cursor_position();
     // Line numbers (4) + " │ " (3) + "The very " (9) = 16
-    assert_eq!(screen_pos.0, 16, "Screen cursor should be at column 16 after 'The very '");
+    assert_eq!(
+        screen_pos.0, 16,
+        "Screen cursor should be at column 16 after 'The very '"
+    );
 
     // Move to after "quick " (position 15 now, was 10 before insertion)
     for _ in 0..6 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
     assert_eq!(harness.cursor_position(), 15);
 
@@ -736,30 +778,50 @@ fn test_rapid_type_delete_cursor_sync() {
     // Move to middle (after "Start ")
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..6 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
     assert_eq!(harness.cursor_position(), 6);
 
     // Rapidly type and delete
     for i in 0..5 {
         // Type 'X'
-        harness.send_key(KeyCode::Char('X'), KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Char('X'), KeyModifiers::NONE)
+            .unwrap();
         let pos_after_insert = harness.cursor_position();
-        assert_eq!(pos_after_insert, 7, "After insert {}, cursor should be at 7", i);
+        assert_eq!(
+            pos_after_insert, 7,
+            "After insert {}, cursor should be at 7",
+            i
+        );
 
         let screen_pos = harness.screen_cursor_position();
-        println!("After insert {}: screen cursor = {:?}, buffer pos = {}", i, screen_pos, pos_after_insert);
+        println!(
+            "After insert {}: screen cursor = {:?}, buffer pos = {}",
+            i, screen_pos, pos_after_insert
+        );
 
         // Verify buffer content has the X
         harness.assert_buffer_content("Start XEnd");
 
         // Delete it
-        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
         let pos_after_delete = harness.cursor_position();
-        assert_eq!(pos_after_delete, 6, "After delete {}, cursor should be back at 6", i);
+        assert_eq!(
+            pos_after_delete, 6,
+            "After delete {}, cursor should be back at 6",
+            i
+        );
 
         let screen_pos2 = harness.screen_cursor_position();
-        println!("After delete {}: screen cursor = {:?}, buffer pos = {}", i, screen_pos2, pos_after_delete);
+        println!(
+            "After delete {}: screen cursor = {:?}, buffer pos = {}",
+            i, screen_pos2, pos_after_delete
+        );
 
         // Verify buffer is back to original
         harness.assert_buffer_content("Start End");
@@ -782,14 +844,22 @@ fn test_cursor_advances_beyond_viewport_width() {
     let long_text = "a".repeat(100);
 
     for (i, ch) in long_text.chars().enumerate() {
-        harness.send_key(crossterm::event::KeyCode::Char(ch), crossterm::event::KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(
+                crossterm::event::KeyCode::Char(ch),
+                crossterm::event::KeyModifiers::NONE,
+            )
+            .unwrap();
 
         // Verify buffer position keeps advancing
         let buffer_pos = harness.cursor_position();
         assert_eq!(
-            buffer_pos, i + 1,
+            buffer_pos,
+            i + 1,
             "After typing {} characters, buffer cursor should be at position {}, but is at {}",
-            i + 1, i + 1, buffer_pos
+            i + 1,
+            i + 1,
+            buffer_pos
         );
     }
 
@@ -934,7 +1004,9 @@ fn test_vertical_scroll_when_typing_to_bottom() {
 
         // Add newline except for the last line
         if i < total_lines - 1 {
-            harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+            harness
+                .send_key(KeyCode::Enter, KeyModifiers::NONE)
+                .unwrap();
         }
     }
 
@@ -982,7 +1054,9 @@ fn test_vertical_scroll_offset() {
     for i in 0..40 {
         harness.type_text(&format!("Line {}", i)).unwrap();
         if i < 39 {
-            harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+            harness
+                .send_key(KeyCode::Enter, KeyModifiers::NONE)
+                .unwrap();
         }
     }
 
@@ -1035,7 +1109,9 @@ fn test_selection_visual_rendering() {
 
     // Select the word "Hello" using Shift+Right (5 times)
     for _ in 0..5 {
-        harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
     }
 
     // Verify the cursor has a selection in the buffer
@@ -1069,15 +1145,21 @@ fn test_selection_visual_rendering() {
     let h_pos = buffer.index_of(7, 1);
     let h_cell = &buffer.content[h_pos];
     assert_eq!(h_cell.symbol(), "H");
-    assert_eq!(h_cell.bg, ratatui::style::Color::Cyan,
-        "Selected character 'H' should have cyan background");
+    assert_eq!(
+        h_cell.bg,
+        ratatui::style::Color::Cyan,
+        "Selected character 'H' should have cyan background"
+    );
 
     // Check fourth character 'l' at position (10, 1) - should have cyan background
     let l_pos = buffer.index_of(10, 1);
     let l_cell = &buffer.content[l_pos];
     assert_eq!(l_cell.symbol(), "l");
-    assert_eq!(l_cell.bg, ratatui::style::Color::Cyan,
-        "Selected character 'l' should have cyan background");
+    assert_eq!(
+        l_cell.bg,
+        ratatui::style::Color::Cyan,
+        "Selected character 'l' should have cyan background"
+    );
 
     // Check fifth character 'o' at position (11, 1) - byte position 4, IN selection
     let o_pos = buffer.index_of(11, 1);
@@ -1085,8 +1167,11 @@ fn test_selection_visual_rendering() {
     assert_eq!(o_cell.symbol(), "o");
     // This 'o' is at byte position 4, which is in the selection range 0..5
     // But the cursor is at position 5, not 4, so this should have cyan background
-    assert_eq!(o_cell.bg, ratatui::style::Color::Cyan,
-        "Selected character 'o' (byte 4) should have cyan background");
+    assert_eq!(
+        o_cell.bg,
+        ratatui::style::Color::Cyan,
+        "Selected character 'o' (byte 4) should have cyan background"
+    );
 
     // Check character ' ' (space) at position (12, 1) - byte position 5, cursor position
     let space_pos = buffer.index_of(12, 1);
@@ -1095,8 +1180,11 @@ fn test_selection_visual_rendering() {
     // This space is at byte position 5, which is the cursor position
     // It should NOT have cyan background (cursor takes precedence over selection)
     // Also, position 5 is not in the selection range 0..5 anyway
-    assert_ne!(space_cell.bg, ratatui::style::Color::Cyan,
-        "Cursor position (byte 5, space) should NOT have cyan background");
+    assert_ne!(
+        space_cell.bg,
+        ratatui::style::Color::Cyan,
+        "Cursor position (byte 5, space) should NOT have cyan background"
+    );
 }
 
 /// Test that the prompt is rendered correctly
@@ -1106,7 +1194,9 @@ fn test_prompt_rendering() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the open file prompt with Ctrl+O
-    harness.send_key(KeyCode::Char('o'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
 
     // Check that the prompt is visible in the status bar area (bottom line)
     let screen = harness.screen_to_string();
@@ -1119,8 +1209,11 @@ fn test_prompt_rendering() {
     // Check a cell in the status bar has yellow background
     let first_cell_pos = buffer.index_of(0, status_y);
     let first_cell = &buffer.content[first_cell_pos];
-    assert_eq!(first_cell.bg, ratatui::style::Color::Yellow,
-        "Prompt should have yellow background");
+    assert_eq!(
+        first_cell.bg,
+        ratatui::style::Color::Yellow,
+        "Prompt should have yellow background"
+    );
 }
 
 /// Test prompt input handling (typing, backspace, cursor movement)
@@ -1130,7 +1223,9 @@ fn test_prompt_input_handling() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the open file prompt with Ctrl+O
-    harness.send_key(KeyCode::Char('o'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_screen_contains("Find file: ");
 
     // Type some text
@@ -1138,7 +1233,9 @@ fn test_prompt_input_handling() {
     harness.assert_screen_contains("Find file: test.txt");
 
     // Test backspace
-    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
     harness.assert_screen_contains("Find file: test.tx");
     harness.assert_screen_not_contains("test.txt");
 
@@ -1166,7 +1263,9 @@ fn test_prompt_cancel() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the open file prompt
-    harness.send_key(KeyCode::Char('o'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_screen_contains("Find file: ");
 
     // Type some text
@@ -1197,7 +1296,9 @@ fn test_open_file_workflow() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the open file prompt
-    harness.send_key(KeyCode::Char('o'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_screen_contains("Find file: ");
 
     // Type the file path
@@ -1205,7 +1306,9 @@ fn test_open_file_workflow() {
     harness.type_text(path_str).unwrap();
 
     // Confirm with Enter
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
 
     // Check that the file was opened
     harness.assert_screen_not_contains("Find file: ");
@@ -1224,13 +1327,17 @@ fn test_open_nonexistent_file() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the open file prompt
-    harness.send_key(KeyCode::Char('o'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
 
     // Type a non-existent file path
     harness.type_text("/nonexistent/file/path.txt").unwrap();
 
     // Confirm with Enter
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
 
     // Should show an error message
     harness.assert_screen_contains("Error opening file");
@@ -1243,7 +1350,9 @@ fn test_command_palette_trigger() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the command palette with Ctrl+P
-    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
 
     // Check that the command prompt is visible
     harness.assert_screen_contains("Command: ");
@@ -1261,7 +1370,9 @@ fn test_command_palette_autocomplete() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the command palette
-    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
 
     // Type "open" to filter commands
     harness.type_text("open").unwrap();
@@ -1280,7 +1391,9 @@ fn test_command_palette_navigation() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the command palette
-    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_screen_contains("Command: ");
 
     // Navigate down
@@ -1300,7 +1413,9 @@ fn test_command_palette_tab_completion() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the command palette
-    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
 
     // Type partial text
     harness.type_text("op").unwrap();
@@ -1319,7 +1434,9 @@ fn test_command_palette_cancel() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the command palette
-    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_screen_contains("Command: ");
 
     // Cancel with Escape
@@ -1337,13 +1454,17 @@ fn test_command_palette_execute() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the command palette
-    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
 
     // Type the command name
     harness.type_text("Show Help").unwrap();
 
     // Execute with Enter
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
 
     // Help should now be visible
     harness.assert_screen_contains("KEYBOARD SHORTCUTS");
@@ -1356,7 +1477,9 @@ fn test_command_palette_fuzzy_matching() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Trigger the command palette
-    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
 
     // Type "sf" which should match "Save File" (fuzzy match)
     harness.type_text("sf").unwrap();
@@ -1389,15 +1512,20 @@ fn test_viewport_displays_all_lines() {
     let viewport_height = state.viewport.height;
 
     // Viewport should be 38 lines tall (40 - 2 for tab bar and status bar)
-    assert_eq!(viewport_height, 38, "Viewport height should be 38 (40 total - 2 for UI chrome)");
+    assert_eq!(
+        viewport_height, 38,
+        "Viewport height should be 38 (40 total - 2 for UI chrome)"
+    );
 
     // Get visible range
     let visible_line_count = state.viewport.visible_line_count();
 
     // All 35 lines should fit in the 38-line viewport
-    assert!(visible_line_count >= 35,
+    assert!(
+        visible_line_count >= 35,
         "Expected to see at least 35 lines, but visible range is only {} lines",
-        visible_line_count);
+        visible_line_count
+    );
 
     // Render and check that lines are actually displayed on screen
     harness.render().unwrap();
@@ -1428,7 +1556,10 @@ fn test_open_file_viewport_dimensions() {
 
     // Initially, the default buffer has correct viewport dimensions
     let initial_viewport_height = harness.editor().active_state().viewport.height;
-    assert_eq!(initial_viewport_height, 29, "Initial viewport should be 29 (31 - 2)");
+    assert_eq!(
+        initial_viewport_height, 29,
+        "Initial viewport should be 29 (31 - 2)"
+    );
 
     // Open a file
     harness.open_file(&file_path).unwrap();
@@ -1445,7 +1576,11 @@ fn test_open_file_viewport_dimensions() {
     // Render and verify the viewport displays the correct number of lines
     harness.render().unwrap();
 
-    let visible_count = harness.editor().active_state().viewport.visible_line_count();
+    let visible_count = harness
+        .editor()
+        .active_state()
+        .viewport
+        .visible_line_count();
 
     assert_eq!(
         visible_count, 29,
@@ -1480,18 +1615,25 @@ fn test_viewport_31_rows() {
     let viewport_height = state.viewport.height;
 
     // Viewport should be 29 lines tall (31 - 2 for tab bar and status bar)
-    assert_eq!(viewport_height, 29, "Viewport height should be 29 (31 total - 2 for UI chrome)");
+    assert_eq!(
+        viewport_height, 29,
+        "Viewport height should be 29 (31 total - 2 for UI chrome)"
+    );
 
     // Get visible range
     let visible_line_count = state.viewport.visible_line_count();
 
     // All 29 lines should be visible
-    assert_eq!(visible_line_count, 29,
+    assert_eq!(
+        visible_line_count, 29,
         "Expected to see all 29 lines, but visible range is only {} lines",
-        visible_line_count);
+        visible_line_count
+    );
 
     // Move cursor to the start of the document so all lines are in view
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
 
     // Render and verify lines are displayed
     harness.render().unwrap();
@@ -1505,7 +1647,9 @@ fn test_viewport_31_rows() {
     harness.assert_screen_contains("Line 20");
 
     // Now open the command palette (which shows suggestions)
-    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Command palette should be visible
@@ -1521,9 +1665,11 @@ fn test_viewport_31_rows() {
     let state = editor.active_state();
     let viewport_height_with_palette = state.viewport.height;
 
-    assert_eq!(viewport_height_with_palette, 29,
+    assert_eq!(
+        viewport_height_with_palette, 29,
         "Viewport height should still be 29 even with command palette open, but got {}",
-        viewport_height_with_palette);
+        viewport_height_with_palette
+    );
 
     // Close the command palette
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -1534,16 +1680,20 @@ fn test_viewport_31_rows() {
     let state = editor.active_state();
     let viewport_height_after = state.viewport.height;
 
-    assert_eq!(viewport_height_after, 29,
+    assert_eq!(
+        viewport_height_after, 29,
         "Viewport height should still be 29 after closing command palette, but got {}",
-        viewport_height_after);
+        viewport_height_after
+    );
 
     // Get visible range after closing palette
     let visible_line_count_after = state.viewport.visible_line_count();
 
-    assert_eq!(visible_line_count_after, 29,
+    assert_eq!(
+        visible_line_count_after, 29,
         "Expected to see all 29 lines after closing palette, but visible range is only {} lines",
-        visible_line_count_after);
+        visible_line_count_after
+    );
 
     // All lines should still be visible on screen
     harness.assert_screen_contains("Line 1");
@@ -1562,12 +1712,16 @@ fn test_select_word() {
     // Move to the middle of "world"
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..8 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
 
     // Now cursor is at position 8 (in the middle of "world")
     // Select word with Ctrl+W
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
 
     // Verify the selection
     let cursor = harness.editor().active_state().cursors.primary();
@@ -1590,11 +1744,15 @@ fn test_select_word_at_start() {
     // Move to start of "world"
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..6 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
 
     // Select word
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
@@ -1613,11 +1771,15 @@ fn test_select_word_at_end() {
     // Move to end of "hello"
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..5 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
 
     // Select word
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
@@ -1632,17 +1794,25 @@ fn test_select_line() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Type multiple lines
-    harness.type_text("first line\nsecond line\nthird line").unwrap();
+    harness
+        .type_text("first line\nsecond line\nthird line")
+        .unwrap();
 
     // Move to start of document, then down to second line
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     for _ in 0..5 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
 
     // Select line with Ctrl+L
-    harness.send_key(KeyCode::Char('l'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('l'), KeyModifiers::CONTROL)
+        .unwrap();
 
     // Verify the selection includes the entire line
     let cursor = harness.editor().active_state().cursors.primary();
@@ -1651,7 +1821,10 @@ fn test_select_line() {
 
     let range = selection.unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "second line\n", "Should select the entire line including newline");
+    assert_eq!(
+        selected_text, "second line\n",
+        "Should select the entire line including newline"
+    );
 }
 
 /// Test select line on first line
@@ -1663,15 +1836,22 @@ fn test_select_line_first() {
     harness.type_text("first line\nsecond line").unwrap();
 
     // Move to start of document (first line)
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
 
     // Select line
-    harness.send_key(KeyCode::Char('l'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('l'), KeyModifiers::CONTROL)
+        .unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "first line\n", "Should select the first line");
+    assert_eq!(
+        selected_text, "first line\n",
+        "Should select the first line"
+    );
 }
 
 /// Test select line on last line (no trailing newline)
@@ -1683,12 +1863,17 @@ fn test_select_line_last() {
     harness.type_text("first line\nsecond line").unwrap();
 
     // Select line (cursor is already on last line)
-    harness.send_key(KeyCode::Char('l'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('l'), KeyModifiers::CONTROL)
+        .unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "second line", "Should select the last line without newline");
+    assert_eq!(
+        selected_text, "second line",
+        "Should select the last line without newline"
+    );
 }
 
 /// Test select word with multiple cursors
@@ -1704,22 +1889,41 @@ fn test_select_word_multi_cursor() {
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // Add cursor at "world" using Ctrl+D (add cursor at next match)
-    harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
-    harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
-    harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
-    harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
-    harness.send_key(KeyCode::Right, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
 
     // Now we have "hello" selected, add cursor at next space or different word
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
 
     // Add cursor above at same column
-    harness.send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
 
     // This test validates multi-cursor infrastructure is ready
     let state = harness.editor().active_state();
-    assert!(state.cursors.count() >= 1, "Should have at least one cursor");
+    assert!(
+        state.cursors.count() >= 1,
+        "Should have at least one cursor"
+    );
 }
 
 /// Test expand selection functionality (Ctrl+Shift+Right)
@@ -1734,32 +1938,49 @@ fn test_expand_selection() {
     // Move to middle of "hello" (position 3, second 'l')
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..3 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
 
     // First expand should select from cursor to end of current word
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range.clone());
-    assert_eq!(selected_text, "lo", "First expand should select from cursor to end of word");
+    assert_eq!(
+        selected_text, "lo",
+        "First expand should select from cursor to end of word"
+    );
 
     // Second expand should extend to include " world"
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range.clone());
-    assert_eq!(selected_text, "lo world", "Second expand should include next word");
+    assert_eq!(
+        selected_text, "lo world",
+        "Second expand should include next word"
+    );
 
     // Third expand should extend to include " test"
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "lo world test", "Third expand should include third word");
+    assert_eq!(
+        selected_text, "lo world test",
+        "Third expand should include third word"
+    );
 }
 
 /// Test expand selection when starting with no selection
@@ -1773,16 +1994,23 @@ fn test_expand_selection_no_initial_selection() {
     // Move to middle of "bar" (position 5, on 'a')
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..5 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
 
     // Expand with no initial selection should select from cursor to end of word
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "ar", "Should select from cursor to end of word");
+    assert_eq!(
+        selected_text, "ar",
+        "Should select from cursor to end of word"
+    );
 }
 
 /// Test expand selection performance with moderately large buffer
@@ -1790,8 +2018,8 @@ fn test_expand_selection_no_initial_selection() {
 #[test]
 fn test_expand_selection_large_buffer_performance() {
     use crossterm::event::{KeyCode, KeyModifiers};
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("large.txt");
@@ -1804,19 +2032,28 @@ fn test_expand_selection_large_buffer_performance() {
     harness.open_file(&file_path).unwrap();
 
     // Move to a position near the middle
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     for _ in 0..50 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
 
     // Expand selection - this used to hang/timeout with large buffers
     // because it would read the entire buffer. Now it should complete quickly
     // by only reading a small window around the cursor.
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
 
     // Verify it works correctly
     let cursor = harness.editor().active_state().cursors.primary();
-    assert!(cursor.selection_range().is_some(), "Should have a selection");
+    assert!(
+        cursor.selection_range().is_some(),
+        "Should have a selection"
+    );
 
     // The selected text should be a word (not testing exact content since position may vary)
     let range = cursor.selection_range().unwrap();
@@ -1830,8 +2067,8 @@ fn test_expand_selection_large_buffer_performance() {
 #[ignore] // This test takes a long time - run with --ignored flag
 fn test_expand_selection_very_large_buffer() {
     use crossterm::event::{KeyCode, KeyModifiers};
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("very_large.txt");
@@ -1845,14 +2082,23 @@ fn test_expand_selection_very_large_buffer() {
 
     // Move to various positions in the file and test expand selection
     // Test near the beginning
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     for _ in 0..100 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
 
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
-    assert!(cursor.selection_range().is_some(), "Should have selection at start");
+    assert!(
+        cursor.selection_range().is_some(),
+        "Should have selection at start"
+    );
 
     // Test in the middle (move down many lines)
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap(); // Clear selection
@@ -1860,9 +2106,14 @@ fn test_expand_selection_very_large_buffer() {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
 
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
-    assert!(cursor.selection_range().is_some(), "Should have selection in middle");
+    assert!(
+        cursor.selection_range().is_some(),
+        "Should have selection in middle"
+    );
 
     // All operations should complete without hanging
 }
@@ -1882,7 +2133,9 @@ fn test_select_word_after_scrolling() {
     harness.type_text(&lines.join("\n")).unwrap();
 
     // Scroll down past the initial viewport
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     for _ in 0..50 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
@@ -1890,18 +2143,25 @@ fn test_select_word_after_scrolling() {
     // Move to middle of a word on line 50
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..10 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
 
     // Select word with Ctrl+W
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
 
     // Should have selected "word50" at line 50
-    assert!(selected_text.contains("word"), "Should select a word after scrolling");
+    assert!(
+        selected_text.contains("word"),
+        "Should select a word after scrolling"
+    );
     assert!(selected_text.len() > 0, "Selection should not be empty");
 }
 
@@ -1919,7 +2179,9 @@ fn test_expand_selection_after_scrolling() {
     harness.type_text(&lines.join("\n")).unwrap();
 
     // Scroll down to line 30
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     for _ in 0..30 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
@@ -1927,22 +2189,34 @@ fn test_expand_selection_after_scrolling() {
     // Move to middle of "alpha" (position 3, 'h')
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..3 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
 
     // First expand should select from cursor to end of word
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range.clone());
-    assert_eq!(selected_text, "ha", "First expand should select from cursor to end of word");
+    assert_eq!(
+        selected_text, "ha",
+        "First expand should select from cursor to end of word"
+    );
 
     // Second expand should extend to include " beta"
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "ha beta", "Second expand should include next word");
+    assert_eq!(
+        selected_text, "ha beta",
+        "Second expand should include next word"
+    );
 }
 
 /// Test expand selection (Ctrl+Shift+Right) across line boundaries
@@ -1953,10 +2227,14 @@ fn test_expand_selection_across_lines() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create multi-line content with words at line boundaries
-    harness.type_text("first line ending\nsecond line starting here").unwrap();
+    harness
+        .type_text("first line ending\nsecond line starting here")
+        .unwrap();
 
     // Position cursor at "ending" on first line
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     // Move back to start of "ending"
     for _ in 0..6 {
@@ -1964,25 +2242,40 @@ fn test_expand_selection_across_lines() {
     }
 
     // First expand: select "ending"
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "ending", "Should select 'ending' on first line");
+    assert_eq!(
+        selected_text, "ending",
+        "Should select 'ending' on first line"
+    );
 
     // Second expand: should cross the newline and select "second" on next line
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "ending\nsecond", "Should cross line boundary and select 'second'");
+    assert_eq!(
+        selected_text, "ending\nsecond",
+        "Should cross line boundary and select 'second'"
+    );
 
     // Third expand: should continue to "line"
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "ending\nsecond line", "Should include 'line' from second line");
+    assert_eq!(
+        selected_text, "ending\nsecond line",
+        "Should include 'line' from second line"
+    );
 }
 
 /// Test expand selection starting at end of line
@@ -1994,27 +2287,39 @@ fn test_expand_selection_from_line_end() {
     harness.type_text("first line\nsecond word here").unwrap();
 
     // Position cursor at end of first line (before newline)
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
 
     // First expand from end of line - should jump to next word on next line
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range.clone());
 
     // The selection should include the newline and "second"
     assert!(!selected_text.is_empty(), "Should select something");
-    assert!(selected_text.contains("second"), "Should jump to next line and select 'second'");
+    assert!(
+        selected_text.contains("second"),
+        "Should jump to next line and select 'second'"
+    );
 
     // Continue expanding to ensure we can reach the next line
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
 
     // After multiple expands, we should definitely reach "second" on the next line
-    assert!(selected_text.contains("second"), "Should eventually reach 'second' on next line");
+    assert!(
+        selected_text.contains("second"),
+        "Should eventually reach 'second' on next line"
+    );
 }
 
 /// Test select word with hyphen - hyphen should be a word separator
@@ -2025,11 +2330,16 @@ fn test_select_word_with_hyphen() {
 
     harness.type_text("foo-bar").unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "foo", "Hyphen should be a word separator, selecting 'foo'");
+    assert_eq!(
+        selected_text, "foo",
+        "Hyphen should be a word separator, selecting 'foo'"
+    );
 }
 
 /// Test select word with underscore - underscore should be a word character
@@ -2040,11 +2350,16 @@ fn test_select_word_with_underscore() {
 
     harness.type_text("baz_qux").unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "baz_qux", "Underscore should be a word char, selecting 'baz_qux'");
+    assert_eq!(
+        selected_text, "baz_qux",
+        "Underscore should be a word char, selecting 'baz_qux'"
+    );
 }
 
 /// Test select word with numbers - alphanumeric should be a word
@@ -2055,11 +2370,16 @@ fn test_select_word_with_numbers() {
 
     harness.type_text("test123").unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "test123", "Alphanumeric should be a single word");
+    assert_eq!(
+        selected_text, "test123",
+        "Alphanumeric should be a single word"
+    );
 }
 
 /// Test select word with @ symbol - @ should be a word separator
@@ -2070,11 +2390,16 @@ fn test_select_word_with_at_symbol() {
 
     harness.type_text("user@domain").unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "user", "@ should be a word separator, selecting 'user'");
+    assert_eq!(
+        selected_text, "user",
+        "@ should be a word separator, selecting 'user'"
+    );
 }
 
 /// Test select word with dot - dot should be a word separator
@@ -2085,11 +2410,16 @@ fn test_select_word_with_dot() {
 
     harness.type_text("domain.com").unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "domain", ". should be a word separator, selecting 'domain'");
+    assert_eq!(
+        selected_text, "domain",
+        ". should be a word separator, selecting 'domain'"
+    );
 }
 
 /// Test expand selection (Ctrl+Shift+Right) when cursor is on a non-word character
@@ -2104,17 +2434,25 @@ fn test_expand_selection_on_non_word_char() {
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // Cursor is now on the first *, press Ctrl+Shift+Right to expand selection
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range();
 
     // Should select from cursor (position 0) through next word, which is "**-word"
-    assert!(range.is_some(), "Should have a selection after Ctrl+Shift+Right");
+    assert!(
+        range.is_some(),
+        "Should have a selection after Ctrl+Shift+Right"
+    );
 
     if let Some(range) = range {
         let selected_text = harness.editor().active_state().buffer.slice(range);
-        assert_eq!(selected_text, "**-word", "Should select from cursor through end of next word");
+        assert_eq!(
+            selected_text, "**-word",
+            "Should select from cursor through end of next word"
+        );
     }
 }
 
@@ -2128,7 +2466,9 @@ fn test_expand_selection_on_word_char() {
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // Cursor on 'h' in "hello", press Ctrl+Shift+Right
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
@@ -2146,16 +2486,23 @@ fn test_expand_selection_from_middle_of_word() {
     harness.type_text("Event").unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     // Move cursor to 'v' (second character)
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
 
     // Press Ctrl+Shift+Right from 'v' in "Event"
-    harness.send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
     // Should select from 'v' to end: "vent", not the whole word "Event"
-    assert_eq!(selected_text, "vent", "Should select from cursor to end of word");
+    assert_eq!(
+        selected_text, "vent",
+        "Should select from cursor to end of word"
+    );
 }
 
 /// Test select word left (Ctrl+Shift+Left) when cursor is on a non-word character
@@ -2169,18 +2516,26 @@ fn test_select_word_left_on_non_word_char() {
     // Cursor is at end after typing (after the '-')
 
     // Press Ctrl+Shift+Left to select backward
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
 
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range();
 
     // Should select backward from cursor through "word"
-    assert!(range.is_some(), "Should have a selection after Ctrl+Shift+Left");
+    assert!(
+        range.is_some(),
+        "Should have a selection after Ctrl+Shift+Left"
+    );
 
     if let Some(range) = range {
         let selected_text = harness.editor().active_state().buffer.slice(range);
         // Should select backward from cursor through non-word chars to start of previous word
-        assert_eq!(selected_text, "word**-", "Should select backward from cursor to start of previous word");
+        assert_eq!(
+            selected_text, "word**-",
+            "Should select backward from cursor to start of previous word"
+        );
     }
 }
 
@@ -2192,78 +2547,132 @@ fn test_select_prev_word_with_special_chars() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Same test text but working backwards
-    harness.type_text("start foo-bar baz_qux test123 user@domain.com").unwrap();
+    harness
+        .type_text("start foo-bar baz_qux test123 user@domain.com")
+        .unwrap();
 
     // Cursor is at end of text after typing
     // Move back one word and select "com" (. is a separator)
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
     assert_eq!(selected_text, "com", "Should select 'com' backwards");
 
     // Move back and select "domain"
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
     assert_eq!(selected_text, "domain", "Should select 'domain' backwards");
 
     // Move back and select "user"
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "user", "Should select 'user' backwards (@ is a separator)");
+    assert_eq!(
+        selected_text, "user",
+        "Should select 'user' backwards (@ is a separator)"
+    );
 
     // Move back and select "test123"
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "test123", "Should select 'test123' backwards");
+    assert_eq!(
+        selected_text, "test123",
+        "Should select 'test123' backwards"
+    );
 
     // Move back and select "baz_qux"
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "baz_qux", "Should select 'baz_qux' backwards (underscore is a word char)");
+    assert_eq!(
+        selected_text, "baz_qux",
+        "Should select 'baz_qux' backwards (underscore is a word char)"
+    );
 
     // Move back and select "bar"
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
     assert_eq!(selected_text, "bar", "Should select 'bar' backwards");
 
     // Move back and select "foo"
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Left, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
     let cursor = harness.editor().active_state().cursors.primary();
     let range = cursor.selection_range().unwrap();
     let selected_text = harness.editor().active_state().buffer.slice(range);
-    assert_eq!(selected_text, "foo", "Should select 'foo' backwards (hyphen is a separator)");
+    assert_eq!(
+        selected_text, "foo",
+        "Should select 'foo' backwards (hyphen is a separator)"
+    );
 }
 
 #[test]
 #[ignore] // Run with: cargo test test_load_big_file_e2e -- --ignored --nocapture
 fn test_load_big_file_e2e() {
-    use std::time::Instant;
-    use std::path::Path;
     use crossterm::event::{KeyCode, KeyModifiers};
+    use std::path::Path;
+    use std::time::Instant;
 
     // Initialize tracing
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -2289,18 +2698,25 @@ fn test_load_big_file_e2e() {
 
     // Verify the file is actually loaded
     let screen = harness.screen_to_string();
-    assert!(screen.contains("Editor Implementation Plan"), "First line should be visible");
+    assert!(
+        screen.contains("Editor Implementation Plan"),
+        "First line should be visible"
+    );
 
     // Test pagedown performance (this is where we had issues)
     let start = Instant::now();
-    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
     let pagedown_time = start.elapsed();
     println!("✓ First PageDown in: {:?}", pagedown_time);
 
     // Do a few more pagedowns to ensure consistent performance
     for i in 1..5 {
         let start = Instant::now();
-        harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
         let time = start.elapsed();
         println!("✓ PageDown #{} in: {:?}", i + 1, time);
     }
@@ -2330,7 +2746,9 @@ fn test_jump_to_eof_large_file() {
 
     // Jump to EOF with Ctrl+End - this should NOT hang
     let start = Instant::now();
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     let jump_time = start.elapsed();
 
     println!("✓ Ctrl+End completed in: {:?}", jump_time);
@@ -2349,13 +2767,18 @@ fn test_jump_to_eof_large_file() {
 
     // Just log the time for informational purposes - don't assert on it
     // Machines can be slow, especially in CI or when running tests in parallel
-    println!("✓ Cursor at position {} (buffer len: {})", cursor_pos, buffer_len);
+    println!(
+        "✓ Cursor at position {} (buffer len: {})",
+        cursor_pos, buffer_len
+    );
 
     // Now test Page Up after jumping to EOF - this tests backward iteration
     println!("\n=== Testing Page Up after EOF ===");
 
     let start = Instant::now();
-    harness.send_key(KeyCode::PageUp, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+        .unwrap();
     let pageup_time = start.elapsed();
 
     println!("✓ Page Up completed in: {:?}", pageup_time);
@@ -2375,7 +2798,9 @@ fn test_jump_to_eof_large_file() {
     println!("\n=== Testing multiple Page Ups ===");
     let start = Instant::now();
     for i in 0..5 {
-        harness.send_key(KeyCode::PageUp, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+            .unwrap();
         let pos = harness.cursor_position();
         println!("  Page Up {}: cursor at {}", i + 1, pos);
     }
@@ -2404,8 +2829,11 @@ fn test_jump_to_eof_large_file() {
         "After scrolling up, cursor should be well before EOF"
     );
 
-    println!("✓ Final cursor position: {} (moved {} bytes from EOF)",
-        final_pos, buffer_len - final_pos);
+    println!(
+        "✓ Final cursor position: {} (moved {} bytes from EOF)",
+        final_pos,
+        buffer_len - final_pos
+    );
 }
 
 /// Test that we can navigate to EOF and back to beginning in a large file
@@ -2425,7 +2853,9 @@ fn test_line_numbers_absolute_after_jump_to_beginning() {
     let buffer_len = harness.editor().active_state().buffer.len();
 
     // Jump to EOF
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     println!("✓ Jumped to EOF");
 
     // Verify we're at the end
@@ -2435,11 +2865,16 @@ fn test_line_numbers_absolute_after_jump_to_beginning() {
     // Check viewport scrolled
     {
         let state = harness.editor().active_state();
-        assert!(state.viewport.top_byte > 0, "Viewport should have scrolled down");
+        assert!(
+            state.viewport.top_byte > 0,
+            "Viewport should have scrolled down"
+        );
     }
 
     // Now jump back to beginning
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     println!("✓ Jumped back to beginning");
 
     // Check cursor is at start
@@ -2459,12 +2894,20 @@ fn test_line_numbers_absolute_after_jump_to_beginning() {
     let mut line_count = 0;
     for i in 0..5 {
         if let Some((byte_pos, content)) = iter.next() {
-            println!("    Line {} at byte {}: {} bytes", i, byte_pos, content.len());
+            println!(
+                "    Line {} at byte {}: {} bytes",
+                i,
+                byte_pos,
+                content.len()
+            );
             line_count += 1;
         }
     }
 
-    assert!(line_count >= 5, "Should be able to read at least 5 lines from beginning");
+    assert!(
+        line_count >= 5,
+        "Should be able to read at least 5 lines from beginning"
+    );
     println!("\n✓ Navigation and line iteration working correctly");
 }
 
@@ -2481,7 +2924,9 @@ fn test_cursor_position_with_large_line_numbers() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Type some content
-    harness.type_text("Line 1\nLine 2\nLine 3\nLine 4\nLine 5").unwrap();
+    harness
+        .type_text("Line 1\nLine 2\nLine 3\nLine 4\nLine 5")
+        .unwrap();
 
     // Note: With the new design, line numbers are calculated on-demand
     // and gutter width is based on buffer size estimation
@@ -2495,7 +2940,10 @@ fn test_cursor_position_with_large_line_numbers() {
     harness.render().unwrap();
     let screen_pos = harness.screen_cursor_position();
     println!("\nWith 7-digit line number (1000000):");
-    println!("Screen cursor position: ({}, {})", screen_pos.0, screen_pos.1);
+    println!(
+        "Screen cursor position: ({}, {})",
+        screen_pos.0, screen_pos.1
+    );
 
     // Line number "1000000" = 7 digits + 1 space = 8 chars needed
     // But if gutter_width is hardcoded to 7, cursor will be at x=0 (BUG!)
@@ -2536,16 +2984,27 @@ fn test_page_down_line_numbers() {
     // Verify the first line is visible on screen
     harness.assert_screen_contains("x1");
     let initial_cursor = harness.cursor_position();
-    println!("Initial state: line {}, cursor at {}, screen contains x1", initial_line, initial_cursor);
+    println!(
+        "Initial state: line {}, cursor at {}, screen contains x1",
+        initial_line, initial_cursor
+    );
     println!("Initial screen:\n{}", harness.screen_to_string());
 
     // Press page down once
-    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
     let after_first_pagedown = harness.top_line_number();
     let cursor_after_first = harness.cursor_position();
 
-    println!("\nAfter first PageDown: line {}, cursor at {}", after_first_pagedown, cursor_after_first);
-    println!("Screen after first PageDown:\n{}", harness.screen_to_string());
+    println!(
+        "\nAfter first PageDown: line {}, cursor at {}",
+        after_first_pagedown, cursor_after_first
+    );
+    println!(
+        "Screen after first PageDown:\n{}",
+        harness.screen_to_string()
+    );
 
     assert!(
         after_first_pagedown > 0,
@@ -2556,15 +3015,26 @@ fn test_page_down_line_numbers() {
     // Verify content has changed - we should see a line number greater than what was initially visible
     let expected_first_content = format!("x{}", after_first_pagedown + 1); // +1 because line numbers are 0-indexed
     harness.assert_screen_contains(&expected_first_content);
-    println!("After first PageDown: screen contains {}", expected_first_content);
+    println!(
+        "After first PageDown: screen contains {}",
+        expected_first_content
+    );
 
     // Press page down again to ensure scroll is triggered
-    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
     let after_second_pagedown = harness.top_line_number();
     let cursor_after_second = harness.cursor_position();
 
-    println!("\nAfter second PageDown: line {}, cursor at {}", after_second_pagedown, cursor_after_second);
-    println!("Screen after second PageDown:\n{}", harness.screen_to_string());
+    println!(
+        "\nAfter second PageDown: line {}, cursor at {}",
+        after_second_pagedown, cursor_after_second
+    );
+    println!(
+        "Screen after second PageDown:\n{}",
+        harness.screen_to_string()
+    );
 
     assert!(
         after_second_pagedown > after_first_pagedown,
@@ -2576,7 +3046,10 @@ fn test_page_down_line_numbers() {
     // Verify we can see content from later in the file
     let expected_second_content = format!("x{}", after_second_pagedown + 1); // +1 because line numbers are 0-indexed
     harness.assert_screen_contains(&expected_second_content);
-    println!("After second PageDown: screen contains {}", expected_second_content);
+    println!(
+        "After second PageDown: screen contains {}",
+        expected_second_content
+    );
 
     // Verify we no longer see the initial content
     harness.assert_screen_not_contains("x1");
@@ -2593,8 +3066,12 @@ fn test_page_down_line_numbers() {
         let cursor_pos = harness.cursor_position();
 
         if current_line < line_before_up {
-            println!("After {} Up presses: line {} (scrolled up!), cursor at {}",
-                     i + 1, current_line, cursor_pos);
+            println!(
+                "After {} Up presses: line {} (scrolled up!), cursor at {}",
+                i + 1,
+                current_line,
+                cursor_pos
+            );
 
             // Verify the line number decreased
             assert!(

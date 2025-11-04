@@ -28,10 +28,13 @@ impl LineCache {
     /// Create a new line cache with byte 0 as line 0
     pub fn new() -> Self {
         let mut entries = BTreeMap::new();
-        entries.insert(0, LineInfo {
-            line_number: 0,
-            byte_offset: 0,
-        });
+        entries.insert(
+            0,
+            LineInfo {
+                line_number: 0,
+                byte_offset: 0,
+            },
+        );
 
         Self {
             entries,
@@ -47,7 +50,10 @@ impl LineCache {
 
     /// Get the nearest cached line at or before the given byte offset
     pub fn get_nearest_before(&self, byte_offset: usize) -> Option<&LineInfo> {
-        self.entries.range(..=byte_offset).next_back().map(|(_, info)| info)
+        self.entries
+            .range(..=byte_offset)
+            .next_back()
+            .map(|(_, info)| info)
     }
 
     /// Ensure we have line information for the given byte offset.
@@ -73,10 +79,13 @@ impl LineCache {
 
         // Cache the starting position if not already cached
         if !self.entries.contains_key(&start_byte) {
-            self.entries.insert(start_byte, LineInfo {
-                line_number: start_line,
-                byte_offset: start_byte,
-            });
+            self.entries.insert(
+                start_byte,
+                LineInfo {
+                    line_number: start_line,
+                    byte_offset: start_byte,
+                },
+            );
         }
 
         while let Some((line_byte, _)) = iter.next() {
@@ -85,10 +94,13 @@ impl LineCache {
             }
 
             // Cache this line
-            self.entries.insert(line_byte, LineInfo {
-                line_number: current_line,
-                byte_offset: line_byte,
-            });
+            self.entries.insert(
+                line_byte,
+                LineInfo {
+                    line_number: current_line,
+                    byte_offset: line_byte,
+                },
+            );
 
             if line_byte == byte_offset {
                 return current_line;
@@ -105,7 +117,12 @@ impl LineCache {
     /// Populate the cache with a range of lines starting from a byte offset.
     /// This is useful for pre-populating the viewport area.
     /// Returns the line number of the starting byte offset.
-    pub fn populate_range(&mut self, buffer: &Buffer, start_byte: usize, line_count: usize) -> usize {
+    pub fn populate_range(
+        &mut self,
+        buffer: &Buffer,
+        start_byte: usize,
+        line_count: usize,
+    ) -> usize {
         let start_line = self.ensure_line_for_byte(buffer, start_byte);
 
         // Now iterate forward to populate more lines
@@ -135,10 +152,7 @@ impl LineCache {
     /// This should be called when an edit occurs.
     pub fn invalidate_from(&mut self, byte_offset: usize) {
         // Remove all entries >= byte_offset
-        let keys_to_remove: Vec<_> = self.entries
-            .range(byte_offset..)
-            .map(|(k, _)| *k)
-            .collect();
+        let keys_to_remove: Vec<_> = self.entries.range(byte_offset..).map(|(k, _)| *k).collect();
 
         for key in keys_to_remove {
             self.entries.remove(&key);
@@ -147,9 +161,15 @@ impl LineCache {
 
     /// Handle an insertion at a byte offset.
     /// This shifts all byte offsets after the insertion point.
-    pub fn handle_insertion(&mut self, insert_byte: usize, inserted_bytes: usize, inserted_newlines: usize) {
+    pub fn handle_insertion(
+        &mut self,
+        insert_byte: usize,
+        inserted_bytes: usize,
+        inserted_newlines: usize,
+    ) {
         // Collect entries that need to be updated (all entries after insert_byte)
-        let entries_to_update: Vec<_> = self.entries
+        let entries_to_update: Vec<_> = self
+            .entries
             .range(insert_byte..)
             .map(|(byte, info)| (*byte, info.clone()))
             .collect();
@@ -178,11 +198,17 @@ impl LineCache {
 
     /// Handle a deletion at a byte offset range.
     /// This shifts all byte offsets after the deletion point.
-    pub fn handle_deletion(&mut self, delete_start: usize, deleted_bytes: usize, deleted_newlines: usize) {
+    pub fn handle_deletion(
+        &mut self,
+        delete_start: usize,
+        deleted_bytes: usize,
+        deleted_newlines: usize,
+    ) {
         let delete_end = delete_start + deleted_bytes;
 
         // Remove all entries in the deleted range
-        let keys_in_range: Vec<_> = self.entries
+        let keys_in_range: Vec<_> = self
+            .entries
             .range(delete_start..delete_end)
             .map(|(k, _)| *k)
             .collect();
@@ -192,7 +218,8 @@ impl LineCache {
         }
 
         // Collect entries after the deletion that need to be updated
-        let entries_to_update: Vec<_> = self.entries
+        let entries_to_update: Vec<_> = self
+            .entries
             .range(delete_end..)
             .map(|(byte, info)| (*byte, info.clone()))
             .collect();
@@ -216,10 +243,13 @@ impl LineCache {
     /// Clear all cached entries except the reference point
     pub fn clear(&mut self) {
         self.entries.clear();
-        self.entries.insert(self.reference_byte, LineInfo {
-            line_number: self.reference_line,
-            byte_offset: self.reference_byte,
-        });
+        self.entries.insert(
+            self.reference_byte,
+            LineInfo {
+                line_number: self.reference_line,
+                byte_offset: self.reference_byte,
+            },
+        );
     }
 
     /// Get the number of cached entries
