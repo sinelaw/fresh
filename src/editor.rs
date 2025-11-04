@@ -2146,9 +2146,9 @@ impl Editor {
                     let current_line_start = iter.current_position();
                     let col_offset = cursor.position - current_line_start;
 
-                    // Skip current line
+                    // Get current line and move to next
                     iter.next();
-                    // Get next line
+                    // Get next line (this is the line we want to move to)
                     if let Some((next_line_start, next_line_content)) = iter.next() {
                         // Calculate length without trailing newline
                         let next_line_len = next_line_content.trim_end_matches('\n').len();

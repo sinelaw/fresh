@@ -602,28 +602,19 @@ impl LineIterator {
             return None;
         }
 
-        // Step 1: Move back past newlines at current position
+        // Move back one position to get to the previous line's last character (or newline)
         self.byte_iter.seek(current_pos.saturating_sub(1));
-        while self.byte_iter.position() > 0 {
-            if let Some(b'\n') = self.byte_iter.peek() {
-                if self.byte_iter.prev().is_none() {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
 
-        // Step 2: Scan backward to find start of this line
+        // Scan backward to find start of the previous line
         while self.byte_iter.position() > 0 {
             self.byte_iter.prev();
             if let Some(b'\n') = self.byte_iter.peek() {
-                self.byte_iter.next(); // Move past newline
+                self.byte_iter.next(); // Move past newline to line start
                 break;
             }
         }
 
-        // Step 3: Read forward to get line content
+        // Read forward to get line content
         let line_start = self.byte_iter.position();
         let mut content = Vec::new();
 
