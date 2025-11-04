@@ -269,6 +269,85 @@ fn test_multiline_editing() {
     harness.assert_buffer_content("Line 1\n>>> Line 2\nLine 3");
 }
 
+/// Test basic editing operations: insert, modify, delete, newline
+#[test]
+fn test_basic_editing_operations() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Test 1: Insert text at beginning
+    harness.type_text("Hello").unwrap();
+    harness.assert_buffer_content("Hello");
+    assert_eq!(harness.cursor_position(), 5);
+
+    // Test 2: Insert more text (append)
+    harness.type_text(" World").unwrap();
+    harness.assert_buffer_content("Hello World");
+    assert_eq!(harness.cursor_position(), 11);
+
+    // Test 3: Insert text in the middle
+    // Move cursor to position 5 (after "Hello")
+    for _ in 0..6 {
+        harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    }
+    assert_eq!(harness.cursor_position(), 5);
+    harness.type_text(",").unwrap();
+    harness.assert_buffer_content("Hello, World");
+    assert_eq!(harness.cursor_position(), 6);
+
+    // Test 4: Delete character (Backspace)
+    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    harness.assert_buffer_content("Hello World");
+    assert_eq!(harness.cursor_position(), 5);
+
+    // Test 5: Delete character forward (Delete key)
+    // Current position: 5 (after "Hello")
+    harness.send_key(KeyCode::Delete, KeyModifiers::NONE).unwrap();
+    harness.assert_buffer_content("HelloWorld");
+    assert_eq!(harness.cursor_position(), 5);
+
+    // Test 6: Insert newline
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.assert_buffer_content("Hello\nWorld");
+    assert_eq!(harness.cursor_position(), 6); // After newline
+
+    // Test 7: Insert text on new line
+    harness.type_text("New Line").unwrap();
+    harness.assert_buffer_content("Hello\nNew LineWorld");
+
+    // Test 8: Create another newline to separate properly
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.assert_buffer_content("Hello\nNew Line\nWorld");
+
+    // Test 9: Navigate to end and add more content
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.type_text("!").unwrap();
+    harness.assert_buffer_content("Hello\nNew Line\nWorld!");
+
+    // Test 10: Delete across newline (delete the newline character)
+    // Move to end of "Hello"
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    assert_eq!(harness.cursor_position(), 5); // End of "Hello"
+
+    // Delete the newline after "Hello"
+    harness.send_key(KeyCode::Delete, KeyModifiers::NONE).unwrap();
+    harness.assert_buffer_content("HelloNew Line\nWorld!");
+
+    // Test 11: Backspace at beginning of line (should join with previous line)
+    // Move to start of "World!"
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    let pos_before = harness.cursor_position();
+
+    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    harness.assert_buffer_content("HelloNew LineWorld!");
+    // After backspace at beginning of line, cursor should be at join point
+    assert_eq!(harness.cursor_position(), pos_before - 1);
+}
+
 /// Test that screen cursor position matches actual cursor position
 #[test]
 fn test_screen_cursor_position() {
