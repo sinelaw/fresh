@@ -1800,6 +1800,10 @@ impl Editor {
                     if let Some((current_line_start, _)) = iter.next() {
                         let col_offset = cursor.position - current_line_start;
 
+                        // After next(), cursor is positioned after current line
+                        // Call prev() once to get back, then again to get previous line
+                        iter.prev();
+
                         // Get previous line
                         if let Some((prev_line_start, prev_line_content)) = iter.prev() {
                             // Calculate length without trailing newline
@@ -1903,8 +1907,6 @@ impl Editor {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-
-                    // Use iterator to move up by lines_per_page lines
                     let mut iter = state.buffer.line_iterator(cursor.position);
                     let mut new_pos = cursor.position;
 
@@ -1912,7 +1914,8 @@ impl Editor {
                         if let Some((line_start, _)) = iter.prev() {
                             new_pos = line_start;
                         } else {
-                            break; // Hit beginning of file
+                            new_pos = 0;
+                            break;
                         }
                     }
 
@@ -1928,8 +1931,6 @@ impl Editor {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-
-                    // Use iterator to move down by lines_per_page lines
                     let mut iter = state.buffer.line_iterator(cursor.position);
                     let mut new_pos = cursor.position;
 
@@ -1937,12 +1938,10 @@ impl Editor {
                         if let Some((line_start, _)) = iter.next() {
                             new_pos = line_start;
                         } else {
-                            break; // Hit end of file
+                            new_pos = state.buffer.len();
+                            break;
                         }
                     }
-
-                    // Clamp to EOF
-                    new_pos = new_pos.min(state.buffer.len());
 
                     events.push(Event::MoveCursor {
                         cursor_id,
@@ -2157,35 +2156,18 @@ impl Editor {
             Action::MovePageUp => {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    // Find current line start and calculate column offset
                     let mut iter = state.buffer.line_iterator(cursor.position);
-                    let Some((current_line_start, _)) = iter.next() else {
-                        continue;
-                    };
-                    let col_offset = cursor.position - current_line_start;
-
-                    // Go backwards by lines_per_page
-                    let mut target_line_start = current_line_start;
+                    let mut new_pos = cursor.position;
 
                     for _ in 0..lines_per_page {
-                        if let Some((line_byte, _)) = iter.prev() {
-                            target_line_start = line_byte;
+                        if let Some((line_start, _)) = iter.prev() {
+                            new_pos = line_start;
                         } else {
-                            // Hit beginning of file
-                            target_line_start = 0;
+                            new_pos = 0;
                             break;
                         }
                     }
 
-                    // Calculate target line length to clamp column offset
-                    let mut target_iter = state.buffer.line_iterator(target_line_start);
-                    let target_line_len = if let Some((_, line_content)) = target_iter.next() {
-                        line_content.trim_end_matches('\n').len()
-                    } else {
-                        0
-                    };
-
-                    let new_pos = target_line_start + col_offset.min(target_line_len);
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: new_pos,
@@ -2197,44 +2179,18 @@ impl Editor {
             Action::MovePageDown => {
                 let lines_per_page = state.viewport.height as usize;
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    // Find current line start and calculate column offset
                     let mut iter = state.buffer.line_iterator(cursor.position);
-                    let Some((current_line_start, _)) = iter.next() else {
-                        continue;
-                    };
-                    let col_offset = cursor.position - current_line_start;
+                    let mut new_pos = cursor.position;
 
-                    // Go forward by lines_per_page (we already consumed current line)
-                    let mut target_line_start = current_line_start;
                     for _ in 0..lines_per_page {
-                        if let Some((line_byte, _)) = iter.next() {
-                            target_line_start = line_byte;
+                        if let Some((line_start, _)) = iter.next() {
+                            new_pos = line_start;
                         } else {
-                            // Hit end of file - go to EOF
-                            target_line_start = state.buffer.len();
+                            new_pos = state.buffer.len();
                             break;
                         }
                     }
 
-                    // Clamp to EOF
-                    if target_line_start >= state.buffer.len() {
-                        events.push(Event::MoveCursor {
-                            cursor_id,
-                            position: state.buffer.len(),
-                            anchor: None,
-                        });
-                        continue;
-                    }
-
-                    // Calculate target line length to clamp column offset
-                    let mut target_iter = state.buffer.line_iterator(target_line_start);
-                    let target_line_len = if let Some((_, line_content)) = target_iter.next() {
-                        line_content.trim_end_matches('\n').len()
-                    } else {
-                        0
-                    };
-
-                    let new_pos = target_line_start + col_offset.min(target_line_len);
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: new_pos,
