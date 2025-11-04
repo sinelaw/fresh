@@ -10,7 +10,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Tabs},
+    widgets::{Block, Borders, Paragraph},
     Frame,
 };
 use std::collections::HashMap;
@@ -292,9 +292,23 @@ impl Editor {
             }
         }
 
-        // Create new buffer for this file
-        let buffer_id = BufferId(self.next_buffer_id);
-        self.next_buffer_id += 1;
+        // If the current buffer is empty and unmodified, replace it instead of creating a new one
+        let replace_current = {
+            let current_state = self.buffers.get(&self.active_buffer).unwrap();
+            current_state.buffer.is_empty()
+                && !current_state.buffer.is_modified()
+                && current_state.buffer.file_path().is_none()
+        };
+
+        let buffer_id = if replace_current {
+            // Reuse the current empty buffer
+            self.active_buffer
+        } else {
+            // Create new buffer for this file
+            let id = BufferId(self.next_buffer_id);
+            self.next_buffer_id += 1;
+            id
+        };
 
         let state = EditorState::from_file(path, self.terminal_width, self.terminal_height)?;
         self.buffers.insert(buffer_id, state);
@@ -399,7 +413,8 @@ impl Editor {
 
     /// Switch to next buffer
     pub fn next_buffer(&mut self) {
-        let ids: Vec<_> = self.buffers.keys().copied().collect();
+        let mut ids: Vec<_> = self.buffers.keys().copied().collect();
+        ids.sort_by_key(|id| id.0); // Sort by buffer ID to ensure consistent order
         if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer) {
             let next_idx = (idx + 1) % ids.len();
             self.active_buffer = ids[next_idx];
@@ -408,7 +423,8 @@ impl Editor {
 
     /// Switch to previous buffer
     pub fn prev_buffer(&mut self) {
-        let ids: Vec<_> = self.buffers.keys().copied().collect();
+        let mut ids: Vec<_> = self.buffers.keys().copied().collect();
+        ids.sort_by_key(|id| id.0); // Sort by buffer ID to ensure consistent order
         if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer) {
             let prev_idx = if idx == 0 { ids.len() - 1 } else { idx - 1 };
             self.active_buffer = ids[prev_idx];
@@ -1280,6 +1296,8 @@ impl Editor {
             Action::AddCursorAbove => self.add_cursor_above(),
             Action::AddCursorBelow => self.add_cursor_below(),
             Action::RemoveSecondaryCursors => self.active_state_mut().cursors.remove_secondary(),
+            Action::NextBuffer => self.next_buffer(),
+            Action::PrevBuffer => self.prev_buffer(),
             Action::None => {}
             _ => {
                 // Convert action to events and apply them
@@ -1373,40 +1391,51 @@ impl Editor {
 
     /// Render the tab bar
     fn render_tabs(&self, frame: &mut Frame, area: Rect) {
-        let titles: Vec<String> = self
-            .buffers
-            .keys()
-            .map(|id| {
-                let state = &self.buffers[id];
-                let name = state
-                    .buffer
-                    .file_path()
-                    .and_then(|p| p.file_name())
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("[No Name]");
+        // Build spans for each tab with individual background colors
+        let mut spans = Vec::new();
 
-                let modified = if state.buffer.is_modified() { "*" } else { "" };
+        // Sort buffer IDs to ensure consistent tab order
+        let mut buffer_ids: Vec<_> = self.buffers.keys().copied().collect();
+        buffer_ids.sort_by_key(|id| id.0);
 
-                format!(" {name}{modified} ")
-            })
-            .collect();
+        for (idx, id) in buffer_ids.iter().enumerate() {
+            let state = &self.buffers[id];
+            let name = state
+                .buffer
+                .file_path()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("[No Name]");
 
-        let selected = self
-            .buffers
-            .keys()
-            .position(|id| *id == self.active_buffer)
-            .unwrap_or(0);
+            let modified = if state.buffer.is_modified() { "*" } else { "" };
+            let tab_text = format!(" {name}{modified} ");
 
-        let tabs = Tabs::new(titles)
-            .select(selected)
-            .style(Style::default().fg(Color::White))
-            .highlight_style(
+            let is_active = *id == self.active_buffer;
+
+            // Active tab: bright yellow text on blue background with bold
+            // Inactive tabs: white text on dark gray background
+            let style = if is_active {
                 Style::default()
                     .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            );
+                    .bg(Color::Blue)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::DarkGray)
+            };
 
-        frame.render_widget(tabs, area);
+            spans.push(Span::styled(tab_text, style));
+
+            // Add a small separator between tabs (single space with no background)
+            if idx < self.buffers.len() - 1 {
+                spans.push(Span::raw(" "));
+            }
+        }
+
+        let line = Line::from(spans);
+        let paragraph = Paragraph::new(line).style(Style::default().bg(Color::Black));
+        frame.render_widget(paragraph, area);
     }
 
     /// Render the main content area
@@ -2781,7 +2810,9 @@ impl Editor {
             | Action::Undo
             | Action::Redo
             | Action::ShowHelp
-            | Action::CommandPalette => {
+            | Action::CommandPalette
+            | Action::NextBuffer
+            | Action::PrevBuffer => {
                 // These actions need special handling in the event loop:
                 // - Clipboard operations need system clipboard access
                 // - File operations need Editor-level state changes
@@ -2789,6 +2820,7 @@ impl Editor {
                 // - Multi-cursor add operations need visual line calculations
                 // - ShowHelp toggles help view
                 // - CommandPalette opens the command palette prompt
+                // - Buffer navigation switches between open buffers
                 return None;
             }
         }

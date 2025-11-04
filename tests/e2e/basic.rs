@@ -72,10 +72,63 @@ fn test_multi_buffer_workflow() {
     harness.assert_screen_contains("file1.txt");
     harness.assert_screen_contains("file2.txt");
 
-    // TODO: When action_to_events() is implemented:
-    // - Switch between buffers
-    // - Edit both files
-    // - Verify buffer switching works correctly
+    // TODO: Edit both files and verify buffer switching works correctly
+}
+
+/// Test buffer switching with keyboard shortcuts
+#[test]
+fn test_buffer_switching() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let temp_dir = TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("alpha.txt");
+    let file2 = temp_dir.path().join("beta.txt");
+
+    std::fs::write(&file1, "Content of alpha").unwrap();
+    std::fs::write(&file2, "Content of beta").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open first file
+    harness.open_file(&file1).unwrap();
+    harness.assert_buffer_content("Content of alpha");
+
+    // Open second file (becomes active)
+    harness.open_file(&file2).unwrap();
+    harness.assert_buffer_content("Content of beta");
+
+    // Verify both tabs are visible and beta is active
+    harness.render().unwrap();
+    harness.assert_screen_contains("alpha.txt");
+    harness.assert_screen_contains("beta.txt");
+
+    // Switch to previous buffer (alpha) using Alt+[
+    harness
+        .send_key(KeyCode::Char('['), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_buffer_content("Content of alpha");
+
+    // Switch to next buffer (beta) using Alt+]
+    harness
+        .send_key(KeyCode::Char(']'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_buffer_content("Content of beta");
+
+    // Test cycling: next from beta should go to alpha
+    harness
+        .send_key(KeyCode::Char(']'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_buffer_content("Content of alpha");
+
+    // Test cycling backwards: prev from alpha should go to beta
+    harness
+        .send_key(KeyCode::Char('['), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_buffer_content("Content of beta");
 }
 
 /// Test that opening a file creates viewport with correct dimensions

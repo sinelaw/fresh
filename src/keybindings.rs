@@ -78,6 +78,10 @@ pub enum Action {
     ShowHelp,
     CommandPalette,
 
+    // Buffer navigation
+    NextBuffer,
+    PrevBuffer,
+
     // No-op
     None,
 }
@@ -155,6 +159,9 @@ impl Action {
             "scroll_down" => Some(Action::ScrollDown),
             "show_help" => Some(Action::ShowHelp),
             "command_palette" => Some(Action::CommandPalette),
+
+            "next_buffer" => Some(Action::NextBuffer),
+            "prev_buffer" => Some(Action::PrevBuffer),
 
             _ => None,
         }
@@ -418,6 +425,16 @@ impl KeybindingResolver {
             Action::CommandPalette,
         );
 
+        // Buffer navigation (Alt+[ and Alt+])
+        bindings.insert(
+            (KeyCode::Char('['), KeyModifiers::ALT),
+            Action::PrevBuffer,
+        );
+        bindings.insert(
+            (KeyCode::Char(']'), KeyModifiers::ALT),
+            Action::NextBuffer,
+        );
+
         bindings
     }
 
@@ -546,6 +563,8 @@ impl KeybindingResolver {
             Action::ScrollDown => "Scroll down".to_string(),
             Action::ShowHelp => "Show help".to_string(),
             Action::CommandPalette => "Command palette".to_string(),
+            Action::NextBuffer => "Next buffer".to_string(),
+            Action::PrevBuffer => "Previous buffer".to_string(),
             Action::None => "No action".to_string(),
         }
     }
