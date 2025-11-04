@@ -19,6 +19,9 @@ tree-sitter-rust = "0.23.2"
 
 lsp-types = "0.95"
 tokio = { version = "1.42", features = ["rt", "rt-multi-thread", "io-util", "sync", "process", "time", "macros"] }
+ctrlc = "3.4"
+libc = "0.2"
+nix = { version = "0.29", features = ["signal", "pthread"] }
 
 [dev-dependencies]
 proptest = "1.0"

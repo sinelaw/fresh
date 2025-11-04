@@ -19,6 +19,7 @@ pub mod lsp_manager;
 pub mod overlay;
 pub mod persistence;
 pub mod popup;
+pub mod signal_handler;
 pub mod state;
 pub mod viewport;
 pub mod virtual_buffer;

@@ -7,7 +7,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
-use editor::{config, editor::Editor};
+use editor::{config, editor::Editor, signal_handler};
 use ratatui::Terminal;
 use std::{
     io::{self, stdout},
@@ -43,6 +43,10 @@ fn main() -> io::Result<()> {
         .init();
 
     tracing::info!("Editor starting");
+
+    // Install signal handlers for SIGTERM and SIGINT
+    signal_handler::install_signal_handlers();
+    tracing::info!("Signal handlers installed");
 
     // Set up panic hook to restore terminal
     let original_hook = std::panic::take_hook();
