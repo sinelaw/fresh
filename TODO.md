@@ -22,10 +22,10 @@
 
 ## Current Status
 
-**Phase**: 3.5 In Progress (Core UI Primitives)
-**Tests**: 70 passing (59 original + 11 new overlay/popup tests)
-**Completed**: Overlay system ✅, Popup system ✅
-**Next**: Integrate popups into Editor, render overlays in viewport
+**Phase**: 3.5 Complete ✅ (Core UI Primitives)
+**Tests**: 85 passing (59 original + 11 overlay/popup unit tests + 15 integration tests)
+**Completed**: Overlay system ✅, Popup system ✅, Event-driven API ✅, Editor integration ✅, Navigation keybindings ✅
+**Next**: Use primitives for LSP diagnostics display (Phase 4.2)
 **Philosophy**: Emacs-style general-purpose primitives enable multiple use cases (LSP, search, selections)
 
 ---
@@ -72,7 +72,8 @@
 - [x] Z-ordering by priority for overlapping overlays ✅
 - [x] Helper methods for common cases (error, warning, info, hint, selection) ✅
 - [x] Integrated into EditorState ✅
-- [ ] Render overlays in viewport (underlines, highlights, backgrounds) - next
+- [x] Event-driven API (AddOverlay, RemoveOverlay, ClearOverlays) ✅
+- [ ] Render overlays in viewport (underlines, highlights, backgrounds) - deferred to Phase 4.2
 
 ### 3.5.2 Popup/Floating Window System (`popup.rs`) ✅
 - [x] Popup struct: position, size, content, border style ✅
@@ -81,7 +82,11 @@
 - [x] Handle popup input/navigation (arrow keys, page up/down) ✅
 - [x] Auto-positioning to keep popup on screen ✅
 - [x] List support with selection and icons ✅
-- [ ] Integrate PopupManager into Editor - next
+- [x] Integrated into EditorState ✅
+- [x] Event-driven API (ShowPopup, HidePopup, PopupSelectNext/Prev, etc.) ✅
+- [x] Integrated into Editor::render() ✅
+- [x] Keybindings for navigation (Up/Down/PageUp/PageDown/Esc/Enter) ✅
+- [x] E2E tests for popups ✅
 
 ### 3.5.3 Annotation/Margin System (`margin.rs`)
 - [ ] Left margin support for line numbers, symbols, etc.
@@ -130,6 +135,10 @@
 - [x] Show keybindings ✅ Complete (via Show Help command)
 
 ### 5.3 Keybinding System Refactoring
+- [ ] Design context-aware keybinding system with priority/overlays (Emacs-style)
+  - Different keybinding contexts based on UI state (help mode, prompt mode, popup visible, normal mode)
+  - Priority-based keybinding resolution (popup keys override normal keys when popup visible)
+  - Inspiration: Emacs minor/major modes, modal keymaps
 - [ ] Replace hardcoded key event handlers in `Editor::handle_key()` with `KeybindingResolver`
 - [ ] Eliminate duplicated key matching logic
 - [ ] Make all keybindings customizable via config.json

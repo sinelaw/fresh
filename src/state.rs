@@ -1,9 +1,11 @@
 use crate::buffer::{Buffer, LineNumber};
 use crate::cursor::{Cursor, Cursors};
-use crate::event::Event;
+use crate::event::{Event, OverlayFace as EventOverlayFace, PopupData, PopupPositionData};
 use crate::highlighter::{Highlighter, Language};
-use crate::overlay::OverlayManager;
+use crate::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
+use crate::popup::{Popup, PopupContent, PopupListItem, PopupManager, PopupPosition};
 use crate::viewport::Viewport;
+use ratatui::style::{Color, Style};
 
 /// The complete editor state - everything needed to represent the current editing session
 pub struct EditorState {
@@ -21,6 +23,9 @@ pub struct EditorState {
 
     /// Overlays for visual decorations (underlines, highlights, etc.)
     pub overlays: OverlayManager,
+
+    /// Popups for floating windows (completion, documentation, etc.)
+    pub popups: PopupManager,
 
     /// Cached line number for primary cursor (0-indexed)
     /// Maintained incrementally to avoid O(n) scanning on every render
@@ -47,6 +52,7 @@ impl EditorState {
             viewport: Viewport::new(width, content_height),
             highlighter: None, // No file path, so no syntax highlighting
             overlays: OverlayManager::new(),
+            popups: PopupManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
         }
@@ -74,6 +80,7 @@ impl EditorState {
             viewport: Viewport::new(width, content_height),
             highlighter,
             overlays: OverlayManager::new(),
+            popups: PopupManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
         })
@@ -243,6 +250,74 @@ impl EditorState {
             Event::ChangeMode { mode } => {
                 self.mode = mode.clone();
             }
+
+            Event::AddOverlay {
+                overlay_id,
+                range,
+                face,
+                priority,
+                message,
+            } => {
+                // Convert event overlay face to overlay face
+                let overlay_face = convert_event_face_to_overlay_face(face);
+                let overlay = Overlay {
+                    range: range.clone(),
+                    face: overlay_face,
+                    priority: *priority,
+                    id: Some(overlay_id.clone()),
+                    message: message.clone(),
+                };
+                self.overlays.add(overlay);
+            }
+
+            Event::RemoveOverlay { overlay_id } => {
+                self.overlays.remove_by_id(overlay_id);
+            }
+
+            Event::RemoveOverlaysInRange { range } => {
+                self.overlays.remove_in_range(range);
+            }
+
+            Event::ClearOverlays => {
+                self.overlays = OverlayManager::new();
+            }
+
+            Event::ShowPopup { popup } => {
+                let popup_obj = convert_popup_data_to_popup(popup);
+                self.popups.show(popup_obj);
+            }
+
+            Event::HidePopup => {
+                self.popups.hide();
+            }
+
+            Event::ClearPopups => {
+                self.popups.clear();
+            }
+
+            Event::PopupSelectNext => {
+                if let Some(popup) = self.popups.top_mut() {
+                    popup.select_next();
+                }
+            }
+
+            Event::PopupSelectPrev => {
+                if let Some(popup) = self.popups.top_mut() {
+                    popup.select_prev();
+                }
+            }
+
+            Event::PopupPageDown => {
+                if let Some(popup) = self.popups.top_mut() {
+                    popup.page_down();
+                }
+            }
+
+            Event::PopupPageUp => {
+                if let Some(popup) = self.popups.top_mut() {
+                    popup.page_up();
+                }
+            }
         }
     }
 
@@ -285,6 +360,71 @@ impl EditorState {
         let primary = *self.cursors.primary();
         self.viewport.ensure_visible(&mut self.buffer, &primary);
     }
+}
+
+/// Convert event overlay face to the actual overlay face
+fn convert_event_face_to_overlay_face(event_face: &EventOverlayFace) -> OverlayFace {
+    match event_face {
+        EventOverlayFace::Underline { color, style } => {
+            let underline_style = match style {
+                crate::event::UnderlineStyle::Straight => UnderlineStyle::Straight,
+                crate::event::UnderlineStyle::Wavy => UnderlineStyle::Wavy,
+                crate::event::UnderlineStyle::Dotted => UnderlineStyle::Dotted,
+                crate::event::UnderlineStyle::Dashed => UnderlineStyle::Dashed,
+            };
+            OverlayFace::Underline {
+                color: Color::Rgb(color.0, color.1, color.2),
+                style: underline_style,
+            }
+        }
+        EventOverlayFace::Background { color } => OverlayFace::Background {
+            color: Color::Rgb(color.0, color.1, color.2),
+        },
+        EventOverlayFace::Foreground { color } => OverlayFace::Foreground {
+            color: Color::Rgb(color.0, color.1, color.2),
+        },
+    }
+}
+
+/// Convert popup data to the actual popup object
+fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
+    let content = match &data.content {
+        crate::event::PopupContentData::Text(lines) => PopupContent::Text(lines.clone()),
+        crate::event::PopupContentData::List { items, selected } => PopupContent::List {
+            items: items
+                .iter()
+                .map(|item| PopupListItem {
+                    text: item.text.clone(),
+                    detail: item.detail.clone(),
+                    icon: item.icon.clone(),
+                    data: item.data.clone(),
+                })
+                .collect(),
+            selected: *selected,
+        },
+    };
+
+    let position = match data.position {
+        PopupPositionData::AtCursor => PopupPosition::AtCursor,
+        PopupPositionData::BelowCursor => PopupPosition::BelowCursor,
+        PopupPositionData::AboveCursor => PopupPosition::AboveCursor,
+        PopupPositionData::Fixed { x, y } => PopupPosition::Fixed { x, y },
+        PopupPositionData::Centered => PopupPosition::Centered,
+    };
+
+    let popup = Popup {
+        title: data.title.clone(),
+        content,
+        position,
+        width: data.width,
+        max_height: data.max_height,
+        bordered: data.bordered,
+        border_style: Style::default().fg(Color::Gray),
+        background_style: Style::default().bg(Color::Rgb(30, 30, 30)),
+        scroll_offset: 0,
+    };
+
+    popup
 }
 
 #[cfg(test)]

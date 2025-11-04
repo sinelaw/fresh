@@ -13,6 +13,7 @@ use ratatui::{
 };
 use std::collections::HashMap;
 use std::io;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 /// Unique identifier for a buffer
@@ -1032,6 +1033,47 @@ impl Editor {
             }
         }
 
+        // Handle popup navigation (if popup is visible)
+        if self.active_state().popups.is_visible() {
+            match (code, modifiers) {
+                // Navigate popup with arrow keys
+                (KeyCode::Up, KeyModifiers::NONE) => {
+                    self.popup_select_prev();
+                    return Ok(());
+                }
+                (KeyCode::Down, KeyModifiers::NONE) => {
+                    self.popup_select_next();
+                    return Ok(());
+                }
+                // Page up/down for popup scrolling
+                (KeyCode::PageUp, KeyModifiers::NONE) => {
+                    self.popup_page_up();
+                    return Ok(());
+                }
+                (KeyCode::PageDown, KeyModifiers::NONE) => {
+                    self.popup_page_down();
+                    return Ok(());
+                }
+                // Escape to close popup
+                (KeyCode::Esc, KeyModifiers::NONE) => {
+                    self.hide_popup();
+                    return Ok(());
+                }
+                // Enter to accept current selection (let it fall through for now)
+                (KeyCode::Enter, KeyModifiers::NONE) => {
+                    // For now, just close the popup
+                    // In the future, this could trigger an action based on the selected item
+                    self.hide_popup();
+                    return Ok(());
+                }
+                // Other keys: close popup and handle normally
+                _ => {
+                    self.hide_popup();
+                    // Don't return - let the key be handled normally below
+                }
+            }
+        }
+
         // Normal mode: use keybinding resolver to convert key to action
         let key_event = crossterm::event::KeyEvent::new(code, modifiers);
         let action = self.keybindings.resolve(&key_event);
@@ -1143,6 +1185,23 @@ impl Editor {
         } else {
             // Status bar is in chunks[2]
             self.render_status_bar(frame, chunks[2]);
+        }
+
+        // Render popups from the active buffer state
+        let state = self.active_state_mut();
+        if state.popups.is_visible() {
+            // Get the primary cursor position for popup positioning
+            let primary_cursor = state.cursors.primary();
+            let cursor_screen_pos = state.viewport.cursor_screen_position(&mut state.buffer, primary_cursor);
+
+            // Adjust cursor position to account for tab bar (1 line offset)
+            let cursor_screen_pos = (cursor_screen_pos.0, cursor_screen_pos.1 + 1);
+
+            // Render all popups (bottom to top)
+            for popup in state.popups.all() {
+                let popup_area = popup.calculate_area(size, Some(cursor_screen_pos));
+                popup.render(frame, popup_area);
+            }
         }
     }
 
@@ -1530,6 +1589,100 @@ impl Editor {
         } else {
             self.help_scroll = self.help_scroll.saturating_sub(delta.unsigned_abs());
         }
+    }
+
+    // === Overlay Management (Event-Driven) ===
+
+    /// Add an overlay for decorations (underlines, highlights, etc.)
+    pub fn add_overlay(
+        &mut self,
+        overlay_id: String,
+        range: Range<usize>,
+        face: crate::event::OverlayFace,
+        priority: i32,
+        message: Option<String>,
+    ) {
+        let event = Event::AddOverlay {
+            overlay_id,
+            range,
+            face,
+            priority,
+            message,
+        };
+        self.active_event_log_mut().append(event.clone());
+        self.active_state_mut().apply(&event);
+    }
+
+    /// Remove an overlay by ID
+    pub fn remove_overlay(&mut self, overlay_id: String) {
+        let event = Event::RemoveOverlay { overlay_id };
+        self.active_event_log_mut().append(event.clone());
+        self.active_state_mut().apply(&event);
+    }
+
+    /// Remove all overlays in a range
+    pub fn remove_overlays_in_range(&mut self, range: Range<usize>) {
+        let event = Event::RemoveOverlaysInRange { range };
+        self.active_event_log_mut().append(event.clone());
+        self.active_state_mut().apply(&event);
+    }
+
+    /// Clear all overlays
+    pub fn clear_overlays(&mut self) {
+        let event = Event::ClearOverlays;
+        self.active_event_log_mut().append(event.clone());
+        self.active_state_mut().apply(&event);
+    }
+
+    // === Popup Management (Event-Driven) ===
+
+    /// Show a popup window
+    pub fn show_popup(&mut self, popup: crate::event::PopupData) {
+        let event = Event::ShowPopup { popup };
+        self.active_event_log_mut().append(event.clone());
+        self.active_state_mut().apply(&event);
+    }
+
+    /// Hide the topmost popup
+    pub fn hide_popup(&mut self) {
+        let event = Event::HidePopup;
+        self.active_event_log_mut().append(event.clone());
+        self.active_state_mut().apply(&event);
+    }
+
+    /// Clear all popups
+    pub fn clear_popups(&mut self) {
+        let event = Event::ClearPopups;
+        self.active_event_log_mut().append(event.clone());
+        self.active_state_mut().apply(&event);
+    }
+
+    /// Navigate popup selection (next item)
+    pub fn popup_select_next(&mut self) {
+        let event = Event::PopupSelectNext;
+        self.active_event_log_mut().append(event.clone());
+        self.active_state_mut().apply(&event);
+    }
+
+    /// Navigate popup selection (previous item)
+    pub fn popup_select_prev(&mut self) {
+        let event = Event::PopupSelectPrev;
+        self.active_event_log_mut().append(event.clone());
+        self.active_state_mut().apply(&event);
+    }
+
+    /// Navigate popup (page down)
+    pub fn popup_page_down(&mut self) {
+        let event = Event::PopupPageDown;
+        self.active_event_log_mut().append(event.clone());
+        self.active_state_mut().apply(&event);
+    }
+
+    /// Navigate popup (page up)
+    pub fn popup_page_up(&mut self) {
+        let event = Event::PopupPageUp;
+        self.active_event_log_mut().append(event.clone());
+        self.active_state_mut().apply(&event);
     }
 
     /// Helper: Check if a byte is a word character (alphanumeric or underscore)

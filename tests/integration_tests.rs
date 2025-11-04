@@ -294,3 +294,200 @@ fn test_viewport_resize_maintains_cursor() {
         "After resize, cursor should be within buffer bounds"
     );
 }
+
+/// Test overlay events - adding and removing overlays
+#[test]
+fn test_overlay_events() {
+    use editor::event::{OverlayFace, UnderlineStyle};
+    
+    let mut state = EditorState::new(80, 24);
+    
+    // Insert some text
+    state.apply(&Event::Insert {
+        position: 0,
+        text: "hello world".to_string(),
+        cursor_id: CursorId(0),
+    });
+    
+    // Add an error overlay
+    state.apply(&Event::AddOverlay {
+        overlay_id: "error1".to_string(),
+        range: 0..5,
+        face: OverlayFace::Underline {
+            color: (255, 0, 0),
+            style: UnderlineStyle::Wavy,
+        },
+        priority: 100,
+        message: Some("Error here".to_string()),
+    });
+    
+    // Check overlay was added
+    let overlays_at_pos = state.overlays.at_position(2);
+    assert_eq!(overlays_at_pos.len(), 1);
+    assert_eq!(overlays_at_pos[0].id, Some("error1".to_string()));
+    
+    // Add a warning overlay with lower priority
+    state.apply(&Event::AddOverlay {
+        overlay_id: "warning1".to_string(),
+        range: 3..8,
+        face: OverlayFace::Underline {
+            color: (255, 255, 0),
+            style: UnderlineStyle::Wavy,
+        },
+        priority: 50,
+        message: Some("Warning here".to_string()),
+    });
+    
+    // Position 4 should have both overlays, sorted by priority (ascending)
+    let overlays_at_4 = state.overlays.at_position(4);
+    assert_eq!(overlays_at_4.len(), 2);
+    assert_eq!(overlays_at_4[0].priority, 50);  // Warning (lower priority) comes first
+    assert_eq!(overlays_at_4[1].priority, 100); // Error (higher priority) comes second
+    
+    // Remove error overlay
+    state.apply(&Event::RemoveOverlay {
+        overlay_id: "error1".to_string(),
+    });
+    
+    // Now position 4 should only have warning
+    let overlays_at_4 = state.overlays.at_position(4);
+    assert_eq!(overlays_at_4.len(), 1);
+    assert_eq!(overlays_at_4[0].id, Some("warning1".to_string()));
+    
+    // Clear all overlays
+    state.apply(&Event::ClearOverlays);
+    let overlays_after_clear = state.overlays.at_position(4);
+    assert_eq!(overlays_after_clear.len(), 0);
+}
+
+/// Test popup events - showing, navigating, and hiding popups
+#[test]
+fn test_popup_events() {
+    use editor::event::{PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+    
+    let mut state = EditorState::new(80, 24);
+    
+    // Create a popup with list items
+    let popup_data = PopupData {
+        title: Some("Test Popup".to_string()),
+        content: PopupContentData::List {
+            items: vec![
+                PopupListItemData {
+                    text: "Item 1".to_string(),
+                    detail: Some("First item".to_string()),
+                    icon: Some("📄".to_string()),
+                    data: None,
+                },
+                PopupListItemData {
+                    text: "Item 2".to_string(),
+                    detail: Some("Second item".to_string()),
+                    icon: Some("📄".to_string()),
+                    data: None,
+                },
+                PopupListItemData {
+                    text: "Item 3".to_string(),
+                    detail: Some("Third item".to_string()),
+                    icon: Some("📄".to_string()),
+                    data: None,
+                },
+            ],
+            selected: 0,
+        },
+        position: PopupPositionData::Centered,
+        width: 40,
+        max_height: 10,
+        bordered: true,
+    };
+    
+    // Show the popup
+    state.apply(&Event::ShowPopup {
+        popup: popup_data,
+    });
+    
+    // Check popup is visible
+    assert!(state.popups.is_visible());
+    let popup = state.popups.top().unwrap();
+    assert_eq!(popup.title, Some("Test Popup".to_string()));
+    
+    // Navigate down
+    state.apply(&Event::PopupSelectNext);
+    
+    // Check selection moved to item 1
+    let popup = state.popups.top().unwrap();
+    let selected_item = popup.selected_item().unwrap();
+    assert_eq!(selected_item.text, "Item 2");
+    
+    // Navigate down again
+    state.apply(&Event::PopupSelectNext);
+    let popup = state.popups.top().unwrap();
+    let selected_item = popup.selected_item().unwrap();
+    assert_eq!(selected_item.text, "Item 3");
+    
+    // Navigate up
+    state.apply(&Event::PopupSelectPrev);
+    let popup = state.popups.top().unwrap();
+    let selected_item = popup.selected_item().unwrap();
+    assert_eq!(selected_item.text, "Item 2");
+    
+    // Hide popup
+    state.apply(&Event::HidePopup);
+    assert!(!state.popups.is_visible());
+}
+
+/// Test that overlays persist through undo/redo
+#[test]
+fn test_overlay_undo_redo() {
+    use editor::event::{OverlayFace, UnderlineStyle};
+    
+    let mut log = EventLog::new();
+    let mut state = EditorState::new(80, 24);
+    
+    // Insert text and add overlay
+    let event1 = Event::Insert {
+        position: 0,
+        text: "hello".to_string(),
+        cursor_id: CursorId(0),
+    };
+    log.append(event1.clone());
+    state.apply(&event1);
+    
+    let event2 = Event::AddOverlay {
+        overlay_id: "test".to_string(),
+        range: 0..5,
+        face: OverlayFace::Underline {
+            color: (255, 0, 0),
+            style: UnderlineStyle::Wavy,
+        },
+        priority: 100,
+        message: None,
+    };
+    log.append(event2.clone());
+    state.apply(&event2);
+    
+    // Verify overlay exists
+    assert_eq!(state.overlays.at_position(2).len(), 1);
+    
+    // Undo the overlay addition
+    log.undo();
+    let mut new_state = EditorState::new(80, 24);
+    for i in 0..log.current_index() {
+        if let Some(entry) = log.entries().get(i) {
+            new_state.apply(&entry.event);
+        }
+    }
+    
+    // Overlay should be gone
+    assert_eq!(new_state.overlays.at_position(2).len(), 0);
+    
+    // Redo
+    log.redo();
+    let mut final_state = EditorState::new(80, 24);
+    for i in 0..log.current_index() {
+        if let Some(entry) = log.entries().get(i) {
+            final_state.apply(&entry.event);
+        }
+    }
+    
+    // Overlay should be back
+    assert_eq!(final_state.overlays.at_position(2).len(), 1);
+}

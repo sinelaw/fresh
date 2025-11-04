@@ -47,6 +47,103 @@ pub enum Event {
 
     /// Change mode (if implementing modal editing)
     ChangeMode { mode: String },
+
+    /// Add an overlay (for decorations like underlines, highlights)
+    AddOverlay {
+        overlay_id: String,
+        range: Range<usize>,
+        face: OverlayFace,
+        priority: i32,
+        message: Option<String>,
+    },
+
+    /// Remove overlay by ID
+    RemoveOverlay { overlay_id: String },
+
+    /// Remove all overlays in a range
+    RemoveOverlaysInRange { range: Range<usize> },
+
+    /// Clear all overlays
+    ClearOverlays,
+
+    /// Show a popup
+    ShowPopup { popup: PopupData },
+
+    /// Hide the topmost popup
+    HidePopup,
+
+    /// Clear all popups
+    ClearPopups,
+
+    /// Navigate popup selection (for list popups)
+    PopupSelectNext,
+    PopupSelectPrev,
+    PopupPageDown,
+    PopupPageUp,
+}
+
+/// Overlay face data for events (must be serializable)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum OverlayFace {
+    Underline {
+        color: (u8, u8, u8), // RGB color
+        style: UnderlineStyle,
+    },
+    Background {
+        color: (u8, u8, u8),
+    },
+    Foreground {
+        color: (u8, u8, u8),
+    },
+}
+
+/// Underline style for overlays
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum UnderlineStyle {
+    Straight,
+    Wavy,
+    Dotted,
+    Dashed,
+}
+
+/// Popup data for events (must be serializable)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PopupData {
+    pub title: Option<String>,
+    pub content: PopupContentData,
+    pub position: PopupPositionData,
+    pub width: u16,
+    pub max_height: u16,
+    pub bordered: bool,
+}
+
+/// Popup content for events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PopupContentData {
+    Text(Vec<String>),
+    List {
+        items: Vec<PopupListItemData>,
+        selected: usize,
+    },
+}
+
+/// Popup list item for events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PopupListItemData {
+    pub text: String,
+    pub detail: Option<String>,
+    pub icon: Option<String>,
+    pub data: Option<String>,
+}
+
+/// Popup position for events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PopupPositionData {
+    AtCursor,
+    BelowCursor,
+    AboveCursor,
+    Fixed { x: u16, y: u16 },
+    Centered,
 }
 
 impl Event {
