@@ -11,6 +11,7 @@ pub mod event;
 pub mod highlighter;
 pub mod keybindings;
 pub mod line_cache;
+pub mod lsp;
 pub mod persistence;
 pub mod state;
 pub mod viewport;

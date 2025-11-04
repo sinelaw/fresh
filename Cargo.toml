@@ -17,6 +17,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tree-sitter-highlight = "0.24.7"
 tree-sitter-rust = "0.23.2"
 
+lsp-types = "0.95"
+
 [dev-dependencies]
 proptest = "1.0"
 criterion = "0.5"

@@ -17,12 +17,14 @@
 - **Configuration**: JSON-based config with keybindings, theme, editor settings
 - **High performance**: ChunkTree buffer, line cache, <1ms operations
 - **Testing**: 59 E2E tests, property tests, benchmarks
+- **LSP Integration (Basic)**: JSON-RPC client, LspManager, rust-analyzer support, didOpen/didChange notifications
 
 ## Current Status
 
-**Phase**: 2.3 Partially Complete ✅ (Advanced Selection - word/line/expand)
+**Phase**: 4.1 Complete ✅ (LSP Client - Basic Integration)
 **Tests**: 59 passing (59 E2E + unit + property tests)
-**Next**: Phase 2.4 - Smart Editing (or continue with rectangular selection)
+**Next**: Phase 4.2 - Diagnostics Display & Completion UI
+**LSP**: rust-analyzer integration working - didOpen/didChange notifications functional
 
 ---
 
@@ -59,26 +61,28 @@
 
 ## Phase 4: LSP Integration
 
-### 4.1 LSP Client (`lsp.rs`)
-- [ ] Implement JSON-RPC protocol over stdin/stdout
-- [ ] Implement initialize, did_open, did_change, shutdown
-- [ ] Handle request/response tracking
-- [ ] Handle server lifecycle (crash detection, restart)
+### 4.1 LSP Client (`lsp.rs`) ✅
+- [x] Implement JSON-RPC protocol over stdin/stdout ✅
+- [x] Implement initialize, did_open, did_change, shutdown ✅
+- [x] Handle request/response tracking ✅
+- [x] Handle server lifecycle (crash detection, restart) ✅
 
 ### 4.2 Basic LSP Features
-- [ ] Diagnostics (inline squiggly underlines)
-- [ ] Completion (popup with fuzzy filter)
-- [ ] Convert events to LSP changes
+- [x] Diagnostics receiving (stored in LspClient) ✅
+- [ ] Diagnostics display (inline squiggly underlines) - rendering not yet implemented
+- [ ] Completion (popup with fuzzy filter) - not yet implemented
+- [x] Convert events to LSP changes (full document sync) ✅
 
 ### 4.3 Advanced LSP Features
 - [ ] Go-to-definition (Ctrl+B or F12)
 - [ ] Hover documentation (Ctrl+K Ctrl+I)
 - [ ] Code actions (lightbulb menu)
 
-### 4.4 LSP Manager
-- [ ] One server per language
-- [ ] Route requests to appropriate server
-- [ ] Configure in config.json
+### 4.4 LSP Manager ✅
+- [x] One server per language ✅
+- [x] Route requests to appropriate server ✅
+- [x] Configure in config.json ✅
+- [x] Integrated into Editor with didOpen/didChange ✅
 
 ---
 
@@ -143,8 +147,10 @@
 ## Timeline Estimate
 
 - **Phase 0-2.2**: ✅ Complete
-- **Phase 2.3-2.4**: 1-2 days (next)
-- **Phase 3**: 1 day
-- **Phase 4**: 2-3 days
-- **Phase 5**: 1-2 days
-- **Total to production**: ~7-10 days remaining
+- **Phase 2.3**: ✅ Complete (Advanced Selection)
+- **Phase 2.4**: 1 day (Smart Editing - next for multi-cursor features)
+- **Phase 3**: 1 day (Syntax Highlighting)
+- **Phase 4.1**: ✅ Complete (LSP Client & Basic Integration)
+- **Phase 4.2-4.3**: 2-3 days (Diagnostics UI, Completion, Advanced LSP)
+- **Phase 5**: 1-2 days (Polish & Optimization)
+- **Total to production**: ~5-7 days remaining

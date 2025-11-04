@@ -1,7 +1,9 @@
 use crate::config::Config;
 use crate::event::{Event, EventLog};
 use crate::keybindings::{Action, KeybindingResolver};
+use crate::lsp::{detect_language, LspManager};
 use crate::state::EditorState;
+use lsp_types::{TextDocumentContentChangeEvent, Url};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -11,7 +13,7 @@ use ratatui::{
 };
 use std::collections::HashMap;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Unique identifier for a buffer
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -134,6 +136,12 @@ pub struct Editor {
     /// Terminal dimensions (for creating new buffers)
     terminal_width: u16,
     terminal_height: u16,
+
+    /// LSP manager
+    lsp: Option<LspManager>,
+
+    /// Map buffer IDs to file paths for LSP
+    buffer_paths: HashMap<BufferId, PathBuf>,
 }
 
 impl Editor {
@@ -155,6 +163,18 @@ impl Editor {
         buffers.insert(buffer_id, state);
         event_logs.insert(buffer_id, EventLog::new());
 
+        // Initialize LSP manager with current working directory as root
+        let root_uri = std::env::current_dir()
+            .ok()
+            .and_then(|path| Url::from_file_path(path).ok());
+
+        let mut lsp = LspManager::new(root_uri);
+
+        // Configure LSP servers from config
+        for (language, lsp_config) in &config.lsp {
+            lsp.set_language_config(language.clone(), lsp_config.clone());
+        }
+
         Ok(Editor {
             buffers,
             active_buffer: buffer_id,
@@ -170,6 +190,8 @@ impl Editor {
             prompt: None,
             terminal_width: width,
             terminal_height: height,
+            lsp: Some(lsp),
+            buffer_paths: HashMap::new(),
         })
     }
 
@@ -206,6 +228,24 @@ impl Editor {
         let state = EditorState::from_file(path, self.terminal_width, self.terminal_height)?;
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
+
+        // Store the file path for this buffer
+        self.buffer_paths.insert(buffer_id, path.to_path_buf());
+
+        // Notify LSP of file open
+        if let Some(lsp) = &mut self.lsp {
+            if let Some(language) = detect_language(path) {
+                if let Ok(uri) = Url::from_file_path(path) {
+                    let text = std::fs::read_to_string(path).unwrap_or_default();
+
+                    if let Some(client) = lsp.get_or_spawn(&language) {
+                        if let Err(e) = client.did_open(uri, text, language.clone()) {
+                            tracing::warn!("Failed to send didOpen to LSP: {}", e);
+                        }
+                    }
+                }
+            }
+        }
 
         self.active_buffer = buffer_id;
         self.status_message = Some(format!("Opened {}", path.display()));
@@ -1038,6 +1078,8 @@ impl Editor {
                     for event in events {
                         self.active_event_log_mut().append(event.clone());
                         self.active_state_mut().apply(&event);
+                        // Notify LSP of the change
+                        self.notify_lsp_change(&event);
                     }
                 }
             }
@@ -1630,6 +1672,50 @@ impl Editor {
         }
 
         start + new_pos
+    }
+
+    /// Notify LSP of a text change event
+    fn notify_lsp_change(&mut self, event: &Event) {
+        // Only notify for insert and delete events
+        match event {
+            Event::Insert { .. } | Event::Delete { .. } => {}
+            _ => return, // Ignore cursor movements and other events
+        }
+
+        // Get the file path for the active buffer
+        let path = match self.buffer_paths.get(&self.active_buffer) {
+            Some(p) => p.clone(),
+            None => return,
+        };
+
+        let language = match detect_language(&path) {
+            Some(l) => l,
+            None => return,
+        };
+
+        let uri = match Url::from_file_path(&path) {
+            Ok(u) => u,
+            Err(_) => return,
+        };
+
+        // Get the full text before borrowing lsp mutably
+        let full_text = self.active_state().buffer.to_string();
+
+        if let Some(lsp) = &mut self.lsp {
+            if let Some(client) = lsp.get_or_spawn(&language) {
+                // Use full document sync (send entire text after change)
+                // This is simpler than incremental sync and works well for small files
+                let change = TextDocumentContentChangeEvent {
+                    range: None, // Full document sync
+                    range_length: None,
+                    text: full_text,
+                };
+
+                if let Err(e) = client.did_change(uri, vec![change]) {
+                    tracing::warn!("Failed to send didChange to LSP: {}", e);
+                }
+            }
+        }
     }
 
     /// Convert an action into a list of events to apply to the active buffer

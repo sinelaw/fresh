@@ -1,3 +1,4 @@
+use crate::lsp::LspServerConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -16,6 +17,9 @@ pub struct Config {
 
     #[serde(default)]
     pub languages: HashMap<String, LanguageConfig>,
+
+    #[serde(default)]
+    pub lsp: HashMap<String, LspServerConfig>,
 }
 
 /// Theme configuration
@@ -187,6 +191,7 @@ impl Default for Config {
             editor: EditorConfig::default(),
             keybindings: Self::default_keybindings(),
             languages: Self::default_languages(),
+            lsp: Self::default_lsp_config(),
         }
     }
 }
@@ -367,6 +372,23 @@ impl Config {
         );
 
         languages
+    }
+
+    /// Create default LSP configurations
+    fn default_lsp_config() -> HashMap<String, LspServerConfig> {
+        let mut lsp = HashMap::new();
+
+        // rust-analyzer (installed via rustup or package manager)
+        lsp.insert(
+            "rust".to_string(),
+            LspServerConfig {
+                command: "rust-analyzer".to_string(),
+                args: vec![],
+                enabled: true,
+            },
+        );
+
+        lsp
     }
 
     /// Validate the configuration
