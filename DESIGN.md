@@ -20,172 +20,28 @@ The core architecture is split into a public-facing VirtualBuffer handle and an 
 
 Unchanged from the original design. This trait perfectly abstracts the storage.
 
-```rust
-pub trait PersistenceLayer {
-    // ... (methods: read, write, insert, delete, len)
-}
-```
+A trait that defines the interface for the pluggable persistence layer, specifying methods for reading, writing, inserting, deleting, and getting the length of the underlying storage.
 
 ### **2. Cache Layer**
 
 Unchanged from the original design. The Cache struct manages loaded regions. It will be wrapped in a Mutex by the InnerBuffer.
 
-```rust
-pub struct Cache {
-    // Map of loaded regions: (start_offset, data)
-    regions: BTreeMap<usize, Vec<u8>>,
-    // ... (dirty tracking, eviction policy)
-}
-```
+A struct that manages caching of loaded data regions. It uses a BTreeMap to store regions mapped by their starting offset and includes logic for tracking dirty regions and implementing an eviction policy.
 
 ### **3. Virtual Buffer (Updated)**
 
 The VirtualBuffer is now a lightweight, cloneable handle that points to the shared inner state. This allows iterators and the buffer handle to coexist safely.
 
-```rust
-
-use std::sync::{Arc, Mutex, RwLock};  
-use std::sync::atomic::{AtomicU64, Ordering};  
-use std::collections::{BTreeSet, BTreeMap};
-
-// The shared, internally-mutable state  
-pub struct InnerBuffer {  
-    // Pluggable persistence backend, mutex-protected for writes  
-    persistence: Mutex\<Box\<dyn PersistenceLayer\>\>,
-
-    // Cache for loaded regions, mutex-protected for reads/writes  
-    cache: Mutex\<Cache\>,
-
-    // Log of edits, read-write locked  
-    // (Many iterators read, one edit operation writes)  
-    edit\_log: RwLock\<Vec\<Edit\>\>,
-
-    // Version counter, atomic for lock-free increments  
-    edit\_version: AtomicU64,
-
-    // NEW: Tracks all active iterators' versions for GC  
-    // BTreeSet makes finding the minimum (oldest) version fast  
-    active\_iterator\_versions: Mutex\<BTreeSet\<u64\>\>,  
-}
-
-// The public-facing handle  
-\#\[derive(Clone)\]  
-pub struct VirtualBuffer {  
-    inner: Arc\<InnerBuffer\>,  
-}
-
-impl VirtualBuffer {  
-    pub fn new(persistence: Box\<dyn PersistenceLayer\>) \-\> Self {  
-        Self {  
-            inner: Arc::new(InnerBuffer {  
-                persistence: Mutex::new(persistence),  
-                cache: Mutex::new(Cache::new()), // Assuming a Cache::new()  
-                edit\_log: RwLock::new(Vec::new()),  
-                edit\_version: AtomicU64::new(0),  
-                active\_iterator\_versions: Mutex::new(BTreeSet::new()),  
-            }),  
-        }  
-    }
-
-    /// Read bytes (takes \&self, locks internally)  
-    pub fn read(\&self, offset: usize, len: usize) \-\> io::Result\<Vec\<u8\>\> {  
-        // 1\. Lock cache  
-        // 2\. If not present, lock persistence and read  
-        // 3\. Update cache  
-        // ... (implementation)  
-        unimplemented\!()  
-    }
-
-    /// Insert bytes (takes \&self, locks internally)  
-    pub fn insert(\&self, offset: usize, data: &\[u8\]) \-\> io::Result\<()\> {  
-        // 1\. Lock persistence and cache  
-        self.inner.persistence.lock().unwrap().insert(offset, data)?;  
-        self.inner.cache.lock().unwrap().write(offset, data); //
-
-        // 2\. Get new version and create edit  
-        let new\_version \= self.inner.edit\_version.fetch\_add(1, Ordering::SeqCst) \+ 1;  
-        let edit \= Edit {  
-            version: new\_version,  
-            kind: EditKind::Insert { offset, len: data.len() }, //  
-        };
-
-        // 3\. Lock edit log and push  
-        self.inner.edit\_log.write().unwrap().push(edit);
-
-        // 4\. Prune old edits  
-        self.prune\_edit\_log();  
-        Ok(())  
-    }
-
-    /// Delete bytes (takes \&self, locks internally)  
-    pub fn delete(\&self, range: Range\<usize\>) \-\> io::Result\<()\> {  
-        // ... (Similar to insert: update persistence/cache, add edit, prune log)  
-        unimplemented\!()  
-    }
-
-    /// Create an iterator (registers its version)  
-    pub fn iter\_at(\&self, position: usize) \-\> ByteIterator {  
-        let current\_version \= self.inner.edit\_version.load(Ordering::Relaxed);
-
-        // Register this new iterator's version  
-        self.inner  
-            .active\_iterator\_versions  
-            .lock()  
-            .unwrap()  
-            .insert(current\_version);
-
-        ByteIterator {  
-            buffer: self.inner.clone(),  
-            position: position,  
-            version\_at\_creation: current\_version, //  
-        }  
-    }
-
-    // ... (other methods) ...
-
-    /// NEW: Edit Log Garbage Collection  
-    fn prune\_edit\_log(\&self) {  
-        let versions \= self.inner.active\_iterator\_versions.lock().unwrap();  
-          
-        // Find the oldest iterator version still in use  
-        let low\_water\_mark \= versions.iter().next().cloned();
-
-        if let Some(oldest\_version) \= low\_water\_mark {  
-            let mut edit\_log \= self.inner.edit\_log.write().unwrap();  
-              
-            // Find index of first edit to \*keep\*  
-            let first\_index\_to\_keep \= edit\_log  
-                .binary\_search\_by\_key(\&oldest\_version, |e| e.version)  
-                .unwrap\_or\_else(|e| e);
-
-            // Drain all edits \*before\* that version  
-            edit\_log.drain(..first\_index\_to\_keep);  
-        }  
-        // If no iterators exist, we could drain all, but it's  
-        // safer to keep them for a bit (e.g., for undo)  
-    }  
-}
-
-```
+The core data structures for the virtual buffer.
+-   `InnerBuffer`: A struct holding the shared, mutable state, including the persistence layer, cache, edit log, edit version, and active iterator versions. It uses concurrency primitives like `Mutex`, `RwLock`, and `AtomicU64` to ensure thread-safe interior mutability.
+-   `VirtualBuffer`: A lightweight, cloneable handle (`Arc<InnerBuffer>`) that provides public access to the shared inner state.
+-   The implementation of `VirtualBuffer` provides methods for creating a new buffer, reading, inserting, and deleting bytes. These methods handle the necessary locking of internal state. It also includes a method to create an iterator (`iter_at`) which registers itself for edit tracking, and a private method (`prune_edit_log`) for garbage collecting old entries from the edit log based on the versions of active iterators.
 
 ### **4. Edit Tracking**
 
 Unchanged from the original design.
 
-```rust
-
-\#\[derive(Clone, Debug)\]  
-pub struct Edit {  
-    version: u64,  
-    kind: EditKind,  
-} //
-
-\#\[derive(Clone, Debug)\]  
-pub enum EditKind {  
-    Insert { offset: usize, len: usize },  
-    Delete { offset: usize, len: usize },  
-} //
-```
+Data structures for tracking edits. `Edit` associates a version number with an `EditKind`, which can be either an `Insert` or a `Delete` operation, each storing the offset and length of the change.
 
 ### **5. Iterator with Edit Awareness (Updated)**
 
@@ -197,60 +53,7 @@ The ByteIterator now holds an Arc\<InnerBuffer> and automatically registers/unre
 2. **Internal 4KB Buffer:** Reads chunks from the snapshot, reducing iterator creation from O(n) to O(n/4096)
 3. **Lazy Invalidation:** When `adjust_for_edits()` detects version changes, it invalidates both snapshot and buffer
 
-```rust
-
-pub struct ByteIterator {
-    buffer: Arc\<InnerBuffer\>,
-    position: usize,
-    version\_at\_creation: u64,
-
-    // Performance optimizations
-    tree\_snapshot: Option\<ChunkTree\<'static\>\>,  // Invalidated on edits
-    chunk\_buffer: Option\<(usize, Vec\<u8\>)\>,      // 4KB internal buffer
-}
-
-impl ByteIterator {
-    pub fn next(\&mut self) \-\> Option\<u8\> {
-        self.adjust\_for\_edits();  // Fast: just atomic load if no edits
-
-        // Fast path: check internal buffer (no locks)
-        if let Some((chunk\_start, data)) \= \&self.chunk\_buffer {
-            let offset \= self.position.saturating\_sub(\*chunk\_start);
-            if offset \< data.len() {
-                let byte \= data\[offset\];
-                self.position \+= 1;
-                return Some(byte);
-            }
-        }
-
-        // Buffer miss: load 4KB chunk from snapshot
-        if let Some(tree) \= \&self.tree\_snapshot {
-            let mut iter \= tree.bytes\_at(self.position);  // O(log n) once per 4KB
-            let chunk\_data \= iter.take(4096).collect();
-            // ... store in chunk\_buffer and return first byte
-        }
-
-        None
-    }
-
-    fn adjust\_for\_edits(\&mut self) {
-        let current\_version \= self.buffer.edit\_version.load(Ordering::Relaxed);
-        if self.version\_at\_creation \== current\_version {
-            return; // Fast path: no edits
-        }
-
-        // Apply position adjustments from edit log
-        // ...
-
-        // CRITICAL: Invalidate cached data
-        self.tree\_snapshot \= None;
-        self.chunk\_buffer \= None;
-
-        // Update version tracking for GC
-        // ...
-    }
-}
-```
+The `ByteIterator` struct provides a way to iterate over the buffer's bytes. It holds a reference to the shared `InnerBuffer`, its current position, and the version at which it was created. For performance, it uses a two-level caching strategy: a snapshot of the underlying `ChunkTree` and a small internal chunk buffer. The `next` method advances the iterator, using the cache for speed. The `adjust_for_edits` method is called to update the iterator's state and invalidate its caches when the underlying buffer is modified.
 
 **Performance:** ~4096x fewer locks and iterator creations compared to per-byte access.
 
