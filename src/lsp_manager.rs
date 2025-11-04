@@ -88,17 +88,16 @@ impl LspManager {
             async_bridge,
         ) {
             Ok(handle) => {
-                // Initialize the handle
-                match handle.initialize(self.root_uri.clone()) {
-                    Ok(_) => {
-                        self.handles.insert(language.to_string(), handle);
-                        self.handles.get_mut(language)
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to initialize LSP server for {}: {}", language, e);
-                        None
-                    }
+                // Initialize the handle (non-blocking)
+                // The handle will become ready asynchronously
+                if let Err(e) = handle.initialize(self.root_uri.clone()) {
+                    tracing::error!("Failed to send initialize command for {}: {}", language, e);
+                    return None;
                 }
+
+                tracing::info!("LSP initialization started for {}, will be ready asynchronously", language);
+                self.handles.insert(language.to_string(), handle);
+                self.handles.get_mut(language)
             }
             Err(e) => {
                 tracing::error!("Failed to spawn LSP handle for {}: {}", language, e);

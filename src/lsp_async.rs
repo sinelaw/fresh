@@ -598,8 +598,15 @@ impl LspHandle {
         })
     }
 
-    /// Initialize the server
-    pub fn initialize(&self, root_uri: Option<Url>) -> Result<InitializeResult, String> {
+    /// Initialize the server (non-blocking)
+    ///
+    /// This sends the initialize request asynchronously. The server will be ready
+    /// when `is_initialized()` returns true. Other methods that require initialization
+    /// will fail gracefully until then.
+    pub fn initialize(&self, root_uri: Option<Url>) -> Result<(), String> {
+        let initialized = self.initialized.clone();
+
+        // Create a channel for the response, but don't wait for it
         let (tx, rx) = oneshot::channel();
 
         self.command_tx
@@ -609,19 +616,32 @@ impl LspHandle {
             })
             .map_err(|_| "Failed to send initialize command".to_string())?;
 
-        // Use runtime.block_on with a timeout to avoid hanging indefinitely
-        // This properly enters the runtime context from the main thread
-        let result = self.runtime.block_on(async {
+        // Spawn a task to wait for the response and update the initialized flag
+        let runtime = self.runtime.clone();
+        runtime.spawn(async move {
             match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
-                Ok(Ok(result)) => result,
-                Ok(Err(_)) => Err("Initialize response channel closed".to_string()),
-                Err(_) => Err("LSP initialization timed out after 10 seconds".to_string()),
+                Ok(Ok(Ok(_))) => {
+                    *initialized.lock().unwrap() = true;
+                    tracing::info!("LSP initialization completed successfully");
+                }
+                Ok(Ok(Err(e))) => {
+                    tracing::error!("LSP initialization failed: {}", e);
+                }
+                Ok(Err(_)) => {
+                    tracing::error!("LSP initialization response channel closed");
+                }
+                Err(_) => {
+                    tracing::error!("LSP initialization timed out after 10 seconds");
+                }
             }
-        })?;
+        });
 
-        *self.initialized.lock().unwrap() = true;
+        Ok(())
+    }
 
-        Ok(result)
+    /// Check if the server is initialized
+    pub fn is_initialized(&self) -> bool {
+        *self.initialized.lock().unwrap()
     }
 
     /// Notify document opened

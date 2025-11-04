@@ -22,6 +22,45 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferId(usize);
 
+/// Metadata associated with a buffer
+#[derive(Debug, Clone)]
+pub struct BufferMetadata {
+    /// File path (if the buffer is associated with a file)
+    pub file_path: Option<PathBuf>,
+
+    /// Whether LSP is enabled for this buffer
+    pub lsp_enabled: bool,
+
+    /// Reason LSP is disabled (if applicable)
+    pub lsp_disabled_reason: Option<String>,
+}
+
+impl BufferMetadata {
+    /// Create new metadata for a buffer
+    pub fn new() -> Self {
+        Self {
+            file_path: None,
+            lsp_enabled: true,
+            lsp_disabled_reason: None,
+        }
+    }
+
+    /// Create metadata for a file-backed buffer
+    pub fn with_file(path: PathBuf) -> Self {
+        Self {
+            file_path: Some(path),
+            lsp_enabled: true,
+            lsp_disabled_reason: None,
+        }
+    }
+
+    /// Disable LSP for this buffer with a reason
+    pub fn disable_lsp(&mut self, reason: String) {
+        self.lsp_enabled = false;
+        self.lsp_disabled_reason = Some(reason);
+    }
+}
+
 /// Type of prompt - determines what action to take when user confirms
 #[derive(Debug, Clone, PartialEq)]
 pub enum PromptType {
@@ -143,8 +182,8 @@ pub struct Editor {
     /// LSP manager
     lsp: Option<LspManager>,
 
-    /// Map buffer IDs to file paths for LSP
-    buffer_paths: HashMap<BufferId, PathBuf>,
+    /// Metadata for each buffer (file paths, LSP status, etc.)
+    buffer_metadata: HashMap<BufferId, BufferMetadata>,
 
     /// Tokio runtime for async I/O tasks
     tokio_runtime: Option<tokio::runtime::Runtime>,
@@ -221,7 +260,7 @@ impl Editor {
             terminal_width: width,
             terminal_height: height,
             lsp: Some(lsp),
-            buffer_paths: HashMap::new(),
+            buffer_metadata: HashMap::new(),
             tokio_runtime,
             async_bridge: Some(async_bridge),
         })
@@ -261,8 +300,8 @@ impl Editor {
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
 
-        // Store the file path for this buffer
-        self.buffer_paths.insert(buffer_id, path.to_path_buf());
+        // Create metadata for this buffer
+        let mut metadata = BufferMetadata::with_file(path.to_path_buf());
 
         // Schedule LSP notification asynchronously to avoid blocking
         // This is especially important for large files
@@ -274,11 +313,13 @@ impl Editor {
                     const MAX_LSP_FILE_SIZE: u64 = 1024 * 1024; // 1MB limit
 
                     if file_size > MAX_LSP_FILE_SIZE {
+                        let reason = format!("File too large ({} bytes)", file_size);
                         tracing::warn!(
-                            "Skipping LSP for large file: {} ({} bytes)",
+                            "Skipping LSP for large file: {} ({})",
                             path.display(),
-                            file_size
+                            reason
                         );
+                        metadata.disable_lsp(reason);
                     } else {
                         // Get the text from the buffer we just loaded
                         let text = if let Some(state) = self.buffers.get(&buffer_id) {
@@ -287,7 +328,7 @@ impl Editor {
                             String::new()
                         };
 
-                        // Spawn or get existing LSP client (now has proper timeout)
+                        // Spawn or get existing LSP client (non-blocking now)
                         if let Some(client) = lsp.get_or_spawn(&language) {
                             if let Err(e) = client.did_open(uri, text, language) {
                                 tracing::warn!("Failed to send didOpen to LSP: {}", e);
@@ -297,6 +338,9 @@ impl Editor {
                 }
             }
         }
+
+        // Store metadata for this buffer
+        self.buffer_metadata.insert(buffer_id, metadata);
 
         self.active_buffer = buffer_id;
         self.status_message = Some(format!("Opened {}", path.display()));
@@ -859,9 +903,9 @@ impl Editor {
                         if let Ok(path) = url.to_file_path() {
                             // Find buffer ID for this path
                             if let Some((buffer_id, _)) = self
-                                .buffer_paths
+                                .buffer_metadata
                                 .iter()
-                                .find(|(_, p)| p.as_path() == path.as_path())
+                                .find(|(_, m)| m.file_path.as_ref().map(|p| p.as_path()) == Some(path.as_path()))
                             {
                                 // Convert diagnostics to overlays
                                 if let Some(state) = self.buffers.get_mut(buffer_id) {
@@ -1257,7 +1301,6 @@ impl Editor {
     pub fn render(&mut self, frame: &mut Frame) {
         let _span = tracing::trace_span!("render").entered();
         let size = frame.area();
-        tracing::debug!("Render frame area: {}x{}", size.width, size.height);
 
         // If help is visible, render help page instead
         if self.help_visible {
@@ -1370,13 +1413,6 @@ impl Editor {
     fn render_content(&mut self, frame: &mut Frame, area: Rect) {
         let _span = tracing::trace_span!("render_content").entered();
         let state = self.active_state_mut();
-
-        tracing::debug!(
-            "Render content area: {}x{}, viewport height: {}",
-            area.width,
-            area.height,
-            state.viewport.height
-        );
 
         // Calculate gutter width dynamically based on buffer size
         let gutter_width = state.viewport.gutter_width(&state.buffer);
@@ -1991,8 +2027,19 @@ impl Editor {
             _ => return, // Ignore cursor movements and other events
         }
 
+        // Check if LSP is enabled for this buffer
+        let metadata = match self.buffer_metadata.get(&self.active_buffer) {
+            Some(m) => m,
+            None => return,
+        };
+
+        if !metadata.lsp_enabled {
+            // LSP is disabled for this buffer, don't try to spawn or notify
+            return;
+        }
+
         // Get the file path for the active buffer
-        let path = match self.buffer_paths.get(&self.active_buffer) {
+        let path = match &metadata.file_path {
             Some(p) => p.clone(),
             None => return,
         };
