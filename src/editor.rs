@@ -28,6 +28,9 @@ pub struct BufferMetadata {
     /// File path (if the buffer is associated with a file)
     pub file_path: Option<PathBuf>,
 
+    /// File URI for LSP (computed once from absolute path)
+    pub file_uri: Option<lsp_types::Url>,
+
     /// Whether LSP is enabled for this buffer
     pub lsp_enabled: bool,
 
@@ -40,6 +43,7 @@ impl BufferMetadata {
     pub fn new() -> Self {
         Self {
             file_path: None,
+            file_uri: None,
             lsp_enabled: true,
             lsp_disabled_reason: None,
         }
@@ -47,8 +51,21 @@ impl BufferMetadata {
 
     /// Create metadata for a file-backed buffer
     pub fn with_file(path: PathBuf) -> Self {
+        // Convert to absolute path and compute URI once
+        let absolute_path = if path.is_absolute() {
+            path.clone()
+        } else {
+            std::env::current_dir()
+                .ok()
+                .and_then(|cwd| cwd.join(&path).canonicalize().ok())
+                .unwrap_or_else(|| path.clone())
+        };
+
+        let file_uri = lsp_types::Url::from_file_path(&absolute_path).ok();
+
         Self {
             file_path: Some(path),
+            file_uri,
             lsp_enabled: true,
             lsp_disabled_reason: None,
         }
@@ -324,56 +341,44 @@ impl Editor {
             if let Some(language) = detect_language(path) {
                 tracing::debug!("Detected language: {} for file: {}", language, path.display());
 
-                // Convert to absolute path if necessary (LSP requires absolute paths)
-                let absolute_path = if path.is_absolute() {
-                    path.to_path_buf()
-                } else {
-                    std::env::current_dir()
-                        .ok()
-                        .and_then(|cwd| cwd.join(path).canonicalize().ok())
-                        .unwrap_or_else(|| path.to_path_buf())
-                };
+                // Use the URI from metadata (already computed in with_file)
+                if let Some(uri) = &metadata.file_uri {
+                    tracing::debug!("Using URI from metadata: {}", uri);
+                    // Get file size to decide whether to send full content
+                    let file_size = std::fs::metadata(path).ok().map(|m| m.len()).unwrap_or(0);
+                    const MAX_LSP_FILE_SIZE: u64 = 1024 * 1024; // 1MB limit
 
-                match Url::from_file_path(&absolute_path) {
-                    Ok(uri) => {
-                        tracing::debug!("Created URI: {} for file: {}", uri, absolute_path.display());
-                        // Get file size to decide whether to send full content
-                        let file_size = std::fs::metadata(path).ok().map(|m| m.len()).unwrap_or(0);
-                        const MAX_LSP_FILE_SIZE: u64 = 1024 * 1024; // 1MB limit
-
-                        if file_size > MAX_LSP_FILE_SIZE {
-                            let reason = format!("File too large ({} bytes)", file_size);
-                            tracing::warn!(
-                                "Skipping LSP for large file: {} ({})",
-                                path.display(),
-                                reason
-                            );
-                            metadata.disable_lsp(reason);
+                    if file_size > MAX_LSP_FILE_SIZE {
+                        let reason = format!("File too large ({} bytes)", file_size);
+                        tracing::warn!(
+                            "Skipping LSP for large file: {} ({})",
+                            path.display(),
+                            reason
+                        );
+                        metadata.disable_lsp(reason);
+                    } else {
+                        // Get the text from the buffer we just loaded
+                        let text = if let Some(state) = self.buffers.get(&buffer_id) {
+                            state.buffer.to_string()
                         } else {
-                            // Get the text from the buffer we just loaded
-                            let text = if let Some(state) = self.buffers.get(&buffer_id) {
-                                state.buffer.to_string()
-                            } else {
-                                String::new()
-                            };
+                            String::new()
+                        };
 
-                            // Spawn or get existing LSP client (non-blocking now)
-                            tracing::debug!("Attempting to get or spawn LSP client for language: {}", language);
-                            if let Some(client) = lsp.get_or_spawn(&language) {
-                                tracing::info!("Sending didOpen to LSP for: {}", uri);
-                                if let Err(e) = client.did_open(uri, text, language) {
-                                    tracing::warn!("Failed to send didOpen to LSP: {}", e);
-                                } else {
-                                    tracing::info!("Successfully sent didOpen to LSP");
-                                }
+                        // Spawn or get existing LSP client (non-blocking now)
+                        tracing::debug!("Attempting to get or spawn LSP client for language: {}", language);
+                        if let Some(client) = lsp.get_or_spawn(&language) {
+                            tracing::info!("Sending didOpen to LSP for: {}", uri);
+                            if let Err(e) = client.did_open(uri.clone(), text, language) {
+                                tracing::warn!("Failed to send didOpen to LSP: {}", e);
                             } else {
-                                tracing::warn!("Failed to get or spawn LSP client for language: {}", language);
+                                tracing::info!("Successfully sent didOpen to LSP");
                             }
+                        } else {
+                            tracing::warn!("Failed to get or spawn LSP client for language: {}", language);
                         }
                     }
-                    Err(()) => {
-                        tracing::warn!("Failed to create URI from file path: {} (path must be absolute)", path.display());
-                    }
+                } else {
+                    tracing::warn!("No URI in metadata for file: {} (failed to compute absolute path)", path.display());
                 }
             } else {
                 tracing::debug!("No language detected for file: {}", path.display());
@@ -2081,39 +2086,56 @@ impl Editor {
     fn notify_lsp_change(&mut self, event: &Event) {
         // Only notify for insert and delete events
         match event {
-            Event::Insert { .. } | Event::Delete { .. } => {}
+            Event::Insert { .. } | Event::Delete { .. } => {
+                tracing::debug!("notify_lsp_change: processing event {:?}", event);
+            }
             _ => return, // Ignore cursor movements and other events
         }
 
         // Check if LSP is enabled for this buffer
         let metadata = match self.buffer_metadata.get(&self.active_buffer) {
             Some(m) => m,
-            None => return,
+            None => {
+                tracing::debug!("notify_lsp_change: no metadata for buffer {:?}", self.active_buffer);
+                return;
+            }
         };
 
         if !metadata.lsp_enabled {
             // LSP is disabled for this buffer, don't try to spawn or notify
+            tracing::debug!("notify_lsp_change: LSP disabled for this buffer");
             return;
         }
 
-        // Get the file path for the active buffer
+        // Get the URI (computed once in with_file)
+        let uri = match &metadata.file_uri {
+            Some(u) => u.clone(),
+            None => {
+                tracing::debug!("notify_lsp_change: no URI for buffer (not a file or URI creation failed)");
+                return;
+            }
+        };
+
+        // Get the file path for language detection
         let path = match &metadata.file_path {
-            Some(p) => p.clone(),
-            None => return,
+            Some(p) => p,
+            None => {
+                tracing::debug!("notify_lsp_change: no file path for buffer");
+                return;
+            }
         };
 
-        let language = match detect_language(&path) {
+        let language = match detect_language(path) {
             Some(l) => l,
-            None => return,
-        };
-
-        let uri = match Url::from_file_path(&path) {
-            Ok(u) => u,
-            Err(_) => return,
+            None => {
+                tracing::debug!("notify_lsp_change: no language detected for {:?}", path);
+                return;
+            }
         };
 
         // Get the full text before borrowing lsp mutably
         let full_text = self.active_state().buffer.to_string();
+        tracing::debug!("notify_lsp_change: sending didChange to {} (text length: {} bytes)", uri, full_text.len());
 
         if let Some(lsp) = &mut self.lsp {
             if let Some(client) = lsp.get_or_spawn(&language) {
@@ -2127,8 +2149,14 @@ impl Editor {
 
                 if let Err(e) = client.did_change(uri, vec![change]) {
                     tracing::warn!("Failed to send didChange to LSP: {}", e);
+                } else {
+                    tracing::info!("Successfully sent didChange to LSP");
                 }
+            } else {
+                tracing::warn!("notify_lsp_change: failed to get or spawn LSP client for {}", language);
             }
+        } else {
+            tracing::debug!("notify_lsp_change: no LSP manager available");
         }
     }
 
