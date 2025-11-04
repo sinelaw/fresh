@@ -979,6 +979,7 @@ impl Editor {
 
     /// Render the editor to the terminal
     pub fn render(&mut self, frame: &mut Frame) {
+        let _span = tracing::trace_span!("render").entered();
         let size = frame.area();
         tracing::debug!("Render frame area: {}x{}", size.width, size.height);
 
@@ -1074,6 +1075,7 @@ impl Editor {
 
     /// Render the main content area
     fn render_content(&mut self, frame: &mut Frame, area: Rect) {
+        let _span = tracing::trace_span!("render_content").entered();
         let state = self.active_state_mut();
 
         tracing::debug!("Render content area: {}x{}, viewport height: {}", area.width, area.height, state.viewport.height);

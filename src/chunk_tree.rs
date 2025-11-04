@@ -650,6 +650,198 @@ impl<'a> ChunkTree<'a> {
     pub fn iter(&self) -> ChunkTreeIterator {
         self.root.iter()
     }
+
+    /// Create a byte-level iterator over a range
+    /// This is much more efficient than calling get(i) repeatedly
+    /// The iterator can be reversed with .rev() to iterate backwards
+    pub fn bytes_range(&self, start: usize, end: usize) -> ByteRangeIterator {
+        ByteRangeIterator::new(self, start, end)
+    }
+
+    /// Create a byte-level iterator starting from a given byte offset to EOF
+    pub fn bytes_from(&self, start_offset: usize) -> ByteRangeIterator {
+        ByteRangeIterator::new(self, start_offset, self.len())
+    }
+}
+
+/// Iterator that yields individual bytes from the chunk tree over a range
+/// Efficiently handles chunk boundaries by caching the current chunk
+/// Implements DoubleEndedIterator so you can use .rev() to iterate backwards
+pub struct ByteRangeIterator<'a> {
+    // Cached chunks for efficient iteration
+    chunks: Vec<(usize, &'a [u8])>, // (start_position, data)
+
+    // Current iteration state
+    front_chunk_idx: usize,
+    front_offset: usize,
+    front_position: usize,
+
+    back_chunk_idx: usize,
+    back_offset: usize,
+    back_position: usize,
+
+    range_start: usize,
+    range_end: usize,
+}
+
+impl<'a> ByteRangeIterator<'a> {
+    fn new(tree: &'a ChunkTree<'a>, start: usize, end: usize) -> Self {
+        use std::time::Instant;
+        let iter_start = Instant::now();
+
+        let start = start.min(tree.len());
+        let end = end.min(tree.len());
+        eprintln!("[PERF] ByteRangeIterator::new: range={}..{}, tree_len={}", start, end, tree.len());
+
+        // Collect all chunks in the range using tree navigation
+        let mut chunks = Vec::new();
+        let chunk_count = Self::collect_chunks_in_range(&tree.root, start, end, 0, &mut chunks);
+
+        eprintln!("[PERF] ByteRangeIterator::new: collected {} chunks from {} total in {:?}", chunks.len(), chunk_count, iter_start.elapsed());
+
+        let back_chunk_idx = chunks.len().saturating_sub(1);
+        let back_offset = chunks.get(back_chunk_idx).map(|(_, data)| data.len()).unwrap_or(0);
+
+        Self {
+            chunks,
+            front_chunk_idx: 0,
+            front_offset: 0,
+            front_position: start,
+            back_chunk_idx,
+            back_offset,
+            back_position: end,
+            range_start: start,
+            range_end: end,
+        }
+    }
+
+    /// Recursively collect chunks that overlap with the range [start, end)
+    /// Returns the total number of leaf chunks visited
+    fn collect_chunks_in_range(
+        node: &'a ChunkTreeNode<'a>,
+        start: usize,
+        end: usize,
+        node_start: usize,
+        chunks: &mut Vec<(usize, &'a [u8])>,
+    ) -> usize {
+        let node_end = node_start + node.len();
+
+        // Skip entirely if this node is before the range
+        if node_end <= start {
+            return 0;
+        }
+
+        // Skip entirely if this node is after the range
+        if node_start >= end {
+            return 0;
+        }
+
+        match node {
+            ChunkTreeNode::Leaf { data } => {
+                // This leaf overlaps with the range
+                let chunk_start_in_range = node_start.max(start);
+                let chunk_end_in_range = node_end.min(end);
+
+                let data_start = chunk_start_in_range - node_start;
+                let data_end = chunk_end_in_range - node_start;
+
+                chunks.push((chunk_start_in_range, &data[data_start..data_end]));
+                1
+            }
+            ChunkTreeNode::Gap { .. } => {
+                // Gaps don't contain data, skip them
+                0
+            }
+            ChunkTreeNode::Internal { children, .. } => {
+                // Recursively process children that might overlap
+                let mut current_pos = node_start;
+                let mut total_visited = 0;
+
+                for child in children {
+                    let child_size = child.len();
+                    let child_end = current_pos + child_size;
+
+                    // Only recurse into children that might overlap with the range
+                    if child_end > start && current_pos < end {
+                        total_visited += Self::collect_chunks_in_range(child, start, end, current_pos, chunks);
+                    }
+
+                    current_pos = child_end;
+
+                    // Early exit if we've passed the range
+                    if current_pos >= end {
+                        break;
+                    }
+                }
+
+                total_visited
+            }
+        }
+    }
+}
+
+impl<'a> Iterator for ByteRangeIterator<'a> {
+    type Item = (usize, u8); // (byte_position, byte_value)
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Check if we've exhausted the iterator
+        if self.front_chunk_idx > self.back_chunk_idx {
+            return None;
+        }
+
+        if self.front_chunk_idx == self.back_chunk_idx && self.front_offset >= self.back_offset {
+            return None;
+        }
+
+        // Get current chunk
+        let (chunk_start, chunk_data) = self.chunks.get(self.front_chunk_idx)?;
+
+        if self.front_offset < chunk_data.len() {
+            let byte = chunk_data[self.front_offset];
+            let pos = chunk_start + self.front_offset;
+            self.front_offset += 1;
+            self.front_position = pos + 1;
+            return Some((pos, byte));
+        }
+
+        // Move to next chunk
+        self.front_chunk_idx += 1;
+        self.front_offset = 0;
+        self.next()
+    }
+}
+
+impl<'a> DoubleEndedIterator for ByteRangeIterator<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        // Check if we've exhausted the iterator
+        if self.front_chunk_idx > self.back_chunk_idx {
+            return None;
+        }
+
+        if self.front_chunk_idx == self.back_chunk_idx && self.front_offset >= self.back_offset {
+            return None;
+        }
+
+        // Get current chunk from back
+        let (chunk_start, chunk_data) = self.chunks.get(self.back_chunk_idx)?;
+
+        if self.back_offset > 0 {
+            self.back_offset -= 1;
+            let byte = chunk_data[self.back_offset];
+            let pos = chunk_start + self.back_offset;
+            self.back_position = pos;
+            return Some((pos, byte));
+        }
+
+        // Move to previous chunk
+        if self.back_chunk_idx == 0 {
+            return None;
+        }
+        self.back_chunk_idx -= 1;
+        let (_, prev_chunk_data) = self.chunks.get(self.back_chunk_idx)?;
+        self.back_offset = prev_chunk_data.len();
+        self.next_back()
+    }
 }
 
 #[cfg(test)]
@@ -1182,5 +1374,82 @@ mod tests {
         let tree = ChunkTree::from_slice(b"abc", SMALL_CONFIG);
         let tree = tree.fill(0, b"");
         assert_eq!(tree.collect_bytes(b'_'), b"abc");
+    }
+
+    #[test]
+    fn test_byte_iterator_from_start() {
+        let tree = ChunkTree::from_slice(b"Hello World!", SMALL_CONFIG);
+        let bytes: Vec<u8> = tree.bytes_from(0).map(|(_, b)| b).collect();
+        assert_eq!(bytes, b"Hello World!");
+    }
+
+    #[test]
+    fn test_byte_iterator_from_middle() {
+        let tree = ChunkTree::from_slice(b"Hello World!", SMALL_CONFIG);
+        let bytes: Vec<u8> = tree.bytes_from(6).map(|(_, b)| b).collect();
+        assert_eq!(bytes, b"World!");
+    }
+
+    #[test]
+    fn test_byte_iterator_positions() {
+        let tree = ChunkTree::from_slice(b"Hello", SMALL_CONFIG);
+        let positions: Vec<(usize, u8)> = tree.bytes_from(2).collect();
+        assert_eq!(positions, vec![(2, b'l'), (3, b'l'), (4, b'o')]);
+    }
+
+    #[test]
+    fn test_bytes_range_performance_near_end() {
+        use std::time::Instant;
+
+        // Create a large tree by inserting many small chunks
+        // This simulates the real-world case where a 61MB file has many chunks
+        let config = ChunkTreeConfig::new(4096, 16);
+        let mut tree = ChunkTree::new(config);
+
+        // Insert 10,000 chunks of 1KB each = ~10MB
+        let chunk = vec![b'x'; 1024];
+        for i in 0..10_000 {
+            tree = tree.insert(i * 1024, &chunk);
+        }
+
+        let total_len = tree.len();
+        eprintln!("Created tree with {} bytes", total_len);
+
+        // Now test creating a range iterator near the END of the tree
+        // This should be fast (O(log n) tree traversal), not O(n) iteration
+        let range_start = total_len.saturating_sub(100_000);
+        let range_end = total_len;
+
+        let start = Instant::now();
+        let iter = tree.bytes_range(range_start, range_end);
+        let creation_time = start.elapsed();
+
+        eprintln!("ByteRangeIterator creation time for range near EOF: {:?}", creation_time);
+
+        // The iterator creation should be very fast (< 10ms even in debug mode)
+        // If it takes > 50ms, we're likely iterating through all chunks
+        assert!(
+            creation_time.as_millis() < 50,
+            "Iterator creation took {:?}, which is too slow. Expected < 50ms",
+            creation_time
+        );
+
+        // Verify the iterator actually works
+        let count = iter.count();
+        eprintln!("Iterator returned {} bytes", count);
+        assert_eq!(count, range_end - range_start);
+    }
+
+    #[test]
+    fn test_bytes_range_skips_chunks_correctly() {
+        // Create a tree with multiple chunks
+        let config = ChunkTreeConfig::new(10, 4);
+        let tree = ChunkTree::from_slice(b"0123456789abcdefghijklmnopqrstuvwxyz", config);
+
+        // Request a range in the middle - should only collect overlapping chunks
+        let iter = tree.bytes_range(10, 20);
+        let bytes: Vec<u8> = iter.map(|(_, b)| b).collect();
+
+        assert_eq!(bytes, b"abcdefghij");
     }
 }

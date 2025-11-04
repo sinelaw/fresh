@@ -308,21 +308,14 @@ impl Buffer {
         }
 
         let end = range.end.min(self.len());
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(end - range.start);
 
-        for i in range.start..end {
-            let piece = self.content.get(i);
-            match piece {
-                crate::chunk_tree::ChunkPiece::Data { data } => {
-                    if !data.is_empty() {
-                        result.push(data[0]);
-                    }
-                }
-                crate::chunk_tree::ChunkPiece::Gap { .. } => {
-                    // Gap - fill with space for now
-                    result.push(b' ');
-                }
+        // Use the efficient byte iterator
+        for (pos, byte) in self.content.bytes_from(range.start) {
+            if pos >= end {
+                break;
             }
+            result.push(byte);
         }
 
         result
@@ -564,18 +557,40 @@ impl Buffer {
     /// Find the start of the line containing the given byte position
     /// Works backwards from byte_pos, no line number conversion needed
     pub fn find_line_start_at_byte(&self, byte_pos: usize) -> usize {
-        let byte_pos = byte_pos.min(self.len());
+        use std::time::Instant;
+        let start = Instant::now();
 
-        // Search backwards for newline
-        for i in (0..byte_pos).rev() {
-            let piece = self.content.get(i);
-            if let crate::chunk_tree::ChunkPiece::Data { data } = piece {
-                if !data.is_empty() && data[0] == b'\n' {
-                    return i + 1; // Return position after the newline
-                }
+        let byte_pos = byte_pos.min(self.len());
+        eprintln!("[PERF] find_line_start_at_byte: byte_pos={}, len={}", byte_pos, self.len());
+
+        // Optimization: Only scan backwards up to 100KB to find line start
+        // This prevents O(n) scans through huge files
+        // Most lines are much shorter than 100KB
+        let search_start = byte_pos.saturating_sub(100_000);
+        eprintln!("[PERF] find_line_start_at_byte: search_start={}, range_size={}", search_start, byte_pos - search_start);
+
+        let iter_start = Instant::now();
+        let iter = self.content.bytes_range(search_start, byte_pos);
+        eprintln!("[PERF] find_line_start_at_byte: created iterator in {:?}", iter_start.elapsed());
+
+        let rev_start = Instant::now();
+        let mut count = 0;
+        // Use the reverse iterator to search backwards from byte_pos
+        for (pos, byte) in iter.rev() {
+            count += 1;
+            if count % 10000 == 0 {
+                eprintln!("[PERF] find_line_start_at_byte: scanned {} bytes in {:?}", count, rev_start.elapsed());
+            }
+            if byte == b'\n' {
+                eprintln!("[PERF] find_line_start_at_byte: found newline after scanning {} bytes in {:?}", count, start.elapsed());
+                return pos + 1; // Line starts after the newline
             }
         }
-        0 // Start of file
+
+        eprintln!("[PERF] find_line_start_at_byte: no newline found after scanning {} bytes in {:?}", count, start.elapsed());
+        // No newline found - line starts at search_start
+        // (This handles extremely long lines by treating them as starting at search_start)
+        search_start
     }
 
     /// Find the end of the line containing the given byte position
@@ -583,18 +598,15 @@ impl Buffer {
     /// Returns position just before the newline (or EOF)
     pub fn find_line_end_at_byte(&self, byte_pos: usize) -> usize {
         let byte_pos = byte_pos.min(self.len());
-        let file_len = self.len();
 
-        // Search forwards for newline
-        for i in byte_pos..file_len {
-            let piece = self.content.get(i);
-            if let crate::chunk_tree::ChunkPiece::Data { data } = piece {
-                if !data.is_empty() && data[0] == b'\n' {
-                    return i; // Return position of the newline
-                }
+        // Use the efficient byte iterator starting from byte_pos
+        for (pos, byte) in self.content.bytes_from(byte_pos) {
+            if byte == b'\n' {
+                return pos;
             }
         }
-        file_len // End of file
+
+        self.len() // End of file
     }
 
     /// Find the start of the previous line from the given byte position
@@ -706,6 +718,19 @@ impl Buffer {
     /// This allows the cache to grow incrementally as we view different parts of the file
     /// Only caches if this line extends the scanned region forward from position 0
     pub fn register_line_in_cache(&self, line_start_byte: usize) {
+        // Early exit: if this line is already scanned or too far ahead, don't do anything
+        {
+            let cache = self.line_cache.borrow();
+            if cache.fully_scanned || line_start_byte <= cache.scanned_up_to {
+                // Fast path: already scanned
+                return;
+            }
+            // Don't scan if the gap is too large (> 10KB)
+            if line_start_byte > cache.scanned_up_to + 10000 {
+                return;
+            }
+        }
+
         let mut cache = self.line_cache.borrow_mut();
 
         // Initialize cache if not valid
@@ -716,38 +741,27 @@ impl Buffer {
             cache.valid = true;
         }
 
-        // Only register if this extends our sequential scan from the beginning
-        // This ensures we maintain accurate line numbers for the beginning of the file
-        if cache.fully_scanned {
-            return; // Already have everything
-        }
+        // Scan forward to include this line, but limit the scan to avoid slowdowns
+        // Scan at least to line_start_byte, but not more than 1000 bytes beyond that
+        if line_start_byte > cache.scanned_up_to {
+            // Find the end of the requested line
+            let line_end = self.find_line_end_at_byte(line_start_byte);
+            // Limit scan to either the line end or up to 1000 bytes from our current position
+            let max_scan = cache.scanned_up_to + 1000;
+            let scan_to = line_end.min(max_scan).min(self.len().saturating_sub(1));
 
-        // Only scan if this line is within a reasonable distance of what we've already scanned
-        // This prevents scanning huge gaps in the file
-        if line_start_byte <= cache.scanned_up_to + 10000 {  // Within 10KB of scanned region
-            // Scan forward to include this line
-            if line_start_byte > cache.scanned_up_to {
-                // Find the end of this line
-                let line_end = self.find_line_end_at_byte(line_start_byte);
-                let scan_to = line_end.min(self.len().saturating_sub(1));
-
-                // Find all newlines between scanned_up_to and the end of this line
-                for i in cache.scanned_up_to..scan_to {
-                    if i < self.len() {
-                        let piece = self.content.get(i);
-                        if let crate::chunk_tree::ChunkPiece::Data { data } = piece {
-                            if !data.is_empty() && data[0] == b'\n' {
-                                cache.line_starts.push(i + 1);
-                            }
-                        }
-                    }
+            // Find all newlines between scanned_up_to and scan_to
+            // Use byte iterator for efficient scanning instead of get() in a loop
+            for (pos, byte) in self.content.bytes_range(cache.scanned_up_to, scan_to) {
+                if byte == b'\n' {
+                    cache.line_starts.push(pos + 1);
                 }
-                cache.scanned_up_to = scan_to;
+            }
+            cache.scanned_up_to = scan_to;
 
-                // Check if we've reached EOF
-                if cache.scanned_up_to >= self.len() {
-                    cache.fully_scanned = true;
-                }
+            // Check if we've reached EOF
+            if cache.scanned_up_to >= self.len() {
+                cache.fully_scanned = true;
             }
         }
     }
@@ -762,12 +776,10 @@ impl Buffer {
         let mut count = 0;
         let actual_end = end.min(self.len());
 
-        for i in start..actual_end {
-            let piece = self.content.get(i);
-            if let crate::chunk_tree::ChunkPiece::Data { data } = piece {
-                if !data.is_empty() && data[0] == b'\n' {
-                    count += 1;
-                }
+        // Use byte iterator for efficient scanning instead of get() in a loop
+        for (_pos, byte) in self.content.bytes_range(start, actual_end) {
+            if byte == b'\n' {
+                count += 1;
             }
         }
 
@@ -780,15 +792,26 @@ impl Buffer {
 pub struct LineIterator<'a> {
     buffer: &'a Buffer,
     current_byte: usize,
+    // Cache a forward iterator to avoid repeated tree seeks when going forward
+    forward_iter: Option<crate::chunk_tree::ByteRangeIterator<'a>>,
 }
 
 impl<'a> LineIterator<'a> {
     /// Create a new line iterator starting at the given byte position
     /// The byte position should be at the start of a line (after a newline or at position 0)
     pub fn new(buffer: &'a Buffer, start_byte: usize) -> Self {
+        let current_byte = start_byte.min(buffer.len());
+        // Create an iterator from current position to EOF for forward iteration
+        let forward_iter = if current_byte < buffer.len() {
+            Some(buffer.content.bytes_from(current_byte))
+        } else {
+            None
+        };
+
         Self {
             buffer,
-            current_byte: start_byte.min(buffer.len()),
+            current_byte,
+            forward_iter,
         }
     }
 
@@ -800,16 +823,29 @@ impl<'a> LineIterator<'a> {
         }
 
         let line_start = self.current_byte;
-        let line_content = self.buffer.line_content_at_byte(line_start);
+        let mut line_bytes = Vec::new();
+        let mut line_end = line_start;
+
+        // Use the cached iterator to find the line end
+        if let Some(ref mut iter) = self.forward_iter {
+            for (pos, byte) in iter {
+                if byte == b'\n' {
+                    line_end = pos;
+                    break;
+                }
+                line_bytes.push(byte);
+                line_end = pos + 1;
+            }
+        }
 
         // Move to start of next line
-        let line_end = self.buffer.find_line_end_at_byte(line_start);
-        self.current_byte = if line_end < self.buffer.len() {
+        self.current_byte = if line_end < self.buffer.len() && line_end > line_start {
             line_end + 1 // Skip past the newline
         } else {
             self.buffer.len()
         };
 
+        let line_content = String::from_utf8_lossy(&line_bytes).to_string();
         Some((line_start, line_content))
     }
 
@@ -820,12 +856,25 @@ impl<'a> LineIterator<'a> {
             return None;
         }
 
-        // Find start of previous line
+        // Find start of previous line using the optimized windowed search
         let prev_line_start = self.buffer.find_prev_line_start_from_byte(self.current_byte)?;
-        let line_content = self.buffer.line_content_at_byte(prev_line_start);
 
+        // Find end of previous line
+        let prev_line_end = self.buffer.find_line_end_at_byte(prev_line_start);
+
+        // Collect the line content efficiently
+        let mut line_bytes = Vec::new();
+        for (_pos, byte) in self.buffer.content.bytes_range(prev_line_start, prev_line_end) {
+            line_bytes.push(byte);
+        }
+
+        // Update position
         self.current_byte = prev_line_start;
 
+        // Invalidate forward iterator since we changed direction
+        self.forward_iter = None;
+
+        let line_content = String::from_utf8_lossy(&line_bytes).to_string();
         Some((prev_line_start, line_content))
     }
 
@@ -844,6 +893,12 @@ impl Buffer {
     /// Get line content starting from a byte position (no full scan needed)
     /// Scans forward from byte_pos to the next newline
     pub fn line_content_at_byte(&self, byte_pos: usize) -> String {
+        static CALL_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let count = CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if count % 100 == 0 {
+            eprintln!("[PERF] line_content_at_byte called {} times", count);
+        }
+
         if byte_pos >= self.len() {
             return String::new();
         }

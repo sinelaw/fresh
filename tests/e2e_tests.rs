@@ -1802,22 +1802,38 @@ fn test_expand_selection_large_buffer_performance() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use tempfile::TempDir;
     use std::fs;
+    use std::time::Instant;
 
+    let start = Instant::now();
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("large.txt");
 
     // Create a moderately large file (~100KB of text)
     let large_text = "word ".repeat(20_000); // ~100KB of text
     fs::write(&file_path, &large_text).unwrap();
+    eprintln!("[PERF] File creation: {:?}", start.elapsed());
 
+    let start = Instant::now();
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    eprintln!("[PERF] Harness creation: {:?}", start.elapsed());
+
+    let start = Instant::now();
     harness.open_file(&file_path).unwrap();
+    eprintln!("[PERF] File open: {:?}", start.elapsed());
 
     // Move to a position near the middle
+    let start = Instant::now();
     harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
-    for _ in 0..50 {
+    eprintln!("[PERF] Home key: {:?}", start.elapsed());
+
+    let start = Instant::now();
+    for i in 0..50 {
         harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        if i == 0 {
+            eprintln!("[PERF] First Right key: {:?}", start.elapsed());
+        }
     }
+    eprintln!("[PERF] 50 Right keys total: {:?}", start.elapsed());
 
     // Expand selection - this used to hang/timeout with large buffers
     // because it would read the entire buffer. Now it should complete quickly
