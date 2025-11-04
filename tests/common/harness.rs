@@ -54,7 +54,6 @@ impl EditorTestHarness {
     pub fn send_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> io::Result<()> {
         // Delegate to the editor's handle_key method (just like main.rs does)
         self.editor.handle_key(code, modifiers)?;
-        self.render()?;
         Ok(())
     }
 
@@ -63,6 +62,7 @@ impl EditorTestHarness {
         for ch in text.chars() {
             self.send_key(KeyCode::Char(ch), KeyModifiers::NONE)?;
         }
+        self.render()?;
         Ok(())
     }
 
