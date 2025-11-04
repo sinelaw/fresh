@@ -553,6 +553,9 @@ pub struct LspHandle {
 
     /// Whether initialized
     initialized: Arc<Mutex<bool>>,
+
+    /// Runtime handle for blocking operations
+    runtime: tokio::runtime::Handle,
 }
 
 impl LspHandle {
@@ -591,6 +594,7 @@ impl LspHandle {
             command_tx,
             language,
             initialized,
+            runtime: runtime.clone(),
         })
     }
 
@@ -605,9 +609,15 @@ impl LspHandle {
             })
             .map_err(|_| "Failed to send initialize command".to_string())?;
 
-        let result = rx
-            .blocking_recv()
-            .map_err(|_| "Failed to receive initialize response".to_string())??;
+        // Use runtime.block_on with a timeout to avoid hanging indefinitely
+        // This properly enters the runtime context from the main thread
+        let result = self.runtime.block_on(async {
+            match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err("Initialize response channel closed".to_string()),
+                Err(_) => Err("LSP initialization timed out after 10 seconds".to_string()),
+            }
+        })?;
 
         *self.initialized.lock().unwrap() = true;
 

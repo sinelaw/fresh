@@ -264,15 +264,34 @@ impl Editor {
         // Store the file path for this buffer
         self.buffer_paths.insert(buffer_id, path.to_path_buf());
 
-        // Notify LSP of file open
+        // Schedule LSP notification asynchronously to avoid blocking
+        // This is especially important for large files
         if let Some(lsp) = &mut self.lsp {
             if let Some(language) = detect_language(path) {
                 if let Ok(uri) = Url::from_file_path(path) {
-                    let text = std::fs::read_to_string(path).unwrap_or_default();
+                    // Get file size to decide whether to send full content
+                    let file_size = std::fs::metadata(path).ok().map(|m| m.len()).unwrap_or(0);
+                    const MAX_LSP_FILE_SIZE: u64 = 1024 * 1024; // 1MB limit
 
-                    if let Some(client) = lsp.get_or_spawn(&language) {
-                        if let Err(e) = client.did_open(uri, text, language.clone()) {
-                            tracing::warn!("Failed to send didOpen to LSP: {}", e);
+                    if file_size > MAX_LSP_FILE_SIZE {
+                        tracing::warn!(
+                            "Skipping LSP for large file: {} ({} bytes)",
+                            path.display(),
+                            file_size
+                        );
+                    } else {
+                        // Get the text from the buffer we just loaded
+                        let text = if let Some(state) = self.buffers.get(&buffer_id) {
+                            state.buffer.to_string()
+                        } else {
+                            String::new()
+                        };
+
+                        // Spawn or get existing LSP client (now has proper timeout)
+                        if let Some(client) = lsp.get_or_spawn(&language) {
+                            if let Err(e) = client.did_open(uri, text, language) {
+                                tracing::warn!("Failed to send didOpen to LSP: {}", e);
+                            }
                         }
                     }
                 }

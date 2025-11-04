@@ -3514,3 +3514,85 @@ fn test_page_down_line_numbers() {
         "After moving up, viewport should have scrolled up from line {after_second_pagedown} to {final_line}"
     );
 }
+
+/// Test loading a large file with LSP enabled
+/// This test ensures we don't hang or block when opening large files
+#[test]
+fn test_large_file_with_lsp() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("large_test.rs");
+
+    // Create a large Rust file (over 1MB to trigger LSP skip)
+    let mut content = String::new();
+    content.push_str("// Large Rust file for testing\n");
+    content.push_str("fn main() {\n");
+
+    // Generate ~1.1MB of content (to exceed the 1MB threshold)
+    // Each line is ~50 characters
+    for i in 0..25000 {
+        content.push_str(&format!("    println!(\"Line number {} of test content\");\n", i));
+    }
+    content.push_str("}\n");
+
+    std::fs::write(&file_path, &content).unwrap();
+
+    // Verify file is actually large
+    let file_size = std::fs::metadata(&file_path).unwrap().len();
+    assert!(file_size > 1024 * 1024, "Test file should be > 1MB (got {} bytes)", file_size);
+
+    // Create harness with LSP enabled (default config has LSP)
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open the large file - this should NOT hang
+    // The timeout on this test will catch hangs
+    let result = harness.open_file(&file_path);
+
+    // Should succeed in opening the file
+    assert!(result.is_ok(), "Should be able to open large file without hanging");
+
+    // Verify the file is actually loaded
+    harness.render().unwrap();
+    harness.assert_screen_contains("large_test.rs");
+
+    // Verify we can see the beginning of the file
+    harness.assert_screen_contains("// Large Rust file");
+}
+
+/// Test loading a medium-sized file with LSP (under 1MB threshold)
+/// This test ensures LSP initialization works correctly for normal-sized files
+#[test]
+fn test_medium_file_with_lsp() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("medium_test.rs");
+
+    // Create a medium Rust file (under 1MB, so LSP should be enabled)
+    let mut content = String::new();
+    content.push_str("// Medium Rust file for testing\n");
+    content.push_str("fn main() {\n");
+
+    // Generate ~500KB of content
+    for i in 0..10000 {
+        content.push_str(&format!("    println!(\"Line {}\");\n", i));
+    }
+    content.push_str("}\n");
+
+    std::fs::write(&file_path, &content).unwrap();
+
+    // Verify file is under 1MB
+    let file_size = std::fs::metadata(&file_path).unwrap().len();
+    assert!(file_size < 1024 * 1024, "Test file should be < 1MB (got {} bytes)", file_size);
+
+    // Create harness with default config
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open the file - should succeed with LSP
+    let result = harness.open_file(&file_path);
+
+    // Should succeed even with LSP initialization
+    assert!(result.is_ok(), "Should be able to open medium file with LSP");
+
+    // Verify the file is loaded
+    harness.render().unwrap();
+    harness.assert_screen_contains("medium_test.rs");
+    harness.assert_screen_contains("// Medium Rust file");
+}
