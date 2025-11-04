@@ -1,7 +1,7 @@
 use crate::cache::Cache;
 use crate::edit::{Edit, EditKind};
 use crate::persistence::PersistenceLayer;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::io;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -176,7 +176,7 @@ impl VirtualBuffer {
             position,
             version_at_creation: current_version,
             tree_snapshot,
-            chunk_buffer: None,
+            chunk_cache: HashMap::new(),
         }
     }
 
@@ -217,9 +217,9 @@ pub struct ByteIterator {
     /// When available, we read chunks from it
     tree_snapshot: Option<crate::chunk_tree::ChunkTree<'static>>,
 
-    /// Internal buffer holding recently read bytes from the tree
-    /// (start_offset, data)
-    chunk_buffer: Option<(usize, Vec<u8>)>,
+    /// Cache of loaded chunks indexed by their start offset
+    /// Maps start_offset => chunk_data
+    chunk_cache: HashMap<usize, Vec<u8>>,
 }
 
 impl ByteIterator {
@@ -237,11 +237,14 @@ impl ByteIterator {
             }
         }
 
-        // Fast path: Check if we have buffered data containing this position
-        if let Some((chunk_start, data)) = &self.chunk_buffer {
-            let offset = self.position.saturating_sub(*chunk_start);
-            if offset < data.len() {
-                let byte = data[offset];
+        // Fast path: Check if we have a cached chunk containing this position
+        const CHUNK_SIZE: usize = 4096;
+        let chunk_start = (self.position / CHUNK_SIZE) * CHUNK_SIZE;
+
+        if let Some(chunk_data) = self.chunk_cache.get(&chunk_start) {
+            let offset = self.position - chunk_start;
+            if offset < chunk_data.len() {
+                let byte = chunk_data[offset];
                 self.position += 1;
                 return Some(byte);
             }
@@ -249,9 +252,7 @@ impl ByteIterator {
 
         // Need to load new chunk
         if let Some(tree) = &self.tree_snapshot {
-            // Read a 4KB chunk starting from current position
-            const CHUNK_SIZE: usize = 4096;
-            let mut iter = tree.bytes_at(self.position);
+            let mut iter = tree.bytes_at(chunk_start);
             let mut chunk_data = Vec::with_capacity(CHUNK_SIZE);
 
             for _ in 0..CHUNK_SIZE {
@@ -263,10 +264,13 @@ impl ByteIterator {
             }
 
             if !chunk_data.is_empty() {
-                let byte = chunk_data[0];
-                self.chunk_buffer = Some((self.position, chunk_data));
-                self.position += 1;
-                return Some(byte);
+                let offset = self.position - chunk_start;
+                if offset < chunk_data.len() {
+                    let byte = chunk_data[offset];
+                    self.chunk_cache.insert(chunk_start, chunk_data);
+                    self.position += 1;
+                    return Some(byte);
+                }
             }
         }
 
@@ -293,19 +297,19 @@ impl ByteIterator {
             }
         }
 
-        // Fast path: Check if we have buffered data containing this position
-        if let Some((chunk_start, data)) = &self.chunk_buffer {
-            let offset = self.position.saturating_sub(*chunk_start);
-            if offset < data.len() {
-                return Some(data[offset]);
+        // Fast path: Check if we have a cached chunk containing this position
+        const CHUNK_SIZE: usize = 4096;
+        let chunk_start = (self.position / CHUNK_SIZE) * CHUNK_SIZE;
+
+        if let Some(chunk_data) = self.chunk_cache.get(&chunk_start) {
+            let offset = self.position - chunk_start;
+            if offset < chunk_data.len() {
+                return Some(chunk_data[offset]);
             }
         }
 
         // Need to load chunk containing this position
         if let Some(tree) = &self.tree_snapshot {
-            // Read a 4KB chunk ending near current position
-            const CHUNK_SIZE: usize = 4096;
-            let chunk_start = self.position.saturating_sub(CHUNK_SIZE / 2);
             let mut iter = tree.bytes_at(chunk_start);
             let mut chunk_data = Vec::with_capacity(CHUNK_SIZE);
 
@@ -318,13 +322,11 @@ impl ByteIterator {
             }
 
             if !chunk_data.is_empty() {
-                self.chunk_buffer = Some((chunk_start, chunk_data));
-                // Retry with the buffered data
-                if let Some((chunk_start, data)) = &self.chunk_buffer {
-                    let offset = self.position.saturating_sub(*chunk_start);
-                    if offset < data.len() {
-                        return Some(data[offset]);
-                    }
+                let offset = self.position - chunk_start;
+                if offset < chunk_data.len() {
+                    let byte = chunk_data[offset];
+                    self.chunk_cache.insert(chunk_start, chunk_data);
+                    return Some(byte);
                 }
             }
         }
@@ -393,7 +395,7 @@ impl ByteIterator {
         // CRITICAL: Invalidate the ChunkTree snapshot since edits occurred
         // The next next()/prev() call will get a fresh snapshot
         self.tree_snapshot = None;
-        self.chunk_buffer = None;
+        self.chunk_cache.clear();
 
         // Update version tracking for GC
         let mut versions = self.buffer.active_iterator_versions.lock().unwrap();
@@ -513,5 +515,201 @@ mod tests {
 
         // Iterator should adjust its position
         assert_eq!(iter.next(), Some(b'w'));
+    }
+
+    #[test]
+    fn test_iterator_chunk_boundary_crossing() {
+        // Create a buffer larger than the 4KB chunk size
+        let data = "x".repeat(8192); // 8KB of data
+        let leaked_data = Box::leak(data.into_bytes().into_boxed_slice());
+
+        let persistence = Box::new(ChunkTreePersistence::from_data(
+            leaked_data,
+            DEFAULT_CONFIG,
+        ));
+        let vbuf = VirtualBuffer::new(persistence);
+
+        // Test forward iteration across chunk boundary
+        let mut iter = vbuf.iter_at(4090);
+
+        // Read through the 4KB boundary
+        for _ in 0..20 {
+            assert_eq!(iter.next(), Some(b'x'), "Should read 'x' across chunk boundary");
+        }
+
+        // Test backward iteration across chunk boundary
+        let mut iter = vbuf.iter_at(4100);
+        for _ in 0..20 {
+            assert_eq!(iter.prev(), Some(b'x'), "Should read 'x' backwards across chunk boundary");
+        }
+    }
+
+    #[test]
+    fn test_iterator_edit_invalidates_buffer() {
+        // Create buffer with repeating pattern
+        let data = "abcd".repeat(2000); // 8KB of "abcdabcd..."
+        let leaked_data = Box::leak(data.clone().into_bytes().into_boxed_slice());
+
+        let persistence = Box::new(ChunkTreePersistence::from_data(
+            leaked_data,
+            DEFAULT_CONFIG,
+        ));
+        let vbuf = VirtualBuffer::new(persistence);
+
+        // Reference implementation using Vec
+        let mut reference = data.into_bytes();
+        let mut ref_pos = 0;
+
+        let mut iter = vbuf.iter_at(0);
+
+        // Read some bytes to populate the internal buffer
+        assert_eq!(iter.next(), Some(b'a'));
+        ref_pos += 1;
+        assert_eq!(iter.next(), Some(b'b'));
+        ref_pos += 1;
+        assert_eq!(iter.next(), Some(b'c'));
+        ref_pos += 1;
+
+        // Now insert at position 1 (between 'a' and 'b')
+        vbuf.insert(1, b"XYZ").unwrap();
+
+        // Do the same insert in reference
+        reference.splice(1..1, b"XYZ".iter().cloned());
+
+        // Adjust reference position for the insert
+        // Insert at position 1, which is before ref_pos (3), so add length of insert
+        ref_pos += 3;
+
+        // Iterator should see the new data after adjustment
+        // The iterator was at position 3, insert at position 1 adjusts it to position 6
+        // Position 6 in "aXYZbcdabcd..." is 'd'
+        let expected = reference[ref_pos];
+        assert_eq!(iter.next(), Some(expected),
+            "After insert, iterator should read from new buffer at adjusted position");
+    }
+
+    #[test]
+    fn test_iterator_multiple_edits() {
+        let persistence = Box::new(ChunkTreePersistence::from_data(
+            Box::leak(b"0123456789".to_vec().into_boxed_slice()),
+            DEFAULT_CONFIG,
+        ));
+        let vbuf = VirtualBuffer::new(persistence);
+
+        let mut iter = vbuf.iter_at(5);
+
+        // Multiple inserts before iterator
+        vbuf.insert(2, b"AA").unwrap();  // "01AA23456789", iter at 7
+        vbuf.insert(0, b"BB").unwrap();  // "BB01AA23456789", iter at 9
+
+        // Iterator should track position correctly
+        assert_eq!(iter.next(), Some(b'5'));
+        assert_eq!(iter.next(), Some(b'6'));
+    }
+
+    #[test]
+    fn test_iterator_delete_before_position() {
+        let persistence = Box::new(ChunkTreePersistence::from_data(
+            Box::leak(b"0123456789".to_vec().into_boxed_slice()),
+            DEFAULT_CONFIG,
+        ));
+        let vbuf = VirtualBuffer::new(persistence);
+
+        let mut iter = vbuf.iter_at(8);
+
+        // Delete before iterator (removes "234")
+        vbuf.delete(2..5).unwrap();  // "01456789", iter should move to 5
+
+        // Iterator should read from adjusted position
+        assert_eq!(iter.next(), Some(b'8'));
+        assert_eq!(iter.next(), Some(b'9'));
+    }
+
+    #[test]
+    fn test_iterator_at_end_of_buffer() {
+        let persistence = Box::new(ChunkTreePersistence::from_data(
+            Box::leak(b"hello".to_vec().into_boxed_slice()),
+            DEFAULT_CONFIG,
+        ));
+        let vbuf = VirtualBuffer::new(persistence);
+
+        let mut iter = vbuf.iter_at(5);
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next(), None); // Should remain stable at end
+    }
+
+    #[test]
+    fn test_iterator_peek_consistency() {
+        let persistence = Box::new(ChunkTreePersistence::from_data(
+            Box::leak(b"hello".to_vec().into_boxed_slice()),
+            DEFAULT_CONFIG,
+        ));
+        let vbuf = VirtualBuffer::new(persistence);
+
+        let mut iter = vbuf.iter_at(1);
+
+        // Peek should not advance
+        assert_eq!(iter.peek(), Some(b'e'));
+        assert_eq!(iter.peek(), Some(b'e'));
+
+        // Next should advance
+        assert_eq!(iter.next(), Some(b'e'));
+        assert_eq!(iter.peek(), Some(b'l'));
+    }
+
+    #[test]
+    fn test_iterator_seek() {
+        let persistence = Box::new(ChunkTreePersistence::from_data(
+            Box::leak(b"0123456789".to_vec().into_boxed_slice()),
+            DEFAULT_CONFIG,
+        ));
+        let vbuf = VirtualBuffer::new(persistence);
+
+        let mut iter = vbuf.iter_at(0);
+        assert_eq!(iter.next(), Some(b'0'));
+
+        iter.seek(5);
+        assert_eq!(iter.next(), Some(b'5'));
+
+        iter.seek(9);
+        assert_eq!(iter.next(), Some(b'9'));
+    }
+
+    #[test]
+    fn test_iterator_buffer_reuse() {
+        // Test that the internal buffer is reused for sequential reads
+        let data = "x".repeat(5000);
+        let leaked_data = Box::leak(data.into_bytes().into_boxed_slice());
+
+        let persistence = Box::new(ChunkTreePersistence::from_data(
+            leaked_data,
+            DEFAULT_CONFIG,
+        ));
+        let vbuf = VirtualBuffer::new(persistence);
+
+        let mut iter = vbuf.iter_at(0);
+
+        // Read 4KB - this should fill the internal buffer
+        for i in 0..4096 {
+            assert_eq!(iter.next(), Some(b'x'), "Failed at position {}", i);
+        }
+
+        // Continue reading - should still work as we read the next chunk
+        for i in 0..900 {
+            assert_eq!(iter.next(), Some(b'x'), "Failed at position {}", 4096 + i);
+        }
+    }
+
+    #[test]
+    fn test_iterator_with_empty_buffer() {
+        let persistence = Box::new(ChunkTreePersistence::from_data(
+            Box::leak(b"".to_vec().into_boxed_slice()),
+            DEFAULT_CONFIG,
+        ));
+        let vbuf = VirtualBuffer::new(persistence);
+
+        let mut iter = vbuf.iter_at(0);
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.prev(), None);
     }
 }
