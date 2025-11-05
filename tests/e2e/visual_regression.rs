@@ -110,9 +110,10 @@ fn visual_help_system() {
 /// Test split view workflow
 #[test]
 fn visual_split_view() {
-    let temp_dir = TempDir::new().unwrap();
-    let file1 = temp_dir.path().join("file1.txt");
-    let file2 = temp_dir.path().join("file2.txt");
+    use crate::common::fixtures::test_temp_dir;
+    let temp_dir = test_temp_dir("visual-split-view").unwrap();
+    let file1 = temp_dir.join("file1.txt");
+    let file2 = temp_dir.join("file2.txt");
 
     fs::write(&file1, "Content of file 1").unwrap();
     fs::write(&file2, "Content of file 2").unwrap();

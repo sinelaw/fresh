@@ -594,7 +594,6 @@ fn test_multi_cursor_comprehensive_abc_editing() {
 #[test]
 fn test_single_cursor_visible() {
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::style::Modifier;
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create multiple lines with various content
@@ -602,21 +601,6 @@ fn test_single_cursor_visible() {
 
     let expected_content = "Hello World\nSecond Line Here\nThird Line\nFourth";
     harness.assert_buffer_content(expected_content);
-
-    // Helper function to find cursor on screen
-    let find_cursor = |harness: &EditorTestHarness| -> Option<(u16, u16, String)> {
-        for y in 0..24 {
-            for x in 0..80 {
-                if let Some(style) = harness.get_cell_style(x, y) {
-                    if style.add_modifier.contains(Modifier::REVERSED) {
-                        let char = harness.get_cell(x, y).unwrap_or_else(|| " ".to_string());
-                        return Some((x, y, char));
-                    }
-                }
-            }
-        }
-        None
-    };
 
     // Move to start of document
     harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
@@ -638,17 +622,17 @@ fn test_single_cursor_visible() {
         let cursor_pos = harness.cursor_position();
         println!("\nStep {}: cursor at buffer position {}", step, cursor_pos);
 
-        // Find cursor on screen
-        let cursor_info = find_cursor(&harness);
+        // Find cursor on screen using the harness's cursor detection
+        let cursors = harness.find_all_cursors();
         assert!(
-            cursor_info.is_some(),
+            !cursors.is_empty(),
             "Step {}: Cursor not visible at buffer position {}! Expected char: '{}'",
             step,
             cursor_pos,
             expected_char
         );
 
-        let (x, y, char_at_cursor) = cursor_info.unwrap();
+        let (x, y, char_at_cursor, _is_primary) = &cursors[0];
         println!("  Screen position: ({}, {}), char: '{}'", x, y, char_at_cursor);
 
         // For newline, we expect to see a space since we add it for visibility
@@ -658,7 +642,7 @@ fn test_single_cursor_visible() {
             // Verify the character matches (accounting for rendered character)
             let expected_str = expected_char.to_string();
             assert_eq!(
-                char_at_cursor, expected_str,
+                *char_at_cursor, expected_str,
                 "Step {}: Cursor at wrong character. Expected '{}', got '{}'",
                 step, expected_str, char_at_cursor
             );
@@ -683,16 +667,16 @@ fn test_single_cursor_visible() {
 
     harness.render().unwrap();
 
-    let cursor_info = find_cursor(&harness);
-    assert!(cursor_info.is_some(), "Cursor should be visible at start of second line");
-    let (x, y, char_at_cursor) = cursor_info.unwrap();
+    let cursors = harness.find_all_cursors();
+    assert!(!cursors.is_empty(), "Cursor should be visible at start of second line");
+    let (x, y, char_at_cursor, _is_primary) = &cursors[0];
     println!("At start of line 2: screen ({}, {}), char: '{}', buffer pos: {}", x, y, char_at_cursor, after_home);
 
     // Position 12 should be 'S' (first char of "Second")
     // But we need to be flexible in case the cursor is shown differently
     if after_home == 12 {
         // If we're at the 'S', it should show 'S' with REVERSED
-        assert_eq!(char_at_cursor, "S", "Should be at 'S' of 'Second'");
+        assert_eq!(*char_at_cursor, "S", "Should be at 'S' of 'Second'");
     } else {
         println!("WARNING: Cursor not at expected position 12, it's at {}", after_home);
     }
@@ -702,17 +686,17 @@ fn test_single_cursor_visible() {
     for (i, expected_char) in second_chars.iter().enumerate() {
         harness.render().unwrap();
 
-        let cursor_info = find_cursor(&harness);
+        let cursors = harness.find_all_cursors();
         assert!(
-            cursor_info.is_some(),
+            !cursors.is_empty(),
             "Cursor not visible at char {} of 'Second'",
             i
         );
 
-        let (_, _, char_at_cursor) = cursor_info.unwrap();
+        let (_, _, char_at_cursor, _is_primary) = &cursors[0];
         let expected_str = expected_char.to_string();
         assert_eq!(
-            char_at_cursor, expected_str,
+            *char_at_cursor, expected_str,
             "At position {} of 'Second': expected '{}', got '{}'",
             i, expected_str, char_at_cursor
         );
@@ -728,24 +712,24 @@ fn test_single_cursor_visible() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    let cursor_info = find_cursor(&harness);
-    assert!(cursor_info.is_some(), "Cursor should be visible after moving down");
-    println!("After Down: cursor at {:?}", cursor_info);
+    let cursors = harness.find_all_cursors();
+    assert!(!cursors.is_empty(), "Cursor should be visible after moving down");
+    println!("After Down: cursor at {:?}", cursors[0]);
 
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    let cursor_info = find_cursor(&harness);
-    assert!(cursor_info.is_some(), "Cursor should be visible after moving up");
-    println!("After Up: cursor at {:?}", cursor_info);
+    let cursors = harness.find_all_cursors();
+    assert!(!cursors.is_empty(), "Cursor should be visible after moving up");
+    println!("After Up: cursor at {:?}", cursors[0]);
 
     // Move to end of document
     harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
     harness.render().unwrap();
 
-    let cursor_info = find_cursor(&harness);
-    assert!(cursor_info.is_some(), "Cursor should be visible at end of document");
-    println!("At end of document: cursor at {:?}", cursor_info);
+    let cursors = harness.find_all_cursors();
+    assert!(!cursors.is_empty(), "Cursor should be visible at end of document");
+    println!("At end of document: cursor at {:?}", cursors[0]);
 
     println!("\nCursor visibility test completed successfully!");
 }
@@ -754,7 +738,6 @@ fn test_single_cursor_visible() {
 #[test]
 fn test_cursor_visible_on_empty_line() {
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::style::Modifier;
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Start with empty buffer (empty line)
@@ -764,17 +747,9 @@ fn test_cursor_visible_on_empty_line() {
     assert_eq!(harness.cursor_count(), 1);
 
     // Cursor should be visible on the empty line
-    let mut cursor_found = false;
-    for x in 0..20 {
-        if let Some(style) = harness.get_cell_style(x, 1) {
-            if style.add_modifier.contains(Modifier::REVERSED) {
-                cursor_found = true;
-                break;
-            }
-        }
-    }
-
-    assert!(cursor_found, "Cursor should be visible on empty line");
+    let cursors = harness.find_all_cursors();
+    assert!(!cursors.is_empty(), "Cursor should be visible on empty line");
+    assert_eq!(cursors.len(), 1, "Should have exactly 1 visible cursor");
 
     // Type some text, then delete it to create an empty line again
     harness.type_text("Test").unwrap();
@@ -784,17 +759,8 @@ fn test_cursor_visible_on_empty_line() {
     harness.render().unwrap();
 
     // Cursor should still be visible on empty line
-    let mut cursor_found_after_delete = false;
-    for x in 0..20 {
-        if let Some(style) = harness.get_cell_style(x, 1) {
-            if style.add_modifier.contains(Modifier::REVERSED) {
-                cursor_found_after_delete = true;
-                break;
-            }
-        }
-    }
-
-    assert!(cursor_found_after_delete, "Cursor should be visible on empty line after deleting text");
+    let cursors_after_delete = harness.find_all_cursors();
+    assert!(!cursors_after_delete.is_empty(), "Cursor should be visible on empty line after deleting text");
 
     // Add multiple empty lines and test cursor on different empty lines
     harness.type_text("\n\n\n").unwrap();
@@ -802,29 +768,13 @@ fn test_cursor_visible_on_empty_line() {
     harness.render().unwrap();
 
     // Cursor should be visible on the empty line we moved to
-    let mut cursor_found_on_middle_empty = false;
-    for y in 1..10 {
-        for x in 0..20 {
-            if let Some(style) = harness.get_cell_style(x, y) {
-                if style.add_modifier.contains(Modifier::REVERSED) {
-                    cursor_found_on_middle_empty = true;
-                    break;
-                }
-            }
-        }
-        if cursor_found_on_middle_empty {
-            break;
-        }
-    }
-
-    assert!(cursor_found_on_middle_empty, "Cursor should be visible on middle empty line");
+    let cursors_on_middle_empty = harness.find_all_cursors();
+    assert!(!cursors_on_middle_empty.is_empty(), "Cursor should be visible on middle empty line");
 }
 
 /// Test cursor visibility when editor first opens with empty buffer
 #[test]
 fn test_cursor_visible_on_initial_empty_buffer() {
-    use ratatui::style::Modifier;
-
     // Create harness with empty buffer (simulates opening editor)
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
     harness.render().unwrap();
@@ -833,30 +783,20 @@ fn test_cursor_visible_on_initial_empty_buffer() {
     println!("Buffer length: {}", harness.editor().active_state().buffer.len());
     println!("Cursor position: {}", harness.editor().active_state().cursors.primary().position);
 
-    // Scan the entire screen for a cursor with REVERSED modifier
-    let mut cursor_found = false;
-    for y in 0..24 {
-        for x in 0..80 {
-            if let Some(style) = harness.get_cell_style(x, y) {
-                if style.add_modifier.contains(Modifier::REVERSED) {
-                    let char = harness.get_cell(x, y).unwrap_or_else(|| " ".to_string());
-                    println!("Found cursor at screen position ({}, {}): '{}'", x, y, char);
-                    cursor_found = true;
-                }
-            }
-        }
-    }
+    // Use the harness's cursor detection which handles both hardware cursor and REVERSED cells
+    let cursors = harness.find_all_cursors();
+    assert!(!cursors.is_empty(), "Cursor must be visible when editor opens with empty buffer");
 
-    assert!(cursor_found, "Cursor must be visible when editor opens with empty buffer");
+    let (x, y, char_at_cursor, is_primary) = &cursors[0];
+    println!("Found cursor at screen position ({}, {}): '{}' (primary: {})", x, y, char_at_cursor, is_primary);
+    assert!(*is_primary, "The only cursor should be the primary cursor");
 }
 
 /// Test cursor visibility when opening a file
 #[test]
 fn test_cursor_visible_when_opening_file() {
-    use ratatui::style::Modifier;
     use tempfile::TempDir;
     use std::fs;
-    use std::path::PathBuf;
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.txt");
@@ -871,21 +811,13 @@ fn test_cursor_visible_when_opening_file() {
     println!("Buffer length: {}", harness.editor().active_state().buffer.len());
     println!("Cursor position: {}", harness.editor().active_state().cursors.primary().position);
 
-    // Scan the entire screen for a cursor with REVERSED modifier
-    let mut cursor_found = false;
-    for y in 0..24 {
-        for x in 0..80 {
-            if let Some(style) = harness.get_cell_style(x, y) {
-                if style.add_modifier.contains(Modifier::REVERSED) {
-                    let char = harness.get_cell(x, y).unwrap_or_else(|| " ".to_string());
-                    println!("Found cursor at screen position ({}, {}): '{}'", x, y, char);
-                    cursor_found = true;
-                }
-            }
-        }
-    }
+    // Use the harness's cursor detection which handles both hardware cursor and REVERSED cells
+    let cursors = harness.find_all_cursors();
+    assert!(!cursors.is_empty(), "Cursor must be visible when opening a file");
 
-    assert!(cursor_found, "Cursor must be visible when opening a file");
+    let (x, y, char_at_cursor, is_primary) = &cursors[0];
+    println!("Found cursor at screen position ({}, {}): '{}' (primary: {})", x, y, char_at_cursor, is_primary);
+    assert!(*is_primary, "The only cursor should be the primary cursor");
 }
 
 /// Test to investigate cursor behavior with identical line content
