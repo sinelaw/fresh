@@ -522,7 +522,8 @@ fn test_lsp_diagnostic_to_overlay() {
         data: None,
     };
 
-    let result = diagnostic_to_overlay(&diagnostic, &buffer);
+    let theme = editor::theme::Theme::dark();
+    let result = diagnostic_to_overlay(&diagnostic, &buffer, &theme);
     assert!(result.is_some());
 
     let (range, face, priority) = result.unwrap();
@@ -534,10 +535,10 @@ fn test_lsp_diagnostic_to_overlay() {
     // Check priority (error should be highest)
     assert_eq!(priority, 100);
 
-    // Check face (should be dark red background)
+    // Check face (should use theme's error background color)
     match face {
         editor::overlay::OverlayFace::Background { color } => {
-            assert_eq!(color, ratatui::style::Color::Rgb(60, 20, 20));
+            assert_eq!(color, theme.diagnostic_error_bg);
         }
         _ => panic!("Expected background face for error diagnostic"),
     }
