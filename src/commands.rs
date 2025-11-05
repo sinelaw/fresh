@@ -313,6 +313,20 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::CommandPalette,
             contexts: vec![KeyContext::Normal],
         },
+
+        // Git operations
+        Command {
+            name: "Git: Grep".to_string(),
+            description: "Search through git-tracked files with live results".to_string(),
+            action: Action::GitGrep,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Git: Find File".to_string(),
+            description: "Find and open a file from git ls-files".to_string(),
+            action: Action::GitFindFile,
+            contexts: vec![KeyContext::Normal],
+        },
     ]
 }
 

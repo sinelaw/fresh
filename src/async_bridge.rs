@@ -14,6 +14,19 @@ use crate::file_tree::{FileTreeView, NodeId};
 use lsp_types::{CompletionItem, Diagnostic, Location};
 use std::sync::mpsc;
 
+/// A single match from git grep
+#[derive(Debug, Clone)]
+pub struct GitGrepMatch {
+    /// File path relative to git root
+    pub file: String,
+    /// Line number (1-indexed)
+    pub line: usize,
+    /// Column number (1-indexed)
+    pub column: usize,
+    /// The matching line content
+    pub content: String,
+}
+
 /// Messages sent from async tasks to the synchronous main loop
 #[derive(Debug)]
 pub enum AsyncMessage {
@@ -46,6 +59,18 @@ pub enum AsyncMessage {
 
     /// Git status updated (future: git integration)
     GitStatusChanged { status: String },
+
+    /// Git grep results for live search
+    GitGrepResults {
+        query: String,
+        results: Vec<GitGrepMatch>,
+    },
+
+    /// Git ls-files results for file finding
+    GitLsFilesResults {
+        query: String,
+        files: Vec<String>,
+    },
 
     /// File explorer initialized with tree view
     FileExplorerInitialized(FileTreeView),

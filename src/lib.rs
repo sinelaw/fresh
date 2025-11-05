@@ -13,6 +13,7 @@ pub mod editor;
 pub mod event;
 pub mod file_tree;
 pub mod fs;
+pub mod git;
 pub mod highlighter;
 pub mod keybindings;
 pub mod line_cache;
