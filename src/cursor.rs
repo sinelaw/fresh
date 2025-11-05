@@ -206,16 +206,18 @@ impl Cursors {
         cursor
     }
 
-    /// Remove all cursors except the primary one
+    /// Remove all cursors except the first one (original cursor)
+    /// When exiting multi-cursor mode, return to the original cursor position
     pub fn remove_secondary(&mut self) {
-        let primary = self.primary_id;
-        let primary_cursor = *self
-            .cursors
-            .get(&primary)
-            .expect("Primary cursor should exist");
+        // Find the cursor with the minimum ID (the original/first cursor)
+        let first_id = *self.cursors.keys().min_by_key(|id| id.0)
+            .expect("Should have at least one cursor");
+        let first_cursor = *self.cursors.get(&first_id)
+            .expect("First cursor should exist");
 
         self.cursors.clear();
-        self.cursors.insert(primary, primary_cursor);
+        self.cursors.insert(first_id, first_cursor);
+        self.primary_id = first_id; // Update primary to be the first cursor
     }
 
     /// Get all cursor IDs

@@ -632,10 +632,15 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         }
 
         Action::RemoveSecondaryCursors => {
-            // Generate RemoveCursor events for all secondary cursors
-            let primary_id = state.cursors.primary_id();
+            // Generate RemoveCursor events for all cursors except the first (original) one
+            // Find the first cursor ID (lowest ID = original cursor)
+            let first_id = state.cursors.iter()
+                .map(|(id, _)| id)
+                .min_by_key(|id| id.0)
+                .expect("Should have at least one cursor");
+
             for (cursor_id, cursor) in state.cursors.iter() {
-                if cursor_id != primary_id {
+                if cursor_id != first_id {
                     events.push(Event::RemoveCursor {
                         cursor_id,
                         position: cursor.position,
