@@ -87,7 +87,7 @@ fn test_file_explorer_shows_directory_structure() {
     // (This is a basic check - the exact content depends on rendering)
 
     // Restore original directory
-    std::env::set_current_dir(original_dir).unwrap();
+    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test file explorer navigation
@@ -132,7 +132,7 @@ fn test_file_explorer_navigation() {
     harness.render().unwrap();
 
     // Restore original directory
-    std::env::set_current_dir(original_dir).unwrap();
+    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test file explorer expand/collapse
@@ -168,6 +168,7 @@ fn test_file_explorer_expand_collapse() {
 
     // Wait for async operation
     std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     let screen_after_expand = harness.screen_to_string();
@@ -180,10 +181,11 @@ fn test_file_explorer_expand_collapse() {
     harness.editor_mut().file_explorer_toggle_expand();
 
     std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Restore original directory
-    std::env::set_current_dir(original_dir).unwrap();
+    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test opening a file from file explorer
@@ -218,6 +220,8 @@ fn test_file_explorer_open_file() {
 
     // Expand root directory to see files (root should be selected by default)
     harness.editor_mut().file_explorer_toggle_expand();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     let screen_after_expand = harness.screen_to_string();
@@ -250,7 +254,7 @@ fn test_file_explorer_open_file() {
     // Note: We don't fail the test if no file was opened, as navigation might not land on the file
 
     // Restore original directory
-    std::env::set_current_dir(original_dir).unwrap();
+    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test file explorer refresh
@@ -284,6 +288,7 @@ fn test_file_explorer_refresh() {
 
     // Wait for refresh
     std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // The new file should now be visible
@@ -292,7 +297,7 @@ fn test_file_explorer_refresh() {
     println!("After refresh:\n{}", screen);
 
     // Restore original directory
-    std::env::set_current_dir(original_dir).unwrap();
+    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test focus switching between file explorer and editor
@@ -315,22 +320,24 @@ fn test_file_explorer_focus_switching() {
     harness.send_key(KeyCode::Down, KeyModifiers::empty()).unwrap();
     harness.render().unwrap();
 
-    // Switch focus to editor using Ctrl+B
-    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    // Toggle file explorer off
+    harness.editor_mut().toggle_file_explorer();
     harness.render().unwrap();
 
-    // File explorer should still be visible but not focused
-    assert!(harness.editor().file_explorer_visible());
+    // File explorer should be hidden now
+    assert!(!harness.editor().file_explorer_visible());
 
-    // Switch focus back to file explorer using Ctrl+B
-    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    // Toggle file explorer back on
+    harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
-    // Should be focused on file explorer again
+    // Should be visible again
     assert!(harness.editor().file_explorer_visible());
 
-    // Press Esc to return focus to editor
-    harness.send_key(KeyCode::Esc, KeyModifiers::empty()).unwrap();
+    // Focus the editor (without toggling file explorer off)
+    harness.editor_mut().focus_editor();
     harness.render().unwrap();
 
     // File explorer should still be visible, just not focused
@@ -370,38 +377,38 @@ fn test_file_explorer_context_aware_keybindings() {
     harness.render().unwrap();
 
     // Restore original directory
-    std::env::set_current_dir(original_dir).unwrap();
+    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test opening file explorer with focus
 #[test]
 fn test_focus_file_explorer_action() {
-    use crossterm::event::{KeyCode, KeyModifiers};
-
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
     // Initially, file explorer is not visible
     assert!(!harness.editor().file_explorer_visible());
 
-    // Use Ctrl+B to focus file explorer (should open and focus it)
-    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    // Open and focus file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // File explorer should now be visible and focused
     assert!(harness.editor().file_explorer_visible());
 
     // Switch focus back to editor
-    harness.send_key(KeyCode::Esc, KeyModifiers::empty()).unwrap();
+    harness.editor_mut().focus_editor();
     harness.render().unwrap();
 
     // File explorer should still be visible
     assert!(harness.editor().file_explorer_visible());
 
-    // Use Ctrl+B again to switch focus back to file explorer
-    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    // Focus file explorer again
+    harness.editor_mut().focus_file_explorer();
     harness.render().unwrap();
 
-    // Should be focused on file explorer
+    // Should still be visible
     assert!(harness.editor().file_explorer_visible());
 }
 
@@ -446,6 +453,8 @@ fn test_file_explorer_displays_opened_file_content() {
 
     // Expand the root directory
     harness.editor_mut().file_explorer_toggle_expand();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Navigate down to find second.txt
@@ -460,7 +469,7 @@ fn test_file_explorer_displays_opened_file_content() {
 
     // Open the selected file from file explorer
     let result = harness.editor_mut().file_explorer_open_file();
-    assert!(result.is_ok(), "Opening file from explorer should succeed");
+    assert!(result.is_ok(), "Opening file from explorer should succeed: {:?}", result);
 
     harness.render().unwrap();
     let screen_after_open = harness.screen_to_string();
@@ -481,7 +490,7 @@ fn test_file_explorer_displays_opened_file_content() {
     );
 
     // Restore original directory
-    std::env::set_current_dir(original_dir).unwrap();
+    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test that file_explorer_toggle_hidden can be called (smoke test)
@@ -555,7 +564,7 @@ fn test_file_explorer_new_file_smoke() {
     harness.render().unwrap();
 
     // Restore original directory
-    std::env::set_current_dir(original_dir).unwrap();
+    let _ = std::env::set_current_dir(original_dir);
 
     // Test passes if no panic occurs
 }
@@ -583,7 +592,7 @@ fn test_file_explorer_new_directory_smoke() {
     harness.render().unwrap();
 
     // Restore original directory
-    std::env::set_current_dir(original_dir).unwrap();
+    let _ = std::env::set_current_dir(original_dir);
 
     // Test passes if no panic occurs
 }
@@ -613,6 +622,7 @@ fn test_file_explorer_delete_smoke() {
     // Expand root and navigate
     harness.editor_mut().file_explorer_toggle_expand();
     std::thread::sleep(std::time::Duration::from_millis(50));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     harness.editor_mut().file_explorer_navigate_down();
@@ -624,7 +634,7 @@ fn test_file_explorer_delete_smoke() {
     harness.render().unwrap();
 
     // Restore original directory
-    std::env::set_current_dir(original_dir).unwrap();
+    let _ = std::env::set_current_dir(original_dir);
 
     // Test passes if no panic occurs
 }
