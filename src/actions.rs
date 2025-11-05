@@ -653,7 +653,28 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         | Action::DecreaseSplitSize
         | Action::Undo
         | Action::Redo
-        | Action::None => return None,
+        | Action::None
+        | Action::HelpToggle
+        | Action::HelpScrollUp
+        | Action::HelpScrollDown
+        | Action::HelpPageUp
+        | Action::HelpPageDown
+        | Action::PromptConfirm
+        | Action::PromptCancel
+        | Action::PromptBackspace
+        | Action::PromptMoveLeft
+        | Action::PromptMoveRight
+        | Action::PromptMoveStart
+        | Action::PromptMoveEnd
+        | Action::PromptSelectPrev
+        | Action::PromptSelectNext
+        | Action::PromptAcceptSuggestion
+        | Action::PopupSelectNext
+        | Action::PopupSelectPrev
+        | Action::PopupPageUp
+        | Action::PopupPageDown
+        | Action::PopupConfirm
+        | Action::PopupCancel => return None,
 
         Action::SelectLine => {
             // Select the entire line for each cursor

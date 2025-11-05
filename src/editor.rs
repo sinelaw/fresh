@@ -794,6 +794,21 @@ impl Editor {
         }
     }
 
+    /// Determine the current keybinding context based on UI state
+    fn get_key_context(&self) -> crate::keybindings::KeyContext {
+        use crate::keybindings::KeyContext;
+
+        if self.help_renderer.is_visible() {
+            KeyContext::Help
+        } else if self.is_prompting() {
+            KeyContext::Prompt
+        } else if self.active_state().popups.is_visible() {
+            KeyContext::Popup
+        } else {
+            KeyContext::Normal
+        }
+    }
+
     /// Handle a key event and return whether it was handled
     /// This is the central key handling logic used by both main.rs and tests
     pub fn handle_key(
@@ -807,296 +822,184 @@ impl Editor {
 
         tracing::debug!("Editor.handle_key: code={:?}, modifiers={:?}", code, modifiers);
 
-        // Handle help mode first
-        if self.help_renderer.is_visible() {
-            match (code, modifiers) {
-                (KeyCode::Esc, KeyModifiers::NONE)
-                | (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
-                    self.help_renderer.toggle();
-                }
-                (KeyCode::Up, KeyModifiers::NONE) => self.help_renderer.scroll(-1, &self.keybindings),
-                (KeyCode::Down, KeyModifiers::NONE) => self.help_renderer.scroll(1, &self.keybindings),
-                (KeyCode::PageUp, KeyModifiers::NONE) => self.help_renderer.scroll(-10, &self.keybindings),
-                (KeyCode::PageDown, KeyModifiers::NONE) => self.help_renderer.scroll(10, &self.keybindings),
-                _ => {}
-            }
-            return Ok(());
-        }
+        // Determine the current context
+        let context = self.get_key_context();
 
-        // Handle prompt mode
-        if self.is_prompting() {
-            match (code, modifiers) {
-                // Confirm prompt with Enter
-                (KeyCode::Enter, KeyModifiers::NONE) => {
-                    if let Some((input, prompt_type)) = self.confirm_prompt() {
-                        // Handle the confirmed prompt
-                        match prompt_type {
-                            PromptType::OpenFile => {
-                                let path = Path::new(&input);
-                                if let Err(e) = self.open_file(path) {
-                                    self.set_status_message(format!("Error opening file: {e}"));
-                                } else {
-                                    self.set_status_message(format!("Opened: {input}"));
-                                }
-                            }
-                            PromptType::SaveFileAs => {
-                                self.set_status_message(format!(
-                                    "Save-as not yet implemented: {input}"
-                                ));
-                            }
-                            PromptType::Search => {
-                                self.set_status_message(format!(
-                                    "Search not yet implemented: {input}"
-                                ));
-                            }
-                            PromptType::Replace { search: _ } => {
-                                self.set_status_message(format!(
-                                    "Replace not yet implemented: {input}"
-                                ));
-                            }
-                            PromptType::Command => {
-                                // Find the command by name and execute it
-                                let commands = get_all_commands();
-                                if let Some(cmd) = commands.iter().find(|c| c.name == input) {
-                                    // Execute the action (we'll handle it below after returning from this match)
-                                    // For now, trigger the action through the normal action handling
-                                    let action = cmd.action.clone();
-                                    self.set_status_message(format!("Executing: {}", cmd.name));
-
-                                    // Handle the action immediately
-                                    match action {
-                                        Action::Quit => self.quit(),
-                                        Action::Save => {
-                                            let _ = self.save();
-                                        }
-                                        Action::Open => self.start_prompt(
-                                            "Find file: ".to_string(),
-                                            PromptType::OpenFile,
-                                        ),
-                                        Action::Copy => self.copy_selection(),
-                                        Action::Cut => self.cut_selection(),
-                                        Action::Paste => self.paste(),
-                                        Action::Undo => {
-                                            if let Some(event) = self.active_event_log_mut().undo()
-                                            {
-                                                if let Some(inverse) = event.inverse() {
-                                                    self.active_state_mut().apply(&inverse);
-                                                }
-                                            }
-                                        }
-                                        Action::Redo => {
-                                            let event_opt =
-                                                self.active_event_log_mut().redo().cloned();
-                                            if let Some(event) = event_opt {
-                                                self.active_state_mut().apply(&event);
-                                            }
-                                        }
-                                        Action::ShowHelp => self.help_renderer.toggle(),
-                                        Action::AddCursorNextMatch => {
-                                            self.add_cursor_at_next_match()
-                                        }
-                                        Action::AddCursorAbove => self.add_cursor_above(),
-                                        Action::AddCursorBelow => self.add_cursor_below(),
-                                        Action::RemoveSecondaryCursors => {
-                                            self.active_state_mut().cursors.remove_secondary()
-                                        }
-                                        Action::SelectAll
-                                        | Action::SelectWord
-                                        | Action::SelectLine
-                                        | Action::ExpandSelection => {
-                                            if let Some(events) = self.action_to_events(action) {
-                                                for event in events {
-                                                    self.active_event_log_mut()
-                                                        .append(event.clone());
-                                                    self.active_state_mut().apply(&event);
-                                                }
-                                            }
-                                        }
-                                        _ => {
-                                            if let Some(events) = self.action_to_events(action) {
-                                                for event in events {
-                                                    self.active_event_log_mut()
-                                                        .append(event.clone());
-                                                    self.active_state_mut().apply(&event);
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    self.set_status_message(format!("Unknown command: {input}"));
-                                }
-                            }
-                        }
-                    }
-                    return Ok(());
-                }
-                // Cancel prompt with Escape
-                (KeyCode::Esc, KeyModifiers::NONE) => {
-                    self.cancel_prompt();
-                    return Ok(());
-                }
-                // Insert character into prompt
-                (KeyCode::Char(c), KeyModifiers::NONE)
-                | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
-                    if let Some(prompt) = self.prompt_mut() {
-                        prompt.input.insert(prompt.cursor_pos, c);
-                        prompt.cursor_pos += c.len_utf8();
-                    }
-                    // Update suggestions if this is a command palette
-                    self.update_prompt_suggestions();
-                    return Ok(());
-                }
-                // Backspace in prompt
-                (KeyCode::Backspace, KeyModifiers::NONE) => {
-                    if let Some(prompt) = self.prompt_mut() {
-                        if prompt.cursor_pos > 0 {
-                            let byte_pos = prompt.cursor_pos;
-                            let mut char_start = byte_pos - 1;
-                            while char_start > 0 && !prompt.input.is_char_boundary(char_start) {
-                                char_start -= 1;
-                            }
-                            prompt.input.remove(char_start);
-                            prompt.cursor_pos = char_start;
-                        }
-                    }
-                    // Update suggestions if this is a command palette
-                    self.update_prompt_suggestions();
-                    return Ok(());
-                }
-                // Navigate suggestions with Up/Down
-                (KeyCode::Up, KeyModifiers::NONE) => {
-                    if let Some(prompt) = self.prompt_mut() {
-                        if !prompt.suggestions.is_empty() {
-                            if let Some(selected) = prompt.selected_suggestion {
-                                prompt.selected_suggestion = if selected == 0 {
-                                    Some(prompt.suggestions.len() - 1)
-                                } else {
-                                    Some(selected - 1)
-                                };
-                            }
-                        }
-                    }
-                    return Ok(());
-                }
-                (KeyCode::Down, KeyModifiers::NONE) => {
-                    if let Some(prompt) = self.prompt_mut() {
-                        if !prompt.suggestions.is_empty() {
-                            if let Some(selected) = prompt.selected_suggestion {
-                                prompt.selected_suggestion =
-                                    Some((selected + 1) % prompt.suggestions.len());
-                            }
-                        }
-                    }
-                    return Ok(());
-                }
-                // Tab to accept current suggestion
-                (KeyCode::Tab, KeyModifiers::NONE) => {
-                    if let Some(prompt) = self.prompt_mut() {
-                        if let Some(selected) = prompt.selected_suggestion {
-                            if let Some(suggestion) = prompt.suggestions.get(selected) {
-                                prompt.input = suggestion.get_value().to_string();
-                                prompt.cursor_pos = prompt.input.len();
-                            }
-                        }
-                    }
-                    return Ok(());
-                }
-                // Move cursor left in prompt
-                (KeyCode::Left, KeyModifiers::NONE) => {
-                    if let Some(prompt) = self.prompt_mut() {
-                        if prompt.cursor_pos > 0 {
-                            let mut new_pos = prompt.cursor_pos - 1;
-                            while new_pos > 0 && !prompt.input.is_char_boundary(new_pos) {
-                                new_pos -= 1;
-                            }
-                            prompt.cursor_pos = new_pos;
-                        }
-                    }
-                    return Ok(());
-                }
-                // Move cursor right in prompt
-                (KeyCode::Right, KeyModifiers::NONE) => {
-                    if let Some(prompt) = self.prompt_mut() {
-                        if prompt.cursor_pos < prompt.input.len() {
-                            let mut new_pos = prompt.cursor_pos + 1;
-                            while new_pos < prompt.input.len()
-                                && !prompt.input.is_char_boundary(new_pos)
-                            {
-                                new_pos += 1;
-                            }
-                            prompt.cursor_pos = new_pos;
-                        }
-                    }
-                    return Ok(());
-                }
-                // Move to start of prompt input
-                (KeyCode::Home, KeyModifiers::NONE) => {
-                    if let Some(prompt) = self.prompt_mut() {
-                        prompt.cursor_pos = 0;
-                    }
-                    return Ok(());
-                }
-                // Move to end of prompt input
-                (KeyCode::End, KeyModifiers::NONE) => {
-                    if let Some(prompt) = self.prompt_mut() {
-                        prompt.cursor_pos = prompt.input.len();
-                    }
-                    return Ok(());
-                }
-                // Ignore other keys in prompt mode
-                _ => return Ok(()),
-            }
-        }
-
-        // Handle popup navigation (if popup is visible)
-        if self.active_state().popups.is_visible() {
-            match (code, modifiers) {
-                // Navigate popup with arrow keys
-                (KeyCode::Up, KeyModifiers::NONE) => {
-                    self.popup_select_prev();
-                    return Ok(());
-                }
-                (KeyCode::Down, KeyModifiers::NONE) => {
-                    self.popup_select_next();
-                    return Ok(());
-                }
-                // Page up/down for popup scrolling
-                (KeyCode::PageUp, KeyModifiers::NONE) => {
-                    self.popup_page_up();
-                    return Ok(());
-                }
-                (KeyCode::PageDown, KeyModifiers::NONE) => {
-                    self.popup_page_down();
-                    return Ok(());
-                }
-                // Escape to close popup
-                (KeyCode::Esc, KeyModifiers::NONE) => {
-                    self.hide_popup();
-                    return Ok(());
-                }
-                // Enter to accept current selection (let it fall through for now)
-                (KeyCode::Enter, KeyModifiers::NONE) => {
-                    // For now, just close the popup
-                    // In the future, this could trigger an action based on the selected item
-                    self.hide_popup();
-                    return Ok(());
-                }
-                // Other keys: close popup and handle normally
-                _ => {
-                    self.hide_popup();
-                    // Don't return - let the key be handled normally below
-                }
-            }
-        }
-
-        // Normal mode: use keybinding resolver to convert key to action
+        // Resolve the key event to an action
         let key_event = crossterm::event::KeyEvent::new(code, modifiers);
-        let action = self.keybindings.resolve(&key_event);
+        let action = self.keybindings.resolve(&key_event, context);
 
-        // Debug logging for selection actions
-        tracing::debug!("Key: {:?} + {:?} -> Action: {:?}", code, modifiers, action);
+        tracing::debug!("Context: {:?} -> Action: {:?}", context, action);
 
-        // Handle special actions
+        // Handle the action
+        match action {
+            // Help mode actions
+            Action::HelpToggle => {
+                self.help_renderer.toggle();
+            }
+            Action::HelpScrollUp => {
+                self.help_renderer.scroll(-1, &self.keybindings);
+            }
+            Action::HelpScrollDown => {
+                self.help_renderer.scroll(1, &self.keybindings);
+            }
+            Action::HelpPageUp => {
+                self.help_renderer.scroll(-10, &self.keybindings);
+            }
+            Action::HelpPageDown => {
+                self.help_renderer.scroll(10, &self.keybindings);
+            }
+
+            // Prompt mode actions
+            Action::PromptConfirm => {
+                if let Some((input, prompt_type)) = self.confirm_prompt() {
+                    match prompt_type {
+                        PromptType::OpenFile => {
+                            let path = Path::new(&input);
+                            if let Err(e) = self.open_file(path) {
+                                self.set_status_message(format!("Error opening file: {e}"));
+                            } else {
+                                self.set_status_message(format!("Opened: {input}"));
+                            }
+                        }
+                        PromptType::SaveFileAs => {
+                            self.set_status_message(format!("Save-as not yet implemented: {input}"));
+                        }
+                        PromptType::Search => {
+                            self.set_status_message(format!("Search not yet implemented: {input}"));
+                        }
+                        PromptType::Replace { search: _ } => {
+                            self.set_status_message(format!("Replace not yet implemented: {input}"));
+                        }
+                        PromptType::Command => {
+                            let commands = get_all_commands();
+                            if let Some(cmd) = commands.iter().find(|c| c.name == input) {
+                                let action = cmd.action.clone();
+                                self.set_status_message(format!("Executing: {}", cmd.name));
+                                // Recursively handle the command action
+                                return self.handle_action(action);
+                            } else {
+                                self.set_status_message(format!("Unknown command: {input}"));
+                            }
+                        }
+                    }
+                }
+            }
+            Action::PromptCancel => {
+                self.cancel_prompt();
+            }
+            Action::PromptBackspace => {
+                if let Some(prompt) = self.prompt_mut() {
+                    if prompt.cursor_pos > 0 {
+                        let byte_pos = prompt.cursor_pos;
+                        let mut char_start = byte_pos - 1;
+                        while char_start > 0 && !prompt.input.is_char_boundary(char_start) {
+                            char_start -= 1;
+                        }
+                        prompt.input.remove(char_start);
+                        prompt.cursor_pos = char_start;
+                    }
+                }
+                self.update_prompt_suggestions();
+            }
+            Action::PromptMoveLeft => {
+                if let Some(prompt) = self.prompt_mut() {
+                    if prompt.cursor_pos > 0 {
+                        let mut new_pos = prompt.cursor_pos - 1;
+                        while new_pos > 0 && !prompt.input.is_char_boundary(new_pos) {
+                            new_pos -= 1;
+                        }
+                        prompt.cursor_pos = new_pos;
+                    }
+                }
+            }
+            Action::PromptMoveRight => {
+                if let Some(prompt) = self.prompt_mut() {
+                    if prompt.cursor_pos < prompt.input.len() {
+                        let mut new_pos = prompt.cursor_pos + 1;
+                        while new_pos < prompt.input.len() && !prompt.input.is_char_boundary(new_pos) {
+                            new_pos += 1;
+                        }
+                        prompt.cursor_pos = new_pos;
+                    }
+                }
+            }
+            Action::PromptMoveStart => {
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.cursor_pos = 0;
+                }
+            }
+            Action::PromptMoveEnd => {
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.cursor_pos = prompt.input.len();
+                }
+            }
+            Action::PromptSelectPrev => {
+                if let Some(prompt) = self.prompt_mut() {
+                    if !prompt.suggestions.is_empty() {
+                        if let Some(selected) = prompt.selected_suggestion {
+                            prompt.selected_suggestion = if selected == 0 {
+                                Some(prompt.suggestions.len() - 1)
+                            } else {
+                                Some(selected - 1)
+                            };
+                        }
+                    }
+                }
+            }
+            Action::PromptSelectNext => {
+                if let Some(prompt) = self.prompt_mut() {
+                    if !prompt.suggestions.is_empty() {
+                        if let Some(selected) = prompt.selected_suggestion {
+                            prompt.selected_suggestion = Some((selected + 1) % prompt.suggestions.len());
+                        }
+                    }
+                }
+            }
+            Action::PromptAcceptSuggestion => {
+                if let Some(prompt) = self.prompt_mut() {
+                    if let Some(selected) = prompt.selected_suggestion {
+                        if let Some(suggestion) = prompt.suggestions.get(selected) {
+                            prompt.input = suggestion.get_value().to_string();
+                            prompt.cursor_pos = prompt.input.len();
+                        }
+                    }
+                }
+            }
+
+            // Popup mode actions
+            Action::PopupSelectNext => {
+                self.popup_select_next();
+            }
+            Action::PopupSelectPrev => {
+                self.popup_select_prev();
+            }
+            Action::PopupPageUp => {
+                self.popup_page_up();
+            }
+            Action::PopupPageDown => {
+                self.popup_page_down();
+            }
+            Action::PopupConfirm => {
+                self.hide_popup();
+            }
+            Action::PopupCancel => {
+                self.hide_popup();
+            }
+
+            // Normal mode actions - delegate to handle_action
+            _ => {
+                return self.handle_action(action);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle an action (for normal mode and command execution)
+    fn handle_action(&mut self, action: Action) -> std::io::Result<()> {
+        use crate::keybindings::Action;
+
         match action {
             Action::Quit => self.quit(),
             Action::Save => self.save()?,
@@ -1119,7 +1022,6 @@ impl Editor {
             }
             Action::ShowHelp => self.help_renderer.toggle(),
             Action::CommandPalette => {
-                // Start the command palette prompt with all commands as suggestions
                 let suggestions = filter_commands("");
                 self.start_prompt_with_suggestions(
                     "Command: ".to_string(),
@@ -1141,13 +1043,31 @@ impl Editor {
             Action::IncreaseSplitSize => self.adjust_split_size(0.05),
             Action::DecreaseSplitSize => self.adjust_split_size(-0.05),
             Action::None => {}
+            Action::InsertChar(c) => {
+                // Handle character insertion in prompt mode
+                if self.is_prompting() {
+                    if let Some(prompt) = self.prompt_mut() {
+                        prompt.input.insert(prompt.cursor_pos, c);
+                        prompt.cursor_pos += c.len_utf8();
+                    }
+                    self.update_prompt_suggestions();
+                } else {
+                    // Normal mode character insertion
+                    if let Some(events) = self.action_to_events(Action::InsertChar(c)) {
+                        for event in events {
+                            self.active_event_log_mut().append(event.clone());
+                            self.active_state_mut().apply(&event);
+                            self.notify_lsp_change(&event);
+                        }
+                    }
+                }
+            }
             _ => {
                 // Convert action to events and apply them
                 if let Some(events) = self.action_to_events(action) {
                     for event in events {
                         self.active_event_log_mut().append(event.clone());
                         self.active_state_mut().apply(&event);
-                        // Notify LSP of the change
                         self.notify_lsp_change(&event);
                     }
                 }
