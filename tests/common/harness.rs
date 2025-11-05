@@ -51,24 +51,17 @@ impl EditorTestHarness {
     /// Create harness with an isolated temporary project directory
     /// The temp directory is kept alive for the duration of the harness
     /// and automatically cleaned up when the harness is dropped.
-    /// The working directory is set to the temp directory during editor initialization
-    /// and restored immediately after, making tests hermetic and parallel-safe.
+    /// This method does NOT modify the process's current directory, making tests
+    /// fully hermetic and safe to run in parallel.
     pub fn with_temp_project(width: u16, height: u16) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
 
-        // Temporarily set current_dir for editor initialization
-        let original_dir = std::env::current_dir()?;
-        std::env::set_current_dir(&temp_path)?;
-
-        // Create editor (file explorer will initialize with temp_path)
+        // Create editor with explicit working directory (no global state modification!)
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
         let config = Config::default();
-        let editor = Editor::new(config, width, height)?;
-
-        // Restore original directory immediately
-        std::env::set_current_dir(&original_dir)?;
+        let editor = Editor::with_working_dir(config, width, height, Some(temp_path))?;
 
         Ok(EditorTestHarness {
             editor,
