@@ -54,9 +54,9 @@ fn test_file_explorer_shows_directory_structure() {
 
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    // Create a test directory structure
-    let temp_dir = TempDir::new().unwrap();
-    let project_root = temp_dir.path();
+    // Create harness with isolated temp project
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
 
     // Create some files and directories
     fs::create_dir(project_root.join("src")).unwrap();
@@ -64,9 +64,6 @@ fn test_file_explorer_shows_directory_structure() {
     fs::write(project_root.join("Cargo.toml"), "[package]").unwrap();
     fs::create_dir(project_root.join("tests")).unwrap();
     fs::write(project_root.join("README.md"), "# Project").unwrap();
-
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
     // Toggle file explorer on with Ctrl+B
     harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
@@ -405,9 +402,10 @@ fn test_focus_file_explorer_action() {
 #[test]
 fn test_file_explorer_displays_opened_file_content() {
     use crossterm::event::{KeyCode, KeyModifiers};
-    // Create a test directory with two distinct files
-    let temp_dir = TempDir::new().unwrap();
-    let project_root = temp_dir.path();
+
+    // Create harness with isolated temp project
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
 
     let file1 = project_root.join("first.txt");
     let file2 = project_root.join("second.txt");
@@ -416,9 +414,6 @@ fn test_file_explorer_displays_opened_file_content() {
 
     fs::write(&file1, content1).unwrap();
     fs::write(&file2, content2).unwrap();
-
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
     // Open the first file directly
     harness.open_file(&file1).unwrap();
