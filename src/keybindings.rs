@@ -177,6 +177,10 @@ pub enum Action {
     FileExplorerDelete,
     FileExplorerRename,
 
+    // LSP operations
+    LspCompletion,
+    LspGotoDefinition,
+
     // No-op
     None,
 }
@@ -306,6 +310,9 @@ impl Action {
             "file_explorer_new_directory" => Some(Action::FileExplorerNewDirectory),
             "file_explorer_delete" => Some(Action::FileExplorerDelete),
             "file_explorer_rename" => Some(Action::FileExplorerRename),
+
+            "lsp_completion" => Some(Action::LspCompletion),
+            "lsp_goto_definition" => Some(Action::LspGotoDefinition),
 
             _ => None,
         }
@@ -865,6 +872,8 @@ impl KeybindingResolver {
             Action::FileExplorerNewDirectory => "File explorer: new directory".to_string(),
             Action::FileExplorerDelete => "File explorer: delete".to_string(),
             Action::FileExplorerRename => "File explorer: rename".to_string(),
+            Action::LspCompletion => "LSP: Show completion suggestions".to_string(),
+            Action::LspGotoDefinition => "LSP: Go to definition".to_string(),
             Action::None => "No action".to_string(),
         }
     }

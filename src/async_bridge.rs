@@ -11,7 +11,7 @@
 //! - Main loop remains responsive and simple
 
 use crate::file_tree::{FileTreeView, NodeId};
-use lsp_types::Diagnostic;
+use lsp_types::{CompletionItem, Diagnostic, Location};
 use std::sync::mpsc;
 
 /// Messages sent from async tasks to the synchronous main loop
@@ -28,6 +28,18 @@ pub enum AsyncMessage {
 
     /// LSP server crashed or failed
     LspError { language: String, error: String },
+
+    /// LSP completion response
+    LspCompletion {
+        request_id: u64,
+        items: Vec<CompletionItem>,
+    },
+
+    /// LSP go-to-definition response
+    LspGotoDefinition {
+        request_id: u64,
+        locations: Vec<Location>,
+    },
 
     /// File changed externally (future: file watching)
     FileChanged { path: String },

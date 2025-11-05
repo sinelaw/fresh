@@ -95,10 +95,47 @@ impl StatusBarRenderer {
             (line_num, col)
         };
 
-        let status = if let Some(msg) = status_message {
-            format!("{filename}{modified} | Ln {line}, Col {col} | {msg}")
+        // Count diagnostics by severity
+        let diagnostics = state.overlays.all();
+        let mut error_count = 0;
+        let mut warning_count = 0;
+        let mut info_count = 0;
+
+        for overlay in diagnostics {
+            if let Some(id) = &overlay.id {
+                if id.starts_with("lsp-diagnostic-") {
+                    // Check priority to determine severity
+                    // Based on lsp_diagnostics.rs: Error=100, Warning=50, Info=30, Hint=10
+                    match overlay.priority {
+                        100 => error_count += 1,
+                        50 => warning_count += 1,
+                        _ => info_count += 1,
+                    }
+                }
+            }
+        }
+
+        // Build diagnostics summary if there are any
+        let diagnostics_summary = if error_count + warning_count + info_count > 0 {
+            let mut parts = Vec::new();
+            if error_count > 0 {
+                parts.push(format!("E:{}", error_count));
+            }
+            if warning_count > 0 {
+                parts.push(format!("W:{}", warning_count));
+            }
+            if info_count > 0 {
+                parts.push(format!("I:{}", info_count));
+            }
+            format!(" | {}", parts.join(" "))
         } else {
-            format!("{filename}{modified} | Ln {line}, Col {col}")
+            String::new()
+        };
+
+        let status = if let Some(msg) = status_message {
+            format!("{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary} | {msg}")
+        } else {
+            format!("{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}")
         };
 
         let status_line =

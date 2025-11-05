@@ -107,6 +107,22 @@ enum LspCommand {
         text: Option<String>,
     },
 
+    /// Request completion at position
+    Completion {
+        request_id: u64,
+        uri: Url,
+        line: u32,
+        character: u32,
+    },
+
+    /// Request go-to-definition
+    GotoDefinition {
+        request_id: u64,
+        uri: Url,
+        line: u32,
+        character: u32,
+    },
+
     /// Shutdown the server
     Shutdown,
 }
@@ -319,6 +335,119 @@ impl LspState {
         self.send_notification::<DidSaveTextDocument>(params).await
     }
 
+    /// Handle completion request
+    async fn handle_completion(
+        &mut self,
+        request_id: u64,
+        uri: Url,
+        line: u32,
+        character: u32,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{CompletionParams, PartialResultParams, Position, TextDocumentIdentifier, TextDocumentPositionParams, WorkDoneProgressParams};
+
+        tracing::debug!("LSP: completion request at {}:{}:{}", uri, line, character);
+
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line, character },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        };
+
+        // Send request and get response
+        match self.send_request_sequential::<_, Value>("textDocument/completion", Some(params), pending).await {
+            Ok(result) => {
+                // Parse the completion response
+                let items = if let Ok(list) = serde_json::from_value::<lsp_types::CompletionList>(result.clone()) {
+                    list.items
+                } else if let Ok(items) = serde_json::from_value::<Vec<lsp_types::CompletionItem>>(result) {
+                    items
+                } else {
+                    vec![]
+                };
+
+                // Send to main loop
+                let _ = self.async_tx.send(AsyncMessage::LspCompletion {
+                    request_id,
+                    items,
+                });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Completion request failed: {}", e);
+                // Send empty completion on error
+                let _ = self.async_tx.send(AsyncMessage::LspCompletion {
+                    request_id,
+                    items: vec![],
+                });
+                Err(e)
+            }
+        }
+    }
+
+    /// Handle go-to-definition request
+    async fn handle_goto_definition(
+        &mut self,
+        request_id: u64,
+        uri: Url,
+        line: u32,
+        character: u32,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{GotoDefinitionParams, PartialResultParams, Position, TextDocumentIdentifier, TextDocumentPositionParams, WorkDoneProgressParams};
+
+        tracing::debug!("LSP: go-to-definition request at {}:{}:{}", uri, line, character);
+
+        let params = GotoDefinitionParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line, character },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        // Send request and get response
+        match self.send_request_sequential::<_, Value>("textDocument/definition", Some(params), pending).await {
+            Ok(result) => {
+                // Parse the definition response (can be Location, Vec<Location>, or LocationLink)
+                let locations = if let Ok(loc) = serde_json::from_value::<lsp_types::Location>(result.clone()) {
+                    vec![loc]
+                } else if let Ok(locs) = serde_json::from_value::<Vec<lsp_types::Location>>(result.clone()) {
+                    locs
+                } else if let Ok(links) = serde_json::from_value::<Vec<lsp_types::LocationLink>>(result) {
+                    // Convert LocationLink to Location
+                    links.into_iter().map(|link| lsp_types::Location {
+                        uri: link.target_uri,
+                        range: link.target_selection_range,
+                    }).collect()
+                } else {
+                    vec![]
+                };
+
+                // Send to main loop
+                let _ = self.async_tx.send(AsyncMessage::LspGotoDefinition {
+                    request_id,
+                    locations,
+                });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Go-to-definition request failed: {}", e);
+                // Send empty locations on error
+                let _ = self.async_tx.send(AsyncMessage::LspGotoDefinition {
+                    request_id,
+                    locations: vec![],
+                });
+                Err(e)
+            }
+        }
+    }
+
     /// Handle shutdown command
     async fn handle_shutdown(&mut self) -> Result<(), String> {
         tracing::info!("Shutting down async LSP server");
@@ -529,6 +658,30 @@ impl LspTask {
                             } else {
                                 tracing::debug!("Queueing DidSave for {} until initialization completes", uri);
                                 pending_commands.push(LspCommand::DidSave { uri, text });
+                            }
+                        }
+                        LspCommand::Completion { request_id, uri, line, character } => {
+                            if state.initialized {
+                                tracing::info!("Processing Completion request for {}", uri);
+                                let _ = state.handle_completion(request_id, uri, line, character, &pending).await;
+                            } else {
+                                tracing::debug!("LSP not initialized, sending empty completion");
+                                let _ = state.async_tx.send(AsyncMessage::LspCompletion {
+                                    request_id,
+                                    items: vec![],
+                                });
+                            }
+                        }
+                        LspCommand::GotoDefinition { request_id, uri, line, character } => {
+                            if state.initialized {
+                                tracing::info!("Processing GotoDefinition request for {}", uri);
+                                let _ = state.handle_goto_definition(request_id, uri, line, character, &pending).await;
+                            } else {
+                                tracing::debug!("LSP not initialized, sending empty locations");
+                                let _ = state.async_tx.send(AsyncMessage::LspGotoDefinition {
+                                    request_id,
+                                    locations: vec![],
+                                });
                             }
                         }
                         LspCommand::Shutdown => {
@@ -1154,6 +1307,30 @@ impl LspHandle {
         self.command_tx
             .try_send(LspCommand::DidSave { uri, text })
             .map_err(|_| "Failed to send did_save command".to_string())
+    }
+
+    /// Request completion at position
+    pub fn completion(&self, request_id: u64, uri: Url, line: u32, character: u32) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::Completion {
+                request_id,
+                uri,
+                line,
+                character,
+            })
+            .map_err(|_| "Failed to send completion command".to_string())
+    }
+
+    /// Request go-to-definition
+    pub fn goto_definition(&self, request_id: u64, uri: Url, line: u32, character: u32) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::GotoDefinition {
+                request_id,
+                uri,
+                line,
+                character,
+            })
+            .map_err(|_| "Failed to send goto_definition command".to_string())
     }
 
     /// Shutdown the server

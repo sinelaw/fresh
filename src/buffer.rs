@@ -530,6 +530,55 @@ impl Buffer {
     pub fn clear_line_cache(&mut self) {
         self.line_cache.clear();
     }
+
+    /// Convert byte position to (line, character) - 0-indexed
+    /// Returns (line_number, character_offset_within_line)
+    pub fn position_to_line_col(&self, byte_pos: usize) -> (usize, usize) {
+        let mut iter = self.line_iterator(0);
+        let mut line_number = 0;
+
+        while let Some((line_start, line_content)) = iter.next() {
+            let line_end = line_start + line_content.len();
+
+            if byte_pos >= line_start && byte_pos <= line_end {
+                // Found the line containing byte_pos
+                let character = byte_pos - line_start;
+                return (line_number, character);
+            }
+
+            line_number += 1;
+        }
+
+        // If position is beyond the end, return the last line
+        if line_number > 0 {
+            line_number -= 1;
+        }
+        (line_number, 0)
+    }
+
+    /// Convert (line, character) to byte position - 0-indexed
+    /// Returns byte position (clamps to end of buffer if line doesn't exist)
+    pub fn line_col_to_position(&self, line: usize, character: usize) -> usize {
+        let mut iter = self.line_iterator(0);
+        let mut current_line = 0;
+
+        while current_line < line {
+            if iter.next().is_none() {
+                // Line doesn't exist, return end of buffer
+                return self.len();
+            }
+            current_line += 1;
+        }
+
+        // Get the start of the target line
+        if let Some((line_start, line_content)) = iter.next() {
+            let byte_offset = character.min(line_content.len());
+            line_start + byte_offset
+        } else {
+            // Line doesn't exist, return end of buffer
+            self.len()
+        }
+    }
 }
 
 impl Default for Buffer {
