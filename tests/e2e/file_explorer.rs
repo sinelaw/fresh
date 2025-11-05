@@ -280,3 +280,109 @@ fn test_file_explorer_refresh() {
     // Restore original directory
     std::env::set_current_dir(original_dir).unwrap();
 }
+
+/// Test focus switching between file explorer and editor
+#[test]
+fn test_file_explorer_focus_switching() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Open file explorer
+    harness.editor_mut().toggle_file_explorer();
+    harness.render().unwrap();
+
+    // File explorer should be visible and focused
+    assert!(harness.editor().file_explorer_visible());
+
+    // Try using arrow keys - in FileExplorer context, these should navigate the explorer
+    harness.send_key(KeyCode::Down, KeyModifiers::empty()).unwrap();
+    harness.render().unwrap();
+
+    // Switch focus to editor using Ctrl+B
+    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // File explorer should still be visible but not focused
+    assert!(harness.editor().file_explorer_visible());
+
+    // Switch focus back to file explorer using Ctrl+B
+    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Should be focused on file explorer again
+    assert!(harness.editor().file_explorer_visible());
+
+    // Press Esc to return focus to editor
+    harness.send_key(KeyCode::Esc, KeyModifiers::empty()).unwrap();
+    harness.render().unwrap();
+
+    // File explorer should still be visible, just not focused
+    assert!(harness.editor().file_explorer_visible());
+}
+
+/// Test that file explorer keybindings only work when explorer has focus
+#[test]
+fn test_file_explorer_context_aware_keybindings() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path();
+    std::fs::write(project_root.join("test.txt"), "content").unwrap();
+
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&project_root).unwrap();
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Open file explorer (starts with focus)
+    harness.editor_mut().toggle_file_explorer();
+    harness.render().unwrap();
+
+    // Arrow keys should work in file explorer context
+    harness.send_key(KeyCode::Down, KeyModifiers::empty()).unwrap();
+    harness.render().unwrap();
+
+    // Switch to editor context
+    harness.send_key(KeyCode::Esc, KeyModifiers::empty()).unwrap();
+    harness.render().unwrap();
+
+    // Now arrow keys should work for editor navigation, not file explorer
+    harness.send_key(KeyCode::Down, KeyModifiers::empty()).unwrap();
+    harness.render().unwrap();
+
+    // Restore original directory
+    std::env::set_current_dir(original_dir).unwrap();
+}
+
+/// Test opening file explorer with focus
+#[test]
+fn test_focus_file_explorer_action() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Initially, file explorer is not visible
+    assert!(!harness.editor().file_explorer_visible());
+
+    // Use Ctrl+B to focus file explorer (should open and focus it)
+    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // File explorer should now be visible and focused
+    assert!(harness.editor().file_explorer_visible());
+
+    // Switch focus back to editor
+    harness.send_key(KeyCode::Esc, KeyModifiers::empty()).unwrap();
+    harness.render().unwrap();
+
+    // File explorer should still be visible
+    assert!(harness.editor().file_explorer_visible());
+
+    // Use Ctrl+B again to switch focus back to file explorer
+    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Should be focused on file explorer
+    assert!(harness.editor().file_explorer_visible());
+}

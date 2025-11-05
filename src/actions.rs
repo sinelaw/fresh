@@ -675,6 +675,8 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         | Action::PopupConfirm
         | Action::PopupCancel
         | Action::ToggleFileExplorer
+        | Action::FocusFileExplorer
+        | Action::FocusEditor
         | Action::FileExplorerUp
         | Action::FileExplorerDown
         | Action::FileExplorerExpand
