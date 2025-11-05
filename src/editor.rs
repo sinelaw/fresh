@@ -5,6 +5,7 @@ use crate::event::{Event, EventLog};
 use crate::keybindings::{Action, KeybindingResolver};
 use crate::lsp_diagnostics;
 use crate::lsp_manager::{detect_language, LspManager};
+use crate::multi_cursor::{add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult};
 use crate::prompt::{Prompt, PromptType};
 use crate::split::SplitManager;
 use crate::state::EditorState;
@@ -567,125 +568,48 @@ impl Editor {
     /// If no selection, does nothing
     pub fn add_cursor_at_next_match(&mut self) {
         let state = self.active_state();
-
-        // Get the selected text from the primary cursor
-        let primary = state.cursors.primary();
-        let selection_range = match primary.selection_range() {
-            Some(range) => range,
-            None => {
-                self.status_message = Some("No selection to match".to_string());
-                return;
+        match add_cursor_at_next_match(state) {
+            AddCursorResult::Success { cursor, total_cursors } => {
+                let state_mut = self.active_state_mut();
+                state_mut.cursors.add(cursor);
+                state_mut.cursors.normalize();
+                self.status_message = Some(format!("Added cursor at match ({})", total_cursors));
             }
-        };
-
-        // Extract the selected text
-        let pattern = state.buffer.slice(selection_range.clone());
-
-        // Find the next occurrence after the current selection
-        let search_start = selection_range.end;
-        let match_pos = match state.buffer.find_next(&pattern, search_start) {
-            Some(pos) => pos,
-            None => {
-                self.status_message = Some("No more matches".to_string());
-                return;
+            AddCursorResult::Failed { message } => {
+                self.status_message = Some(message);
             }
-        };
-
-        // Create a new cursor at the match position with selection
-        let new_cursor =
-            crate::cursor::Cursor::with_selection(match_pos, match_pos + pattern.len());
-
-        // Add the cursor
-        let state_mut = self.active_state_mut();
-        state_mut.cursors.add(new_cursor);
-
-        // Normalize cursors to merge overlapping ones
-        state_mut.cursors.normalize();
-
-        self.status_message = Some(format!(
-            "Added cursor at match ({})",
-            state_mut.cursors.iter().count()
-        ));
+        }
     }
 
     /// Add a cursor above the primary cursor at the same column
     pub fn add_cursor_above(&mut self) {
         let state = self.active_state();
-        let primary = state.cursors.primary();
-
-        // Find the start of the current line using iterator
-        let mut iter = state.buffer.line_iterator(primary.position);
-        let Some((line_start, _line_content)) = iter.next() else {
-            self.status_message = Some("Unable to find current line".to_string());
-            return;
-        };
-
-        // Check if we're on the first line
-        if line_start == 0 {
-            self.status_message = Some("Already at first line".to_string());
-            return;
-        }
-
-        // Calculate column offset from line start
-        let col_offset = primary.position - line_start;
-
-        // After next(), iterator is positioned after current line
-        // Call prev() twice: once to get back to current line, once more to get previous line
-        iter.prev(); // Move back to current line
-
-        // Get the previous line
-        if let Some((prev_line_start, prev_line_content)) = iter.prev() {
-            // Calculate new position on previous line, capping at line length
-            let prev_line_len = prev_line_content.len();
-            let new_pos = prev_line_start + col_offset.min(prev_line_len);
-
-            let new_cursor = crate::cursor::Cursor::new(new_pos);
-
-            let state_mut = self.active_state_mut();
-            state_mut.cursors.add(new_cursor);
-            state_mut.cursors.normalize();
-
-            self.status_message = Some(format!(
-                "Added cursor above ({})",
-                state_mut.cursors.iter().count()
-            ));
-        } else {
-            self.status_message = Some("Already at first line".to_string());
+        match add_cursor_above(state) {
+            AddCursorResult::Success { cursor, total_cursors } => {
+                let state_mut = self.active_state_mut();
+                state_mut.cursors.add(cursor);
+                state_mut.cursors.normalize();
+                self.status_message = Some(format!("Added cursor above ({})", total_cursors));
+            }
+            AddCursorResult::Failed { message } => {
+                self.status_message = Some(message);
+            }
         }
     }
 
     /// Add a cursor below the primary cursor at the same column
     pub fn add_cursor_below(&mut self) {
         let state = self.active_state();
-        let primary = state.cursors.primary();
-
-        // Find the start of the current line using iterator
-        let mut iter = state.buffer.line_iterator(primary.position);
-        let Some((line_start, _)) = iter.next() else {
-            self.status_message = Some("Unable to find current line".to_string());
-            return;
-        };
-
-        // Calculate column offset from line start
-        let col_offset = primary.position - line_start;
-
-        // Get next line (we already consumed current line with first iter.next())
-        if let Some((next_line_start, next_line_content)) = iter.next() {
-            // Calculate new position on next line, capping at line length
-            let next_line_len = next_line_content.len();
-            let new_pos = next_line_start + col_offset.min(next_line_len);
-            let new_cursor = crate::cursor::Cursor::new(new_pos);
-
-            let state_mut = self.active_state_mut();
-            state_mut.cursors.add(new_cursor);
-            state_mut.cursors.normalize();
-
-            self.status_message = Some(format!(
-                "Added cursor below ({})",
-                state_mut.cursors.iter().count()
-            ));
-        } else {
-            self.status_message = Some("Already at last line".to_string());
+        match add_cursor_below(state) {
+            AddCursorResult::Success { cursor, total_cursors } => {
+                let state_mut = self.active_state_mut();
+                state_mut.cursors.add(cursor);
+                state_mut.cursors.normalize();
+                self.status_message = Some(format!("Added cursor below ({})", total_cursors));
+            }
+            AddCursorResult::Failed { message } => {
+                self.status_message = Some(message);
+            }
         }
     }
 

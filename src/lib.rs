@@ -17,6 +17,7 @@ pub mod lsp;
 pub mod lsp_async;
 pub mod lsp_diagnostics;
 pub mod lsp_manager;
+pub mod multi_cursor;
 pub mod overlay;
 pub mod persistence;
 pub mod popup;
