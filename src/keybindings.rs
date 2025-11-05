@@ -152,6 +152,8 @@ pub enum Action {
     PromptMoveEnd,
     PromptSelectPrev,
     PromptSelectNext,
+    PromptPageUp,
+    PromptPageDown,
     PromptAcceptSuggestion,
 
     // Popup mode actions
@@ -294,6 +296,8 @@ impl Action {
             "prompt_move_end" => Some(Action::PromptMoveEnd),
             "prompt_select_prev" => Some(Action::PromptSelectPrev),
             "prompt_select_next" => Some(Action::PromptSelectNext),
+            "prompt_page_up" => Some(Action::PromptPageUp),
+            "prompt_page_down" => Some(Action::PromptPageDown),
             "prompt_accept_suggestion" => Some(Action::PromptAcceptSuggestion),
 
             "popup_select_next" => Some(Action::PopupSelectNext),
@@ -371,6 +375,20 @@ impl KeybindingResolver {
         resolver
     }
 
+    /// Check if an action is application-wide (should be accessible in all contexts)
+    fn is_application_wide_action(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::Quit
+                | Action::Save
+                | Action::SaveAs
+                | Action::ShowHelp
+                | Action::HelpToggle
+                | Action::PromptCancel  // Esc should always cancel
+                | Action::PopupCancel   // Esc should always cancel
+        )
+    }
+
     /// Resolve a key event to an action in the given context
     pub fn resolve(&self, event: &KeyEvent, context: KeyContext) -> Action {
         tracing::debug!(
@@ -396,19 +414,24 @@ impl KeybindingResolver {
             }
         }
 
-        // Fall back to normal context if we're in a different context
+        // Fall back to normal context ONLY for application-wide actions
+        // This prevents keys from leaking through to the editor when in special contexts
         if context != KeyContext::Normal {
             if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
                 if let Some(action) = normal_bindings.get(&(event.code, event.modifiers)) {
-                    tracing::debug!("  -> Found in custom normal bindings: {:?}", action);
-                    return action.clone();
+                    if Self::is_application_wide_action(action) {
+                        tracing::debug!("  -> Found application-wide action in custom normal bindings: {:?}", action);
+                        return action.clone();
+                    }
                 }
             }
 
             if let Some(normal_bindings) = self.default_bindings.get(&KeyContext::Normal) {
                 if let Some(action) = normal_bindings.get(&(event.code, event.modifiers)) {
-                    tracing::debug!("  -> Found in default normal bindings: {:?}", action);
-                    return action.clone();
+                    if Self::is_application_wide_action(action) {
+                        tracing::debug!("  -> Found application-wide action in default normal bindings: {:?}", action);
+                        return action.clone();
+                    }
                 }
             }
         }
@@ -683,6 +706,8 @@ impl KeybindingResolver {
         prompt_bindings.insert((KeyCode::End, KeyModifiers::empty()), Action::PromptMoveEnd);
         prompt_bindings.insert((KeyCode::Up, KeyModifiers::empty()), Action::PromptSelectPrev);
         prompt_bindings.insert((KeyCode::Down, KeyModifiers::empty()), Action::PromptSelectNext);
+        prompt_bindings.insert((KeyCode::PageUp, KeyModifiers::empty()), Action::PromptPageUp);
+        prompt_bindings.insert((KeyCode::PageDown, KeyModifiers::empty()), Action::PromptPageDown);
         prompt_bindings.insert((KeyCode::Tab, KeyModifiers::empty()), Action::PromptAcceptSuggestion);
         all_bindings.insert(KeyContext::Prompt, prompt_bindings);
 
@@ -873,6 +898,8 @@ impl KeybindingResolver {
             Action::PromptMoveEnd => "Prompt move to end".to_string(),
             Action::PromptSelectPrev => "Prompt select previous".to_string(),
             Action::PromptSelectNext => "Prompt select next".to_string(),
+            Action::PromptPageUp => "Prompt page up".to_string(),
+            Action::PromptPageDown => "Prompt page down".to_string(),
             Action::PromptAcceptSuggestion => "Prompt accept suggestion".to_string(),
             Action::PopupSelectNext => "Popup select next".to_string(),
             Action::PopupSelectPrev => "Popup select previous".to_string(),

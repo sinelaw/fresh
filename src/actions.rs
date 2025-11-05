@@ -669,6 +669,8 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         | Action::PromptMoveEnd
         | Action::PromptSelectPrev
         | Action::PromptSelectNext
+        | Action::PromptPageUp
+        | Action::PromptPageDown
         | Action::PromptAcceptSuggestion
         | Action::PopupSelectNext
         | Action::PopupSelectPrev
