@@ -1,6 +1,5 @@
 use clap::Parser;
 use crossterm::{
-    cursor,
     event::{
         poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent,
         KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -52,7 +51,6 @@ fn main() -> io::Result<()> {
     // Set up panic hook to restore terminal
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
-        let _ = stdout().execute(cursor::Hide);
         let _ = stdout().execute(PopKeyboardEnhancementFlags);
         let _ = disable_raw_mode();
         let _ = stdout().execute(LeaveAlternateScreen);
@@ -75,9 +73,6 @@ fn main() -> io::Result<()> {
 
     let backend = ratatui::backend::CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
-
-    // Show the cursor (it's hidden by default in TUI mode)
-    stdout().execute(cursor::Show)?;
 
     // Clear the terminal to ensure proper initialization
     terminal.clear()?;
@@ -103,7 +98,6 @@ fn main() -> io::Result<()> {
     let result = run_event_loop(&mut editor, &mut terminal);
 
     // Clean up terminal
-    let _ = stdout().execute(cursor::Hide);
     let _ = stdout().execute(PopKeyboardEnhancementFlags);
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
