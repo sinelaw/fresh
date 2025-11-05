@@ -355,3 +355,51 @@ fn test_command_palette_scroll_beyond_visible() {
     // Should NOT see "Unknown command" error
     harness.assert_screen_not_contains("Unknown command");
 }
+
+/// Test that "New File" command actually switches to the new buffer
+#[test]
+fn test_command_palette_new_file_switches_buffer() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let fixture = TestFixture::new("test.txt", "Original content\nLine 2\nLine 3").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open the fixture file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Should see the original content
+    harness.assert_screen_contains("Original content");
+    harness.assert_screen_contains("Line 2");
+
+    // The tab should show the filename
+    harness.assert_screen_contains("test.txt");
+
+    // Now use command palette to create a new file
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness.type_text("new").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should see status message confirming new buffer
+    harness.assert_screen_contains("New buffer");
+
+    // Should now have two tabs
+    harness.assert_screen_contains("test.txt");
+    harness.assert_screen_contains("[No Name]");
+
+    // The important part: the CONTENT should now be empty (new buffer)
+    // NOT showing the original content anymore
+    harness.assert_screen_not_contains("Original content");
+    harness.assert_screen_not_contains("Line 2");
+
+    // The cursor should be at the start of an empty buffer
+    let screen = harness.screen_to_string();
+    println!("Screen after New File:\n{}", screen);
+
+    // Verify we can type in the new buffer
+    harness.type_text("New buffer text").unwrap();
+    harness.assert_screen_contains("New buffer text");
+    harness.assert_screen_not_contains("Original content");
+}
