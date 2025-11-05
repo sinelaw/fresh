@@ -3242,8 +3242,11 @@ mod tests {
             assert_eq!(state.cursors.count(), 3);
         }
 
-        // Save primary ID before calling action_to_events
-        let primary_id = editor.active_state().cursors.primary_id();
+        // Find the first cursor ID (the one that will be kept)
+        let first_id = editor.active_state().cursors.iter()
+            .map(|(id, _)| id)
+            .min_by_key(|id| id.0)
+            .expect("Should have at least one cursor");
 
         // RemoveSecondaryCursors should generate RemoveCursor events
         let events = editor.action_to_events(Action::RemoveSecondaryCursors);
@@ -3256,8 +3259,8 @@ mod tests {
         for event in &events {
             match event {
                 Event::RemoveCursor { cursor_id, .. } => {
-                    // Should not be the primary cursor
-                    assert_ne!(*cursor_id, primary_id);
+                    // Should not be the first cursor (the one we're keeping)
+                    assert_ne!(*cursor_id, first_id);
                 }
                 _ => panic!("Expected RemoveCursor event"),
             }

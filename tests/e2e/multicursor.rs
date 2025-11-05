@@ -941,3 +941,57 @@ fn test_identical_lines_cursor_positions() {
     // This should pass if cursors are positioned correctly
     assert_eq!(x_count, 4, "Should have 4 X's, one per cursor. Buffer:\n{}", result);
 }
+
+/// Test that pressing Esc returns to original cursor position, not last added cursor
+#[test]
+fn test_esc_returns_to_original_cursor_position() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create multiple lines
+    harness.type_text("Line 1\nLine 2\nLine 3\nLine 4\nLine 5").unwrap();
+    harness.assert_buffer_content("Line 1\nLine 2\nLine 3\nLine 4\nLine 5");
+
+    // Go to start of Line 1
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+
+    // Get the original cursor position (should be at start of Line 1, position 0)
+    let original_position = harness.cursor_position();
+    println!("Original cursor position: {} (should be at start of Line 1)", original_position);
+    assert_eq!(original_position, 0, "Should start at position 0");
+
+    // Add cursors to lines below (Line 2, 3, 4)
+    harness.editor_mut().add_cursor_below(); // Add to Line 2
+    harness.editor_mut().add_cursor_below(); // Add to Line 3
+    harness.editor_mut().add_cursor_below(); // Add to Line 4
+
+    // Should have 4 cursors now
+    assert_eq!(harness.editor().active_state().cursors.iter().count(), 4);
+
+    // Print cursor positions for debugging
+    println!("After adding cursors:");
+    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+        println!("  Cursor {:?}: position={}", id, cursor.position);
+    }
+
+    // The "primary" cursor is now at Line 4 (the last one we added)
+    // But when we press Esc, we expect to return to Line 1 (original position)
+
+    // Press Esc to remove secondary cursors
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should have only 1 cursor now
+    assert_eq!(harness.editor().active_state().cursors.iter().count(), 1);
+
+    // The cursor should be at the ORIGINAL position (Line 1, position 0)
+    // NOT at the last added cursor position (Line 4)
+    let final_position = harness.cursor_position();
+    println!("Final cursor position: {} (should be back at original position 0)", final_position);
+
+    assert_eq!(
+        final_position, original_position,
+        "After pressing Esc, cursor should return to original position {} but is at {}",
+        original_position, final_position
+    );
+}
