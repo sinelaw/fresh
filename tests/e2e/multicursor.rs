@@ -820,6 +820,74 @@ fn test_cursor_visible_on_empty_line() {
     assert!(cursor_found_on_middle_empty, "Cursor should be visible on middle empty line");
 }
 
+/// Test cursor visibility when editor first opens with empty buffer
+#[test]
+fn test_cursor_visible_on_initial_empty_buffer() {
+    use ratatui::style::Modifier;
+
+    // Create harness with empty buffer (simulates opening editor)
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    println!("Testing initial empty buffer cursor visibility...");
+    println!("Buffer length: {}", harness.editor().active_state().buffer.len());
+    println!("Cursor position: {}", harness.editor().active_state().cursors.primary().position);
+
+    // Scan the entire screen for a cursor with REVERSED modifier
+    let mut cursor_found = false;
+    for y in 0..24 {
+        for x in 0..80 {
+            if let Some(style) = harness.get_cell_style(x, y) {
+                if style.add_modifier.contains(Modifier::REVERSED) {
+                    let char = harness.get_cell(x, y).unwrap_or_else(|| " ".to_string());
+                    println!("Found cursor at screen position ({}, {}): '{}'", x, y, char);
+                    cursor_found = true;
+                }
+            }
+        }
+    }
+
+    assert!(cursor_found, "Cursor must be visible when editor opens with empty buffer");
+}
+
+/// Test cursor visibility when opening a file
+#[test]
+fn test_cursor_visible_when_opening_file() {
+    use ratatui::style::Modifier;
+    use tempfile::TempDir;
+    use std::fs;
+    use std::path::PathBuf;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    fs::write(&file_path, "Hello World\nSecond Line").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    println!("Testing cursor visibility when opening file...");
+    println!("Buffer content: {}", harness.editor().active_state().buffer.to_string());
+    println!("Buffer length: {}", harness.editor().active_state().buffer.len());
+    println!("Cursor position: {}", harness.editor().active_state().cursors.primary().position);
+
+    // Scan the entire screen for a cursor with REVERSED modifier
+    let mut cursor_found = false;
+    for y in 0..24 {
+        for x in 0..80 {
+            if let Some(style) = harness.get_cell_style(x, y) {
+                if style.add_modifier.contains(Modifier::REVERSED) {
+                    let char = harness.get_cell(x, y).unwrap_or_else(|| " ".to_string());
+                    println!("Found cursor at screen position ({}, {}): '{}'", x, y, char);
+                    cursor_found = true;
+                }
+            }
+        }
+    }
+
+    assert!(cursor_found, "Cursor must be visible when opening a file");
+}
+
 /// Test to investigate cursor behavior with identical line content
 #[test]
 fn test_identical_lines_cursor_positions() {
