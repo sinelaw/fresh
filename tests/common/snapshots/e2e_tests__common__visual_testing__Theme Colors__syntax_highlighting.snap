@@ -1,0 +1,28 @@
+---
+source: tests/common/visual_testing.rs
+expression: "&screen_text"
+---
+ [No Name]*                                                                     
+   1 │ // This is a comment                                                     
+   2 │ fn main() {                                                              
+   3 │     let x = 42;                                                          
+   4 │ }                                                                        
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+[No Name] [+] | Ln 4, Col 0

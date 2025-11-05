@@ -310,6 +310,20 @@ impl EditorTestHarness {
 
         Ok(false)
     }
+
+    /// Capture a visual step for regression testing
+    /// This takes both a text snapshot (for testing) and generates an SVG (for visualization)
+    pub fn capture_visual_step(
+        &mut self,
+        flow: &mut crate::common::visual_testing::VisualFlow,
+        step_name: &str,
+        description: &str,
+    ) -> io::Result<()> {
+        self.render()?;
+        let cursor_pos = self.screen_cursor_position();
+        flow.step(self.buffer(), cursor_pos, step_name, description)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

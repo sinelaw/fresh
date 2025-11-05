@@ -1,0 +1,28 @@
+---
+source: tests/common/visual_testing.rs
+expression: "&screen_text"
+---
+ [No Name]                                                                      
+   1 │                                                                          
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Open File  -  Open a file in a new or existing buffer                       │
+│  Save File  -  Save the current buffer to disk                               │
+│  Save File As  -  Save the current buffer to a new file                      │
+│  New File  -  Create a new empty buffer                                      │
+│  Close Buffer  -  Close the current buffer                                   │
+│  Quit  -  Exit the editor                                                    │
+│  Undo  -  Undo the last edit                                                 │
+│  Redo  -  Redo the last undone edit                                          │
+│  Copy  -  Copy selection to clipboard                                        │
+│  Cut  -  Cut selection to clipboard                                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+Command:
