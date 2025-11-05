@@ -1061,7 +1061,8 @@ impl Editor {
     pub fn update_prompt_suggestions(&mut self) {
         if let Some(prompt) = &mut self.prompt {
             if matches!(prompt.prompt_type, PromptType::Command) {
-                prompt.suggestions = filter_commands(&prompt.input);
+                // Use the underlying context (not Prompt context) for filtering
+                prompt.suggestions = filter_commands(&prompt.input, self.key_context);
                 prompt.selected_suggestion = if prompt.suggestions.is_empty() {
                     None
                 } else {
@@ -1507,13 +1508,37 @@ impl Editor {
                         }
                         PromptType::Command => {
                             let commands = get_all_commands();
-                            if let Some(cmd) = commands.iter().find(|c| c.name == input) {
+
+                            // Use the selected suggestion's text if available, otherwise use input
+                            let command_name = if let Some(prompt) = &self.prompt {
+                                if let Some(selected_idx) = prompt.selected_suggestion {
+                                    if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
+                                        // Don't execute disabled commands
+                                        if suggestion.disabled {
+                                            self.set_status_message(format!(
+                                                "Command '{}' is not available in current context",
+                                                suggestion.text
+                                            ));
+                                            return Ok(());
+                                        }
+                                        suggestion.get_value().to_string()
+                                    } else {
+                                        input.clone()
+                                    }
+                                } else {
+                                    input.clone()
+                                }
+                            } else {
+                                input.clone()
+                            };
+
+                            if let Some(cmd) = commands.iter().find(|c| c.name == command_name) {
                                 let action = cmd.action.clone();
                                 self.set_status_message(format!("Executing: {}", cmd.name));
                                 // Recursively handle the command action
                                 return self.handle_action(action);
                             } else {
-                                self.set_status_message(format!("Unknown command: {input}"));
+                                self.set_status_message(format!("Unknown command: {command_name}"));
                             }
                         }
                     }
@@ -1735,7 +1760,8 @@ impl Editor {
             }
             Action::ShowHelp => self.help_renderer.toggle(),
             Action::CommandPalette => {
-                let suggestions = filter_commands("");
+                // Use the current context for filtering commands
+                let suggestions = filter_commands("", self.key_context);
                 self.start_prompt_with_suggestions(
                     "Command: ".to_string(),
                     PromptType::Command,
@@ -1848,7 +1874,8 @@ impl Editor {
         ];
 
         if suggestion_lines > 0 {
-            constraints.push(Constraint::Length(suggestion_lines as u16)); // Suggestions popup
+            // Add 2 lines for the border (top and bottom)
+            constraints.push(Constraint::Length(suggestion_lines as u16 + 2)); // Suggestions popup with border
         }
 
         constraints.push(Constraint::Length(1)); // Status bar
