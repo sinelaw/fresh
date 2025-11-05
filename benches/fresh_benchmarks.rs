@@ -1,9 +1,9 @@
 // Benchmarks for critical editor operations
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use editor::buffer::Buffer;
-use editor::cursor::{Cursor, CursorId, Cursors};
-use editor::event::Event;
-use editor::state::EditorState;
+use fresh::buffer::Buffer;
+use fresh::cursor::{Cursor, CursorId, Cursors};
+use fresh::event::Event;
+use fresh::state::EditorState;
 
 /// Benchmark buffer insert operations
 fn bench_buffer_insert(c: &mut Criterion) {

@@ -15,7 +15,7 @@
 //!
 //! # Examples
 //! ```
-//! use editor::chunk_tree::{ChunkTree, ChunkTreeConfig};
+//! use fresh::chunk_tree::{ChunkTree, ChunkTreeConfig};
 //!
 //! let config = ChunkTreeConfig::new(4, 4);
 //! let tree = ChunkTree::new(config);

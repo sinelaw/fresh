@@ -22,7 +22,7 @@ Core editing, multi-cursor, event-driven architecture, LSP integration (diagnost
 - [ ] Signature help
 - [ ] Inlay hints
 
-### Editor Features
+### Editing Features
 - [ ] Search & replace with regex
 - [ ] Rectangular selection (Alt+drag)
 - [ ] Auto-indent on newline

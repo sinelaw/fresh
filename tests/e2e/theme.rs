@@ -1,7 +1,7 @@
 // E2E tests for the theme system
 
 use crate::common::harness::EditorTestHarness;
-use editor::config::Config;
+use fresh::config::Config;
 use ratatui::style::Color;
 
 #[test]

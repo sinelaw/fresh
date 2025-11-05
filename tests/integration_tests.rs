@@ -2,7 +2,7 @@
 
 mod common;
 
-use editor::{
+use fresh::{
     event::{CursorId, Event, EventLog},
     state::EditorState,
 };
@@ -298,7 +298,7 @@ fn test_viewport_resize_maintains_cursor() {
 /// Test overlay events - adding and removing overlays
 #[test]
 fn test_overlay_events() {
-    use editor::event::{OverlayFace, UnderlineStyle};
+    use fresh::event::{OverlayFace, UnderlineStyle};
     
     let mut state = EditorState::new(80, 24);
     
@@ -363,7 +363,7 @@ fn test_overlay_events() {
 /// Test popup events - showing, navigating, and hiding popups
 #[test]
 fn test_popup_events() {
-    use editor::event::{PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+    use fresh::event::{PopupContentData, PopupData, PopupListItemData, PopupPositionData};
     
     let mut state = EditorState::new(80, 24);
     
@@ -437,7 +437,7 @@ fn test_popup_events() {
 /// Test that overlays persist through undo/redo
 #[test]
 fn test_overlay_undo_redo() {
-    use editor::event::{OverlayFace, UnderlineStyle};
+    use fresh::event::{OverlayFace, UnderlineStyle};
 
     let mut log = EventLog::new();
     let mut state = EditorState::new(80, 24);
@@ -495,7 +495,7 @@ fn test_overlay_undo_redo() {
 /// Test LSP diagnostic to overlay conversion
 #[test]
 fn test_lsp_diagnostic_to_overlay() {
-    use editor::{buffer::Buffer, lsp_diagnostics::diagnostic_to_overlay};
+    use fresh::{buffer::Buffer, lsp_diagnostics::diagnostic_to_overlay};
     use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 
     let buffer = Buffer::from_str("let x = 5;\nlet y = 10;");
@@ -522,7 +522,7 @@ fn test_lsp_diagnostic_to_overlay() {
         data: None,
     };
 
-    let theme = editor::theme::Theme::dark();
+    let theme = fresh::theme::Theme::dark();
     let result = diagnostic_to_overlay(&diagnostic, &buffer, &theme);
     assert!(result.is_some());
 
@@ -537,7 +537,7 @@ fn test_lsp_diagnostic_to_overlay() {
 
     // Check face (should use theme's error background color)
     match face {
-        editor::overlay::OverlayFace::Background { color } => {
+        fresh::overlay::OverlayFace::Background { color } => {
             assert_eq!(color, theme.diagnostic_error_bg);
         }
         _ => panic!("Expected background face for error diagnostic"),
@@ -547,7 +547,7 @@ fn test_lsp_diagnostic_to_overlay() {
 /// Test overlay rendering with multiple priorities
 #[test]
 fn test_overlay_priority_layering() {
-    use editor::event::{OverlayFace, UnderlineStyle};
+    use fresh::event::{OverlayFace, UnderlineStyle};
 
     let mut state = EditorState::new(80, 24);
 
@@ -597,7 +597,7 @@ fn test_overlay_priority_layering() {
 #[test]
 fn test_diagnostic_overlay_visual_rendering() {
     use common::harness::EditorTestHarness;
-    use editor::event::{OverlayFace, UnderlineStyle};
+    use fresh::event::{OverlayFace, UnderlineStyle};
     use ratatui::style::{Color, Modifier};
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();

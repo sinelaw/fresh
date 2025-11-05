@@ -184,7 +184,7 @@ When you create a PR with UI changes:
 ## File Structure
 
 ```
-editor/
+fresh/
 ├── docs/
 │   └── visual-regression/
 │       ├── tests/                      # Individual test docs (auto-generated, committed)
@@ -324,5 +324,5 @@ Potential improvements:
 ## See Also
 
 - [TESTING.md](TESTING.md) - General testing strategy
-- [ARCHITECTURE.md](ARCHITECTURE.md) - How the editor works
+- [ARCHITECTURE.md](ARCHITECTURE.md) - How fresh works
 - [insta documentation](https://insta.rs/) - Snapshot testing library

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This editor automatically applies resource limits to LSP servers (like `rust-analyzer`, `typescript-language-server`, etc.) to prevent them from consuming excessive system resources and making your development environment unresponsive.
+Fresh automatically applies resource limits to LSP servers (like `rust-analyzer`, `typescript-language-server`, etc.) to prevent them from consuming excessive system resources and making your development environment unresponsive.
 
 ## Why This Matters
 
@@ -21,7 +21,7 @@ Resource limits prevent these issues by automatically constraining LSP servers t
 Using resource limits: memory=6815 MB (cgroup), CPU=90% (unavailable)
 ```
 
-The editor will limit each LSP server to **50% of system memory** by default. This happens automatically—no configuration required.
+Fresh will limit each LSP server to **50% of system memory** by default. This happens automatically—no configuration required.
 
 ## CPU Throttling (Optional Setup)
 
@@ -70,7 +70,7 @@ cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/cgroup.controllers
 
 #### Verify It's Working
 
-After setup, check the editor logs (`/tmp/editor.log`). You should see:
+After setup, check the fresh logs (`/tmp/fresh.log`). You should see:
 
 ```
 Using resource limits: memory=6815 MB (cgroup), CPU=90% (cgroup)
@@ -83,7 +83,7 @@ If CPU still shows as `unavailable`, delegation may not have taken effect. Try:
 
 ## Configuration
 
-Limits are configurable per LSP server in `~/.config/editor/config.json`:
+Limits are configurable per LSP server in `~/.config/fresh/config.json`:
 
 ```json
 {
@@ -129,7 +129,7 @@ Limits are configurable per LSP server in `~/.config/editor/config.json`:
 
 ## How It Works
 
-The editor uses **cgroups v2** for resource limiting when available, with automatic fallbacks for compatibility.
+Fresh uses **cgroups v2** for resource limiting when available, with automatic fallbacks for compatibility.
 
 ### Memory Limiting
 
@@ -162,7 +162,7 @@ The editor uses **cgroups v2** for resource limiting when available, with automa
 
 ### Status Messages
 
-The editor logs show which methods are active:
+The fresh logs show which methods are active:
 
 | Message | Meaning |
 |---------|---------|
@@ -172,7 +172,7 @@ The editor logs show which methods are active:
 | `CPU=90% (cgroup)` | CPU throttling via cgroups v2 ✓ |
 | `CPU=90% (unavailable)` | CPU throttling not available (needs delegation) |
 
-Check `/tmp/editor.log` after starting the editor to see what's active.
+Check `/tmp/fresh.log` after starting fresh to see what's active.
 
 ## Platform Support
 
@@ -253,13 +253,13 @@ If cgroups unavailable, setrlimit fallback should still work (check logs).
 
 ### Cgroup Hierarchy
 
-The editor creates cgroups in this hierarchy:
+Fresh creates cgroups in this hierarchy:
 ```
 /sys/fs/cgroup/
 └── user.slice/
     └── user-1000.slice/
         └── user@1000.service/
-            └── editor-lsp-12345/    ← Created per LSP server
+            └── fresh-lsp-12345/    ← Created per LSP server
                 ├── cgroup.procs     ← Process moved here
                 ├── memory.max       ← Memory limit written here
                 └── cpu.max          ← CPU limit written here (if delegated)
