@@ -10,6 +10,7 @@ use std::sync::Arc;
 /// The tree starts with just the root node. Directories are only read
 /// when explicitly expanded via `expand_node()`. This makes the tree
 /// efficient even for very large directory structures.
+#[derive(Debug)]
 pub struct FileTree {
     /// Root directory path
     root_path: PathBuf,
