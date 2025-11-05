@@ -479,6 +479,8 @@ impl Editor {
             // Switch to the target buffer (without saving position)
             if self.buffers.contains_key(&target_buffer) {
                 self.active_buffer = target_buffer;
+                // Update the split manager to show the new buffer
+                self.split_manager.set_active_buffer_id(target_buffer);
 
                 // Move cursor to the saved position
                 let state = self.active_state_mut();
@@ -503,6 +505,8 @@ impl Editor {
             // Switch to the target buffer
             if self.buffers.contains_key(&target_buffer) {
                 self.active_buffer = target_buffer;
+                // Update the split manager to show the new buffer
+                self.split_manager.set_active_buffer_id(target_buffer);
 
                 // Move cursor to the saved position
                 let state = self.active_state_mut();
