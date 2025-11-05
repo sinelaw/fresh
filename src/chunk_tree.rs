@@ -420,6 +420,9 @@ impl<'a> ChunkTreeNode<'a> {
                     remaining_range.start = end;
                 }
 
+                if new_children.is_empty() {
+                    return ChunkTreeNode::empty();
+                }
                 if new_children.len() == 1 {
                     return (*new_children[0]).clone();
                 }
