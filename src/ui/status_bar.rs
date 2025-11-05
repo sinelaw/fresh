@@ -135,6 +135,13 @@ impl StatusBarRenderer {
             String::new()
         };
 
+        // Build cursor count indicator (only show if multiple cursors)
+        let cursor_count_indicator = if state.cursors.count() > 1 {
+            format!(" | {} cursors", state.cursors.count())
+        } else {
+            String::new()
+        };
+
         // Build the status string with optional LSP status and status message
         let lsp_indicator = if !lsp_status.is_empty() {
             format!(" | {}", lsp_status)
@@ -143,9 +150,9 @@ impl StatusBarRenderer {
         };
 
         let status = if let Some(msg) = status_message {
-            format!("{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{lsp_indicator} | {msg}")
+            format!("{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{cursor_count_indicator}{lsp_indicator} | {msg}")
         } else {
-            format!("{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{lsp_indicator}")
+            format!("{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{cursor_count_indicator}{lsp_indicator}")
         };
 
         let status_line =

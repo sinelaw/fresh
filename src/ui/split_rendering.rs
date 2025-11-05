@@ -275,6 +275,11 @@ impl SplitRenderer {
                         style = Style::default().fg(theme.editor_fg).bg(theme.selection_bg);
                     }
 
+                    // Cursor styling - make cursors visible with reversed colors
+                    if is_cursor && is_active {
+                        style = style.add_modifier(Modifier::REVERSED);
+                    }
+
                     // If this is a cursor position and we're waiting for LSP, show animated cursor
                     let display_char = if is_cursor && lsp_waiting && is_active {
                         // Use a simple waiting indicator character
