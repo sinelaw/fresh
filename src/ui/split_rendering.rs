@@ -124,6 +124,14 @@ impl SplitRenderer {
             .map(|(_, cursor)| cursor.position)
             .collect();
 
+        tracing::debug!(
+            "Rendering buffer with {} cursors at positions: {:?}, is_active: {}, buffer_len: {}",
+            cursor_positions.len(),
+            cursor_positions,
+            is_active,
+            state.buffer.len()
+        );
+
         // Use line iterator starting from top_byte to render visible lines
         let visible_count = state.viewport.visible_line_count();
 
@@ -321,8 +329,18 @@ impl SplitRenderer {
                 let line_end_pos = line_start + char_index;
                 let cursor_at_end = cursor_positions.iter().any(|&pos| pos == line_end_pos);
 
+                tracing::debug!(
+                    "End-of-line check: line_start={}, char_index={}, line_end_pos={}, cursor_at_end={}, is_active={}",
+                    line_start,
+                    char_index,
+                    line_end_pos,
+                    cursor_at_end,
+                    is_active
+                );
+
                 if cursor_at_end && is_active {
                     // Add a space character with REVERSED style to show cursor at end of line
+                    tracing::debug!("Adding REVERSED cursor indicator at end of line");
                     let cursor_style = Style::default()
                         .fg(theme.editor_fg)
                         .bg(theme.editor_bg)
