@@ -213,6 +213,18 @@ impl SplitRenderer {
 
             // Check if this line has any selected text
             let mut char_index = 0;
+
+            // Debug: Log first line rendering with cursor info
+            if lines_rendered == 0 && !cursor_positions.is_empty() {
+                tracing::debug!(
+                    "Rendering first line: line_start={}, line_len={}, left_col={}, cursor_positions={:?}",
+                    line_start,
+                    line_content.len(),
+                    left_col,
+                    cursor_positions
+                );
+            }
+
             for ch in line_content.chars() {
                 let byte_pos = line_start + char_index;
 
@@ -220,6 +232,17 @@ impl SplitRenderer {
                 if char_index >= left_col {
                     // Check if this character is at a cursor position
                     let is_cursor = cursor_positions.contains(&byte_pos);
+
+                    // Debug: Log when we find a cursor position
+                    if is_cursor && is_active {
+                        tracing::debug!(
+                            "Found cursor at byte_pos={}, char_index={}, ch={:?}, is_active={}",
+                            byte_pos,
+                            char_index,
+                            ch,
+                            is_active
+                        );
+                    }
 
                     // Check if this character is in any selection range (but not at cursor position)
                     let is_selected = !is_cursor
@@ -285,6 +308,11 @@ impl SplitRenderer {
 
                     // Cursor styling - make cursors visible with reversed colors
                     if is_cursor && is_active {
+                        tracing::debug!(
+                            "Applying REVERSED modifier to cursor at byte_pos={}, char={:?}",
+                            byte_pos,
+                            ch
+                        );
                         style = style.add_modifier(Modifier::REVERSED);
                     }
 
@@ -305,6 +333,13 @@ impl SplitRenderer {
 
                     // Only add non-empty spans
                     if !display_char.is_empty() {
+                        if is_cursor && is_active {
+                            tracing::debug!(
+                                "Adding span with REVERSED cursor: display_char={:?}, has_reversed={}",
+                                display_char,
+                                style.add_modifier.contains(Modifier::REVERSED)
+                            );
+                        }
                         line_spans.push(Span::styled(display_char.to_string(), style));
                     }
 
