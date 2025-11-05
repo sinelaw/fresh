@@ -1549,36 +1549,83 @@ impl Editor {
             }
             Action::PopupConfirm => {
                 // If it's a completion popup, insert the selected item
-                if let Some(popup) = self.active_state().popups.top() {
+                // Clone the completion text first to avoid borrow checker issues
+                let completion_text = if let Some(popup) = self.active_state().popups.top() {
                     if let Some(title) = &popup.title {
                         if title == "Completion" {
-                            // Get the selected completion item
                             if let Some(item) = popup.selected_item() {
-                                if let Some(text) = &item.data {
-                                    // Insert the completion text at cursor
-                                    if let Some(events) = self.action_to_events(Action::InsertChar(' ')) {
-                                        // We'll use the insert logic but with the completion text
-                                        let state = self.active_state();
-                                        let cursor_id = state.cursors.primary_id();
-                                        let position = state.cursors.primary().position;
-
-                                        // Create insert event for the completion text
-                                        let event = crate::event::Event::Insert {
-                                            position,
-                                            text: text.clone(),
-                                            cursor_id,
-                                        };
-
-                                        // Apply the event
-                                        self.active_event_log_mut().append(event.clone());
-                                        self.active_state_mut().apply(&event);
-                                        self.notify_lsp_change(&event);
-                                    }
-                                }
+                                item.data.clone()
+                            } else {
+                                None
                             }
+                        } else {
+                            None
                         }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Now perform the completion if we have text
+                if let Some(text) = completion_text {
+                    use crate::word_navigation::find_word_start;
+
+                    let state = self.active_state();
+                    let cursor_id = state.cursors.primary_id();
+                    let cursor_pos = state.cursors.primary().position;
+
+                    // Find the start of the current word
+                    let word_start = find_word_start(&state.buffer, cursor_pos);
+
+                    // Get the text being deleted (if any) before we mutate
+                    let deleted_text = if word_start < cursor_pos {
+                        state.buffer.slice(word_start..cursor_pos).to_string()
+                    } else {
+                        String::new()
+                    };
+
+                    // Now we can mutate - delete the partial word and insert completion
+                    if word_start < cursor_pos {
+                        // Delete the partial word
+                        let delete_event = crate::event::Event::Delete {
+                            range: word_start..cursor_pos,
+                            deleted_text,
+                            cursor_id,
+                        };
+
+                        self.active_event_log_mut().append(delete_event.clone());
+                        self.active_state_mut().apply(&delete_event);
+                        self.notify_lsp_change(&delete_event);
+
+                        // After deletion, ensure insert position is valid
+                        let buffer_len = self.active_state().buffer.len();
+                        let insert_pos = word_start.min(buffer_len);
+
+                        let insert_event = crate::event::Event::Insert {
+                            position: insert_pos,
+                            text,
+                            cursor_id,
+                        };
+
+                        self.active_event_log_mut().append(insert_event.clone());
+                        self.active_state_mut().apply(&insert_event);
+                        self.notify_lsp_change(&insert_event);
+                    } else {
+                        // No partial word to delete, just insert
+                        let insert_event = crate::event::Event::Insert {
+                            position: cursor_pos,
+                            text,
+                            cursor_id,
+                        };
+
+                        self.active_event_log_mut().append(insert_event.clone());
+                        self.active_state_mut().apply(&insert_event);
+                        self.notify_lsp_change(&insert_event);
                     }
                 }
+
                 self.hide_popup();
             }
             Action::PopupCancel => {

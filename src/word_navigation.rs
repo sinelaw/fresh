@@ -14,26 +14,27 @@ pub fn find_word_start(buffer: &Buffer, pos: usize) -> usize {
     }
 
     let buf_len = buffer.len();
-    if pos >= buf_len {
-        return buf_len;
-    }
+
+    // Clamp position to buffer length
+    let pos = pos.min(buf_len);
 
     // Only read a small window around the position for efficiency
     let start = pos.saturating_sub(1000);
+    // Read one extra byte to include the character AT pos (if it exists)
     let end = (pos + 1).min(buf_len);
     let bytes = buffer.slice_bytes(start..end);
     let offset = pos - start;
 
     let mut new_pos = offset;
 
-    // If we're at a non-word character, scan left to find a word
-    if let Some(&b) = bytes.get(new_pos) {
-        if !is_word_char(b) && new_pos > 0 {
+    // If we're at the end of the buffer or at a non-word character, scan left
+    if new_pos >= bytes.len() || (bytes.get(new_pos).map(|&b| !is_word_char(b)).unwrap_or(true)) {
+        if new_pos > 0 {
             new_pos = new_pos.saturating_sub(1);
         }
     }
 
-    // Find start of current word
+    // Find start of current word by scanning backwards
     while new_pos > 0 {
         if let Some(&prev_byte) = bytes.get(new_pos.saturating_sub(1)) {
             if !is_word_char(prev_byte) {

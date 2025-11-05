@@ -3,6 +3,132 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 
+/// Test that completion popup text is not mangled
+#[test]
+fn test_lsp_completion_popup_text_not_mangled() -> std::io::Result<()> {
+    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Show a completion popup with realistic LSP data
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            content: PopupContentData::List {
+                items: vec![
+                    PopupListItemData {
+                        text: "test_function".to_string(),
+                        detail: Some("fn test_function() -> i32".to_string()),
+                        icon: Some("λ".to_string()),
+                        data: Some("test_function".to_string()),
+                    },
+                    PopupListItemData {
+                        text: "test_variable".to_string(),
+                        detail: Some("let test_variable: String".to_string()),
+                        icon: Some("v".to_string()),
+                        data: Some("test_variable".to_string()),
+                    },
+                ],
+                selected: 0,
+            },
+            position: PopupPositionData::Centered,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Get the screen content
+    let screen = harness.screen_to_string();
+
+    // Debug: print the screen to see what's there
+    println!("Screen content:\n{}", screen);
+
+    // Verify the completion items are visible and not mangled
+    assert!(
+        screen.contains("test_function"),
+        "Expected 'test_function' to be visible in popup"
+    );
+    assert!(
+        screen.contains("test_variable"),
+        "Expected 'test_variable' to be visible in popup"
+    );
+
+    // Check that icon is displayed (should be the lambda character or similar)
+    // Note: This might render differently depending on terminal capabilities
+
+    // Check for common mangled text patterns
+    assert!(
+        !screen.contains("\u{0}"),
+        "Screen should not contain null characters"
+    );
+    assert!(
+        !screen.contains("\u{1}"),
+        "Screen should not contain control characters"
+    );
+
+    // Verify details are shown (if the popup implementation shows them)
+    // The exact format depends on how the popup renders items
+
+    Ok(())
+}
+
+/// Test that completion replaces current word, not appends
+#[test]
+fn test_lsp_completion_replaces_word() -> std::io::Result<()> {
+    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type a partial word
+    harness.type_text("test_f")?;
+    harness.render()?;
+
+    // Verify partial word is in buffer
+    let buffer_before = harness.get_buffer_content();
+    assert_eq!(buffer_before, "test_f");
+
+    // Show completion popup
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            content: PopupContentData::List {
+                items: vec![PopupListItemData {
+                    text: "test_function".to_string(),
+                    detail: Some("fn test_function()".to_string()),
+                    icon: Some("λ".to_string()),
+                    data: Some("test_function".to_string()),
+                }],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 40,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Confirm selection with Enter
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Buffer should now contain the full word, not "test_ftest_function"
+    let buffer_after = harness.get_buffer_content();
+    assert_eq!(
+        buffer_after, "test_function",
+        "Expected completion to replace 'test_f' with 'test_function', but got '{}'",
+        buffer_after
+    );
+
+    Ok(())
+}
+
 /// Test LSP diagnostics display in the editor
 #[test]
 fn test_lsp_diagnostics_display() -> std::io::Result<()> {
