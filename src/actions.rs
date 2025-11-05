@@ -129,7 +129,8 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
                 let current_line_start = iter.current_position();
                 let col_offset = cursor.position - current_line_start;
 
-                // Move to next line
+                // Skip current line, then get next line
+                iter.next();
                 if let Some((next_line_start, next_line_content)) = iter.next() {
                     // Calculate length without trailing newline
                     let next_line_len = next_line_content.trim_end_matches('\n').len();
@@ -146,34 +147,31 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
 
         Action::MoveLineStart => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let iter = state.buffer.line_iterator(cursor.position);
-                let line_start = iter.current_position();
-
-                events.push(Event::MoveCursor {
-                    cursor_id,
-                    position: line_start,
-                    anchor: None,
-                });
+                let mut iter = state.buffer.line_iterator(cursor.position);
+                if let Some((line_start, _)) = iter.next() {
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: line_start,
+                        anchor: None,
+                    });
+                }
             }
         }
 
         Action::MoveLineEnd => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 let mut iter = state.buffer.line_iterator(cursor.position);
-                let line_start = iter.current_position();
+                if let Some((line_start, line_content)) = iter.next() {
+                    // Calculate end position (exclude newline)
+                    let line_len = line_content.trim_end_matches('\n').len();
+                    let line_end = line_start + line_len;
 
-                // Calculate line end (excluding newline)
-                let line_end = if let Some((_start, content)) = iter.next() {
-                    line_start + content.trim_end_matches('\n').len()
-                } else {
-                    state.buffer.len()
-                };
-
-                events.push(Event::MoveCursor {
-                    cursor_id,
-                    position: line_end,
-                    anchor: None,
-                });
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: line_end,
+                        anchor: None,
+                    });
+                }
             }
         }
 
@@ -328,6 +326,8 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
                 let col_offset = cursor.position - current_line_start;
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
 
+                // Skip current line, then get next line
+                iter.next();
                 if let Some((next_line_start, next_line_content)) = iter.next() {
                     let next_line_len = next_line_content.trim_end_matches('\n').len();
                     let new_pos = next_line_start + col_offset.min(next_line_len);
@@ -343,35 +343,35 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
 
         Action::SelectLineStart => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let iter = state.buffer.line_iterator(cursor.position);
-                let line_start = iter.current_position();
+                let mut iter = state.buffer.line_iterator(cursor.position);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
 
-                events.push(Event::MoveCursor {
-                    cursor_id,
-                    position: line_start,
-                    anchor: Some(anchor),
-                });
+                if let Some((line_start, _)) = iter.next() {
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: line_start,
+                        anchor: Some(anchor),
+                    });
+                }
             }
         }
 
         Action::SelectLineEnd => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 let mut iter = state.buffer.line_iterator(cursor.position);
-                let line_start = iter.current_position();
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
 
-                let line_end = if let Some((_start, content)) = iter.next() {
-                    line_start + content.trim_end_matches('\n').len()
-                } else {
-                    state.buffer.len()
-                };
+                if let Some((line_start, line_content)) = iter.next() {
+                    // Calculate end position (exclude newline)
+                    let line_len = line_content.trim_end_matches('\n').len();
+                    let line_end = line_start + line_len;
 
-                events.push(Event::MoveCursor {
-                    cursor_id,
-                    position: line_end,
-                    anchor: Some(anchor),
-                });
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: line_end,
+                        anchor: Some(anchor),
+                    });
+                }
             }
         }
 
@@ -651,12 +651,104 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         | Action::ShowHelp
         | Action::IncreaseSplitSize
         | Action::DecreaseSplitSize
-        | Action::SelectLine
-        | Action::ExpandSelection
         | Action::Undo
         | Action::Redo
         | Action::None => return None,
+
+        Action::SelectLine => {
+            // Select the entire line for each cursor
+            for (cursor_id, cursor) in state.cursors.iter() {
+                // Use iterator to get line bounds
+                let mut iter = state.buffer.line_iterator(cursor.position);
+                if let Some((line_start, line_content)) = iter.next() {
+                    // Include newline if present
+                    let line_end = line_start + line_content.len();
+
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: line_end,
+                        anchor: Some(line_start),
+                    });
+                }
+            }
+        }
+
+        Action::ExpandSelection => {
+            // Expand selection for each cursor
+            for (cursor_id, cursor) in state.cursors.iter() {
+                if let Some(range) = cursor.selection_range() {
+                    // Selection exists - expand it by one word in both directions
+                    let start = range.start;
+                    let end = range.end;
+
+                    // Expand backward to previous word boundary
+                    let new_start = find_word_start(&state.buffer, start);
+                    // Expand forward to next word boundary
+                    let new_end = find_word_end(&state.buffer, end);
+
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_end,
+                        anchor: Some(new_start),
+                    });
+                } else {
+                    // No selection - select word at cursor
+                    let word_start = find_word_start(&state.buffer, cursor.position);
+                    let word_end = find_word_end(&state.buffer, cursor.position);
+
+                    if word_start < word_end {
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            position: word_end,
+                            anchor: Some(word_start),
+                        });
+                    }
+                }
+            }
+        }
     }
 
     Some(events)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::EditorState;
+    use crate::event::{Event, CursorId};
+    
+    #[test]
+    fn test_backspace_deletes_newline() {
+        let mut state = EditorState::new(80, 24);
+        
+        // Insert "Hello\nWorld"
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "Hello\nWorld".to_string(),
+            cursor_id: CursorId(0),
+        });
+        
+        assert_eq!(state.buffer.to_string(), "Hello\nWorld");
+        assert_eq!(state.cursors.primary().position, 11);
+        
+        // Move cursor to position 6 (beginning of "World")
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            position: 6,
+            anchor: None,
+        });
+        
+        assert_eq!(state.cursors.primary().position, 6);
+        
+        // Press Backspace - should delete the newline at position 5
+        let events = action_to_events(&state, Action::DeleteBackward, 4).unwrap();
+        println!("Generated events: {:?}", events);
+        
+        for event in events {
+            state.apply(&event);
+        }
+        
+        assert_eq!(state.buffer.to_string(), "HelloWorld");
+        assert_eq!(state.cursors.primary().position, 5);
+    }
 }
