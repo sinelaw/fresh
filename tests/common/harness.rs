@@ -66,6 +66,12 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// Apply an event directly to the active buffer
+    pub fn apply_event(&mut self, event: editor::event::Event) -> io::Result<()> {
+        self.editor.apply_event_to_active_buffer(event);
+        Ok(())
+    }
+
     /// Force a render cycle and capture output
     pub fn render(&mut self) -> io::Result<()> {
         self.terminal.draw(|frame| {

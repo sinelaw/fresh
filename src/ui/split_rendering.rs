@@ -97,9 +97,14 @@ impl SplitRenderer {
             tracing::debug!("render_content: {} overlays present", overlay_count);
         }
 
-        // Calculate gutter width dynamically based on buffer size
-        let gutter_width = state.viewport.gutter_width(&state.buffer);
-        let line_number_digits = gutter_width.saturating_sub(3); // Subtract " │ "
+        // Update margin width based on buffer size
+        // Estimate total lines from buffer length (same as viewport.gutter_width)
+        let buffer_len = state.buffer.len();
+        let estimated_lines = (buffer_len / 80).max(1);
+        state.margins.update_width_for_buffer(estimated_lines);
+
+        // Calculate gutter width from margin manager
+        let gutter_width = state.margins.left_total_width();
 
         let mut lines = Vec::new();
 
@@ -146,7 +151,19 @@ impl SplitRenderer {
         let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
         let mut lines_rendered = 0;
 
-        while let Some((line_start, line_content)) = iter.next() {
+        // For empty buffers, render at least one line with the margin
+        let is_empty_buffer = state.buffer.is_empty();
+
+        loop {
+            let (line_start, line_content) = if let Some(line_data) = iter.next() {
+                line_data
+            } else if is_empty_buffer && lines_rendered == 0 {
+                // Special case: empty buffer should show line 1 with margin
+                (0, String::new())
+            } else {
+                break;
+            };
+
             if lines_rendered >= visible_count {
                 break;
             }
@@ -160,15 +177,29 @@ impl SplitRenderer {
             // Build line with selection highlighting
             let mut line_spans = Vec::new();
 
-            // Line number prefix (1-indexed for display)
-            line_spans.push(Span::styled(
-                format!(
-                    "{:>width$} │ ",
-                    current_line_num + 1,
-                    width = line_number_digits
-                ),
-                Style::default().fg(theme.line_number_fg),
-            ));
+            // Render left margin (line numbers + annotations)
+            if state.margins.left_config.enabled {
+                let margin_content = state.margins.render_line(
+                    current_line_num,
+                    crate::margin::MarginPosition::Left,
+                    estimated_lines,
+                );
+                let (rendered_text, style_opt) = margin_content.render(state.margins.left_config.width);
+
+                // Combine margin text with separator
+                let margin_text = if state.margins.left_config.show_separator {
+                    format!("{}{}", rendered_text, state.margins.left_config.separator)
+                } else {
+                    rendered_text
+                };
+
+                // Use custom style if provided, otherwise use default theme color
+                let margin_style = style_opt.unwrap_or_else(|| {
+                    Style::default().fg(theme.line_number_fg)
+                });
+
+                line_spans.push(Span::styled(margin_text, margin_style));
+            }
 
             // Check if this line has any selected text
             let mut char_index = 0;

@@ -98,6 +98,33 @@ pub enum Event {
     PopupPageDown,
     PopupPageUp,
 
+    /// Margin events
+    /// Add a margin annotation
+    AddMarginAnnotation {
+        line: usize,
+        position: MarginPositionData,
+        content: MarginContentData,
+        annotation_id: Option<String>,
+    },
+
+    /// Remove margin annotation by ID
+    RemoveMarginAnnotation { annotation_id: String },
+
+    /// Remove all margin annotations at a specific line
+    RemoveMarginAnnotationsAtLine {
+        line: usize,
+        position: MarginPositionData,
+    },
+
+    /// Clear all margin annotations in a position
+    ClearMarginPosition { position: MarginPositionData },
+
+    /// Clear all margin annotations
+    ClearMargins,
+
+    /// Enable/disable line numbers
+    SetLineNumbers { enabled: bool },
+
     /// Split view events
     /// Split the active pane
     SplitPane {
@@ -184,6 +211,24 @@ pub enum PopupPositionData {
     AboveCursor,
     Fixed { x: u16, y: u16 },
     Centered,
+}
+
+/// Margin position for events
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MarginPositionData {
+    Left,
+    Right,
+}
+
+/// Margin content for events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MarginContentData {
+    Text(String),
+    Symbol {
+        text: String,
+        color: Option<(u8, u8, u8)>, // RGB color
+    },
+    Empty,
 }
 
 impl Event {

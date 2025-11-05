@@ -1,7 +1,8 @@
 use crate::buffer::{Buffer, LineNumber};
 use crate::cursor::{Cursor, Cursors};
-use crate::event::{Event, OverlayFace as EventOverlayFace, PopupData, PopupPositionData};
+use crate::event::{Event, MarginContentData, MarginPositionData, OverlayFace as EventOverlayFace, PopupData, PopupPositionData};
 use crate::highlighter::{Highlighter, Language};
+use crate::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPosition};
 use crate::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::popup::{Popup, PopupContent, PopupListItem, PopupManager, PopupPosition};
 use crate::viewport::Viewport;
@@ -26,6 +27,9 @@ pub struct EditorState {
 
     /// Popups for floating windows (completion, documentation, etc.)
     pub popups: PopupManager,
+
+    /// Margins for line numbers, annotations, gutter symbols, etc.
+    pub margins: MarginManager,
 
     /// Cached line number for primary cursor (0-indexed)
     /// Maintained incrementally to avoid O(n) scanning on every render
@@ -53,6 +57,7 @@ impl EditorState {
             highlighter: None, // No file path, so no syntax highlighting
             overlays: OverlayManager::new(),
             popups: PopupManager::new(),
+            margins: MarginManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
         }
@@ -81,6 +86,7 @@ impl EditorState {
             highlighter,
             overlays: OverlayManager::new(),
             popups: PopupManager::new(),
+            margins: MarginManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
         })
@@ -319,6 +325,44 @@ impl EditorState {
                 }
             }
 
+            Event::AddMarginAnnotation {
+                line,
+                position,
+                content,
+                annotation_id,
+            } => {
+                let margin_position = convert_margin_position(position);
+                let margin_content = convert_margin_content(content);
+                let annotation = if let Some(id) = annotation_id {
+                    MarginAnnotation::with_id(*line, margin_position, margin_content, id.clone())
+                } else {
+                    MarginAnnotation::new(*line, margin_position, margin_content)
+                };
+                self.margins.add_annotation(annotation);
+            }
+
+            Event::RemoveMarginAnnotation { annotation_id } => {
+                self.margins.remove_by_id(annotation_id);
+            }
+
+            Event::RemoveMarginAnnotationsAtLine { line, position } => {
+                let margin_position = convert_margin_position(position);
+                self.margins.remove_at_line(*line, margin_position);
+            }
+
+            Event::ClearMarginPosition { position } => {
+                let margin_position = convert_margin_position(position);
+                self.margins.clear_position(margin_position);
+            }
+
+            Event::ClearMargins => {
+                self.margins.clear_all();
+            }
+
+            Event::SetLineNumbers { enabled } => {
+                self.margins.set_line_numbers(*enabled);
+            }
+
             // Split events are handled at the Editor level, not at EditorState level
             // These are no-ops here as they affect the split layout, not buffer state
             Event::SplitPane { .. }
@@ -436,6 +480,29 @@ fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
     };
 
     popup
+}
+
+/// Convert margin position data to the actual margin position
+fn convert_margin_position(position: &MarginPositionData) -> MarginPosition {
+    match position {
+        MarginPositionData::Left => MarginPosition::Left,
+        MarginPositionData::Right => MarginPosition::Right,
+    }
+}
+
+/// Convert margin content data to the actual margin content
+fn convert_margin_content(content: &MarginContentData) -> MarginContent {
+    match content {
+        MarginContentData::Text(text) => MarginContent::Text(text.clone()),
+        MarginContentData::Symbol { text, color } => {
+            if let Some((r, g, b)) = color {
+                MarginContent::colored_symbol(text.clone(), Color::Rgb(*r, *g, *b))
+            } else {
+                MarginContent::symbol(text.clone(), Style::default())
+            }
+        }
+        MarginContentData::Empty => MarginContent::Empty,
+    }
 }
 
 #[cfg(test)]
