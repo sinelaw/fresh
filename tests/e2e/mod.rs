@@ -19,3 +19,4 @@ pub mod scrolling;
 pub mod selection;
 pub mod split_view;
 pub mod theme;
+pub mod visual_regression;
