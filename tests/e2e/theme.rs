@@ -1,0 +1,250 @@
+// E2E tests for the theme system
+
+use crate::common::harness::EditorTestHarness;
+use editor::config::Config;
+use ratatui::style::Color;
+
+#[test]
+fn test_default_theme_is_dark() {
+    let harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Default theme should be "dark"
+    let theme = harness.editor().theme();
+    assert_eq!(theme.name, "dark");
+}
+
+#[test]
+fn test_theme_loading_from_config_dark() {
+    let mut config = Config::default();
+    config.theme = "dark".to_string();
+
+    let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    let theme = harness.editor().theme();
+    assert_eq!(theme.name, "dark");
+
+    // Verify some dark theme colors
+    assert_eq!(theme.editor_bg, Color::Rgb(30, 30, 30));
+    assert_eq!(theme.editor_fg, Color::Rgb(212, 212, 212));
+    assert_eq!(theme.tab_active_fg, Color::Yellow);
+    assert_eq!(theme.tab_active_bg, Color::Blue);
+}
+
+#[test]
+fn test_theme_loading_from_config_light() {
+    let mut config = Config::default();
+    config.theme = "light".to_string();
+
+    let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    let theme = harness.editor().theme();
+    assert_eq!(theme.name, "light");
+
+    // Verify some light theme colors
+    assert_eq!(theme.editor_bg, Color::Rgb(255, 255, 255));
+    assert_eq!(theme.editor_fg, Color::Rgb(0, 0, 0));
+    assert_eq!(theme.tab_active_fg, Color::Black);
+    assert_eq!(theme.tab_active_bg, Color::Cyan);
+}
+
+#[test]
+fn test_theme_loading_from_config_high_contrast() {
+    let mut config = Config::default();
+    config.theme = "high-contrast".to_string();
+
+    let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    let theme = harness.editor().theme();
+    assert_eq!(theme.name, "high-contrast");
+
+    // Verify some high-contrast theme colors
+    assert_eq!(theme.editor_bg, Color::Black);
+    assert_eq!(theme.editor_fg, Color::White);
+    assert_eq!(theme.cursor, Color::Yellow);
+    assert_eq!(theme.tab_active_fg, Color::Black);
+    assert_eq!(theme.tab_active_bg, Color::Yellow);
+}
+
+#[test]
+fn test_invalid_theme_falls_back_to_dark() {
+    let mut config = Config::default();
+    config.theme = "nonexistent-theme".to_string();
+
+    let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    // Should fall back to dark theme
+    let theme = harness.editor().theme();
+    assert_eq!(theme.name, "dark");
+}
+
+#[test]
+fn test_theme_renders_with_correct_tab_colors() {
+    let mut config = Config::default();
+    config.theme = "dark".to_string();
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.render().unwrap();
+
+    // Check that tab bar (first row) uses theme colors
+    // The active tab should have the theme's tab_active colors
+    let theme = harness.editor().theme();
+
+    // Get style of a cell in the tab bar area (row 0)
+    if let Some(style) = harness.get_cell_style(1, 0) {
+        // For dark theme, active tab has yellow fg and blue bg
+        assert_eq!(style.fg, Some(theme.tab_active_fg));
+        assert_eq!(style.bg, Some(theme.tab_active_bg));
+    }
+}
+
+#[test]
+fn test_theme_renders_with_correct_status_bar_colors() {
+    let mut config = Config::default();
+    config.theme = "dark".to_string();
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.render().unwrap();
+
+    let theme = harness.editor().theme();
+
+    // Status bar is at the bottom (row 23 for a 24-row terminal)
+    if let Some(style) = harness.get_cell_style(1, 23) {
+        // Status bar should use theme's status bar colors
+        assert_eq!(style.fg, Some(theme.status_bar_fg));
+        assert_eq!(style.bg, Some(theme.status_bar_bg));
+    }
+}
+
+#[test]
+fn test_light_theme_renders_differently_than_dark() {
+    let mut dark_config = Config::default();
+    dark_config.theme = "dark".to_string();
+
+    let mut light_config = Config::default();
+    light_config.theme = "light".to_string();
+
+    let mut dark_harness = EditorTestHarness::with_config(80, 24, dark_config).unwrap();
+    let mut light_harness = EditorTestHarness::with_config(80, 24, light_config).unwrap();
+
+    dark_harness.render().unwrap();
+    light_harness.render().unwrap();
+
+    // Get tab bar styles from both themes
+    let dark_style = dark_harness.get_cell_style(1, 0);
+    let light_style = light_harness.get_cell_style(1, 0);
+
+    // The colors should be different
+    assert_ne!(dark_style, light_style, "Dark and light themes should render with different colors");
+}
+
+#[test]
+fn test_theme_diagnostic_colors() {
+    let mut config = Config::default();
+    config.theme = "dark".to_string();
+
+    let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let theme = harness.editor().theme();
+
+    // Verify diagnostic colors are set correctly for dark theme
+    assert_eq!(theme.diagnostic_error_fg, Color::Red);
+    assert_eq!(theme.diagnostic_error_bg, Color::Rgb(60, 20, 20));
+    assert_eq!(theme.diagnostic_warning_fg, Color::Yellow);
+    assert_eq!(theme.diagnostic_warning_bg, Color::Rgb(60, 50, 0));
+    assert_eq!(theme.diagnostic_info_fg, Color::Blue);
+    assert_eq!(theme.diagnostic_info_bg, Color::Rgb(0, 30, 60));
+}
+
+#[test]
+fn test_theme_syntax_highlighting_colors() {
+    let mut config = Config::default();
+    config.theme = "dark".to_string();
+
+    let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let theme = harness.editor().theme();
+
+    // Verify syntax highlighting colors are set
+    assert_eq!(theme.syntax_keyword, Color::Rgb(86, 156, 214));
+    assert_eq!(theme.syntax_string, Color::Rgb(206, 145, 120));
+    assert_eq!(theme.syntax_comment, Color::Rgb(106, 153, 85));
+    assert_eq!(theme.syntax_function, Color::Rgb(220, 220, 170));
+    assert_eq!(theme.syntax_type, Color::Rgb(78, 201, 176));
+    assert_eq!(theme.syntax_variable, Color::Rgb(156, 220, 254));
+}
+
+#[test]
+fn test_all_available_themes_can_be_loaded() {
+    let themes = vec!["dark", "light", "high-contrast"];
+
+    for theme_name in themes {
+        let mut config = Config::default();
+        config.theme = theme_name.to_string();
+
+        let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+        let theme = harness.editor().theme();
+
+        assert_eq!(theme.name, theme_name, "Theme '{}' should load correctly", theme_name);
+    }
+}
+
+#[test]
+fn test_theme_selection_colors() {
+    let mut dark_config = Config::default();
+    dark_config.theme = "dark".to_string();
+
+    let mut light_config = Config::default();
+    light_config.theme = "light".to_string();
+
+    let dark_harness = EditorTestHarness::with_config(80, 24, dark_config).unwrap();
+    let light_harness = EditorTestHarness::with_config(80, 24, light_config).unwrap();
+
+    let dark_theme = dark_harness.editor().theme();
+    let light_theme = light_harness.editor().theme();
+
+    // Selection colors should be different between themes
+    assert_ne!(dark_theme.selection_bg, light_theme.selection_bg);
+
+    // Dark theme has a darker selection background
+    assert_eq!(dark_theme.selection_bg, Color::Rgb(38, 79, 120));
+
+    // Light theme has a lighter selection background
+    assert_eq!(light_theme.selection_bg, Color::Rgb(173, 214, 255));
+}
+
+#[test]
+fn test_theme_popup_colors() {
+    let mut config = Config::default();
+    config.theme = "dark".to_string();
+
+    let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let theme = harness.editor().theme();
+
+    // Verify popup colors
+    assert_eq!(theme.popup_border_fg, Color::Gray);
+    assert_eq!(theme.popup_bg, Color::Rgb(30, 30, 30));
+    assert_eq!(theme.popup_selection_bg, Color::Rgb(58, 79, 120));
+    assert_eq!(theme.popup_text_fg, Color::White);
+}
+
+#[test]
+fn test_case_insensitive_theme_name() {
+    let mut config = Config::default();
+    config.theme = "HIGH-CONTRAST".to_string(); // uppercase
+
+    let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let theme = harness.editor().theme();
+
+    // Should still load high-contrast theme (case insensitive)
+    assert_eq!(theme.name, "high-contrast");
+}
+
+#[test]
+fn test_theme_with_underscore_variant() {
+    let mut config = Config::default();
+    config.theme = "high_contrast".to_string(); // underscore instead of dash
+
+    let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let theme = harness.editor().theme();
+
+    // Should still load high-contrast theme (accepts both - and _)
+    assert_eq!(theme.name, "high-contrast");
+}
