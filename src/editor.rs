@@ -1318,6 +1318,27 @@ impl Editor {
         Ok(())
     }
 
+    /// Check if there are any pending LSP requests
+    pub fn has_pending_lsp_requests(&self) -> bool {
+        self.pending_completion_request.is_some() || self.pending_goto_definition_request.is_some()
+    }
+
+    /// Cancel any pending LSP requests
+    /// This should be called when the user performs an action that would make
+    /// the pending request's results stale (e.g., cursor movement, text editing)
+    fn cancel_pending_lsp_requests(&mut self) {
+        if self.pending_completion_request.is_some() {
+            tracing::debug!("Canceling pending LSP completion request");
+            self.pending_completion_request = None;
+            self.lsp_status.clear();
+        }
+        if self.pending_goto_definition_request.is_some() {
+            tracing::debug!("Canceling pending LSP goto-definition request");
+            self.pending_goto_definition_request = None;
+            self.lsp_status.clear();
+        }
+    }
+
     /// Request LSP completion at current cursor position
     fn request_completion(&mut self) -> io::Result<()> {
         // Get the current buffer and cursor position
@@ -1431,6 +1452,18 @@ impl Editor {
         let action = self.keybindings.resolve(&key_event, context);
 
         tracing::debug!("Context: {:?} -> Action: {:?}", context, action);
+
+        // Cancel pending LSP requests on user actions (except LSP actions themselves)
+        // This ensures stale completions don't show up after the user has moved on
+        match action {
+            Action::LspCompletion | Action::LspGotoDefinition | Action::None => {
+                // Don't cancel for LSP actions or no-op
+            }
+            _ => {
+                // Cancel any pending LSP requests
+                self.cancel_pending_lsp_requests();
+            }
+        }
 
         // Handle the action
         match action {
@@ -1829,6 +1862,7 @@ impl Editor {
         TabsRenderer::render(frame, chunks[0], &self.buffers, self.active_buffer, &self.theme);
 
         // Render content (with file explorer if visible)
+        let lsp_waiting = self.pending_completion_request.is_some() || self.pending_goto_definition_request.is_some();
         let content_area = chunks[1];
         if self.file_explorer_visible && self.file_explorer.is_some() {
             // Split content area horizontally: file explorer (30%) | content (70%)
@@ -1854,6 +1888,7 @@ impl Editor {
                 &mut self.buffers,
                 &mut self.event_logs,
                 &self.theme,
+                lsp_waiting,
             );
         } else {
             // No file explorer, render content normally
@@ -1864,6 +1899,7 @@ impl Editor {
                 &mut self.buffers,
                 &mut self.event_logs,
                 &self.theme,
+                lsp_waiting,
             );
         }
 

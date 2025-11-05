@@ -888,3 +888,143 @@ fn test_lsp_completion_popup_hides_background() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test that LSP completion request is canceled when cursor moves
+#[test]
+fn test_lsp_completion_canceled_on_cursor_move() -> std::io::Result<()> {
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Open a test file
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n    test_\n}\n")?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Position cursor after "test_"
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Request completion (sets pending request)
+    harness.send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)?;
+    harness.render()?;
+
+    // Verify LSP indicator is showing
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("LSP: completion..."),
+        "Expected LSP indicator before cursor move"
+    );
+
+    // Move cursor (should cancel the request)
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify LSP indicator is gone (request canceled)
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("LSP: completion..."),
+        "Expected LSP indicator to be cleared after cursor move"
+    );
+
+    // Verify pending request is cleared in editor
+    let editor = harness.editor();
+    assert!(
+        !editor.has_pending_lsp_requests(),
+        "Expected no pending LSP requests after cursor move"
+    );
+
+    Ok(())
+}
+
+/// Test that cursor shows waiting animation while LSP is pending
+#[test]
+fn test_lsp_cursor_animation() -> std::io::Result<()> {
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Open a test file  
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n    test_\n}\n")?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Position cursor after "test_"
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Get screen before LSP request
+    let screen_before = harness.screen_to_string();
+
+    // Request completion
+    harness.send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)?;
+    harness.render()?;
+
+    // Get screen during LSP wait
+    let screen_during = harness.screen_to_string();
+    println!("Screen before LSP:\n{}", screen_before);
+    println!("Screen during LSP wait:\n{}", screen_during);
+
+    // The cursor character should be replaced with the waiting indicator
+    // Look for the waiting character "⋯" in the buffer area
+    assert!(
+        screen_during.contains("⋯"),
+        "Expected waiting cursor character '⋯' to appear during LSP wait"
+    );
+
+    Ok(())
+}
+
+/// Test that LSP completion request is canceled when text is edited
+#[test]
+fn test_lsp_completion_canceled_on_text_edit() -> std::io::Result<()> {
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Open a test file
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n    test_\n}\n")?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Position cursor after "test_"
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Request completion
+    harness.send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)?;
+    harness.render()?;
+
+    // Verify LSP indicator is showing
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("LSP: completion..."),
+        "Expected LSP indicator before text edit"
+    );
+
+    // Type a character (should cancel the request)
+    harness.type_text("x")?;
+    harness.render()?;
+
+    // Verify LSP indicator is gone
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("LSP: completion..."),
+        "Expected LSP indicator to be cleared after text edit"
+    );
+
+    // Verify pending request is cleared
+    let editor = harness.editor();
+    assert!(
+        !editor.has_pending_lsp_requests(),
+        "Expected no pending LSP requests after text edit"
+    );
+
+    Ok(())
+}
