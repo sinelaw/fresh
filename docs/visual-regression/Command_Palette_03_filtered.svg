@@ -564,4 +564,6 @@
   <rect x="693" y="414" width="9" height="18" fill="#f1fa8c"/>
   <rect x="702" y="414" width="9" height="18" fill="#f1fa8c"/>
   <rect x="711" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <!-- Cursor indicator -->
+  <rect x="117" y="414" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
 </svg>

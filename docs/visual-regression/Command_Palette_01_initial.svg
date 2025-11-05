@@ -122,4 +122,6 @@
   <rect x="693" y="414" width="9" height="18" fill="#ffffff"/>
   <rect x="702" y="414" width="9" height="18" fill="#ffffff"/>
   <rect x="711" y="414" width="9" height="18" fill="#ffffff"/>
+  <!-- Cursor indicator -->
+  <rect x="63" y="18" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
 </svg>
