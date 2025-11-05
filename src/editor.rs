@@ -1177,10 +1177,38 @@ impl Editor {
             return Ok(());
         }
 
+        // Get the partial word at cursor to filter completions
+        use crate::word_navigation::find_completion_word_start;
+        let state = self.active_state();
+        let cursor_pos = state.cursors.primary().position;
+        let word_start = find_completion_word_start(&state.buffer, cursor_pos);
+        let prefix = if word_start < cursor_pos {
+            state.buffer.slice(word_start..cursor_pos).to_string().to_lowercase()
+        } else {
+            String::new()
+        };
+
+        // Filter completions to match the typed prefix
+        let filtered_items: Vec<&lsp_types::CompletionItem> = if prefix.is_empty() {
+            // No prefix - show all completions
+            items.iter().collect()
+        } else {
+            // Filter to items that start with the prefix (case-insensitive)
+            items.iter().filter(|item| {
+                item.label.to_lowercase().starts_with(&prefix) ||
+                item.filter_text.as_ref().map(|ft| ft.to_lowercase().starts_with(&prefix)).unwrap_or(false)
+            }).collect()
+        };
+
+        if filtered_items.is_empty() {
+            tracing::debug!("No completion items match prefix '{}'", prefix);
+            return Ok(());
+        }
+
         // Convert CompletionItem to PopupListItem
         use crate::popup::{PopupListItem, PopupContent, Popup, PopupPosition};
 
-        let popup_items: Vec<PopupListItem> = items.iter().map(|item| {
+        let popup_items: Vec<PopupListItem> = filtered_items.iter().map(|item| {
             let text = item.label.clone();
             let detail = item.detail.clone();
             let icon = match item.kind {
@@ -1570,14 +1598,14 @@ impl Editor {
 
                 // Now perform the completion if we have text
                 if let Some(text) = completion_text {
-                    use crate::word_navigation::find_word_start;
+                    use crate::word_navigation::find_completion_word_start;
 
                     let state = self.active_state();
                     let cursor_id = state.cursors.primary_id();
                     let cursor_pos = state.cursors.primary().position;
 
-                    // Find the start of the current word
-                    let word_start = find_word_start(&state.buffer, cursor_pos);
+                    // Find the start of the current completion word (stops at delimiters like '.')
+                    let word_start = find_completion_word_start(&state.buffer, cursor_pos);
 
                     // Get the text being deleted (if any) before we mutate
                     let deleted_text = if word_start < cursor_pos {

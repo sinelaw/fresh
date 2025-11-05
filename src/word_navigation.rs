@@ -7,6 +7,68 @@ pub fn is_word_char(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
+/// Find the start of the completion word at the cursor position.
+/// This is different from find_word_start in that it stops at delimiters like `.` and `::`
+/// rather than including them in the deletion range.
+///
+/// For example:
+/// - "args.som|" returns position of 's' (after the dot)
+/// - "Self::new|" returns position of 'n' (after the ::)
+/// - "hello|" returns position of 'h' (start of word)
+/// - "args.|" returns cursor position (no partial word to delete)
+pub fn find_completion_word_start(buffer: &Buffer, pos: usize) -> usize {
+    if pos == 0 {
+        return 0;
+    }
+
+    let buf_len = buffer.len();
+    let pos = pos.min(buf_len);
+
+    // Only read a small window around the position for efficiency
+    let start = pos.saturating_sub(1000);
+    let end = (pos + 1).min(buf_len);
+    let bytes = buffer.slice_bytes(start..end);
+    let offset = pos - start;
+
+    if offset == 0 {
+        return pos;
+    }
+
+    // Check the character immediately before the cursor
+    if let Some(&prev_byte) = bytes.get(offset.saturating_sub(1)) {
+        // If the previous character is not a word character (e.g., '.', ':', ' '),
+        // then there's no partial word to delete - return cursor position
+        if !is_word_char(prev_byte) {
+            return pos;
+        }
+    }
+
+    let mut new_pos = offset;
+
+    // If we're at the end of the buffer or at a non-word character, scan left
+    if new_pos >= bytes.len() || (bytes.get(new_pos).map(|&b| !is_word_char(b)).unwrap_or(true)) {
+        if new_pos > 0 {
+            new_pos = new_pos.saturating_sub(1);
+        }
+    }
+
+    // Find start of current identifier segment by scanning backwards
+    // Stop at delimiters like '.' or ':'
+    while new_pos > 0 {
+        if let Some(&prev_byte) = bytes.get(new_pos.saturating_sub(1)) {
+            if !is_word_char(prev_byte) {
+                // Stop here - don't include the delimiter
+                break;
+            }
+            new_pos = new_pos.saturating_sub(1);
+        } else {
+            break;
+        }
+    }
+
+    start + new_pos
+}
+
 /// Find the start of the word at or before the given position
 pub fn find_word_start(buffer: &Buffer, pos: usize) -> usize {
     if pos == 0 {
