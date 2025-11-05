@@ -108,10 +108,12 @@ Implemented:
 - ✅ Focus indication
 
 ### 4. Actions and Keybindings (`src/keybindings.rs`, `src/actions.rs`)
-**Status:** ✅ Complete
+**Status:** ✅ Complete (core actions), ⚠️ Partial (file operations)
 
-Implemented actions:
+**Fully Implemented Actions:**
 - `ToggleFileExplorer`: Show/hide file explorer
+- `FocusFileExplorer`: Focus on file explorer
+- `FocusEditor`: Return focus to editor
 - `FileExplorerUp`: Navigate up in tree
 - `FileExplorerDown`: Navigate down in tree
 - `FileExplorerExpand`: Expand selected directory
@@ -119,11 +121,18 @@ Implemented actions:
 - `FileExplorerOpen`: Open selected file
 - `FileExplorerRefresh`: Refresh directory contents
 
+**Defined but Not Yet Implemented:**
+- `FileExplorerNewFile`: Create new file (action defined, no handler)
+- `FileExplorerNewDirectory`: Create new directory (action defined, no handler)
+- `FileExplorerDelete`: Delete file/directory (action defined, no handler)
+- `FileExplorerRename`: Rename file/directory (action defined, no handler)
+
 **Features:**
 - ✅ All actions defined in Action enum
 - ✅ String parsing for config files
 - ✅ Descriptive names for help system
 - ✅ Integrated with existing action system
+- ✅ Context-aware keybindings via `KeyContext::FileExplorer`
 
 ### 5. Demo Example (`examples/file_explorer_demo.rs`)
 **Status:** ✅ Complete
@@ -186,45 +195,68 @@ ignore = "0.4"                      # gitignore support (for future)
 
 ## 🔄 Integration Status
 
-### ✅ Completed
-- Core infrastructure built and tested
-- All filesystem operations working
-- Tree model with lazy loading working
-- Navigation and view management working
-- UI rendering working
-- Actions and keybindings defined
-- Demo example working
+### ✅ Completed Integration
 
-### 📝 Remaining Work (for full integration)
+**Editor Integration (`src/editor.rs`)** - ✅ 90% Complete
+- ✅ `FileTreeView` field added to `Editor` struct
+- ✅ `FsManager` initialized with editor
+- ✅ File explorer toggle logic working (`toggle_file_explorer()`)
+- ✅ Focus management implemented (`focus_file_explorer()`, `focus_editor()`)
+- ✅ File explorer initialization (`init_file_explorer()`)
+- ✅ All navigation actions routed and working
+- ✅ File opening from explorer working (`file_explorer_open_file()`)
+- ✅ Refresh functionality working (`file_explorer_refresh()`)
+- ⚠️ Uses `block_on()` for async operations (blocks UI thread - needs improvement)
 
-To fully integrate the file explorer into the editor, the following would be needed:
+**Split View Integration** - ✅ Complete
+- ✅ File explorer rendered in split layout (30% width | 70% editor)
+- ✅ Focus state indicated via border styling
+- ✅ Integrated with main render loop
+- ✅ Explorer width/position managed
 
-1. **Editor Integration** (`src/editor.rs`)
-   - Add `FileTreeView` field to `Editor` struct
-   - Initialize filesystem manager
-   - Add file explorer toggle logic
-   - Route file explorer actions to view
-   - Handle async operations via async bridge
+**Basic Operations** - ✅ Complete
+- ✅ Toggle show/hide file explorer
+- ✅ Navigate up/down in tree
+- ✅ Expand/collapse directories
+- ✅ Select and open files
+- ✅ Refresh directory contents
+- ✅ Context-aware keybindings
 
-2. **Split View Integration**
-   - Modify split rendering to support file explorer pane
-   - Add special split type for file explorer
-   - Handle focus switching between explorer and editor
-   - Manage explorer width/position
+### 📝 Remaining Work
 
-3. **File Operations**
-   - Open file from explorer → load in buffer
-   - Create new file/directory
-   - Delete file/directory (with confirmation)
-   - Rename file/directory
-   - Copy/move operations
+**1. File Operations** - ❌ Not Implemented
+Actions are defined but handlers are missing:
+- ❌ Create new file (`FileExplorerNewFile`)
+- ❌ Create new directory (`FileExplorerNewDirectory`)
+- ❌ Delete file/directory (`FileExplorerDelete`)
+- ❌ Rename file/directory (`FileExplorerRename`)
+- ❌ Copy/move operations
 
-4. **Polish Features** (optional)
-   - Gitignore support (use `ignore` crate)
-   - File watching for auto-refresh
-   - Search/filter in explorer
-   - Drag-and-drop (if terminal supports)
-   - Custom icons/colors via config
+**2. Ignore Patterns** - ❌ Not Implemented
+- ❌ `src/file_tree/ignore.rs` module (planned but not created)
+- ❌ Gitignore support (dependency added but not integrated)
+- ❌ Custom ignore patterns
+- ❌ Show/hide ignored files toggle
+
+**3. Async Operations** - ⚠️ Needs Improvement
+Current implementation:
+- ⚠️ `init_file_explorer()` uses `runtime.block_on()` (line 557)
+- ⚠️ `file_explorer_toggle_expand()` uses `runtime.block_on()` (line 602)
+- ⚠️ `file_explorer_refresh()` uses `runtime.block_on()` (line 639)
+- These block the UI thread during directory operations
+
+Needed improvements:
+- Use `AsyncMessage` system for non-blocking operations
+- Add loading indicators during async operations
+- Proper error handling with user feedback
+- Queue operations instead of blocking
+
+**4. Polish Features** - ❌ Not Implemented
+- ❌ File watching for auto-refresh
+- ❌ Search/filter within explorer
+- ❌ Custom icons/colors via config
+- ❌ Preview on selection
+- ❌ Bulk operations
 
 ## 🧪 Testing
 
@@ -295,17 +327,168 @@ The integration into the main editor loop is the remaining step. This would invo
 
 All the hard work (async FS, tree model, rendering) is done and tested!
 
-## 📊 Metrics
+## 📊 Current Metrics
 
-- **Lines of Code Added:** ~2,500
+- **Lines of Code Added:** ~3,000+
 - **Test Coverage:** 47 new tests, all passing
-- **Modules Created:** 8
+- **Modules Created:** 8 (7 planned modules + integration code)
+- **Files Created:**
+  - `src/fs/` (3 files: backend.rs, local.rs, manager.rs)
+  - `src/file_tree/` (3 files: node.rs, tree.rs, view.rs)
+  - `src/ui/file_explorer.rs`
+  - `examples/file_explorer_demo.rs`
+- **Files Modified:**
+  - `src/editor.rs` (added file explorer state and handlers)
+  - `src/keybindings.rs` (added actions and context)
+  - `src/actions.rs` (action routing)
 - **Performance:** Optimized for directories with 10,000+ files
 - **Memory:** Lazy loading keeps memory usage minimal
-- **Async:** All blocking operations eliminated
+- **Async:** All FS operations are async (but some block UI via `block_on()`)
+
+## 🎓 Implementation Status Summary
+
+**Overall Progress: ~80% Complete**
+
+| Component | Status | Completeness |
+|-----------|--------|--------------|
+| Filesystem Layer | ✅ Complete | 100% |
+| Tree Model | ✅ Complete | 100% |
+| UI Renderer | ✅ Complete | 100% |
+| Actions/Keybindings | ⚠️ Partial | 70% (core complete, file ops missing) |
+| Editor Integration | ✅ Mostly Complete | 90% (working but blocking issues) |
+| Basic Operations | ✅ Complete | 100% (navigate, expand, open) |
+| File Operations | ❌ Not Implemented | 0% (create, delete, rename) |
+| Ignore Patterns | ❌ Not Implemented | 0% (.gitignore support) |
+| Async Bridge | ⚠️ Needs Work | 30% (uses blocking instead) |
+| Polish Features | ❌ Not Implemented | 0% (watch, search, filter) |
+
+**What Works Right Now:**
+- ✅ Show/hide file explorer with toggle
+- ✅ Navigate directory tree with keyboard
+- ✅ Expand/collapse directories
+- ✅ Open files in editor
+- ✅ Refresh directory contents
+- ✅ Focus switching between explorer and editor
+- ✅ Beautiful terminal UI with icons and colors
+
+**What Doesn't Work:**
+- ❌ Creating new files/directories
+- ❌ Deleting files/directories
+- ❌ Renaming files/directories
+- ❌ Gitignore support
+- ❌ True non-blocking async (uses `block_on()`)
+- ❌ File watching/auto-refresh
+- ❌ Search/filter in explorer
 
 ## 🚀 Usage
 
 See `examples/file_explorer_demo.rs` for a complete working example.
 
 See `FILE-EXPLORER.md` for the full design and implementation plan.
+
+## 🎯 Next Steps / Priority Order
+
+Based on the current state, here are the recommended next steps in priority order:
+
+### Priority 1: Fix Async Blocking Issues ⚠️ HIGH IMPACT
+**Problem:** Current implementation blocks UI thread during directory operations
+**Impact:** Poor UX on slow filesystems, defeats purpose of async architecture
+**Tasks:**
+1. Replace `block_on()` calls in `src/editor.rs` with `AsyncMessage` system
+2. Add `AsyncMessage::FileTreeExpand`, `AsyncMessage::FileTreeRefresh`, `AsyncMessage::FileTreeInit`
+3. Update handlers to spawn async tasks instead of blocking
+4. Add loading indicators during async operations
+5. Test with slow/network filesystems
+
+**Estimated Effort:** 4-6 hours
+**Files to modify:** `src/editor.rs`, `src/async_bridge.rs` (or wherever AsyncMessage is defined)
+
+### Priority 2: Implement File Operations 📝 HIGH VALUE
+**Problem:** Cannot create, delete, or rename files from explorer
+**Impact:** File explorer is read-only, limiting usefulness
+**Tasks:**
+1. Implement `file_explorer_new_file()` handler in `src/editor.rs`
+   - Prompt for filename
+   - Create file via `tokio::fs::File::create()`
+   - Open in editor
+   - Add to file tree
+2. Implement `file_explorer_new_directory()` handler
+   - Prompt for directory name
+   - Create directory via `tokio::fs::create_dir()`
+   - Refresh parent in tree
+3. Implement `file_explorer_delete()` handler
+   - Confirm deletion with user
+   - Delete via `tokio::fs::remove_file()` or `remove_dir_all()`
+   - Refresh parent in tree
+4. Implement `file_explorer_rename()` handler
+   - Prompt for new name
+   - Rename via `tokio::fs::rename()`
+   - Update tree
+
+**Estimated Effort:** 6-8 hours
+**Files to modify:** `src/editor.rs`
+**Bonus:** Add input prompt UI component for getting filenames
+
+### Priority 3: Implement Ignore Patterns 🎨 MEDIUM VALUE
+**Problem:** No .gitignore support, explorer shows build artifacts
+**Impact:** Cluttered view, harder to navigate
+**Tasks:**
+1. Create `src/file_tree/ignore.rs` module
+2. Implement `IgnorePattern` struct using `ignore` crate
+3. Load `.gitignore` files when expanding directories
+4. Filter nodes based on ignore patterns
+5. Add `show_ignored` toggle to `FileTreeView`
+6. Add action to toggle visibility of ignored files
+7. Gray out ignored files instead of hiding them (optional)
+
+**Estimated Effort:** 4-6 hours
+**Files to create:** `src/file_tree/ignore.rs`
+**Files to modify:** `src/file_tree/view.rs`, `src/editor.rs`, `src/keybindings.rs`
+
+### Priority 4: Add Keybindings 🎯 QUICK WIN
+**Problem:** File explorer actions not bound to keys
+**Tasks:**
+1. Add default keybindings to config
+   - `Ctrl-b` or `F2` for toggle explorer
+   - `j`/`k` for navigate down/up (in explorer context)
+   - `Enter` or `l` for expand/open
+   - `h` for collapse
+   - `r` for refresh
+   - `a` for new file
+   - `Shift-a` for new directory
+   - `d` for delete
+   - `n` for rename
+2. Document keybindings in help system
+
+**Estimated Effort:** 1-2 hours
+**Files to modify:** Default config file, `src/keybindings.rs`
+
+### Priority 5: Polish & UX Improvements ✨ NICE TO HAVE
+**Tasks:**
+1. Add file watching for auto-refresh
+2. Add search/filter in explorer
+3. Add keyboard shortcut hints in status bar
+4. Improve error messages
+5. Add configuration options (width, icons, colors)
+6. Add drag-and-drop support (if terminal supports)
+
+**Estimated Effort:** 8-12 hours
+**Impact:** Better UX but not critical
+
+## 🚨 Known Issues
+
+1. **UI Blocking**: `block_on()` freezes UI during directory operations (Priority 1)
+2. **No File Creation**: Cannot create files/directories (Priority 2)
+3. **No .gitignore**: Shows all files including build artifacts (Priority 3)
+4. **No Keybindings**: Actions defined but not bound to keys (Priority 4)
+5. **Icons**: Recently changed from Unicode to ASCII - may want to make configurable
+
+## 📅 Recent Changes (from git log)
+
+- **7aae3c3**: Fix buffer display issue and replace unicode icons
+- **f871085**: Implement Annotation/Margin System (per-buffer)
+- **aa08182**: Fix AsyncMessage clone test after removing Clone trait
+- **3012153**: Add file operation actions for Phase 3 (groundwork)
+- **f7764be**: Add context-aware focus management for file explorer (Phase 2)
+
+Last updated: 2025-11-05
