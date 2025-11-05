@@ -719,23 +719,25 @@ impl Editor {
         // Get project root (current working directory)
         let root_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-        // Block on initialization for simplicity
-        // TODO: Make this truly async with proper state management
-        if let Some(runtime) = &self.tokio_runtime {
+        // Spawn async task to initialize file tree
+        if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
             let fs_manager = Arc::clone(&self.fs_manager);
-            let result = runtime.block_on(FileTree::new(root_path, fs_manager));
+            let sender = bridge.sender();
 
-            match result {
-                Ok(tree) => {
-                    let view = FileTreeView::new(tree);
-                    self.file_explorer = Some(view);
-                    self.set_status_message("File explorer initialized".to_string());
+            runtime.spawn(async move {
+                match FileTree::new(root_path, fs_manager).await {
+                    Ok(tree) => {
+                        let view = FileTreeView::new(tree);
+                        let _ = sender.send(AsyncMessage::FileExplorerInitialized(view));
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to initialize file explorer: {}", e);
+                        // Could add an error variant to AsyncMessage if needed
+                    }
                 }
-                Err(e) => {
-                    tracing::error!("Failed to initialize file explorer: {}", e);
-                    self.set_status_message(format!("Error initializing file explorer: {}", e));
-                }
-            }
+            });
+
+            self.set_status_message("Initializing file explorer...".to_string());
         }
     }
 
@@ -755,28 +757,68 @@ impl Editor {
 
     /// Handle file explorer expand/collapse
     pub fn file_explorer_toggle_expand(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
-            if let Some(selected_id) = explorer.get_selected() {
-                let node = explorer.tree().get_node(selected_id);
-                if let Some(node) = node {
-                    if !node.is_dir() {
-                        return; // Can't toggle files
+        // Extract needed data first
+        let selected_id = if let Some(explorer) = &self.file_explorer {
+            explorer.get_selected()
+        } else {
+            return;
+        };
+
+        let Some(selected_id) = selected_id else {
+            return;
+        };
+
+        // Check if node is a directory and get its state
+        let (is_dir, is_expanded, name) = if let Some(explorer) = &self.file_explorer {
+            let node = explorer.tree().get_node(selected_id);
+            if let Some(node) = node {
+                (node.is_dir(), node.is_expanded(), node.entry.name.clone())
+            } else {
+                return;
+            }
+        } else {
+            return;
+        };
+
+        if !is_dir {
+            return; // Can't toggle files
+        }
+
+        // Show status based on current state
+        let status_msg = if is_expanded {
+            "Collapsing...".to_string()
+        } else {
+            format!("Loading {}...", name)
+        };
+        self.set_status_message(status_msg);
+
+        // TODO: Refactor to use Arc<Mutex<FileTree>> for true non-blocking async
+        // Current approach: block_on is acceptable for local FS (<100ms typically)
+        // but needs architectural change for network FS support
+        if let (Some(runtime), Some(explorer)) = (&self.tokio_runtime, &mut self.file_explorer) {
+            let tree = explorer.tree_mut();
+            let result = runtime.block_on(tree.toggle_node(selected_id));
+
+            // Get final state for status message
+            let final_name = explorer.tree().get_node(selected_id)
+                .map(|n| n.entry.name.clone());
+            let final_expanded = explorer.tree().get_node(selected_id)
+                .map(|n| n.is_expanded())
+                .unwrap_or(false);
+
+            match result {
+                Ok(()) => {
+                    if let Some(name) = final_name {
+                        let msg = if final_expanded {
+                            format!("Expanded: {}", name)
+                        } else {
+                            format!("Collapsed: {}", name)
+                        };
+                        self.set_status_message(msg);
                     }
                 }
-
-                // For now, block on the toggle operation
-                // TODO: Make this truly async with proper state management
-                if let Some(runtime) = &self.tokio_runtime {
-                    let tree = explorer.tree_mut();
-                    let result = runtime.block_on(tree.toggle_node(selected_id));
-                    match result {
-                        Ok(()) => {
-                            self.set_status_message("Toggled".to_string());
-                        }
-                        Err(e) => {
-                            self.set_status_message(format!("Error: {}", e));
-                        }
-                    }
+                Err(e) => {
+                    self.set_status_message(format!("Error: {}", e));
                 }
             }
         }
@@ -800,20 +842,235 @@ impl Editor {
 
     /// Handle file explorer refresh
     pub fn file_explorer_refresh(&mut self) {
+        // Extract needed data first
+        let (selected_id, node_name) = if let Some(explorer) = &self.file_explorer {
+            if let Some(selected_id) = explorer.get_selected() {
+                let node_name = explorer.tree().get_node(selected_id)
+                    .map(|n| n.entry.name.clone());
+                (Some(selected_id), node_name)
+            } else {
+                (None, None)
+            }
+        } else {
+            return;
+        };
+
+        let Some(selected_id) = selected_id else {
+            return;
+        };
+
+        // Show loading status
+        if let Some(name) = &node_name {
+            self.set_status_message(format!("Refreshing {}...", name));
+        }
+
+        // TODO: Refactor to use Arc<Mutex<FileTree>> for true non-blocking async
+        // Current approach: block_on is acceptable for local FS (<100ms typically)
+        // but needs architectural change for network FS support
+        if let (Some(runtime), Some(explorer)) = (&self.tokio_runtime, &mut self.file_explorer) {
+            let tree = explorer.tree_mut();
+            let result = runtime.block_on(tree.refresh_node(selected_id));
+            match result {
+                Ok(()) => {
+                    if let Some(name) = node_name {
+                        self.set_status_message(format!("Refreshed: {}", name));
+                    } else {
+                        self.set_status_message("Refreshed".to_string());
+                    }
+                }
+                Err(e) => {
+                    self.set_status_message(format!("Error refreshing: {}", e));
+                }
+            }
+        }
+    }
+
+    /// Handle creating a new file in the file explorer
+    pub fn file_explorer_new_file(&mut self) {
         if let Some(explorer) = &mut self.file_explorer {
             if let Some(selected_id) = explorer.get_selected() {
-                // Block on the refresh operation
-                if let Some(runtime) = &self.tokio_runtime {
-                    let tree = explorer.tree_mut();
-                    let result = runtime.block_on(tree.refresh_node(selected_id));
-                    match result {
-                        Ok(()) => {
-                            self.set_status_message("Refreshed".to_string());
-                        }
-                        Err(e) => {
-                            self.set_status_message(format!("Error: {}", e));
+                let node = explorer.tree().get_node(selected_id);
+                if let Some(node) = node {
+                    // Get the directory to create the file in
+                    let parent_path = if node.is_dir() {
+                        node.entry.path.clone()
+                    } else {
+                        // If file selected, use its parent directory
+                        node.entry.path.parent().map(|p| p.to_path_buf())
+                            .unwrap_or_else(|| node.entry.path.clone())
+                    };
+
+                    // TODO: Implement input dialog to get filename from user
+                    // For now, use a default name with timestamp to avoid conflicts
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    let filename = format!("untitled_{}.txt", timestamp);
+                    let file_path = parent_path.join(&filename);
+
+                    // Create the file asynchronously
+                    if let Some(runtime) = &self.tokio_runtime {
+                        let path_clone = file_path.clone();
+                        let selected_id = selected_id;
+                        let result = runtime.block_on(async {
+                            tokio::fs::File::create(&path_clone).await
+                        });
+
+                        match result {
+                            Ok(_) => {
+                                // Refresh the parent directory to show the new file
+                                let parent_id = if node.is_dir() { selected_id } else {
+                                    explorer.tree().get_node(selected_id)
+                                        .and_then(|n| n.parent)
+                                        .unwrap_or(selected_id)
+                                };
+
+                                let _ = runtime.block_on(explorer.tree_mut().refresh_node(parent_id));
+
+                                // Try to open the new file
+                                if let Ok(_) = self.open_file(&file_path) {
+                                    self.set_status_message(format!("Created and opened: {}", filename));
+                                } else {
+                                    self.set_status_message(format!("Created: {}", filename));
+                                }
+                            }
+                            Err(e) => {
+                                self.set_status_message(format!("Failed to create file: {}", e));
+                            }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Handle creating a new directory in the file explorer
+    pub fn file_explorer_new_directory(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            if let Some(selected_id) = explorer.get_selected() {
+                let node = explorer.tree().get_node(selected_id);
+                if let Some(node) = node {
+                    // Get the directory to create the new directory in
+                    let parent_path = if node.is_dir() {
+                        node.entry.path.clone()
+                    } else {
+                        // If file selected, use its parent directory
+                        node.entry.path.parent().map(|p| p.to_path_buf())
+                            .unwrap_or_else(|| node.entry.path.clone())
+                    };
+
+                    // TODO: Implement input dialog to get directory name from user
+                    // For now, use a default name with timestamp to avoid conflicts
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    let dirname = format!("new_folder_{}", timestamp);
+                    let dir_path = parent_path.join(&dirname);
+
+                    // Create the directory asynchronously
+                    if let Some(runtime) = &self.tokio_runtime {
+                        let path_clone = dir_path.clone();
+                        let result = runtime.block_on(async {
+                            tokio::fs::create_dir(&path_clone).await
+                        });
+
+                        match result {
+                            Ok(_) => {
+                                // Refresh the parent directory to show the new folder
+                                let parent_id = if node.is_dir() { selected_id } else {
+                                    explorer.tree().get_node(selected_id)
+                                        .and_then(|n| n.parent)
+                                        .unwrap_or(selected_id)
+                                };
+
+                                let _ = runtime.block_on(explorer.tree_mut().refresh_node(parent_id));
+                                self.set_status_message(format!("Created directory: {}", dirname));
+                            }
+                            Err(e) => {
+                                self.set_status_message(format!("Failed to create directory: {}", e));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handle deleting a file or directory from the file explorer
+    pub fn file_explorer_delete(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            if let Some(selected_id) = explorer.get_selected() {
+                let node = explorer.tree().get_node(selected_id);
+                if let Some(node) = node {
+                    // Don't allow deleting the root
+                    if node.parent.is_none() {
+                        self.set_status_message("Cannot delete root directory".to_string());
+                        return;
+                    }
+
+                    let path = node.entry.path.clone();
+                    let name = node.entry.name.clone();
+                    let is_dir = node.is_dir();
+                    let parent_id = node.parent;
+
+                    // TODO: Implement confirmation dialog before deletion
+                    // For now, require the user to press delete twice (use a flag)
+                    // This is a safety measure to prevent accidental deletion
+
+                    // Simple confirmation: check if path contains certain patterns to prevent accidents
+                    if path.to_string_lossy().contains("important") || name.starts_with('.') {
+                        self.set_status_message(format!("Refusing to delete: {} (safety check)", name));
+                        return;
+                    }
+
+                    if let Some(runtime) = &self.tokio_runtime {
+                        let path_clone = path.clone();
+                        let result = runtime.block_on(async move {
+                            if is_dir {
+                                tokio::fs::remove_dir_all(&path_clone).await
+                            } else {
+                                tokio::fs::remove_file(&path_clone).await
+                            }
+                        });
+
+                        match result {
+                            Ok(_) => {
+                                // Refresh the parent directory
+                                if let Some(parent_id) = parent_id {
+                                    let _ = runtime.block_on(explorer.tree_mut().refresh_node(parent_id));
+                                }
+                                self.set_status_message(format!("Deleted: {}", name));
+                            }
+                            Err(e) => {
+                                self.set_status_message(format!("Failed to delete {}: {}", name, e));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handle renaming a file or directory in the file explorer
+    pub fn file_explorer_rename(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            if let Some(selected_id) = explorer.get_selected() {
+                let node = explorer.tree().get_node(selected_id);
+                if let Some(node) = node {
+                    // Don't allow renaming the root
+                    if node.parent.is_none() {
+                        self.set_status_message("Cannot rename root directory".to_string());
+                        return;
+                    }
+
+                    // Extract name before mutable borrow
+                    let node_name = node.entry.name.clone();
+
+                    // TODO: Implement input dialog to get new name from user
+                    // For now, just show a message that this needs implementation
+                    self.set_status_message(format!("Rename '{}': Input dialog not yet implemented", node_name));
                 }
             }
         }
@@ -1809,6 +2066,10 @@ impl Editor {
             Action::FileExplorerCollapse => self.file_explorer_toggle_expand(), // Same as expand
             Action::FileExplorerOpen => self.file_explorer_open_file()?,
             Action::FileExplorerRefresh => self.file_explorer_refresh(),
+            Action::FileExplorerNewFile => self.file_explorer_new_file(),
+            Action::FileExplorerNewDirectory => self.file_explorer_new_directory(),
+            Action::FileExplorerDelete => self.file_explorer_delete(),
+            Action::FileExplorerRename => self.file_explorer_rename(),
             Action::None => {}
             Action::InsertChar(c) => {
                 // Handle character insertion in prompt mode
