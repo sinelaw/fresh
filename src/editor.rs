@@ -1351,7 +1351,11 @@ impl Editor {
     pub fn confirm_prompt(&mut self) -> Option<(String, PromptType)> {
         if let Some(prompt) = self.prompt.take() {
             // For command prompts, prefer the selected suggestion over raw input
-            let final_input = if matches!(prompt.prompt_type, PromptType::Command) {
+            let final_input = if matches!(
+                prompt.prompt_type,
+                PromptType::Command | PromptType::GitGrep | PromptType::GitFindFile
+            ) {
+                // For Command, GitGrep, and GitFindFile, use the selected suggestion if any
                 if let Some(selected_idx) = prompt.selected_suggestion {
                     if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
                         // Don't confirm disabled commands
@@ -1362,16 +1366,16 @@ impl Editor {
                             ));
                             return None;
                         }
-                        // Use the selected suggestion text
+                        // Use the selected suggestion value
                         suggestion.get_value().to_string()
                     } else {
-                        prompt.input
+                        prompt.input.clone()
                     }
                 } else {
-                    prompt.input
+                    prompt.input.clone()
                 }
             } else {
-                prompt.input
+                prompt.input.clone()
             };
 
             Some((final_input, prompt.prompt_type))
@@ -1979,28 +1983,21 @@ impl Editor {
                                     let state = self.active_state_mut();
 
                                     // Find the byte position for the target line
+                                    // Git grep returns 1-indexed line numbers
                                     let target_line = line.saturating_sub(1); // Convert to 0-indexed
                                     let mut iter = state.buffer.line_iterator(0);
-                                    let mut current_line = 0;
                                     let mut target_byte = 0;
 
-                                    while current_line < target_line {
+                                    // Iterate through lines until we reach the target
+                                    for current_line in 0..=target_line {
                                         if let Some((line_start, _)) = iter.next() {
-                                            if current_line + 1 == target_line {
+                                            if current_line == target_line {
                                                 target_byte = line_start;
                                                 break;
                                             }
-                                            current_line += 1;
                                         } else {
                                             // Reached end of buffer before target line
                                             break;
-                                        }
-                                    }
-
-                                    // Get the line start position if we're at the target line
-                                    if current_line == target_line {
-                                        if let Some((line_start, _)) = iter.next() {
-                                            target_byte = line_start;
                                         }
                                     }
 
@@ -2015,6 +2012,10 @@ impl Editor {
 
                                     self.set_status_message(format!("Jumped to {}:{}", file, line));
                                 }
+                            } else {
+                                self.set_status_message(format!(
+                                    "Invalid git grep result format: '{input}'"
+                                ));
                             }
                         }
                         PromptType::GitFindFile => {

@@ -575,3 +575,241 @@ fn test_git_commands_via_command_palette() {
     // Should now be in git grep mode
     harness.assert_screen_contains("Git grep:");
 }
+
+/// REPRODUCTION TEST: Git grep selection should open file and jump to exact line
+#[test]
+fn test_git_grep_opens_correct_file_and_jumps_to_line() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Verify we start with an empty buffer
+    let initial_content = harness.get_buffer_content();
+    assert!(initial_content.is_empty() || initial_content == "\n", "Should start with empty buffer");
+
+    // Trigger git grep
+    harness
+        .send_key(KeyCode::Char('F'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for "println" which appears in main.rs line 2
+    harness.type_text("println").unwrap();
+
+    // Wait for results
+    let found = harness
+        .wait_for_async(
+            |h| h.screen_to_string().contains("main.rs"),
+            2000,
+        )
+        .unwrap();
+    assert!(found, "Should find grep results");
+
+    let screen_before = harness.screen_to_string();
+    println!("Screen with results:\n{}", screen_before);
+
+    // Confirm selection (Enter)
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Give time for file to load
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    harness.render().unwrap();
+
+    // CRITICAL CHECKS:
+
+    // 1. Buffer content should have changed from empty to the file content
+    let buffer_content = harness.get_buffer_content();
+    println!("Buffer content after selection:\n{}", buffer_content);
+
+    assert!(
+        !buffer_content.is_empty() && buffer_content != "\n",
+        "BUG: Buffer is still empty! File was not opened. Buffer: {:?}",
+        buffer_content
+    );
+
+    assert!(
+        buffer_content.contains("println"),
+        "BUG: Buffer does not contain expected file content. Expected 'println' in buffer. Buffer: {:?}",
+        buffer_content
+    );
+
+    // 2. The cursor should be at the line with println (line 2)
+    let cursor_pos = harness.cursor_position();
+    println!("Cursor position: {}", cursor_pos);
+
+    // The cursor should NOT be at position 0 (start of file)
+    // It should be near the "println" line
+    assert!(
+        cursor_pos > 0,
+        "BUG: Cursor is at position 0! It should have jumped to the match line. Position: {}",
+        cursor_pos
+    );
+
+    // 3. Verify screen shows the file content
+    let screen_after = harness.screen_to_string();
+    println!("Screen after selection:\n{}", screen_after);
+
+    assert!(
+        screen_after.contains("fn main") || screen_after.contains("println"),
+        "BUG: Screen does not show file content after selection"
+    );
+}
+
+/// REPRODUCTION TEST: Git find file selection should actually open the file
+#[test]
+fn test_git_find_file_actually_opens_file() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Verify we start with an empty buffer
+    let initial_content = harness.get_buffer_content();
+    assert!(initial_content.is_empty() || initial_content == "\n", "Should start with empty buffer");
+
+    // Trigger git find file
+    harness
+        .send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type to find lib.rs
+    harness.type_text("lib.rs").unwrap();
+
+    // Wait for results
+    let found = harness
+        .wait_for_async(
+            |h| {
+                let s = h.screen_to_string();
+                // Look for file list or at least src/ directory
+                s.contains("src/lib.rs") || s.contains("lib.rs")
+            },
+            2000,
+        )
+        .unwrap();
+
+    let screen_before = harness.screen_to_string();
+    println!("Screen with file list:\n{}", screen_before);
+
+    assert!(found, "Should find lib.rs in results. Screen:\n{}", screen_before);
+
+    // Confirm selection (Enter)
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Give time for file to load
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    harness.render().unwrap();
+
+    // CRITICAL CHECKS:
+
+    // 1. Buffer content should have changed from empty to lib.rs content
+    let buffer_content = harness.get_buffer_content();
+    println!("Buffer content after selection:\n{}", buffer_content);
+
+    assert!(
+        !buffer_content.is_empty() && buffer_content != "\n",
+        "BUG: Buffer is still empty! File lib.rs was not opened. Buffer: {:?}",
+        buffer_content
+    );
+
+    assert!(
+        buffer_content.contains("pub struct Config") || buffer_content.contains("impl Default"),
+        "BUG: Buffer does not contain lib.rs content. Expected 'Config' or 'impl Default'. Buffer: {:?}",
+        buffer_content
+    );
+
+    // 2. Verify screen shows the file content
+    let screen_after = harness.screen_to_string();
+    println!("Screen after selection:\n{}", screen_after);
+
+    assert!(
+        screen_after.contains("Config") || screen_after.contains("pub struct"),
+        "BUG: Screen does not show lib.rs content after selection. Screen:\n{}",
+        screen_after
+    );
+
+    // 3. Status bar should show we're no longer in prompt mode
+    harness.assert_screen_not_contains("Find file:");
+}
+
+/// REPRODUCTION TEST: Verify cursor jumps to correct line in git grep
+#[test]
+fn test_git_grep_cursor_position_accuracy() {
+    let repo = GitTestRepo::new();
+
+    // Create a file with known line content
+    repo.create_file(
+        "test.txt",
+        "Line 1\nLine 2\nLine 3 with MARKER\nLine 4\nLine 5\n"
+    );
+    repo.git_add(&["test.txt"]);
+    repo.git_commit("Add test file");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Trigger git grep
+    harness
+        .send_key(KeyCode::Char('F'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for MARKER (should be on line 3)
+    harness.type_text("MARKER").unwrap();
+
+    // Wait for results
+    harness
+        .wait_for_async(
+            |h| h.screen_to_string().contains("test.txt"),
+            2000,
+        )
+        .unwrap();
+
+    // Confirm selection
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    harness.render().unwrap();
+
+    // Check buffer content
+    let buffer_content = harness.get_buffer_content();
+    println!("Buffer content:\n{}", buffer_content);
+
+    assert!(
+        buffer_content.contains("MARKER"),
+        "BUG: File not opened or wrong file opened. Buffer: {:?}",
+        buffer_content
+    );
+
+    // The cursor should be on line 3 (0-indexed = line 2)
+    // Calculate expected byte position for line 3
+    // Line 1: "Line 1\n" = 7 bytes
+    // Line 2: "Line 2\n" = 7 bytes
+    // Line 3 starts at byte 14
+    let cursor_pos = harness.cursor_position();
+    println!("Cursor position: {}", cursor_pos);
+
+    // Cursor should be at line 3 (byte position should be at or after byte 14)
+    assert!(
+        cursor_pos >= 14,
+        "BUG: Cursor should be at line 3 (position >= 14), but is at position {}",
+        cursor_pos
+    );
+
+    // Verify the line at cursor contains MARKER
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("MARKER"),
+        "BUG: Screen should show the line with MARKER"
+    );
+}
