@@ -1,7 +1,7 @@
 /// Process resource limiting infrastructure
 ///
 /// Provides cross-platform support for limiting memory and CPU usage of spawned processes.
-/// On Linux, uses cgroups v2 if available, otherwise falls back to setrlimit.
+/// On Linux, uses user-delegated cgroups v2 if available, otherwise falls back to setrlimit.
 
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -63,8 +63,7 @@ impl ProcessLimits {
 
     /// Apply these limits to a tokio Command before spawning
     ///
-    /// On Linux, tries cgroups v2 first, then falls back to setrlimit.
-    /// On other platforms, this is currently a no-op.
+    /// On Linux, tries user-delegated cgroups v2, otherwise falls back to setrlimit.
     pub fn apply_to_command(&self, cmd: &mut tokio::process::Command) -> io::Result<()> {
         if !self.enabled {
             return Ok(());
@@ -91,35 +90,43 @@ impl ProcessLimits {
         let max_memory_bytes = self.max_memory_mb.map(|mb| mb * 1024 * 1024);
         let max_cpu_percent = self.max_cpu_percent;
 
-        // Try to set up cgroups first
-        let cgroup_path = self.try_setup_cgroup();
+        // Try to set up a user-delegated cgroup
+        let cgroup_path = self.try_setup_user_cgroup();
+
+        if let Some(ref cgroup) = cgroup_path {
+            tracing::info!(
+                "Using cgroups for resource limits (memory: {:?} MB, CPU: {:?}%, path: {:?})",
+                self.max_memory_mb, self.max_cpu_percent, cgroup
+            );
+        } else {
+            tracing::info!(
+                "Using setrlimit fallback for resource limits (memory: {:?} MB, CPU throttling not available)",
+                self.max_memory_mb
+            );
+        }
 
         unsafe {
             cmd.pre_exec(move || {
                 // If we have a cgroup set up, move this process into it
                 if let Some(ref cgroup) = cgroup_path {
                     if let Err(e) = move_to_cgroup(cgroup) {
-                        tracing::warn!("Failed to move process to cgroup: {}", e);
-                        // Don't fail, will use setrlimit as fallback
+                        tracing::warn!("Failed to move process to cgroup: {}, falling back to setrlimit", e);
                     } else {
-                        tracing::debug!("Moved process to cgroup: {:?}", cgroup);
-                        return Ok(()); // Cgroup limits are already set, don't need setrlimit
+                        // Successfully moved to cgroup, limits are already set
+                        return Ok(());
                     }
                 }
 
                 // Fall back to setrlimit
                 if let Some(mem_limit) = max_memory_bytes {
-                    match apply_memory_limit_setrlimit(mem_limit) {
-                        Ok(()) => tracing::debug!("Applied memory limit via setrlimit: {} MB", mem_limit / 1024 / 1024),
-                        Err(e) => tracing::warn!("Failed to apply memory limit via setrlimit: {}", e),
+                    if let Err(e) = apply_memory_limit_setrlimit(mem_limit) {
+                        tracing::warn!("Failed to apply memory limit via setrlimit: {}", e);
                     }
                 }
 
-                if let Some(_cpu_percent) = max_cpu_percent {
-                    match apply_cpu_time_limit_setrlimit() {
-                        Ok(()) => tracing::debug!("Applied CPU time limit via setrlimit (not throttling)"),
-                        Err(e) => tracing::warn!("Failed to apply CPU time limit via setrlimit: {}", e),
-                    }
+                // Note: CPU percentage limiting not possible with setrlimit
+                if max_cpu_percent.is_some() {
+                    tracing::debug!("CPU throttling not available with setrlimit (only total CPU time limits work)");
                 }
 
                 Ok(())
@@ -129,39 +136,60 @@ impl ProcessLimits {
         Ok(())
     }
 
-    /// Try to set up a cgroup for resource limiting
+    /// Try to set up a cgroup in user-delegated space
     /// Returns the cgroup path if successful, None otherwise
     #[cfg(target_os = "linux")]
-    fn try_setup_cgroup(&self) -> Option<PathBuf> {
-        // Check if cgroups v2 is mounted
+    fn try_setup_user_cgroup(&self) -> Option<PathBuf> {
         let cgroup_root = PathBuf::from("/sys/fs/cgroup");
         if !cgroup_root.exists() {
             tracing::debug!("cgroups v2 not available at /sys/fs/cgroup");
             return None;
         }
 
-        // Try to find a writable location for our cgroup
-        let cgroup_locations = vec![
-            // User slice (most likely to work for unprivileged users)
-            cgroup_root.join(format!("user.slice/user-{}.slice/editor-lsp-{}", get_uid(), std::process::id())),
-            // Direct under root (requires privileges or delegated controllers)
-            cgroup_root.join(format!("editor-lsp-{}", std::process::id())),
+        let uid = get_uid();
+        let pid = std::process::id();
+
+        // Try common locations for user-delegated cgroups
+        // On systemd systems: /sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/
+        // On some systems: /sys/fs/cgroup/user.slice/user-{uid}.slice/
+        // Direct: /sys/fs/cgroup/user-{uid}/
+        let locations = vec![
+            cgroup_root.join(format!("user.slice/user-{}.slice/user@{}.service/app.slice", uid, uid)),
+            cgroup_root.join(format!("user.slice/user-{}.slice/user@{}.service", uid, uid)),
+            cgroup_root.join(format!("user.slice/user-{}.slice", uid)),
+            cgroup_root.join(format!("user-{}", uid)),
         ];
 
-        for cgroup_path in cgroup_locations {
-            if let Ok(()) = fs::create_dir_all(&cgroup_path) {
-                // Try to set limits
+        for parent in locations {
+            if !parent.exists() {
+                continue;
+            }
+
+            // Check if we can write to this location by checking cgroup.procs
+            let test_file = parent.join("cgroup.procs");
+            if !is_writable(&test_file) {
+                tracing::debug!("Parent cgroup not writable: {:?}", parent);
+                continue;
+            }
+
+            // Create a child cgroup for our process
+            let cgroup_name = format!("editor-lsp-{}", pid);
+            let cgroup_path = parent.join(&cgroup_name);
+
+            if let Ok(()) = fs::create_dir(&cgroup_path) {
+                // Try to set the limits
                 if self.apply_cgroup_limits(&cgroup_path).is_ok() {
                     tracing::debug!("Created cgroup at {:?}", cgroup_path);
                     return Some(cgroup_path);
                 } else {
                     // Clean up failed attempt
                     let _ = fs::remove_dir(&cgroup_path);
+                    tracing::debug!("Failed to set limits on cgroup: {:?}", cgroup_path);
                 }
             }
         }
 
-        tracing::debug!("Could not create writable cgroup, will use setrlimit");
+        tracing::debug!("Could not find writable user-delegated cgroup, will use setrlimit");
         None
     }
 
@@ -173,7 +201,7 @@ impl ProcessLimits {
             let memory_bytes = memory_mb * 1024 * 1024;
             let memory_max_file = cgroup_path.join("memory.max");
             fs::write(&memory_max_file, format!("{}", memory_bytes))?;
-            tracing::debug!("Set cgroup memory.max to {} bytes", memory_bytes);
+            tracing::debug!("Set cgroup memory.max to {} bytes ({} MB)", memory_bytes, memory_mb);
         }
 
         // Set CPU limit
@@ -188,6 +216,20 @@ impl ProcessLimits {
         }
 
         Ok(())
+    }
+}
+
+/// Check if a file is writable
+#[cfg(target_os = "linux")]
+fn is_writable(path: &PathBuf) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Ok(metadata) = fs::metadata(path) {
+        let permissions = metadata.permissions();
+        // Check if user has write permission
+        permissions.mode() & 0o200 != 0
+    } else {
+        false
     }
 }
 
@@ -276,22 +318,6 @@ fn apply_memory_limit_setrlimit(bytes: u64) -> io::Result<()> {
     // Set RLIMIT_AS (address space / virtual memory limit)
     setrlimit(Resource::RLIMIT_AS, bytes, bytes)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("setrlimit AS failed: {}", e)))
-}
-
-/// Apply CPU time limit via setrlimit (fallback method, does NOT throttle CPU percentage)
-#[cfg(target_os = "linux")]
-fn apply_cpu_time_limit_setrlimit() -> io::Result<()> {
-    use nix::sys::resource::{Resource, setrlimit};
-
-    // Set a generous CPU time limit (24 hours) as a safety measure
-    // Note: This limits total CPU time, NOT percentage usage
-    let cpu_time_seconds: u64 = 24 * 60 * 60;
-
-    setrlimit(Resource::RLIMIT_CPU, cpu_time_seconds, cpu_time_seconds)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("setrlimit CPU failed: {}", e)))?;
-
-    tracing::debug!("Set RLIMIT_CPU to {} seconds (safety limit, not throttling)", cpu_time_seconds);
-    Ok(())
 }
 
 /// Get the number of CPU cores (Linux)
@@ -444,22 +470,24 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    fn test_cgroup_setup_gracefully_fails() {
-        // Just verify that cgroup setup doesn't panic when it fails
+    fn test_user_cgroup_detection() {
+        // Check if we can find user-delegated cgroups
         let limits = ProcessLimits {
             max_memory_mb: Some(100),
             max_cpu_percent: Some(50),
             enabled: true,
         };
 
-        let cgroup = limits.try_setup_cgroup();
-        // Should either succeed or return None, not panic
-        if let Some(path) = cgroup {
-            println!("Created cgroup at: {:?}", path);
-            // Clean up
-            let _ = std::fs::remove_dir(&path);
-        } else {
-            println!("Cgroup setup failed gracefully, will use setrlimit");
+        let cgroup = limits.try_setup_user_cgroup();
+        match cgroup {
+            Some(path) => {
+                println!("✓ Found writable user cgroup at: {:?}", path);
+                // Clean up
+                let _ = std::fs::remove_dir(&path);
+            }
+            None => {
+                println!("✗ No writable user cgroup found, will use setrlimit fallback");
+            }
         }
     }
 }
