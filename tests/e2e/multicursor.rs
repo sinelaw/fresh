@@ -269,3 +269,165 @@ fn test_multi_cursor_delete_undo_atomic() {
     // All characters should be restored
     harness.assert_buffer_content("aaa\nbbb\nccc");
 }
+
+/// Test that adding cursors can be undone
+#[test]
+fn test_add_cursor_undo() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create three lines
+    harness.type_text("Line 1\nLine 2\nLine 3").unwrap();
+
+    // Go to start
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Should start with 1 cursor
+    assert_eq!(harness.editor().active_state().cursors.count(), 1);
+
+    // Add a cursor below
+    harness.editor_mut().add_cursor_below();
+    harness.render().unwrap();
+
+    // Should now have 2 cursors
+    assert_eq!(harness.editor().active_state().cursors.count(), 2);
+
+    // Add another cursor below
+    harness.editor_mut().add_cursor_below();
+    harness.render().unwrap();
+
+    // Should now have 3 cursors
+    assert_eq!(harness.editor().active_state().cursors.count(), 3);
+
+    // Undo - should remove the last cursor added
+    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Should be back to 2 cursors
+    assert_eq!(harness.editor().active_state().cursors.count(), 2);
+
+    // Undo again - should remove the second cursor
+    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Should be back to 1 cursor
+    assert_eq!(harness.editor().active_state().cursors.count(), 1);
+
+    // Redo - should add cursor back
+    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Should be back to 2 cursors
+    assert_eq!(harness.editor().active_state().cursors.count(), 2);
+}
+
+/// Test that removing cursors can be undone
+#[test]
+fn test_remove_cursor_undo() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create three lines
+    harness.type_text("Line 1\nLine 2\nLine 3").unwrap();
+
+    // Go to start
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Add two cursors
+    harness.editor_mut().add_cursor_below();
+    harness.editor_mut().add_cursor_below();
+
+    // Should have 3 cursors
+    assert_eq!(harness.editor().active_state().cursors.count(), 3);
+
+    // Remove secondary cursors (using Escape)
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should be back to 1 cursor
+    assert_eq!(harness.editor().active_state().cursors.count(), 1);
+
+    // Undo - should restore the secondary cursors
+    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Should be back to 3 cursors
+    assert_eq!(harness.editor().active_state().cursors.count(), 3);
+
+    // Redo - should remove them again
+    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Should be back to 1 cursor
+    assert_eq!(harness.editor().active_state().cursors.count(), 1);
+}
+
+/// Test undo beyond cursor add removes the cursor and undoes the edit
+#[test]
+fn test_undo_beyond_cursor_add() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create three lines
+    harness.type_text("aaa\nbbb\nccc").unwrap();
+
+    // Go to start
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Should start with 1 cursor
+    assert_eq!(harness.editor().active_state().cursors.count(), 1);
+
+    // Add a cursor below
+    harness.editor_mut().add_cursor_below();
+    harness.render().unwrap();
+
+    // Should now have 2 cursors
+    assert_eq!(harness.editor().active_state().cursors.count(), 2);
+
+    // Type "X" with both cursors
+    harness.type_text("X").unwrap();
+
+    // Should have X inserted at both positions
+    let result = harness.get_buffer_content();
+    let x_count = result.matches('X').count();
+    assert_eq!(x_count, 2, "Should have 2 X's. Buffer: {}", result);
+
+    // Undo - should undo the batch insertion
+    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // X's should be gone, but we should still have 2 cursors
+    let result = harness.get_buffer_content();
+    let x_count = result.matches('X').count();
+    assert_eq!(x_count, 0, "Should have 0 X's. Buffer: {}", result);
+    assert_eq!(harness.editor().active_state().cursors.count(), 2);
+
+    // Undo again - should remove the second cursor
+    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Should be back to 1 cursor
+    assert_eq!(harness.editor().active_state().cursors.count(), 1);
+
+    // Redo - should add the cursor back
+    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Should have 2 cursors again
+    assert_eq!(harness.editor().active_state().cursors.count(), 2);
+
+    // Redo again - should redo the batch insertion
+    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // X's should be back
+    let result = harness.get_buffer_content();
+    let x_count = result.matches('X').count();
+    assert_eq!(x_count, 2, "Should have 2 X's back. Buffer: {}", result);
+}
