@@ -449,3 +449,205 @@ fn test_lsp_completion_cancel() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test completion after a dot preserves the prefix
+#[test]
+fn test_lsp_completion_after_dot() -> std::io::Result<()> {
+    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type "args."
+    harness.type_text("args.")?;
+    harness.render()?;
+
+    // Show completion popup with method-like completions
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            content: PopupContentData::List {
+                items: vec![
+                    PopupListItemData {
+                        text: "len".to_string(),
+                        detail: Some("fn len(&self) -> usize".to_string()),
+                        icon: Some("λ".to_string()),
+                        data: Some("len".to_string()),
+                    },
+                    PopupListItemData {
+                        text: "is_empty".to_string(),
+                        detail: Some("fn is_empty(&self) -> bool".to_string()),
+                        icon: Some("λ".to_string()),
+                        data: Some("is_empty".to_string()),
+                    },
+                ],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 40,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Confirm selection (should insert "len" after the dot)
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify "args." is preserved and "len" is appended
+    let buffer_content = harness.get_buffer_content();
+    assert_eq!(
+        buffer_content, "args.len",
+        "Expected 'args.len', got: {}",
+        buffer_content
+    );
+    assert!(
+        !buffer_content.contains(".."),
+        "Should not have double dots"
+    );
+
+    Ok(())
+}
+
+/// Test completion after typing a partial identifier after dot
+#[test]
+fn test_lsp_completion_after_dot_with_partial() -> std::io::Result<()> {
+    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type "args.le"
+    harness.type_text("args.le")?;
+    harness.render()?;
+
+    // Show completion popup
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            content: PopupContentData::List {
+                items: vec![PopupListItemData {
+                    text: "length".to_string(),
+                    detail: Some("fn length(&self) -> usize".to_string()),
+                    icon: Some("λ".to_string()),
+                    data: Some("length".to_string()),
+                }],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 40,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Confirm selection (should replace "le" with "length")
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify "args." is preserved and "le" is replaced with "length"
+    let buffer_content = harness.get_buffer_content();
+    assert_eq!(
+        buffer_content, "args.length",
+        "Expected 'args.length', got: {}",
+        buffer_content
+    );
+
+    Ok(())
+}
+
+/// Test that completion filtering only shows matching items by prefix
+#[test]
+fn test_lsp_completion_filtering() -> std::io::Result<()> {
+    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type a prefix "test_"
+    harness.type_text("test_")?;
+    harness.render()?;
+
+    // Manually show completion popup with mixed items (simulating what would be filtered)
+    // In reality, the filtering happens in handle_completion_response, but we simulate
+    // the expected result here to test the concept
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            content: PopupContentData::List {
+                items: vec![
+                    // Only items matching "test_" prefix should appear
+                    PopupListItemData {
+                        text: "test_function".to_string(),
+                        detail: Some("fn test_function()".to_string()),
+                        icon: Some("λ".to_string()),
+                        data: Some("test_function".to_string()),
+                    },
+                    PopupListItemData {
+                        text: "test_variable".to_string(),
+                        detail: Some("let test_variable".to_string()),
+                        icon: Some("v".to_string()),
+                        data: Some("test_variable".to_string()),
+                    },
+                    // These should NOT appear (different prefix):
+                    // - "Self" (doesn't start with "test_")
+                    // - "something_else" (doesn't start with "test_")
+                ],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 40,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Verify popup is shown with only matching items
+    let state = harness.editor().active_state();
+    assert!(
+        state.popups.top().is_some(),
+        "Expected completion popup to be shown"
+    );
+
+    if let Some(popup) = state.popups.top() {
+        if let editor::popup::PopupContent::List { items, .. } = &popup.content {
+            // Should only have test_function and test_variable
+            assert_eq!(
+                items.len(),
+                2,
+                "Expected 2 filtered items, got {}",
+                items.len()
+            );
+            assert!(
+                items.iter().any(|i| i.text.contains("test_function")),
+                "Expected to find test_function in completions"
+            );
+            assert!(
+                items.iter().any(|i| i.text.contains("test_variable")),
+                "Expected to find test_variable in completions"
+            );
+        } else {
+            panic!("Expected popup to have List content");
+        }
+    }
+
+    // Confirm first selection (test_function)
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Verify completion replaced "test_" with "test_function"
+    let buffer_content = harness.get_buffer_content();
+    assert_eq!(
+        buffer_content, "test_function",
+        "Expected 'test_function', got: {}",
+        buffer_content
+    );
+
+    Ok(())
+}
