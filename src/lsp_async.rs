@@ -1088,7 +1088,7 @@ impl LspHandle {
         let (tx, rx) = oneshot::channel();
 
         self.command_tx
-            .blocking_send(LspCommand::Initialize {
+            .try_send(LspCommand::Initialize {
                 root_uri,
                 response: tx,
             })
@@ -1126,7 +1126,7 @@ impl LspHandle {
     pub fn did_open(&self, uri: Url, text: String, language_id: String) -> Result<(), String> {
         // Send command to LspTask which will queue it if not initialized yet
         self.command_tx
-            .blocking_send(LspCommand::DidOpen {
+            .try_send(LspCommand::DidOpen {
                 uri,
                 text,
                 language_id,
@@ -1142,7 +1142,7 @@ impl LspHandle {
     ) -> Result<(), String> {
         // Send command to LspTask which will queue it if not initialized yet
         self.command_tx
-            .blocking_send(LspCommand::DidChange {
+            .try_send(LspCommand::DidChange {
                 uri,
                 content_changes,
             })
@@ -1152,14 +1152,14 @@ impl LspHandle {
     /// Send didSave notification
     pub fn did_save(&self, uri: Url, text: Option<String>) -> Result<(), String> {
         self.command_tx
-            .blocking_send(LspCommand::DidSave { uri, text })
+            .try_send(LspCommand::DidSave { uri, text })
             .map_err(|_| "Failed to send did_save command".to_string())
     }
 
     /// Shutdown the server
     pub fn shutdown(&self) -> Result<(), String> {
         self.command_tx
-            .blocking_send(LspCommand::Shutdown)
+            .try_send(LspCommand::Shutdown)
             .map_err(|_| "Failed to send shutdown command".to_string())
     }
 }

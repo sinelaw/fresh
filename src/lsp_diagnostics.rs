@@ -4,8 +4,7 @@
 ///! Diagnostics are displayed as colored underlines (red for errors, yellow for warnings, etc.)
 
 use crate::buffer::Buffer;
-use crate::event::OverlayFace as EventOverlayFace;
-use crate::overlay::{OverlayFace, UnderlineStyle};
+use crate::overlay::OverlayFace;
 use crate::state::EditorState;
 use lsp_types::{Diagnostic, DiagnosticSeverity};
 use ratatui::style::Color;
@@ -195,11 +194,10 @@ mod tests {
         assert_eq!(priority, 100); // Error has highest priority
 
         match face {
-            OverlayFace::Underline { color, style } => {
-                assert_eq!(color, Color::Red);
-                assert_eq!(style, UnderlineStyle::Wavy);
+            OverlayFace::Background { color } => {
+                assert_eq!(color, Color::Rgb(60, 20, 20)); // Dark red background
             }
-            _ => panic!("Expected Underline face"),
+            _ => panic!("Expected Background face"),
         }
     }
 
@@ -236,11 +234,10 @@ mod tests {
         assert_eq!(priority, 50); // Warning has medium priority
 
         match face {
-            OverlayFace::Underline { color, style } => {
-                assert_eq!(color, Color::Yellow);
-                assert_eq!(style, UnderlineStyle::Wavy);
+            OverlayFace::Background { color } => {
+                assert_eq!(color, Color::Rgb(60, 50, 0)); // Dark yellow/brown background
             }
-            _ => panic!("Expected Underline face"),
+            _ => panic!("Expected Background face"),
         }
     }
 

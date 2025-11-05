@@ -534,13 +534,12 @@ fn test_lsp_diagnostic_to_overlay() {
     // Check priority (error should be highest)
     assert_eq!(priority, 100);
 
-    // Check face (should be red wavy underline)
+    // Check face (should be dark red background)
     match face {
-        editor::overlay::OverlayFace::Underline { color, style } => {
-            assert_eq!(color, ratatui::style::Color::Red);
-            assert_eq!(style, editor::overlay::UnderlineStyle::Wavy);
+        editor::overlay::OverlayFace::Background { color } => {
+            assert_eq!(color, ratatui::style::Color::Rgb(60, 20, 20));
         }
-        _ => panic!("Expected underline face for error diagnostic"),
+        _ => panic!("Expected background face for error diagnostic"),
     }
 }
 
