@@ -1,7 +1,7 @@
 // EditorTestHarness - Virtual terminal environment for E2E testing
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use editor::{config::Config, editor::Editor};
+use fresh::{config::Config, editor::Editor};
 use ratatui::{backend::TestBackend, Terminal};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -211,7 +211,7 @@ impl EditorTestHarness {
     }
 
     /// Apply an event directly to the active buffer
-    pub fn apply_event(&mut self, event: editor::event::Event) -> io::Result<()> {
+    pub fn apply_event(&mut self, event: fresh::event::Event) -> io::Result<()> {
         self.editor.apply_event_to_active_buffer(event);
         Ok(())
     }

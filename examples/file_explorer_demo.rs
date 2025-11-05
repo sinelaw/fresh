@@ -4,9 +4,9 @@
 ///
 /// To run: cargo run --example file_explorer_demo
 
-use editor::file_tree::{FileTree, FileTreeView};
-use editor::fs::{FsManager, LocalFsBackend};
-use editor::ui::FileExplorerRenderer;
+use fresh::file_tree::{FileTree, FileTreeView};
+use fresh::fs::{FsManager, LocalFsBackend};
+use fresh::ui::FileExplorerRenderer;
 use std::env;
 use std::io;
 use std::path::PathBuf;

@@ -1,8 +1,8 @@
-# Editor
+# Fresh
 
 A fast, lightweight terminal text editor written in Rust. Handles files of any size with instant startup, low memory usage, and modern IDE features.
 
-## Why This Editor?
+## Why Fresh?
 
 - **Instant load of huge files** - Open and edit 1GB+ files instantly with syntax highlighting
 - **Lightweight** - Minimal memory footprint, fast startup
@@ -65,13 +65,13 @@ cargo build --release
 
 ### Run
 ```bash
-./target/release/editor [file]
+./target/release/fresh [file]
 ```
 
 Open any file, including large files:
 ```bash
-./target/release/editor large_log_file.txt
-./target/release/editor src/main.rs
+./target/release/fresh large_log_file.txt
+./target/release/fresh src/main.rs
 ```
 
 ## Essential Keybindings
@@ -104,7 +104,7 @@ Press **Ctrl+H** inside the editor to see all keybindings.
 
 ## Configuration
 
-Configuration file: `~/.config/editor/config.json`
+Configuration file: `~/.config/fresh/config.json`
 
 ```json
 {
@@ -132,7 +132,7 @@ All keybindings, colors, and LSP servers are configurable.
 
 ## 🔒 Process Resource Limits
 
-The editor automatically limits memory and CPU usage of LSP servers (like `rust-analyzer`) to prevent them from making your system unresponsive. **Memory limiting works out of the box** on modern Linux systems.
+Fresh automatically limits memory and CPU usage of LSP servers (like `rust-analyzer`) to prevent them from making your system unresponsive. **Memory limiting works out of the box** on modern Linux systems.
 
 - **Default:** 50% of system memory, 90% CPU throttling
 - **When needed:** LSP servers consuming excessive resources
@@ -142,7 +142,7 @@ See [docs/PROCESS_LIMITS.md](docs/PROCESS_LIMITS.md) for detailed documentation,
 
 ## Large File Support
 
-This editor is designed to handle files of any size:
+Fresh is designed to handle files of any size:
 
 - **Instant loading** - Files open immediately regardless of size
 - **Viewport-only parsing** - Only highlights visible text (enables instant load of huge files)

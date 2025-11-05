@@ -1,6 +1,6 @@
 # Architecture
 
-A high-performance terminal text editor with async I/O and event-driven design.
+Fresh is a high-performance terminal text editor with async I/O and event-driven design.
 
 ## Core Design Principles
 

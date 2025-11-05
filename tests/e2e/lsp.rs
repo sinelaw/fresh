@@ -6,7 +6,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 /// Test that completion popup text is not mangled
 #[test]
 fn test_lsp_completion_popup_text_not_mangled() -> std::io::Result<()> {
-    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+    use fresh::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -79,7 +79,7 @@ fn test_lsp_completion_popup_text_not_mangled() -> std::io::Result<()> {
 /// Test that completion replaces current word, not appends
 #[test]
 fn test_lsp_completion_replaces_word() -> std::io::Result<()> {
-    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+    use fresh::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -132,7 +132,7 @@ fn test_lsp_completion_replaces_word() -> std::io::Result<()> {
 /// Test LSP diagnostics display in the editor
 #[test]
 fn test_lsp_diagnostics_display() -> std::io::Result<()> {
-    use editor::event::{Event, OverlayFace, UnderlineStyle};
+    use fresh::event::{Event, OverlayFace, UnderlineStyle};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -168,7 +168,7 @@ fn test_lsp_diagnostics_display() -> std::io::Result<()> {
 /// Test LSP completion popup display
 #[test]
 fn test_lsp_completion_popup() -> std::io::Result<()> {
-    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+    use fresh::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -240,7 +240,7 @@ fn test_lsp_completion_popup() -> std::io::Result<()> {
 /// Test LSP diagnostics summary in status bar
 #[test]
 fn test_lsp_diagnostics_status_bar() -> std::io::Result<()> {
-    use editor::event::{Event, OverlayFace};
+    use fresh::event::{Event, OverlayFace};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -290,7 +290,7 @@ fn test_lsp_diagnostics_status_bar() -> std::io::Result<()> {
 /// Test that diagnostics are removed when cleared
 #[test]
 fn test_lsp_clear_diagnostics() -> std::io::Result<()> {
-    use editor::event::{Event, OverlayFace};
+    use fresh::event::{Event, OverlayFace};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -337,7 +337,7 @@ fn test_lsp_clear_diagnostics() -> std::io::Result<()> {
 /// Test multiple completion items navigation
 #[test]
 fn test_lsp_completion_navigation() -> std::io::Result<()> {
-    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+    use fresh::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -401,7 +401,7 @@ fn test_lsp_completion_navigation() -> std::io::Result<()> {
 /// Test popup cancel (Escape) doesn't insert anything
 #[test]
 fn test_lsp_completion_cancel() -> std::io::Result<()> {
-    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+    use fresh::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -453,7 +453,7 @@ fn test_lsp_completion_cancel() -> std::io::Result<()> {
 /// Test completion after a dot preserves the prefix
 #[test]
 fn test_lsp_completion_after_dot() -> std::io::Result<()> {
-    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+    use fresh::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -514,7 +514,7 @@ fn test_lsp_completion_after_dot() -> std::io::Result<()> {
 /// Test completion after typing a partial identifier after dot
 #[test]
 fn test_lsp_completion_after_dot_with_partial() -> std::io::Result<()> {
-    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+    use fresh::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -563,7 +563,7 @@ fn test_lsp_completion_after_dot_with_partial() -> std::io::Result<()> {
 /// Test that completion filtering only shows matching items by prefix
 #[test]
 fn test_lsp_completion_filtering() -> std::io::Result<()> {
-    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+    use fresh::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -616,7 +616,7 @@ fn test_lsp_completion_filtering() -> std::io::Result<()> {
     );
 
     if let Some(popup) = state.popups.top() {
-        if let editor::popup::PopupContent::List { items, .. } = &popup.content {
+        if let fresh::popup::PopupContent::List { items, .. } = &popup.content {
             // Should only have test_function and test_variable
             assert_eq!(
                 items.len(),
@@ -655,7 +655,7 @@ fn test_lsp_completion_filtering() -> std::io::Result<()> {
 /// Test that popup size is appropriate for the number of filtered items
 #[test]
 fn test_lsp_completion_popup_size() -> std::io::Result<()> {
-    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+    use fresh::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -785,7 +785,7 @@ fn test_lsp_waiting_indicator() -> std::io::Result<()> {
 /// Test that popup properly hides buffer text behind it
 #[test]
 fn test_lsp_completion_popup_hides_background() -> std::io::Result<()> {
-    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+    use fresh::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 

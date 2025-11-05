@@ -7,7 +7,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
-use editor::{config, editor::Editor, signal_handler};
+use fresh::{config, editor::Editor, signal_handler};
 use ratatui::Terminal;
 use std::{
     io::{self, stdout},

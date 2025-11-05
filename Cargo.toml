@@ -1,5 +1,5 @@
 [package]
-name = "editor"
+name = "fresh"
 version = "0.1.0"
 authors = ["Noam Lewis"]
 edition = "2021"
@@ -36,7 +36,7 @@ insta = { version = "1.43", features = ["yaml"] }
 ctor = "0.2"
 
 [[bench]]
-name = "editor_benchmarks"
+name = "fresh_benchmarks"
 harness = false
 
 [profile.release]
