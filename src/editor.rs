@@ -154,6 +154,9 @@ pub struct Editor {
     /// Current keybinding context
     key_context: KeyContext,
 
+    /// Working directory for file explorer (set at initialization)
+    working_dir: PathBuf,
+
     /// Position history for back/forward navigation
     pub position_history: PositionHistory,
 
@@ -175,8 +178,20 @@ pub struct Editor {
 
 impl Editor {
     /// Create a new editor with the given configuration and terminal dimensions
+    /// If working_dir is None, uses the current working directory
     pub fn new(config: Config, width: u16, height: u16) -> io::Result<Self> {
+        Self::with_working_dir(config, width, height, None)
+    }
+
+    /// Create a new editor with an explicit working directory
+    /// This is useful for testing with isolated temporary directories
+    pub fn with_working_dir(config: Config, width: u16, height: u16, working_dir: Option<PathBuf>) -> io::Result<Self> {
         tracing::info!("Editor::new called with width={}, height={}", width, height);
+
+        // Use provided working_dir or capture from environment
+        let working_dir = working_dir.unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        });
 
         // Load theme from config
         let theme = crate::theme::Theme::from_name(&config.theme);
@@ -197,9 +212,7 @@ impl Editor {
         event_logs.insert(buffer_id, EventLog::new());
 
         // Initialize LSP manager with current working directory as root
-        let root_uri = std::env::current_dir()
-            .ok()
-            .and_then(|path| Url::from_file_path(path).ok());
+        let root_uri = Url::from_file_path(&working_dir).ok();
 
         // Create Tokio runtime for async I/O (LSP, file watching, git, etc.)
         let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
@@ -260,6 +273,7 @@ impl Editor {
             fs_manager,
             file_explorer_visible: false,
             key_context: KeyContext::Normal,
+            working_dir,
             position_history: PositionHistory::new(),
             in_navigation: false,
             next_lsp_request_id: 0,
@@ -716,8 +730,8 @@ impl Editor {
 
     /// Initialize the file explorer
     fn init_file_explorer(&mut self) {
-        // Get project root (current working directory)
-        let root_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        // Use the captured working directory from initialization time
+        let root_path = self.working_dir.clone();
 
         // Spawn async task to initialize file tree
         if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {

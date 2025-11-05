@@ -91,16 +91,13 @@ fn test_file_explorer_navigation() {
 
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    // Create a test directory structure with multiple files
-    let temp_dir = TempDir::new().unwrap();
-    let project_root = temp_dir.path();
+    // Create harness with isolated temp project
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
 
     fs::write(project_root.join("file1.txt"), "File 1").unwrap();
     fs::write(project_root.join("file2.txt"), "File 2").unwrap();
     fs::write(project_root.join("file3.txt"), "File 3").unwrap();
-
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
     // Toggle file explorer on with Ctrl+B
     harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
@@ -135,16 +132,13 @@ fn test_file_explorer_expand_collapse() {
 
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    // Create a test directory structure with nested directories
-    let temp_dir = TempDir::new().unwrap();
-    let project_root = temp_dir.path();
+    // Create harness with isolated temp project
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
 
     fs::create_dir(project_root.join("src")).unwrap();
     fs::write(project_root.join("src/lib.rs"), "// lib").unwrap();
     fs::write(project_root.join("src/main.rs"), "fn main() {}").unwrap();
-
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
     // Toggle file explorer on with Ctrl+B
     harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
@@ -185,15 +179,13 @@ fn test_file_explorer_expand_collapse() {
 #[test]
 fn test_file_explorer_open_file() {
 
-    // Create a simple test directory with one file
-    let temp_dir = TempDir::new().unwrap();
-    let project_root = temp_dir.path();
+    // Create harness with isolated temp project
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
     let test_file = project_root.join("simple.txt");
     let test_content = "Hello World";
     fs::write(&test_file, test_content).unwrap();
-
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
     // Toggle file explorer on (this initializes it synchronously now)
     harness.editor_mut().toggle_file_explorer();
@@ -251,14 +243,12 @@ fn test_file_explorer_open_file() {
 #[test]
 fn test_file_explorer_refresh() {
 
-    let temp_dir = TempDir::new().unwrap();
-    let project_root = temp_dir.path();
+    // Create harness with isolated temp project
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
 
     // Create initial file
     fs::write(project_root.join("file1.txt"), "File 1").unwrap();
-
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
@@ -337,12 +327,10 @@ fn test_file_explorer_context_aware_keybindings() {
 
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let project_root = temp_dir.path();
+    // Create harness with isolated temp project
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
     std::fs::write(project_root.join("test.txt"), "content").unwrap();
-
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
     // Open file explorer (starts with focus)
     harness.editor_mut().toggle_file_explorer();
@@ -428,6 +416,11 @@ fn test_file_explorer_displays_opened_file_content() {
 
     // Now open file explorer with Ctrl+B
     harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Wait for async file system operations
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
@@ -525,10 +518,8 @@ fn test_file_explorer_toggle_gitignored_smoke() {
 /// Test that file_explorer_new_file can be called (smoke test)
 #[test]
 fn test_file_explorer_new_file_smoke() {
-
-    let temp_dir = TempDir::new().unwrap();
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    // Create harness with isolated temp project
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
@@ -550,10 +541,8 @@ fn test_file_explorer_new_file_smoke() {
 /// Test that file_explorer_new_directory can be called (smoke test)
 #[test]
 fn test_file_explorer_new_directory_smoke() {
-
-    let temp_dir = TempDir::new().unwrap();
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    // Create harness with isolated temp project
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
@@ -575,15 +564,12 @@ fn test_file_explorer_new_directory_smoke() {
 /// Test that file_explorer_delete can be called (smoke test)
 #[test]
 fn test_file_explorer_delete_smoke() {
-
-    let temp_dir = TempDir::new().unwrap();
-    let project_root = temp_dir.path();
+    // Create harness with isolated temp project
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
 
     // Create a test file
     fs::write(project_root.join("test.txt"), "test").unwrap();
-
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
