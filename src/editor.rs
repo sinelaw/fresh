@@ -1619,8 +1619,11 @@ impl Editor {
                 if let Some(prompt) = self.prompt_mut() {
                     if let Some(selected) = prompt.selected_suggestion {
                         if let Some(suggestion) = prompt.suggestions.get(selected) {
-                            prompt.input = suggestion.get_value().to_string();
-                            prompt.cursor_pos = prompt.input.len();
+                            // Don't accept disabled suggestions (greyed out commands)
+                            if !suggestion.disabled {
+                                prompt.input = suggestion.get_value().to_string();
+                                prompt.cursor_pos = prompt.input.len();
+                            }
                         }
                     }
                 }
