@@ -636,6 +636,8 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         | Action::Close
         | Action::NextBuffer
         | Action::PrevBuffer
+        | Action::NavigateBack
+        | Action::NavigateForward
         | Action::SplitHorizontal
         | Action::SplitVertical
         | Action::CloseSplit

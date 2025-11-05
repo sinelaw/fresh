@@ -161,15 +161,23 @@
 - [ ] Eliminate duplicated key matching logic
 - [ ] Make all keybindings customizable via config.json
 
-### 5.4 File Explorer
+### 5.4 Position History Navigation
+- [ ] Implement PositionHistory struct to track navigation positions
+- [ ] Add NavigateBack and NavigateForward actions
+- [ ] Track position changes (buffer switches, large cursor movements)
+- [ ] Keybindings: Alt+Left (back), Alt+Right (forward)
+- [ ] Works across buffers/tabs/splits
+- [ ] E2E tests for navigation history
+
+### 5.5 File Explorer
 - [ ] Simple file tree in sidebar (Ctrl+B)
 
-### 5.5 Performance Optimization
+### 5.6 Performance Optimization
 - [ ] Profile hot paths
 - [ ] Test with 1GB+ files
 - [ ] Measure keystroke latency (<1ms target)
 
-### 5.6 User Experience
+### 5.7 User Experience
 - [ ] Improve error messages
 - [ ] Confirmation dialogs (quit without saving)
 - [ ] Progress indicators (loading large files)

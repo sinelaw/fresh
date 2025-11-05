@@ -9,6 +9,7 @@ use crate::keybindings::{Action, KeybindingResolver, KeyContext};
 use crate::lsp_diagnostics;
 use crate::lsp_manager::{detect_language, LspManager};
 use crate::multi_cursor::{add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult};
+use crate::position_history::PositionHistory;
 use crate::prompt::{Prompt, PromptType};
 use crate::split::SplitManager;
 use crate::state::EditorState;
@@ -152,6 +153,9 @@ pub struct Editor {
 
     /// Current keybinding context
     key_context: KeyContext,
+
+    /// Position history for back/forward navigation
+    position_history: PositionHistory,
 }
 
 impl Editor {
@@ -241,6 +245,7 @@ impl Editor {
             fs_manager,
             file_explorer_visible: false,
             key_context: KeyContext::Normal,
+            position_history: PositionHistory::new(),
         })
     }
 
@@ -263,13 +268,19 @@ impl Editor {
     /// Open a file and return its buffer ID
     pub fn open_file(&mut self, path: &Path) -> io::Result<BufferId> {
         // Check if file is already open
-        for (id, state) in &self.buffers {
-            if state.buffer.file_path() == Some(path) {
-                self.active_buffer = *id;
+        let already_open = self.buffers.iter()
+            .find(|(_, state)| state.buffer.file_path() == Some(path))
+            .map(|(id, _)| *id);
+
+        if let Some(id) = already_open {
+            // Save current position before switching to existing buffer
+            if id != self.active_buffer {
+                self.save_current_position();
+                self.active_buffer = id;
                 // Update the split manager to show this buffer
-                self.split_manager.set_active_buffer_id(*id);
-                return Ok(*id);
+                self.split_manager.set_active_buffer_id(id);
             }
+            return Ok(id);
         }
 
         // If the current buffer is empty and unmodified, replace it instead of creating a new one
@@ -353,6 +364,10 @@ impl Editor {
         // Store metadata for this buffer
         self.buffer_metadata.insert(buffer_id, metadata);
 
+        // Save current position before switching to new buffer (if not replacing current)
+        if !replace_current {
+            self.save_current_position();
+        }
         self.active_buffer = buffer_id;
         // Update the split manager to show the new buffer
         self.split_manager.set_active_buffer_id(buffer_id);
@@ -363,6 +378,9 @@ impl Editor {
 
     /// Create a new empty buffer
     pub fn new_buffer(&mut self) -> BufferId {
+        // Save current position before creating new buffer
+        self.save_current_position();
+
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
 
@@ -405,7 +423,9 @@ impl Editor {
 
     /// Switch to the given buffer
     pub fn switch_buffer(&mut self, id: BufferId) {
-        if self.buffers.contains_key(&id) {
+        if self.buffers.contains_key(&id) && id != self.active_buffer {
+            // Save current position before switching
+            self.save_current_position();
             self.active_buffer = id;
         }
     }
@@ -416,9 +436,13 @@ impl Editor {
         ids.sort_by_key(|id| id.0); // Sort by buffer ID to ensure consistent order
         if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer) {
             let next_idx = (idx + 1) % ids.len();
-            self.active_buffer = ids[next_idx];
-            // Update the split manager to show the new buffer
-            self.split_manager.set_active_buffer_id(ids[next_idx]);
+            if ids[next_idx] != self.active_buffer {
+                // Save current position before switching
+                self.save_current_position();
+                self.active_buffer = ids[next_idx];
+                // Update the split manager to show the new buffer
+                self.split_manager.set_active_buffer_id(ids[next_idx]);
+            }
         }
     }
 
@@ -428,10 +452,76 @@ impl Editor {
         ids.sort_by_key(|id| id.0); // Sort by buffer ID to ensure consistent order
         if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer) {
             let prev_idx = if idx == 0 { ids.len() - 1 } else { idx - 1 };
-            self.active_buffer = ids[prev_idx];
-            // Update the split manager to show the new buffer
-            self.split_manager.set_active_buffer_id(ids[prev_idx]);
+            if ids[prev_idx] != self.active_buffer {
+                // Save current position before switching
+                self.save_current_position();
+                self.active_buffer = ids[prev_idx];
+                // Update the split manager to show the new buffer
+                self.split_manager.set_active_buffer_id(ids[prev_idx]);
+            }
         }
+    }
+
+    /// Navigate back in position history
+    pub fn navigate_back(&mut self) {
+        if let Some(entry) = self.position_history.back() {
+            let target_buffer = entry.buffer_id;
+            let target_position = entry.position;
+            let target_anchor = entry.anchor;
+
+            // Switch to the target buffer (without saving position)
+            if self.buffers.contains_key(&target_buffer) {
+                self.active_buffer = target_buffer;
+
+                // Move cursor to the saved position
+                let state = self.active_state_mut();
+                let cursor_id = state.cursors.primary_id();
+                let event = Event::MoveCursor {
+                    cursor_id,
+                    position: target_position,
+                    anchor: target_anchor,
+                };
+                state.apply(&event);
+            }
+        }
+    }
+
+    /// Navigate forward in position history
+    pub fn navigate_forward(&mut self) {
+        if let Some(entry) = self.position_history.forward() {
+            let target_buffer = entry.buffer_id;
+            let target_position = entry.position;
+            let target_anchor = entry.anchor;
+
+            // Switch to the target buffer
+            if self.buffers.contains_key(&target_buffer) {
+                self.active_buffer = target_buffer;
+
+                // Move cursor to the saved position
+                let state = self.active_state_mut();
+                let cursor_id = state.cursors.primary_id();
+                let event = Event::MoveCursor {
+                    cursor_id,
+                    position: target_position,
+                    anchor: target_anchor,
+                };
+                state.apply(&event);
+            }
+        }
+    }
+
+    /// Save current position to history
+    /// This should be called before significant navigation actions
+    fn save_current_position(&mut self) {
+        let buffer_id = self.active_buffer;
+        let state = self.active_state();
+        let cursor = state.cursors.primary();
+        let entry = crate::position_history::PositionEntry::new(
+            buffer_id,
+            cursor.position,
+            cursor.anchor,
+        );
+        self.position_history.push(entry);
     }
 
     /// Split the current pane horizontally
@@ -1203,6 +1293,7 @@ impl Editor {
             Action::Quit => self.quit(),
             Action::Save => self.save()?,
             Action::Open => self.start_prompt("Find file: ".to_string(), PromptType::OpenFile),
+            Action::New => { self.new_buffer(); },
             Action::Copy => self.copy_selection(),
             Action::Cut => self.cut_selection(),
             Action::Paste => self.paste(),
@@ -1234,6 +1325,8 @@ impl Editor {
             Action::RemoveSecondaryCursors => self.active_state_mut().cursors.remove_secondary(),
             Action::NextBuffer => self.next_buffer(),
             Action::PrevBuffer => self.prev_buffer(),
+            Action::NavigateBack => self.navigate_back(),
+            Action::NavigateForward => self.navigate_forward(),
             Action::SplitHorizontal => self.split_pane_horizontal(),
             Action::SplitVertical => self.split_pane_vertical(),
             Action::CloseSplit => self.close_active_split(),

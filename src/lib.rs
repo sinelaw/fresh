@@ -25,6 +25,7 @@ pub mod multi_cursor;
 pub mod overlay;
 pub mod persistence;
 pub mod popup;
+pub mod position_history;
 pub mod prompt;
 pub mod signal_handler;
 pub mod split;
