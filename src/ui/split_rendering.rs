@@ -136,6 +136,15 @@ impl SplitRenderer {
             state.buffer.len()
         );
 
+        // Verify primary is in the list
+        if !cursor_positions.contains(&primary_cursor_position) {
+            tracing::warn!(
+                "Primary cursor position {} not found in cursor_positions list: {:?}",
+                primary_cursor_position,
+                cursor_positions
+            );
+        }
+
         // Use line iterator starting from top_byte to render visible lines
         let visible_count = state.viewport.visible_line_count();
 
@@ -408,34 +417,39 @@ impl SplitRenderer {
 
         // Render cursor and log state (only for active split)
         if is_active {
-            let cursor_positions = state.cursor_positions();
-            tracing::debug!(
-                "Setting hardware cursor position: cursor_positions={:?}",
-                cursor_positions
-            );
-            if let Some(&(x, y)) = cursor_positions.first() {
-                // Adjust for line numbers (gutter width is dynamic based on max line number)
-                // and adjust Y for the content area offset (area.y accounts for tab bar)
-                let screen_x = area.x.saturating_add(x).saturating_add(gutter_width as u16);
-                let screen_y = area.y.saturating_add(y);
-                tracing::debug!(
-                    "Hardware cursor: area.x={}, area.y={}, gutter_width={}, cursor(x={},y={}) => screen({},{})",
-                    area.x,
-                    area.y,
-                    gutter_width,
-                    x,
-                    y,
-                    screen_x,
-                    screen_y
-                );
-                frame.set_cursor_position((screen_x, screen_y));
+            // Position hardware cursor at PRIMARY cursor only
+            let primary_cursor = state.cursors.primary();
+            let (x, y) = state
+                .viewport
+                .cursor_screen_position(&mut state.buffer, primary_cursor);
 
-                // Log rendering state for debugging
-                if let Some(event_log) = event_log {
-                    let cursor_pos = state.cursors.primary().position;
-                    let buffer_len = state.buffer.len();
-                    event_log.log_render_state(cursor_pos, screen_x, screen_y, buffer_len);
-                }
+            tracing::debug!(
+                "Setting hardware cursor to PRIMARY cursor position: ({}, {})",
+                x,
+                y
+            );
+
+            // Adjust for line numbers (gutter width is dynamic based on max line number)
+            // and adjust Y for the content area offset (area.y accounts for tab bar)
+            let screen_x = area.x.saturating_add(x).saturating_add(gutter_width as u16);
+            let screen_y = area.y.saturating_add(y);
+            tracing::debug!(
+                "Hardware cursor: area.x={}, area.y={}, gutter_width={}, cursor(x={},y={}) => screen({},{})",
+                area.x,
+                area.y,
+                gutter_width,
+                x,
+                y,
+                screen_x,
+                screen_y
+            );
+            frame.set_cursor_position((screen_x, screen_y));
+
+            // Log rendering state for debugging
+            if let Some(event_log) = event_log {
+                let cursor_pos = state.cursors.primary().position;
+                let buffer_len = state.buffer.len();
+                event_log.log_render_state(cursor_pos, screen_x, screen_y, buffer_len);
             }
         }
     }
