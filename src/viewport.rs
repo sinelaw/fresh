@@ -205,8 +205,9 @@ impl Viewport {
             self.top_byte = iter.current_position();
         }
 
-        // Apply scroll limiting
-        self.apply_scroll_limit(buffer);
+        // Note: Don't apply scroll limiting here - we want to allow the viewport
+        // to scroll to show the cursor even if it's at/beyond the end of the buffer.
+        // Scroll limiting is only applied for explicit scroll commands (scroll_down).
 
         // Horizontal scrolling
         let cursor_column = cursor.position.saturating_sub(cursor_line_start);
@@ -400,7 +401,15 @@ mod tests {
 
     #[test]
     fn test_scroll_up_down() {
-        let buffer = Buffer::from_str("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15");
+        // Create a buffer with more lines than the viewport to make scrolling possible
+        let mut content = String::new();
+        for i in 1..=50 {
+            if i > 1 {
+                content.push('\n');
+            }
+            content.push_str(&format!("line{}", i));
+        }
+        let buffer = Buffer::from_str(&content);
         let mut vp = Viewport::new(80, 24);
 
         vp.scroll_down(&buffer, 10);

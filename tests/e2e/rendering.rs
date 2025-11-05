@@ -192,10 +192,11 @@ fn test_cursor_position_with_large_line_numbers() {
     );
 
     // First, verify that the line numbers are correct
+    // Filter for lines with line number separator " │ " (not just scrollbar "│")
     let content_lines: Vec<&str> = lines
         .iter()
         .skip(1) // Skip tab bar
-        .filter(|line| line.contains("│"))
+        .filter(|line| line.contains(" │ "))
         .copied()
         .collect();
 
@@ -310,10 +311,11 @@ fn test_line_numbers_rendered_correctly() {
         }
 
         // Check that we can see the last line number
+        // Filter for lines with line number separator " │ " (not just scrollbar "│")
         let content_lines: Vec<&str> = lines
             .iter()
             .skip(1) // Skip tab bar
-            .filter(|line| line.contains("│"))
+            .filter(|line| line.contains(" │ "))
             .copied()
             .collect();
 
