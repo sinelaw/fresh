@@ -45,29 +45,31 @@ fn test_selection_visual_rendering() {
     // The screen should contain the text "Hello World"
     harness.assert_screen_contains("Hello World");
 
-    // Check that the selected characters have cyan background
+    // Check that the selected characters have the theme's selection background
     // Line numbers take up 7 characters: "   1 │ "
     // So "Hello" starts at column 7
     let buffer = harness.buffer();
+    let theme = harness.editor().theme();
+    let selection_bg = theme.selection_bg;
 
-    // Check first character 'H' at position (7, 1) - should have cyan background
+    // Check first character 'H' at position (7, 1) - should have selection background
     let h_pos = buffer.index_of(7, 1);
     let h_cell = &buffer.content[h_pos];
     assert_eq!(h_cell.symbol(), "H");
     assert_eq!(
         h_cell.bg,
-        ratatui::style::Color::Cyan,
-        "Selected character 'H' should have cyan background"
+        selection_bg,
+        "Selected character 'H' should have selection background"
     );
 
-    // Check fourth character 'l' at position (10, 1) - should have cyan background
+    // Check fourth character 'l' at position (10, 1) - should have selection background
     let l_pos = buffer.index_of(10, 1);
     let l_cell = &buffer.content[l_pos];
     assert_eq!(l_cell.symbol(), "l");
     assert_eq!(
         l_cell.bg,
-        ratatui::style::Color::Cyan,
-        "Selected character 'l' should have cyan background"
+        selection_bg,
+        "Selected character 'l' should have selection background"
     );
 
     // Check fifth character 'o' at position (11, 1) - byte position 4, IN selection
@@ -75,11 +77,11 @@ fn test_selection_visual_rendering() {
     let o_cell = &buffer.content[o_pos];
     assert_eq!(o_cell.symbol(), "o");
     // This 'o' is at byte position 4, which is in the selection range 0..5
-    // But the cursor is at position 5, not 4, so this should have cyan background
+    // But the cursor is at position 5, not 4, so this should have selection background
     assert_eq!(
         o_cell.bg,
-        ratatui::style::Color::Cyan,
-        "Selected character 'o' (byte 4) should have cyan background"
+        selection_bg,
+        "Selected character 'o' (byte 4) should have selection background"
     );
 
     // Check character ' ' (space) at position (12, 1) - byte position 5, cursor position
@@ -87,12 +89,12 @@ fn test_selection_visual_rendering() {
     let space_cell = &buffer.content[space_pos];
     assert_eq!(space_cell.symbol(), " ");
     // This space is at byte position 5, which is the cursor position
-    // It should NOT have cyan background (cursor takes precedence over selection)
+    // It should NOT have selection background (cursor takes precedence over selection)
     // Also, position 5 is not in the selection range 0..5 anyway
     assert_ne!(
         space_cell.bg,
-        ratatui::style::Color::Cyan,
-        "Cursor position (byte 5, space) should NOT have cyan background"
+        selection_bg,
+        "Cursor position (byte 5, space) should NOT have selection background"
     );
 }
 
