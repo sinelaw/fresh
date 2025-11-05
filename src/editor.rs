@@ -426,6 +426,10 @@ impl Editor {
         self.event_logs.insert(buffer_id, EventLog::new());
 
         self.active_buffer = buffer_id;
+
+        // Update the active split to display the new buffer
+        self.split_manager.set_active_buffer_id(buffer_id);
+
         self.status_message = Some("New buffer".to_string());
 
         buffer_id
