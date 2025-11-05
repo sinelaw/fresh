@@ -28,3 +28,4 @@ pub mod state;
 pub mod ui;
 pub mod viewport;
 pub mod virtual_buffer;
+pub mod word_navigation;

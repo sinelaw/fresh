@@ -10,6 +10,7 @@ use crate::prompt::{Prompt, PromptType};
 use crate::split::SplitManager;
 use crate::state::EditorState;
 use crate::ui::{HelpRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer, TabsRenderer};
+use crate::word_navigation::{find_word_end, find_word_start, find_word_start_left, find_word_start_right};
 use lsp_types::{TextDocumentContentChangeEvent, Url};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
@@ -1353,147 +1354,6 @@ impl Editor {
     // NOTE: Diagnostics are now applied automatically via process_async_messages()
     // when received from the LSP server asynchronously. No manual polling needed!
 
-    /// Helper: Check if a byte is a word character (alphanumeric or underscore)
-    fn is_word_char(byte: u8) -> bool {
-        byte.is_ascii_alphanumeric() || byte == b'_'
-    }
-
-    /// Helper: Find the start of the word at or before the given position
-    fn find_word_start(&self, buffer: &crate::buffer::Buffer, pos: usize) -> usize {
-        if pos == 0 {
-            return 0;
-        }
-
-        let buf_len = buffer.len();
-        if pos >= buf_len {
-            return buf_len;
-        }
-
-        // Only read a small window around the position for efficiency
-        let start = pos.saturating_sub(1000);
-        let end = (pos + 1).min(buf_len);
-        let bytes = buffer.slice_bytes(start..end);
-        let offset = pos - start;
-
-        let mut new_pos = offset;
-
-        // If we're at a non-word character, scan left to find a word
-        if let Some(&b) = bytes.get(new_pos) {
-            if !Self::is_word_char(b) && new_pos > 0 {
-                new_pos = new_pos.saturating_sub(1);
-            }
-        }
-
-        // Find start of current word
-        while new_pos > 0 {
-            if let Some(&prev_byte) = bytes.get(new_pos.saturating_sub(1)) {
-                if !Self::is_word_char(prev_byte) {
-                    break;
-                }
-                new_pos = new_pos.saturating_sub(1);
-            } else {
-                break;
-            }
-        }
-
-        start + new_pos
-    }
-
-    /// Helper: Find the end of the word at or after the given position
-    fn find_word_end(&self, buffer: &crate::buffer::Buffer, pos: usize) -> usize {
-        let buf_len = buffer.len();
-        if pos >= buf_len {
-            return buf_len;
-        }
-
-        // Only read a small window around the position for efficiency
-        let start = pos;
-        let end = (pos + 1000).min(buf_len);
-        let bytes = buffer.slice_bytes(start..end);
-
-        let mut new_pos = 0;
-
-        // Find end of current word
-        while new_pos < bytes.len() {
-            if let Some(&byte) = bytes.get(new_pos) {
-                if !Self::is_word_char(byte) {
-                    break;
-                }
-                new_pos += 1;
-            } else {
-                break;
-            }
-        }
-
-        start + new_pos
-    }
-
-    /// Helper: Find the start of the word to the left of the given position
-    fn find_word_start_left(&self, buffer: &crate::buffer::Buffer, pos: usize) -> usize {
-        if pos == 0 {
-            return 0;
-        }
-
-        let buf_len = buffer.len();
-        let actual_pos = pos.min(buf_len);
-
-        // Only read a small window around the position for efficiency
-        let start = actual_pos.saturating_sub(1000);
-        let end = actual_pos;
-        let bytes = buffer.slice_bytes(start..end);
-
-        let mut new_pos = bytes.len().saturating_sub(1);
-
-        // Skip non-word characters (whitespace and punctuation)
-        while new_pos > 0 && bytes.get(new_pos).is_some_and(|&b| !Self::is_word_char(b)) {
-            new_pos = new_pos.saturating_sub(1);
-        }
-
-        // Find start of word
-        while new_pos > 0 {
-            let prev_byte = bytes.get(new_pos.saturating_sub(1));
-            let curr_byte = bytes.get(new_pos);
-
-            match (prev_byte, curr_byte) {
-                (Some(&prev), Some(&curr)) => {
-                    if Self::is_word_char(prev) != Self::is_word_char(curr) {
-                        break;
-                    }
-                    new_pos = new_pos.saturating_sub(1);
-                }
-                _ => break,
-            }
-        }
-
-        start + new_pos
-    }
-
-    /// Helper: Find the start of the word to the right of the given position
-    fn find_word_start_right(&self, buffer: &crate::buffer::Buffer, pos: usize) -> usize {
-        let buf_len = buffer.len();
-        if pos >= buf_len {
-            return buf_len;
-        }
-
-        // Only read a small window around the position for efficiency
-        let start = pos;
-        let end = (pos + 1000).min(buf_len);
-        let bytes = buffer.slice_bytes(start..end);
-
-        let mut new_pos = 0;
-
-        // Skip current word
-        while new_pos < bytes.len() && bytes.get(new_pos).is_some_and(|&b| Self::is_word_char(b)) {
-            new_pos += 1;
-        }
-
-        // Skip non-word characters (whitespace and punctuation)
-        while new_pos < bytes.len() && bytes.get(new_pos).is_some_and(|&b| !Self::is_word_char(b)) {
-            new_pos += 1;
-        }
-
-        start + new_pos
-    }
 
     /// Notify LSP of a text change event
     fn notify_lsp_change(&mut self, event: &Event) {
@@ -2064,8 +1924,8 @@ impl Editor {
             Action::SelectWord => {
                 // Select the word under each cursor
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let word_start = self.find_word_start(&state.buffer, cursor.position);
-                    let word_end = self.find_word_end(&state.buffer, cursor.position);
+                    let word_start = find_word_start(&state.buffer, cursor.position);
+                    let word_end = find_word_end(&state.buffer, cursor.position);
 
                     // Move cursor to word end with anchor at word start
                     events.push(Event::MoveCursor {
@@ -2101,8 +1961,8 @@ impl Editor {
                         // Already have a selection - expand by one word to the right
                         // First move to the start of the next word, then to its end
                         let next_word_start =
-                            self.find_word_start_right(&state.buffer, cursor.position);
-                        let new_end = self.find_word_end(&state.buffer, next_word_start);
+                            find_word_start_right(&state.buffer, cursor.position);
+                        let new_end = find_word_end(&state.buffer, next_word_start);
                         events.push(Event::MoveCursor {
                             cursor_id,
                             position: new_end,
@@ -2110,8 +1970,8 @@ impl Editor {
                         });
                     } else {
                         // No selection - select from cursor to end of current word
-                        let word_start = self.find_word_start(&state.buffer, cursor.position);
-                        let word_end = self.find_word_end(&state.buffer, cursor.position);
+                        let word_start = find_word_start(&state.buffer, cursor.position);
+                        let word_end = find_word_end(&state.buffer, cursor.position);
 
                         // If cursor is on non-word char OR at the end of a word,
                         // select from current position to end of next word
@@ -2119,8 +1979,8 @@ impl Editor {
                             if word_start == word_end || cursor.position == word_end {
                                 // Find the next word (skip non-word characters to find it)
                                 let next_start =
-                                    self.find_word_start_right(&state.buffer, cursor.position);
-                                let next_end = self.find_word_end(&state.buffer, next_start);
+                                    find_word_start_right(&state.buffer, cursor.position);
+                                let next_end = find_word_end(&state.buffer, next_start);
                                 // Select FROM cursor position TO the end of next word
                                 (cursor.position, next_end)
                             } else {
@@ -2161,7 +2021,7 @@ impl Editor {
             // Word movement
             Action::MoveWordLeft => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let new_pos = self.find_word_start_left(&state.buffer, cursor.position);
+                    let new_pos = find_word_start_left(&state.buffer, cursor.position);
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: new_pos,
@@ -2172,7 +2032,7 @@ impl Editor {
 
             Action::MoveWordRight => {
                 for (cursor_id, cursor) in state.cursors.iter() {
-                    let new_pos = self.find_word_start_right(&state.buffer, cursor.position);
+                    let new_pos = find_word_start_right(&state.buffer, cursor.position);
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: new_pos,
@@ -2185,7 +2045,7 @@ impl Editor {
             Action::SelectWordLeft => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let new_pos = self.find_word_start_left(&state.buffer, cursor.position);
+                    let new_pos = find_word_start_left(&state.buffer, cursor.position);
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: new_pos,
@@ -2197,7 +2057,7 @@ impl Editor {
             Action::SelectWordRight => {
                 for (cursor_id, cursor) in state.cursors.iter() {
                     let anchor = cursor.anchor.unwrap_or(cursor.position);
-                    let new_pos = self.find_word_start_right(&state.buffer, cursor.position);
+                    let new_pos = find_word_start_right(&state.buffer, cursor.position);
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: new_pos,
@@ -2218,7 +2078,7 @@ impl Editor {
                         });
                     } else {
                         // Delete word to the left
-                        let word_start = self.find_word_start_left(&state.buffer, cursor.position);
+                        let word_start = find_word_start_left(&state.buffer, cursor.position);
                         if word_start < cursor.position {
                             let range = word_start..cursor.position;
                             events.push(Event::Delete {
@@ -2242,7 +2102,7 @@ impl Editor {
                         });
                     } else {
                         // Delete word to the right
-                        let word_end = self.find_word_start_right(&state.buffer, cursor.position);
+                        let word_end = find_word_start_right(&state.buffer, cursor.position);
                         if cursor.position < word_end {
                             let range = cursor.position..word_end;
                             events.push(Event::Delete {
