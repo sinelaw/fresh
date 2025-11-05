@@ -590,3 +590,56 @@ fn test_multi_cursor_comprehensive_abc_editing() {
     assert_eq!(harness.editor().active_state().cursors.iter().count(), 4);
 }
 
+/// Test to investigate cursor behavior with identical line content
+#[test]
+fn test_identical_lines_cursor_positions() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create multiple lines with IDENTICAL content
+    harness.type_text("abc\nabc\nabc\nabc").unwrap();
+    harness.assert_buffer_content("abc\nabc\nabc\nabc");
+
+    // Go to start
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+
+    // Get initial cursor position
+    let initial_pos = harness.cursor_position();
+    println!("Initial cursor position: {}", initial_pos);
+
+    // Add first cursor below
+    harness.editor_mut().add_cursor_below();
+    println!("After adding 1st cursor below:");
+    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+        println!("  Cursor {:?}: position={}, anchor={:?}", id, cursor.position, cursor.anchor);
+    }
+
+    // Add second cursor below
+    harness.editor_mut().add_cursor_below();
+    println!("After adding 2nd cursor below:");
+    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+        println!("  Cursor {:?}: position={}, anchor={:?}", id, cursor.position, cursor.anchor);
+    }
+
+    // Add third cursor below
+    harness.editor_mut().add_cursor_below();
+    println!("After adding 3rd cursor below:");
+    for (id, cursor) in harness.editor().active_state().cursors.iter() {
+        println!("  Cursor {:?}: position={}, anchor={:?}", id, cursor.position, cursor.anchor);
+    }
+
+    let cursor_count = harness.editor().active_state().cursors.iter().count();
+    println!("Total cursors: {}", cursor_count);
+
+    // Type X
+    harness.type_text("X").unwrap();
+
+    let result = harness.get_buffer_content();
+    println!("Buffer after typing X:\n{}", result);
+
+    let x_count = result.matches('X').count();
+    println!("X count: {}", x_count);
+
+    // This should pass if cursors are positioned correctly
+    assert_eq!(x_count, 4, "Should have 4 X's, one per cursor. Buffer:\n{}", result);
+}

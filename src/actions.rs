@@ -21,7 +21,13 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
     match action {
         // Character input - insert at each cursor
         Action::InsertChar(ch) => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            // Collect cursors and sort by position (reverse order)
+            // This ensures insertions at later positions happen first,
+            // avoiding position shifts that would affect earlier insertions
+            let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
+            cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
+
+            for (cursor_id, cursor) in cursor_vec {
                 // If there's a selection, delete it first
                 if let Some(range) = cursor.selection_range() {
                     events.push(Event::Delete {
@@ -41,7 +47,11 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         }
 
         Action::InsertNewline => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            // Sort cursors by position (reverse order) to avoid position shifts
+            let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
+            cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
+
+            for (cursor_id, cursor) in cursor_vec {
                 if let Some(range) = cursor.selection_range() {
                     events.push(Event::Delete {
                         range: range.clone(),
@@ -60,7 +70,11 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
 
         Action::InsertTab => {
             let tab_str = " ".repeat(tab_size);
-            for (cursor_id, cursor) in state.cursors.iter() {
+            // Sort cursors by position (reverse order) to avoid position shifts
+            let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
+            cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
+
+            for (cursor_id, cursor) in cursor_vec {
                 if let Some(range) = cursor.selection_range() {
                     events.push(Event::Delete {
                         range: range.clone(),
@@ -506,7 +520,11 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         }
 
         Action::DeleteBackward => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            // Sort cursors by position (reverse order) to avoid position shifts
+            let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
+            cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
+
+            for (cursor_id, cursor) in cursor_vec {
                 if let Some(range) = cursor.selection_range() {
                     // Delete the selection
                     events.push(Event::Delete {
@@ -528,7 +546,11 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         }
 
         Action::DeleteForward => {
-            for (cursor_id, cursor) in state.cursors.iter() {
+            // Sort cursors by position (reverse order) to avoid position shifts
+            let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
+            cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
+
+            for (cursor_id, cursor) in cursor_vec {
                 if let Some(range) = cursor.selection_range() {
                     // Delete the selection
                     events.push(Event::Delete {
