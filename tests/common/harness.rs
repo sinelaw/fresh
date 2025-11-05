@@ -4,7 +4,8 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use editor::{config::Config, editor::Editor};
 use ratatui::{backend::TestBackend, Terminal};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use tempfile::TempDir;
 
 /// Virtual editor environment for testing
 /// Captures all rendering output without displaying to actual terminal
@@ -14,6 +15,9 @@ pub struct EditorTestHarness {
 
     /// Virtual terminal backend
     terminal: Terminal<TestBackend>,
+
+    /// Optional temp directory (kept alive for the duration of the test)
+    _temp_dir: Option<TempDir>,
 }
 
 impl EditorTestHarness {
@@ -24,7 +28,11 @@ impl EditorTestHarness {
         let config = Config::default();
         let editor = Editor::new(config, width, height)?;
 
-        Ok(EditorTestHarness { editor, terminal })
+        Ok(EditorTestHarness {
+            editor,
+            terminal,
+            _temp_dir: None,
+        })
     }
 
     /// Create with custom config
@@ -33,7 +41,45 @@ impl EditorTestHarness {
         let terminal = Terminal::new(backend)?;
         let editor = Editor::new(config, width, height)?;
 
-        Ok(EditorTestHarness { editor, terminal })
+        Ok(EditorTestHarness {
+            editor,
+            terminal,
+            _temp_dir: None,
+        })
+    }
+
+    /// Create harness with an isolated temporary project directory
+    /// The temp directory is kept alive for the duration of the harness
+    /// and automatically cleaned up when the harness is dropped.
+    /// The working directory is set to the temp directory during editor initialization
+    /// and restored immediately after, making tests hermetic and parallel-safe.
+    pub fn with_temp_project(width: u16, height: u16) -> io::Result<Self> {
+        let temp_dir = TempDir::new()?;
+        let temp_path = temp_dir.path().to_path_buf();
+
+        // Temporarily set current_dir for editor initialization
+        let original_dir = std::env::current_dir()?;
+        std::env::set_current_dir(&temp_path)?;
+
+        // Create editor (file explorer will initialize with temp_path)
+        let backend = TestBackend::new(width, height);
+        let terminal = Terminal::new(backend)?;
+        let config = Config::default();
+        let editor = Editor::new(config, width, height)?;
+
+        // Restore original directory immediately
+        std::env::set_current_dir(&original_dir)?;
+
+        Ok(EditorTestHarness {
+            editor,
+            terminal,
+            _temp_dir: Some(temp_dir),
+        })
+    }
+
+    /// Get the path to the temp project directory (if created with with_temp_project)
+    pub fn project_dir(&self) -> Option<PathBuf> {
+        self._temp_dir.as_ref().map(|d| d.path().to_path_buf())
     }
 
     /// Open a file in the editor
