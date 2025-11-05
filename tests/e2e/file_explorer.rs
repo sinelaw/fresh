@@ -5,14 +5,16 @@ use tempfile::TempDir;
 /// Test file explorer toggle
 #[test]
 fn test_file_explorer_toggle() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
     // Initially file explorer should not be visible
     harness.render().unwrap();
     let screen_before = harness.screen_to_string();
 
-    // Toggle file explorer on
-    harness.editor_mut().toggle_file_explorer();
+    // Toggle file explorer on with Ctrl+B
+    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
@@ -26,10 +28,8 @@ fn test_file_explorer_toggle() {
         "Screen should show file explorer after toggle"
     );
 
-    // Toggle file explorer off
-    harness.editor_mut().toggle_file_explorer();
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    harness.editor_mut().process_async_messages();
+    // Toggle file explorer off with Ctrl+B
+    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
     harness.render().unwrap();
 
     // File Explorer text should no longer be visible
@@ -51,6 +51,9 @@ fn test_file_explorer_toggle() {
 /// Test file explorer displays directory structure
 #[test]
 fn test_file_explorer_shows_directory_structure() {
+
+    use crossterm::event::{KeyCode, KeyModifiers};
+
     // Create a test directory structure
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path();
@@ -62,14 +65,11 @@ fn test_file_explorer_shows_directory_structure() {
     fs::create_dir(project_root.join("tests")).unwrap();
     fs::write(project_root.join("README.md"), "# Project").unwrap();
 
-    // Change to project directory and create harness
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&project_root).unwrap();
 
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
-    // Toggle file explorer on
-    harness.editor_mut().toggle_file_explorer();
+    // Toggle file explorer on with Ctrl+B
+    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
@@ -86,13 +86,14 @@ fn test_file_explorer_shows_directory_structure() {
     // Should show at least the root directory name or some indication of files
     // (This is a basic check - the exact content depends on rendering)
 
-    // Restore original directory
-    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test file explorer navigation
 #[test]
 fn test_file_explorer_navigation() {
+
+    use crossterm::event::{KeyCode, KeyModifiers};
+
     // Create a test directory structure with multiple files
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path();
@@ -101,13 +102,11 @@ fn test_file_explorer_navigation() {
     fs::write(project_root.join("file2.txt"), "File 2").unwrap();
     fs::write(project_root.join("file3.txt"), "File 3").unwrap();
 
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&project_root).unwrap();
 
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
-    // Toggle file explorer on
-    harness.editor_mut().toggle_file_explorer();
+    // Toggle file explorer on with Ctrl+B
+    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
 
@@ -117,8 +116,8 @@ fn test_file_explorer_navigation() {
 
     let screen_initial = harness.screen_to_string();
 
-    // Navigate down
-    harness.editor_mut().file_explorer_navigate_down();
+    // Navigate down with Alt+J
+    harness.send_key(KeyCode::Char('j'), KeyModifiers::ALT).unwrap();
     harness.render().unwrap();
 
     let screen_after_down = harness.screen_to_string();
@@ -127,17 +126,18 @@ fn test_file_explorer_navigation() {
     // Note: This might be subtle depending on rendering
     println!("After navigate down:\n{}", screen_after_down);
 
-    // Navigate up
-    harness.editor_mut().file_explorer_navigate_up();
+    // Navigate up with Alt+K
+    harness.send_key(KeyCode::Char('k'), KeyModifiers::ALT).unwrap();
     harness.render().unwrap();
 
-    // Restore original directory
-    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test file explorer expand/collapse
 #[test]
 fn test_file_explorer_expand_collapse() {
+
+    use crossterm::event::{KeyCode, KeyModifiers};
+
     // Create a test directory structure with nested directories
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path();
@@ -146,13 +146,11 @@ fn test_file_explorer_expand_collapse() {
     fs::write(project_root.join("src/lib.rs"), "// lib").unwrap();
     fs::write(project_root.join("src/main.rs"), "fn main() {}").unwrap();
 
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&project_root).unwrap();
 
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
-    // Toggle file explorer on
-    harness.editor_mut().toggle_file_explorer();
+    // Toggle file explorer on with Ctrl+B
+    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
 
@@ -163,8 +161,8 @@ fn test_file_explorer_expand_collapse() {
     let screen_before_expand = harness.screen_to_string();
     println!("Before expand:\n{}", screen_before_expand);
 
-    // Navigate to the src directory (root is selected initially, navigate down to first child)
-    harness.editor_mut().file_explorer_toggle_expand();
+    // Expand the root directory with Alt+L
+    harness.send_key(KeyCode::Char('l'), KeyModifiers::ALT).unwrap();
 
     // Wait for async operation
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -177,20 +175,19 @@ fn test_file_explorer_expand_collapse() {
     // The screen should show more content after expanding
     // (exact assertion depends on rendering details)
 
-    // Collapse
-    harness.editor_mut().file_explorer_toggle_expand();
+    // Collapse with Alt+L (toggle)
+    harness.send_key(KeyCode::Char('l'), KeyModifiers::ALT).unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
-    // Restore original directory
-    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test opening a file from file explorer
 #[test]
 fn test_file_explorer_open_file() {
+
     // Create a simple test directory with one file
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path();
@@ -198,8 +195,6 @@ fn test_file_explorer_open_file() {
     let test_content = "Hello World";
     fs::write(&test_file, test_content).unwrap();
 
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&project_root).unwrap();
 
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
@@ -253,21 +248,18 @@ fn test_file_explorer_open_file() {
     }
     // Note: We don't fail the test if no file was opened, as navigation might not land on the file
 
-    // Restore original directory
-    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test file explorer refresh
 #[test]
 fn test_file_explorer_refresh() {
+
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path();
 
     // Create initial file
     fs::write(project_root.join("file1.txt"), "File 1").unwrap();
 
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&project_root).unwrap();
 
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
@@ -296,8 +288,6 @@ fn test_file_explorer_refresh() {
     let screen = harness.screen_to_string();
     println!("After refresh:\n{}", screen);
 
-    // Restore original directory
-    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test focus switching between file explorer and editor
@@ -347,14 +337,13 @@ fn test_file_explorer_focus_switching() {
 /// Test that file explorer keybindings only work when explorer has focus
 #[test]
 fn test_file_explorer_context_aware_keybindings() {
+
     use crossterm::event::{KeyCode, KeyModifiers};
 
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path();
     std::fs::write(project_root.join("test.txt"), "content").unwrap();
 
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&project_root).unwrap();
 
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
@@ -376,8 +365,6 @@ fn test_file_explorer_context_aware_keybindings() {
     harness.send_key(KeyCode::Down, KeyModifiers::empty()).unwrap();
     harness.render().unwrap();
 
-    // Restore original directory
-    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test opening file explorer with focus
@@ -417,6 +404,7 @@ fn test_focus_file_explorer_action() {
 /// still shows the old buffer
 #[test]
 fn test_file_explorer_displays_opened_file_content() {
+    use crossterm::event::{KeyCode, KeyModifiers};
     // Create a test directory with two distinct files
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path();
@@ -429,8 +417,6 @@ fn test_file_explorer_displays_opened_file_content() {
     fs::write(&file1, content1).unwrap();
     fs::write(&file2, content2).unwrap();
 
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&project_root).unwrap();
 
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
@@ -445,33 +431,35 @@ fn test_file_explorer_displays_opened_file_content() {
         "First file content should be visible on screen after opening"
     );
 
-    // Now open file explorer
-    harness.editor_mut().toggle_file_explorer();
+    // Now open file explorer with Ctrl+B
+    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
-    // Expand the root directory
-    harness.editor_mut().file_explorer_toggle_expand();
+    // Expand the root directory with Alt+L
+    harness.send_key(KeyCode::Char('l'), KeyModifiers::ALT).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
-    // Navigate down to find second.txt
+    // Navigate down to find second.txt with Alt+J
     // We need to find it in the list (first.txt comes before second.txt alphabetically)
     for _ in 0..3 {
-        harness.editor_mut().file_explorer_navigate_down();
+        harness.send_key(KeyCode::Char('j'), KeyModifiers::ALT).unwrap();
     }
     harness.render().unwrap();
 
     let screen_before_open = harness.screen_to_string();
     println!("Screen before opening second file:\n{}", screen_before_open);
 
-    // Open the selected file from file explorer
-    let result = harness.editor_mut().file_explorer_open_file();
-    assert!(result.is_ok(), "Opening file from explorer should succeed: {:?}", result);
+    // Open the selected file from file explorer with Alt+Enter
+    let result = harness.send_key(KeyCode::Enter, KeyModifiers::ALT);
+    assert!(result.is_ok(), "Failed to send Alt+Enter: {:?}", result);
 
+    std::thread::sleep(std::time::Duration::from_millis(50));
     harness.render().unwrap();
+
     let screen_after_open = harness.screen_to_string();
     println!("Screen after opening second file:\n{}", screen_after_open);
 
@@ -489,8 +477,6 @@ fn test_file_explorer_displays_opened_file_content() {
         screen_after_open
     );
 
-    // Restore original directory
-    let _ = std::env::set_current_dir(original_dir);
 }
 
 /// Test that file_explorer_toggle_hidden can be called (smoke test)
@@ -544,9 +530,8 @@ fn test_file_explorer_toggle_gitignored_smoke() {
 /// Test that file_explorer_new_file can be called (smoke test)
 #[test]
 fn test_file_explorer_new_file_smoke() {
+
     let temp_dir = TempDir::new().unwrap();
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&temp_dir).unwrap();
 
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
@@ -563,8 +548,6 @@ fn test_file_explorer_new_file_smoke() {
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
-    // Restore original directory
-    let _ = std::env::set_current_dir(original_dir);
 
     // Test passes if no panic occurs
 }
@@ -572,9 +555,8 @@ fn test_file_explorer_new_file_smoke() {
 /// Test that file_explorer_new_directory can be called (smoke test)
 #[test]
 fn test_file_explorer_new_directory_smoke() {
+
     let temp_dir = TempDir::new().unwrap();
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&temp_dir).unwrap();
 
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
@@ -591,8 +573,6 @@ fn test_file_explorer_new_directory_smoke() {
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
-    // Restore original directory
-    let _ = std::env::set_current_dir(original_dir);
 
     // Test passes if no panic occurs
 }
@@ -600,14 +580,13 @@ fn test_file_explorer_new_directory_smoke() {
 /// Test that file_explorer_delete can be called (smoke test)
 #[test]
 fn test_file_explorer_delete_smoke() {
+
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path();
 
     // Create a test file
     fs::write(project_root.join("test.txt"), "test").unwrap();
 
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&project_root).unwrap();
 
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
@@ -633,8 +612,6 @@ fn test_file_explorer_delete_smoke() {
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
-    // Restore original directory
-    let _ = std::env::set_current_dir(original_dir);
 
     // Test passes if no panic occurs
 }
