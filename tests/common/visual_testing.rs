@@ -33,6 +33,7 @@ static FLOW_REGISTRY: Mutex<Option<Vec<FlowMetadata>>> = Mutex::new(None);
 /// Helper for capturing visual test flows
 pub struct VisualFlow {
     flow_name: String,
+    flow_name_sanitized: String, // For filenames (no spaces)
     category: String,
     description: String,
     steps: Vec<StepMetadata>,
@@ -42,8 +43,12 @@ pub struct VisualFlow {
 impl VisualFlow {
     /// Create a new visual flow
     pub fn new(flow_name: &str, category: &str, description: &str) -> Self {
+        // Sanitize flow name for use in filenames (replace spaces with underscores)
+        let flow_name_sanitized = flow_name.replace(' ', "_");
+
         Self {
             flow_name: flow_name.to_string(),
+            flow_name_sanitized,
             category: category.to_string(),
             description: description.to_string(),
             steps: Vec::new(),
@@ -64,10 +69,10 @@ impl VisualFlow {
         // Take text snapshot with insta
         insta::assert_snapshot!(snapshot_name, &screen_text);
 
-        // Generate SVG image
+        // Generate SVG image with sanitized filename (no spaces)
         let image_filename = format!(
             "{}_{:02}_{}.svg",
-            self.flow_name, self.step_num, step_name
+            self.flow_name_sanitized, self.step_num, step_name
         );
         let image_path = PathBuf::from("docs/visual-regression").join(&image_filename);
 
