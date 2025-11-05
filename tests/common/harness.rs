@@ -240,6 +240,45 @@ impl EditorTestHarness {
         (pos.x, pos.y)
     }
 
+    /// Find all visible cursors on screen
+    /// Returns a vec of (x, y, character_at_cursor, is_primary)
+    /// Primary cursor is detected at hardware cursor position
+    /// Secondary cursors are detected by REVERSED style modifier
+    pub fn find_all_cursors(&mut self) -> Vec<(u16, u16, String, bool)> {
+        use ratatui::style::Modifier;
+        let mut cursors = Vec::new();
+
+        // Get hardware cursor position (primary cursor)
+        let (hw_x, hw_y) = self.screen_cursor_position();
+
+        // Get the buffer to read cell content
+        let buffer = self.terminal.backend().buffer();
+
+        // Add primary cursor at hardware position
+        if let Some(cell) = buffer.content.get(buffer.index_of(hw_x, hw_y)) {
+            cursors.push((hw_x, hw_y, cell.symbol().to_string(), true));
+        }
+
+        // Find secondary cursors (cells with REVERSED modifier)
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                // Skip if this is the hardware cursor position
+                if x == hw_x && y == hw_y {
+                    continue;
+                }
+
+                let pos = buffer.index_of(x, y);
+                if let Some(cell) = buffer.content.get(pos) {
+                    if cell.modifier.contains(Modifier::REVERSED) {
+                        cursors.push((x, y, cell.symbol().to_string(), false));
+                    }
+                }
+            }
+        }
+
+        cursors
+    }
+
     /// Get the top line number currently visible in the viewport
     pub fn top_line_number(&mut self) -> usize {
         let top_byte = self.editor.active_state().viewport.top_byte;

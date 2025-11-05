@@ -442,7 +442,16 @@ mod tests {
         assert!(svg_path.exists());
 
         let svg_content = fs::read_to_string(&svg_path).unwrap();
-        assert!(svg_content.contains("Hello, World!"));
+        // Each character is rendered in a separate <text> element, so check for individual chars
+        assert!(svg_content.contains(">H<"));
+        assert!(svg_content.contains(">e<"));
+        assert!(svg_content.contains(">l<"));
+        assert!(svg_content.contains(">o<"));
+        assert!(svg_content.contains(">,<"));
+        assert!(svg_content.contains(">W<"));
+        assert!(svg_content.contains(">r<"));
+        assert!(svg_content.contains(">d<"));
+        assert!(svg_content.contains(">!</"));
         assert!(svg_content.contains("<svg"));
     }
 
