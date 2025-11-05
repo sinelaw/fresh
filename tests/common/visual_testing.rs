@@ -191,7 +191,7 @@ pub fn render_buffer_to_svg(buffer: &Buffer, path: &Path) -> io::Result<()> {
 <style>
     .terminal {{ font-family: 'Courier New', 'Consolas', monospace; font-size: {}px; white-space: pre; }}
 </style>
-<rect width="100%" height="100%" fill="#1e1e1e"/>
+<rect width="100%" height="100%" fill="#000000"/>
 "##,
         svg_width, svg_height, svg_width, svg_height, FONT_SIZE
     );
@@ -203,18 +203,21 @@ pub fn render_buffer_to_svg(buffer: &Buffer, path: &Path) -> io::Result<()> {
             let style = cell.style();
             let symbol = cell.symbol();
 
-            // Draw background if not default
+            // Draw background if not default/black (skip black since SVG base is black)
             if let Some(bg) = style.bg {
-                let bg_hex = color_to_hex(bg);
-                svg.push_str(&format!(
-                    r#"  <rect x="{}" y="{}" width="{}" height="{}" fill="{}"/>"#,
-                    x * CHAR_WIDTH,
-                    y * CHAR_HEIGHT,
-                    CHAR_WIDTH,
-                    CHAR_HEIGHT,
-                    bg_hex
-                ));
-                svg.push('\n');
+                // Skip black backgrounds - let the SVG base black show through
+                if !matches!(bg, Color::Black | Color::Reset) {
+                    let bg_hex = color_to_hex(bg);
+                    svg.push_str(&format!(
+                        r#"  <rect x="{}" y="{}" width="{}" height="{}" fill="{}"/>"#,
+                        x * CHAR_WIDTH,
+                        y * CHAR_HEIGHT,
+                        CHAR_WIDTH,
+                        CHAR_HEIGHT,
+                        bg_hex
+                    ));
+                    svg.push('\n');
+                }
             }
 
             // Draw text
