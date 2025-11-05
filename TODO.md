@@ -131,8 +131,9 @@
   - [x] LSP completion request/response handling ✅
   - [x] Popup display with completion items ✅
   - [x] Icon support for different completion kinds (function, variable, struct, etc.) ✅
-  - [ ] E2E tests with fake LSP server - TODO
-  - [ ] Completion item insertion on Enter - TODO
+  - [x] E2E tests with fake LSP server ✅
+  - [x] Completion item insertion on Enter ✅
+  - [x] Default keybindings (Ctrl+Space for completion) ✅
 - [x] Convert events to LSP changes (full document sync) ✅
 
 ### 4.3 Advanced LSP Features
@@ -140,7 +141,8 @@
   - [x] LSP definition request/response handling ✅
   - [x] Jump to definition location ✅
   - [x] Open file at correct line/column ✅
-  - [ ] E2E tests with fake LSP server - TODO
+  - [x] E2E tests with fake LSP server ✅
+  - [x] Default keybindings (Ctrl+B and F12) ✅
 - [ ] Hover documentation via popup
 - [ ] Code actions via popup menu
 

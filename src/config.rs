@@ -324,6 +324,28 @@ impl Config {
                 args: HashMap::new(),
                 when: None,
             },
+            // LSP features
+            Keybinding {
+                key: " ".to_string(), // Space key
+                modifiers: vec!["ctrl".to_string()],
+                action: "lsp_completion".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
+            Keybinding {
+                key: "b".to_string(),
+                modifiers: vec!["ctrl".to_string()],
+                action: "lsp_goto_definition".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
+            Keybinding {
+                key: "F12".to_string(),
+                modifiers: vec![],
+                action: "lsp_goto_definition".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
         ]
     }
 
