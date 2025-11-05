@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -299,6 +299,9 @@ impl Popup {
 
     /// Render the popup to the frame
     pub fn render(&self, frame: &mut Frame, area: Rect, theme: &crate::theme::Theme) {
+        // Clear the area behind the popup first to hide underlying text
+        frame.render_widget(Clear, area);
+
         let block = if self.bordered {
             let mut block = Block::default()
                 .borders(Borders::ALL)
