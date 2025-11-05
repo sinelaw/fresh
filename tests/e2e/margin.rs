@@ -85,8 +85,9 @@ fn test_margin_disable_line_numbers() {
     let screen = harness.screen_to_string();
     println!("Screen without line numbers:\n{}", screen);
 
-    // Should NOT show line numbers
-    harness.assert_screen_not_contains("│");
+    // Should NOT show line numbers (check for line number separator pattern " │ " with spaces)
+    // Note: We can't just check for "│" because the scrollbar also uses that character
+    harness.assert_screen_not_contains(" │ ");
 
     // Should still show content (but without margin)
     harness.assert_screen_contains("Line 1");

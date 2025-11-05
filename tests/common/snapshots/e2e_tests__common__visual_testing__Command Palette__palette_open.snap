@@ -3,16 +3,16 @@ source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
  [No Name]                                                                      
-   1 │                                                                          
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
+   1 │                                                                         █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               │
+                                                                               │
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  Open File  -  Open a file in a new or existing buffer                       │
 │  Save File  -  Save the current buffer to disk                               │
