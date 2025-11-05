@@ -169,3 +169,103 @@ fn test_remove_secondary_cursors() {
     // Should have only 1 cursor now
     assert_eq!(harness.editor().active_state().cursors.iter().count(), 1);
 }
+
+/// Test multi-cursor undo atomicity
+/// When using multiple cursors, undo should undo all cursor actions in one step
+#[test]
+fn test_multi_cursor_undo_atomic() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create three lines with more content (matching the working test)
+    harness.type_text("aaa\nbbb\nccc\nddd").unwrap();
+
+    // Go to start
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Add cursors - each time we add a cursor below, the new cursor becomes primary
+    // So we can continue adding cursors below
+    harness.editor_mut().add_cursor_below(); // Now we have cursors on line 1 and 2
+    harness.editor_mut().add_cursor_below(); // Now we have cursors on line 1, 2, and 3
+
+    // Should have 3 cursors
+    let cursor_count = harness.editor().active_state().cursors.iter().count();
+    assert_eq!(cursor_count, 3, "Should have 3 cursors");
+
+    // Type "X" with all three cursors - this should create a batch event
+    harness.type_text("X").unwrap();
+
+    // Each cursor should insert X at its position
+    let result = harness.get_buffer_content();
+
+    // Count how many X's were inserted
+    let x_count = result.matches('X').count();
+    assert_eq!(
+        x_count, 3,
+        "Should have inserted exactly 3 X's, one per cursor. Buffer: {}", result
+    );
+
+    // Undo once - this should undo ALL three insertions atomically
+    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // All X's should be gone after a single undo
+    let result_after_undo = harness.get_buffer_content();
+    let x_count_after_undo = result_after_undo.matches('X').count();
+    assert_eq!(
+        x_count_after_undo, 0,
+        "Should have removed all X's with single undo. Buffer: {}", result_after_undo
+    );
+    harness.assert_buffer_content("aaa\nbbb\nccc\nddd");
+
+    // Redo once - this should redo ALL three insertions atomically
+    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // All X's should be back after a single redo
+    let result_after_redo = harness.get_buffer_content();
+    let x_count_after_redo = result_after_redo.matches('X').count();
+    assert_eq!(
+        x_count_after_redo, 3,
+        "Should have restored all 3 X's with single redo. Buffer: {}", result_after_redo
+    );
+}
+
+/// Test multi-cursor delete undo atomicity
+#[test]
+fn test_multi_cursor_delete_undo_atomic() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create three lines
+    harness.type_text("aaa\nbbb\nccc").unwrap();
+
+    // Go to start
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Add two more cursors
+    harness.editor_mut().add_cursor_below();
+    harness.editor_mut().add_cursor_below();
+
+    // Should have 3 cursors
+    assert_eq!(harness.editor().active_state().cursors.iter().count(), 3);
+
+    // Delete forward at all three cursors - should delete 'a', 'b', 'c'
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
+
+    // Verify first character deleted from each line
+    harness.assert_buffer_content("aa\nbb\ncc");
+
+    // Undo once - should restore all three characters
+    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // All characters should be restored
+    harness.assert_buffer_content("aaa\nbbb\nccc");
+}

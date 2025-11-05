@@ -147,6 +147,13 @@ pub enum Event {
 
     /// Navigate to previous split
     PrevSplit,
+
+    /// Batch of events that should be undone/redone atomically
+    /// Used for multi-cursor operations where all cursors perform the same action
+    Batch {
+        events: Vec<Event>,
+        description: String,
+    },
 }
 
 /// Overlay face data for events (must be serializable)
@@ -256,6 +263,19 @@ impl Event {
                 text: deleted_text.clone(),
                 cursor_id: *cursor_id,
             }),
+            Event::Batch { events, description } => {
+                // Invert all events in the batch in reverse order
+                let inverted: Option<Vec<Event>> = events
+                    .iter()
+                    .rev()
+                    .map(|e| e.inverse())
+                    .collect();
+
+                inverted.map(|inverted_events| Event::Batch {
+                    events: inverted_events,
+                    description: format!("Undo: {}", description),
+                })
+            }
             // MoveCursor, AddCursor, RemoveCursor are not automatically invertible
             // They would need to store the previous state
             _ => None,
@@ -264,7 +284,11 @@ impl Event {
 
     /// Returns true if this event modifies the buffer content
     pub fn modifies_buffer(&self) -> bool {
-        matches!(self, Event::Insert { .. } | Event::Delete { .. })
+        match self {
+            Event::Insert { .. } | Event::Delete { .. } => true,
+            Event::Batch { events, .. } => events.iter().any(|e| e.modifies_buffer()),
+            _ => false,
+        }
     }
 
     /// Returns the cursor ID associated with this event, if any

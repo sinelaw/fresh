@@ -373,6 +373,14 @@ impl EditorState {
             | Event::PrevSplit => {
                 // No-op: split events are handled by Editor, not EditorState
             }
+
+            Event::Batch { events, .. } => {
+                // Apply all events in the batch sequentially
+                // This ensures multi-cursor operations are applied atomically
+                for event in events {
+                    self.apply(event);
+                }
+            }
         }
     }
 
