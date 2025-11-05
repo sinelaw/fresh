@@ -16,7 +16,6 @@
 /// editing trail, not through every single keystroke.
 
 use crate::event::BufferId;
-use std::time::{Duration, Instant};
 
 /// A single entry in the position history
 #[derive(Clone, Debug, PartialEq)]
@@ -47,13 +46,11 @@ impl PositionEntry {
 struct PendingMovement {
     /// Starting position of this movement sequence
     start_entry: PositionEntry,
-
-    /// Last update time (to detect idle)
-    last_update: Instant,
 }
 
-/// How long to wait before considering a movement "committed"
-const MOVEMENT_COALESCE_TIMEOUT: Duration = Duration::from_millis(1000);
+/// Distance threshold for considering a movement "large" (in bytes)
+/// Movements larger than this will not be coalesced
+const LARGE_JUMP_THRESHOLD: usize = 50;
 
 /// Position history manager
 ///
@@ -97,39 +94,42 @@ impl PositionHistory {
 
     /// Record a cursor movement event
     ///
-    /// This is called for EVERY MoveCursor event. Consecutive movements are coalesced
+    /// This is called for EVERY MoveCursor event. Consecutive small movements are coalesced
     /// into a single history entry. The movement is committed to history when:
     /// - Buffer changes
-    /// - Timeout expires (1 second of idle)
+    /// - Large jump detected (> 50 bytes distance from pending start position)
     /// - User triggers back/forward navigation
     pub fn record_movement(&mut self, buffer_id: BufferId, position: usize, anchor: Option<usize>) {
-        let now = Instant::now();
         let entry = PositionEntry::new(buffer_id, position, anchor);
 
         match &mut self.pending_movement {
             Some(pending) => {
                 // Check if this is a continuation of the current movement
                 if pending.start_entry.buffer_id == buffer_id {
-                    // Same buffer - check if we should coalesce
-                    if now.duration_since(pending.last_update) < MOVEMENT_COALESCE_TIMEOUT {
-                        // Update the pending movement's timestamp
-                        // Don't commit yet - wait for timeout or buffer switch
-                        pending.last_update = now;
+                    // Calculate distance from the pending movement's start position
+                    let distance = if position > pending.start_entry.position {
+                        position - pending.start_entry.position
+                    } else {
+                        pending.start_entry.position - position
+                    };
+
+                    // Check if this is a small movement that should be coalesced
+                    if distance <= LARGE_JUMP_THRESHOLD {
+                        // Small movement - keep coalescing, don't commit yet
                         return;
                     }
                 }
 
-                // Different buffer or timeout expired - commit the pending movement
+                // Different buffer or large jump - commit the pending movement
                 self.commit_pending_movement();
             }
-            None => {
-                // No pending movement - start a new one
-                self.pending_movement = Some(PendingMovement {
-                    start_entry: entry,
-                    last_update: now,
-                });
-            }
+            None => {}
         }
+
+        // Start a new pending movement
+        self.pending_movement = Some(PendingMovement {
+            start_entry: entry,
+        });
     }
 
     /// Commit any pending movement to history
@@ -268,6 +268,12 @@ impl PositionHistory {
     /// Check if history is empty
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Get current index (for debugging)
+    #[cfg(test)]
+    pub fn current_index(&self) -> Option<usize> {
+        self.current_index
     }
 }
 
