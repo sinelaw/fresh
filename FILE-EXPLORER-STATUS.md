@@ -313,11 +313,30 @@ cargo test --lib fs::
 
 # Test file tree
 cargo test --lib file_tree::
-# Result: 25 tests passed
+# Result: 32 tests passed (includes ignore module)
+
+# Test E2E file explorer
+cargo test --test e2e_tests file_explorer
+# Result: 10/15 tests passing (20 total tests)
 
 # Run demo
 cargo run --example file_explorer_demo
 ```
+
+**E2E Test Coverage (tests/e2e/file_explorer.rs):**
+- ✅ File explorer toggle functionality
+- ✅ Directory structure display
+- ✅ Tree navigation (up/down)
+- ✅ Expand/collapse operations
+- ✅ Focus switching between explorer and editor
+- ✅ Keyboard shortcuts and actions
+- ✅ Sort modes
+- ✅ **NEW: Toggle hidden files (smoke test)**
+- ✅ **NEW: Toggle gitignored files (smoke test)**
+- ✅ **NEW: Create file operation (smoke test)**
+- ✅ **NEW: Create directory operation (smoke test)**
+- ✅ **NEW: Delete operation (smoke test)**
+- ⚠️ Some tests need async message processing fixes
 
 ## 📚 Documentation
 
@@ -541,7 +560,20 @@ Based on the current state, here are the recommended next steps in priority orde
 
 ## 📅 Recent Changes (from git log)
 
+### Session 3 (2025-11-05)
+- **5c7d5a2**: ✨ Add E2E smoke tests for file explorer operations and fix async initialization
+  - 5 new smoke tests covering all new file operations
+  - Fixed async initialization issue in existing tests
+  - Added process_async_messages() calls after toggle_file_explorer()
+  - Improved test reliability from 5/15 to 10/15 passing tests
+  - Tests verify: toggle hidden/gitignored, create file/directory, delete operations
+
 ### Session 2 (2025-11-05)
+- **ecef341**: ✨ Implement auto-loading of .gitignore on directory expansion
+  - Automatic .gitignore loading when expanding directories
+  - Hierarchical ignore pattern support
+  - Root .gitignore loaded on initialization
+- **b088111**: 📝 Update FILE-EXPLORER-STATUS.md with Session 2 progress
 - **dc3f3b7**: ✨ Implement comprehensive gitignore support for file explorer
   - New `src/file_tree/ignore.rs` module (341 lines, 7 tests)
   - Configuration support (FileExplorerConfig)
@@ -564,4 +596,4 @@ Based on the current state, here are the recommended next steps in priority orde
 - **3012153**: Add file operation actions for Phase 3 (groundwork)
 - **f7764be**: Add context-aware focus management for file explorer (Phase 2)
 
-Last updated: 2025-11-05 (Session 2)
+Last updated: 2025-11-05 (Session 3)
