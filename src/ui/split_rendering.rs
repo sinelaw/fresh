@@ -144,7 +144,10 @@ impl SplitRenderer {
         } else {
             1
         };
-        let thumb_size = thumb_size.max(1).min(height);
+        // Cap thumb size: minimum 1, maximum 80% of scrollbar height (to leave room for visual feedback)
+        // This prevents the thumb from being too large when buffer is only slightly larger than viewport
+        let max_thumb_size = (height as f64 * 0.8).floor() as usize;
+        let thumb_size = thumb_size.max(1).min(max_thumb_size).min(height);
 
         let thumb_end = (thumb_start + thumb_size).min(height);
 

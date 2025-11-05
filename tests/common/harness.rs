@@ -1,6 +1,6 @@
 // EditorTestHarness - Virtual terminal environment for E2E testing
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use editor::{config::Config, editor::Editor};
 use ratatui::{backend::TestBackend, Terminal};
 use std::io;
@@ -102,6 +102,111 @@ impl EditorTestHarness {
             self.send_key(KeyCode::Char(ch), KeyModifiers::NONE)?;
         }
         self.render()?;
+        Ok(())
+    }
+
+    /// Simulate a mouse event
+    pub fn send_mouse(&mut self, mouse_event: MouseEvent) -> io::Result<()> {
+        // Delegate to the editor's handle_mouse method (just like main.rs does)
+        self.editor.handle_mouse(mouse_event)?;
+        Ok(())
+    }
+
+    /// Simulate a mouse click at specific coordinates
+    pub fn mouse_click(&mut self, col: u16, row: u16) -> io::Result<()> {
+        let mouse_event = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        };
+        self.send_mouse(mouse_event)?;
+
+        // Also send the release event
+        let mouse_up = MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        };
+        self.send_mouse(mouse_up)?;
+        self.render()?;
+        Ok(())
+    }
+
+    /// Simulate a mouse drag from one position to another
+    pub fn mouse_drag(&mut self, start_col: u16, start_row: u16, end_col: u16, end_row: u16) -> io::Result<()> {
+        // Send initial press
+        let mouse_down = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: start_col,
+            row: start_row,
+            modifiers: KeyModifiers::empty(),
+        };
+        self.send_mouse(mouse_down)?;
+
+        // Interpolate intermediate positions for smooth dragging
+        let steps = ((end_row as i32 - start_row as i32).abs()).max((end_col as i32 - start_col as i32).abs()).max(1);
+        for i in 1..=steps {
+            let t = i as f32 / steps as f32;
+            let col = start_col as f32 + (end_col as f32 - start_col as f32) * t;
+            let row = start_row as f32 + (end_row as f32 - start_row as f32) * t;
+
+            let mouse_drag_event = MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: col as u16,
+                row: row as u16,
+                modifiers: KeyModifiers::empty(),
+            };
+            self.send_mouse(mouse_drag_event)?;
+        }
+
+        // Send final release
+        let mouse_up = MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: end_col,
+            row: end_row,
+            modifiers: KeyModifiers::empty(),
+        };
+        self.send_mouse(mouse_up)?;
+        self.render()?;
+        Ok(())
+    }
+
+    /// Simulate pressing the mouse button down (without releasing)
+    pub fn mouse_down(&mut self, col: u16, row: u16) -> io::Result<()> {
+        let mouse_event = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        };
+        self.send_mouse(mouse_event)?;
+        Ok(())
+    }
+
+    /// Simulate releasing the mouse button
+    pub fn mouse_up(&mut self, col: u16, row: u16) -> io::Result<()> {
+        let mouse_event = MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        };
+        self.send_mouse(mouse_event)?;
+        self.render()?;
+        Ok(())
+    }
+
+    /// Simulate mouse movement (hover) without clicking
+    pub fn mouse_move(&mut self, col: u16, row: u16) -> io::Result<()> {
+        let mouse_event = MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        };
+        self.send_mouse(mouse_event)?;
         Ok(())
     }
 
