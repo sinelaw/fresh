@@ -146,3 +146,102 @@ fn test_page_movements_tracked_in_history() {
         "After navigating back, cursor should be at position {} where we paged down to",
         middle_pos);
 }
+
+/// Test that cursor movements WITHIN A SINGLE BUFFER are tracked in history
+/// This is the key feature of VS Code's position history - it tracks where you've been
+/// even without switching files
+#[test]
+fn test_cursor_movements_within_single_buffer_tracked() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create a multi-line document
+    harness.type_text("Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10").unwrap();
+    let end_pos = harness.cursor_position();
+
+    // Position 1: Go to beginning
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    let pos1 = harness.cursor_position();
+    assert_eq!(pos1, 0, "Should be at beginning");
+
+    // Position 2: Jump to end (this is a "large" movement that should be tracked)
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    let pos2 = harness.cursor_position();
+    assert_eq!(pos2, end_pos, "Should be at end");
+
+    // Position 3: Jump back to beginning
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    let pos3 = harness.cursor_position();
+    assert_eq!(pos3, 0, "Should be at beginning again");
+
+    // Now navigate back through the history
+    // We should go: current(beginning) -> back to end -> back to beginning (before the jump to end)
+
+    // First back: should go to position 2 (end)
+    harness.send_key(KeyCode::Left, KeyModifiers::ALT).unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.cursor_position(), pos2,
+        "After first back, should be at end position (pos2={}), but at {}",
+        pos2, harness.cursor_position());
+
+    // Second back: should go to position 1 (beginning before jump to end)
+    harness.send_key(KeyCode::Left, KeyModifiers::ALT).unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.cursor_position(), pos1,
+        "After second back, should be at beginning position (pos1={}), but at {}",
+        pos1, harness.cursor_position());
+
+    // Navigate forward: should go back to end
+    harness.send_key(KeyCode::Right, KeyModifiers::ALT).unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.cursor_position(), pos2,
+        "After forward, should be back at end position (pos2={}), but at {}",
+        pos2, harness.cursor_position());
+}
+
+/// Test that PageDown jumps within a buffer are tracked
+#[test]
+fn test_large_jumps_within_buffer_tracked() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create many lines of content
+    for i in 0..100 {
+        harness.type_text(&format!("Line {}\n", i)).unwrap();
+    }
+
+    // Position 1: Go to start
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    let start_pos = harness.cursor_position();
+    assert_eq!(start_pos, 0);
+
+    // Position 2: PageDown once (significant movement)
+    harness.send_key(KeyCode::PageDown, KeyModifiers::empty()).unwrap();
+    let page1_pos = harness.cursor_position();
+    assert!(page1_pos > start_pos, "Should have moved down");
+
+    // Position 3: PageDown again (another significant movement)
+    harness.send_key(KeyCode::PageDown, KeyModifiers::empty()).unwrap();
+    let page2_pos = harness.cursor_position();
+    assert!(page2_pos > page1_pos, "Should have moved further down");
+
+    // Now navigate back through history
+    // Should go: current(page2) -> page1 -> start
+
+    harness.send_key(KeyCode::Left, KeyModifiers::ALT).unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.cursor_position(), page1_pos,
+        "After back, should be at page1 position ({}), but at {}",
+        page1_pos, harness.cursor_position());
+
+    harness.send_key(KeyCode::Left, KeyModifiers::ALT).unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.cursor_position(), start_pos,
+        "After second back, should be at start position ({}), but at {}",
+        start_pos, harness.cursor_position());
+
+    // Navigate forward
+    harness.send_key(KeyCode::Right, KeyModifiers::ALT).unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.cursor_position(), page1_pos,
+        "After forward, should be back at page1 position ({}), but at {}",
+        page1_pos, harness.cursor_position());
+}

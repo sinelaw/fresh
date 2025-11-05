@@ -535,6 +535,18 @@ impl Editor {
         self.position_history.push(entry);
     }
 
+    /// Check if an action represents a "significant movement" that should be tracked in history
+    /// This includes large jumps within a file (like Ctrl+Home, Ctrl+End, PageUp/PageDown)
+    fn is_significant_movement(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::MoveDocumentStart
+                | Action::MoveDocumentEnd
+                | Action::MovePageUp
+                | Action::MovePageDown
+        )
+    }
+
     /// Split the current pane horizontally
     pub fn split_pane_horizontal(&mut self) {
         // Create a new buffer for the new split
@@ -1375,6 +1387,11 @@ impl Editor {
                 }
             }
             _ => {
+                // Save position before significant movements
+                if Self::is_significant_movement(&action) {
+                    self.save_current_position();
+                }
+
                 // Convert action to events and apply them
                 if let Some(events) = self.action_to_events(action) {
                     for event in events {
