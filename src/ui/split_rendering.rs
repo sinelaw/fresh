@@ -25,7 +25,7 @@ impl SplitRenderer {
     /// * `theme` - The active theme for colors
     ///
     /// # Returns
-    /// * Vec of (split_id, buffer_id, content_rect, scrollbar_rect) for mouse handling
+    /// * Vec of (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end) for mouse handling
     pub fn render_content(
         frame: &mut Frame,
         area: Rect,
@@ -34,7 +34,7 @@ impl SplitRenderer {
         event_logs: &mut HashMap<BufferId, EventLog>,
         theme: &crate::theme::Theme,
         lsp_waiting: bool,
-    ) -> Vec<(crate::event::SplitId, BufferId, Rect, Rect)> {
+    ) -> Vec<(crate::event::SplitId, BufferId, Rect, Rect, usize, usize)> {
         let _span = tracing::trace_span!("render_content").entered();
 
         // Get all visible splits with their areas
@@ -70,11 +70,11 @@ impl SplitRenderer {
             if let Some(state) = state_opt {
                 Self::render_buffer_in_split(frame, state, event_log_opt, content_rect, is_active, theme, lsp_waiting);
 
-                // Render scrollbar for this split
-                Self::render_scrollbar(frame, state, scrollbar_rect, is_active, theme);
+                // Render scrollbar for this split and get thumb position
+                let (thumb_start, thumb_end) = Self::render_scrollbar(frame, state, scrollbar_rect, is_active, theme);
 
                 // Store the areas for mouse handling
-                split_areas.push((split_id, buffer_id, content_rect, scrollbar_rect));
+                split_areas.push((split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end));
             }
         }
 
@@ -111,16 +111,17 @@ impl SplitRenderer {
     }
 
     /// Render a scrollbar for a split
+    /// Returns (thumb_start, thumb_end) positions for mouse hit testing
     fn render_scrollbar(
         frame: &mut Frame,
         state: &EditorState,
         scrollbar_rect: Rect,
         is_active: bool,
         _theme: &crate::theme::Theme,
-    ) {
+    ) -> (usize, usize) {
         let height = scrollbar_rect.height as usize;
         if height == 0 {
-            return;
+            return (0, 0);
         }
 
         let buffer_len = state.buffer.len();
@@ -178,6 +179,9 @@ impl SplitRenderer {
             let paragraph = Paragraph::new(char).style(Style::default().fg(color));
             frame.render_widget(paragraph, cell_area);
         }
+
+        // Return thumb position for mouse hit testing
+        (thumb_start, thumb_end)
     }
 
     /// Render a single buffer in a split pane
