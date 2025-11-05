@@ -159,6 +159,15 @@ pub struct Editor {
 
     /// Flag to prevent recording movements during navigation
     in_navigation: bool,
+
+    /// Next LSP request ID
+    next_lsp_request_id: u64,
+
+    /// Pending LSP completion request ID (if any)
+    pending_completion_request: Option<u64>,
+
+    /// Pending LSP go-to-definition request ID (if any)
+    pending_goto_definition_request: Option<u64>,
 }
 
 impl Editor {
@@ -250,6 +259,9 @@ impl Editor {
             key_context: KeyContext::Normal,
             position_history: PositionHistory::new(),
             in_navigation: false,
+            next_lsp_request_id: 0,
+            pending_completion_request: None,
+            pending_goto_definition_request: None,
         })
     }
 
@@ -1114,6 +1126,16 @@ impl Editor {
                     tracing::error!("LSP error for {}: {}", language, error);
                     self.status_message = Some(format!("LSP error ({}): {}", language, error));
                 }
+                AsyncMessage::LspCompletion { request_id, items } => {
+                    if let Err(e) = self.handle_completion_response(request_id, items) {
+                        tracing::error!("Error handling completion response: {}", e);
+                    }
+                }
+                AsyncMessage::LspGotoDefinition { request_id, locations } => {
+                    if let Err(e) = self.handle_goto_definition_response(request_id, locations) {
+                        tracing::error!("Error handling goto definition response: {}", e);
+                    }
+                }
                 AsyncMessage::FileChanged { path } => {
                     tracing::info!("File changed externally: {}", path);
                     // TODO: Handle external file changes
@@ -1138,6 +1160,203 @@ impl Editor {
                 }
             }
         }
+    }
+
+    /// Handle LSP completion response
+    fn handle_completion_response(&mut self, request_id: u64, items: Vec<lsp_types::CompletionItem>) -> io::Result<()> {
+        // Check if this is the pending completion request
+        if self.pending_completion_request != Some(request_id) {
+            tracing::debug!("Ignoring completion response for outdated request {}", request_id);
+            return Ok(());
+        }
+
+        self.pending_completion_request = None;
+
+        if items.is_empty() {
+            tracing::debug!("No completion items received");
+            return Ok(());
+        }
+
+        // Convert CompletionItem to PopupListItem
+        use crate::popup::{PopupListItem, PopupContent, Popup, PopupPosition};
+
+        let popup_items: Vec<PopupListItem> = items.iter().map(|item| {
+            let text = item.label.clone();
+            let detail = item.detail.clone();
+            let icon = match item.kind {
+                Some(lsp_types::CompletionItemKind::FUNCTION) | Some(lsp_types::CompletionItemKind::METHOD) => Some("λ".to_string()),
+                Some(lsp_types::CompletionItemKind::VARIABLE) => Some("v".to_string()),
+                Some(lsp_types::CompletionItemKind::STRUCT) | Some(lsp_types::CompletionItemKind::CLASS) => Some("S".to_string()),
+                Some(lsp_types::CompletionItemKind::CONSTANT) => Some("c".to_string()),
+                Some(lsp_types::CompletionItemKind::KEYWORD) => Some("k".to_string()),
+                _ => None,
+            };
+
+            let mut list_item = PopupListItem::new(text);
+            if let Some(detail) = detail {
+                list_item = list_item.with_detail(detail);
+            }
+            if let Some(icon) = icon {
+                list_item = list_item.with_icon(icon);
+            }
+            // Store the insert_text or label as data
+            let data = item.insert_text.clone().or_else(|| Some(item.label.clone()));
+            if let Some(data) = data {
+                list_item = list_item.with_data(data);
+            }
+            list_item
+        }).collect();
+
+        // Show the popup
+        use crate::event::{PopupData, PopupContentData, PopupListItemData, PopupPositionData};
+        let popup_data = PopupData {
+            title: Some("Completion".to_string()),
+            content: PopupContentData::List {
+                items: popup_items.into_iter().map(|item| PopupListItemData {
+                    text: item.text,
+                    detail: item.detail,
+                    icon: item.icon,
+                    data: item.data,
+                }).collect(),
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 50,
+            max_height: 15,
+            bordered: true,
+        };
+
+        self.active_state_mut().apply(&crate::event::Event::ShowPopup { popup: popup_data });
+
+        tracing::info!("Showing completion popup with {} items", items.len());
+
+        Ok(())
+    }
+
+    /// Handle LSP go-to-definition response
+    fn handle_goto_definition_response(&mut self, request_id: u64, locations: Vec<lsp_types::Location>) -> io::Result<()> {
+        // Check if this is the pending request
+        if self.pending_goto_definition_request != Some(request_id) {
+            tracing::debug!("Ignoring go-to-definition response for outdated request {}", request_id);
+            return Ok(());
+        }
+
+        self.pending_goto_definition_request = None;
+
+        if locations.is_empty() {
+            self.status_message = Some("No definition found".to_string());
+            return Ok(());
+        }
+
+        // For now, just jump to the first location
+        let location = &locations[0];
+
+        // Convert URI to file path
+        if let Ok(path) = location.uri.to_file_path() {
+            // Open the file
+            let buffer_id = self.open_file(&path)?;
+
+            // Move cursor to the definition position
+            let line = location.range.start.line as usize;
+            let character = location.range.start.character as usize;
+
+            // Calculate byte position from line and character
+            if let Some(state) = self.buffers.get(&buffer_id) {
+                let position = state.buffer.line_col_to_position(line, character);
+
+                // Move cursor
+                let cursor_id = state.cursors.primary_id();
+                let event = crate::event::Event::MoveCursor {
+                    cursor_id,
+                    position,
+                    anchor: None,
+                };
+
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    state.apply(&event);
+                }
+            }
+
+            self.status_message = Some(format!("Jumped to definition at {}:{}", path.display(), line + 1));
+        } else {
+            self.status_message = Some("Could not open definition location".to_string());
+        }
+
+        Ok(())
+    }
+
+    /// Request LSP completion at current cursor position
+    fn request_completion(&mut self) -> io::Result<()> {
+        // Get the current buffer and cursor position
+        let state = self.active_state();
+        let cursor_pos = state.cursors.primary().position;
+
+        // Convert byte position to line/column
+        let (line, character) = state.buffer.position_to_line_col(cursor_pos);
+
+        // Get the current file URI and path
+        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let (uri, file_path) = if let Some(meta) = metadata {
+            (meta.file_uri.as_ref(), meta.file_path.as_ref())
+        } else {
+            (None, None)
+        };
+
+        if let (Some(uri), Some(path)) = (uri, file_path) {
+            // Detect language from file extension
+            if let Some(language) = crate::lsp_manager::detect_language(path) {
+                // Get LSP handle
+                if let Some(lsp) = self.lsp.as_mut() {
+                    if let Some(handle) = lsp.get_or_spawn(&language) {
+                        let request_id = self.next_lsp_request_id;
+                        self.next_lsp_request_id += 1;
+                        self.pending_completion_request = Some(request_id);
+
+                        let _ = handle.completion(request_id, uri.clone(), line as u32, character as u32);
+                        tracing::info!("Requested completion at {}:{}:{}", uri, line, character);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Request LSP go-to-definition at current cursor position
+    fn request_goto_definition(&mut self) -> io::Result<()> {
+        // Get the current buffer and cursor position
+        let state = self.active_state();
+        let cursor_pos = state.cursors.primary().position;
+
+        // Convert byte position to line/column
+        let (line, character) = state.buffer.position_to_line_col(cursor_pos);
+
+        // Get the current file URI and path
+        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let (uri, file_path) = if let Some(meta) = metadata {
+            (meta.file_uri.as_ref(), meta.file_path.as_ref())
+        } else {
+            (None, None)
+        };
+
+        if let (Some(uri), Some(path)) = (uri, file_path) {
+            // Detect language from file extension
+            if let Some(language) = crate::lsp_manager::detect_language(path) {
+                // Get LSP handle
+                if let Some(lsp) = self.lsp.as_mut() {
+                    if let Some(handle) = lsp.get_or_spawn(&language) {
+                        let request_id = self.next_lsp_request_id;
+                        self.next_lsp_request_id += 1;
+                        self.pending_goto_definition_request = Some(request_id);
+
+                        let _ = handle.goto_definition(request_id, uri.clone(), line as u32, character as u32);
+                        tracing::info!("Requested go-to-definition at {}:{}:{}", uri, line, character);
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Determine the current keybinding context based on UI state
@@ -1377,6 +1596,12 @@ impl Editor {
                     PromptType::Command,
                     suggestions,
                 );
+            }
+            Action::LspCompletion => {
+                self.request_completion()?;
+            }
+            Action::LspGotoDefinition => {
+                self.request_goto_definition()?;
             }
             Action::AddCursorNextMatch => self.add_cursor_at_next_match(),
             Action::AddCursorAbove => self.add_cursor_above(),

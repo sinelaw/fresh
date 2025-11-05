@@ -117,6 +117,7 @@
 - [x] Overlay rendering in viewport (red/yellow/blue colors with underline) ✅
 - [x] E2E test for visual diagnostic rendering ✅
 - [x] didSave notification support (diagnostics appear after Ctrl+S) ✅
+- [x] Diagnostics summary in status line (E:N W:N I:N format) ✅
 - [x] Split view support (vertical/horizontal) ✅
   - [x] Generic split view system that allows multiple buffers displayed simultaneously ✅
   - [x] Support both vertical and horizontal splits ✅
@@ -126,11 +127,20 @@
   - [x] 7 E2E tests covering all split functionality ✅
   - [ ] Dedicated diagnostics buffer type (can display in split) - future enhancement
 - [ ] Diagnostics in gutter (error/warning icons) - deferred
-- [ ] Completion via popup system ← NEXT
+- [x] Completion via popup system ✅
+  - [x] LSP completion request/response handling ✅
+  - [x] Popup display with completion items ✅
+  - [x] Icon support for different completion kinds (function, variable, struct, etc.) ✅
+  - [ ] E2E tests with fake LSP server - TODO
+  - [ ] Completion item insertion on Enter - TODO
 - [x] Convert events to LSP changes (full document sync) ✅
 
 ### 4.3 Advanced LSP Features
-- [ ] Go-to-definition (Ctrl+B or F12)
+- [x] Go-to-definition (Ctrl+B or F12) ✅
+  - [x] LSP definition request/response handling ✅
+  - [x] Jump to definition location ✅
+  - [x] Open file at correct line/column ✅
+  - [ ] E2E tests with fake LSP server - TODO
 - [ ] Hover documentation via popup
 - [ ] Code actions via popup menu
 
