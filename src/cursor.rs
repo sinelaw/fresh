@@ -175,6 +175,16 @@ impl Cursors {
         id
     }
 
+    /// Insert a cursor with a specific ID (for undo/redo)
+    pub fn insert_with_id(&mut self, id: CursorId, cursor: Cursor) {
+        self.cursors.insert(id, cursor);
+        self.primary_id = id; // New cursor becomes primary
+        // Update next_id if necessary to avoid collisions
+        if id.0 >= self.next_id {
+            self.next_id = id.0 + 1;
+        }
+    }
+
     /// Remove a cursor by ID
     pub fn remove(&mut self, id: CursorId) -> Option<Cursor> {
         // Can't remove the last cursor

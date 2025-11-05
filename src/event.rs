@@ -53,8 +53,12 @@ pub enum Event {
         anchor: Option<usize>,
     },
 
-    /// Remove a cursor
-    RemoveCursor { cursor_id: CursorId },
+    /// Remove a cursor (stores cursor state for undo)
+    RemoveCursor {
+        cursor_id: CursorId,
+        position: usize,
+        anchor: Option<usize>,
+    },
 
     /// Scroll the viewport
     Scroll { line_offset: isize },
@@ -276,8 +280,40 @@ impl Event {
                     description: format!("Undo: {}", description),
                 })
             }
-            // MoveCursor, AddCursor, RemoveCursor are not automatically invertible
-            // They would need to store the previous state
+            Event::AddCursor {
+                cursor_id,
+                position,
+                anchor,
+            } => {
+                // To undo adding a cursor, we remove it (store its state for redo)
+                Some(Event::RemoveCursor {
+                    cursor_id: *cursor_id,
+                    position: *position,
+                    anchor: *anchor,
+                })
+            }
+            Event::RemoveCursor {
+                cursor_id,
+                position,
+                anchor,
+            } => {
+                // To undo removing a cursor, we add it back
+                Some(Event::AddCursor {
+                    cursor_id: *cursor_id,
+                    position: *position,
+                    anchor: *anchor,
+                })
+            }
+            Event::MoveCursor {
+                cursor_id,
+                position,
+                anchor,
+            } => {
+                // We can't automatically invert MoveCursor without knowing the old position
+                // This needs to store old_position and old_anchor
+                None
+            }
+            // Other events are not automatically invertible
             _ => None,
         }
     }
@@ -298,7 +334,7 @@ impl Event {
             | Event::Delete { cursor_id, .. }
             | Event::MoveCursor { cursor_id, .. }
             | Event::AddCursor { cursor_id, .. }
-            | Event::RemoveCursor { cursor_id } => Some(*cursor_id),
+            | Event::RemoveCursor { cursor_id, .. } => Some(*cursor_id),
             _ => None,
         }
     }

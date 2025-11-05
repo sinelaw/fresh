@@ -2,7 +2,7 @@ use crate::actions::action_to_events as convert_action_to_events;
 use crate::async_bridge::{AsyncBridge, AsyncMessage};
 use crate::commands::{filter_commands, get_all_commands, Suggestion};
 use crate::config::Config;
-use crate::event::{Event, EventLog};
+use crate::event::{CursorId, Event, EventLog};
 use crate::file_tree::{FileTree, FileTreeView};
 use crate::fs::{FsManager, LocalFsBackend};
 use crate::keybindings::{Action, KeybindingResolver, KeyContext};
@@ -1245,9 +1245,18 @@ impl Editor {
         let state = self.active_state();
         match add_cursor_at_next_match(state) {
             AddCursorResult::Success { cursor, total_cursors } => {
-                let state_mut = self.active_state_mut();
-                state_mut.cursors.add(cursor);
-                state_mut.cursors.normalize();
+                // Create AddCursor event with the next cursor ID
+                let next_id = CursorId(self.active_state().cursors.count());
+                let event = Event::AddCursor {
+                    cursor_id: next_id,
+                    position: cursor.position,
+                    anchor: cursor.anchor,
+                };
+
+                // Log and apply the event
+                self.active_event_log_mut().append(event.clone());
+                self.active_state_mut().apply(&event);
+
                 self.status_message = Some(format!("Added cursor at match ({})", total_cursors));
             }
             AddCursorResult::Failed { message } => {
@@ -1261,9 +1270,18 @@ impl Editor {
         let state = self.active_state();
         match add_cursor_above(state) {
             AddCursorResult::Success { cursor, total_cursors } => {
-                let state_mut = self.active_state_mut();
-                state_mut.cursors.add(cursor);
-                state_mut.cursors.normalize();
+                // Create AddCursor event with the next cursor ID
+                let next_id = CursorId(self.active_state().cursors.count());
+                let event = Event::AddCursor {
+                    cursor_id: next_id,
+                    position: cursor.position,
+                    anchor: cursor.anchor,
+                };
+
+                // Log and apply the event
+                self.active_event_log_mut().append(event.clone());
+                self.active_state_mut().apply(&event);
+
                 self.status_message = Some(format!("Added cursor above ({})", total_cursors));
             }
             AddCursorResult::Failed { message } => {
@@ -1277,9 +1295,18 @@ impl Editor {
         let state = self.active_state();
         match add_cursor_below(state) {
             AddCursorResult::Success { cursor, total_cursors } => {
-                let state_mut = self.active_state_mut();
-                state_mut.cursors.add(cursor);
-                state_mut.cursors.normalize();
+                // Create AddCursor event with the next cursor ID
+                let next_id = CursorId(self.active_state().cursors.count());
+                let event = Event::AddCursor {
+                    cursor_id: next_id,
+                    position: cursor.position,
+                    anchor: cursor.anchor,
+                };
+
+                // Log and apply the event
+                self.active_event_log_mut().append(event.clone());
+                self.active_state_mut().apply(&event);
+
                 self.status_message = Some(format!("Added cursor below ({})", total_cursors));
             }
             AddCursorResult::Failed { message } => {
@@ -2322,7 +2349,6 @@ impl Editor {
             Action::AddCursorNextMatch => self.add_cursor_at_next_match(),
             Action::AddCursorAbove => self.add_cursor_above(),
             Action::AddCursorBelow => self.add_cursor_below(),
-            Action::RemoveSecondaryCursors => self.active_state_mut().cursors.remove_secondary(),
             Action::NextBuffer => self.next_buffer(),
             Action::PrevBuffer => self.prev_buffer(),
             Action::NavigateBack => self.navigate_back(),

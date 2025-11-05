@@ -225,17 +225,14 @@ impl EditorState {
                     Cursor::new(*position)
                 };
 
-                // Check if cursor already exists
-                if self.cursors.get(*cursor_id).is_none() {
-                    // If the cursor_id matches our next_id, use add()
-                    // Otherwise manually insert (for replaying events)
-                    let _ = self.cursors.add(cursor);
-                }
+                // Insert cursor with the specific ID from the event
+                // This is important for undo/redo to work correctly
+                self.cursors.insert_with_id(*cursor_id, cursor);
 
                 self.cursors.normalize();
             }
 
-            Event::RemoveCursor { cursor_id } => {
+            Event::RemoveCursor { cursor_id, .. } => {
                 self.cursors.remove(*cursor_id);
             }
 
