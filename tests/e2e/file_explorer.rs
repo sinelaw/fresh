@@ -13,6 +13,8 @@ fn test_file_explorer_toggle() {
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Screen should show file explorer (check for the border or title)
@@ -26,6 +28,8 @@ fn test_file_explorer_toggle() {
 
     // Toggle file explorer off
     harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // File Explorer text should no longer be visible
@@ -66,6 +70,8 @@ fn test_file_explorer_shows_directory_structure() {
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Wait a moment for async file system operations
@@ -102,6 +108,8 @@ fn test_file_explorer_navigation() {
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
 
     // Wait for initialization
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -145,6 +153,8 @@ fn test_file_explorer_expand_collapse() {
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
 
     // Wait for initialization
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -193,6 +203,8 @@ fn test_file_explorer_open_file() {
 
     // Toggle file explorer on (this initializes it synchronously now)
     harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     let screen_with_explorer = harness.screen_to_string();
@@ -257,6 +269,8 @@ fn test_file_explorer_refresh() {
 
     // Toggle file explorer on
     harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
 
     // Wait for initialization
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -290,6 +304,8 @@ fn test_file_explorer_focus_switching() {
 
     // Open file explorer
     harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // File explorer should be visible and focused
@@ -337,6 +353,8 @@ fn test_file_explorer_context_aware_keybindings() {
 
     // Open file explorer (starts with focus)
     harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Arrow keys should work in file explorer context
@@ -422,6 +440,8 @@ fn test_file_explorer_displays_opened_file_content() {
 
     // Now open file explorer
     harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Expand the root directory
@@ -462,4 +482,149 @@ fn test_file_explorer_displays_opened_file_content() {
 
     // Restore original directory
     std::env::set_current_dir(original_dir).unwrap();
+}
+
+/// Test that file_explorer_toggle_hidden can be called (smoke test)
+#[test]
+fn test_file_explorer_toggle_hidden_smoke() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Toggle file explorer on
+    harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Call toggle_hidden - should not panic
+    harness.editor_mut().file_explorer_toggle_hidden();
+    harness.render().unwrap();
+
+    // Call again to toggle back
+    harness.editor_mut().file_explorer_toggle_hidden();
+    harness.render().unwrap();
+
+    // Test passes if no panic occurs
+}
+
+/// Test that file_explorer_toggle_gitignored can be called (smoke test)
+#[test]
+fn test_file_explorer_toggle_gitignored_smoke() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Toggle file explorer on
+    harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Call toggle_gitignored - should not panic
+    harness.editor_mut().file_explorer_toggle_gitignored();
+    harness.render().unwrap();
+
+    // Call again to toggle back
+    harness.editor_mut().file_explorer_toggle_gitignored();
+    harness.render().unwrap();
+
+    // Test passes if no panic occurs
+}
+
+/// Test that file_explorer_new_file can be called (smoke test)
+#[test]
+fn test_file_explorer_new_file_smoke() {
+    let temp_dir = TempDir::new().unwrap();
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&temp_dir).unwrap();
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Toggle file explorer on
+    harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Call new_file - should not panic (actual file creation depends on runtime)
+    harness.editor_mut().file_explorer_new_file();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // Restore original directory
+    std::env::set_current_dir(original_dir).unwrap();
+
+    // Test passes if no panic occurs
+}
+
+/// Test that file_explorer_new_directory can be called (smoke test)
+#[test]
+fn test_file_explorer_new_directory_smoke() {
+    let temp_dir = TempDir::new().unwrap();
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&temp_dir).unwrap();
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Toggle file explorer on
+    harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Call new_directory - should not panic (actual creation depends on runtime)
+    harness.editor_mut().file_explorer_new_directory();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // Restore original directory
+    std::env::set_current_dir(original_dir).unwrap();
+
+    // Test passes if no panic occurs
+}
+
+/// Test that file_explorer_delete can be called (smoke test)
+#[test]
+fn test_file_explorer_delete_smoke() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_root = temp_dir.path();
+
+    // Create a test file
+    fs::write(project_root.join("test.txt"), "test").unwrap();
+
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&project_root).unwrap();
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Toggle file explorer on
+    harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Expand root and navigate
+    harness.editor_mut().file_explorer_toggle_expand();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    harness.render().unwrap();
+
+    harness.editor_mut().file_explorer_navigate_down();
+    harness.render().unwrap();
+
+    // Call delete - should not panic (actual deletion depends on runtime and safety checks)
+    harness.editor_mut().file_explorer_delete();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // Restore original directory
+    std::env::set_current_dir(original_dir).unwrap();
+
+    // Test passes if no panic occurs
 }
