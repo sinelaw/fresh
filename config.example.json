@@ -1,0 +1,29 @@
+{
+  "theme": "dark",
+  "editor": {
+    "tab_size": 4,
+    "auto_indent": true,
+    "line_numbers": true,
+    "relative_line_numbers": false,
+    "scroll_offset": 3,
+    "syntax_highlighting": true,
+    "highlight_timeout_ms": 5,
+    "snapshot_interval": 100
+  },
+  "keybindings": [],
+  "languages": {
+    "rust": {
+      "extensions": ["rs"],
+      "grammar": "rust",
+      "comment_prefix": "//",
+      "auto_indent": true
+    }
+  },
+  "lsp": {
+    "rust": {
+      "command": "rust-analyzer",
+      "args": [],
+      "enabled": true
+    }
+  }
+}

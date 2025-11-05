@@ -113,8 +113,8 @@ pub struct Popup {
 }
 
 impl Popup {
-    /// Create a new popup with text content
-    pub fn text(content: Vec<String>) -> Self {
+    /// Create a new popup with text content using theme colors
+    pub fn text(content: Vec<String>, theme: &crate::theme::Theme) -> Self {
         Self {
             title: None,
             content: PopupContent::Text(content),
@@ -122,14 +122,14 @@ impl Popup {
             width: 50,
             max_height: 15,
             bordered: true,
-            border_style: Style::default().fg(Color::Gray),
-            background_style: Style::default().bg(Color::Rgb(30, 30, 30)),
+            border_style: Style::default().fg(theme.popup_border_fg),
+            background_style: Style::default().bg(theme.popup_bg),
             scroll_offset: 0,
         }
     }
 
-    /// Create a new popup with a list of items
-    pub fn list(items: Vec<PopupListItem>) -> Self {
+    /// Create a new popup with a list of items using theme colors
+    pub fn list(items: Vec<PopupListItem>, theme: &crate::theme::Theme) -> Self {
         Self {
             title: None,
             content: PopupContent::List { items, selected: 0 },
@@ -137,8 +137,8 @@ impl Popup {
             width: 50,
             max_height: 15,
             bordered: true,
-            border_style: Style::default().fg(Color::Gray),
-            background_style: Style::default().bg(Color::Rgb(30, 30, 30)),
+            border_style: Style::default().fg(theme.popup_border_fg),
+            background_style: Style::default().bg(theme.popup_bg),
             scroll_offset: 0,
         }
     }
@@ -283,7 +283,7 @@ impl Popup {
     }
 
     /// Render the popup to the frame
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, theme: &crate::theme::Theme) {
         let block = if self.bordered {
             let mut block = Block::default()
                 .borders(Borders::ALL)
@@ -335,13 +335,13 @@ impl Popup {
                         if let Some(detail) = &item.detail {
                             spans.push(Span::styled(
                                 format!(" {}", detail),
-                                Style::default().fg(Color::Gray),
+                                Style::default().fg(theme.help_separator_fg),
                             ));
                         }
 
                         let style = if idx == *selected {
                             Style::default()
-                                .bg(Color::Rgb(58, 79, 120))
+                                .bg(theme.popup_selection_bg)
                                 .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default()

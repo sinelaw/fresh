@@ -20,6 +20,7 @@
 - **LSP Integration (Basic)**: JSON-RPC client, LspManager, rust-analyzer support, didOpen/didChange notifications
 - **Core UI Primitives**: Overlay system (decorations), Popup system (floating windows) - Emacs-style general-purpose building blocks
 - **Split view system**: Horizontal/vertical splits, navigation, nested splits - foundation for diagnostics panels
+- **Theme system**: Comprehensive theming with 3 built-in themes (dark, light, high-contrast), JSON config support
 
 ## Current Status
 
@@ -178,12 +179,12 @@
 
 ## Phase 6: Advanced Features (Future)
 
-### 6.1 Theme System
-- [ ] Create Theme struct with all color definitions (background, foreground, selection, cursor, status bar, prompt, suggestions, etc.)
-- [ ] Replace all hardcoded Color/Style references throughout codebase with theme lookups
-- [ ] Make theme replaceable at runtime (store in Editor context)
-- [ ] Load themes from JSON configuration
-- [ ] Support multiple built-in themes (dark, light, high contrast)
+### 6.1 Theme System ✅
+- [x] Create Theme struct with all color definitions (background, foreground, selection, cursor, status bar, prompt, suggestions, etc.) ✅
+- [x] Replace all hardcoded Color/Style references throughout codebase with theme lookups ✅
+- [x] Make theme replaceable at runtime (store in Editor context) ✅
+- [x] Load themes from JSON configuration ✅
+- [x] Support multiple built-in themes (dark, light, high contrast) ✅
 
 ### 6.2 Other Advanced Features
 - [ ] Macros (record/play)

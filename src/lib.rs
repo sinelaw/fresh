@@ -26,6 +26,7 @@ pub mod prompt;
 pub mod signal_handler;
 pub mod split;
 pub mod state;
+pub mod theme;
 pub mod ui;
 pub mod viewport;
 pub mod virtual_buffer;

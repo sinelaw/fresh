@@ -98,6 +98,9 @@ pub struct Editor {
     /// Configuration
     config: Config,
 
+    /// Active theme
+    theme: crate::theme::Theme,
+
     /// Keybinding resolver
     keybindings: KeybindingResolver,
 
@@ -140,6 +143,10 @@ impl Editor {
     /// Create a new editor with the given configuration and terminal dimensions
     pub fn new(config: Config, width: u16, height: u16) -> io::Result<Self> {
         tracing::info!("Editor::new called with width={}, height={}", width, height);
+
+        // Load theme from config
+        let theme = crate::theme::Theme::from_name(&config.theme);
+
         let keybindings = KeybindingResolver::new(&config);
 
         // Create an empty initial buffer
@@ -197,6 +204,7 @@ impl Editor {
             event_logs,
             next_buffer_id: 1,
             config,
+            theme,
             keybindings,
             clipboard: String::new(),
             should_quit: false,
@@ -630,6 +638,11 @@ impl Editor {
         self.should_quit
     }
 
+    /// Get the active theme
+    pub fn theme(&self) -> &crate::theme::Theme {
+        &self.theme
+    }
+
     /// Request the editor to quit
     pub fn quit(&mut self) {
         // TODO: Check for unsaved buffers
@@ -746,6 +759,7 @@ impl Editor {
                                 lsp_diagnostics::apply_diagnostics_to_state(
                                     state,
                                     &diagnostics,
+                                    &self.theme,
                                 );
                                 tracing::info!(
                                     "Applied {} diagnostics to buffer {:?}",
@@ -1150,7 +1164,7 @@ impl Editor {
 
         // If help is visible, render help page instead
         if self.help_renderer.is_visible() {
-            self.help_renderer.render(frame, size, &self.keybindings);
+            self.help_renderer.render(frame, size, &self.keybindings, &self.theme);
             return;
         }
 
@@ -1184,7 +1198,7 @@ impl Editor {
             .split(size);
 
         // Render tabs
-        TabsRenderer::render(frame, chunks[0], &self.buffers, self.active_buffer);
+        TabsRenderer::render(frame, chunks[0], &self.buffers, self.active_buffer, &self.theme);
 
         // Render content
         SplitRenderer::render_content(
@@ -1193,12 +1207,13 @@ impl Editor {
             &self.split_manager,
             &mut self.buffers,
             &mut self.event_logs,
+            &self.theme,
         );
 
         // Render suggestions popup if present
         if suggestion_lines > 0 {
             if let Some(prompt) = &self.prompt {
-                SuggestionsRenderer::render(frame, chunks[2], prompt);
+                SuggestionsRenderer::render(frame, chunks[2], prompt, &self.theme);
             }
             // Status bar is in chunks[3]
             StatusBarRenderer::render(
@@ -1207,6 +1222,7 @@ impl Editor {
                 self.active_state(),
                 &self.status_message,
                 &self.prompt,
+                &self.theme,
             );
         } else {
             // Status bar is in chunks[2]
@@ -1216,10 +1232,13 @@ impl Editor {
                 self.active_state(),
                 &self.status_message,
                 &self.prompt,
+                &self.theme,
             );
         }
 
         // Render popups from the active buffer state
+        // Clone theme to avoid borrow checker issues with active_state_mut()
+        let theme_clone = self.theme.clone();
         let state = self.active_state_mut();
         if state.popups.is_visible() {
             // Get the primary cursor position for popup positioning
@@ -1232,7 +1251,7 @@ impl Editor {
             // Render all popups (bottom to top)
             for popup in state.popups.all() {
                 let popup_area = popup.calculate_area(size, Some(cursor_screen_pos));
-                popup.render(frame, popup_area);
+                popup.render(frame, popup_area, &theme_clone);
             }
         }
     }
