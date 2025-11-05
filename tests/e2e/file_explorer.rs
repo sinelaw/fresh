@@ -20,7 +20,7 @@ fn test_file_explorer_toggle() {
 
     // Should show "File Explorer" in the UI
     assert!(
-        screen_after.contains("File Explorer") || screen_after.contains("📁"),
+        screen_after.contains("File Explorer") || screen_after.contains("[D]"),
         "Screen should show file explorer after toggle"
     );
 
@@ -200,7 +200,7 @@ fn test_file_explorer_open_file() {
 
     // Verify file explorer is showing
     assert!(
-        screen_with_explorer.contains("File Explorer") || screen_with_explorer.contains("📁"),
+        screen_with_explorer.contains("File Explorer") || screen_with_explorer.contains("[D]"),
         "File explorer should be visible"
     );
 
@@ -385,4 +385,81 @@ fn test_focus_file_explorer_action() {
 
     // Should be focused on file explorer
     assert!(harness.editor().file_explorer_visible());
+}
+
+/// Test that opening a file from file explorer actually displays its content
+/// This reproduces the bug where a new buffer is created but the content area
+/// still shows the old buffer
+#[test]
+fn test_file_explorer_displays_opened_file_content() {
+    // Create a test directory with two distinct files
+    let temp_dir = TempDir::new().unwrap();
+    let project_root = temp_dir.path();
+
+    let file1 = project_root.join("first.txt");
+    let file2 = project_root.join("second.txt");
+    let content1 = "This is the FIRST file content";
+    let content2 = "This is the SECOND file content";
+
+    fs::write(&file1, content1).unwrap();
+    fs::write(&file2, content2).unwrap();
+
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&project_root).unwrap();
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Open the first file directly
+    harness.open_file(&file1).unwrap();
+    let screen1 = harness.screen_to_string();
+    println!("Screen after opening first file:\n{}", screen1);
+
+    // Verify first file content is displayed on screen
+    assert!(
+        screen1.contains(content1),
+        "First file content should be visible on screen after opening"
+    );
+
+    // Now open file explorer
+    harness.editor_mut().toggle_file_explorer();
+    harness.render().unwrap();
+
+    // Expand the root directory
+    harness.editor_mut().file_explorer_toggle_expand();
+    harness.render().unwrap();
+
+    // Navigate down to find second.txt
+    // We need to find it in the list (first.txt comes before second.txt alphabetically)
+    for _ in 0..3 {
+        harness.editor_mut().file_explorer_navigate_down();
+    }
+    harness.render().unwrap();
+
+    let screen_before_open = harness.screen_to_string();
+    println!("Screen before opening second file:\n{}", screen_before_open);
+
+    // Open the selected file from file explorer
+    let result = harness.editor_mut().file_explorer_open_file();
+    assert!(result.is_ok(), "Opening file from explorer should succeed");
+
+    harness.render().unwrap();
+    let screen_after_open = harness.screen_to_string();
+    println!("Screen after opening second file:\n{}", screen_after_open);
+
+    // The critical assertion: the screen should now show the second file's content
+    // NOT the first file's content
+    assert!(
+        screen_after_open.contains(content2),
+        "Second file content should be visible on screen after opening from file explorer.\nScreen:\n{}",
+        screen_after_open
+    );
+
+    assert!(
+        !screen_after_open.contains(content1),
+        "First file content should NOT be visible anymore after opening second file.\nScreen:\n{}",
+        screen_after_open
+    );
+
+    // Restore original directory
+    std::env::set_current_dir(original_dir).unwrap();
 }

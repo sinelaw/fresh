@@ -322,6 +322,18 @@ impl SplitManager {
             .and_then(|node| node.buffer_id())
     }
 
+    /// Update the buffer ID of the active split
+    /// Returns true if successful (active split is a leaf), false otherwise
+    pub fn set_active_buffer_id(&mut self, new_buffer_id: BufferId) -> bool {
+        if let Some(node) = self.root.find_mut(self.active_split) {
+            if let SplitNode::Leaf { buffer_id, .. } = node {
+                *buffer_id = new_buffer_id;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Allocate a new split ID
     fn allocate_split_id(&mut self) -> SplitId {
         let id = SplitId(self.next_split_id);
