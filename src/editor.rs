@@ -2361,30 +2361,74 @@ impl Editor {
                 } else {
                     // Normal mode character insertion
                     if let Some(events) = self.action_to_events(Action::InsertChar(c)) {
-                        for event in events {
-                            self.active_event_log_mut().append(event.clone());
-                            self.active_state_mut().apply(&event);
-                            self.notify_lsp_change(&event);
+                        // Wrap multiple events (multi-cursor) in a Batch for atomic undo
+                        if events.len() > 1 {
+                            let batch = Event::Batch {
+                                events: events.clone(),
+                                description: format!("Insert '{}'", c),
+                            };
+                            self.active_event_log_mut().append(batch.clone());
+                            self.active_state_mut().apply(&batch);
+                            // Notify LSP of all changes in the batch
+                            for event in &events {
+                                self.notify_lsp_change(event);
+                            }
+                        } else {
+                            // Single cursor - no need for batch
+                            for event in events {
+                                self.active_event_log_mut().append(event.clone());
+                                self.active_state_mut().apply(&event);
+                                self.notify_lsp_change(&event);
+                            }
                         }
                     }
                 }
             }
             _ => {
                 // Convert action to events and apply them
+                // Get description before moving action
+                let action_description = format!("{:?}", action);
                 if let Some(events) = self.action_to_events(action) {
-                    for event in events {
-                        self.active_event_log_mut().append(event.clone());
-                        self.active_state_mut().apply(&event);
-                        self.notify_lsp_change(&event);
+                    // Wrap multiple events (multi-cursor) in a Batch for atomic undo
+                    if events.len() > 1 {
+                        let batch = Event::Batch {
+                            events: events.clone(),
+                            description: action_description,
+                        };
+                        self.active_event_log_mut().append(batch.clone());
+                        self.active_state_mut().apply(&batch);
 
-                        // Track cursor movements in position history (but not during navigation)
-                        if !self.in_navigation {
-                            if let Event::MoveCursor { position, anchor, .. } = event {
-                                self.position_history.record_movement(
-                                    self.active_buffer,
-                                    position,
-                                    anchor,
-                                );
+                        // Notify LSP and track position history for all events in the batch
+                        for event in &events {
+                            self.notify_lsp_change(event);
+
+                            // Track cursor movements in position history (but not during navigation)
+                            if !self.in_navigation {
+                                if let Event::MoveCursor { position, anchor, .. } = event {
+                                    self.position_history.record_movement(
+                                        self.active_buffer,
+                                        *position,
+                                        *anchor,
+                                    );
+                                }
+                            }
+                        }
+                    } else {
+                        // Single cursor - no need for batch
+                        for event in events {
+                            self.active_event_log_mut().append(event.clone());
+                            self.active_state_mut().apply(&event);
+                            self.notify_lsp_change(&event);
+
+                            // Track cursor movements in position history (but not during navigation)
+                            if !self.in_navigation {
+                                if let Event::MoveCursor { position, anchor, .. } = event {
+                                    self.position_history.record_movement(
+                                        self.active_buffer,
+                                        position,
+                                        anchor,
+                                    );
+                                }
                             }
                         }
                     }
