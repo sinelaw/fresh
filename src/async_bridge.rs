@@ -127,10 +127,9 @@ mod tests {
         let sender = bridge.sender();
 
         // Send a message
-        let msg = AsyncMessage::LspInitialized {
+        sender.send(AsyncMessage::LspInitialized {
             language: "rust".to_string(),
-        };
-        sender.send(msg.clone()).unwrap();
+        }).unwrap();
 
         // Receive it
         let messages = bridge.try_recv_all();
