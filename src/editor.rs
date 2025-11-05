@@ -652,6 +652,11 @@ impl Editor {
         self.buffers.get_mut(&self.active_buffer).unwrap()
     }
 
+    /// Apply an event to the active buffer
+    pub fn apply_event_to_active_buffer(&mut self, event: Event) {
+        self.active_state_mut().apply(&event);
+    }
+
     /// Get the event log for the active buffer
     pub fn active_event_log(&self) -> &EventLog {
         self.event_logs.get(&self.active_buffer).unwrap()
