@@ -130,6 +130,115 @@ Configuration file: `~/.config/editor/config.json`
 
 All keybindings, colors, and LSP servers are configurable.
 
+## 🔒 Process Resource Limits (LSP Servers)
+
+### Why This Matters
+
+Language servers like `rust-analyzer` can sometimes consume excessive CPU or memory, making your system unresponsive. This editor automatically applies resource limits to LSP servers to prevent runaway processes from impacting your workflow.
+
+### What Works Out of the Box
+
+**Memory limiting** works immediately on all modern Linux systems (cgroups v2):
+```
+Using resource limits: memory=6815 MB (cgroup), CPU=90% (unavailable)
+```
+
+The editor will limit LSP servers to **50% of system memory** by default.
+
+### CPU Throttling (Optional Setup Required)
+
+**CPU throttling** (limiting to a percentage like 90%) requires enabling cgroup delegation. This allows unprivileged users to set CPU quotas on their processes.
+
+#### When to Enable This
+
+Enable CPU delegation if:
+- Your LSP server frequently uses 100% CPU and makes the system sluggish
+- You want to prevent any single process from monopolizing CPU resources
+- You're running multiple resource-intensive language servers
+
+#### Quick Setup
+
+**On systemd systems (Ubuntu 18.04+, Debian 10+, Fedora 31+, Arch Linux):**
+
+```bash
+# Create systemd drop-in configuration
+sudo mkdir -p /etc/systemd/system/user@.service.d/
+sudo tee /etc/systemd/system/user@.service.d/delegate.conf <<EOF
+[Service]
+Delegate=cpu cpuset io memory pids
+EOF
+
+# Apply changes
+sudo systemctl daemon-reload
+
+# Log out and back in, then verify:
+cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers
+# Should show: cpu memory io pids
+```
+
+**On non-systemd systems with cgroups v2:**
+
+```bash
+# Enable cpu controller delegation for your user
+echo "+cpu" | sudo tee /sys/fs/cgroup/user.slice/user-$(id -u).slice/cgroup.subtree_control
+
+# Verify:
+cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/cgroup.controllers
+# Should include: cpu
+```
+
+After setup, the editor will show:
+```
+Using resource limits: memory=6815 MB (cgroup), CPU=90% (cgroup)
+```
+
+### Configuration
+
+Limits are configurable per LSP server in `~/.config/editor/config.json`:
+
+```json
+{
+  "lsp": {
+    "rust": {
+      "command": "rust-analyzer",
+      "enabled": true,
+      "process_limits": {
+        "max_memory_mb": null,     // null = 50% of system memory
+        "max_cpu_percent": 90,     // 90% of total CPU
+        "enabled": true            // true on Linux, false elsewhere
+      }
+    }
+  }
+}
+```
+
+### How It Works
+
+The editor uses **cgroups v2** for resource limiting when available:
+
+1. **Memory limiting** (works without delegation):
+   - Uses `memory.max` cgroup controller
+   - Falls back to `setrlimit(RLIMIT_AS)` if cgroups unavailable
+   - Works on all modern Linux systems
+
+2. **CPU throttling** (requires delegation):
+   - Uses `cpu.max` cgroup controller for percentage-based throttling
+   - Requires cpu controller delegation (see setup above)
+   - Unavailable without delegation (no setrlimit equivalent)
+
+3. **Platform support**:
+   - Linux: Full support (memory + CPU)
+   - macOS: TODO (will use setrlimit for memory)
+   - Windows: TODO (will use Job Objects)
+
+### References
+
+| Resource | Description | Link |
+| :--- | :--- | :--- |
+| **Arch Wiki: cgroups** | Comprehensive guide to cgroups v2 and delegation | [wiki.archlinux.org](https://wiki.archlinux.org/title/Cgroups) |
+| **Ubuntu Security Docs** | Explains cgroups and security benefits on Ubuntu | [Ubuntu cgroups](https://documentation.ubuntu.com/security/docs/security-features/privilege-restriction/cgroups/) |
+| **systemd.resource-control** | Documentation for CPU and memory quota properties | [systemd.resource-control](https://www.freedesktop.org/software/systemd/man/systemd.resource-control.html) |
+
 ## Large File Support
 
 This editor is designed to handle files of any size:
