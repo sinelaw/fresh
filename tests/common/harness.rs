@@ -282,6 +282,34 @@ impl EditorTestHarness {
     pub fn assert_no_selection(&self) {
         assert!(!self.has_selection(), "Expected no selection but found one");
     }
+
+    /// Process pending async messages and render
+    /// Useful for testing async features like git grep, file explorer, etc.
+    pub fn process_async_and_render(&mut self) -> io::Result<()> {
+        self.editor.process_async_messages();
+        self.render()?;
+        Ok(())
+    }
+
+    /// Wait for async operations with timeout
+    /// Repeatedly processes async messages until condition is met or timeout
+    pub fn wait_for_async<F>(&mut self, mut condition: F, timeout_ms: u64) -> io::Result<bool>
+    where
+        F: FnMut(&Self) -> bool,
+    {
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+
+        while start.elapsed() < timeout {
+            self.process_async_and_render()?;
+            if condition(self) {
+                return Ok(true);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        Ok(false)
+    }
 }
 
 #[cfg(test)]
