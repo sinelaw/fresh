@@ -10,3 +10,4 @@ pub mod rendering;
 pub mod scrolling;
 pub mod selection;
 pub mod split_view;
+pub mod theme;
