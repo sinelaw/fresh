@@ -137,21 +137,12 @@ impl PositionHistory {
     /// This is called when:
     /// - Switching buffers
     /// - Before navigating back/forward
-    /// - Timeout expires
     pub fn commit_pending_movement(&mut self) {
         if let Some(pending) = self.pending_movement.take() {
-            // Only commit if we've actually moved from our current position
-            let should_commit = match self.current() {
-                Some(current) => {
-                    current.buffer_id != pending.start_entry.buffer_id
-                        || current.position != pending.start_entry.position
-                }
-                None => true,
-            };
-
-            if should_commit {
-                self.push(pending.start_entry);
-            }
+            // Always call push(), which handles both:
+            // 1. Truncating forward history (if we're not at the end)
+            // 2. Checking for duplicates before adding
+            self.push(pending.start_entry);
         }
     }
 
@@ -271,7 +262,6 @@ impl PositionHistory {
     }
 
     /// Get current index (for debugging)
-    #[cfg(test)]
     pub fn current_index(&self) -> Option<usize> {
         self.current_index
     }

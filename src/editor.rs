@@ -155,7 +155,7 @@ pub struct Editor {
     key_context: KeyContext,
 
     /// Position history for back/forward navigation
-    position_history: PositionHistory,
+    pub position_history: PositionHistory,
 
     /// Flag to prevent recording movements during navigation
     in_navigation: bool,
