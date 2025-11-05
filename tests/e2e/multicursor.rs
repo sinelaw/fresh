@@ -590,6 +590,156 @@ fn test_multi_cursor_comprehensive_abc_editing() {
     assert_eq!(harness.editor().active_state().cursors.iter().count(), 4);
 }
 
+/// Test single cursor visibility
+#[test]
+fn test_single_cursor_visible() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::style::Modifier;
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type some text
+    harness.type_text("Hello World").unwrap();
+
+    // Should have exactly 1 cursor
+    assert_eq!(harness.cursor_count(), 1);
+
+    // Move to start
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // The cursor should be visible at the beginning of the line
+    // Check that there's a cursor indicator (REVERSED style) at the cursor position
+    // Tab bar is at y=0, content starts at y=1
+    // With line numbers, the 'H' of "Hello" should be at some x position
+
+    let mut cursor_found = false;
+    for x in 0..20 {
+        if let Some(style) = harness.get_cell_style(x, 1) {
+            if style.add_modifier.contains(Modifier::REVERSED) {
+                cursor_found = true;
+                // Also check that the character at this position is 'H'
+                if let Some(text) = harness.get_cell(x, 1) {
+                    assert_eq!(text, "H", "Cursor should be at 'H' character");
+                }
+                break;
+            }
+        }
+    }
+
+    assert!(cursor_found, "Single cursor should be visible with REVERSED style at 'H'");
+
+    // Move cursor to the middle (after "Hello ")
+    for _ in 0..6 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // Cursor should now be at 'W'
+    let mut cursor_found_at_w = false;
+    for x in 0..20 {
+        if let Some(style) = harness.get_cell_style(x, 1) {
+            if style.add_modifier.contains(Modifier::REVERSED) {
+                if let Some(text) = harness.get_cell(x, 1) {
+                    if text == "W" {
+                        cursor_found_at_w = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(cursor_found_at_w, "Cursor should be visible at 'W' after moving");
+
+    // Move to end
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // At the end, cursor should be after 'd' (at end of line, might be on a space or newline char)
+    // Just verify we have a REVERSED style somewhere
+    let mut cursor_found_at_end = false;
+    for x in 0..30 {
+        if let Some(style) = harness.get_cell_style(x, 1) {
+            if style.add_modifier.contains(Modifier::REVERSED) {
+                cursor_found_at_end = true;
+                break;
+            }
+        }
+    }
+
+    assert!(cursor_found_at_end, "Cursor should be visible at end of line");
+}
+
+/// Test cursor visibility on empty lines
+#[test]
+fn test_cursor_visible_on_empty_line() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::style::Modifier;
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Start with empty buffer (empty line)
+    harness.render().unwrap();
+
+    // Should have exactly 1 cursor
+    assert_eq!(harness.cursor_count(), 1);
+
+    // Cursor should be visible on the empty line
+    let mut cursor_found = false;
+    for x in 0..20 {
+        if let Some(style) = harness.get_cell_style(x, 1) {
+            if style.add_modifier.contains(Modifier::REVERSED) {
+                cursor_found = true;
+                break;
+            }
+        }
+    }
+
+    assert!(cursor_found, "Cursor should be visible on empty line");
+
+    // Type some text, then delete it to create an empty line again
+    harness.type_text("Test").unwrap();
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // Cursor should still be visible on empty line
+    let mut cursor_found_after_delete = false;
+    for x in 0..20 {
+        if let Some(style) = harness.get_cell_style(x, 1) {
+            if style.add_modifier.contains(Modifier::REVERSED) {
+                cursor_found_after_delete = true;
+                break;
+            }
+        }
+    }
+
+    assert!(cursor_found_after_delete, "Cursor should be visible on empty line after deleting text");
+
+    // Add multiple empty lines and test cursor on different empty lines
+    harness.type_text("\n\n\n").unwrap();
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Cursor should be visible on the empty line we moved to
+    let mut cursor_found_on_middle_empty = false;
+    for y in 1..10 {
+        for x in 0..20 {
+            if let Some(style) = harness.get_cell_style(x, y) {
+                if style.add_modifier.contains(Modifier::REVERSED) {
+                    cursor_found_on_middle_empty = true;
+                    break;
+                }
+            }
+        }
+        if cursor_found_on_middle_empty {
+            break;
+        }
+    }
+
+    assert!(cursor_found_on_middle_empty, "Cursor should be visible on middle empty line");
+}
+
 /// Test to investigate cursor behavior with identical line content
 #[test]
 fn test_identical_lines_cursor_positions() {

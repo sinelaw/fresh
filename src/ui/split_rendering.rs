@@ -294,6 +294,20 @@ impl SplitRenderer {
                 char_index += ch.len_utf8();
             }
 
+            // Check if any cursor is at the end of this line (or beyond)
+            // If so, add a space with cursor styling to make it visible
+            let line_end_pos = line_start + char_index;
+            let cursor_at_end = cursor_positions.iter().any(|&pos| pos == line_end_pos);
+
+            if cursor_at_end && is_active {
+                // Add a space character with REVERSED style to show cursor at end of line
+                let cursor_style = Style::default()
+                    .fg(theme.editor_fg)
+                    .bg(theme.editor_bg)
+                    .add_modifier(Modifier::REVERSED);
+                line_spans.push(Span::styled(" ", cursor_style));
+            }
+
             lines.push(Line::from(line_spans));
         }
 
