@@ -857,5 +857,207 @@ mod tests {
         assert_eq!(Action::from_str("move_left", &args), Some(Action::MoveLeft));
         assert_eq!(Action::from_str("save", &args), Some(Action::Save));
         assert_eq!(Action::from_str("unknown", &args), None);
+
+        // Test new context-specific actions
+        assert_eq!(Action::from_str("help_toggle", &args), Some(Action::HelpToggle));
+        assert_eq!(Action::from_str("prompt_confirm", &args), Some(Action::PromptConfirm));
+        assert_eq!(Action::from_str("popup_cancel", &args), Some(Action::PopupCancel));
+    }
+
+    #[test]
+    fn test_key_context_from_when_clause() {
+        assert_eq!(KeyContext::from_when_clause("normal"), Some(KeyContext::Normal));
+        assert_eq!(KeyContext::from_when_clause("help"), Some(KeyContext::Help));
+        assert_eq!(KeyContext::from_when_clause("prompt"), Some(KeyContext::Prompt));
+        assert_eq!(KeyContext::from_when_clause("popup"), Some(KeyContext::Popup));
+        assert_eq!(KeyContext::from_when_clause("  help  "), Some(KeyContext::Help)); // Test trimming
+        assert_eq!(KeyContext::from_when_clause("unknown"), None);
+        assert_eq!(KeyContext::from_when_clause(""), None);
+    }
+
+    #[test]
+    fn test_key_context_to_when_clause() {
+        assert_eq!(KeyContext::Normal.to_when_clause(), "normal");
+        assert_eq!(KeyContext::Help.to_when_clause(), "help");
+        assert_eq!(KeyContext::Prompt.to_when_clause(), "prompt");
+        assert_eq!(KeyContext::Popup.to_when_clause(), "popup");
+    }
+
+    #[test]
+    fn test_context_specific_bindings() {
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        // Test help context bindings
+        let esc_event = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
+        assert_eq!(resolver.resolve(&esc_event, KeyContext::Help), Action::HelpToggle);
+        assert_eq!(resolver.resolve(&esc_event, KeyContext::Normal), Action::RemoveSecondaryCursors);
+
+        // Test prompt context bindings
+        let enter_event = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
+        assert_eq!(resolver.resolve(&enter_event, KeyContext::Prompt), Action::PromptConfirm);
+        assert_eq!(resolver.resolve(&enter_event, KeyContext::Normal), Action::InsertNewline);
+
+        // Test popup context bindings
+        let up_event = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());
+        assert_eq!(resolver.resolve(&up_event, KeyContext::Popup), Action::PopupSelectPrev);
+        assert_eq!(resolver.resolve(&up_event, KeyContext::Normal), Action::MoveUp);
+    }
+
+    #[test]
+    fn test_context_fallback_to_normal() {
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        // Ctrl+S should work in all contexts (falls back to normal)
+        let save_event = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        assert_eq!(resolver.resolve(&save_event, KeyContext::Normal), Action::Save);
+        assert_eq!(resolver.resolve(&save_event, KeyContext::Help), Action::Save);
+        assert_eq!(resolver.resolve(&save_event, KeyContext::Popup), Action::Save);
+        // Note: Prompt context might handle this differently in practice
+    }
+
+    #[test]
+    fn test_context_priority_resolution() {
+        use crate::config::Keybinding;
+
+        // Create a config with a custom binding that overrides default in help context
+        let mut config = Config::default();
+        config.keybindings.push(Keybinding {
+            key: "esc".to_string(),
+            modifiers: vec![],
+            action: "quit".to_string(), // Override Esc in help context to quit
+            args: HashMap::new(),
+            when: Some("help".to_string()),
+        });
+
+        let resolver = KeybindingResolver::new(&config);
+        let esc_event = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
+
+        // In help context, custom binding should override default HelpToggle
+        assert_eq!(resolver.resolve(&esc_event, KeyContext::Help), Action::Quit);
+
+        // In normal context, should still be RemoveSecondaryCursors
+        assert_eq!(resolver.resolve(&esc_event, KeyContext::Normal), Action::RemoveSecondaryCursors);
+    }
+
+    #[test]
+    fn test_character_input_in_contexts() {
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        let char_event = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::empty());
+
+        // Character input should work in Normal and Prompt contexts
+        assert_eq!(resolver.resolve(&char_event, KeyContext::Normal), Action::InsertChar('a'));
+        assert_eq!(resolver.resolve(&char_event, KeyContext::Prompt), Action::InsertChar('a'));
+
+        // But not in Help or Popup contexts (returns None)
+        assert_eq!(resolver.resolve(&char_event, KeyContext::Help), Action::None);
+        assert_eq!(resolver.resolve(&char_event, KeyContext::Popup), Action::None);
+    }
+
+    #[test]
+    fn test_custom_keybinding_loading() {
+        use crate::config::Keybinding;
+
+        let mut config = Config::default();
+
+        // Add a custom keybinding for normal context
+        config.keybindings.push(Keybinding {
+            key: "f".to_string(),
+            modifiers: vec!["ctrl".to_string()],
+            action: "command_palette".to_string(),
+            args: HashMap::new(),
+            when: None, // Default to normal context
+        });
+
+        // Add a custom keybinding for prompt context
+        config.keybindings.push(Keybinding {
+            key: "k".to_string(),
+            modifiers: vec!["ctrl".to_string()],
+            action: "prompt_cancel".to_string(),
+            args: HashMap::new(),
+            when: Some("prompt".to_string()),
+        });
+
+        let resolver = KeybindingResolver::new(&config);
+
+        // Test normal context custom binding
+        let ctrl_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
+        assert_eq!(resolver.resolve(&ctrl_f, KeyContext::Normal), Action::CommandPalette);
+
+        // Test prompt context custom binding
+        let ctrl_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
+        assert_eq!(resolver.resolve(&ctrl_k, KeyContext::Prompt), Action::PromptCancel);
+        assert_eq!(resolver.resolve(&ctrl_k, KeyContext::Normal), Action::None); // Not bound in normal
+    }
+
+    #[test]
+    fn test_all_context_default_bindings_exist() {
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        // Verify that default bindings exist for all contexts
+        assert!(resolver.default_bindings.contains_key(&KeyContext::Normal));
+        assert!(resolver.default_bindings.contains_key(&KeyContext::Help));
+        assert!(resolver.default_bindings.contains_key(&KeyContext::Prompt));
+        assert!(resolver.default_bindings.contains_key(&KeyContext::Popup));
+
+        // Verify each context has some bindings
+        assert!(!resolver.default_bindings[&KeyContext::Normal].is_empty());
+        assert!(!resolver.default_bindings[&KeyContext::Help].is_empty());
+        assert!(!resolver.default_bindings[&KeyContext::Prompt].is_empty());
+        assert!(!resolver.default_bindings[&KeyContext::Popup].is_empty());
+    }
+
+    #[test]
+    fn test_resolve_determinism() {
+        // Property: Resolving the same key in the same context should always return the same action
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        let test_cases = vec![
+            (KeyCode::Left, KeyModifiers::empty(), KeyContext::Normal),
+            (KeyCode::Esc, KeyModifiers::empty(), KeyContext::Help),
+            (KeyCode::Enter, KeyModifiers::empty(), KeyContext::Prompt),
+            (KeyCode::Down, KeyModifiers::empty(), KeyContext::Popup),
+        ];
+
+        for (key_code, modifiers, context) in test_cases {
+            let event = KeyEvent::new(key_code, modifiers);
+            let action1 = resolver.resolve(&event, context);
+            let action2 = resolver.resolve(&event, context);
+            let action3 = resolver.resolve(&event, context);
+
+            assert_eq!(action1, action2, "Resolve should be deterministic");
+            assert_eq!(action2, action3, "Resolve should be deterministic");
+        }
+    }
+
+    #[test]
+    fn test_modifier_combinations() {
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        // Test that modifier combinations are distinguished correctly
+        let char_s = KeyCode::Char('s');
+
+        let no_mod = KeyEvent::new(char_s, KeyModifiers::empty());
+        let ctrl = KeyEvent::new(char_s, KeyModifiers::CONTROL);
+        let shift = KeyEvent::new(char_s, KeyModifiers::SHIFT);
+        let ctrl_shift = KeyEvent::new(char_s, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+
+        let action_no_mod = resolver.resolve(&no_mod, KeyContext::Normal);
+        let action_ctrl = resolver.resolve(&ctrl, KeyContext::Normal);
+        let action_shift = resolver.resolve(&shift, KeyContext::Normal);
+        let action_ctrl_shift = resolver.resolve(&ctrl_shift, KeyContext::Normal);
+
+        // These should all be different actions (or at least distinguishable)
+        assert_eq!(action_no_mod, Action::InsertChar('s'));
+        assert_eq!(action_ctrl, Action::Save);
+        assert_eq!(action_shift, Action::InsertChar('s')); // Shift alone is still character input
+        // Ctrl+Shift+S is not bound by default, should return None
+        assert_eq!(action_ctrl_shift, Action::None);
     }
 }
