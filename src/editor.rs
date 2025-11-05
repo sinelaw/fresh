@@ -189,6 +189,11 @@ struct MouseState {
     dragging_scrollbar: Option<SplitId>,
     /// Last mouse position
     last_position: Option<(u16, u16)>,
+    /// Initial mouse row when starting to drag the scrollbar thumb
+    /// Used to calculate relative movement rather than jumping
+    drag_start_row: Option<u16>,
+    /// Initial viewport top_byte when starting to drag the scrollbar thumb
+    drag_start_top_byte: Option<usize>,
 }
 
 /// Cached layout information for mouse hit testing
@@ -198,8 +203,9 @@ struct CachedLayout {
     file_explorer_area: Option<ratatui::layout::Rect>,
     /// Editor content area (excluding file explorer)
     editor_content_area: Option<ratatui::layout::Rect>,
-    /// Individual split areas with their scrollbar areas
-    split_areas: Vec<(SplitId, BufferId, ratatui::layout::Rect, ratatui::layout::Rect)>, // (split_id, buffer_id, content_rect, scrollbar_rect)
+    /// Individual split areas with their scrollbar areas and thumb positions
+    /// (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end)
+    split_areas: Vec<(SplitId, BufferId, ratatui::layout::Rect, ratatui::layout::Rect, usize, usize)>,
 }
 
 impl Editor {
@@ -2532,8 +2538,10 @@ impl Editor {
                 self.handle_mouse_drag(col, row)?;
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                // Stop dragging
+                // Stop dragging and clear drag state
                 self.mouse_state.dragging_scrollbar = None;
+                self.mouse_state.drag_start_row = None;
+                self.mouse_state.drag_start_top_byte = None;
             }
             _ => {
                 // Ignore other mouse events for now
@@ -2559,21 +2567,37 @@ impl Editor {
         }
 
         // Check if click is on a scrollbar
-        for (split_id, buffer_id, _content_rect, scrollbar_rect) in &self.cached_layout.split_areas {
+        for (split_id, buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in &self.cached_layout.split_areas {
             if col >= scrollbar_rect.x
                 && col < scrollbar_rect.x + scrollbar_rect.width
                 && row >= scrollbar_rect.y
                 && row < scrollbar_rect.y + scrollbar_rect.height
             {
-                // Click on scrollbar - start dragging and jump to position
-                self.mouse_state.dragging_scrollbar = Some(*split_id);
-                self.handle_scrollbar_drag(col, row, *buffer_id, *scrollbar_rect)?;
+                // Calculate relative row within scrollbar
+                let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
+
+                // Check if click is on thumb or track
+                let is_on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
+
+                if is_on_thumb {
+                    // Click on thumb - start drag from current position (don't jump)
+                    self.mouse_state.dragging_scrollbar = Some(*split_id);
+                    self.mouse_state.drag_start_row = Some(row);
+                    // Record the current viewport position
+                    if let Some(state) = self.buffers.get(buffer_id) {
+                        self.mouse_state.drag_start_top_byte = Some(state.viewport.top_byte);
+                    }
+                } else {
+                    // Click on track - jump to position
+                    self.mouse_state.dragging_scrollbar = Some(*split_id);
+                    self.handle_scrollbar_jump(col, row, *buffer_id, *scrollbar_rect)?;
+                }
                 return Ok(());
             }
         }
 
         // Check if click is in editor content area
-        for (split_id, buffer_id, content_rect, _scrollbar_rect) in &self.cached_layout.split_areas {
+        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in &self.cached_layout.split_areas {
             if col >= content_rect.x
                 && col < content_rect.x + content_rect.width
                 && row >= content_rect.y
@@ -2593,9 +2617,16 @@ impl Editor {
         // If dragging scrollbar, update scroll position
         if let Some(dragging_split_id) = self.mouse_state.dragging_scrollbar {
             // Find the buffer and scrollbar rect for this split
-            for (split_id, buffer_id, _content_rect, scrollbar_rect) in &self.cached_layout.split_areas {
+            for (split_id, buffer_id, _content_rect, scrollbar_rect, _thumb_start, _thumb_end) in &self.cached_layout.split_areas {
                 if *split_id == dragging_split_id {
-                    self.handle_scrollbar_drag(col, row, *buffer_id, *scrollbar_rect)?;
+                    // Check if we started dragging from the thumb (have drag_start_row)
+                    if self.mouse_state.drag_start_row.is_some() {
+                        // Relative drag from thumb
+                        self.handle_scrollbar_drag_relative(row, *buffer_id, *scrollbar_rect)?;
+                    } else {
+                        // Jump drag (started from track)
+                        self.handle_scrollbar_jump(col, row, *buffer_id, *scrollbar_rect)?;
+                    }
                     return Ok(());
                 }
             }
@@ -2603,8 +2634,64 @@ impl Editor {
         Ok(())
     }
 
-    /// Handle scrollbar drag
-    fn handle_scrollbar_drag(
+    /// Handle scrollbar drag with relative movement (when dragging from thumb)
+    fn handle_scrollbar_drag_relative(
+        &mut self,
+        row: u16,
+        buffer_id: BufferId,
+        scrollbar_rect: ratatui::layout::Rect,
+    ) -> std::io::Result<()> {
+        let drag_start_row = match self.mouse_state.drag_start_row {
+            Some(r) => r,
+            None => return Ok(()), // No drag start, shouldn't happen
+        };
+
+        let drag_start_top_byte = match self.mouse_state.drag_start_top_byte {
+            Some(b) => b,
+            None => return Ok(()), // No drag start, shouldn't happen
+        };
+
+        // Calculate the offset in rows
+        let row_offset = (row as i32) - (drag_start_row as i32);
+
+        // Get the buffer state
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let scrollbar_height = scrollbar_rect.height as usize;
+            if scrollbar_height == 0 {
+                return Ok(());
+            }
+
+            let buffer_len = state.buffer.len();
+
+            // Calculate how much to scroll based on the row offset
+            // Each pixel of movement corresponds to (buffer_len / scrollbar_height) bytes
+            let bytes_per_pixel = buffer_len as f64 / scrollbar_height as f64;
+            let byte_offset = (row_offset as f64 * bytes_per_pixel) as i64;
+
+            // Calculate new top_byte relative to drag start
+            let new_top_byte = if byte_offset >= 0 {
+                drag_start_top_byte.saturating_add(byte_offset as usize)
+            } else {
+                drag_start_top_byte.saturating_sub((-byte_offset) as usize)
+            };
+
+            // Clamp to valid range with scroll limiting
+            let max_top_byte = Self::calculate_max_scroll_position(&state.buffer, state.viewport.visible_line_count());
+            let new_top_byte = new_top_byte.min(max_top_byte);
+
+            // Find the line start for this byte position
+            let iter = state.buffer.line_iterator(new_top_byte);
+            let line_start = iter.current_position();
+
+            // Set viewport top to this position
+            state.viewport.top_byte = line_start;
+        }
+
+        Ok(())
+    }
+
+    /// Handle scrollbar jump (clicking on track or absolute positioning)
+    fn handle_scrollbar_jump(
         &mut self,
         _col: u16,
         row: u16,
@@ -2633,11 +2720,60 @@ impl Editor {
             let iter = state.buffer.line_iterator(target_byte);
             let line_start = iter.current_position();
 
+            // Apply scroll limiting
+            let max_top_byte = Self::calculate_max_scroll_position(&state.buffer, state.viewport.visible_line_count());
+            let limited_line_start = line_start.min(max_top_byte);
+
             // Set viewport top to this position
-            state.viewport.top_byte = line_start;
+            state.viewport.top_byte = limited_line_start;
         }
 
         Ok(())
+    }
+
+    /// Calculate the maximum allowed scroll position
+    /// Ensures the last line is always at the bottom unless the buffer is smaller than viewport
+    fn calculate_max_scroll_position(buffer: &crate::buffer::Buffer, viewport_height: usize) -> usize {
+        if viewport_height == 0 {
+            return 0;
+        }
+
+        let buffer_len = buffer.len();
+        if buffer_len == 0 {
+            return 0;
+        }
+
+        // Count total lines in buffer
+        let mut line_count = 0;
+        let mut iter = buffer.line_iterator(0);
+        while iter.next().is_some() {
+            line_count += 1;
+        }
+
+        // If buffer has fewer lines than viewport, can't scroll at all
+        if line_count <= viewport_height {
+            return 0;
+        }
+
+        // Calculate how many lines from the start we can scroll
+        // We want to be able to scroll so that the last line is at the bottom
+        let scrollable_lines = line_count.saturating_sub(viewport_height);
+
+        // Find the byte position of the line at scrollable_lines offset
+        let mut iter = buffer.line_iterator(0);
+        let mut current_line = 0;
+        let mut max_byte_pos = 0;
+
+        while current_line < scrollable_lines {
+            if let Some((pos, _content)) = iter.next() {
+                max_byte_pos = pos;
+                current_line += 1;
+            } else {
+                break;
+            }
+        }
+
+        max_byte_pos
     }
 
     /// Handle click in editor content area

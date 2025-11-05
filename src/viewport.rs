@@ -90,6 +90,60 @@ impl Viewport {
             }
         }
         self.top_byte = iter.current_position();
+
+        // Apply scroll limiting
+        self.apply_scroll_limit(buffer);
+    }
+
+    /// Apply scroll limiting to prevent scrolling past the end of the buffer
+    /// Ensures the last line is always at the bottom unless the buffer is smaller than viewport
+    pub fn apply_scroll_limit(&mut self, buffer: &Buffer) {
+        let viewport_height = self.visible_line_count();
+        if viewport_height == 0 {
+            return;
+        }
+
+        let buffer_len = buffer.len();
+        if buffer_len == 0 {
+            self.top_byte = 0;
+            return;
+        }
+
+        // Count total lines in buffer
+        let mut line_count = 0;
+        let mut iter = buffer.line_iterator(0);
+        while iter.next().is_some() {
+            line_count += 1;
+        }
+
+        // If buffer has fewer lines than viewport, scroll to top
+        if line_count <= viewport_height {
+            self.top_byte = 0;
+            return;
+        }
+
+        // Calculate how many lines from the start we can scroll
+        // We want to be able to scroll so that the last line is at the bottom
+        let scrollable_lines = line_count.saturating_sub(viewport_height);
+
+        // Find the byte position of the line at scrollable_lines offset
+        let mut iter = buffer.line_iterator(0);
+        let mut current_line = 0;
+        let mut max_byte_pos = 0;
+
+        while current_line < scrollable_lines {
+            if let Some((pos, _content)) = iter.next() {
+                max_byte_pos = pos;
+                current_line += 1;
+            } else {
+                break;
+            }
+        }
+
+        // Clamp top_byte to not exceed max_byte_pos
+        if self.top_byte > max_byte_pos {
+            self.top_byte = max_byte_pos;
+        }
     }
 
     /// Scroll to a specific line (byte-based)
@@ -151,6 +205,9 @@ impl Viewport {
             self.top_byte = iter.current_position();
         }
 
+        // Apply scroll limiting
+        self.apply_scroll_limit(buffer);
+
         // Horizontal scrolling
         let cursor_column = cursor.position.saturating_sub(cursor_line_start);
         self.ensure_column_visible(cursor_column, buffer);
@@ -209,6 +266,9 @@ impl Viewport {
             }
             self.top_byte = iter.current_position();
             // Line number is now tracked automatically via LineCache
+
+            // Apply scroll limiting
+            self.apply_scroll_limit(buffer);
         }
     }
 
