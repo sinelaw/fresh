@@ -1,3 +1,4 @@
+use crate::process_limits::ProcessLimits;
 use lsp_types::{
     notification::{Notification, PublishDiagnostics},
     request::{Initialize, Request, Shutdown},
@@ -459,6 +460,10 @@ pub struct LspServerConfig {
     /// Whether the server is enabled
     #[serde(default = "default_true")]
     pub enabled: bool,
+
+    /// Process resource limits (memory and CPU)
+    #[serde(default)]
+    pub process_limits: ProcessLimits,
 }
 
 fn default_true() -> bool {

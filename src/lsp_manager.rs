@@ -86,6 +86,7 @@ impl LspManager {
             &config.args,
             language.to_string(),
             async_bridge,
+            config.process_limits.clone(),
         ) {
             Ok(handle) => {
                 // Initialize the handle (non-blocking)
@@ -170,6 +171,7 @@ mod tests {
             enabled: true,
             command: "rust-analyzer".to_string(),
             args: vec![],
+            process_limits: crate::process_limits::ProcessLimits::unlimited(),
         };
 
         manager.set_language_config("rust".to_string(), config);
@@ -190,6 +192,7 @@ mod tests {
                 enabled: true,
                 command: "rust-analyzer".to_string(),
                 args: vec![],
+                process_limits: crate::process_limits::ProcessLimits::unlimited(),
             },
         );
 
@@ -226,6 +229,7 @@ mod tests {
                 enabled: false,
                 command: "rust-analyzer".to_string(),
                 args: vec![],
+                process_limits: crate::process_limits::ProcessLimits::unlimited(),
             },
         );
 

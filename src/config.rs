@@ -556,6 +556,7 @@ impl Config {
                 command: "rust-analyzer".to_string(),
                 args: vec![],
                 enabled: true,
+                process_limits: crate::process_limits::ProcessLimits::default(),
             },
         );
 

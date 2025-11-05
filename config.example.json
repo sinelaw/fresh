@@ -23,7 +23,13 @@
     "rust": {
       "command": "rust-analyzer",
       "args": [],
-      "enabled": true
+      "enabled": true,
+      "process_limits": {
+        "max_memory_mb": null,
+        "max_cpu_percent": 90,
+        "enabled": true
+      }
     }
-  }
+  },
+  "_comment_lsp": "Process limits: max_memory_mb defaults to 50% of system memory if null, max_cpu_percent defaults to 90% of total CPU. Only enabled on Linux by default."
 }

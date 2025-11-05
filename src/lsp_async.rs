@@ -12,6 +12,7 @@
 //! - Uses tokio channels for command/response communication
 
 use crate::async_bridge::{AsyncBridge, AsyncMessage};
+use crate::process_limits::ProcessLimits;
 use lsp_types::{
     notification::{
         DidChangeTextDocument, DidOpenTextDocument, DidSaveTextDocument, Initialized,
@@ -510,15 +511,24 @@ impl LspTask {
         args: &[String],
         language: String,
         async_tx: std_mpsc::Sender<AsyncMessage>,
+        process_limits: &ProcessLimits,
     ) -> Result<Self, String> {
         tracing::info!("Spawning async LSP server: {} {:?}", command, args);
+        tracing::info!("Process limits: {:?}", process_limits);
 
-        let mut process = Command::new(command)
-            .args(args)
+        let mut cmd = Command::new(command);
+        cmd.args(args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+
+        // Apply resource limits to the process
+        process_limits
+            .apply_to_command(&mut cmd)
+            .map_err(|e| format!("Failed to apply process limits: {}", e))?;
+
+        let mut process = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn LSP process: {}", e))?;
 
@@ -1197,6 +1207,7 @@ impl LspHandle {
         args: &[String],
         language: String,
         async_bridge: &AsyncBridge,
+        process_limits: ProcessLimits,
     ) -> Result<Self, String> {
         let (command_tx, command_rx) = mpsc::channel(100); // Buffer up to 100 commands
         let async_tx = async_bridge.sender();
@@ -1207,7 +1218,7 @@ impl LspHandle {
         let initialized_clone = initialized.clone();
 
         runtime.spawn(async move {
-            match LspTask::spawn(&command, &args, language_clone.clone(), async_tx.clone()).await {
+            match LspTask::spawn(&command, &args, language_clone.clone(), async_tx.clone(), &process_limits).await {
                 Ok(task) => {
                     task.run(command_rx).await;
                 }
@@ -1497,7 +1508,7 @@ mod tests {
 
         // Use 'cat' as a mock LSP server (it will just echo stdin to stdout)
         // This will fail to initialize but allows us to test the spawn mechanism
-        let result = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge);
+        let result = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge, ProcessLimits::unlimited());
 
         // Should succeed in spawning
         assert!(result.is_ok());
@@ -1512,35 +1523,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lsp_handle_did_open_requires_initialization() {
+    async fn test_lsp_handle_did_open_queues_before_initialization() {
         let runtime = tokio::runtime::Handle::current();
         let async_bridge = AsyncBridge::new();
 
-        let handle = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge)
+        let handle = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge, ProcessLimits::unlimited())
             .unwrap();
 
-        // did_open should fail because server is not initialized
+        // did_open now succeeds and queues the command for when server is initialized
         let result = handle.did_open(
             Url::parse("file:///test.rs").unwrap(),
             "fn main() {}".to_string(),
             "rust".to_string(),
         );
 
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("LSP client not initialized"));
+        // Should succeed (command is queued)
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn test_lsp_handle_did_change_requires_initialization() {
+    async fn test_lsp_handle_did_change_queues_before_initialization() {
         let runtime = tokio::runtime::Handle::current();
         let async_bridge = AsyncBridge::new();
 
-        let handle = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge)
+        let handle = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge, ProcessLimits::unlimited())
             .unwrap();
 
-        // did_change should fail because server is not initialized
+        // did_change now succeeds and queues the command for when server is initialized
         let result = handle.did_change(
             Url::parse("file:///test.rs").unwrap(),
             vec![TextDocumentContentChangeEvent {
@@ -1550,10 +1559,8 @@ mod tests {
             }],
         );
 
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("LSP client not initialized"));
+        // Should succeed (command is queued)
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
@@ -1568,6 +1575,7 @@ mod tests {
             &[],
             "test".to_string(),
             &async_bridge,
+            ProcessLimits::unlimited(),
         );
 
         // Should succeed in creating handle (error happens asynchronously)
@@ -1596,7 +1604,7 @@ mod tests {
 
             let handle = rt.block_on(async {
                 let runtime = tokio::runtime::Handle::current();
-                LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge).unwrap()
+                LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge, ProcessLimits::unlimited()).unwrap()
             });
 
             // This should succeed from a non-async context
