@@ -10,6 +10,7 @@ pub mod multicursor;
 pub mod position_history;
 pub mod position_history_bugs;
 pub mod position_history_debug;
+pub mod position_history_truncate_debug;
 pub mod prompt;
 pub mod rendering;
 pub mod scrolling;

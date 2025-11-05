@@ -510,21 +510,26 @@ impl Editor {
         // Set flag to prevent recording this navigation movement
         self.in_navigation = true;
 
-        // Save current position before navigating (so we can come back to it with forward)
-        self.position_history.commit_pending_movement();
-        let current_state = self.active_state();
-        let position = current_state.cursors.primary().position;
-        let anchor = current_state.cursors.primary().anchor;
-        self.position_history.record_movement(self.active_buffer, position, anchor);
+        // Commit any pending movement
         self.position_history.commit_pending_movement();
 
-        // Now go back
+        // If we're at the end of history (haven't used back yet), save current position
+        // so we can navigate forward to it later
+        if self.position_history.can_go_back() && !self.position_history.can_go_forward() {
+            let current_state = self.active_state();
+            let position = current_state.cursors.primary().position;
+            let anchor = current_state.cursors.primary().anchor;
+            self.position_history.record_movement(self.active_buffer, position, anchor);
+            self.position_history.commit_pending_movement();
+        }
+
+        // Navigate to the previous position
         if let Some(entry) = self.position_history.back() {
             let target_buffer = entry.buffer_id;
             let target_position = entry.position;
             let target_anchor = entry.anchor;
 
-            // Switch to the target buffer (without saving position)
+            // Switch to the target buffer
             if self.buffers.contains_key(&target_buffer) {
                 self.active_buffer = target_buffer;
                 // Update the split manager to show the new buffer
