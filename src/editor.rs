@@ -1028,9 +1028,35 @@ impl Editor {
     }
 
     /// Get the confirmed input and prompt type, consuming the prompt
+    /// For command palette, returns the selected suggestion if available, otherwise the raw input
+    /// Returns None if trying to confirm a disabled command
     pub fn confirm_prompt(&mut self) -> Option<(String, PromptType)> {
         if let Some(prompt) = self.prompt.take() {
-            Some((prompt.input, prompt.prompt_type))
+            // For command prompts, prefer the selected suggestion over raw input
+            let final_input = if matches!(prompt.prompt_type, PromptType::Command) {
+                if let Some(selected_idx) = prompt.selected_suggestion {
+                    if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
+                        // Don't confirm disabled commands
+                        if suggestion.disabled {
+                            self.set_status_message(format!(
+                                "Command '{}' is not available in current context",
+                                suggestion.text
+                            ));
+                            return None;
+                        }
+                        // Use the selected suggestion text
+                        suggestion.get_value().to_string()
+                    } else {
+                        prompt.input
+                    }
+                } else {
+                    prompt.input
+                }
+            } else {
+                prompt.input
+            };
+
+            Some((final_input, prompt.prompt_type))
         } else {
             None
         }
@@ -1509,36 +1535,14 @@ impl Editor {
                         PromptType::Command => {
                             let commands = get_all_commands();
 
-                            // Use the selected suggestion's text if available, otherwise use input
-                            let command_name = if let Some(prompt) = &self.prompt {
-                                if let Some(selected_idx) = prompt.selected_suggestion {
-                                    if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
-                                        // Don't execute disabled commands
-                                        if suggestion.disabled {
-                                            self.set_status_message(format!(
-                                                "Command '{}' is not available in current context",
-                                                suggestion.text
-                                            ));
-                                            return Ok(());
-                                        }
-                                        suggestion.get_value().to_string()
-                                    } else {
-                                        input.clone()
-                                    }
-                                } else {
-                                    input.clone()
-                                }
-                            } else {
-                                input.clone()
-                            };
-
-                            if let Some(cmd) = commands.iter().find(|c| c.name == command_name) {
+                            // input now contains the selected command name (from confirm_prompt)
+                            if let Some(cmd) = commands.iter().find(|c| c.name == input) {
                                 let action = cmd.action.clone();
                                 self.set_status_message(format!("Executing: {}", cmd.name));
                                 // Recursively handle the command action
                                 return self.handle_action(action);
                             } else {
-                                self.set_status_message(format!("Unknown command: {command_name}"));
+                                self.set_status_message(format!("Unknown command: {input}"));
                             }
                         }
                     }

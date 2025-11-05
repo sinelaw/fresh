@@ -258,3 +258,58 @@ fn test_command_palette_tab_all_disabled() {
     // Check that input didn't change (tab should do nothing on disabled suggestions)
     harness.assert_screen_contains("Command: focus ed");
 }
+
+/// Test Enter executes the selected (highlighted) command, not the typed text
+#[test]
+fn test_command_palette_enter_uses_selection() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Trigger the command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Type partial text "new" which will match "New File"
+    harness.type_text("new").unwrap();
+
+    // The first suggestion should be "New File" (selected by default)
+    harness.assert_screen_contains("New File");
+
+    // Press Enter - should execute "New File" command, not try to find "new" command
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should NOT see error about unknown command
+    harness.assert_screen_not_contains("Unknown command");
+
+    // Should see the result of executing New File command
+    // (new_buffer() sets status message to "New buffer")
+    harness.assert_screen_contains("New buffer");
+}
+
+/// Test Enter with partial match uses the highlighted selection
+#[test]
+fn test_command_palette_enter_partial_match() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Trigger the command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Type "sav" which matches "Save File" and "Save File As"
+    harness.type_text("sav").unwrap();
+
+    // Navigate down to select "Save File As"
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Press Enter - should execute the selected command
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should execute the selected command, not fail on "sav"
+    harness.assert_screen_not_contains("Unknown command: sav");
+}
