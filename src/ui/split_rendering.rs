@@ -23,6 +23,9 @@ impl SplitRenderer {
     /// * `buffers` - All open buffers
     /// * `event_logs` - Event logs for each buffer
     /// * `theme` - The active theme for colors
+    ///
+    /// # Returns
+    /// * Vec of (split_id, buffer_id, content_rect, scrollbar_rect) for mouse handling
     pub fn render_content(
         frame: &mut Frame,
         area: Rect,
@@ -31,23 +34,47 @@ impl SplitRenderer {
         event_logs: &mut HashMap<BufferId, EventLog>,
         theme: &crate::theme::Theme,
         lsp_waiting: bool,
-    ) {
+    ) -> Vec<(crate::event::SplitId, BufferId, Rect, Rect)> {
         let _span = tracing::trace_span!("render_content").entered();
 
         // Get all visible splits with their areas
         let visible_buffers = split_manager.get_visible_buffers(area);
         let active_split_id = split_manager.active_split();
 
+        // Collect areas for mouse handling
+        let mut split_areas = Vec::new();
+
         // Render each split
         for (split_id, buffer_id, split_area) in visible_buffers {
             let is_active = split_id == active_split_id;
+
+            // Reserve 1 column on the right for scrollbar
+            let scrollbar_width = 1;
+            let content_rect = Rect::new(
+                split_area.x,
+                split_area.y,
+                split_area.width.saturating_sub(scrollbar_width),
+                split_area.height,
+            );
+            let scrollbar_rect = Rect::new(
+                split_area.x + split_area.width.saturating_sub(scrollbar_width),
+                split_area.y,
+                scrollbar_width,
+                split_area.height,
+            );
 
             // Get references separately to avoid double borrow
             let state_opt = buffers.get_mut(&buffer_id);
             let event_log_opt = event_logs.get_mut(&buffer_id);
 
             if let Some(state) = state_opt {
-                Self::render_buffer_in_split(frame, state, event_log_opt, split_area, is_active, theme, lsp_waiting);
+                Self::render_buffer_in_split(frame, state, event_log_opt, content_rect, is_active, theme, lsp_waiting);
+
+                // Render scrollbar for this split
+                Self::render_scrollbar(frame, state, scrollbar_rect, is_active, theme);
+
+                // Store the areas for mouse handling
+                split_areas.push((split_id, buffer_id, content_rect, scrollbar_rect));
             }
         }
 
@@ -56,6 +83,8 @@ impl SplitRenderer {
         for (direction, x, y, length) in separators {
             Self::render_separator(frame, direction, x, y, length, theme);
         }
+
+        split_areas
     }
 
     /// Render a split separator line
@@ -78,6 +107,73 @@ impl SplitRenderer {
                     frame.render_widget(paragraph, cell_area);
                 }
             }
+        }
+    }
+
+    /// Render a scrollbar for a split
+    fn render_scrollbar(
+        frame: &mut Frame,
+        state: &EditorState,
+        scrollbar_rect: Rect,
+        is_active: bool,
+        _theme: &crate::theme::Theme,
+    ) {
+        let height = scrollbar_rect.height as usize;
+        if height == 0 {
+            return;
+        }
+
+        let buffer_len = state.buffer.len();
+        let viewport_top = state.viewport.top_byte;
+        let viewport_height = state.viewport.visible_line_count();
+
+        // Estimate total lines in buffer (same heuristic as margin width)
+        let estimated_lines = (buffer_len / 80).max(1);
+
+        // Calculate scrollbar thumb position and size
+        // thumb_start = (viewport_top / buffer_len) * height
+        // thumb_size = (viewport_height / estimated_lines) * height
+        let thumb_start = if buffer_len > 0 {
+            ((viewport_top as f64 / buffer_len as f64) * height as f64) as usize
+        } else {
+            0
+        };
+
+        let thumb_size = if estimated_lines > 0 {
+            ((viewport_height as f64 / estimated_lines as f64) * height as f64).ceil() as usize
+        } else {
+            1
+        };
+        let thumb_size = thumb_size.max(1).min(height);
+
+        let thumb_end = (thumb_start + thumb_size).min(height);
+
+        // Choose colors based on whether split is active
+        let track_color = if is_active {
+            Color::DarkGray
+        } else {
+            Color::Black
+        };
+        let thumb_color = if is_active {
+            Color::Gray
+        } else {
+            Color::DarkGray
+        };
+
+        // Render scrollbar track and thumb
+        for row in 0..height {
+            let cell_area = Rect::new(scrollbar_rect.x, scrollbar_rect.y + row as u16, 1, 1);
+
+            let (char, color) = if row >= thumb_start && row < thumb_end {
+                // Thumb
+                ("█", thumb_color)
+            } else {
+                // Track
+                ("│", track_color)
+            };
+
+            let paragraph = Paragraph::new(char).style(Style::default().fg(color));
+            frame.render_widget(paragraph, cell_area);
         }
     }
 
