@@ -20,13 +20,43 @@ The release workflow builds binaries for:
 
 ### Creating a Release
 
+#### Using the Version Bump Script (Recommended)
+
+The easiest way to prepare a release is using the provided script:
+
+```bash
+# Prepare the version bump
+./scripts/bump-version.sh 0.2.0
+
+# Review the changes
+git diff
+
+# Commit, tag, and push
+git add Cargo.toml Cargo.lock
+git commit -m "Bump version to 0.2.0"
+git tag v0.2.0
+git push origin main
+git push origin v0.2.0
+```
+
+The script will:
+- Validate the version format
+- Update `Cargo.toml` with the new version
+- Run `cargo build` to update `Cargo.lock`
+- Show you a diff of the changes
+- Provide the exact commands to commit and push
+
+#### Manual Process
+
+If you prefer to do it manually:
+
 1. **Update the version** in `Cargo.toml`:
    ```toml
    [package]
    version = "0.2.0"  # Update this
    ```
 
-2. **Update the version** in `Cargo.lock` (if it exists):
+2. **Update the version** in `Cargo.lock`:
    ```bash
    cargo build
    ```
@@ -40,12 +70,16 @@ The release workflow builds binaries for:
 4. **Create and push a version tag**:
    ```bash
    git tag v0.2.0
+   git push origin main
    git push origin v0.2.0
    ```
 
-5. **Wait for GitHub Actions** to build the binaries (usually takes 5-10 minutes)
+#### After Creating the Tag
 
-6. **Check the release** at `https://github.com/YOUR_USERNAME/YOUR_REPO/releases`
+Once you've pushed the version tag (either method):
+
+1. **Wait for GitHub Actions** to build the binaries (usually takes 5-10 minutes)
+2. **Check the release** at `https://github.com/YOUR_USERNAME/YOUR_REPO/releases`
 
 The GitHub Actions workflow will:
 - **Verify** the Cargo.toml version matches the git tag (fails if mismatch)
