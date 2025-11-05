@@ -154,6 +154,15 @@ pub enum Action {
     PopupConfirm,
     PopupCancel,
 
+    // File explorer operations
+    ToggleFileExplorer,
+    FileExplorerUp,
+    FileExplorerDown,
+    FileExplorerExpand,
+    FileExplorerCollapse,
+    FileExplorerOpen,
+    FileExplorerRefresh,
+
     // No-op
     None,
 }
@@ -266,6 +275,14 @@ impl Action {
             "popup_page_down" => Some(Action::PopupPageDown),
             "popup_confirm" => Some(Action::PopupConfirm),
             "popup_cancel" => Some(Action::PopupCancel),
+
+            "toggle_file_explorer" => Some(Action::ToggleFileExplorer),
+            "file_explorer_up" => Some(Action::FileExplorerUp),
+            "file_explorer_down" => Some(Action::FileExplorerDown),
+            "file_explorer_expand" => Some(Action::FileExplorerExpand),
+            "file_explorer_collapse" => Some(Action::FileExplorerCollapse),
+            "file_explorer_open" => Some(Action::FileExplorerOpen),
+            "file_explorer_refresh" => Some(Action::FileExplorerRefresh),
 
             _ => None,
         }
@@ -782,6 +799,13 @@ impl KeybindingResolver {
             Action::PopupPageDown => "Popup page down".to_string(),
             Action::PopupConfirm => "Popup confirm".to_string(),
             Action::PopupCancel => "Popup cancel".to_string(),
+            Action::ToggleFileExplorer => "Toggle file explorer".to_string(),
+            Action::FileExplorerUp => "File explorer: navigate up".to_string(),
+            Action::FileExplorerDown => "File explorer: navigate down".to_string(),
+            Action::FileExplorerExpand => "File explorer: expand directory".to_string(),
+            Action::FileExplorerCollapse => "File explorer: collapse directory".to_string(),
+            Action::FileExplorerOpen => "File explorer: open file".to_string(),
+            Action::FileExplorerRefresh => "File explorer: refresh".to_string(),
             Action::None => "No action".to_string(),
         }
     }
