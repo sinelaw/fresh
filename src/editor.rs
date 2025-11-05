@@ -156,6 +156,9 @@ pub struct Editor {
 
     /// Position history for back/forward navigation
     position_history: PositionHistory,
+
+    /// Flag to prevent recording movements during navigation
+    in_navigation: bool,
 }
 
 impl Editor {
@@ -246,6 +249,7 @@ impl Editor {
             file_explorer_visible: false,
             key_context: KeyContext::Normal,
             position_history: PositionHistory::new(),
+            in_navigation: false,
         })
     }
 
@@ -273,9 +277,9 @@ impl Editor {
             .map(|(id, _)| *id);
 
         if let Some(id) = already_open {
-            // Save current position before switching to existing buffer
+            // Commit pending movement before switching to existing buffer
             if id != self.active_buffer {
-                self.save_current_position();
+                self.position_history.commit_pending_movement();
                 self.active_buffer = id;
                 // Update the split manager to show this buffer
                 self.split_manager.set_active_buffer_id(id);
@@ -366,8 +370,16 @@ impl Editor {
 
         // Save current position before switching to new buffer (if not replacing current)
         if !replace_current {
-            self.save_current_position();
+            self.position_history.commit_pending_movement();
+
+            // Explicitly record current position before switching
+            let current_state = self.active_state();
+            let position = current_state.cursors.primary().position;
+            let anchor = current_state.cursors.primary().anchor;
+            self.position_history.record_movement(self.active_buffer, position, anchor);
+            self.position_history.commit_pending_movement();
         }
+
         self.active_buffer = buffer_id;
         // Update the split manager to show the new buffer
         self.split_manager.set_active_buffer_id(buffer_id);
@@ -378,9 +390,15 @@ impl Editor {
 
     /// Create a new empty buffer
     pub fn new_buffer(&mut self) -> BufferId {
-        // Save current position before creating new buffer
-        // This will truncate forward history if we're in the middle of it
-        self.save_current_position();
+        // Save current position before switching to new buffer
+        self.position_history.commit_pending_movement();
+
+        // Explicitly record current position before switching
+        let current_state = self.active_state();
+        let position = current_state.cursors.primary().position;
+        let anchor = current_state.cursors.primary().anchor;
+        self.position_history.record_movement(self.active_buffer, position, anchor);
+        self.position_history.commit_pending_movement();
 
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
@@ -425,8 +443,16 @@ impl Editor {
     /// Switch to the given buffer
     pub fn switch_buffer(&mut self, id: BufferId) {
         if self.buffers.contains_key(&id) && id != self.active_buffer {
-            // Save current position before switching
-            self.save_current_position();
+            // Save current position before switching buffers
+            self.position_history.commit_pending_movement();
+
+            // Also explicitly record current position (in case there was no pending movement)
+            let current_state = self.active_state();
+            let position = current_state.cursors.primary().position;
+            let anchor = current_state.cursors.primary().anchor;
+            self.position_history.record_movement(self.active_buffer, position, anchor);
+            self.position_history.commit_pending_movement();
+
             self.active_buffer = id;
         }
     }
@@ -439,7 +465,15 @@ impl Editor {
             let next_idx = (idx + 1) % ids.len();
             if ids[next_idx] != self.active_buffer {
                 // Save current position before switching
-                self.save_current_position();
+                self.position_history.commit_pending_movement();
+
+                // Also explicitly record current position
+                let current_state = self.active_state();
+                let position = current_state.cursors.primary().position;
+                let anchor = current_state.cursors.primary().anchor;
+                self.position_history.record_movement(self.active_buffer, position, anchor);
+                self.position_history.commit_pending_movement();
+
                 self.active_buffer = ids[next_idx];
                 // Update the split manager to show the new buffer
                 self.split_manager.set_active_buffer_id(ids[next_idx]);
@@ -455,7 +489,15 @@ impl Editor {
             let prev_idx = if idx == 0 { ids.len() - 1 } else { idx - 1 };
             if ids[prev_idx] != self.active_buffer {
                 // Save current position before switching
-                self.save_current_position();
+                self.position_history.commit_pending_movement();
+
+                // Also explicitly record current position
+                let current_state = self.active_state();
+                let position = current_state.cursors.primary().position;
+                let anchor = current_state.cursors.primary().anchor;
+                self.position_history.record_movement(self.active_buffer, position, anchor);
+                self.position_history.commit_pending_movement();
+
                 self.active_buffer = ids[prev_idx];
                 // Update the split manager to show the new buffer
                 self.split_manager.set_active_buffer_id(ids[prev_idx]);
@@ -465,12 +507,18 @@ impl Editor {
 
     /// Navigate back in position history
     pub fn navigate_back(&mut self) {
-        // If we're at the "live" position (end of history), save it first
-        // so we can return to it with forward
-        if !self.position_history.can_go_forward() {
-            self.save_current_position();
-        }
+        // Set flag to prevent recording this navigation movement
+        self.in_navigation = true;
 
+        // Save current position before navigating (so we can come back to it with forward)
+        self.position_history.commit_pending_movement();
+        let current_state = self.active_state();
+        let position = current_state.cursors.primary().position;
+        let anchor = current_state.cursors.primary().anchor;
+        self.position_history.record_movement(self.active_buffer, position, anchor);
+        self.position_history.commit_pending_movement();
+
+        // Now go back
         if let Some(entry) = self.position_history.back() {
             let target_buffer = entry.buffer_id;
             let target_position = entry.position;
@@ -493,10 +541,16 @@ impl Editor {
                 state.apply(&event);
             }
         }
+
+        // Clear the flag
+        self.in_navigation = false;
     }
 
     /// Navigate forward in position history
     pub fn navigate_forward(&mut self) {
+        // Set flag to prevent recording this navigation movement
+        self.in_navigation = true;
+
         if let Some(entry) = self.position_history.forward() {
             let target_buffer = entry.buffer_id;
             let target_position = entry.position;
@@ -519,32 +573,9 @@ impl Editor {
                 state.apply(&event);
             }
         }
-    }
 
-    /// Save current position to history
-    /// This should be called before significant navigation actions
-    fn save_current_position(&mut self) {
-        let buffer_id = self.active_buffer;
-        let state = self.active_state();
-        let cursor = state.cursors.primary();
-        let entry = crate::position_history::PositionEntry::new(
-            buffer_id,
-            cursor.position,
-            cursor.anchor,
-        );
-        self.position_history.push(entry);
-    }
-
-    /// Check if an action represents a "significant movement" that should be tracked in history
-    /// This includes large jumps within a file (like Ctrl+Home, Ctrl+End, PageUp/PageDown)
-    fn is_significant_movement(action: &Action) -> bool {
-        matches!(
-            action,
-            Action::MoveDocumentStart
-                | Action::MoveDocumentEnd
-                | Action::MovePageUp
-                | Action::MovePageDown
-        )
+        // Clear the flag
+        self.in_navigation = false;
     }
 
     /// Split the current pane horizontally
@@ -1387,17 +1418,23 @@ impl Editor {
                 }
             }
             _ => {
-                // Save position before significant movements
-                if Self::is_significant_movement(&action) {
-                    self.save_current_position();
-                }
-
                 // Convert action to events and apply them
                 if let Some(events) = self.action_to_events(action) {
                     for event in events {
                         self.active_event_log_mut().append(event.clone());
                         self.active_state_mut().apply(&event);
                         self.notify_lsp_change(&event);
+
+                        // Track cursor movements in position history (but not during navigation)
+                        if !self.in_navigation {
+                            if let Event::MoveCursor { position, anchor, .. } = event {
+                                self.position_history.record_movement(
+                                    self.active_buffer,
+                                    position,
+                                    anchor,
+                                );
+                            }
+                        }
                     }
                 }
             }

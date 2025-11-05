@@ -3,8 +3,20 @@
 /// This module tracks the user's position history across buffers,
 /// allowing navigation back and forward through editing locations.
 /// Similar to VS Code's Alt+Left/Alt+Right navigation.
+///
+/// ## Architecture
+///
+/// Position history consumes MoveCursor events from the event log and coalesces
+/// consecutive movements into single "jump" entries. This means:
+/// - Many arrow key presses = one jump entry
+/// - Each buffer switch = commits pending movement and adds new entry
+/// - Idle period = commits pending movement
+///
+/// This matches VS Code's behavior where you can navigate back through your
+/// editing trail, not through every single keystroke.
 
 use crate::event::BufferId;
+use std::time::{Duration, Instant};
 
 /// A single entry in the position history
 #[derive(Clone, Debug, PartialEq)]
@@ -30,11 +42,27 @@ impl PositionEntry {
     }
 }
 
+/// Pending movement that may be coalesced with subsequent movements
+#[derive(Clone, Debug)]
+struct PendingMovement {
+    /// Starting position of this movement sequence
+    start_entry: PositionEntry,
+
+    /// Last update time (to detect idle)
+    last_update: Instant,
+}
+
+/// How long to wait before considering a movement "committed"
+const MOVEMENT_COALESCE_TIMEOUT: Duration = Duration::from_millis(1000);
+
 /// Position history manager
 ///
 /// This tracks navigation history across the editor, storing positions
 /// the user has visited. It maintains a stack with a current index,
 /// allowing back/forward navigation.
+///
+/// Movements are coalesced: consecutive MoveCursor events within a short
+/// time period are treated as a single "jump" for navigation purposes.
 pub struct PositionHistory {
     /// Stack of position entries
     entries: Vec<PositionEntry>,
@@ -45,6 +73,10 @@ pub struct PositionHistory {
 
     /// Maximum number of entries to keep
     max_entries: usize,
+
+    /// Pending movement that hasn't been committed yet
+    /// Gets committed when: buffer switches, timeout expires, or significant event
+    pending_movement: Option<PendingMovement>,
 }
 
 impl PositionHistory {
@@ -59,6 +91,67 @@ impl PositionHistory {
             entries: Vec::new(),
             current_index: None,
             max_entries,
+            pending_movement: None,
+        }
+    }
+
+    /// Record a cursor movement event
+    ///
+    /// This is called for EVERY MoveCursor event. Consecutive movements are coalesced
+    /// into a single history entry. The movement is committed to history when:
+    /// - Buffer changes
+    /// - Timeout expires (1 second of idle)
+    /// - User triggers back/forward navigation
+    pub fn record_movement(&mut self, buffer_id: BufferId, position: usize, anchor: Option<usize>) {
+        let now = Instant::now();
+        let entry = PositionEntry::new(buffer_id, position, anchor);
+
+        match &mut self.pending_movement {
+            Some(pending) => {
+                // Check if this is a continuation of the current movement
+                if pending.start_entry.buffer_id == buffer_id {
+                    // Same buffer - check if we should coalesce
+                    if now.duration_since(pending.last_update) < MOVEMENT_COALESCE_TIMEOUT {
+                        // Update the pending movement's timestamp
+                        // Don't commit yet - wait for timeout or buffer switch
+                        pending.last_update = now;
+                        return;
+                    }
+                }
+
+                // Different buffer or timeout expired - commit the pending movement
+                self.commit_pending_movement();
+            }
+            None => {
+                // No pending movement - start a new one
+                self.pending_movement = Some(PendingMovement {
+                    start_entry: entry,
+                    last_update: now,
+                });
+            }
+        }
+    }
+
+    /// Commit any pending movement to history
+    ///
+    /// This is called when:
+    /// - Switching buffers
+    /// - Before navigating back/forward
+    /// - Timeout expires
+    pub fn commit_pending_movement(&mut self) {
+        if let Some(pending) = self.pending_movement.take() {
+            // Only commit if we've actually moved from our current position
+            let should_commit = match self.current() {
+                Some(current) => {
+                    current.buffer_id != pending.start_entry.buffer_id
+                        || current.position != pending.start_entry.position
+                }
+                None => true,
+            };
+
+            if should_commit {
+                self.push(pending.start_entry);
+            }
         }
     }
 
@@ -101,10 +194,12 @@ impl PositionHistory {
 
     /// Navigate back in history
     ///
-    /// Returns the previous position, or None if we're at the beginning
-    /// of history. This does NOT include the current position - it moves
-    /// to the previous entry.
+    /// Commits any pending movement first, then returns the previous position.
+    /// Returns None if we're at the beginning of history.
     pub fn back(&mut self) -> Option<&PositionEntry> {
+        // Commit any pending movement before navigating
+        self.commit_pending_movement();
+
         if self.entries.is_empty() {
             return None;
         }
