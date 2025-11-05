@@ -124,10 +124,14 @@ impl SplitRenderer {
             .map(|(_, cursor)| cursor.position)
             .collect();
 
+        // Get primary cursor position - we won't apply REVERSED to it to preserve terminal cursor visibility
+        let primary_cursor_position = state.cursors.primary().position;
+
         tracing::debug!(
-            "Rendering buffer with {} cursors at positions: {:?}, is_active: {}, buffer_len: {}",
+            "Rendering buffer with {} cursors at positions: {:?}, primary at {}, is_active: {}, buffer_len: {}",
             cursor_positions.len(),
             cursor_positions,
+            primary_cursor_position,
             is_active,
             state.buffer.len()
         );
@@ -306,10 +310,12 @@ impl SplitRenderer {
                         style = Style::default().fg(theme.editor_fg).bg(theme.selection_bg);
                     }
 
-                    // Cursor styling - make cursors visible with reversed colors
-                    if is_cursor && is_active {
+                    // Cursor styling - make secondary cursors visible with reversed colors
+                    // Don't apply REVERSED to primary cursor to preserve terminal cursor visibility
+                    let is_secondary_cursor = is_cursor && byte_pos != primary_cursor_position;
+                    if is_secondary_cursor && is_active {
                         tracing::debug!(
-                            "Applying REVERSED modifier to cursor at byte_pos={}, char={:?}",
+                            "Applying REVERSED modifier to secondary cursor at byte_pos={}, char={:?}",
                             byte_pos,
                             ch
                         );
@@ -344,13 +350,17 @@ impl SplitRenderer {
                     }
 
                     // If this is a cursor on a newline, we'll handle it after the char loop
+                    // Only apply REVERSED for secondary cursors to preserve primary cursor visibility
                     if is_cursor && is_active && ch == '\n' {
-                        // Add a visible cursor indicator (space with REVERSED style)
-                        let cursor_style = Style::default()
-                            .fg(theme.editor_fg)
-                            .bg(theme.editor_bg)
-                            .add_modifier(Modifier::REVERSED);
-                        line_spans.push(Span::styled(" ", cursor_style));
+                        if is_secondary_cursor {
+                            // Add a visible cursor indicator (space with REVERSED style) for secondary cursors
+                            let cursor_style = Style::default()
+                                .fg(theme.editor_fg)
+                                .bg(theme.editor_bg)
+                                .add_modifier(Modifier::REVERSED);
+                            line_spans.push(Span::styled(" ", cursor_style));
+                        }
+                        // Primary cursor on newline will be shown by terminal hardware cursor
                     }
                 }
 
@@ -374,13 +384,18 @@ impl SplitRenderer {
                 );
 
                 if cursor_at_end && is_active {
-                    // Add a space character with REVERSED style to show cursor at end of line
-                    tracing::debug!("Adding REVERSED cursor indicator at end of line");
-                    let cursor_style = Style::default()
-                        .fg(theme.editor_fg)
-                        .bg(theme.editor_bg)
-                        .add_modifier(Modifier::REVERSED);
-                    line_spans.push(Span::styled(" ", cursor_style));
+                    // Only add REVERSED indicator for secondary cursors to preserve primary cursor visibility
+                    let is_primary_at_end = line_end_pos == primary_cursor_position;
+                    if !is_primary_at_end {
+                        // Add a space character with REVERSED style to show secondary cursor at end of line
+                        tracing::debug!("Adding REVERSED cursor indicator at end of line for secondary cursor");
+                        let cursor_style = Style::default()
+                            .fg(theme.editor_fg)
+                            .bg(theme.editor_bg)
+                            .add_modifier(Modifier::REVERSED);
+                        line_spans.push(Span::styled(" ", cursor_style));
+                    }
+                    // Primary cursor at end of line will be shown by terminal hardware cursor
                 }
             }
 
