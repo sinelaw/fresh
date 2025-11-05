@@ -30,6 +30,7 @@ impl SplitRenderer {
         buffers: &mut HashMap<BufferId, EditorState>,
         event_logs: &mut HashMap<BufferId, EventLog>,
         theme: &crate::theme::Theme,
+        lsp_waiting: bool,
     ) {
         let _span = tracing::trace_span!("render_content").entered();
 
@@ -46,7 +47,7 @@ impl SplitRenderer {
             let event_log_opt = event_logs.get_mut(&buffer_id);
 
             if let Some(state) = state_opt {
-                Self::render_buffer_in_split(frame, state, event_log_opt, split_area, is_active, theme);
+                Self::render_buffer_in_split(frame, state, event_log_opt, split_area, is_active, theme, lsp_waiting);
             }
         }
 
@@ -88,6 +89,7 @@ impl SplitRenderer {
         area: Rect,
         is_active: bool,
         theme: &crate::theme::Theme,
+        lsp_waiting: bool,
     ) {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
 
@@ -273,7 +275,15 @@ impl SplitRenderer {
                         style = Style::default().fg(theme.editor_fg).bg(theme.selection_bg);
                     }
 
-                    line_spans.push(Span::styled(ch.to_string(), style));
+                    // If this is a cursor position and we're waiting for LSP, show animated cursor
+                    let display_char = if is_cursor && lsp_waiting && is_active {
+                        // Use a simple waiting indicator character
+                        "⋯"
+                    } else {
+                        &ch.to_string()
+                    };
+
+                    line_spans.push(Span::styled(display_char.to_string(), style));
                 }
 
                 char_index += ch.len_utf8();
