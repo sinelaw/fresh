@@ -1,5 +1,6 @@
 use super::backend::{FsBackend, FsEntry, FsMetadata};
 use std::collections::HashMap;
+use std::fmt;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,6 +19,15 @@ pub struct FsManager {
     /// Map of path -> list of channels waiting for the result
     pending_dir_requests:
         Arc<Mutex<HashMap<PathBuf, Vec<oneshot::Sender<io::Result<Vec<FsEntry>>>>>>>,
+}
+
+impl fmt::Debug for FsManager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FsManager")
+            .field("backend", &"<dyn FsBackend>")
+            .field("pending_dir_requests", &"<mutex>")
+            .finish()
+    }
 }
 
 impl FsManager {

@@ -3,6 +3,7 @@ use super::tree::FileTree;
 use crate::fs::FsEntry;
 
 /// View state for file tree navigation and filtering
+#[derive(Debug)]
 pub struct FileTreeView {
     /// The underlying tree model
     tree: FileTree,

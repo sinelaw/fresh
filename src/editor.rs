@@ -3,6 +3,8 @@ use crate::async_bridge::{AsyncBridge, AsyncMessage};
 use crate::commands::{filter_commands, get_all_commands, Suggestion};
 use crate::config::Config;
 use crate::event::{Event, EventLog};
+use crate::file_tree::{FileTree, FileTreeView};
+use crate::fs::{FsManager, LocalFsBackend};
 use crate::keybindings::{Action, KeybindingResolver};
 use crate::lsp_diagnostics;
 use crate::lsp_manager::{detect_language, LspManager};
@@ -10,7 +12,7 @@ use crate::multi_cursor::{add_cursor_above, add_cursor_at_next_match, add_cursor
 use crate::prompt::{Prompt, PromptType};
 use crate::split::SplitManager;
 use crate::state::EditorState;
-use crate::ui::{HelpRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer, TabsRenderer};
+use crate::ui::{FileExplorerRenderer, HelpRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer, TabsRenderer};
 use lsp_types::{TextDocumentContentChangeEvent, Url};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
@@ -20,6 +22,7 @@ use std::collections::HashMap;
 use std::io;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 // Re-export BufferId from event module for backward compatibility
 pub use crate::event::BufferId;
@@ -137,6 +140,15 @@ pub struct Editor {
 
     /// Split view manager
     split_manager: SplitManager,
+
+    /// File explorer view (optional, only when open)
+    file_explorer: Option<FileTreeView>,
+
+    /// Filesystem manager for file explorer
+    fs_manager: Arc<FsManager>,
+
+    /// Whether file explorer is visible
+    file_explorer_visible: bool,
 }
 
 impl Editor {
@@ -198,6 +210,10 @@ impl Editor {
         // Initialize split manager with the initial buffer
         let split_manager = SplitManager::new(buffer_id);
 
+        // Initialize filesystem manager for file explorer
+        let fs_backend = Arc::new(LocalFsBackend::new());
+        let fs_manager = Arc::new(FsManager::new(fs_backend));
+
         Ok(Editor {
             buffers,
             active_buffer: buffer_id,
@@ -218,6 +234,9 @@ impl Editor {
             tokio_runtime,
             async_bridge: Some(async_bridge),
             split_manager,
+            file_explorer: None,
+            fs_manager,
+            file_explorer_visible: false,
         })
     }
 
@@ -469,6 +488,126 @@ impl Editor {
             self.set_status_message(format!("Cannot adjust split size: {}", e));
         } else {
             self.set_status_message(format!("Adjusted split size by {:.0}%", delta * 100.0));
+        }
+    }
+
+    /// Toggle file explorer visibility
+    pub fn toggle_file_explorer(&mut self) {
+        self.file_explorer_visible = !self.file_explorer_visible;
+
+        if self.file_explorer_visible {
+            // Initialize file explorer if not already created
+            if self.file_explorer.is_none() {
+                self.init_file_explorer();
+            }
+            self.set_status_message("File explorer opened".to_string());
+        } else {
+            self.set_status_message("File explorer closed".to_string());
+        }
+    }
+
+    /// Initialize the file explorer
+    fn init_file_explorer(&mut self) {
+        // Get project root (current working directory)
+        let root_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+        // Block on initialization for simplicity
+        // TODO: Make this truly async with proper state management
+        if let Some(runtime) = &self.tokio_runtime {
+            let fs_manager = Arc::clone(&self.fs_manager);
+            let result = runtime.block_on(FileTree::new(root_path, fs_manager));
+
+            match result {
+                Ok(tree) => {
+                    let view = FileTreeView::new(tree);
+                    self.file_explorer = Some(view);
+                    self.set_status_message("File explorer initialized".to_string());
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize file explorer: {}", e);
+                    self.set_status_message(format!("Error initializing file explorer: {}", e));
+                }
+            }
+        }
+    }
+
+    /// Handle file explorer navigation up
+    pub fn file_explorer_navigate_up(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.select_prev();
+        }
+    }
+
+    /// Handle file explorer navigation down
+    pub fn file_explorer_navigate_down(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.select_next();
+        }
+    }
+
+    /// Handle file explorer expand/collapse
+    pub fn file_explorer_toggle_expand(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            if let Some(selected_id) = explorer.get_selected() {
+                let node = explorer.tree().get_node(selected_id);
+                if let Some(node) = node {
+                    if !node.is_dir() {
+                        return; // Can't toggle files
+                    }
+                }
+
+                // For now, block on the toggle operation
+                // TODO: Make this truly async with proper state management
+                if let Some(runtime) = &self.tokio_runtime {
+                    let tree = explorer.tree_mut();
+                    let result = runtime.block_on(tree.toggle_node(selected_id));
+                    match result {
+                        Ok(()) => {
+                            self.set_status_message("Toggled".to_string());
+                        }
+                        Err(e) => {
+                            self.set_status_message(format!("Error: {}", e));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handle file explorer open file
+    pub fn file_explorer_open_file(&mut self) -> io::Result<()> {
+        // Clone the path and name before calling open_file to avoid borrow checker issues
+        let file_info = self.file_explorer
+            .as_ref()
+            .and_then(|explorer| explorer.get_selected_entry())
+            .filter(|entry| entry.is_file())
+            .map(|entry| (entry.path.clone(), entry.name.clone()));
+
+        if let Some((path, name)) = file_info {
+            self.open_file(&path)?;
+            self.set_status_message(format!("Opened: {}", name));
+        }
+        Ok(())
+    }
+
+    /// Handle file explorer refresh
+    pub fn file_explorer_refresh(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            if let Some(selected_id) = explorer.get_selected() {
+                // Block on the refresh operation
+                if let Some(runtime) = &self.tokio_runtime {
+                    let tree = explorer.tree_mut();
+                    let result = runtime.block_on(tree.refresh_node(selected_id));
+                    match result {
+                        Ok(()) => {
+                            self.set_status_message("Refreshed".to_string());
+                        }
+                        Err(e) => {
+                            self.set_status_message(format!("Error: {}", e));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -790,6 +929,20 @@ impl Editor {
                     tracing::info!("Git status changed: {}", status);
                     // TODO: Handle git status changes
                 }
+                AsyncMessage::FileExplorerInitialized(view) => {
+                    tracing::info!("File explorer initialized");
+                    self.file_explorer = Some(view);
+                    self.set_status_message("File explorer ready".to_string());
+                }
+                AsyncMessage::FileExplorerToggleNode(node_id) => {
+                    // Async toggle completed - this message signals the operation is done
+                    tracing::debug!("File explorer toggle completed for node {:?}", node_id);
+                }
+                AsyncMessage::FileExplorerRefreshNode(node_id) => {
+                    // Async refresh completed
+                    tracing::debug!("File explorer refresh completed for node {:?}", node_id);
+                    self.set_status_message("Refreshed".to_string());
+                }
             }
         }
     }
@@ -1042,6 +1195,13 @@ impl Editor {
             Action::PrevSplit => self.prev_split(),
             Action::IncreaseSplitSize => self.adjust_split_size(0.05),
             Action::DecreaseSplitSize => self.adjust_split_size(-0.05),
+            Action::ToggleFileExplorer => self.toggle_file_explorer(),
+            Action::FileExplorerUp => self.file_explorer_navigate_up(),
+            Action::FileExplorerDown => self.file_explorer_navigate_down(),
+            Action::FileExplorerExpand => self.file_explorer_toggle_expand(),
+            Action::FileExplorerCollapse => self.file_explorer_toggle_expand(), // Same as expand
+            Action::FileExplorerOpen => self.file_explorer_open_file()?,
+            Action::FileExplorerRefresh => self.file_explorer_refresh(),
             Action::None => {}
             Action::InsertChar(c) => {
                 // Handle character insertion in prompt mode
@@ -1120,15 +1280,43 @@ impl Editor {
         // Render tabs
         TabsRenderer::render(frame, chunks[0], &self.buffers, self.active_buffer, &self.theme);
 
-        // Render content
-        SplitRenderer::render_content(
-            frame,
-            chunks[1],
-            &self.split_manager,
-            &mut self.buffers,
-            &mut self.event_logs,
-            &self.theme,
-        );
+        // Render content (with file explorer if visible)
+        let content_area = chunks[1];
+        if self.file_explorer_visible && self.file_explorer.is_some() {
+            // Split content area horizontally: file explorer (30%) | content (70%)
+            let horizontal_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(30),  // File explorer
+                    Constraint::Percentage(70),  // Content
+                ])
+                .split(content_area);
+
+            // Render file explorer on the left
+            if let Some(ref explorer) = self.file_explorer {
+                FileExplorerRenderer::render(explorer, frame, horizontal_chunks[0], true);
+            }
+
+            // Render content on the right
+            SplitRenderer::render_content(
+                frame,
+                horizontal_chunks[1],
+                &self.split_manager,
+                &mut self.buffers,
+                &mut self.event_logs,
+                &self.theme,
+            );
+        } else {
+            // No file explorer, render content normally
+            SplitRenderer::render_content(
+                frame,
+                chunks[1],
+                &self.split_manager,
+                &mut self.buffers,
+                &mut self.event_logs,
+                &self.theme,
+            );
+        }
 
         // Render suggestions popup if present
         if suggestion_lines > 0 {

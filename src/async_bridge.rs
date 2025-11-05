@@ -10,11 +10,12 @@
 //! - Computation should be sync (editing, rendering)
 //! - Main loop remains responsive and simple
 
+use crate::file_tree::{FileTreeView, NodeId};
 use lsp_types::Diagnostic;
 use std::sync::mpsc;
 
 /// Messages sent from async tasks to the synchronous main loop
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum AsyncMessage {
     /// LSP diagnostics received for a file
     LspDiagnostics {
@@ -33,6 +34,15 @@ pub enum AsyncMessage {
 
     /// Git status updated (future: git integration)
     GitStatusChanged { status: String },
+
+    /// File explorer initialized with tree view
+    FileExplorerInitialized(FileTreeView),
+
+    /// File explorer node toggle completed
+    FileExplorerToggleNode(NodeId),
+
+    /// File explorer node refresh completed
+    FileExplorerRefreshNode(NodeId),
 }
 
 /// Bridge between async Tokio runtime and sync main loop
