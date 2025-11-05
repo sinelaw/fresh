@@ -7,6 +7,7 @@ pub mod lifecycle;
 pub mod margin;
 pub mod movement;
 pub mod multicursor;
+pub mod position_history;
 pub mod prompt;
 pub mod rendering;
 pub mod scrolling;

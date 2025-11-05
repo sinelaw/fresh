@@ -122,6 +122,10 @@ pub enum Action {
     NextBuffer,
     PrevBuffer,
 
+    // Position history navigation
+    NavigateBack,
+    NavigateForward,
+
     // Split view operations
     SplitHorizontal,
     SplitVertical,
@@ -253,6 +257,9 @@ impl Action {
 
             "next_buffer" => Some(Action::NextBuffer),
             "prev_buffer" => Some(Action::PrevBuffer),
+
+            "navigate_back" => Some(Action::NavigateBack),
+            "navigate_forward" => Some(Action::NavigateForward),
 
             "split_horizontal" => Some(Action::SplitHorizontal),
             "split_vertical" => Some(Action::SplitVertical),
@@ -609,6 +616,16 @@ impl KeybindingResolver {
             Action::NextBuffer,
         );
 
+        // Position history navigation (Alt+Left/Right - like VS Code)
+        bindings.insert(
+            (KeyCode::Left, KeyModifiers::ALT),
+            Action::NavigateBack,
+        );
+        bindings.insert(
+            (KeyCode::Right, KeyModifiers::ALT),
+            Action::NavigateForward,
+        );
+
         // File explorer focus (Ctrl+B to toggle focus to file explorer)
         bindings.insert(
             (KeyCode::Char('b'), KeyModifiers::CONTROL),
@@ -805,6 +822,8 @@ impl KeybindingResolver {
             Action::CommandPalette => "Command palette".to_string(),
             Action::NextBuffer => "Next buffer".to_string(),
             Action::PrevBuffer => "Previous buffer".to_string(),
+            Action::NavigateBack => "Navigate back in history".to_string(),
+            Action::NavigateForward => "Navigate forward in history".to_string(),
             Action::SplitHorizontal => "Split horizontally".to_string(),
             Action::SplitVertical => "Split vertically".to_string(),
             Action::CloseSplit => "Close split".to_string(),
