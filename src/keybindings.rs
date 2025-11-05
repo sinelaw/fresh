@@ -13,6 +13,8 @@ pub enum KeyContext {
     Prompt,
     /// Popup window is visible
     Popup,
+    /// File explorer has focus
+    FileExplorer,
 }
 
 impl KeyContext {
@@ -22,6 +24,7 @@ impl KeyContext {
             "help" => Some(KeyContext::Help),
             "prompt" => Some(KeyContext::Prompt),
             "popup" => Some(KeyContext::Popup),
+            "fileExplorer" | "file_explorer" => Some(KeyContext::FileExplorer),
             "normal" => Some(KeyContext::Normal),
             _ => None,
         }
@@ -34,6 +37,7 @@ impl KeyContext {
             KeyContext::Help => "help",
             KeyContext::Prompt => "prompt",
             KeyContext::Popup => "popup",
+            KeyContext::FileExplorer => "fileExplorer",
         }
     }
 }
@@ -156,6 +160,8 @@ pub enum Action {
 
     // File explorer operations
     ToggleFileExplorer,
+    FocusFileExplorer,
+    FocusEditor,
     FileExplorerUp,
     FileExplorerDown,
     FileExplorerExpand,
@@ -277,6 +283,8 @@ impl Action {
             "popup_cancel" => Some(Action::PopupCancel),
 
             "toggle_file_explorer" => Some(Action::ToggleFileExplorer),
+            "focus_file_explorer" => Some(Action::FocusFileExplorer),
+            "focus_editor" => Some(Action::FocusEditor),
             "file_explorer_up" => Some(Action::FileExplorerUp),
             "file_explorer_down" => Some(Action::FileExplorerDown),
             "file_explorer_expand" => Some(Action::FileExplorerExpand),
@@ -593,6 +601,12 @@ impl KeybindingResolver {
             Action::NextBuffer,
         );
 
+        // File explorer focus (Ctrl+B to toggle focus to file explorer)
+        bindings.insert(
+            (KeyCode::Char('b'), KeyModifiers::CONTROL),
+            Action::FocusFileExplorer,
+        );
+
         all_bindings.insert(KeyContext::Normal, bindings);
 
         // Help context bindings
@@ -629,6 +643,18 @@ impl KeybindingResolver {
         popup_bindings.insert((KeyCode::Esc, KeyModifiers::empty()), Action::PopupCancel);
         all_bindings.insert(KeyContext::Popup, popup_bindings);
 
+        // File Explorer context bindings
+        let mut explorer_bindings = HashMap::new();
+        explorer_bindings.insert((KeyCode::Up, KeyModifiers::empty()), Action::FileExplorerUp);
+        explorer_bindings.insert((KeyCode::Down, KeyModifiers::empty()), Action::FileExplorerDown);
+        explorer_bindings.insert((KeyCode::Enter, KeyModifiers::empty()), Action::FileExplorerOpen);
+        explorer_bindings.insert((KeyCode::Right, KeyModifiers::empty()), Action::FileExplorerExpand);
+        explorer_bindings.insert((KeyCode::Left, KeyModifiers::empty()), Action::FileExplorerCollapse);
+        explorer_bindings.insert((KeyCode::Char('r'), KeyModifiers::CONTROL), Action::FileExplorerRefresh);
+        explorer_bindings.insert((KeyCode::Esc, KeyModifiers::empty()), Action::FocusEditor);
+        explorer_bindings.insert((KeyCode::Char('b'), KeyModifiers::CONTROL), Action::FocusEditor);
+        all_bindings.insert(KeyContext::FileExplorer, explorer_bindings);
+
         all_bindings
     }
 
@@ -638,7 +664,7 @@ impl KeybindingResolver {
         let mut bindings = Vec::new();
 
         // Collect all bindings from all contexts
-        for context in &[KeyContext::Normal, KeyContext::Help, KeyContext::Prompt, KeyContext::Popup] {
+        for context in &[KeyContext::Normal, KeyContext::Help, KeyContext::Prompt, KeyContext::Popup, KeyContext::FileExplorer] {
             let mut all_keys: HashMap<(KeyCode, KeyModifiers), Action> = HashMap::new();
 
             // Start with defaults for this context
@@ -800,6 +826,8 @@ impl KeybindingResolver {
             Action::PopupConfirm => "Popup confirm".to_string(),
             Action::PopupCancel => "Popup cancel".to_string(),
             Action::ToggleFileExplorer => "Toggle file explorer".to_string(),
+            Action::FocusFileExplorer => "Focus file explorer".to_string(),
+            Action::FocusEditor => "Focus editor".to_string(),
             Action::FileExplorerUp => "File explorer: navigate up".to_string(),
             Action::FileExplorerDown => "File explorer: navigate down".to_string(),
             Action::FileExplorerExpand => "File explorer: expand directory".to_string(),

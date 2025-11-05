@@ -5,7 +5,7 @@ use crate::config::Config;
 use crate::event::{Event, EventLog};
 use crate::file_tree::{FileTree, FileTreeView};
 use crate::fs::{FsManager, LocalFsBackend};
-use crate::keybindings::{Action, KeybindingResolver};
+use crate::keybindings::{Action, KeybindingResolver, KeyContext};
 use crate::lsp_diagnostics;
 use crate::lsp_manager::{detect_language, LspManager};
 use crate::multi_cursor::{add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult};
@@ -149,6 +149,9 @@ pub struct Editor {
 
     /// Whether file explorer is visible
     file_explorer_visible: bool,
+
+    /// Current keybinding context
+    key_context: KeyContext,
 }
 
 impl Editor {
@@ -237,6 +240,7 @@ impl Editor {
             file_explorer: None,
             fs_manager,
             file_explorer_visible: false,
+            key_context: KeyContext::Normal,
         })
     }
 
@@ -491,6 +495,11 @@ impl Editor {
         }
     }
 
+    /// Check if file explorer is visible
+    pub fn file_explorer_visible(&self) -> bool {
+        self.file_explorer_visible
+    }
+
     /// Toggle file explorer visibility
     pub fn toggle_file_explorer(&mut self) {
         self.file_explorer_visible = !self.file_explorer_visible;
@@ -500,10 +509,32 @@ impl Editor {
             if self.file_explorer.is_none() {
                 self.init_file_explorer();
             }
+            // Switch focus to file explorer when opening
+            self.key_context = KeyContext::FileExplorer;
             self.set_status_message("File explorer opened".to_string());
         } else {
+            // Return focus to editor when closing
+            self.key_context = KeyContext::Normal;
             self.set_status_message("File explorer closed".to_string());
         }
+    }
+
+    /// Focus the file explorer
+    pub fn focus_file_explorer(&mut self) {
+        if self.file_explorer_visible {
+            // File explorer is already visible, just switch focus
+            self.key_context = KeyContext::FileExplorer;
+            self.set_status_message("File explorer focused".to_string());
+        } else {
+            // Open file explorer if not visible
+            self.toggle_file_explorer();
+        }
+    }
+
+    /// Focus the editor (return from file explorer)
+    pub fn focus_editor(&mut self) {
+        self.key_context = KeyContext::Normal;
+        self.set_status_message("Editor focused".to_string());
     }
 
     /// Initialize the file explorer
@@ -951,6 +982,7 @@ impl Editor {
     fn get_key_context(&self) -> crate::keybindings::KeyContext {
         use crate::keybindings::KeyContext;
 
+        // Priority order: Help > Prompt > Popup > Current context (FileExplorer or Normal)
         if self.help_renderer.is_visible() {
             KeyContext::Help
         } else if self.is_prompting() {
@@ -958,7 +990,8 @@ impl Editor {
         } else if self.active_state().popups.is_visible() {
             KeyContext::Popup
         } else {
-            KeyContext::Normal
+            // Use the current context (can be FileExplorer or Normal)
+            self.key_context
         }
     }
 
@@ -1196,6 +1229,8 @@ impl Editor {
             Action::IncreaseSplitSize => self.adjust_split_size(0.05),
             Action::DecreaseSplitSize => self.adjust_split_size(-0.05),
             Action::ToggleFileExplorer => self.toggle_file_explorer(),
+            Action::FocusFileExplorer => self.focus_file_explorer(),
+            Action::FocusEditor => self.focus_editor(),
             Action::FileExplorerUp => self.file_explorer_navigate_up(),
             Action::FileExplorerDown => self.file_explorer_navigate_down(),
             Action::FileExplorerExpand => self.file_explorer_toggle_expand(),
@@ -1294,7 +1329,8 @@ impl Editor {
 
             // Render file explorer on the left
             if let Some(ref explorer) = self.file_explorer {
-                FileExplorerRenderer::render(explorer, frame, horizontal_chunks[0], true);
+                let is_focused = self.key_context == KeyContext::FileExplorer;
+                FileExplorerRenderer::render(explorer, frame, horizontal_chunks[0], is_focused);
             }
 
             // Render content on the right
