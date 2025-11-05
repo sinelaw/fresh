@@ -48,10 +48,13 @@ The release workflow builds binaries for:
 6. **Check the release** at `https://github.com/YOUR_USERNAME/YOUR_REPO/releases`
 
 The GitHub Actions workflow will:
+- **Verify** the Cargo.toml version matches the git tag (fails if mismatch)
 - Build binaries for all supported platforms
 - Create a new GitHub Release
 - Upload all binary archives to the release
 - Generate SHA256 checksums for verification
+
+**Important:** The workflow includes automatic version validation. If the version in `Cargo.toml` doesn't match the git tag, the release will fail with a clear error message. This ensures releases are always properly versioned.
 
 ### Manual Testing Before Release
 
@@ -82,6 +85,7 @@ This project follows [Semantic Versioning](https://semver.org/):
 - Check the Actions tab in GitHub for error logs
 - Ensure all CI tests pass before creating a tag
 - Verify the tag format is `vX.Y.Z` (e.g., `v0.1.0`)
+- **Version mismatch error:** If you see "Version mismatch!", update `Cargo.toml` to match the tag version, commit, and recreate the tag
 
 **Need to delete a failed release:**
 ```bash
