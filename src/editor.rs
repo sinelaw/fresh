@@ -379,6 +379,7 @@ impl Editor {
     /// Create a new empty buffer
     pub fn new_buffer(&mut self) -> BufferId {
         // Save current position before creating new buffer
+        // This will truncate forward history if we're in the middle of it
         self.save_current_position();
 
         let buffer_id = BufferId(self.next_buffer_id);
@@ -464,6 +465,12 @@ impl Editor {
 
     /// Navigate back in position history
     pub fn navigate_back(&mut self) {
+        // If we're at the "live" position (end of history), save it first
+        // so we can return to it with forward
+        if !self.position_history.can_go_forward() {
+            self.save_current_position();
+        }
+
         if let Some(entry) = self.position_history.back() {
             let target_buffer = entry.buffer_id;
             let target_position = entry.position;

@@ -72,6 +72,12 @@ impl PositionHistory {
     /// If we're not at the end of history (user has gone back), this
     /// truncates the forward history and adds the new position.
     pub fn push(&mut self, entry: PositionEntry) {
+        // If we're not at the end, truncate forward history FIRST
+        // This ensures forward history is cleared even if the new entry is a duplicate
+        if let Some(current_idx) = self.current_index {
+            self.entries.truncate(current_idx + 1);
+        }
+
         // Don't add duplicate consecutive entries
         if let Some(current_idx) = self.current_index {
             if current_idx < self.entries.len() {
@@ -79,11 +85,6 @@ impl PositionHistory {
                     return;
                 }
             }
-        }
-
-        // If we're not at the end, truncate forward history
-        if let Some(current_idx) = self.current_index {
-            self.entries.truncate(current_idx + 1);
         }
 
         // Add new entry
