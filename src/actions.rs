@@ -676,33 +676,41 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         Action::ExpandSelection => {
             // Expand selection for each cursor
             for (cursor_id, cursor) in state.cursors.iter() {
-                if let Some(range) = cursor.selection_range() {
-                    // Selection exists - expand it by one word in both directions
-                    let start = range.start;
-                    let end = range.end;
-
-                    // Expand backward to previous word boundary
-                    let new_start = find_word_start(&state.buffer, start);
-                    // Expand forward to next word boundary
-                    let new_end = find_word_end(&state.buffer, end);
-
+                if let Some(anchor) = cursor.anchor {
+                    // Already have a selection - expand by one word to the right
+                    // First move to the start of the next word, then to its end
+                    let next_word_start = find_word_start_right(&state.buffer, cursor.position);
+                    let new_end = find_word_end(&state.buffer, next_word_start);
                     events.push(Event::MoveCursor {
                         cursor_id,
                         position: new_end,
-                        anchor: Some(new_start),
+                        anchor: Some(anchor),
                     });
                 } else {
-                    // No selection - select word at cursor
+                    // No selection - select from cursor to end of current word
                     let word_start = find_word_start(&state.buffer, cursor.position);
                     let word_end = find_word_end(&state.buffer, cursor.position);
 
-                    if word_start < word_end {
-                        events.push(Event::MoveCursor {
-                            cursor_id,
-                            position: word_end,
-                            anchor: Some(word_start),
-                        });
-                    }
+                    // If cursor is on non-word char OR at the end of a word,
+                    // select from current position to end of next word
+                    let (final_start, final_end) = if word_start == word_end
+                        || cursor.position == word_end
+                    {
+                        // Find the next word (skip non-word characters to find it)
+                        let next_start = find_word_start_right(&state.buffer, cursor.position);
+                        let next_end = find_word_end(&state.buffer, next_start);
+                        // Select FROM cursor position TO the end of next word
+                        (cursor.position, next_end)
+                    } else {
+                        // On a word char - select from cursor to end of current word
+                        (cursor.position, word_end)
+                    };
+
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: final_end,
+                        anchor: Some(final_start),
+                    });
                 }
             }
         }
