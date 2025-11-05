@@ -313,3 +313,45 @@ fn test_command_palette_enter_partial_match() {
     // Should execute the selected command, not fail on "sav"
     harness.assert_screen_not_contains("Unknown command: sav");
 }
+
+/// Test scrolling beyond visible suggestions keeps selection visible
+#[test]
+fn test_command_palette_scroll_beyond_visible() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Trigger the command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // With no filter, we should have many commands
+    // The popup shows max 10 items at a time
+
+    // Press Down 15 times to go well beyond the first 10 visible items
+    for _ in 0..15 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // The selection should still be visible (the view should have scrolled)
+    // We can verify this by checking that the view has scrolled beyond the first commands
+    let screen = harness.screen_to_string();
+
+    // Should have scrolled and show later commands (not the first commands)
+    // After scrolling down 15 times, "Open File" (first command) should NOT be visible
+    harness.assert_screen_not_contains("Open File");
+
+    // Should show some later commands like "Select All", "Expand Selection" etc.
+    // These appear around position 10-16 in the list
+    harness.assert_screen_contains("Select All");
+
+    // Now press Enter - it should execute the selected command (whatever is selected)
+    // not fail with "Unknown command"
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should NOT see "Unknown command" error
+    harness.assert_screen_not_contains("Unknown command");
+}

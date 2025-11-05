@@ -35,8 +35,25 @@ impl SuggestionsRenderer {
 
         let mut lines = Vec::new();
         let visible_count = inner_area.height as usize;
-        let start_idx = 0;
-        let end_idx = visible_count.min(prompt.suggestions.len());
+
+        // Calculate scroll position to keep selected item visible
+        let start_idx = if let Some(selected) = prompt.selected_suggestion {
+            // Try to center the selected item, or at least keep it visible
+            if selected < visible_count / 2 {
+                // Near the top, start from beginning
+                0
+            } else if selected >= prompt.suggestions.len() - visible_count / 2 {
+                // Near the bottom, show last page
+                prompt.suggestions.len().saturating_sub(visible_count)
+            } else {
+                // In the middle, center the selected item
+                selected.saturating_sub(visible_count / 2)
+            }
+        } else {
+            0
+        };
+
+        let end_idx = (start_idx + visible_count).min(prompt.suggestions.len());
 
         for (idx, suggestion) in prompt.suggestions[start_idx..end_idx].iter().enumerate() {
             let actual_idx = start_idx + idx;
