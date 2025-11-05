@@ -651,3 +651,133 @@ fn test_lsp_completion_filtering() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test that popup size is appropriate for the number of filtered items
+#[test]
+fn test_lsp_completion_popup_size() -> std::io::Result<()> {
+    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type a prefix
+    harness.type_text("test_")?;
+    harness.render()?;
+
+    // Show completion popup with only 2 items but max_height of 15
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            content: PopupContentData::List {
+                items: vec![
+                    PopupListItemData {
+                        text: "test_function".to_string(),
+                        detail: Some("fn test_function()".to_string()),
+                        icon: Some("λ".to_string()),
+                        data: Some("test_function".to_string()),
+                    },
+                    PopupListItemData {
+                        text: "test_variable".to_string(),
+                        detail: Some("let test_variable".to_string()),
+                        icon: Some("v".to_string()),
+                        data: Some("test_variable".to_string()),
+                    },
+                ],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 40,
+            max_height: 15,  // Much larger than needed for 2 items
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Get the screen content
+    let screen = harness.screen_to_string();
+    println!("Screen content:\n{}", screen);
+
+    // Count the number of visible lines in the popup
+    // The popup should show:
+    // - 1 line for top border
+    // - 2 lines for items
+    // - 1 line for bottom border
+    // Total: 4 lines
+    // But currently it's showing max_height (15) lines
+
+    // Let's check by counting the border characters
+    let lines: Vec<&str> = screen.lines().collect();
+
+    // Find the popup borders
+    let mut popup_start_line = None;
+    let mut popup_end_line = None;
+
+    for (idx, line) in lines.iter().enumerate() {
+        if line.contains("Completion") {
+            popup_start_line = Some(idx);
+        }
+        if popup_start_line.is_some() && (line.contains("└") || line.contains("╰")) {
+            popup_end_line = Some(idx);
+            break;
+        }
+    }
+
+    if let (Some(start), Some(end)) = (popup_start_line, popup_end_line) {
+        let popup_height = end - start + 1;
+        println!("Popup height: {} lines", popup_height);
+
+        // The popup should be sized for content (2 items + 2 borders = 4)
+        // not for max_height (15)
+        assert_eq!(
+            popup_height, 4,
+            "Expected popup to be sized for content (4 lines), but got {} lines",
+            popup_height
+        );
+
+        println!("✓ Popup is appropriately sized: {} lines for 2 items", popup_height);
+    } else {
+        panic!("Could not find popup borders in screen output");
+    }
+
+    Ok(())
+}
+
+/// Test that LSP waiting indicator appears in status bar
+#[test]
+fn test_lsp_waiting_indicator() -> std::io::Result<()> {
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Open a test file
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n    \n}\n")?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Position cursor inside the function
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Request completion using Ctrl+Space (which will set the LSP waiting indicator)
+    // Since we don't have a real LSP server in this test, the indicator will stay set
+    harness.send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)?;
+
+    // Render to update the screen
+    harness.render()?;
+
+    // Get the screen content and check for LSP indicator
+    let screen = harness.screen_to_string();
+    println!("Screen with LSP indicator:\n{}", screen);
+
+    // Check that "LSP: completion..." appears in the status bar
+    assert!(
+        screen.contains("LSP: completion..."),
+        "Expected LSP waiting indicator in status bar, got:\n{}",
+        screen
+    );
+
+    Ok(())
+}

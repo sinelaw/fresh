@@ -229,6 +229,20 @@ impl Popup {
         }
     }
 
+    /// Calculate the actual content height based on the popup content
+    fn content_height(&self) -> u16 {
+        let content_lines = match &self.content {
+            PopupContent::Text(lines) => lines.len() as u16,
+            PopupContent::List { items, .. } => items.len() as u16,
+            PopupContent::Custom(lines) => lines.len() as u16,
+        };
+
+        // Add border lines if bordered
+        let border_height = if self.bordered { 2 } else { 0 };
+
+        content_lines + border_height
+    }
+
     /// Calculate the area where this popup should be rendered
     pub fn calculate_area(&self, terminal_area: Rect, cursor_pos: Option<(u16, u16)>) -> Rect {
         match self.position {
@@ -236,7 +250,8 @@ impl Popup {
                 let (cursor_x, cursor_y) = cursor_pos.unwrap_or((terminal_area.width / 2, terminal_area.height / 2));
 
                 let width = self.width.min(terminal_area.width);
-                let height = self.max_height.min(terminal_area.height);
+                // Use the minimum of max_height, actual content height, and terminal height
+                let height = self.content_height().min(self.max_height).min(terminal_area.height);
 
                 let x = if cursor_x + width > terminal_area.width {
                     terminal_area.width.saturating_sub(width)
@@ -269,12 +284,12 @@ impl Popup {
             }
             PopupPosition::Fixed { x, y } => {
                 let width = self.width.min(terminal_area.width);
-                let height = self.max_height.min(terminal_area.height);
+                let height = self.content_height().min(self.max_height).min(terminal_area.height);
                 Rect { x, y, width, height }
             }
             PopupPosition::Centered => {
                 let width = self.width.min(terminal_area.width);
-                let height = self.max_height.min(terminal_area.height);
+                let height = self.content_height().min(self.max_height).min(terminal_area.height);
                 let x = (terminal_area.width.saturating_sub(width)) / 2;
                 let y = (terminal_area.height.saturating_sub(height)) / 2;
                 Rect { x, y, width, height }

@@ -21,6 +21,7 @@ impl StatusBarRenderer {
     /// * `state` - The active buffer's editor state
     /// * `status_message` - Optional status message to display
     /// * `prompt` - Optional active prompt
+    /// * `lsp_status` - LSP status indicator
     /// * `theme` - The active theme for colors
     pub fn render(
         frame: &mut Frame,
@@ -28,6 +29,7 @@ impl StatusBarRenderer {
         state: &EditorState,
         status_message: &Option<String>,
         prompt: &Option<Prompt>,
+        lsp_status: &str,
         theme: &crate::theme::Theme,
     ) {
         // If we're in prompt mode, render the prompt instead of the status bar
@@ -37,7 +39,7 @@ impl StatusBarRenderer {
         }
 
         // Normal status bar rendering
-        Self::render_status(frame, area, state, status_message, theme);
+        Self::render_status(frame, area, state, status_message, lsp_status, theme);
     }
 
     /// Render the prompt/minibuffer
@@ -65,6 +67,7 @@ impl StatusBarRenderer {
         area: Rect,
         state: &EditorState,
         status_message: &Option<String>,
+        lsp_status: &str,
         theme: &crate::theme::Theme,
     ) {
         // Collect all data we need from state
@@ -132,10 +135,17 @@ impl StatusBarRenderer {
             String::new()
         };
 
-        let status = if let Some(msg) = status_message {
-            format!("{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary} | {msg}")
+        // Build the status string with optional LSP status and status message
+        let lsp_indicator = if !lsp_status.is_empty() {
+            format!(" | {}", lsp_status)
         } else {
-            format!("{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}")
+            String::new()
+        };
+
+        let status = if let Some(msg) = status_message {
+            format!("{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{lsp_indicator} | {msg}")
+        } else {
+            format!("{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{lsp_indicator}")
         };
 
         let status_line =

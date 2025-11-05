@@ -168,6 +168,9 @@ pub struct Editor {
 
     /// Pending LSP go-to-definition request ID (if any)
     pending_goto_definition_request: Option<u64>,
+
+    /// LSP status indicator for status bar
+    lsp_status: String,
 }
 
 impl Editor {
@@ -262,6 +265,7 @@ impl Editor {
             next_lsp_request_id: 0,
             pending_completion_request: None,
             pending_goto_definition_request: None,
+            lsp_status: String::new(),
         })
     }
 
@@ -1171,6 +1175,7 @@ impl Editor {
         }
 
         self.pending_completion_request = None;
+        self.lsp_status.clear();
 
         if items.is_empty() {
             tracing::debug!("No completion items received");
@@ -1339,6 +1344,7 @@ impl Editor {
                         let request_id = self.next_lsp_request_id;
                         self.next_lsp_request_id += 1;
                         self.pending_completion_request = Some(request_id);
+                        self.lsp_status = "LSP: completion...".to_string();
 
                         let _ = handle.completion(request_id, uri.clone(), line as u32, character as u32);
                         tracing::info!("Requested completion at {}:{}:{}", uri, line, character);
@@ -1873,6 +1879,7 @@ impl Editor {
                 self.active_state(),
                 &self.status_message,
                 &self.prompt,
+                &self.lsp_status,
                 &self.theme,
             );
         } else {
@@ -1883,6 +1890,7 @@ impl Editor {
                 self.active_state(),
                 &self.status_message,
                 &self.prompt,
+                &self.lsp_status,
                 &self.theme,
             );
         }
