@@ -1972,19 +1972,20 @@ impl Editor {
                             if parts.len() >= 3 {
                                 let file = parts[0];
                                 let line = parts[1].parse::<usize>().unwrap_or(1);
-                                let _column = parts[2].parse::<usize>().unwrap_or(1);
+                                let column = parts[2].parse::<usize>().unwrap_or(1);
 
                                 // Open the file
                                 let path = Path::new(file);
                                 if let Err(e) = self.open_file(path) {
                                     self.set_status_message(format!("Error opening file: {e}"));
                                 } else {
-                                    // Jump to the line
+                                    // Jump to the line and column
                                     let state = self.active_state_mut();
 
                                     // Find the byte position for the target line
-                                    // Git grep returns 1-indexed line numbers
+                                    // Git grep returns 1-indexed line numbers and columns
                                     let target_line = line.saturating_sub(1); // Convert to 0-indexed
+                                    let column_offset = column.saturating_sub(1); // Convert to 0-indexed
                                     let mut iter = state.buffer.line_iterator(0);
                                     let mut target_byte = 0;
 
@@ -2001,16 +2002,22 @@ impl Editor {
                                         }
                                     }
 
-                                    state.cursors.primary_mut().position = target_byte;
+                                    // Add the column offset to position within the line
+                                    // Git grep --column returns byte offsets from line start
+                                    let final_position = target_byte + column_offset;
+
+                                    // Ensure we don't go past the buffer end
+                                    let buffer_len = state.buffer.len();
+                                    state.cursors.primary_mut().position = final_position.min(buffer_len);
                                     state.cursors.primary_mut().anchor = None;
 
-                                    // Ensure the line is visible
+                                    // Ensure the position is visible
                                     state.viewport.ensure_visible(
                                         &mut state.buffer,
                                         state.cursors.primary(),
                                     );
 
-                                    self.set_status_message(format!("Jumped to {}:{}", file, line));
+                                    self.set_status_message(format!("Jumped to {}:{}:{}", file, line, column));
                                 }
                             } else {
                                 self.set_status_message(format!(
@@ -2097,6 +2104,37 @@ impl Editor {
                     if !prompt.suggestions.is_empty() {
                         if let Some(selected) = prompt.selected_suggestion {
                             prompt.selected_suggestion = Some((selected + 1) % prompt.suggestions.len());
+                        }
+                    }
+                }
+            }
+            Action::PromptPageUp => {
+                if let Some(prompt) = self.prompt_mut() {
+                    if !prompt.suggestions.is_empty() {
+                        if let Some(selected) = prompt.selected_suggestion {
+                            // Move up by 10, wrapping to end if needed
+                            let len = prompt.suggestions.len();
+                            prompt.selected_suggestion = if selected < 10 {
+                                Some(len.saturating_sub(10 - selected))
+                            } else {
+                                Some(selected - 10)
+                            };
+                        }
+                    }
+                }
+            }
+            Action::PromptPageDown => {
+                if let Some(prompt) = self.prompt_mut() {
+                    if !prompt.suggestions.is_empty() {
+                        if let Some(selected) = prompt.selected_suggestion {
+                            // Move down by 10, wrapping to start if needed
+                            let len = prompt.suggestions.len();
+                            let new_pos = selected + 10;
+                            prompt.selected_suggestion = if new_pos >= len {
+                                Some((new_pos - len).min(9))
+                            } else {
+                                Some(new_pos)
+                            };
                         }
                     }
                 }
