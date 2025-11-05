@@ -186,7 +186,8 @@ mod tests {
             data: None,
         };
 
-        let result = diagnostic_to_overlay(&diagnostic, &buffer);
+        let theme = crate::theme::Theme::dark();
+        let result = diagnostic_to_overlay(&diagnostic, &buffer, &theme);
         assert!(result.is_some());
 
         let (range, face, priority) = result.unwrap();
@@ -195,7 +196,7 @@ mod tests {
 
         match face {
             OverlayFace::Background { color } => {
-                assert_eq!(color, Color::Rgb(60, 20, 20)); // Dark red background
+                assert_eq!(color, theme.diagnostic_error_bg);
             }
             _ => panic!("Expected Background face"),
         }
@@ -226,7 +227,8 @@ mod tests {
             data: None,
         };
 
-        let result = diagnostic_to_overlay(&diagnostic, &buffer);
+        let theme = crate::theme::Theme::dark();
+        let result = diagnostic_to_overlay(&diagnostic, &buffer, &theme);
         assert!(result.is_some());
 
         let (range, face, priority) = result.unwrap();
@@ -235,7 +237,7 @@ mod tests {
 
         match face {
             OverlayFace::Background { color } => {
-                assert_eq!(color, Color::Rgb(60, 50, 0)); // Dark yellow/brown background
+                assert_eq!(color, theme.diagnostic_warning_bg);
             }
             _ => panic!("Expected Background face"),
         }
@@ -266,7 +268,8 @@ mod tests {
             data: None,
         };
 
-        let result = diagnostic_to_overlay(&diagnostic, &buffer);
+        let theme = crate::theme::Theme::dark();
+        let result = diagnostic_to_overlay(&diagnostic, &buffer, &theme);
         assert!(result.is_some());
 
         let (range, _, _) = result.unwrap();
