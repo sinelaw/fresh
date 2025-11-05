@@ -13,6 +13,9 @@ pub struct Config {
     pub editor: EditorConfig,
 
     #[serde(default)]
+    pub file_explorer: FileExplorerConfig,
+
+    #[serde(default)]
     pub keybindings: Vec<Keybinding>,
 
     #[serde(default)]
@@ -93,6 +96,46 @@ impl Default for EditorConfig {
     }
 }
 
+/// File explorer configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileExplorerConfig {
+    /// Whether to respect .gitignore files
+    #[serde(default = "default_true")]
+    pub respect_gitignore: bool,
+
+    /// Whether to show hidden files (starting with .) by default
+    #[serde(default = "default_false")]
+    pub show_hidden: bool,
+
+    /// Whether to show gitignored files by default
+    #[serde(default = "default_false")]
+    pub show_gitignored: bool,
+
+    /// Custom patterns to ignore (in addition to .gitignore)
+    #[serde(default)]
+    pub custom_ignore_patterns: Vec<String>,
+
+    /// Width of file explorer as percentage (0.0 to 1.0)
+    #[serde(default = "default_explorer_width")]
+    pub width: f32,
+}
+
+fn default_explorer_width() -> f32 {
+    0.3 // 30% of screen width
+}
+
+impl Default for FileExplorerConfig {
+    fn default() -> Self {
+        Self {
+            respect_gitignore: true,
+            show_hidden: false,
+            show_gitignored: false,
+            custom_ignore_patterns: Vec::new(),
+            width: default_explorer_width(),
+        }
+    }
+}
+
 /// Keybinding definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Keybinding {
@@ -138,6 +181,7 @@ impl Default for Config {
         Self {
             theme: default_theme_name(),
             editor: EditorConfig::default(),
+            file_explorer: FileExplorerConfig::default(),
             keybindings: Self::default_keybindings(),
             languages: Self::default_languages(),
             lsp: Self::default_lsp_config(),
@@ -356,7 +400,7 @@ impl Config {
             },
             Keybinding {
                 key: "Escape".to_string(),
-                modifiers: vec![],
+                modifiers: vec!["alt".to_string()],
                 action: "focus_editor".to_string(),
                 args: HashMap::new(),
                 when: None,
@@ -433,6 +477,21 @@ impl Config {
                 key: "F2".to_string(),
                 modifiers: vec![],
                 action: "file_explorer_rename".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
+            // File Explorer - Toggles
+            Keybinding {
+                key: ".".to_string(),
+                modifiers: vec!["alt".to_string()],
+                action: "file_explorer_toggle_hidden".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
+            Keybinding {
+                key: "i".to_string(),
+                modifiers: vec!["alt".to_string()],
+                action: "file_explorer_toggle_gitignored".to_string(),
                 args: HashMap::new(),
                 when: None,
             },

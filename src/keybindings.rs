@@ -176,6 +176,8 @@ pub enum Action {
     FileExplorerNewDirectory,
     FileExplorerDelete,
     FileExplorerRename,
+    FileExplorerToggleHidden,
+    FileExplorerToggleGitignored,
 
     // LSP operations
     LspCompletion,
@@ -310,6 +312,8 @@ impl Action {
             "file_explorer_new_directory" => Some(Action::FileExplorerNewDirectory),
             "file_explorer_delete" => Some(Action::FileExplorerDelete),
             "file_explorer_rename" => Some(Action::FileExplorerRename),
+            "file_explorer_toggle_hidden" => Some(Action::FileExplorerToggleHidden),
+            "file_explorer_toggle_gitignored" => Some(Action::FileExplorerToggleGitignored),
 
             "lsp_completion" => Some(Action::LspCompletion),
             "lsp_goto_definition" => Some(Action::LspGotoDefinition),
@@ -872,6 +876,8 @@ impl KeybindingResolver {
             Action::FileExplorerNewDirectory => "File explorer: new directory".to_string(),
             Action::FileExplorerDelete => "File explorer: delete".to_string(),
             Action::FileExplorerRename => "File explorer: rename".to_string(),
+            Action::FileExplorerToggleHidden => "File explorer: toggle hidden files".to_string(),
+            Action::FileExplorerToggleGitignored => "File explorer: toggle gitignored files".to_string(),
             Action::LspCompletion => "LSP: Show completion suggestions".to_string(),
             Action::LspGotoDefinition => "LSP: Go to definition".to_string(),
             Action::None => "No action".to_string(),

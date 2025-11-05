@@ -689,6 +689,8 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         | Action::FileExplorerNewDirectory
         | Action::FileExplorerDelete
         | Action::FileExplorerRename
+        | Action::FileExplorerToggleHidden
+        | Action::FileExplorerToggleGitignored
         | Action::LspCompletion
         | Action::LspGotoDefinition
         | Action::None => return None,

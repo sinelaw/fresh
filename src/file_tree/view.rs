@@ -1,3 +1,4 @@
+use super::ignore::IgnorePatterns;
 use super::node::NodeId;
 use super::tree::FileTree;
 use crate::fs::FsEntry;
@@ -13,6 +14,8 @@ pub struct FileTreeView {
     scroll_offset: usize,
     /// Sort mode for entries
     sort_mode: SortMode,
+    /// Ignore patterns for filtering
+    ignore_patterns: IgnorePatterns,
 }
 
 /// Sort mode for file tree entries
@@ -35,6 +38,7 @@ impl FileTreeView {
             selected_node: Some(root_id),
             scroll_offset: 0,
             sort_mode: SortMode::Type,
+            ignore_patterns: IgnorePatterns::new(),
         }
     }
 
@@ -216,6 +220,42 @@ impl FileTreeView {
     /// Get the number of visible nodes
     pub fn visible_count(&self) -> usize {
         self.tree.get_visible_nodes().len()
+    }
+
+    /// Get reference to ignore patterns
+    pub fn ignore_patterns(&self) -> &IgnorePatterns {
+        &self.ignore_patterns
+    }
+
+    /// Get mutable reference to ignore patterns
+    pub fn ignore_patterns_mut(&mut self) -> &mut IgnorePatterns {
+        &mut self.ignore_patterns
+    }
+
+    /// Toggle showing hidden files
+    pub fn toggle_show_hidden(&mut self) {
+        self.ignore_patterns.toggle_show_hidden();
+    }
+
+    /// Toggle showing gitignored files
+    pub fn toggle_show_gitignored(&mut self) {
+        self.ignore_patterns.toggle_show_gitignored();
+    }
+
+    /// Check if a node should be visible (not filtered by ignore patterns)
+    pub fn is_node_visible(&self, node_id: NodeId) -> bool {
+        if let Some(node) = self.tree.get_node(node_id) {
+            !self.ignore_patterns.is_ignored(&node.entry.path, node.is_dir())
+        } else {
+            false
+        }
+    }
+
+    /// Load .gitignore for a directory
+    ///
+    /// This should be called when expanding a directory to load its .gitignore
+    pub fn load_gitignore_for_dir(&mut self, dir_path: &std::path::Path) -> std::io::Result<()> {
+        self.ignore_patterns.load_gitignore(dir_path)
     }
 }
 

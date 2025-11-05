@@ -1076,6 +1076,34 @@ impl Editor {
         }
     }
 
+    /// Toggle showing hidden files in file explorer
+    pub fn file_explorer_toggle_hidden(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.toggle_show_hidden();
+            let show = explorer.ignore_patterns().show_hidden();
+            let msg = if show {
+                "Showing hidden files"
+            } else {
+                "Hiding hidden files"
+            };
+            self.set_status_message(msg.to_string());
+        }
+    }
+
+    /// Toggle showing gitignored files in file explorer
+    pub fn file_explorer_toggle_gitignored(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.toggle_show_gitignored();
+            let show = explorer.ignore_patterns().show_gitignored();
+            let msg = if show {
+                "Showing gitignored files"
+            } else {
+                "Hiding gitignored files"
+            };
+            self.set_status_message(msg.to_string());
+        }
+    }
+
     /// Get the currently active buffer state
     pub fn active_state(&self) -> &EditorState {
         self.buffers.get(&self.active_buffer).unwrap()
@@ -2070,6 +2098,8 @@ impl Editor {
             Action::FileExplorerNewDirectory => self.file_explorer_new_directory(),
             Action::FileExplorerDelete => self.file_explorer_delete(),
             Action::FileExplorerRename => self.file_explorer_rename(),
+            Action::FileExplorerToggleHidden => self.file_explorer_toggle_hidden(),
+            Action::FileExplorerToggleGitignored => self.file_explorer_toggle_gitignored(),
             Action::None => {}
             Action::InsertChar(c) => {
                 // Handle character insertion in prompt mode
