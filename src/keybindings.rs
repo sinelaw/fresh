@@ -183,6 +183,10 @@ pub enum Action {
     LspCompletion,
     LspGotoDefinition,
 
+    // Git operations
+    GitGrep,
+    GitFindFile,
+
     // No-op
     None,
 }
@@ -317,6 +321,9 @@ impl Action {
 
             "lsp_completion" => Some(Action::LspCompletion),
             "lsp_goto_definition" => Some(Action::LspGotoDefinition),
+
+            "git_grep" => Some(Action::GitGrep),
+            "git_find_file" => Some(Action::GitFindFile),
 
             _ => None,
         }
@@ -617,6 +624,16 @@ impl KeybindingResolver {
             Action::CommandPalette,
         );
 
+        // Git operations (Ctrl+Shift+F for grep, Ctrl+Shift+P for find file)
+        bindings.insert(
+            (KeyCode::Char('F'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            Action::GitGrep,
+        );
+        bindings.insert(
+            (KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            Action::GitFindFile,
+        );
+
         // Buffer navigation (Ctrl+PageUp/PageDown - standard in terminals and browsers)
         bindings.insert(
             (KeyCode::PageUp, KeyModifiers::CONTROL),
@@ -880,6 +897,8 @@ impl KeybindingResolver {
             Action::FileExplorerToggleGitignored => "File explorer: toggle gitignored files".to_string(),
             Action::LspCompletion => "LSP: Show completion suggestions".to_string(),
             Action::LspGotoDefinition => "LSP: Go to definition".to_string(),
+            Action::GitGrep => "Git: Grep - search through git-tracked files".to_string(),
+            Action::GitFindFile => "Git: Find File - find file by filtering git ls-files".to_string(),
             Action::None => "No action".to_string(),
         }
     }

@@ -1403,16 +1403,34 @@ impl Editor {
 
     /// Update prompt suggestions based on current input
     pub fn update_prompt_suggestions(&mut self) {
-        if let Some(prompt) = &mut self.prompt {
-            if matches!(prompt.prompt_type, PromptType::Command) {
-                // Use the underlying context (not Prompt context) for filtering
-                prompt.suggestions = filter_commands(&prompt.input, self.key_context);
-                prompt.selected_suggestion = if prompt.suggestions.is_empty() {
-                    None
-                } else {
-                    Some(0)
-                };
+        // Extract prompt type and input to avoid borrow checker issues
+        let (prompt_type, input) = if let Some(prompt) = &self.prompt {
+            (prompt.prompt_type.clone(), prompt.input.clone())
+        } else {
+            return;
+        };
+
+        match prompt_type {
+            PromptType::Command => {
+                if let Some(prompt) = &mut self.prompt {
+                    // Use the underlying context (not Prompt context) for filtering
+                    prompt.suggestions = filter_commands(&input, self.key_context);
+                    prompt.selected_suggestion = if prompt.suggestions.is_empty() {
+                        None
+                    } else {
+                        Some(0)
+                    };
+                }
             }
+            PromptType::GitGrep => {
+                // Trigger async git grep
+                self.request_git_grep(input);
+            }
+            PromptType::GitFindFile => {
+                // Trigger async git ls-files with query
+                self.request_git_ls_files(input);
+            }
+            _ => {}
         }
     }
 
@@ -1492,6 +1510,47 @@ impl Editor {
                 AsyncMessage::GitStatusChanged { status } => {
                     tracing::info!("Git status changed: {}", status);
                     // TODO: Handle git status changes
+                }
+                AsyncMessage::GitGrepResults { query, results } => {
+                    // Update prompt suggestions with git grep results
+                    if let Some(prompt) = &mut self.prompt {
+                        if matches!(prompt.prompt_type, PromptType::GitGrep) && prompt.input == query {
+                            // Convert git grep results to suggestions
+                            prompt.suggestions = results
+                                .into_iter()
+                                .map(|m| {
+                                    let text = format!("{}:{}:{}", m.file, m.line, m.column);
+                                    Suggestion::with_description(text, m.content)
+                                })
+                                .collect();
+
+                            // Select first suggestion if any
+                            prompt.selected_suggestion = if prompt.suggestions.is_empty() {
+                                None
+                            } else {
+                                Some(0)
+                            };
+                        }
+                    }
+                }
+                AsyncMessage::GitLsFilesResults { query, files } => {
+                    // Update prompt suggestions with git ls-files results
+                    if let Some(prompt) = &mut self.prompt {
+                        if matches!(prompt.prompt_type, PromptType::GitFindFile) && prompt.input == query {
+                            // Convert file list to suggestions
+                            prompt.suggestions = files
+                                .into_iter()
+                                .map(|file| Suggestion::new(file))
+                                .collect();
+
+                            // Select first suggestion if any
+                            prompt.selected_suggestion = if prompt.suggestions.is_empty() {
+                                None
+                            } else {
+                                Some(0)
+                            };
+                        }
+                    }
                 }
                 AsyncMessage::FileExplorerInitialized(mut view) => {
                     tracing::info!("File explorer initialized");
@@ -1773,6 +1832,32 @@ impl Editor {
         Ok(())
     }
 
+    /// Request git grep results for a query
+    fn request_git_grep(&mut self, query: String) {
+        if let (Some(bridge), Some(runtime)) = (&self.async_bridge, &self.tokio_runtime) {
+            let sender = bridge.sender();
+            let query_clone = query.clone();
+
+            // Spawn async task to run git grep
+            runtime.spawn(async move {
+                crate::git::git_grep(query_clone, sender).await;
+            });
+        }
+    }
+
+    /// Request git ls-files results filtered by query
+    fn request_git_ls_files(&mut self, query: String) {
+        if let (Some(bridge), Some(runtime)) = (&self.async_bridge, &self.tokio_runtime) {
+            let sender = bridge.sender();
+            let query_clone = query.clone();
+
+            // Spawn async task to run git ls-files
+            runtime.spawn(async move {
+                crate::git::git_ls_files(query_clone, sender).await;
+            });
+        }
+    }
+
     /// Determine the current keybinding context based on UI state
     fn get_key_context(&self) -> crate::keybindings::KeyContext {
         use crate::keybindings::KeyContext;
@@ -1875,6 +1960,70 @@ impl Editor {
                                 return self.handle_action(action);
                             } else {
                                 self.set_status_message(format!("Unknown command: {input}"));
+                            }
+                        }
+                        PromptType::GitGrep => {
+                            // Parse the selected result: "file:line:column"
+                            let parts: Vec<&str> = input.split(':').collect();
+                            if parts.len() >= 3 {
+                                let file = parts[0];
+                                let line = parts[1].parse::<usize>().unwrap_or(1);
+                                let _column = parts[2].parse::<usize>().unwrap_or(1);
+
+                                // Open the file
+                                let path = Path::new(file);
+                                if let Err(e) = self.open_file(path) {
+                                    self.set_status_message(format!("Error opening file: {e}"));
+                                } else {
+                                    // Jump to the line
+                                    let state = self.active_state_mut();
+
+                                    // Find the byte position for the target line
+                                    let target_line = line.saturating_sub(1); // Convert to 0-indexed
+                                    let mut iter = state.buffer.line_iterator(0);
+                                    let mut current_line = 0;
+                                    let mut target_byte = 0;
+
+                                    while current_line < target_line {
+                                        if let Some((line_start, _)) = iter.next() {
+                                            if current_line + 1 == target_line {
+                                                target_byte = line_start;
+                                                break;
+                                            }
+                                            current_line += 1;
+                                        } else {
+                                            // Reached end of buffer before target line
+                                            break;
+                                        }
+                                    }
+
+                                    // Get the line start position if we're at the target line
+                                    if current_line == target_line {
+                                        if let Some((line_start, _)) = iter.next() {
+                                            target_byte = line_start;
+                                        }
+                                    }
+
+                                    state.cursors.primary_mut().position = target_byte;
+                                    state.cursors.primary_mut().anchor = None;
+
+                                    // Ensure the line is visible
+                                    state.viewport.ensure_visible(
+                                        &mut state.buffer,
+                                        state.cursors.primary(),
+                                    );
+
+                                    self.set_status_message(format!("Jumped to {}:{}", file, line));
+                                }
+                            }
+                        }
+                        PromptType::GitFindFile => {
+                            // Open the selected file
+                            let path = Path::new(&input);
+                            if let Err(e) = self.open_file(path) {
+                                self.set_status_message(format!("Error opening file: {e}"));
+                            } else {
+                                self.set_status_message(format!("Opened: {input}"));
                             }
                         }
                     }
@@ -2112,6 +2261,24 @@ impl Editor {
             }
             Action::LspGotoDefinition => {
                 self.request_goto_definition()?;
+            }
+            Action::GitGrep => {
+                // Start git grep prompt with empty suggestions (will be populated as user types)
+                self.start_prompt_with_suggestions(
+                    "Git grep: ".to_string(),
+                    PromptType::GitGrep,
+                    vec![],
+                );
+            }
+            Action::GitFindFile => {
+                // Start git find file prompt and immediately request all files
+                self.start_prompt_with_suggestions(
+                    "Find file: ".to_string(),
+                    PromptType::GitFindFile,
+                    vec![],
+                );
+                // Trigger initial git ls-files with empty query
+                self.request_git_ls_files(String::new());
             }
             Action::AddCursorNextMatch => self.add_cursor_at_next_match(),
             Action::AddCursorAbove => self.add_cursor_above(),

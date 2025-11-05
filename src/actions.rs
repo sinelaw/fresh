@@ -693,6 +693,8 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         | Action::FileExplorerToggleGitignored
         | Action::LspCompletion
         | Action::LspGotoDefinition
+        | Action::GitGrep
+        | Action::GitFindFile
         | Action::None => return None,
 
         Action::SelectLine => {

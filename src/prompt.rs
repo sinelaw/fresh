@@ -15,6 +15,10 @@ pub enum PromptType {
     Replace { search: String },
     /// Execute a command by name (M-x)
     Command,
+    /// Git grep - search through git-tracked files
+    GitGrep,
+    /// Git find file - find file by filtering git ls-files
+    GitFindFile,
 }
 
 /// Prompt state for the minibuffer
