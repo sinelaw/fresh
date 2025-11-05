@@ -27,6 +27,7 @@ pub mod overlay;
 pub mod persistence;
 pub mod popup;
 pub mod position_history;
+pub mod process_limits;
 pub mod prompt;
 pub mod signal_handler;
 pub mod split;
