@@ -8,7 +8,7 @@
 /// - Splits can display the same buffer multiple times (useful for viewing different parts)
 ///
 /// Example split layouts:
-/// ```
+/// ```text
 /// ┌────────────────────┐      ┌──────────┬─────────┐
 /// │                    │      │          │         │
 /// │   Single buffer    │      │  Buffer  │ Buffer  │
