@@ -58,9 +58,9 @@ async fn main() -> io::Result<()> {
         if let Some(node) = view.tree().get_node(*node_id) {
             let indent_str = "  ".repeat(*indent);
             let icon = if node.is_dir() {
-                if node.is_expanded() { "📂" } else { "📁" }
+                if node.is_expanded() { "[-]" } else { "[+]" }
             } else {
-                "📄"
+                "[F]"
             };
             let name = &node.entry.name;
             println!("{}{} {}", indent_str, icon, name);

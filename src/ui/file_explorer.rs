@@ -135,29 +135,29 @@ impl FileExplorerRenderer {
     /// Get icon for file type
     fn get_icon(entry_type: &FsEntryType, name: &str) -> &'static str {
         match entry_type {
-            FsEntryType::Directory => "📁 ",
-            FsEntryType::Symlink => "🔗 ",
+            FsEntryType::Directory => "[D] ",
+            FsEntryType::Symlink => "[L] ",
             FsEntryType::File => {
                 // Determine icon based on file extension
                 if let Some(ext) = name.rsplit('.').next() {
                     match ext.to_lowercase().as_str() {
-                        "rs" => "🦀 ",
-                        "py" => "🐍 ",
-                        "js" | "ts" | "jsx" | "tsx" => "📜 ",
-                        "html" | "htm" => "🌐 ",
-                        "css" | "scss" | "sass" => "🎨 ",
-                        "json" | "yaml" | "yml" | "toml" => "⚙️  ",
-                        "md" | "txt" => "📝 ",
-                        "jpg" | "jpeg" | "png" | "gif" | "svg" => "🖼️  ",
-                        "mp3" | "wav" | "ogg" => "🎵 ",
-                        "mp4" | "avi" | "mkv" => "🎬 ",
-                        "zip" | "tar" | "gz" | "7z" => "📦 ",
-                        "pdf" => "📄 ",
-                        "sh" | "bash" | "zsh" => "⚡ ",
-                        _ => "📄 ",
+                        "rs" => "[R] ",
+                        "py" => "[P] ",
+                        "js" | "ts" | "jsx" | "tsx" => "[J] ",
+                        "html" | "htm" => "[H] ",
+                        "css" | "scss" | "sass" => "[C] ",
+                        "json" | "yaml" | "yml" | "toml" => "[*] ",
+                        "md" | "txt" => "[T] ",
+                        "jpg" | "jpeg" | "png" | "gif" | "svg" => "[I] ",
+                        "mp3" | "wav" | "ogg" => "[A] ",
+                        "mp4" | "avi" | "mkv" => "[V] ",
+                        "zip" | "tar" | "gz" | "7z" => "[Z] ",
+                        "pdf" => "[F] ",
+                        "sh" | "bash" | "zsh" => "[S] ",
+                        _ => "[F] ",
                     }
                 } else {
-                    "📄 "
+                    "[F] "
                 }
             }
         }
@@ -210,27 +210,27 @@ mod tests {
     fn test_get_icon() {
         assert_eq!(
             FileExplorerRenderer::get_icon(&FsEntryType::Directory, "test"),
-            "📁 "
+            "[D] "
         );
         assert_eq!(
             FileExplorerRenderer::get_icon(&FsEntryType::Symlink, "test"),
-            "🔗 "
+            "[L] "
         );
         assert_eq!(
             FileExplorerRenderer::get_icon(&FsEntryType::File, "test.rs"),
-            "🦀 "
+            "[R] "
         );
         assert_eq!(
             FileExplorerRenderer::get_icon(&FsEntryType::File, "test.py"),
-            "🐍 "
+            "[P] "
         );
         assert_eq!(
             FileExplorerRenderer::get_icon(&FsEntryType::File, "test.txt"),
-            "📝 "
+            "[T] "
         );
         assert_eq!(
             FileExplorerRenderer::get_icon(&FsEntryType::File, "unknown"),
-            "📄 "
+            "[F] "
         );
     }
 }

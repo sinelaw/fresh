@@ -266,6 +266,8 @@ impl Editor {
         for (id, state) in &self.buffers {
             if state.buffer.file_path() == Some(path) {
                 self.active_buffer = *id;
+                // Update the split manager to show this buffer
+                self.split_manager.set_active_buffer_id(*id);
                 return Ok(*id);
             }
         }
@@ -352,6 +354,8 @@ impl Editor {
         self.buffer_metadata.insert(buffer_id, metadata);
 
         self.active_buffer = buffer_id;
+        // Update the split manager to show the new buffer
+        self.split_manager.set_active_buffer_id(buffer_id);
         self.status_message = Some(format!("Opened {}", path.display()));
 
         Ok(buffer_id)
@@ -413,6 +417,8 @@ impl Editor {
         if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer) {
             let next_idx = (idx + 1) % ids.len();
             self.active_buffer = ids[next_idx];
+            // Update the split manager to show the new buffer
+            self.split_manager.set_active_buffer_id(ids[next_idx]);
         }
     }
 
@@ -423,6 +429,8 @@ impl Editor {
         if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer) {
             let prev_idx = if idx == 0 { ids.len() - 1 } else { idx - 1 };
             self.active_buffer = ids[prev_idx];
+            // Update the split manager to show the new buffer
+            self.split_manager.set_active_buffer_id(ids[prev_idx]);
         }
     }
 
