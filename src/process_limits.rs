@@ -1,10 +1,12 @@
 /// Process resource limiting infrastructure
 ///
 /// Provides cross-platform support for limiting memory and CPU usage of spawned processes.
-/// On Linux, uses setrlimit and cgroups. On other platforms, this is a TODO.
+/// On Linux, uses cgroups v2 if available, otherwise falls back to setrlimit.
 
 use serde::{Deserialize, Serialize};
 use std::io;
+use std::fs;
+use std::path::PathBuf;
 
 /// Configuration for process resource limits
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -61,8 +63,8 @@ impl ProcessLimits {
 
     /// Apply these limits to a tokio Command before spawning
     ///
-    /// This configures the command to have resource limits applied when the process starts.
-    /// On Linux, uses setrlimit. On other platforms, this is currently a no-op (TODO).
+    /// On Linux, tries cgroups v2 first, then falls back to setrlimit.
+    /// On other platforms, this is currently a no-op.
     pub fn apply_to_command(&self, cmd: &mut tokio::process::Command) -> io::Result<()> {
         if !self.enabled {
             return Ok(());
@@ -89,21 +91,34 @@ impl ProcessLimits {
         let max_memory_bytes = self.max_memory_mb.map(|mb| mb * 1024 * 1024);
         let max_cpu_percent = self.max_cpu_percent;
 
+        // Try to set up cgroups first
+        let cgroup_path = self.try_setup_cgroup();
+
         unsafe {
             cmd.pre_exec(move || {
-                // Apply memory limit using RLIMIT_AS (virtual memory)
-                if let Some(mem_limit) = max_memory_bytes {
-                    match apply_memory_limit(mem_limit) {
-                        Ok(()) => tracing::debug!("Applied memory limit: {} MB", mem_limit / 1024 / 1024),
-                        Err(e) => tracing::warn!("Failed to apply memory limit: {}", e),
+                // If we have a cgroup set up, move this process into it
+                if let Some(ref cgroup) = cgroup_path {
+                    if let Err(e) = move_to_cgroup(cgroup) {
+                        tracing::warn!("Failed to move process to cgroup: {}", e);
+                        // Don't fail, will use setrlimit as fallback
+                    } else {
+                        tracing::debug!("Moved process to cgroup: {:?}", cgroup);
+                        return Ok(()); // Cgroup limits are already set, don't need setrlimit
                     }
                 }
 
-                // Apply CPU limit using cgroups or CPU time rlimit
-                if let Some(cpu_percent) = max_cpu_percent {
-                    match apply_cpu_limit(cpu_percent) {
-                        Ok(()) => tracing::debug!("Applied CPU limit: {}%", cpu_percent),
-                        Err(e) => tracing::warn!("Failed to apply CPU limit: {}", e),
+                // Fall back to setrlimit
+                if let Some(mem_limit) = max_memory_bytes {
+                    match apply_memory_limit_setrlimit(mem_limit) {
+                        Ok(()) => tracing::debug!("Applied memory limit via setrlimit: {} MB", mem_limit / 1024 / 1024),
+                        Err(e) => tracing::warn!("Failed to apply memory limit via setrlimit: {}", e),
+                    }
+                }
+
+                if let Some(_cpu_percent) = max_cpu_percent {
+                    match apply_cpu_time_limit_setrlimit() {
+                        Ok(()) => tracing::debug!("Applied CPU time limit via setrlimit (not throttling)"),
+                        Err(e) => tracing::warn!("Failed to apply CPU time limit via setrlimit: {}", e),
                     }
                 }
 
@@ -113,6 +128,82 @@ impl ProcessLimits {
 
         Ok(())
     }
+
+    /// Try to set up a cgroup for resource limiting
+    /// Returns the cgroup path if successful, None otherwise
+    #[cfg(target_os = "linux")]
+    fn try_setup_cgroup(&self) -> Option<PathBuf> {
+        // Check if cgroups v2 is mounted
+        let cgroup_root = PathBuf::from("/sys/fs/cgroup");
+        if !cgroup_root.exists() {
+            tracing::debug!("cgroups v2 not available at /sys/fs/cgroup");
+            return None;
+        }
+
+        // Try to find a writable location for our cgroup
+        let cgroup_locations = vec![
+            // User slice (most likely to work for unprivileged users)
+            cgroup_root.join(format!("user.slice/user-{}.slice/editor-lsp-{}", get_uid(), std::process::id())),
+            // Direct under root (requires privileges or delegated controllers)
+            cgroup_root.join(format!("editor-lsp-{}", std::process::id())),
+        ];
+
+        for cgroup_path in cgroup_locations {
+            if let Ok(()) = fs::create_dir_all(&cgroup_path) {
+                // Try to set limits
+                if self.apply_cgroup_limits(&cgroup_path).is_ok() {
+                    tracing::debug!("Created cgroup at {:?}", cgroup_path);
+                    return Some(cgroup_path);
+                } else {
+                    // Clean up failed attempt
+                    let _ = fs::remove_dir(&cgroup_path);
+                }
+            }
+        }
+
+        tracing::debug!("Could not create writable cgroup, will use setrlimit");
+        None
+    }
+
+    /// Apply resource limits to an existing cgroup
+    #[cfg(target_os = "linux")]
+    fn apply_cgroup_limits(&self, cgroup_path: &PathBuf) -> io::Result<()> {
+        // Set memory limit
+        if let Some(memory_mb) = self.max_memory_mb {
+            let memory_bytes = memory_mb * 1024 * 1024;
+            let memory_max_file = cgroup_path.join("memory.max");
+            fs::write(&memory_max_file, format!("{}", memory_bytes))?;
+            tracing::debug!("Set cgroup memory.max to {} bytes", memory_bytes);
+        }
+
+        // Set CPU limit
+        if let Some(cpu_percent) = self.max_cpu_percent {
+            // cpu.max format: "$MAX $PERIOD" where MAX/PERIOD = desired quota
+            // Standard period is 100ms (100000 microseconds)
+            let period_us = 100_000;
+            let max_us = (period_us * cpu_percent as u64) / 100;
+            let cpu_max_file = cgroup_path.join("cpu.max");
+            fs::write(&cpu_max_file, format!("{} {}", max_us, period_us))?;
+            tracing::debug!("Set cgroup cpu.max to {} {} ({}%)", max_us, period_us, cpu_percent);
+        }
+
+        Ok(())
+    }
+}
+
+/// Move the current process into a cgroup
+#[cfg(target_os = "linux")]
+fn move_to_cgroup(cgroup_path: &PathBuf) -> io::Result<()> {
+    let procs_file = cgroup_path.join("cgroup.procs");
+    let pid = std::process::id();
+    fs::write(&procs_file, format!("{}", pid))?;
+    Ok(())
+}
+
+/// Get the current user's UID
+#[cfg(target_os = "linux")]
+fn get_uid() -> u32 {
+    unsafe { libc::getuid() }
 }
 
 /// System resource information utilities
@@ -177,53 +268,35 @@ impl SystemResources {
     }
 }
 
-/// Linux-specific resource limit application
+/// Apply memory limit via setrlimit (fallback method)
 #[cfg(target_os = "linux")]
-fn apply_memory_limit(bytes: u64) -> io::Result<()> {
+fn apply_memory_limit_setrlimit(bytes: u64) -> io::Result<()> {
     use nix::sys::resource::{Resource, setrlimit};
 
     // Set RLIMIT_AS (address space / virtual memory limit)
-    // This is more effective than RLIMIT_DATA for modern applications
     setrlimit(Resource::RLIMIT_AS, bytes, bytes)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("setrlimit failed: {}", e)))
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("setrlimit AS failed: {}", e)))
 }
 
-/// Linux-specific CPU limit application
+/// Apply CPU time limit via setrlimit (fallback method, does NOT throttle CPU percentage)
 #[cfg(target_os = "linux")]
-fn apply_cpu_limit(cpu_percent: u32) -> io::Result<()> {
-    // CPU percentage limiting via cgroups is complex and requires root or systemd user units.
-    // For now, we'll use RLIMIT_CPU as a softer limit (CPU time in seconds).
-    // This is not a perfect solution but provides some protection.
-
-    // TODO: Implement proper CPU throttling using cgroups v2
-    // This would require:
-    // 1. Creating a cgroup for the process
-    // 2. Setting cpu.max to limit CPU bandwidth
-    // 3. Moving the process into the cgroup
-
-    // For now, we'll set a generous CPU time limit as a safety measure
-    // This limits total CPU time, not percentage usage
+fn apply_cpu_time_limit_setrlimit() -> io::Result<()> {
     use nix::sys::resource::{Resource, setrlimit};
 
-    // Set a very high CPU time limit (24 hours) as a safety measure
-    // This prevents runaway processes but doesn't throttle CPU percentage
-    let cpu_time_seconds: u64 = 24 * 60 * 60; // 24 hours
+    // Set a generous CPU time limit (24 hours) as a safety measure
+    // Note: This limits total CPU time, NOT percentage usage
+    let cpu_time_seconds: u64 = 24 * 60 * 60;
 
     setrlimit(Resource::RLIMIT_CPU, cpu_time_seconds, cpu_time_seconds)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("setrlimit CPU failed: {}", e)))?;
 
-    tracing::debug!(
-        "Set RLIMIT_CPU to {} seconds (note: CPU percentage throttling requires cgroups)",
-        cpu_time_seconds
-    );
-
+    tracing::debug!("Set RLIMIT_CPU to {} seconds (safety limit, not throttling)", cpu_time_seconds);
     Ok(())
 }
 
 /// Get the number of CPU cores (Linux)
 #[cfg(target_os = "linux")]
 fn num_cpus() -> usize {
-    // Read from /proc/cpuinfo or use std::thread::available_parallelism
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
@@ -308,22 +381,6 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    fn test_process_limits_apply_to_command_with_limits() {
-        let limits = ProcessLimits {
-            max_memory_mb: Some(512),
-            max_cpu_percent: Some(50),
-            enabled: true,
-        };
-
-        let mut cmd = tokio::process::Command::new("echo");
-
-        // Should succeed in setting up the pre_exec hook
-        let result = limits.apply_to_command(&mut cmd);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
     fn test_process_limits_default_memory_calculation() {
         let default_memory = ProcessLimits::default_memory_limit_mb();
 
@@ -372,7 +429,7 @@ mod tests {
         let mut cmd = tokio::process::Command::new("echo");
         cmd.arg("test");
 
-        // Apply limits
+        // Apply limits (will try cgroups or fall back to setrlimit)
         limits.apply_to_command(&mut cmd).unwrap();
 
         // Spawn and wait for the process
@@ -383,5 +440,26 @@ mod tests {
         let output = output.unwrap();
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "test");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_cgroup_setup_gracefully_fails() {
+        // Just verify that cgroup setup doesn't panic when it fails
+        let limits = ProcessLimits {
+            max_memory_mb: Some(100),
+            max_cpu_percent: Some(50),
+            enabled: true,
+        };
+
+        let cgroup = limits.try_setup_cgroup();
+        // Should either succeed or return None, not panic
+        if let Some(path) = cgroup {
+            println!("Created cgroup at: {:?}", path);
+            // Clean up
+            let _ = std::fs::remove_dir(&path);
+        } else {
+            println!("Cgroup setup failed gracefully, will use setrlimit");
+        }
     }
 }
