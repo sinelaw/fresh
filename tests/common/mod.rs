@@ -1,5 +1,6 @@
 // Common test utilities
 
-pub mod fixtures;
-pub mod harness;
 pub mod fake_lsp;
+pub mod fixtures;
+pub mod git_test_helper;
+pub mod harness;
