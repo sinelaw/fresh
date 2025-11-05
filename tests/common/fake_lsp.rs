@@ -1,0 +1,162 @@
+//! Fake LSP server for E2E testing
+//!
+//! This module provides a simple fake LSP server that responds to LSP requests
+//! with predefined responses. It's used for testing LSP features without requiring
+//! a real language server.
+
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+
+/// A fake LSP server process for testing
+pub struct FakeLspServer {
+    /// Handle to the server process
+    handle: Option<thread::JoinHandle<()>>,
+    /// Channel to stop the server
+    stop_tx: mpsc::Sender<()>,
+}
+
+impl FakeLspServer {
+    /// Spawn a new fake LSP server
+    ///
+    /// The server will listen on stdin/stdout and respond to LSP requests.
+    /// It uses a Bash script that acts as a simple JSON-RPC server.
+    pub fn spawn() -> std::io::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        // Create a Bash script that acts as a fake LSP server
+        // This script reads JSON-RPC messages and sends predefined responses
+        let script = r#"#!/bin/bash
+
+# Function to read a message
+read_message() {
+    # Read headers
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        # Empty line marks end of headers
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+
+    # Read content
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+# Function to send a message
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+
+# Main loop
+while true; do
+    # Read incoming message
+    msg=$(read_message)
+
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    # Extract method from JSON
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+    case "$method" in
+        "initialize")
+            # Send initialize response
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"triggerCharacters":[".",":",":"]},"definitionProvider":true,"textDocumentSync":1}}}'
+            ;;
+        "textDocument/completion")
+            # Send completion response with sample items
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[{"label":"test_function","kind":3,"detail":"fn test_function()","insertText":"test_function"},{"label":"test_variable","kind":6,"detail":"let test_variable","insertText":"test_variable"},{"label":"test_struct","kind":22,"detail":"struct TestStruct","insertText":"test_struct"}]}}'
+            ;;
+        "textDocument/definition")
+            # Send definition response (points to line 0, col 0)
+            uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"uri":"'$uri'","range":{"start":{"line":0,"character":0},"end":{"line":0,"character":10}}}}'
+            ;;
+        "textDocument/didSave")
+            # Send diagnostics after save
+            uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+            send_message '{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"'$uri'","diagnostics":[{"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":5}},"severity":1,"message":"Test error from fake LSP"}]}}'
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+            break
+            ;;
+    esac
+done
+"#;
+
+        // Write script to a temporary file
+        let script_path = std::env::temp_dir().join("fake_lsp_server.sh");
+        std::fs::write(&script_path, script)?;
+
+        // Make it executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        // Note: This server doesn't actually start a process.
+        // Instead, tests should use the script path to start the server themselves.
+        // For now, we just return a handle that does nothing.
+
+        let handle = Some(thread::spawn(move || {
+            // Wait for stop signal
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Get the path to the fake LSP server script
+    pub fn script_path() -> std::path::PathBuf {
+        std::env::temp_dir().join("fake_lsp_server.sh")
+    }
+
+    /// Stop the server
+    pub fn stop(&mut self) {
+        let _ = self.stop_tx.send(());
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for FakeLspServer {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fake_lsp_server_creation() {
+        let server = FakeLspServer::spawn();
+        assert!(server.is_ok());
+    }
+
+    #[test]
+    fn test_script_path_exists() {
+        let _server = FakeLspServer::spawn().unwrap();
+        let path = FakeLspServer::script_path();
+        assert!(path.exists());
+    }
+}

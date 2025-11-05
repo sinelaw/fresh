@@ -1548,6 +1548,37 @@ impl Editor {
                 self.popup_page_down();
             }
             Action::PopupConfirm => {
+                // If it's a completion popup, insert the selected item
+                if let Some(popup) = self.active_state().popups.top() {
+                    if let Some(title) = &popup.title {
+                        if title == "Completion" {
+                            // Get the selected completion item
+                            if let Some(item) = popup.selected_item() {
+                                if let Some(text) = &item.data {
+                                    // Insert the completion text at cursor
+                                    if let Some(events) = self.action_to_events(Action::InsertChar(' ')) {
+                                        // We'll use the insert logic but with the completion text
+                                        let state = self.active_state();
+                                        let cursor_id = state.cursors.primary_id();
+                                        let position = state.cursors.primary().position;
+
+                                        // Create insert event for the completion text
+                                        let event = crate::event::Event::Insert {
+                                            position,
+                                            text: text.clone(),
+                                            cursor_id,
+                                        };
+
+                                        // Apply the event
+                                        self.active_event_log_mut().append(event.clone());
+                                        self.active_state_mut().apply(&event);
+                                        self.notify_lsp_change(&event);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 self.hide_popup();
             }
             Action::PopupCancel => {

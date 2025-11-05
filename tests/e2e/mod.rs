@@ -4,6 +4,7 @@ pub mod command_palette;
 pub mod file_explorer;
 pub mod help;
 pub mod lifecycle;
+pub mod lsp;
 pub mod margin;
 pub mod movement;
 pub mod multicursor;
