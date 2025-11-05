@@ -781,3 +781,110 @@ fn test_lsp_waiting_indicator() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test that popup properly hides buffer text behind it
+#[test]
+fn test_lsp_completion_popup_hides_background() -> std::io::Result<()> {
+    use editor::event::{Event, PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Insert text that would be visible behind the popup if not properly cleared
+    harness.type_text("let args = Args::parse();\nargs.log_file.create_log();\nsome_other_code_here();")?;
+    harness.render()?;
+
+    // Position cursor at the start of line 2 where we'll show the popup
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Show a completion popup that will overlap with the buffer text
+    let state = harness.editor_mut().active_state_mut();
+    state.apply(&Event::ShowPopup {
+        popup: PopupData {
+            title: Some("Completion".to_string()),
+            content: PopupContentData::List {
+                items: vec![
+                    PopupListItemData {
+                        text: "args".to_string(),
+                        detail: Some("Args".to_string()),
+                        icon: Some("v".to_string()),
+                        data: Some("args".to_string()),
+                    },
+                    PopupListItemData {
+                        text: "Args".to_string(),
+                        detail: Some("Args".to_string()),
+                        icon: Some("S".to_string()),
+                        data: Some("Args".to_string()),
+                    },
+                ],
+                selected: 0,
+            },
+            position: PopupPositionData::BelowCursor,
+            width: 40,
+            max_height: 10,
+            bordered: true,
+        },
+    });
+
+    harness.render()?;
+
+    // Get the screen content
+    let screen = harness.screen_to_string();
+    println!("Screen content:\n{}", screen);
+
+    // Find the popup area by looking for the popup border and title
+    let lines: Vec<&str> = screen.lines().collect();
+    let mut in_popup = false;
+    let mut popup_lines: Vec<&str> = Vec::new();
+
+    for line in &lines {
+        if line.contains("Completion") {
+            in_popup = true;
+        }
+        if in_popup {
+            popup_lines.push(line);
+            if line.contains("└") || line.contains("╰") {
+                break;
+            }
+        }
+    }
+
+    // Join popup lines to check content
+    let popup_content = popup_lines.join("\n");
+    println!("Popup area content:\n{}", popup_content);
+
+    // Verify that buffer text is NOT bleeding through in the popup area
+    // These strings from the buffer should NOT appear within the popup borders
+    assert!(
+        !popup_content.contains("log_file"),
+        "Buffer text 'log_file' should not be visible through popup"
+    );
+    assert!(
+        !popup_content.contains("create_log"),
+        "Buffer text 'create_log' should not be visible through popup"
+    );
+    assert!(
+        !popup_content.contains("code_here"),
+        "Buffer text 'code_here' should not be visible through popup, found:\n{}",
+        popup_content
+    );
+    assert!(
+        !popup_content.contains("parse()"),
+        "Buffer text 'parse()' should not be visible through popup, found:\n{}",
+        popup_content
+    );
+
+    // Verify the actual completion items ARE visible
+    assert!(
+        popup_content.contains("args"),
+        "Completion item 'args' should be visible in popup"
+    );
+    assert!(
+        popup_content.contains("Args"),
+        "Completion item 'Args' should be visible in popup"
+    );
+
+    Ok(())
+}
