@@ -535,9 +535,10 @@ mod tests {
         let popup_centered = popup.clone().with_position(PopupPosition::Centered);
         let area = popup_centered.calculate_area(terminal_area, None);
         assert_eq!(area.width, 30);
-        assert_eq!(area.height, 10);
+        // Height is now based on content: 1 text line + 2 border lines = 3
+        assert_eq!(area.height, 3);
         assert_eq!(area.x, (100 - 30) / 2);
-        assert_eq!(area.y, (50 - 10) / 2);
+        assert_eq!(area.y, (50 - 3) / 2);
 
         // Below cursor
         let popup_below = popup.clone().with_position(PopupPosition::BelowCursor);
