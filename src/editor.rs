@@ -2,7 +2,7 @@ use crate::actions::action_to_events as convert_action_to_events;
 use crate::async_bridge::{AsyncBridge, AsyncMessage};
 use crate::commands::{filter_commands, get_all_commands, Suggestion};
 use crate::config::Config;
-use crate::event::{CursorId, Event, EventLog};
+use crate::event::{CursorId, Event, EventLog, SplitId};
 use crate::file_tree::{FileTree, FileTreeView};
 use crate::fs::{FsManager, LocalFsBackend};
 use crate::keybindings::{Action, KeybindingResolver, KeyContext};
@@ -174,6 +174,32 @@ pub struct Editor {
 
     /// LSP status indicator for status bar
     lsp_status: String,
+
+    /// Mouse state for scrollbar dragging
+    mouse_state: MouseState,
+
+    /// Cached layout areas from last render (for mouse hit testing)
+    cached_layout: CachedLayout,
+}
+
+/// Mouse state tracking
+#[derive(Debug, Clone, Default)]
+struct MouseState {
+    /// Whether we're currently dragging a scrollbar
+    dragging_scrollbar: Option<SplitId>,
+    /// Last mouse position
+    last_position: Option<(u16, u16)>,
+}
+
+/// Cached layout information for mouse hit testing
+#[derive(Debug, Clone, Default)]
+struct CachedLayout {
+    /// File explorer area (if visible)
+    file_explorer_area: Option<ratatui::layout::Rect>,
+    /// Editor content area (excluding file explorer)
+    editor_content_area: Option<ratatui::layout::Rect>,
+    /// Individual split areas with their scrollbar areas
+    split_areas: Vec<(SplitId, BufferId, ratatui::layout::Rect, ratatui::layout::Rect)>, // (split_id, buffer_id, content_rect, scrollbar_rect)
 }
 
 impl Editor {
@@ -280,6 +306,8 @@ impl Editor {
             pending_completion_request: None,
             pending_goto_definition_request: None,
             lsp_status: String::new(),
+            mouse_state: MouseState::default(),
+            cached_layout: CachedLayout::default(),
         })
     }
 
@@ -2482,6 +2510,270 @@ impl Editor {
         Ok(())
     }
 
+    /// Handle a mouse event
+    pub fn handle_mouse(&mut self, mouse_event: crossterm::event::MouseEvent) -> std::io::Result<()> {
+        use crossterm::event::{MouseButton, MouseEventKind};
+
+        let col = mouse_event.column;
+        let row = mouse_event.row;
+
+        tracing::debug!(
+            "handle_mouse: kind={:?}, col={}, row={}",
+            mouse_event.kind,
+            col,
+            row
+        );
+
+        match mouse_event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.handle_mouse_click(col, row)?;
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                self.handle_mouse_drag(col, row)?;
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                // Stop dragging
+                self.mouse_state.dragging_scrollbar = None;
+            }
+            _ => {
+                // Ignore other mouse events for now
+            }
+        }
+
+        self.mouse_state.last_position = Some((col, row));
+        Ok(())
+    }
+
+    /// Handle mouse click (down event)
+    fn handle_mouse_click(&mut self, col: u16, row: u16) -> std::io::Result<()> {
+        // Check if click is on file explorer
+        if let Some(explorer_area) = self.cached_layout.file_explorer_area {
+            if col >= explorer_area.x
+                && col < explorer_area.x + explorer_area.width
+                && row >= explorer_area.y
+                && row < explorer_area.y + explorer_area.height
+            {
+                self.handle_file_explorer_click(col, row, explorer_area)?;
+                return Ok(());
+            }
+        }
+
+        // Check if click is on a scrollbar
+        for (split_id, buffer_id, _content_rect, scrollbar_rect) in &self.cached_layout.split_areas {
+            if col >= scrollbar_rect.x
+                && col < scrollbar_rect.x + scrollbar_rect.width
+                && row >= scrollbar_rect.y
+                && row < scrollbar_rect.y + scrollbar_rect.height
+            {
+                // Click on scrollbar - start dragging and jump to position
+                self.mouse_state.dragging_scrollbar = Some(*split_id);
+                self.handle_scrollbar_drag(col, row, *buffer_id, *scrollbar_rect)?;
+                return Ok(());
+            }
+        }
+
+        // Check if click is in editor content area
+        for (split_id, buffer_id, content_rect, _scrollbar_rect) in &self.cached_layout.split_areas {
+            if col >= content_rect.x
+                && col < content_rect.x + content_rect.width
+                && row >= content_rect.y
+                && row < content_rect.y + content_rect.height
+            {
+                // Click in editor - focus split and position cursor
+                self.handle_editor_click(col, row, *split_id, *buffer_id, *content_rect)?;
+                return Ok(());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle mouse drag event
+    fn handle_mouse_drag(&mut self, col: u16, row: u16) -> std::io::Result<()> {
+        // If dragging scrollbar, update scroll position
+        if let Some(dragging_split_id) = self.mouse_state.dragging_scrollbar {
+            // Find the buffer and scrollbar rect for this split
+            for (split_id, buffer_id, _content_rect, scrollbar_rect) in &self.cached_layout.split_areas {
+                if *split_id == dragging_split_id {
+                    self.handle_scrollbar_drag(col, row, *buffer_id, *scrollbar_rect)?;
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle scrollbar drag
+    fn handle_scrollbar_drag(
+        &mut self,
+        _col: u16,
+        row: u16,
+        buffer_id: BufferId,
+        scrollbar_rect: ratatui::layout::Rect,
+    ) -> std::io::Result<()> {
+        // Calculate which line to scroll to based on mouse position
+        let scrollbar_height = scrollbar_rect.height as usize;
+        if scrollbar_height == 0 {
+            return Ok(());
+        }
+
+        // Get relative position in scrollbar (0.0 to 1.0)
+        let relative_row = row.saturating_sub(scrollbar_rect.y);
+        let ratio = (relative_row as f64) / (scrollbar_height as f64);
+        let ratio = ratio.clamp(0.0, 1.0);
+
+        // Get the buffer state
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let buffer_len = state.buffer.len();
+            // Calculate target byte position
+            let target_byte = (buffer_len as f64 * ratio) as usize;
+            let target_byte = target_byte.min(buffer_len.saturating_sub(1));
+
+            // Find the line start for this byte position
+            let iter = state.buffer.line_iterator(target_byte);
+            let line_start = iter.current_position();
+
+            // Set viewport top to this position
+            state.viewport.top_byte = line_start;
+        }
+
+        Ok(())
+    }
+
+    /// Handle click in editor content area
+    fn handle_editor_click(
+        &mut self,
+        col: u16,
+        row: u16,
+        split_id: crate::event::SplitId,
+        buffer_id: BufferId,
+        content_rect: ratatui::layout::Rect,
+    ) -> std::io::Result<()> {
+        use crate::event::Event;
+
+        // Focus this split
+        self.split_manager.set_active_split(split_id);
+        if buffer_id != self.active_buffer {
+            self.position_history.commit_pending_movement();
+            self.active_buffer = buffer_id;
+        }
+
+        // Calculate clicked position in buffer
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            // Account for left margin (line numbers)
+            let gutter_width = state.margins.left_total_width() as u16;
+
+            // Calculate relative position in content area
+            let content_col = col.saturating_sub(content_rect.x);
+            let content_row = row.saturating_sub(content_rect.y);
+
+            // Skip if click is in the gutter
+            if content_col < gutter_width {
+                return Ok(());
+            }
+
+            // Adjust for gutter
+            let text_col = content_col.saturating_sub(gutter_width);
+
+            // Account for horizontal scroll
+            let actual_col = (text_col as usize) + state.viewport.left_column;
+
+            // Find the byte position for this line and column
+            let mut line_iter = state.buffer.line_iterator(state.viewport.top_byte);
+            let mut target_position = state.viewport.top_byte;
+
+            // Navigate to the clicked line
+            let mut line_start = state.viewport.top_byte;
+            for _ in 0..content_row {
+                if let Some((pos, _content)) = line_iter.next() {
+                    line_start = pos;
+                } else {
+                    break;
+                }
+            }
+
+            // Get the content of the target line
+            if let Some((pos, line_content)) = line_iter.next() {
+                line_start = pos;
+                // Calculate byte offset within the line (accounting for multi-byte chars)
+                let byte_offset = actual_col.min(line_content.len());
+                target_position = line_start + byte_offset;
+            } else {
+                // If we're past the last line, use the line start
+                target_position = line_start;
+            }
+
+            // Move the primary cursor to this position
+            let primary_cursor_id = state.cursors.primary_id();
+            let event = Event::MoveCursor {
+                cursor_id: primary_cursor_id,
+                position: target_position,
+                anchor: None,
+            };
+
+            // Apply the event
+            if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+                event_log.append(event.clone());
+            }
+            state.apply(&event);
+
+            // Track position history
+            if !self.in_navigation {
+                self.position_history.record_movement(
+                    buffer_id,
+                    target_position,
+                    None,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle click in file explorer
+    fn handle_file_explorer_click(
+        &mut self,
+        _col: u16,
+        row: u16,
+        explorer_area: ratatui::layout::Rect,
+    ) -> std::io::Result<()> {
+        // Focus file explorer
+        self.key_context = crate::keybindings::KeyContext::FileExplorer;
+
+        // Calculate which item was clicked (accounting for border and title)
+        // The file explorer has a 1-line border at top and bottom
+        let relative_row = row.saturating_sub(explorer_area.y + 1); // +1 for top border
+
+        if let Some(ref mut explorer) = self.file_explorer {
+            let display_nodes = explorer.get_display_nodes();
+            let scroll_offset = explorer.get_scroll_offset();
+            let clicked_index = (relative_row as usize) + scroll_offset;
+
+            if clicked_index < display_nodes.len() {
+                let (node_id, _indent) = display_nodes[clicked_index];
+
+                // Select this node
+                explorer.set_selected(Some(node_id));
+
+                // Check if it's a file or directory
+                let node = explorer.tree().get_node(node_id);
+                if let Some(node) = node {
+                    if node.is_dir() {
+                        // Toggle expand/collapse using the existing method
+                        self.file_explorer_toggle_expand();
+                    } else if node.is_file() {
+                        // Open the file using the existing method
+                        self.file_explorer_open_file()?;
+                        // Switch focus back to editor after opening file
+                        self.key_context = crate::keybindings::KeyContext::Normal;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Render the editor to the terminal
     pub fn render(&mut self, frame: &mut Frame) {
         let _span = tracing::trace_span!("render").entered();
@@ -2529,6 +2821,9 @@ impl Editor {
         // Render content (with file explorer if visible)
         let lsp_waiting = self.pending_completion_request.is_some() || self.pending_goto_definition_request.is_some();
         let content_area = chunks[1];
+
+        // Cache layout for mouse handling
+        let editor_content_area;
         if self.file_explorer_visible && self.file_explorer.is_some() {
             // Split content area horizontally: file explorer (30%) | content (70%)
             let horizontal_chunks = Layout::default()
@@ -2539,14 +2834,18 @@ impl Editor {
                 ])
                 .split(content_area);
 
+            // Cache file explorer area
+            self.cached_layout.file_explorer_area = Some(horizontal_chunks[0]);
+            editor_content_area = horizontal_chunks[1];
+
             // Render file explorer on the left
             if let Some(ref explorer) = self.file_explorer {
                 let is_focused = self.key_context == KeyContext::FileExplorer;
                 FileExplorerRenderer::render(explorer, frame, horizontal_chunks[0], is_focused);
             }
 
-            // Render content on the right
-            SplitRenderer::render_content(
+            // Render content on the right and get split areas for mouse handling
+            let split_areas = SplitRenderer::render_content(
                 frame,
                 horizontal_chunks[1],
                 &self.split_manager,
@@ -2555,9 +2854,13 @@ impl Editor {
                 &self.theme,
                 lsp_waiting,
             );
+            self.cached_layout.split_areas = split_areas;
         } else {
             // No file explorer, render content normally
-            SplitRenderer::render_content(
+            self.cached_layout.file_explorer_area = None;
+            editor_content_area = chunks[1];
+
+            let split_areas = SplitRenderer::render_content(
                 frame,
                 chunks[1],
                 &self.split_manager,
@@ -2566,7 +2869,11 @@ impl Editor {
                 &self.theme,
                 lsp_waiting,
             );
+            self.cached_layout.split_areas = split_areas;
         }
+
+        // Cache editor content area
+        self.cached_layout.editor_content_area = Some(editor_content_area);
 
         // Render suggestions popup if present
         if suggestion_lines > 0 {

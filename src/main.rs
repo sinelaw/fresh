@@ -1,7 +1,7 @@
 use clap::Parser;
 use crossterm::{
     event::{
-        poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent,
+        poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent, MouseEvent,
         KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -71,6 +71,10 @@ fn main() -> io::Result<()> {
     let _ = stdout().execute(PushKeyboardEnhancementFlags(keyboard_flags));
     tracing::info!("Enabled keyboard enhancement flags: {:?}", keyboard_flags);
 
+    // Enable mouse support
+    let _ = crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture);
+    tracing::info!("Enabled mouse capture");
+
     let backend = ratatui::backend::CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -98,6 +102,7 @@ fn main() -> io::Result<()> {
     let result = run_event_loop(&mut editor, &mut terminal);
 
     // Clean up terminal
+    let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
     let _ = stdout().execute(PopKeyboardEnhancementFlags);
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
@@ -128,12 +133,15 @@ fn run_event_loop(
                 CrosstermEvent::Key(key_event) => {
                     handle_key_event(editor, key_event)?;
                 }
+                CrosstermEvent::Mouse(mouse_event) => {
+                    handle_mouse_event(editor, mouse_event)?;
+                }
                 CrosstermEvent::Resize(width, height) => {
                     tracing::info!("Terminal resize event: {}x{}", width, height);
                     editor.resize(width, height);
                 }
                 _ => {
-                    // Ignore other events (mouse, etc.)
+                    // Ignore other events
                 }
             }
         }
@@ -160,6 +168,22 @@ fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> io::Result<()> 
 
     // Delegate to the editor's handle_key method
     editor.handle_key(key_event.code, key_event.modifiers)?;
+
+    Ok(())
+}
+
+/// Handle a mouse event
+fn handle_mouse_event(editor: &mut Editor, mouse_event: MouseEvent) -> io::Result<()> {
+    tracing::debug!(
+        "Mouse event received: kind={:?}, column={}, row={}, modifiers={:?}",
+        mouse_event.kind,
+        mouse_event.column,
+        mouse_event.row,
+        mouse_event.modifiers
+    );
+
+    // Delegate to the editor's handle_mouse method
+    editor.handle_mouse(mouse_event)?;
 
     Ok(())
 }
