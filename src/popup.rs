@@ -442,13 +442,14 @@ mod tests {
 
     #[test]
     fn test_popup_selection() {
+        let theme = crate::theme::Theme::dark();
         let items = vec![
             PopupListItem::new("item1".to_string()),
             PopupListItem::new("item2".to_string()),
             PopupListItem::new("item3".to_string()),
         ];
 
-        let mut popup = Popup::list(items);
+        let mut popup = Popup::list(items, &theme);
 
         assert_eq!(popup.selected_item().unwrap().text, "item1");
 
@@ -473,18 +474,19 @@ mod tests {
 
     #[test]
     fn test_popup_manager() {
+        let theme = crate::theme::Theme::dark();
         let mut manager = PopupManager::new();
 
         assert!(!manager.is_visible());
         assert_eq!(manager.top(), None);
 
-        let popup1 = Popup::text(vec!["test1".to_string()]);
+        let popup1 = Popup::text(vec!["test1".to_string()], &theme);
         manager.show(popup1);
 
         assert!(manager.is_visible());
         assert_eq!(manager.all().len(), 1);
 
-        let popup2 = Popup::text(vec!["test2".to_string()]);
+        let popup2 = Popup::text(vec!["test2".to_string()], &theme);
         manager.show(popup2);
 
         assert_eq!(manager.all().len(), 2);
@@ -499,6 +501,7 @@ mod tests {
 
     #[test]
     fn test_popup_area_calculation() {
+        let theme = crate::theme::Theme::dark();
         let terminal_area = Rect {
             x: 0,
             y: 0,
@@ -506,7 +509,7 @@ mod tests {
             height: 50,
         };
 
-        let popup = Popup::text(vec!["test".to_string()])
+        let popup = Popup::text(vec!["test".to_string()], &theme)
             .with_width(30)
             .with_max_height(10);
 
