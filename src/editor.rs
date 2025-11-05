@@ -2375,6 +2375,23 @@ impl Editor {
             Action::FileExplorerRename => self.file_explorer_rename(),
             Action::FileExplorerToggleHidden => self.file_explorer_toggle_hidden(),
             Action::FileExplorerToggleGitignored => self.file_explorer_toggle_gitignored(),
+            Action::RemoveSecondaryCursors => {
+                // Convert action to events and apply them
+                if let Some(events) = self.action_to_events(Action::RemoveSecondaryCursors) {
+                    // Wrap in batch for atomic undo
+                    let batch = Event::Batch {
+                        events: events.clone(),
+                        description: "Remove secondary cursors".to_string(),
+                    };
+                    self.active_event_log_mut().append(batch.clone());
+                    self.active_state_mut().apply(&batch);
+
+                    // Ensure the primary cursor is visible after removing secondary cursors
+                    let state = self.active_state_mut();
+                    let primary = *state.cursors.primary();
+                    state.viewport.ensure_visible(&mut state.buffer, &primary);
+                }
+            }
             Action::None => {}
             Action::InsertChar(c) => {
                 // Handle character insertion in prompt mode
@@ -3238,7 +3255,7 @@ mod tests {
 
         for event in &events {
             match event {
-                Event::RemoveCursor { cursor_id } => {
+                Event::RemoveCursor { cursor_id, .. } => {
                     // Should not be the primary cursor
                     assert_ne!(*cursor_id, primary_id);
                 }
