@@ -808,6 +808,21 @@ impl Editor {
 
             match result {
                 Ok(()) => {
+                    // If directory was just expanded, load its .gitignore
+                    if final_expanded {
+                        // Extract the path before calling mutable method
+                        let dir_path = explorer.tree().get_node(selected_id)
+                            .map(|n| n.entry.path.clone());
+
+                        if let Some(dir_path) = dir_path {
+                            // Load .gitignore for this directory
+                            if let Err(e) = explorer.load_gitignore_for_dir(&dir_path) {
+                                tracing::warn!("Failed to load .gitignore from {:?}: {}", dir_path, e);
+                                // Don't fail the expansion, just log the warning
+                            }
+                        }
+                    }
+
                     if let Some(name) = final_name {
                         let msg = if final_expanded {
                             format!("Expanded: {}", name)
@@ -1464,8 +1479,22 @@ impl Editor {
                     tracing::info!("Git status changed: {}", status);
                     // TODO: Handle git status changes
                 }
-                AsyncMessage::FileExplorerInitialized(view) => {
+                AsyncMessage::FileExplorerInitialized(mut view) => {
                     tracing::info!("File explorer initialized");
+
+                    // Load root .gitignore
+                    let root_id = view.tree().root_id();
+                    let root_path = view.tree().get_node(root_id)
+                        .map(|n| n.entry.path.clone());
+
+                    if let Some(root_path) = root_path {
+                        if let Err(e) = view.load_gitignore_for_dir(&root_path) {
+                            tracing::warn!("Failed to load root .gitignore from {:?}: {}", root_path, e);
+                        } else {
+                            tracing::debug!("Loaded root .gitignore from {:?}", root_path);
+                        }
+                    }
+
                     self.file_explorer = Some(view);
                     self.set_status_message("File explorer ready".to_string());
                 }
