@@ -20,11 +20,13 @@ impl TabsRenderer {
     /// * `area` - The rectangular area to render the tabs in
     /// * `buffers` - All open buffers
     /// * `active_buffer` - The currently active buffer ID
+    /// * `theme` - The active theme for colors
     pub fn render(
         frame: &mut Frame,
         area: Rect,
         buffers: &HashMap<BufferId, EditorState>,
         active_buffer: BufferId,
+        theme: &crate::theme::Theme,
     ) {
         // Build spans for each tab with individual background colors
         let mut spans = Vec::new();
@@ -47,17 +49,17 @@ impl TabsRenderer {
 
             let is_active = *id == active_buffer;
 
-            // Active tab: bright yellow text on blue background with bold
-            // Inactive tabs: white text on dark gray background
+            // Active tab: theme colors with bold
+            // Inactive tabs: theme colors
             let style = if is_active {
                 Style::default()
-                    .fg(Color::Yellow)
-                    .bg(Color::Blue)
+                    .fg(theme.tab_active_fg)
+                    .bg(theme.tab_active_bg)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
-                    .fg(Color::White)
-                    .bg(Color::DarkGray)
+                    .fg(theme.tab_inactive_fg)
+                    .bg(theme.tab_inactive_bg)
             };
 
             spans.push(Span::styled(tab_text, style));
@@ -69,7 +71,7 @@ impl TabsRenderer {
         }
 
         let line = Line::from(spans);
-        let paragraph = Paragraph::new(line).style(Style::default().bg(Color::Black));
+        let paragraph = Paragraph::new(line).style(Style::default().bg(theme.tab_separator_bg));
         frame.render_widget(paragraph, area);
     }
 }

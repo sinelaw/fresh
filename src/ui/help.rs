@@ -57,7 +57,8 @@ impl HelpRenderer {
     /// * `frame` - The ratatui frame to render to
     /// * `area` - The rectangular area to render in
     /// * `keybindings` - The keybinding resolver to get bindings from
-    pub fn render(&self, frame: &mut Frame, area: Rect, keybindings: &KeybindingResolver) {
+    /// * `theme` - The active theme for colors
+    pub fn render(&self, frame: &mut Frame, area: Rect, keybindings: &KeybindingResolver, theme: &crate::theme::Theme) {
         // Get all keybindings
         let bindings = keybindings.get_all_bindings();
 
@@ -73,8 +74,8 @@ impl HelpRenderer {
         lines.push(Line::from(vec![Span::styled(
             " KEYBOARD SHORTCUTS ",
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
+                .fg(theme.prompt_fg)
+                .bg(theme.prompt_bg)
                 .add_modifier(Modifier::BOLD),
         )]));
         lines.push(Line::from(""));
@@ -101,18 +102,18 @@ impl HelpRenderer {
                 end_idx,
                 bindings.len()
             ),
-            Style::default().fg(Color::Black).bg(Color::White),
+            Style::default().fg(theme.status_bar_fg).bg(theme.status_bar_bg),
         )]));
 
         let help = Paragraph::new(lines)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Yellow))
+                    .border_style(Style::default().fg(theme.help_separator_fg))
                     .title(" Help ")
                     .title_style(
                         Style::default()
-                            .fg(Color::Yellow)
+                            .fg(theme.help_key_fg)
                             .add_modifier(Modifier::BOLD),
                     ),
             )

@@ -22,12 +22,14 @@ impl SplitRenderer {
     /// * `split_manager` - The split manager
     /// * `buffers` - All open buffers
     /// * `event_logs` - Event logs for each buffer
+    /// * `theme` - The active theme for colors
     pub fn render_content(
         frame: &mut Frame,
         area: Rect,
         split_manager: &SplitManager,
         buffers: &mut HashMap<BufferId, EditorState>,
         event_logs: &mut HashMap<BufferId, EventLog>,
+        theme: &crate::theme::Theme,
     ) {
         let _span = tracing::trace_span!("render_content").entered();
 
@@ -44,26 +46,26 @@ impl SplitRenderer {
             let event_log_opt = event_logs.get_mut(&buffer_id);
 
             if let Some(state) = state_opt {
-                Self::render_buffer_in_split(frame, state, event_log_opt, split_area, is_active);
+                Self::render_buffer_in_split(frame, state, event_log_opt, split_area, is_active, theme);
             }
         }
 
         // Render split separators
         let separators = split_manager.get_separators(area);
         for (direction, x, y, length) in separators {
-            Self::render_separator(frame, direction, x, y, length);
+            Self::render_separator(frame, direction, x, y, length, theme);
         }
     }
 
     /// Render a split separator line
-    fn render_separator(frame: &mut Frame, direction: SplitDirection, x: u16, y: u16, length: u16) {
+    fn render_separator(frame: &mut Frame, direction: SplitDirection, x: u16, y: u16, length: u16, theme: &crate::theme::Theme) {
         match direction {
             SplitDirection::Horizontal => {
                 // Draw horizontal line
                 let line_area = Rect::new(x, y, length, 1);
                 let line_text = "─".repeat(length as usize);
                 let paragraph =
-                    Paragraph::new(line_text).style(Style::default().fg(Color::DarkGray));
+                    Paragraph::new(line_text).style(Style::default().fg(theme.split_separator_fg));
                 frame.render_widget(paragraph, line_area);
             }
             SplitDirection::Vertical => {
@@ -71,7 +73,7 @@ impl SplitRenderer {
                 for offset in 0..length {
                     let cell_area = Rect::new(x, y + offset, 1, 1);
                     let paragraph =
-                        Paragraph::new("│").style(Style::default().fg(Color::DarkGray));
+                        Paragraph::new("│").style(Style::default().fg(theme.split_separator_fg));
                     frame.render_widget(paragraph, cell_area);
                 }
             }
@@ -85,6 +87,7 @@ impl SplitRenderer {
         event_log: Option<&mut EventLog>,
         area: Rect,
         is_active: bool,
+        theme: &crate::theme::Theme,
     ) {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
 
@@ -164,7 +167,7 @@ impl SplitRenderer {
                     current_line_num + 1,
                     width = line_number_digits
                 ),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.line_number_fg),
             ));
 
             // Check if this line has any selected text
@@ -197,8 +200,8 @@ impl SplitRenderer {
                         // Apply syntax highlighting
                         Style::default().fg(color)
                     } else {
-                        // Default color
-                        Style::default().fg(Color::White)
+                        // Default color from theme
+                        Style::default().fg(theme.editor_fg)
                     };
 
                     // Apply overlay styles (in priority order, so higher priority overlays override)
@@ -234,9 +237,9 @@ impl SplitRenderer {
                         }
                     }
 
-                    // Selection overrides everything
+                    // Selection overrides everything (use theme colors)
                     if is_selected {
-                        style = Style::default().fg(Color::Black).bg(Color::Cyan);
+                        style = Style::default().fg(theme.editor_fg).bg(theme.selection_bg);
                     }
 
                     line_spans.push(Span::styled(ch.to_string(), style));

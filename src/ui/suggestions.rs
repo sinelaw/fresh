@@ -19,7 +19,8 @@ impl SuggestionsRenderer {
     /// * `frame` - The ratatui frame to render to
     /// * `area` - The rectangular area to render in
     /// * `prompt` - The active prompt containing suggestions
-    pub fn render(frame: &mut Frame, area: Rect, prompt: &Prompt) {
+    /// * `theme` - The active theme for colors
+    pub fn render(frame: &mut Frame, area: Rect, prompt: &Prompt, theme: &crate::theme::Theme) {
         if prompt.suggestions.is_empty() {
             return;
         }
@@ -41,11 +42,11 @@ impl SuggestionsRenderer {
             };
 
             let style = if is_selected {
-                // Highlight selected suggestion with cyan background
-                Style::default().fg(Color::Black).bg(Color::Cyan)
+                // Highlight selected suggestion with theme colors
+                Style::default().fg(theme.popup_text_fg).bg(theme.suggestion_selected_bg)
             } else {
-                // Normal suggestion with dark gray background
-                Style::default().fg(Color::White).bg(Color::DarkGray)
+                // Normal suggestion with theme colors
+                Style::default().fg(theme.popup_text_fg).bg(theme.suggestion_bg)
             };
 
             lines.push(Line::from(Span::styled(text, style)));

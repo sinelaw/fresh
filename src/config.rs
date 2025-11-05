@@ -6,8 +6,8 @@ use std::path::Path;
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    #[serde(default)]
-    pub theme: ThemeConfig,
+    #[serde(default = "default_theme_name")]
+    pub theme: String,
 
     #[serde(default)]
     pub editor: EditorConfig,
@@ -22,59 +22,8 @@ pub struct Config {
     pub lsp: HashMap<String, LspServerConfig>,
 }
 
-/// Theme configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ThemeConfig {
-    #[serde(default = "default_foreground")]
-    pub foreground: String,
-
-    #[serde(default = "default_background")]
-    pub background: String,
-
-    #[serde(default = "default_cursor")]
-    pub cursor: String,
-
-    #[serde(default = "default_selection")]
-    pub selection: String,
-
-    #[serde(default)]
-    pub syntax: HashMap<String, String>,
-}
-
-fn default_foreground() -> String {
-    "#ffffff".to_string()
-}
-
-fn default_background() -> String {
-    "#1e1e1e".to_string()
-}
-
-fn default_cursor() -> String {
-    "#528bff".to_string()
-}
-
-fn default_selection() -> String {
-    "#264f78".to_string()
-}
-
-impl Default for ThemeConfig {
-    fn default() -> Self {
-        let mut syntax = HashMap::new();
-        syntax.insert("keyword".to_string(), "#569cd6".to_string());
-        syntax.insert("string".to_string(), "#ce9178".to_string());
-        syntax.insert("comment".to_string(), "#6a9955".to_string());
-        syntax.insert("function".to_string(), "#dcdcaa".to_string());
-        syntax.insert("type".to_string(), "#4ec9b0".to_string());
-        syntax.insert("variable".to_string(), "#9cdcfe".to_string());
-
-        Self {
-            foreground: default_foreground(),
-            background: default_background(),
-            cursor: default_cursor(),
-            selection: default_selection(),
-            syntax,
-        }
-    }
+fn default_theme_name() -> String {
+    "dark".to_string()
 }
 
 /// Editor behavior configuration
@@ -187,7 +136,7 @@ pub struct LanguageConfig {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            theme: ThemeConfig::default(),
+            theme: default_theme_name(),
             editor: EditorConfig::default(),
             keybindings: Self::default_keybindings(),
             languages: Self::default_languages(),
@@ -530,7 +479,7 @@ mod tests {
 
         let loaded = Config::load_from_file(&config_path).unwrap();
         assert_eq!(config.editor.tab_size, loaded.editor.tab_size);
-        assert_eq!(config.theme.foreground, loaded.theme.foreground);
+        assert_eq!(config.theme, loaded.theme);
     }
 
     #[test]

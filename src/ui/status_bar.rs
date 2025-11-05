@@ -21,31 +21,33 @@ impl StatusBarRenderer {
     /// * `state` - The active buffer's editor state
     /// * `status_message` - Optional status message to display
     /// * `prompt` - Optional active prompt
+    /// * `theme` - The active theme for colors
     pub fn render(
         frame: &mut Frame,
         area: Rect,
         state: &EditorState,
         status_message: &Option<String>,
         prompt: &Option<Prompt>,
+        theme: &crate::theme::Theme,
     ) {
         // If we're in prompt mode, render the prompt instead of the status bar
         if let Some(prompt) = prompt {
-            Self::render_prompt(frame, area, prompt);
+            Self::render_prompt(frame, area, prompt, theme);
             return;
         }
 
         // Normal status bar rendering
-        Self::render_status(frame, area, state, status_message);
+        Self::render_status(frame, area, state, status_message, theme);
     }
 
     /// Render the prompt/minibuffer
-    fn render_prompt(frame: &mut Frame, area: Rect, prompt: &Prompt) {
+    fn render_prompt(frame: &mut Frame, area: Rect, prompt: &Prompt, theme: &crate::theme::Theme) {
         // Build prompt display: message + input + cursor
         let prompt_text = format!("{}{}", prompt.message, prompt.input);
 
-        // Use a different style for prompt (yellow background to distinguish from status bar)
+        // Use theme colors for prompt
         let prompt_line = Paragraph::new(prompt_text)
-            .style(Style::default().fg(Color::Black).bg(Color::Yellow));
+            .style(Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg));
 
         frame.render_widget(prompt_line, area);
 
@@ -63,6 +65,7 @@ impl StatusBarRenderer {
         area: Rect,
         state: &EditorState,
         status_message: &Option<String>,
+        theme: &crate::theme::Theme,
     ) {
         // Collect all data we need from state
         let filename = state
@@ -99,7 +102,7 @@ impl StatusBarRenderer {
         };
 
         let status_line =
-            Paragraph::new(status).style(Style::default().fg(Color::Black).bg(Color::White));
+            Paragraph::new(status).style(Style::default().fg(theme.status_bar_fg).bg(theme.status_bar_bg));
 
         frame.render_widget(status_line, area);
     }

@@ -15,6 +15,7 @@ use std::ops::Range;
 pub fn diagnostic_to_overlay(
     diagnostic: &Diagnostic,
     buffer: &Buffer,
+    theme: &crate::theme::Theme,
 ) -> Option<(Range<usize>, OverlayFace, i32)> {
     // Convert LSP positions (line/character) to byte offsets
     // LSP uses 0-indexed lines and characters (UTF-16 code units)
@@ -29,30 +30,29 @@ pub fn diagnostic_to_overlay(
     let start_byte = line_char_to_byte(buffer, start_line, start_char)?;
     let end_byte = line_char_to_byte(buffer, end_line, end_char)?;
 
-    // Determine overlay face based on diagnostic severity
-    // Use background colors to make diagnostics more visible
+    // Determine overlay face based on diagnostic severity using theme colors
     let (face, priority) = match diagnostic.severity {
         Some(DiagnosticSeverity::ERROR) => (
             OverlayFace::Background {
-                color: Color::Rgb(60, 20, 20), // Dark red background
+                color: theme.diagnostic_error_bg,
             },
             100, // Highest priority
         ),
         Some(DiagnosticSeverity::WARNING) => (
             OverlayFace::Background {
-                color: Color::Rgb(60, 50, 0), // Dark yellow/brown background
+                color: theme.diagnostic_warning_bg,
             },
             50, // Medium priority
         ),
         Some(DiagnosticSeverity::INFORMATION) => (
             OverlayFace::Background {
-                color: Color::Rgb(0, 30, 60), // Dark blue background
+                color: theme.diagnostic_info_bg,
             },
             30, // Lower priority
         ),
         Some(DiagnosticSeverity::HINT) | None => (
             OverlayFace::Background {
-                color: Color::Rgb(30, 30, 30), // Dark gray background
+                color: theme.diagnostic_hint_bg,
             },
             10, // Lowest priority
         ),
@@ -68,7 +68,7 @@ pub fn diagnostic_to_overlay(
 /// 1. Clears existing diagnostic overlays (IDs starting with "lsp-diagnostic-")
 /// 2. Converts diagnostics to overlays
 /// 3. Adds overlays to the editor state
-pub fn apply_diagnostics_to_state(state: &mut EditorState, diagnostics: &[Diagnostic]) {
+pub fn apply_diagnostics_to_state(state: &mut EditorState, diagnostics: &[Diagnostic], theme: &crate::theme::Theme) {
     use crate::overlay::Overlay;
 
     // Clear existing diagnostic overlays
@@ -94,7 +94,7 @@ pub fn apply_diagnostics_to_state(state: &mut EditorState, diagnostics: &[Diagno
 
     // Add new diagnostic overlays
     for (idx, diagnostic) in diagnostics.iter().enumerate() {
-        if let Some((range, face, priority)) = diagnostic_to_overlay(diagnostic, &state.buffer) {
+        if let Some((range, face, priority)) = diagnostic_to_overlay(diagnostic, &state.buffer, theme) {
             let overlay_id = format!("lsp-diagnostic-{}", idx);
             let message = diagnostic.message.clone();
 
