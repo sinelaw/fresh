@@ -280,32 +280,55 @@ impl SplitRenderer {
                         style = style.add_modifier(Modifier::REVERSED);
                     }
 
-                    // If this is a cursor position and we're waiting for LSP, show animated cursor
+                    // Determine what character to display
                     let display_char = if is_cursor && lsp_waiting && is_active {
-                        // Use a simple waiting indicator character
+                        // Show LSP waiting indicator
                         "⋯"
+                    } else if is_cursor && is_active && ch == '\n' {
+                        // Show cursor on newline as a visible space (don't actually render \n which would break the line)
+                        // We'll skip adding this to line_spans and handle it after the loop
+                        ""
+                    } else if ch == '\n' {
+                        // Don't render the newline character itself - it's a line terminator
+                        ""
                     } else {
                         &ch.to_string()
                     };
 
-                    line_spans.push(Span::styled(display_char.to_string(), style));
+                    // Only add non-empty spans
+                    if !display_char.is_empty() {
+                        line_spans.push(Span::styled(display_char.to_string(), style));
+                    }
+
+                    // If this is a cursor on a newline, we'll handle it after the char loop
+                    if is_cursor && is_active && ch == '\n' {
+                        // Add a visible cursor indicator (space with REVERSED style)
+                        let cursor_style = Style::default()
+                            .fg(theme.editor_fg)
+                            .bg(theme.editor_bg)
+                            .add_modifier(Modifier::REVERSED);
+                        line_spans.push(Span::styled(" ", cursor_style));
+                    }
                 }
 
                 char_index += ch.len_utf8();
             }
 
-            // Check if any cursor is at the end of this line (or beyond)
-            // If so, add a space with cursor styling to make it visible
-            let line_end_pos = line_start + char_index;
-            let cursor_at_end = cursor_positions.iter().any(|&pos| pos == line_end_pos);
+            // Note: We already handle cursors on newlines in the loop above.
+            // For lines without newlines (last line or empty lines), check if cursor is at end
+            let has_newline = line_content.ends_with('\n');
+            if !has_newline {
+                let line_end_pos = line_start + char_index;
+                let cursor_at_end = cursor_positions.iter().any(|&pos| pos == line_end_pos);
 
-            if cursor_at_end && is_active {
-                // Add a space character with REVERSED style to show cursor at end of line
-                let cursor_style = Style::default()
-                    .fg(theme.editor_fg)
-                    .bg(theme.editor_bg)
-                    .add_modifier(Modifier::REVERSED);
-                line_spans.push(Span::styled(" ", cursor_style));
+                if cursor_at_end && is_active {
+                    // Add a space character with REVERSED style to show cursor at end of line
+                    let cursor_style = Style::default()
+                        .fg(theme.editor_fg)
+                        .bg(theme.editor_bg)
+                        .add_modifier(Modifier::REVERSED);
+                    line_spans.push(Span::styled(" ", cursor_style));
+                }
             }
 
             lines.push(Line::from(line_spans));

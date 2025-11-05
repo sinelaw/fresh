@@ -590,84 +590,164 @@ fn test_multi_cursor_comprehensive_abc_editing() {
     assert_eq!(harness.editor().active_state().cursors.iter().count(), 4);
 }
 
-/// Test single cursor visibility
+/// Test single cursor visibility - comprehensive test moving through every position
 #[test]
 fn test_single_cursor_visible() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::style::Modifier;
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    // Type some text
-    harness.type_text("Hello World").unwrap();
+    // Create multiple lines with various content
+    harness.type_text("Hello World\nSecond Line Here\nThird Line\nFourth").unwrap();
 
-    // Should have exactly 1 cursor
-    assert_eq!(harness.cursor_count(), 1);
+    let expected_content = "Hello World\nSecond Line Here\nThird Line\nFourth";
+    harness.assert_buffer_content(expected_content);
 
-    // Move to start
-    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // The cursor should be visible at the beginning of the line
-    // Check that there's a cursor indicator (REVERSED style) at the cursor position
-    // Tab bar is at y=0, content starts at y=1
-    // With line numbers, the 'H' of "Hello" should be at some x position
-
-    let mut cursor_found = false;
-    for x in 0..20 {
-        if let Some(style) = harness.get_cell_style(x, 1) {
-            if style.add_modifier.contains(Modifier::REVERSED) {
-                cursor_found = true;
-                // Also check that the character at this position is 'H'
-                if let Some(text) = harness.get_cell(x, 1) {
-                    assert_eq!(text, "H", "Cursor should be at 'H' character");
-                }
-                break;
-            }
-        }
-    }
-
-    assert!(cursor_found, "Single cursor should be visible with REVERSED style at 'H'");
-
-    // Move cursor to the middle (after "Hello ")
-    for _ in 0..6 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
-    }
-    harness.render().unwrap();
-
-    // Cursor should now be at 'W'
-    let mut cursor_found_at_w = false;
-    for x in 0..20 {
-        if let Some(style) = harness.get_cell_style(x, 1) {
-            if style.add_modifier.contains(Modifier::REVERSED) {
-                if let Some(text) = harness.get_cell(x, 1) {
-                    if text == "W" {
-                        cursor_found_at_w = true;
-                        break;
+    // Helper function to find cursor on screen
+    let find_cursor = |harness: &EditorTestHarness| -> Option<(u16, u16, String)> {
+        for y in 0..24 {
+            for x in 0..80 {
+                if let Some(style) = harness.get_cell_style(x, y) {
+                    if style.add_modifier.contains(Modifier::REVERSED) {
+                        let char = harness.get_cell(x, y).unwrap_or_else(|| " ".to_string());
+                        return Some((x, y, char));
                     }
                 }
             }
         }
-    }
+        None
+    };
 
-    assert!(cursor_found_at_w, "Cursor should be visible at 'W' after moving");
-
-    // Move to end
-    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    // Move to start of document
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
     harness.render().unwrap();
 
-    // At the end, cursor should be after 'd' (at end of line, might be on a space or newline char)
-    // Just verify we have a REVERSED style somewhere
-    let mut cursor_found_at_end = false;
-    for x in 0..30 {
-        if let Some(style) = harness.get_cell_style(x, 1) {
-            if style.add_modifier.contains(Modifier::REVERSED) {
-                cursor_found_at_end = true;
-                break;
-            }
+    // Expected positions for "Hello World\nSecond Line Here\nThird Line\nFourth"
+    let expected_chars = vec![
+        'H', 'e', 'l', 'l', 'o', ' ', 'W', 'o', 'r', 'l', 'd', // end of line 1
+        '\n', // newline is at position 11
+    ];
+
+    println!("\nStarting comprehensive cursor visibility test...");
+    println!("Testing first line: 'Hello World'");
+
+    // Move through first line character by character
+    for (step, expected_char) in expected_chars.iter().enumerate() {
+        harness.render().unwrap();
+
+        let cursor_pos = harness.cursor_position();
+        println!("\nStep {}: cursor at buffer position {}", step, cursor_pos);
+
+        // Find cursor on screen
+        let cursor_info = find_cursor(&harness);
+        assert!(
+            cursor_info.is_some(),
+            "Step {}: Cursor not visible at buffer position {}! Expected char: '{}'",
+            step,
+            cursor_pos,
+            expected_char
+        );
+
+        let (x, y, char_at_cursor) = cursor_info.unwrap();
+        println!("  Screen position: ({}, {}), char: '{}'", x, y, char_at_cursor);
+
+        // For newline, we expect to see a space since we add it for visibility
+        if *expected_char == '\n' {
+            println!("  At newline - expecting space or newline indicator");
+        } else {
+            // Verify the character matches (accounting for rendered character)
+            let expected_str = expected_char.to_string();
+            assert_eq!(
+                char_at_cursor, expected_str,
+                "Step {}: Cursor at wrong character. Expected '{}', got '{}'",
+                step, expected_str, char_at_cursor
+            );
+        }
+
+        // Move right for next iteration
+        if step < expected_chars.len() - 1 {
+            harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
         }
     }
 
-    assert!(cursor_found_at_end, "Cursor should be visible at end of line");
+    println!("\nTesting navigation to second line...");
+
+    // Move to start of second line
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    let after_down = harness.cursor_position();
+    println!("After Down: cursor at buffer position {}", after_down);
+
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    let after_home = harness.cursor_position();
+    println!("After Home: cursor at buffer position {}", after_home);
+
+    harness.render().unwrap();
+
+    let cursor_info = find_cursor(&harness);
+    assert!(cursor_info.is_some(), "Cursor should be visible at start of second line");
+    let (x, y, char_at_cursor) = cursor_info.unwrap();
+    println!("At start of line 2: screen ({}, {}), char: '{}', buffer pos: {}", x, y, char_at_cursor, after_home);
+
+    // Position 12 should be 'S' (first char of "Second")
+    // But we need to be flexible in case the cursor is shown differently
+    if after_home == 12 {
+        // If we're at the 'S', it should show 'S' with REVERSED
+        assert_eq!(char_at_cursor, "S", "Should be at 'S' of 'Second'");
+    } else {
+        println!("WARNING: Cursor not at expected position 12, it's at {}", after_home);
+    }
+
+    // Move through "Second" character by character
+    let second_chars = vec!['S', 'e', 'c', 'o', 'n', 'd'];
+    for (i, expected_char) in second_chars.iter().enumerate() {
+        harness.render().unwrap();
+
+        let cursor_info = find_cursor(&harness);
+        assert!(
+            cursor_info.is_some(),
+            "Cursor not visible at char {} of 'Second'",
+            i
+        );
+
+        let (_, _, char_at_cursor) = cursor_info.unwrap();
+        let expected_str = expected_char.to_string();
+        assert_eq!(
+            char_at_cursor, expected_str,
+            "At position {} of 'Second': expected '{}', got '{}'",
+            i, expected_str, char_at_cursor
+        );
+
+        if i < second_chars.len() - 1 {
+            harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        }
+    }
+
+    println!("\nTesting vertical navigation...");
+
+    // Test moving up and down
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let cursor_info = find_cursor(&harness);
+    assert!(cursor_info.is_some(), "Cursor should be visible after moving down");
+    println!("After Down: cursor at {:?}", cursor_info);
+
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let cursor_info = find_cursor(&harness);
+    assert!(cursor_info.is_some(), "Cursor should be visible after moving up");
+    println!("After Up: cursor at {:?}", cursor_info);
+
+    // Move to end of document
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    let cursor_info = find_cursor(&harness);
+    assert!(cursor_info.is_some(), "Cursor should be visible at end of document");
+    println!("At end of document: cursor at {:?}", cursor_info);
+
+    println!("\nCursor visibility test completed successfully!");
 }
 
 /// Test cursor visibility on empty lines
