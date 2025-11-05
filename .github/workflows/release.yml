@@ -16,9 +16,29 @@ jobs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
       version: ${{ steps.get_version.outputs.version }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Get version from tag
         id: get_version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Verify Cargo.toml version matches tag
+        run: |
+          TAG_VERSION="${{ steps.get_version.outputs.version }}"
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+
+          echo "Tag version: $TAG_VERSION"
+          echo "Cargo.toml version: $CARGO_VERSION"
+
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "ERROR: Version mismatch!"
+            echo "Git tag version (v$TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
+            echo "Please update Cargo.toml version to $TAG_VERSION before creating the release"
+            exit 1
+          fi
+
+          echo "✓ Version check passed: $TAG_VERSION"
 
       - name: Create Release
         id: create_release
