@@ -168,6 +168,10 @@ pub enum Action {
     FileExplorerCollapse,
     FileExplorerOpen,
     FileExplorerRefresh,
+    FileExplorerNewFile,
+    FileExplorerNewDirectory,
+    FileExplorerDelete,
+    FileExplorerRename,
 
     // No-op
     None,
@@ -291,6 +295,10 @@ impl Action {
             "file_explorer_collapse" => Some(Action::FileExplorerCollapse),
             "file_explorer_open" => Some(Action::FileExplorerOpen),
             "file_explorer_refresh" => Some(Action::FileExplorerRefresh),
+            "file_explorer_new_file" => Some(Action::FileExplorerNewFile),
+            "file_explorer_new_directory" => Some(Action::FileExplorerNewDirectory),
+            "file_explorer_delete" => Some(Action::FileExplorerDelete),
+            "file_explorer_rename" => Some(Action::FileExplorerRename),
 
             _ => None,
         }
@@ -834,6 +842,10 @@ impl KeybindingResolver {
             Action::FileExplorerCollapse => "File explorer: collapse directory".to_string(),
             Action::FileExplorerOpen => "File explorer: open file".to_string(),
             Action::FileExplorerRefresh => "File explorer: refresh".to_string(),
+            Action::FileExplorerNewFile => "File explorer: new file".to_string(),
+            Action::FileExplorerNewDirectory => "File explorer: new directory".to_string(),
+            Action::FileExplorerDelete => "File explorer: delete".to_string(),
+            Action::FileExplorerRename => "File explorer: rename".to_string(),
             Action::None => "No action".to_string(),
         }
     }

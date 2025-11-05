@@ -683,6 +683,10 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         | Action::FileExplorerCollapse
         | Action::FileExplorerOpen
         | Action::FileExplorerRefresh
+        | Action::FileExplorerNewFile
+        | Action::FileExplorerNewDirectory
+        | Action::FileExplorerDelete
+        | Action::FileExplorerRename
         | Action::None => return None,
 
         Action::SelectLine => {
