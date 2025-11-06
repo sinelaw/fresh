@@ -1233,3 +1233,142 @@ fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test the EXACT scenario from the bug report:
+/// Open a Rust file, position cursor on a variable, press F2, type ONE character, press Enter
+/// This should reproduce the ContentModified error with rust-analyzer
+#[test]
+#[ignore] // Run with: cargo test test_rust_analyzer_rename_real_scenario -- --ignored --nocapture
+fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
+    use std::io::Write;
+    use std::process::Command;
+
+    // Check if rust-analyzer is installed
+    let rust_analyzer_check = Command::new("which").arg("rust-analyzer").output();
+    if rust_analyzer_check.is_err() || !rust_analyzer_check.unwrap().status.success() {
+        eprintln!("Skipping test: rust-analyzer not found in PATH");
+        return Ok(());
+    }
+
+    eprintln!("rust-analyzer found, running REAL SCENARIO test...");
+
+    // Create a simple directory with just one Rust file (no Cargo.toml - faster startup)
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    let mut file = std::fs::File::create(&test_file)?;
+
+    // Write a simple Rust file with a variable to rename
+    writeln!(file, "fn main() {{")?;
+    writeln!(file, "    let log_line = \"hello world\";")?;
+    writeln!(file, "    println!(\"{{}}\", log_line);")?;
+    writeln!(file, "    let result = log_line.len();")?;
+    writeln!(file, "}}")?;
+    drop(file);
+
+    eprintln!("Created test file: {:?}", test_file);
+
+    let mut harness = EditorTestHarness::new(80, 30)?;
+
+    // Open the Rust file - this should trigger LSP initialization
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    eprintln!("File opened, waiting for rust-analyzer to initialize...");
+
+    // Wait INDEFINITELY for LSP to initialize (no timeout as user requested)
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        harness.editor_mut().process_async_messages();
+        harness.render()?;
+
+        let screen = harness.screen_to_string();
+        if screen.contains("LSP (rust) ready") {
+            eprintln!("✓ rust-analyzer initialized and ready!");
+            break;
+        }
+
+        // Print status periodically
+        if screen.contains("LSP") {
+            eprintln!("  Waiting... Status: {}", screen.lines().last().unwrap_or(""));
+        }
+    }
+
+    // Position cursor on "log_line" variable (line 1, after "let ")
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?; // Start of file
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?; // Move to line with "let log_line"
+    for _ in 0..8 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?; // After "    let "
+    }
+    harness.render()?;
+
+    let buffer_before = harness.get_buffer_content();
+    eprintln!("\nBuffer before rename:\n{}", buffer_before);
+    eprintln!("Cursor positioned on 'log_line' variable");
+
+    // Press F2 to enter rename mode
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE)?;
+    harness.render()?;
+
+    eprintln!("Entered rename mode");
+
+    // Type ONE character '2' (like the user did: log_line -> log_line2)
+    harness.type_text("2")?;
+    harness.render()?;
+
+    eprintln!("Typed '2' to make 'log_line2'");
+
+    // Press Enter to confirm rename
+    eprintln!("\nPressing Enter to confirm rename...");
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+    harness.editor_mut().process_async_messages();
+
+    // Wait INDEFINITELY for LSP response (no timeout)
+    eprintln!("Waiting for rust-analyzer response (no timeout)...");
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        harness.editor_mut().process_async_messages();
+        harness.render()?;
+
+        let screen = harness.screen_to_string();
+
+        // Check if we got ANY response
+        if !screen.contains("LSP: rename...") {
+            eprintln!("✓ rust-analyzer responded!");
+            break;
+        }
+
+        // Print periodic status
+        eprintln!("  Still waiting... {}", screen.lines().last().unwrap_or(""));
+    }
+
+    // Get final screen and buffer
+    let screen_final = harness.screen_to_string();
+    let buffer_final = harness.get_buffer_content();
+
+    eprintln!("\n========================================");
+    eprintln!("FINAL SCREEN:");
+    eprintln!("{}", screen_final);
+    eprintln!("\nFINAL BUFFER:");
+    eprintln!("{}", buffer_final);
+    eprintln!("========================================\n");
+
+    // CHECK FOR THE BUG: ContentModified error
+    if screen_final.contains("content modified") || screen_final.contains("modified") {
+        eprintln!("\n⚠️  BUG REPRODUCED! ⚠️");
+        eprintln!("Got 'content modified' error from rust-analyzer");
+        panic!("REPRODUCED: ContentModified error - this is the bug we need to fix!");
+    }
+
+    // Check if rename actually succeeded
+    if buffer_final.contains("let log_line2 =") {
+        eprintln!("\n✅ SUCCESS! Rename worked!");
+        assert!(buffer_final.contains("println!(\"{}\", log_line2)"));
+        assert!(buffer_final.contains("let result = log_line2.len()"));
+    } else {
+        eprintln!("\n❌ FAILED: Rename didn't apply to buffer");
+        panic!("Rename was not applied to buffer");
+    }
+
+    Ok(())
+}
