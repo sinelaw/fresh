@@ -579,9 +579,13 @@ impl LspTask {
         language: String,
         async_tx: std_mpsc::Sender<AsyncMessage>,
         process_limits: &ProcessLimits,
+        working_dir: Option<PathBuf>,
     ) -> Result<Self, String> {
         tracing::info!("Spawning async LSP server: {} {:?}", command, args);
         tracing::info!("Process limits: {:?}", process_limits);
+        if let Some(ref wd) = working_dir {
+            tracing::info!("LSP working directory: {:?}", wd);
+        }
 
         let mut cmd = Command::new(command);
         cmd.args(args)
@@ -589,6 +593,11 @@ impl LspTask {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
+
+        // Set working directory if provided
+        if let Some(wd) = working_dir {
+            cmd.current_dir(wd);
+        }
 
         // Apply resource limits to the process
         process_limits
@@ -1287,6 +1296,7 @@ impl LspHandle {
         language: String,
         async_bridge: &AsyncBridge,
         process_limits: ProcessLimits,
+        working_dir: Option<PathBuf>,
     ) -> Result<Self, String> {
         let (command_tx, command_rx) = mpsc::channel(100); // Buffer up to 100 commands
         let async_tx = async_bridge.sender();
@@ -1297,7 +1307,7 @@ impl LspHandle {
         let initialized_clone = initialized.clone();
 
         runtime.spawn(async move {
-            match LspTask::spawn(&command, &args, language_clone.clone(), async_tx.clone(), &process_limits).await {
+            match LspTask::spawn(&command, &args, language_clone.clone(), async_tx.clone(), &process_limits, working_dir).await {
                 Ok(task) => {
                     task.run(command_rx).await;
                 }
@@ -1600,7 +1610,7 @@ mod tests {
 
         // Use 'cat' as a mock LSP server (it will just echo stdin to stdout)
         // This will fail to initialize but allows us to test the spawn mechanism
-        let result = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge, ProcessLimits::unlimited());
+        let result = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge, ProcessLimits::unlimited(), None);
 
         // Should succeed in spawning
         assert!(result.is_ok());
@@ -1619,7 +1629,7 @@ mod tests {
         let runtime = tokio::runtime::Handle::current();
         let async_bridge = AsyncBridge::new();
 
-        let handle = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge, ProcessLimits::unlimited())
+        let handle = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge, ProcessLimits::unlimited(), None)
             .unwrap();
 
         // did_open now succeeds and queues the command for when server is initialized
@@ -1638,7 +1648,7 @@ mod tests {
         let runtime = tokio::runtime::Handle::current();
         let async_bridge = AsyncBridge::new();
 
-        let handle = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge, ProcessLimits::unlimited())
+        let handle = LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge, ProcessLimits::unlimited(), None)
             .unwrap();
 
         // did_change now succeeds and queues the command for when server is initialized
@@ -1668,6 +1678,7 @@ mod tests {
             "test".to_string(),
             &async_bridge,
             ProcessLimits::unlimited(),
+            None,
         );
 
         // Should succeed in creating handle (error happens asynchronously)
@@ -1696,7 +1707,7 @@ mod tests {
 
             let handle = rt.block_on(async {
                 let runtime = tokio::runtime::Handle::current();
-                LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge, ProcessLimits::unlimited()).unwrap()
+                LspHandle::spawn(&runtime, "cat", &[], "test".to_string(), &async_bridge, ProcessLimits::unlimited(), None).unwrap()
             });
 
             // This should succeed from a non-async context

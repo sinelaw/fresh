@@ -293,7 +293,7 @@ impl Editor {
         }
 
         // Create LSP manager with async support
-        let mut lsp = LspManager::new(root_uri);
+        let mut lsp = LspManager::new(root_uri, Some(working_dir.clone()));
 
         // Configure runtime and bridge if available
         if let Some(ref runtime) = tokio_runtime {
