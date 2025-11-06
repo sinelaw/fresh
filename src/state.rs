@@ -87,13 +87,23 @@ impl EditorState {
                 .ok()
         });
 
+        // Initialize marker list with buffer size
+        let mut marker_list = MarkerList::new();
+        if buffer.len() > 0 {
+            tracing::debug!(
+                "Initializing marker list for file with {} bytes",
+                buffer.len()
+            );
+            marker_list.adjust_for_insert(0, buffer.len());
+        }
+
         Ok(Self {
             buffer,
             cursors: Cursors::new(),
             viewport: Viewport::new(width, content_height),
             highlighter,
             overlays: OverlayManager::new(),
-            marker_list: MarkerList::new(),
+            marker_list,
             popups: PopupManager::new(),
             margins: MarginManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
