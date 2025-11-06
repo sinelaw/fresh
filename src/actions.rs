@@ -100,7 +100,25 @@ pub fn action_to_events(
         // Basic movement - move each cursor
         Action::MoveLeft => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let new_pos = cursor.position.saturating_sub(1);
+                // Check if we're at the start of a line
+                let mut iter = state.buffer.line_iterator(cursor.position);
+                let line_start = iter.current_position();
+
+                let new_pos = if cursor.position > 0 && cursor.position == line_start {
+                    // At start of line - move to end of previous line (before its newline)
+                    if let Some((prev_line_start, prev_line_content)) = iter.prev() {
+                        // Position at end of previous line content, not at the newline
+                        let prev_line_len = prev_line_content.trim_end_matches('\n').len();
+                        prev_line_start + prev_line_len
+                    } else {
+                        // No previous line, just move left by 1
+                        cursor.position.saturating_sub(1)
+                    }
+                } else {
+                    // Normal left movement
+                    cursor.position.saturating_sub(1)
+                };
+
                 events.push(Event::MoveCursor {
                     cursor_id,
                     position: new_pos,
@@ -111,12 +129,36 @@ pub fn action_to_events(
 
         Action::MoveRight => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let new_pos = (cursor.position + 1).min(state.buffer.len());
-                events.push(Event::MoveCursor {
-                    cursor_id,
-                    position: new_pos,
-                    anchor: None,
-                });
+                // Check if we're at the end of a line (before the newline)
+                let mut iter = state.buffer.line_iterator(cursor.position);
+                if let Some((line_start, line_content)) = iter.next() {
+                    let line_len_without_newline = line_content.trim_end_matches('\n').len();
+                    let line_end_pos = line_start + line_len_without_newline;
+
+                    // If we're at or past the end of visible content, and there's a newline
+                    // skip directly to the start of the next line
+                    let new_pos = if cursor.position >= line_end_pos && line_content.ends_with('\n') {
+                        // Skip the newline - move to start of next line
+                        line_start + line_content.len()
+                    } else {
+                        // Normal right movement
+                        (cursor.position + 1).min(state.buffer.len())
+                    };
+
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos.min(state.buffer.len()),
+                        anchor: None,
+                    });
+                } else {
+                    // Fallback: normal right movement
+                    let new_pos = (cursor.position + 1).min(state.buffer.len());
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        position: new_pos,
+                        anchor: None,
+                    });
+                }
             }
         }
 
