@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use tempfile::TempDir;
 
 /// Manages temporary test files
@@ -83,32 +84,44 @@ impl TestFixture {
         Ok(path)
     }
 
-    /// Create a test-specific large file (61MB) in a temporary directory.
-    /// This ensures tests are hermetic and don't interfere with each other.
-    /// Each test gets its own copy, preventing race conditions during parallel test execution.
+    /// Get or create a shared large file (61MB) for all tests.
+    /// Uses locking to ensure only one test creates the file, even when tests run in parallel.
+    /// All concurrent tests share the same file, which is much more efficient than creating
+    /// separate files per test.
     ///
-    /// The file is automatically cleaned up when the returned TestFixture is dropped.
-    pub fn big_txt_for_test(test_name: &str) -> std::io::Result<Self> {
-        let temp_dir = tempfile::tempdir()?;
-        let filename = format!("BIG-{}.txt", test_name);
-        let path = temp_dir.path().join(&filename);
+    /// The file persists across test runs in the system temp directory and is reused.
+    ///
+    /// Note: The test_name parameter is kept for API compatibility but is no longer used
+    /// since all tests share the same file.
+    pub fn big_txt_for_test(_test_name: &str) -> std::io::Result<PathBuf> {
+        // Global lock and path storage for thread-safe initialization
+        static BIG_TXT_INIT: OnceLock<Mutex<PathBuf>> = OnceLock::new();
 
-        eprintln!("Generating temporary large file for test '{}' (61MB)...", test_name);
-        let mut file = fs::File::create(&path)?;
-        let line = "x".repeat(80) + "\n";
-        let lines_per_mb = 1024 * 1024 / line.len();
-        let size_mb = 61;
+        let path_mutex = BIG_TXT_INIT.get_or_init(|| {
+            // Create path in system temp directory with predictable name
+            let path = std::env::temp_dir().join("fresh-test-BIG.txt");
+            Mutex::new(path)
+        });
 
-        for _ in 0..(size_mb * lines_per_mb) {
-            file.write_all(line.as_bytes())?;
+        // Lock to ensure only one test creates the file
+        let path = path_mutex.lock().unwrap().clone();
+
+        // Check if file already exists
+        if !path.exists() {
+            eprintln!("Generating shared large test file (61MB, one-time)...");
+            let mut file = fs::File::create(&path)?;
+            let line = "x".repeat(80) + "\n";
+            let lines_per_mb = 1024 * 1024 / line.len();
+            let size_mb = 61;
+
+            for _ in 0..(size_mb * lines_per_mb) {
+                file.write_all(line.as_bytes())?;
+            }
+            file.flush()?;
+            eprintln!("Generated shared large test file at {:?}", path);
         }
-        file.flush()?;
-        eprintln!("Generated temporary large file for test '{}'", test_name);
 
-        Ok(TestFixture {
-            _temp_dir: temp_dir,
-            path,
-        })
+        Ok(path)
     }
 }
 

@@ -634,12 +634,11 @@ fn test_jump_to_eof_large_file() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use std::time::Instant;
 
-    // Create a test-specific large file to avoid interference with other tests
-    let big_txt_fixture = TestFixture::big_txt_for_test("jump_to_eof_large_file").unwrap();
-    let big_txt_path = &big_txt_fixture.path;
+    // Get shared large file (all tests use the same 61MB file for efficiency)
+    let big_txt_path = TestFixture::big_txt_for_test("jump_to_eof_large_file").unwrap();
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    harness.open_file(big_txt_path).unwrap();
+    harness.open_file(&big_txt_path).unwrap();
 
     println!("\n=== Testing Ctrl+End on 61MB file ===");
 
@@ -736,11 +735,10 @@ fn test_line_numbers_absolute_after_jump_to_beginning() {
 
     println!("\n=== Testing navigation: EOF -> Home ===");
 
-    // Create a test-specific large file to avoid interference with other tests
-    let big_txt_fixture = TestFixture::big_txt_for_test("line_numbers_absolute").unwrap();
-    let big_txt_path = &big_txt_fixture.path;
+    // Get shared large file (all tests use the same 61MB file for efficiency)
+    let big_txt_path = TestFixture::big_txt_for_test("line_numbers_absolute").unwrap();
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    harness.open_file(big_txt_path).unwrap();
+    harness.open_file(&big_txt_path).unwrap();
 
     println!("✓ Opened 61MB file");
     let buffer_len = harness.editor().active_state().buffer.len();
