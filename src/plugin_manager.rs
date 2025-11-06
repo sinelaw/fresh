@@ -252,6 +252,19 @@ impl PluginManager {
         // Clone API for next closure
         let api_clone = api.clone();
 
+        // editor.remove_overlay(buffer_id, overlay_id)
+        let remove_overlay = lua.create_function(
+            move |_, (buffer_id, overlay_id): (usize, String)| {
+                api_clone
+                    .remove_overlay(BufferId(buffer_id), overlay_id)
+                    .map_err(|e| mlua::Error::RuntimeError(e))
+            },
+        )?;
+        editor.set("remove_overlay", remove_overlay)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
         // editor.set_status(message)
         let set_status = lua.create_function(move |_, message: String| {
             api_clone

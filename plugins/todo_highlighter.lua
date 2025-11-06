@@ -28,30 +28,36 @@ local comment_patterns = {
 
 -- Clear all existing overlays
 local function clear_overlays()
+    local buffer_id = editor.get_active_buffer_id()
     for _, overlay_id in ipairs(current_overlays) do
-        editor.remove_overlay(overlay_id)
+        editor.remove_overlay(buffer_id, overlay_id)
     end
     current_overlays = {}
 end
 
 -- Find and highlight all keywords in the current buffer
 local function highlight_keywords()
+    debug("TODO Highlighter: highlight_keywords() called")
     -- Clear existing overlays first
     clear_overlays()
 
     if not highlighting_enabled then
+        debug("TODO Highlighter: highlighting_enabled is false, returning")
         return
     end
 
     -- Get current buffer content
     local buffer_id = editor.get_active_buffer_id()
+    debug("TODO Highlighter: buffer_id = " .. tostring(buffer_id))
     local content = editor.get_buffer_content(buffer_id)
 
     if not content then
+        debug("TODO Highlighter: content is nil")
         editor.set_status("Cannot access buffer content")
         return
     end
 
+    debug("TODO Highlighter: content length = " .. #content)
     local highlights_found = 0
     local byte_offset = 0
 
@@ -88,14 +94,25 @@ local function highlight_keywords()
                     local highlight_start = byte_offset + start_pos - 1
                     local highlight_end = byte_offset + end_pos
 
-                    -- Add overlay
-                    local overlay_id = editor.add_overlay(
+                    debug(string.format("TODO Highlighter: Found %s at byte range [%d, %d)",
+                        pattern, highlight_start, highlight_end))
+
+                    -- Generate unique overlay ID
+                    local overlay_id = string.format("todo_%s_%d", pattern, highlight_start)
+
+                    -- Add overlay (API expects: buffer_id, overlay_id, start, end, r, g, b, underline)
+                    editor.add_overlay(
                         buffer_id,
+                        overlay_id,
                         highlight_start,
                         highlight_end,
-                        keyword_info.color
+                        keyword_info.color.r,
+                        keyword_info.color.g,
+                        keyword_info.color.b,
+                        false  -- no underline
                     )
 
+                    debug("TODO Highlighter: Added overlay with id = " .. overlay_id)
                     table.insert(current_overlays, overlay_id)
                     highlights_found = highlights_found + 1
                 end
@@ -109,6 +126,7 @@ local function highlight_keywords()
         byte_offset = byte_offset + #line
     end
 
+    debug("TODO Highlighter: Total highlights found = " .. highlights_found)
     if highlights_found > 0 then
         editor.set_status(string.format("TODO Highlighter: Found %d keywords", highlights_found))
     else
@@ -123,6 +141,7 @@ editor.register_command({
     action = "todo_highlight_enable",
     contexts = {"normal"},
     callback = function()
+        debug("TODO Highlighter: Enable command called")
         highlighting_enabled = true
         highlight_keywords()
     end
@@ -189,4 +208,5 @@ editor.register_command({
     end
 })
 
+debug("TODO Highlighter: Plugin loaded")
 editor.set_status("TODO Highlighter plugin loaded! Use 'TODO Highlighter: Toggle' to start.")
