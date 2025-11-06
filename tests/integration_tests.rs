@@ -626,10 +626,10 @@ fn test_diagnostic_overlay_visual_rendering() {
     harness.render().unwrap();
 
     // Now check that the character "x" at the expected position has red color
-    // The gutter is typically "   1 │ " (7 characters for single-digit line numbers)
-    // So the text starts at column 7
-    // "let x = 5;" -> "x" is at text position 4, which maps to screen column 7 + 4 = 11
-    let gutter_width = 7; // "   1 │ " for line 1
+    // The gutter is now " " + "   1" + " │ " (8 characters: indicator + line number + separator)
+    // So the text starts at column 8
+    // "let x = 5;" -> "x" is at text position 4, which maps to screen column 8 + 4 = 12
+    let gutter_width = 8; // " " (indicator) + "   1" + " │ " for line 1
     let x_column = gutter_width + 4; // Position of "x" in "let x = 5;"
     let x_row = 1; // First line of content (row 0 is tab bar, row 1 is first text line)
 
