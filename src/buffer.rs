@@ -533,6 +533,7 @@ impl Buffer {
 
     /// Convert byte position to (line, character) - 0-indexed
     /// Returns (line_number, character_offset_within_line)
+    /// Note: character is in BYTES, not UTF-16 code units (use position_to_lsp_position for LSP)
     pub fn position_to_line_col(&self, byte_pos: usize) -> (usize, usize) {
         let mut iter = self.line_iterator(0);
         let mut line_number = 0;
@@ -544,6 +545,40 @@ impl Buffer {
                 // Found the line containing byte_pos
                 let character = byte_pos - line_start;
                 return (line_number, character);
+            }
+
+            line_number += 1;
+        }
+
+        // If position is beyond the end, return the last line
+        if line_number > 0 {
+            line_number -= 1;
+        }
+        (line_number, 0)
+    }
+
+    /// Convert byte position to LSP position (line, UTF-16 code units) - 0-indexed
+    /// LSP uses UTF-16 code units for character offsets, not bytes
+    /// Returns (line_number, utf16_code_unit_offset)
+    pub fn position_to_lsp_position(&self, byte_pos: usize) -> (usize, usize) {
+        let mut iter = self.line_iterator(0);
+        let mut line_number = 0;
+
+        while let Some((line_start, line_content)) = iter.next() {
+            let line_end = line_start + line_content.len();
+
+            if byte_pos >= line_start && byte_pos <= line_end {
+                // Found the line containing byte_pos
+                let byte_offset = byte_pos - line_start;
+
+                // Convert byte offset to UTF-16 code units
+                // Take the substring from start of line to our byte position
+                let text_before = &line_content[..byte_offset.min(line_content.len())];
+
+                // Count UTF-16 code units
+                let utf16_offset = text_before.encode_utf16().count();
+
+                return (line_number, utf16_offset);
             }
 
             line_number += 1;

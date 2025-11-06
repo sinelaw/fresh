@@ -2000,8 +2000,8 @@ impl Editor {
         let state = self.active_state();
         let cursor_pos = state.cursors.primary().position;
 
-        // Convert byte position to line/column
-        let (line, character) = state.buffer.position_to_line_col(cursor_pos);
+        // Convert byte position to LSP position (line, UTF-16 code units)
+        let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
 
         // Get the current file URI and path
         let metadata = self.buffer_metadata.get(&self.active_buffer);
@@ -2038,8 +2038,8 @@ impl Editor {
         let state = self.active_state();
         let cursor_pos = state.cursors.primary().position;
 
-        // Convert byte position to line/column
-        let (line, character) = state.buffer.position_to_line_col(cursor_pos);
+        // Convert byte position to LSP position (line, UTF-16 code units)
+        let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
 
         // Get the current file URI and path
         let metadata = self.buffer_metadata.get(&self.active_buffer);
@@ -2401,9 +2401,10 @@ impl Editor {
             // This ensures we send the rename request for the correct symbol even if cursor moved
             let rename_pos = rename_state.start_pos;
 
-            // Convert byte position to line/column
+            // Convert byte position to LSP position (line, UTF-16 code units)
+            // LSP uses UTF-16 code units for character offsets, not byte offsets
             let state = self.active_state();
-            let (line, character) = state.buffer.position_to_line_col(rename_pos);
+            let (line, character) = state.buffer.position_to_lsp_position(rename_pos);
 
             // Get the current file URI and path
             let metadata = self.buffer_metadata.get(&self.active_buffer);
