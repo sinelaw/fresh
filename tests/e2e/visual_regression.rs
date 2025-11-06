@@ -455,3 +455,207 @@ fn visual_lsp_rename() {
 
     harness.capture_visual_step(&mut flow, "rename_complete", "Rename complete - all 3 occurrences of 'value' renamed to 'amount'").unwrap();
 }
+
+/// Test that canceling rename after deleting characters restores original name
+#[test]
+fn test_lsp_rename_cancel_restores_original() {
+    use editor::overlay::OverlayFace;
+    use ratatui::style::Color;
+
+    let mut harness = EditorTestHarness::new(80, 30).unwrap();
+
+    // Step 1: Create code with a symbol
+    harness.type_text("fn calculate(value: i32) -> i32 {\n").unwrap();
+    harness.type_text("    let result = value * 2;\n").unwrap();
+    harness.type_text("    result\n").unwrap();
+    harness.type_text("}\n").unwrap();
+    harness.render().unwrap();
+
+    // Step 2: Position cursor on the symbol 'value' (on the parameter)
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap(); // Go to document start
+    for _ in 0..14 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+
+    // Verify cursor is positioned on "value"
+    let initial_cursor_pos = harness.cursor_position();
+    let buffer = &harness.editor().active_state().buffer;
+    let word_at_cursor = {
+        let start = initial_cursor_pos.saturating_sub(2).max(0);
+        let end = (initial_cursor_pos + 10).min(buffer.len());
+        buffer.slice(start..end).to_string()
+    };
+    assert!(word_at_cursor.contains("value"),
+            "Cursor should be near 'value', but found: '{}'", word_at_cursor);
+
+    // Get the full buffer content before rename
+    let original_buffer_content = harness.get_buffer_content();
+    assert!(original_buffer_content.contains("fn calculate(value: i32)"),
+            "Original buffer should contain 'value' parameter");
+
+    // Step 3: Press F2 to enter rename mode
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Verify rename mode is active
+    let state = harness.editor().active_state();
+    let overlays: Vec<_> = state.overlays.all().iter()
+        .filter(|o| o.id.as_ref().map_or(false, |id| id.starts_with("rename_overlay_")))
+        .collect();
+    assert_eq!(overlays.len(), 1, "Should have exactly one rename overlay");
+
+    let overlay_text = state.buffer.slice(overlays[0].range.clone()).to_string();
+    assert_eq!(overlay_text, "value", "Overlay should cover the 'value' symbol");
+
+    // Step 4: Delete some characters
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    // Verify the text has been modified during rename mode
+    let state_after_delete = harness.editor().active_state();
+    let buffer_after_delete = state_after_delete.buffer.to_string();
+    assert!(buffer_after_delete.contains("fn calculate(va: i32)"),
+            "Buffer should show partially deleted name 'va'");
+
+    // Verify overlay still exists during editing
+    let overlays_after_delete: Vec<_> = state_after_delete.overlays.all().iter()
+        .filter(|o| o.id.as_ref().map_or(false, |id| id.starts_with("rename_overlay_")))
+        .collect();
+    assert_eq!(overlays_after_delete.len(), 1, "Rename overlay should still exist after deletion");
+
+    // Step 5: Press Escape to cancel
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Step 6: Verify the original name "value" is restored
+    let final_buffer_content = harness.get_buffer_content();
+    assert_eq!(final_buffer_content, original_buffer_content,
+               "Buffer content should be restored to original after canceling rename");
+    assert!(final_buffer_content.contains("fn calculate(value: i32)"),
+            "Original 'value' parameter should be restored");
+
+    // Verify rename overlay is removed
+    let state_after_cancel = harness.editor().active_state();
+    let overlays_after_cancel: Vec<_> = state_after_cancel.overlays.all().iter()
+        .filter(|o| o.id.as_ref().map_or(false, |id| id.starts_with("rename_overlay_")))
+        .collect();
+    assert_eq!(overlays_after_cancel.len(), 0, "Rename overlay should be removed after cancel");
+
+    // Verify we're back in normal mode (not rename mode)
+    let screen = harness.screen_to_string();
+    assert!(!screen.contains("Rename mode"), "Should exit rename mode after cancel");
+}
+
+/// Test that undo after successful rename restores all occurrences in one step
+#[test]
+fn test_lsp_rename_undo_restores_all() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
+    use std::collections::HashMap;
+    use std::io::Write;
+
+    // Create a temporary file for this test
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_file = temp_dir.path().join("test.rs");
+    let mut file = std::fs::File::create(&test_file).unwrap();
+    writeln!(file, "fn calculate(value: i32) -> i32 {{").unwrap();
+    writeln!(file, "    let result = value * 2;").unwrap();
+    writeln!(file, "    println!(\"Value: {{}}\", value);").unwrap();
+    writeln!(file, "    result").unwrap();
+    writeln!(file, "}}").unwrap();
+    drop(file);
+
+    let mut harness = EditorTestHarness::new(80, 30).unwrap();
+
+    // Open the temporary file
+    harness.open_file(&test_file).unwrap();
+    harness.render().unwrap();
+
+    // Save the original buffer content
+    let original_content = harness.get_buffer_content();
+    assert!(original_content.contains("fn calculate(value: i32)"));
+    assert_eq!(original_content.matches("value").count(), 3);
+
+    // Create file URI from the temp file path
+    let file_uri = Url::from_file_path(&test_file).unwrap();
+
+    // Simulate LSP WorkspaceEdit response with multiple edits
+    let mut changes = HashMap::new();
+    changes.insert(
+        file_uri.clone(),
+        vec![
+            // Edit 1: parameter name (line 0, col 14-19: "value")
+            TextEdit {
+                range: Range {
+                    start: Position { line: 0, character: 13 },
+                    end: Position { line: 0, character: 18 },
+                },
+                new_text: "amount".to_string(),
+            },
+            // Edit 2: first usage in let statement (line 1, col 17-22: "value")
+            TextEdit {
+                range: Range {
+                    start: Position { line: 1, character: 17 },
+                    end: Position { line: 1, character: 22 },
+                },
+                new_text: "amount".to_string(),
+            },
+            // Edit 3: second usage in println (line 2, col 28-33: "value")
+            TextEdit {
+                range: Range {
+                    start: Position { line: 2, character: 28 },
+                    end: Position { line: 2, character: 33 },
+                },
+                new_text: "amount".to_string(),
+            },
+        ],
+    );
+
+    let workspace_edit = WorkspaceEdit {
+        changes: Some(changes),
+        document_changes: None,
+        change_annotations: None,
+    };
+
+    // Call handle_rename_response directly to simulate LSP rename response
+    harness.editor_mut().handle_rename_response(1, Ok(workspace_edit)).unwrap();
+    harness.render().unwrap();
+
+    // Step 5: Verify all occurrences were renamed
+    let renamed_content = harness.get_buffer_content();
+    assert!(renamed_content.contains("fn calculate(amount: i32)"),
+            "Parameter should be renamed to 'amount'");
+    assert_eq!(renamed_content.matches("amount").count(), 3,
+               "Should have 3 occurrences of 'amount'");
+    assert_eq!(renamed_content.matches("value").count(), 0,
+               "Should have no occurrences of 'value' as identifier");
+
+    // Step 6: Perform undo (Ctrl+Z)
+    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Step 7: Verify ALL occurrences are restored to original in ONE undo step
+    let after_undo_content = harness.get_buffer_content();
+    assert_eq!(after_undo_content, original_content,
+               "Single undo should restore all occurrences to 'value'");
+    assert!(after_undo_content.contains("fn calculate(value: i32)"),
+            "Parameter should be restored to 'value'");
+    assert_eq!(after_undo_content.matches("value").count(), 3,
+               "Should have 3 occurrences of 'value' after undo");
+    assert_eq!(after_undo_content.matches("amount").count(), 0,
+               "Should have no occurrences of 'amount' after undo");
+
+    // Step 8: Verify we can redo (Ctrl+Y or Ctrl+Shift+Z)
+    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    let after_redo_content = harness.get_buffer_content();
+    assert_eq!(after_redo_content, renamed_content,
+               "Redo should restore the renamed content");
+    assert_eq!(after_redo_content.matches("amount").count(), 3,
+               "Should have 3 occurrences of 'amount' after redo");
+    assert_eq!(after_redo_content.matches("value").count(), 0,
+               "Should have no occurrences of 'value' after redo");
+}
