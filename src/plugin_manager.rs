@@ -51,6 +51,9 @@ pub struct PluginManager {
     /// Action callbacks (action_name -> Lua registry key)
     action_callbacks: HashMap<String, mlua::RegistryKey>,
 
+    /// Hook callbacks (hook_name -> Vec<Lua registry key>)
+    hook_callbacks: HashMap<String, Vec<mlua::RegistryKey>>,
+
     /// Next callback ID for spawn processes
     next_callback_id: u64,
 
@@ -101,6 +104,10 @@ impl PluginManager {
         // Create global table for storing spawn callbacks
         lua.globals().set("_spawn_callbacks", lua.create_table()?)?;
 
+        // Create global table for storing hook callbacks
+        lua.globals()
+            .set("_hook_callbacks", lua.create_table()?)?;
+
         tracing::info!("Plugin debug log: {:?}", debug_log_path);
 
         Ok(Self {
@@ -111,6 +118,7 @@ impl PluginManager {
             plugin_api,
             command_receiver,
             action_callbacks: HashMap::new(),
+            hook_callbacks: HashMap::new(),
             next_callback_id: 1,
             async_sender: None,
             debug_log_path,
@@ -273,25 +281,27 @@ impl PluginManager {
         })?;
         editor.set("set_status", set_status)?;
 
-        // Clone API for next closure
-        let api_clone = api.clone();
-
         // editor.on(hook_name, callback)
+        // We can't directly create a closure that captures Lua state across threads,
+        // so we store the callback and invoke it later in run_hook()
         let on_hook = lua.create_function(
             move |lua, (hook_name, callback): (String, mlua::Function)| {
-                // Store callback in registry to keep it alive
-                let registry_key = lua.create_registry_value(callback)?;
+                // Store callback in a global table so we can find it later
+                let hooks_table: mlua::Table = lua.globals().get("_hook_callbacks")?;
 
-                // Create Rust callback that calls Lua function
-                // Note: This is a simplified version - real implementation would need
-                // to handle the registry key lifetime properly
-                let hook_callback = Box::new(move |_args: &HookArgs| -> bool {
-                    // In real implementation, we'd call the Lua function here
-                    // For now, just return true
-                    true
-                });
+                // Get or create array for this hook name
+                let hook_array: mlua::Table = if hooks_table.contains_key(hook_name.as_str())? {
+                    hooks_table.get(hook_name.as_str())?
+                } else {
+                    let new_array = lua.create_table()?;
+                    hooks_table.set(hook_name.as_str(), &new_array)?;
+                    new_array
+                };
 
-                api_clone.register_hook(&hook_name, hook_callback);
+                // Append callback to array
+                let len = hook_array.len()?;
+                hook_array.set(len + 1, callback)?;
+
                 Ok(())
             },
         )?;
@@ -670,6 +680,39 @@ impl PluginManager {
                 action_name
             ))
         }
+    }
+
+    /// Run plugin hooks for a given event
+    /// This allows Lua plugins to respond to editor events
+    pub fn run_hook(&self, hook_name: &str, _args: &HookArgs) -> Result<(), String> {
+        // Get the hooks table
+        let hooks_table: mlua::Table = self
+            .lua
+            .globals()
+            .get("_hook_callbacks")
+            .map_err(|e| format!("Failed to get hooks table: {}", e))?;
+
+        // Get the array of callbacks for this hook
+        let hook_array: Option<mlua::Table> = hooks_table.get(hook_name).ok();
+
+        if let Some(array) = hook_array {
+            // Call each callback
+            let len = array
+                .len()
+                .map_err(|e| format!("Failed to get hook array length: {}", e))?;
+
+            for i in 1..=len {
+                let callback: Option<mlua::Function> = array.get(i).ok();
+                if let Some(cb) = callback {
+                    // Call the callback
+                    // For now, we don't pass args to Lua (would need to convert HookArgs to Lua table)
+                    cb.call::<_, ()>(())
+                        .map_err(|e| format!("Plugin hook callback error: {}", e))?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Spawn an async process for a plugin
