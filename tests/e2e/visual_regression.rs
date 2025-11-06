@@ -191,7 +191,8 @@ fn visual_multicursor() {
 /// Test LSP diagnostics with margin bullet points
 #[test]
 fn visual_lsp_diagnostics() {
-    use editor::event::{Event, MarginContentData, MarginPositionData, OverlayFace};
+    use editor::event::{Event, OverlayFace};
+    use ratatui::style::Color;
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
     let mut flow = VisualFlow::new(
@@ -209,7 +210,7 @@ fn visual_lsp_diagnostics() {
     harness.render().unwrap();
     harness.capture_visual_step(&mut flow, "code_without_diagnostics", "Code before diagnostics appear").unwrap();
 
-    // Step 2: Add diagnostic overlays and margin annotations (simulating LSP)
+    // Step 2: Add diagnostic overlays and margin indicators (simulating LSP)
     let state = harness.editor_mut().active_state_mut();
 
     // Error on line 2 (unused variable x)
@@ -235,26 +236,10 @@ fn visual_lsp_diagnostics() {
     });
 
     // Add red bullet points in the margin for lines with diagnostics
-    state.apply(&Event::AddMarginAnnotation {
-        line: 1, // Line 2 (0-indexed)
-        position: MarginPositionData::Left,
-        content: MarginContentData::Symbol {
-            text: "●".to_string(),
-            color: Some((255, 0, 0)), // Red
-        },
-        annotation_id: Some("lsp-diagnostic-margin".to_string()),
-    });
-
-    state.apply(&Event::AddMarginAnnotation {
-        line: 2, // Line 3 (0-indexed)
-        position: MarginPositionData::Left,
-        content: MarginContentData::Symbol {
-            text: "●".to_string(),
-            color: Some((255, 0, 0)), // Red
-        },
-        annotation_id: Some("lsp-diagnostic-margin".to_string()),
-    });
+    // Using the new diagnostic indicator API
+    state.margins.set_diagnostic_indicator(1, "●".to_string(), Color::Red); // Line 2 (0-indexed)
+    state.margins.set_diagnostic_indicator(2, "●".to_string(), Color::Red); // Line 3 (0-indexed)
 
     harness.render().unwrap();
-    harness.capture_visual_step(&mut flow, "diagnostics_with_bullets", "Diagnostics with red bullet points in margin").unwrap();
+    harness.capture_visual_step(&mut flow, "diagnostics_with_bullets", "Diagnostics with red bullet points in separate margin column").unwrap();
 }

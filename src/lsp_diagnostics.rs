@@ -4,7 +4,6 @@
 ///! Diagnostics are displayed as colored underlines (red for errors, yellow for warnings, etc.)
 
 use crate::buffer::Buffer;
-use crate::margin::{MarginAnnotation, MarginContent, MarginPosition};
 use crate::overlay::OverlayFace;
 use crate::state::EditorState;
 use lsp_types::{Diagnostic, DiagnosticSeverity};
@@ -69,7 +68,7 @@ pub fn diagnostic_to_overlay(
 /// 1. Clears existing diagnostic overlays (IDs starting with "lsp-diagnostic-")
 /// 2. Converts diagnostics to overlays
 /// 3. Adds overlays to the editor state
-/// 4. Adds red bullet point margin annotations for lines with diagnostics
+/// 4. Adds red bullet point indicators in the margin for lines with diagnostics
 pub fn apply_diagnostics_to_state(state: &mut EditorState, diagnostics: &[Diagnostic], theme: &crate::theme::Theme) {
     use crate::overlay::Overlay;
 
@@ -94,9 +93,8 @@ pub fn apply_diagnostics_to_state(state: &mut EditorState, diagnostics: &[Diagno
         state.overlays.remove_by_id(&id);
     }
 
-    // Clear existing diagnostic margin annotations
-    // Use a separate prefix for margin annotations
-    state.margins.remove_by_id("lsp-diagnostic-margin");
+    // Clear existing diagnostic indicators
+    state.margins.clear_diagnostic_indicators();
 
     // Track unique lines with diagnostics to avoid duplicate margin markers
     let mut diagnostic_lines = std::collections::HashSet::new();
@@ -113,21 +111,15 @@ pub fn apply_diagnostics_to_state(state: &mut EditorState, diagnostics: &[Diagno
 
             state.overlays.add(overlay);
 
-            // Track the line number for margin annotation
+            // Track the line number for diagnostic indicator
             let line = diagnostic.range.start.line as usize;
             diagnostic_lines.insert(line);
         }
     }
 
-    // Add red bullet point margin annotations for each unique diagnostic line
+    // Add red bullet point indicators for each unique diagnostic line
     for line in diagnostic_lines {
-        let annotation = MarginAnnotation::with_id(
-            line,
-            MarginPosition::Left,
-            MarginContent::colored_symbol("●", Color::Red),
-            "lsp-diagnostic-margin".to_string(),
-        );
-        state.margins.add_annotation(annotation);
+        state.margins.set_diagnostic_indicator(line, "●".to_string(), Color::Red);
     }
 }
 
