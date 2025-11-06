@@ -1444,3 +1444,239 @@ fn test_scrollbar_invariants_200_lines() {
 fn test_scrollbar_invariants_500_lines() {
     test_scrollbar_invariants_with_file_size(500);
 }
+
+/// Test that the last line of buffer never scrolls higher than the bottom of the editor
+/// when scrolling vertically, unless the entire buffer is smaller than the view
+#[test]
+fn test_last_line_never_above_bottom() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use tempfile::TempDir;
+
+    let terminal_height = 24u16;
+    let terminal_width = 80u16;
+
+    // Calculate the content area bounds
+    // Row 0: Tab bar
+    // Rows 1 to terminal_height-2: Content area
+    // Row terminal_height-1: Status bar
+    let content_first_row = 1usize;
+    let content_last_row = (terminal_height - 2) as usize; // Row 22 for height 24
+
+    // Test Case 1: Buffer larger than viewport
+    // Create a buffer with 50 lines (more than viewport height)
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    let mut content = String::new();
+    for i in 1..=50 {
+        if i > 1 {
+            content.push('\n');
+        }
+        content.push_str(&format!("Line {i}"));
+    }
+    std::fs::write(&file_path, &content).unwrap();
+
+    let mut harness = EditorTestHarness::new(terminal_width, terminal_height).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+
+    // Jump to end of file
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify cursor is at the end of the file
+    let buffer_content = harness.get_buffer_content();
+    let cursor_pos = harness.cursor_position();
+    assert_eq!(
+        cursor_pos,
+        buffer_content.len(),
+        "Cursor should be at end of file"
+    );
+
+    // Get the rendered screen and parse it
+    let screen = harness.screen_to_string();
+    let screen_lines: Vec<&str> = screen.lines().collect();
+
+    // Find the last line of the buffer on screen
+    let last_buffer_line = "Line 50";
+    let mut last_line_row = None;
+    for (row_idx, line) in screen_lines.iter().enumerate() {
+        if line.contains(last_buffer_line) {
+            last_line_row = Some(row_idx);
+        }
+    }
+
+    // Verify the last line was found
+    assert!(
+        last_line_row.is_some(),
+        "Last buffer line '{}' should be visible on screen",
+        last_buffer_line
+    );
+
+    let last_line_row = last_line_row.unwrap();
+
+    // The last line should be at or near the bottom of the content area
+    // It should be at content_last_row (row 22 for height 24)
+    assert_eq!(
+        last_line_row, content_last_row,
+        "Last buffer line should be at row {} (bottom of content area), but found at row {}",
+        content_last_row, last_line_row
+    );
+
+    // Verify there are no empty rows between where we found the last line and the status bar
+    // All rows from content_first_row to content_last_row should have content
+    let mut empty_rows_below_last_line = 0;
+    for row_idx in (last_line_row + 1)..=content_last_row {
+        if row_idx < screen_lines.len() {
+            let line = screen_lines[row_idx].trim();
+            // Check if line is empty or just whitespace/gutter
+            if line.is_empty() || line.chars().all(|c| c.is_whitespace() || c == '│') {
+                empty_rows_below_last_line += 1;
+            }
+        }
+    }
+
+    assert_eq!(
+        empty_rows_below_last_line, 0,
+        "There should be no empty content rows below the last buffer line, but found {} empty rows",
+        empty_rows_below_last_line
+    );
+
+    // Try to scroll down further with PageDown - should not move viewport
+    let top_byte_before = harness.editor().active_state().viewport.top_byte;
+    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let top_byte_after = harness.editor().active_state().viewport.top_byte;
+
+    assert_eq!(
+        top_byte_before, top_byte_after,
+        "Viewport should not scroll past the last line. \
+         top_byte was {top_byte_before}, now {top_byte_after}"
+    );
+
+    // Try Down arrow - should not move viewport
+    let top_byte_before = harness.editor().active_state().viewport.top_byte;
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let top_byte_after = harness.editor().active_state().viewport.top_byte;
+
+    assert_eq!(
+        top_byte_before, top_byte_after,
+        "Viewport should not scroll when cursor is at last line. \
+         top_byte was {top_byte_before}, now {top_byte_after}"
+    );
+
+    // Test Case 2: Buffer smaller than viewport
+    // Create a buffer with only 10 lines (less than viewport height)
+    let small_file_path = temp_dir.path().join("small.txt");
+    let mut small_content = String::new();
+    for i in 1..=10 {
+        if i > 1 {
+            small_content.push('\n');
+        }
+        small_content.push_str(&format!("Small Line {i}"));
+    }
+    std::fs::write(&small_file_path, &small_content).unwrap();
+
+    let mut small_harness = EditorTestHarness::new(terminal_width, terminal_height).unwrap();
+    small_harness.open_file(&small_file_path).unwrap();
+    small_harness.render().unwrap();
+
+    // Jump to end of file
+    small_harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    small_harness.render().unwrap();
+
+    // When buffer is smaller than viewport, top_byte should be 0
+    let small_state = small_harness.editor().active_state();
+    assert_eq!(
+        small_state.viewport.top_byte, 0,
+        "When buffer is smaller than viewport, top_byte should remain 0"
+    );
+
+    // Get screen for small buffer
+    let small_screen = small_harness.screen_to_string();
+    let small_screen_lines: Vec<&str> = small_screen.lines().collect();
+
+    // Verify the first line is at the top of content area
+    assert!(
+        small_screen_lines.len() > content_first_row,
+        "Screen should have enough lines"
+    );
+    assert!(
+        small_screen_lines[content_first_row].contains("Small Line 1"),
+        "First line should be at row {} (top of content area)",
+        content_first_row
+    );
+
+    // Verify the last line is visible somewhere in the content area
+    let mut found_last_small_line = false;
+    for row_idx in content_first_row..=content_last_row {
+        if row_idx < small_screen_lines.len() && small_screen_lines[row_idx].contains("Small Line 10") {
+            found_last_small_line = true;
+
+            // Since buffer is smaller than viewport, last line should NOT be at bottom
+            assert!(
+                row_idx < content_last_row,
+                "When buffer is smaller than viewport, last line should not be at bottom. \
+                 Found at row {} but content area ends at row {}",
+                row_idx, content_last_row
+            );
+            break;
+        }
+    }
+
+    assert!(
+        found_last_small_line,
+        "Last line of small buffer should be visible"
+    );
+}
+
+/// Test PageDown behavior when buffer is exactly the same height as viewport
+/// Regression test: cursor should end up at bottom row, not at top
+#[test]
+fn test_page_down_when_buffer_equals_viewport_height() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use tempfile::TempDir;
+
+    let terminal_height = 24u16;
+    let viewport_height = (terminal_height - 2) as usize; // 22 lines (minus tab bar and status bar)
+    let expected_bottom_row = (terminal_height - 2) as u16; // Row 22
+
+    // Create buffer with exactly viewport_height lines
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("exact_fit.txt");
+    let mut content = String::new();
+    for i in 1..=viewport_height {
+        if i > 1 {
+            content.push('\n');
+        }
+        content.push_str(&format!("Line {i}"));
+    }
+    std::fs::write(&file_path, &content).unwrap();
+
+    let mut harness = EditorTestHarness::new(80, terminal_height).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Press PageDown twice from the top
+    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+
+    // Verify cursor is detected at the bottom row
+    let all_cursors = harness.find_all_cursors();
+    assert_eq!(all_cursors.len(), 1, "Should have exactly one cursor");
+
+    let (_, cursor_y, _, is_primary) = all_cursors[0];
+    assert!(is_primary, "Cursor should be primary cursor");
+    assert_eq!(
+        cursor_y, expected_bottom_row,
+        "Cursor should be at bottom row {}, but is at row {}",
+        expected_bottom_row, cursor_y
+    );
+}
+
