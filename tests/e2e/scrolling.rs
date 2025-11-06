@@ -42,14 +42,14 @@ fn test_edits_persist_through_scrolling() {
 
     // Create content with many lines (more than viewport can show)
     // This ensures we can scroll away from edited content
-    let mut lines = Vec::new();
-    for i in 0..100 {
-        lines.push(format!("Line {i}"));
-    }
-    harness.type_text(&lines.join("\n")).unwrap();
+    let lines: Vec<String> = (0..100)
+        .map(|i| format!("Line {i}"))
+        .collect();
+    let content = lines.join("\n");
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
     // Verify initial content
-    harness.assert_buffer_content(&lines.join("\n"));
+    harness.assert_buffer_content(&content);
 
     // Go to the beginning of the document
     harness

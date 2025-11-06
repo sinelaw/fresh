@@ -532,11 +532,11 @@ fn test_select_word_after_scrolling() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a buffer with many lines (more than viewport height)
-    let mut lines = Vec::new();
-    for i in 0..100 {
-        lines.push(format!("line{i} word{i} test{i}"));
-    }
-    harness.type_text(&lines.join("\n")).unwrap();
+    let content: String = (0..100)
+        .map(|i| format!("line{i} word{i} test{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
     // Scroll down past the initial viewport
     harness
@@ -582,11 +582,11 @@ fn test_expand_selection_after_scrolling() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a buffer with many lines
-    let mut lines = Vec::new();
-    for i in 0..50 {
-        lines.push(format!("alpha beta gamma delta epsilon line{i}"));
-    }
-    harness.type_text(&lines.join("\n")).unwrap();
+    let content: String = (0..50)
+        .map(|i| format!("alpha beta gamma delta epsilon line{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
     // Scroll down to line 30
     harness
