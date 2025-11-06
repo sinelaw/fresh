@@ -1316,12 +1316,23 @@ impl Editor {
         self.buffers.get_mut(&self.active_buffer).unwrap()
     }
 
-    /// Apply an event to the active buffer
+    /// Apply an event to the active buffer with all cross-cutting concerns.
+    /// This is the centralized method that automatically handles:
+    /// - Event application to buffer
+    /// - Plugin hooks (after-insert, after-delete, etc.)
+    /// - LSP notifications
+    /// - Any other cross-cutting concerns
+    ///
+    /// All event applications MUST go through this method to ensure consistency.
     pub fn apply_event_to_active_buffer(&mut self, event: &Event) {
+        // 1. Apply the event to the buffer
         self.active_state_mut().apply(event);
 
-        // Trigger plugin hooks for this event
+        // 2. Trigger plugin hooks for this event
         self.trigger_plugin_hooks_for_event(event);
+
+        // 3. Notify LSP of the change
+        self.notify_lsp_change(event);
     }
 
     /// Trigger plugin hooks for an event (if any)
@@ -1463,7 +1474,7 @@ impl Editor {
 
                 // Log and apply the event
                 self.active_event_log_mut().append(event.clone());
-                self.active_state_mut().apply(&event);
+                self.apply_event_to_active_buffer(&event);
 
                 self.status_message = Some(format!("Added cursor at match ({})", total_cursors));
             }
@@ -1491,7 +1502,7 @@ impl Editor {
 
                 // Log and apply the event
                 self.active_event_log_mut().append(event.clone());
-                self.active_state_mut().apply(&event);
+                self.apply_event_to_active_buffer(&event);
 
                 self.status_message = Some(format!("Added cursor above ({})", total_cursors));
             }
@@ -1519,7 +1530,7 @@ impl Editor {
 
                 // Log and apply the event
                 self.active_event_log_mut().append(event.clone());
-                self.active_state_mut().apply(&event);
+                self.apply_event_to_active_buffer(&event);
 
                 self.status_message = Some(format!("Added cursor below ({})", total_cursors));
             }
@@ -2758,7 +2769,7 @@ impl Editor {
             let remove_overlay_event = crate::event::Event::RemoveOverlay {
                 overlay_id: rename_state.overlay_id,
             };
-            self.active_state_mut().apply(&remove_overlay_event);
+            self.apply_event_to_active_buffer(&remove_overlay_event);
 
             self.status_message = Some("Rename cancelled".to_string());
         }
@@ -3195,8 +3206,7 @@ impl Editor {
                         };
 
                         self.active_event_log_mut().append(delete_event.clone());
-                        self.active_state_mut().apply(&delete_event);
-                        self.notify_lsp_change(&delete_event);
+                        self.apply_event_to_active_buffer(&delete_event);
 
                         // After deletion, ensure insert position is valid
                         let buffer_len = self.active_state().buffer.len();
@@ -3209,8 +3219,7 @@ impl Editor {
                         };
 
                         self.active_event_log_mut().append(insert_event.clone());
-                        self.active_state_mut().apply(&insert_event);
-                        self.notify_lsp_change(&insert_event);
+                        self.apply_event_to_active_buffer(&insert_event);
                     } else {
                         // No partial word to delete, just insert
                         let insert_event = crate::event::Event::Insert {
@@ -3220,8 +3229,7 @@ impl Editor {
                         };
 
                         self.active_event_log_mut().append(insert_event.clone());
-                        self.active_state_mut().apply(&insert_event);
-                        self.notify_lsp_change(&insert_event);
+                        self.apply_event_to_active_buffer(&insert_event);
                     }
                 }
 
@@ -3257,14 +3265,14 @@ impl Editor {
             Action::Undo => {
                 if let Some(event) = self.active_event_log_mut().undo() {
                     if let Some(inverse) = event.inverse() {
-                        self.active_state_mut().apply(&inverse);
+                        self.apply_event_to_active_buffer(&inverse);
                     }
                 }
             }
             Action::Redo => {
                 let event_opt = self.active_event_log_mut().redo().cloned();
                 if let Some(event) = event_opt {
-                    self.active_state_mut().apply(&event);
+                    self.apply_event_to_active_buffer(&event);
                 }
             }
             Action::ShowHelp => self.help_renderer.toggle(),
@@ -3321,7 +3329,7 @@ impl Editor {
                             position: current_pos - 1,
                             anchor: None,
                         };
-                        self.active_state_mut().apply(&event);
+                        self.apply_event_to_active_buffer(&event);
                     }
                 }
             }
@@ -3335,7 +3343,7 @@ impl Editor {
                             position: current_pos + 1,
                             anchor: None,
                         };
-                        self.active_state_mut().apply(&event);
+                        self.apply_event_to_active_buffer(&event);
                     }
                 }
             }
@@ -3347,7 +3355,7 @@ impl Editor {
                         position: rename_state.start_pos,
                         anchor: None,
                     };
-                    self.active_state_mut().apply(&event);
+                    self.apply_event_to_active_buffer(&event);
                 }
             }
             Action::RenameMoveEnd => {
@@ -3358,7 +3366,7 @@ impl Editor {
                         position: rename_state.end_pos,
                         anchor: None,
                     };
-                    self.active_state_mut().apply(&event);
+                    self.apply_event_to_active_buffer(&event);
                 }
             }
             Action::GitGrep => {
@@ -3417,7 +3425,7 @@ impl Editor {
                         description: "Remove secondary cursors".to_string(),
                     };
                     self.active_event_log_mut().append(batch.clone());
-                    self.active_state_mut().apply(&batch);
+                    self.apply_event_to_active_buffer(&batch);
 
                     // Ensure the primary cursor is visible after removing secondary cursors
                     let state = self.active_state_mut();
@@ -3454,14 +3462,12 @@ impl Editor {
                             };
                             self.active_event_log_mut().append(batch.clone());
                             self.apply_event_to_active_buffer(&batch);
-                            for event in &events {
-                                self.notify_lsp_change(event);
-                            }
+                            // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
                         } else {
                             for event in events {
                                 self.active_event_log_mut().append(event.clone());
                                 self.apply_event_to_active_buffer(&event);
-                                self.notify_lsp_change(&event);
+                                // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
                             }
                         }
                     }
@@ -3510,16 +3516,13 @@ impl Editor {
                             };
                             self.active_event_log_mut().append(batch.clone());
                             self.apply_event_to_active_buffer(&batch);
-                            // Notify LSP of all changes in the batch
-                            for event in &events {
-                                self.notify_lsp_change(event);
-                            }
+                            // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
                         } else {
                             // Single cursor - no need for batch
                             for event in events {
                                 self.active_event_log_mut().append(event.clone());
                                 self.apply_event_to_active_buffer(&event);
-                                self.notify_lsp_change(&event);
+                                // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
                             }
                         }
                     }
@@ -3538,11 +3541,10 @@ impl Editor {
                         };
                         self.active_event_log_mut().append(batch.clone());
                         self.apply_event_to_active_buffer(&batch);
+                        // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
 
-                        // Notify LSP and track position history for all events in the batch
+                        // Track position history for all events in the batch
                         for event in &events {
-                            self.notify_lsp_change(event);
-
                             // Track cursor movements in position history (but not during navigation)
                             if !self.in_navigation {
                                 if let Event::MoveCursor {
@@ -3562,7 +3564,7 @@ impl Editor {
                         for event in events {
                             self.active_event_log_mut().append(event.clone());
                             self.apply_event_to_active_buffer(&event);
-                            self.notify_lsp_change(&event);
+                            // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
 
                             // Track cursor movements in position history (but not during navigation)
                             if !self.in_navigation {
@@ -4283,28 +4285,28 @@ impl Editor {
             message,
         };
         self.active_event_log_mut().append(event.clone());
-        self.active_state_mut().apply(&event);
+        self.apply_event_to_active_buffer(&event);
     }
 
     /// Remove an overlay by ID
     pub fn remove_overlay(&mut self, overlay_id: String) {
         let event = Event::RemoveOverlay { overlay_id };
         self.active_event_log_mut().append(event.clone());
-        self.active_state_mut().apply(&event);
+        self.apply_event_to_active_buffer(&event);
     }
 
     /// Remove all overlays in a range
     pub fn remove_overlays_in_range(&mut self, range: Range<usize>) {
         let event = Event::RemoveOverlaysInRange { range };
         self.active_event_log_mut().append(event.clone());
-        self.active_state_mut().apply(&event);
+        self.apply_event_to_active_buffer(&event);
     }
 
     /// Clear all overlays
     pub fn clear_overlays(&mut self) {
         let event = Event::ClearOverlays;
         self.active_event_log_mut().append(event.clone());
-        self.active_state_mut().apply(&event);
+        self.apply_event_to_active_buffer(&event);
     }
 
     // === Popup Management (Event-Driven) ===
@@ -4313,49 +4315,49 @@ impl Editor {
     pub fn show_popup(&mut self, popup: crate::event::PopupData) {
         let event = Event::ShowPopup { popup };
         self.active_event_log_mut().append(event.clone());
-        self.active_state_mut().apply(&event);
+        self.apply_event_to_active_buffer(&event);
     }
 
     /// Hide the topmost popup
     pub fn hide_popup(&mut self) {
         let event = Event::HidePopup;
         self.active_event_log_mut().append(event.clone());
-        self.active_state_mut().apply(&event);
+        self.apply_event_to_active_buffer(&event);
     }
 
     /// Clear all popups
     pub fn clear_popups(&mut self) {
         let event = Event::ClearPopups;
         self.active_event_log_mut().append(event.clone());
-        self.active_state_mut().apply(&event);
+        self.apply_event_to_active_buffer(&event);
     }
 
     /// Navigate popup selection (next item)
     pub fn popup_select_next(&mut self) {
         let event = Event::PopupSelectNext;
         self.active_event_log_mut().append(event.clone());
-        self.active_state_mut().apply(&event);
+        self.apply_event_to_active_buffer(&event);
     }
 
     /// Navigate popup selection (previous item)
     pub fn popup_select_prev(&mut self) {
         let event = Event::PopupSelectPrev;
         self.active_event_log_mut().append(event.clone());
-        self.active_state_mut().apply(&event);
+        self.apply_event_to_active_buffer(&event);
     }
 
     /// Navigate popup (page down)
     pub fn popup_page_down(&mut self) {
         let event = Event::PopupPageDown;
         self.active_event_log_mut().append(event.clone());
-        self.active_state_mut().apply(&event);
+        self.apply_event_to_active_buffer(&event);
     }
 
     /// Navigate popup (page up)
     pub fn popup_page_up(&mut self) {
         let event = Event::PopupPageUp;
         self.active_event_log_mut().append(event.clone());
-        self.active_state_mut().apply(&event);
+        self.apply_event_to_active_buffer(&event);
     }
 
     // === Help Page Management (Delegates to HelpRenderer) ===
