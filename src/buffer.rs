@@ -593,6 +593,7 @@ impl Buffer {
 
     /// Convert (line, character) to byte position - 0-indexed
     /// Returns byte position (clamps to end of buffer if line doesn't exist)
+    /// Note: character is in BYTES, not UTF-16 code units (use lsp_position_to_byte for LSP)
     pub fn line_col_to_position(&self, line: usize, character: usize) -> usize {
         let mut iter = self.line_iterator(0);
         let mut current_line = 0;
@@ -609,6 +610,45 @@ impl Buffer {
         if let Some((line_start, line_content)) = iter.next() {
             let byte_offset = character.min(line_content.len());
             line_start + byte_offset
+        } else {
+            // Line doesn't exist, return end of buffer
+            self.len()
+        }
+    }
+
+    /// Convert LSP position (line, UTF-16 code units) to byte position - 0-indexed
+    /// LSP uses UTF-16 code units for character offsets, not bytes
+    /// Returns byte position (clamps to end of buffer/line if out of bounds)
+    pub fn lsp_position_to_byte(&self, line: usize, utf16_offset: usize) -> usize {
+        let mut iter = self.line_iterator(0);
+        let mut current_line = 0;
+
+        while current_line < line {
+            if iter.next().is_none() {
+                // Line doesn't exist, return end of buffer
+                return self.len();
+            }
+            current_line += 1;
+        }
+
+        // Get the start of the target line
+        if let Some((line_start, line_content)) = iter.next() {
+            // Convert UTF-16 offset to byte offset
+            // We need to count UTF-16 code units until we reach the target offset
+            let mut current_utf16 = 0;
+            let mut byte_offset = 0;
+
+            for ch in line_content.chars() {
+                if current_utf16 >= utf16_offset {
+                    break;
+                }
+                // Each char can be 1 or 2 UTF-16 code units
+                current_utf16 += ch.len_utf16();
+                byte_offset += ch.len_utf8();
+            }
+
+            // Clamp to line length
+            line_start + byte_offset.min(line_content.len())
         } else {
             // Line doesn't exist, return end of buffer
             self.len()

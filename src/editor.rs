@@ -2110,13 +2110,14 @@ impl Editor {
                                 })?;
 
                                 // Convert LSP range to byte positions
+                                // LSP uses UTF-16 code units, not byte offsets
                                 let start_line = edit.range.start.line as usize;
                                 let start_char = edit.range.start.character as usize;
                                 let end_line = edit.range.end.line as usize;
                                 let end_char = edit.range.end.character as usize;
 
-                                let start_pos = state.buffer.line_col_to_position(start_line, start_char);
-                                let end_pos = state.buffer.line_col_to_position(end_line, end_char);
+                                let start_pos = state.buffer.lsp_position_to_byte(start_line, start_char);
+                                let end_pos = state.buffer.lsp_position_to_byte(end_line, end_char);
 
                                 // Delete old text
                                 if start_pos < end_pos {
@@ -2231,13 +2232,14 @@ impl Editor {
                                 })?;
 
                                 // Convert LSP range to byte positions
+                                // LSP uses UTF-16 code units, not byte offsets
                                 let start_line = edit.range.start.line as usize;
                                 let start_char = edit.range.start.character as usize;
                                 let end_line = edit.range.end.line as usize;
                                 let end_char = edit.range.end.character as usize;
 
-                                let start_pos = state.buffer.line_col_to_position(start_line, start_char);
-                                let end_pos = state.buffer.line_col_to_position(end_line, end_char);
+                                let start_pos = state.buffer.lsp_position_to_byte(start_line, start_char);
+                                let end_pos = state.buffer.lsp_position_to_byte(end_line, end_char);
 
                                 // Delete old text
                                 if start_pos < end_pos {
