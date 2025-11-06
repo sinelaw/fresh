@@ -17,12 +17,12 @@ expression: "&screen_text"
                                                                                █
                                                                                █
                                                                                █
+                                                                               █
                                                                                │
                                                                                │
                                                                                │
                                                                                │
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  Show Help  -  Display the help page with all keybindings                    │
-│  Plugin Demo: Open Help  -  Open the editor help page (uses built-in action) │
 └──────────────────────────────────────────────────────────────────────────────┘
 Command: help
