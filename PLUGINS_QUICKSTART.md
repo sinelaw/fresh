@@ -256,6 +256,55 @@ if vp then
 end
 ```
 
+### Async Process Spawning (Phase 2 - NEW!)
+
+**Spawn External Process:**
+```lua
+-- Basic usage: spawn(command, args, callback)
+editor.spawn("git", {"status", "--short"}, function(stdout, stderr, exit_code)
+    if exit_code == 0 then
+        editor.set_status("Git status: " .. stdout)
+    else
+        editor.set_status("Git failed: " .. stderr)
+    end
+end)
+```
+
+**With Working Directory:**
+```lua
+-- spawn(command, args, options, callback)
+editor.spawn("pwd", {}, {cwd = "/tmp"}, function(stdout, stderr, exit_code)
+    editor.set_status("Working dir: " .. stdout)
+end)
+```
+
+**Example: Git Branch Checker**
+```lua
+editor.register_command({
+    name = "Show Git Branch",
+    description = "Display current git branch",
+    action = "show_git_branch",
+    contexts = {"normal"},
+    callback = function()
+        editor.spawn("git", {"branch", "--show-current"}, function(stdout, stderr, exit_code)
+            if exit_code == 0 then
+                local branch = stdout:gsub("\n", "")
+                editor.set_status("On branch: " .. branch)
+            else
+                editor.set_status("Not a git repository")
+            end
+        end)
+    end
+})
+```
+
+**Key Features:**
+- ✅ Fully asynchronous - editor remains responsive
+- ✅ Captures stdout and stderr separately
+- ✅ Returns exit code for error handling
+- ✅ Working directory control via `{cwd = "/path"}`
+- ✅ Multiple processes can run concurrently
+
 ---
 
 ## Example: Auto-Save Message Plugin
