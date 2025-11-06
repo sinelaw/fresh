@@ -359,9 +359,19 @@ impl SplitRenderer {
             // Build line with selection highlighting
             let mut line_spans = Vec::new();
 
-            // Render left margin (line numbers + separator/diagnostic)
+            // Render left margin (indicators + line numbers + separator)
             if state.margins.left_config.enabled {
-                // Render line number
+                // First column: render indicator or space
+                // Check for diagnostic indicator on this line
+                if let Some((symbol, color)) = state.margins.get_diagnostic_indicator(current_line_num) {
+                    // Show diagnostic indicator
+                    line_spans.push(Span::styled(symbol.clone(), Style::default().fg(*color)));
+                } else {
+                    // Show space (reserved for future indicators like breakpoints)
+                    line_spans.push(Span::raw(" "));
+                }
+
+                // Next N columns: render line number (right-aligned)
                 let margin_content = state.margins.render_line(
                     current_line_num,
                     crate::margin::MarginPosition::Left,
@@ -376,17 +386,10 @@ impl SplitRenderer {
 
                 line_spans.push(Span::styled(rendered_text, margin_style));
 
-                // Render separator or diagnostic indicator (single character)
-                // If there's a diagnostic, show the indicator; otherwise show the separator
+                // Render separator
                 if state.margins.left_config.show_separator {
-                    if let Some((symbol, color)) = state.margins.get_diagnostic_indicator(current_line_num) {
-                        // Show diagnostic indicator instead of separator
-                        line_spans.push(Span::styled(symbol.clone(), Style::default().fg(*color)));
-                    } else {
-                        // Show normal separator
-                        let separator_style = Style::default().fg(theme.line_number_fg);
-                        line_spans.push(Span::styled(state.margins.left_config.separator.clone(), separator_style));
-                    }
+                    let separator_style = Style::default().fg(theme.line_number_fg);
+                    line_spans.push(Span::styled(state.margins.left_config.separator.clone(), separator_style));
                 }
             }
 

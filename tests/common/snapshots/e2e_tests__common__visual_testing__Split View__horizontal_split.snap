@@ -3,7 +3,7 @@ source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
  file1.txt   [No Name]                                                                                                  
-   1 │                                                                                                                 █
+    1 │                                                                                                                █
                                                                                                                        █
                                                                                                                        █
                                                                                                                        █
@@ -18,7 +18,7 @@ expression: "&screen_text"
                                                                                                                        │
                                                                                                                        │
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   1 │                                                                                                                 █
+    1 │                                                                                                                █
                                                                                                                        █
                                                                                                                        █
                                                                                                                        █

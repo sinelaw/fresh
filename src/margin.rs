@@ -128,10 +128,12 @@ impl MarginConfig {
         }
     }
 
-    /// Calculate the total width including separator
+    /// Calculate the total width including indicator column and separator
+    /// Format: [indicator (1 char)][line_number (N chars)][separator (3 chars)]
     pub fn total_width(&self) -> usize {
         if self.enabled {
-            self.width + if self.show_separator { self.separator.chars().count() } else { 0 }
+            // 1 char for indicator column + line number width + separator
+            1 + self.width + if self.show_separator { self.separator.chars().count() } else { 0 }
         } else {
             0
         }
@@ -456,10 +458,10 @@ mod tests {
         let mut config = MarginConfig::left_default();
         config.width = 4;
         config.separator = " │ ".to_string();
-        assert_eq!(config.total_width(), 7); // 4 + 3
+        assert_eq!(config.total_width(), 8); // 1 (indicator) + 4 (line num) + 3 (separator)
 
         config.show_separator = false;
-        assert_eq!(config.total_width(), 4);
+        assert_eq!(config.total_width(), 5); // 1 (indicator) + 4 (line num)
 
         config.enabled = false;
         assert_eq!(config.total_width(), 0);

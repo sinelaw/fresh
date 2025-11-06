@@ -177,9 +177,9 @@ fn test_cursor_position_with_margin() {
     let cursor_pos = harness.screen_cursor_position();
     println!("Cursor position: {:?}", cursor_pos);
 
-    // With line numbers enabled (4 digits + " │ " = 7 chars),
-    // cursor after "abc" should be at column 10 (7 + 3)
-    assert_eq!(cursor_pos.0, 10, "Cursor X position should account for margin width");
+    // Format: [indicator (1)] + [line numbers (4)] + [" │ " (3)] = 8 chars gutter
+    // cursor after "abc" should be at column 11 (8 + 3)
+    assert_eq!(cursor_pos.0, 11, "Cursor X position should account for margin width");
     assert_eq!(cursor_pos.1, 1, "Cursor Y position should be on first line");
 }
 
