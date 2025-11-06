@@ -454,9 +454,9 @@ fn test_cursor_disappears_beyond_long_line_end() {
             }
 
             // Cursor is visible if it's within the content region
-            // The cursor must be pointing at actual visible content, not past it
+            // The cursor can be at content_end (one position past last char) for "end of line" position
             // If content_end == gutter_end, there's no visible content, so cursor can't be visible
-            let is_visible = cursor_x >= gutter_end && cursor_x < content_end;
+            let is_visible = cursor_x >= gutter_end && cursor_x <= content_end && content_end > gutter_end;
 
             let char_at_cursor = chars.get(cursor_x).copied();
             let info = format!("gutter_end={}, content_end={}, cursor_x={}, char={:?}",
