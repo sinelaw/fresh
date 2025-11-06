@@ -240,6 +240,10 @@ pub struct MarginManager {
 
     /// Whether to show line numbers by default
     pub show_line_numbers: bool,
+
+    /// Diagnostic indicators per line (displayed between line numbers and separator)
+    /// Maps line number to (symbol, color) tuple
+    diagnostic_indicators: BTreeMap<usize, (String, Color)>,
 }
 
 impl MarginManager {
@@ -251,6 +255,7 @@ impl MarginManager {
             left_annotations: BTreeMap::new(),
             right_annotations: BTreeMap::new(),
             show_line_numbers: true,
+            diagnostic_indicators: BTreeMap::new(),
         }
     }
 
@@ -259,6 +264,26 @@ impl MarginManager {
         let mut manager = Self::new();
         manager.show_line_numbers = false;
         manager
+    }
+
+    /// Set a diagnostic indicator for a line
+    pub fn set_diagnostic_indicator(&mut self, line: usize, symbol: String, color: Color) {
+        self.diagnostic_indicators.insert(line, (symbol, color));
+    }
+
+    /// Remove diagnostic indicator for a line
+    pub fn remove_diagnostic_indicator(&mut self, line: usize) {
+        self.diagnostic_indicators.remove(&line);
+    }
+
+    /// Clear all diagnostic indicators
+    pub fn clear_diagnostic_indicators(&mut self) {
+        self.diagnostic_indicators.clear();
+    }
+
+    /// Get diagnostic indicator for a line
+    pub fn get_diagnostic_indicator(&self, line: usize) -> Option<&(String, Color)> {
+        self.diagnostic_indicators.get(&line)
     }
 
     /// Add an annotation to a margin
@@ -369,9 +394,15 @@ impl MarginManager {
         }
     }
 
-    /// Get the total width of the left margin (including separator)
+    /// Get the total width of the left margin (including separator and diagnostic column)
     pub fn left_total_width(&self) -> usize {
-        self.left_config.total_width()
+        let base_width = self.left_config.total_width();
+        // Add 1 for the diagnostic indicator column (always present, shows space if no diagnostic)
+        if self.show_line_numbers {
+            base_width + 1
+        } else {
+            base_width
+        }
     }
 
     /// Get the total width of the right margin (including separator)

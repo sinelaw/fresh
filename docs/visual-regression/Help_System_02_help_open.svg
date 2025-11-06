@@ -934,5 +934,5 @@
   <text x="703" y="536" fill="#44475a" class="terminal" style="">─</text>
   <text x="712" y="536" fill="#44475a" class="terminal" style="">┘</text>
   <!-- Cursor indicator -->
-  <rect x="63" y="18" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
+  <rect x="72" y="18" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
 </svg>
