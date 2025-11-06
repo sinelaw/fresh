@@ -8,6 +8,42 @@ Core editing, multi-cursor, event-driven architecture, LSP integration (diagnost
 
 ## Current Focus
 
+### Known Issues / Tech Debt
+
+#### **CRITICAL: Cursor Position Out-of-Sync with Visual Display**
+**Location**: `src/ui/split_rendering.rs:733-744`
+
+**Problem**: The cursor logical position can be set to locations beyond the buffer's last line (e.g., at `buffer.len()`), but the rendering code has no well-defined visual position for this case. Currently using a **band-aid fix** that guesses the visual position by placing the cursor at the last rendered line when it's not found during line iteration.
+
+**Why this is wrong**:
+- Cursor position should always have a direct, deterministic translation from logical position to visual position
+- The current fix is a fallback/guess rather than a proper architectural solution
+- Creates an implicit dependency where rendering code must handle "invalid" cursor positions
+
+**Root Cause**: Movement commands (e.g., PageDown in `src/actions.rs:267-295`) can position the cursor beyond valid buffer content. The cursor position is then clamped or handled inconsistently across different code paths.
+
+**Proper Solution**:
+1. **Option A**: Prevent cursor from ever being positioned beyond last valid line
+   - Clamp cursor position in movement commands before generating `MoveCursor` event
+   - Ensure `buffer.len()` maps to end of last line, not "beyond" it
+   - Make cursor position always representable as (line, column) within actual buffer content
+
+2. **Option B**: Define explicit semantics for "end-of-buffer" position
+   - If cursor can be at `buffer.len()`, define what this means visually
+   - Document when/why cursor can be beyond last line
+   - Make rendering logic handle this as a first-class case, not a fallback
+
+**Impact**: Medium - Current band-aid works for common cases but could break with:
+- Empty buffers or single-line files
+- Complex wrapping scenarios
+- Split views with different viewport sizes
+- Any future cursor positioning edge cases
+
+**References**:
+- Commit: 57cd694 "Fix cursor rendering at top when positioned beyond last line"
+- Issue first discovered during PageDown buffer scroll testing
+- Related to viewport scroll limiting (`src/viewport.rs:137-156`)
+
 ### File Explorer Polish
 - [ ] Input dialog system for custom file/directory names
 - [ ] Copy/move operations
