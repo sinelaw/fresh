@@ -1252,12 +1252,24 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
 
     eprintln!("rust-analyzer found, running REAL SCENARIO test...");
 
-    // Create a simple directory with just one Rust file (no Cargo.toml - faster startup)
+    // Create minimal Cargo project (rust-analyzer needs Cargo.toml)
     let temp_dir = tempfile::tempdir()?;
-    let test_file = temp_dir.path().join("test.rs");
-    let mut file = std::fs::File::create(&test_file)?;
 
-    // Write a simple Rust file with a variable to rename
+    // Create minimal Cargo.toml
+    let cargo_toml = temp_dir.path().join("Cargo.toml");
+    let mut cargo_file = std::fs::File::create(&cargo_toml)?;
+    writeln!(cargo_file, "[package]")?;
+    writeln!(cargo_file, "name = \"test\"")?;
+    writeln!(cargo_file, "version = \"0.1.0\"")?;
+    writeln!(cargo_file, "edition = \"2021\"")?;
+    drop(cargo_file);
+
+    // Create src directory
+    std::fs::create_dir(temp_dir.path().join("src"))?;
+
+    // Create src/main.rs with a variable to rename
+    let test_file = temp_dir.path().join("src").join("main.rs");
+    let mut file = std::fs::File::create(&test_file)?;
     writeln!(file, "fn main() {{")?;
     writeln!(file, "    let log_line = \"hello world\";")?;
     writeln!(file, "    println!(\"{{}}\", log_line);")?;
@@ -1265,7 +1277,7 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     writeln!(file, "}}")?;
     drop(file);
 
-    eprintln!("Created test file: {:?}", test_file);
+    eprintln!("Created minimal Cargo project at: {:?}", temp_dir.path());
 
     let mut harness = EditorTestHarness::new(80, 30)?;
 
