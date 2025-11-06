@@ -659,15 +659,9 @@ impl SplitRenderer {
                         segment.text.clone()
                     };
 
-                    // Preserve styles from original content_spans (not line_spans which includes gutter)
-                    // Map each character in segment to its original style
-                    let styled_spans = Self::apply_styles_to_segment(
-                        &segment_text,
-                        content_spans,
-                        segment.start_char_offset,
-                        if !line_wrap { left_col } else { 0 },
-                    );
-                    segment_spans.extend(styled_spans);
+                    // For now, use simple unstyled text
+                    // TODO: Properly preserve styles from original content_spans
+                    segment_spans.push(Span::raw(segment_text));
 
                     lines.push(Line::from(segment_spans));
                     lines_rendered += 1;
