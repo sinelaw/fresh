@@ -376,15 +376,11 @@ fn test_cursor_wrap_on_long_line_navigation() {
     assert_eq!(screen_pos_back.1, screen_pos_at_end.1, "Cursor should be back on first line visually");
 }
 
-/// Test that cursor skips newline when moving right from end of line
-/// This verifies the fix for a bug where cursor would disappear for 16+ keypresses
-/// when navigating past the end of a horizontally-scrolled long line.
-///
-/// The issue was: pressing Right at position 100 (end of content) would move to
-/// the newline character (which doesn't render), causing viewport to scroll but
-/// cursor to be invisible. Now it skips directly to the next line.
+/// Test to reproduce cursor disappearing when navigating beyond long line end
+/// User reports: cursor disappears for exactly 16 right-arrow keypresses
+/// when moving past the end of a horizontally scrolled long line.
 #[test]
-fn test_cursor_visibility_beyond_long_line_end() {
+fn test_cursor_disappears_beyond_long_line_end() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use fresh::config::Config;
     let mut config = Config::default();
@@ -397,27 +393,45 @@ fn test_cursor_visibility_beyond_long_line_end() {
     harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     harness.type_text("second line").unwrap();
 
-    // Move to start and navigate character-by-character to position 95
-    // (not quite at the end yet)
+    // Navigate to position 95 character-by-character (near end of first line)
+    // This simulates the user holding down the right arrow key
     harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
     for _ in 0..95 {
         harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
     }
     harness.render().unwrap();
 
-    println!("\n=== Testing cursor visibility beyond line end ===");
+    println!("\n=== Reproducing cursor disappearance bug ===");
 
-    // At position 95 (near end but not quite)
     let start_pos = harness.cursor_position();
     println!("Starting at position: {}", start_pos);
-    assert_eq!(start_pos, 95);
+    assert_eq!(start_pos, 95, "Should be at position 95");
 
     let screen_pos = harness.screen_cursor_position();
     println!("Initial screen cursor: ({}, {})", screen_pos.0, screen_pos.1);
 
-    // Press right arrow multiple times and check cursor visibility
-    // We'll go past the end of line (position 100) and continue onto second line
-    for i in 1..=25 {
+    // Check what's in the buffer around position 100
+    let buffer_content = harness.get_buffer_content();
+    println!("\nBuffer analysis:");
+    println!("  Total buffer length: {}", buffer_content.len());
+    println!("  Char at position 98: {:?}", buffer_content.chars().nth(98));
+    println!("  Char at position 99: {:?}", buffer_content.chars().nth(99));
+    println!("  Char at position 100: {:?}", buffer_content.chars().nth(100));
+    println!("  Char at position 101: {:?}", buffer_content.chars().nth(101));
+    println!("  Char at position 102: {:?}", buffer_content.chars().nth(102));
+
+    let screen_output = harness.screen_to_string();
+    println!("\nScreen output (first 3 lines):");
+    for (i, line) in screen_output.lines().take(3).enumerate() {
+        println!("  Line {}: {:?}", i, line);
+    }
+
+    // Now press right arrow and track what happens for 20 keypresses
+    let mut disappeared_count = 0;
+    let mut first_disappear = None;
+    let mut reappear = None;
+
+    for i in 1..=20 {
         harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
 
@@ -425,23 +439,73 @@ fn test_cursor_visibility_beyond_long_line_end() {
         let screen_pos = harness.screen_cursor_position();
         let left_col = harness.editor().active_state().viewport.left_column;
 
+        // Get the actual screen output to check if cursor is really visible
+        let screen = harness.screen_to_string();
+        let lines: Vec<&str> = screen.lines().collect();
+
+        // Check what character is in the buffer at this position
+        let buffer_content = harness.get_buffer_content();
+        let buffer_char = buffer_content.chars().nth(buffer_pos);
+
+        // Check if the cursor position is actually within the rendered content
+        // Screen cursor at (x, y) should have content at that position
+        let cursor_char = if (screen_pos.1 as usize) < lines.len() {
+            let line = lines[screen_pos.1 as usize];
+            let chars: Vec<char> = line.chars().collect();
+            if (screen_pos.0 as usize) < chars.len() {
+                Some(chars[screen_pos.0 as usize])
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Cursor is visible if there's a character rendered at that position
+        // (spaces count as visible since they're rendered)
+        let is_cursor_visible = cursor_char.is_some();
+
+        if !is_cursor_visible && first_disappear.is_none() {
+            first_disappear = Some(i);
+        }
+        if !is_cursor_visible {
+            disappeared_count += 1;
+        }
+        if is_cursor_visible && first_disappear.is_some() && reappear.is_none() {
+            reappear = Some(i);
+        }
+
         println!("\nAfter {} right arrow(s):", i);
         println!("  Buffer position: {}", buffer_pos);
+        println!("  Buffer char: {:?}", buffer_char);
         println!("  Screen cursor: ({}, {})", screen_pos.0, screen_pos.1);
+        println!("  Screen char at cursor: {:?}", cursor_char);
         println!("  Viewport left_column: {}", left_col);
+        println!("  Cursor visible: {}", is_cursor_visible);
 
-        // Check if cursor is within visible screen bounds
-        // Terminal is 80 wide, with gutter taking ~8 chars
-        let is_visible_x = screen_pos.0 < 80;
-        let is_visible_y = screen_pos.1 < 24;
-        let is_visible = is_visible_x && is_visible_y;
+        if i <= 3 || (i >= 5 && i <= 7) || i >= 18 {
+            println!("  Screen line at cursor Y:");
+            if (screen_pos.1 as usize) < lines.len() {
+                println!("    {:?}", lines[screen_pos.1 as usize]);
+            }
+        }
+    }
 
-        println!("  Cursor visible: {} (x: {}, y: {})", is_visible, is_visible_x, is_visible_y);
+    println!("\n=== Summary ===");
+    if let Some(first) = first_disappear {
+        println!("Cursor first disappeared at keypress: {}", first);
+    }
+    if let Some(reapp) = reappear {
+        println!("Cursor reappeared at keypress: {}", reapp);
+    }
+    if let (Some(first), Some(reapp)) = (first_disappear, reappear) {
+        println!("Cursor was invisible for {} keypresses", reapp - first);
+    }
+    println!("Total keypresses where cursor was invisible: {}", disappeared_count);
 
-        // The cursor should ALWAYS be visible
-        assert!(is_visible,
-            "Cursor should be visible at buffer position {} (screen: ({}, {}))",
-            buffer_pos, screen_pos.0, screen_pos.1);
+    // Fail if cursor disappeared
+    if disappeared_count > 0 {
+        panic!("BUG REPRODUCED: Cursor disappeared for {} keypresses!", disappeared_count);
     }
 }
 
