@@ -729,6 +729,10 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         | Action::LspRename
         | Action::RenameConfirm
         | Action::RenameCancel
+        | Action::RenameMoveLeft
+        | Action::RenameMoveRight
+        | Action::RenameMoveHome
+        | Action::RenameMoveEnd
         | Action::GitGrep
         | Action::GitFindFile
         | Action::PluginAction(_)
