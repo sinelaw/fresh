@@ -51,6 +51,12 @@ pub enum PluginCommand {
 
     /// Unregister a command by name
     UnregisterCommand { name: String },
+
+    /// Open a file in the editor (in background, without switching focus)
+    OpenFileInBackground { path: PathBuf },
+
+    /// Insert text at the current cursor position in the active buffer
+    InsertAtCursor { text: String },
 }
 
 /// Plugin API context - provides safe access to editor functionality

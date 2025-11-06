@@ -50,6 +50,12 @@ pub struct PluginManager {
 
     /// Action callbacks (action_name -> Lua registry key)
     action_callbacks: HashMap<String, mlua::RegistryKey>,
+
+    /// Debug log file path
+    debug_log_path: PathBuf,
+
+    /// Whether debug log has been opened in editor
+    debug_log_opened: Arc<RwLock<bool>>,
 }
 
 impl PluginManager {
@@ -63,6 +69,15 @@ impl PluginManager {
         // Create channel for plugin commands
         let (command_sender, command_receiver) = std::sync::mpsc::channel();
 
+        // Create debug log file in temp directory
+        let debug_log_path = std::env::temp_dir().join(format!("editor_plugin_debug_{}.log", std::process::id()));
+
+        // Create or truncate the debug log file
+        std::fs::write(&debug_log_path, "=== Plugin Debug Log ===\n")
+            .map_err(|e| mlua::Error::RuntimeError(format!("Failed to create debug log: {}", e)))?;
+
+        let debug_log_opened = Arc::new(RwLock::new(false));
+
         // Create plugin API
         let plugin_api = PluginApi::new(
             Arc::clone(&hooks),
@@ -71,10 +86,12 @@ impl PluginManager {
         );
 
         // Set up Lua globals and bindings
-        Self::setup_lua_bindings(&lua, &plugin_api)?;
+        Self::setup_lua_bindings(&lua, &plugin_api, &debug_log_path, Arc::clone(&debug_log_opened))?;
 
         // Create global table for storing callbacks
         lua.globals().set("_plugin_callbacks", lua.create_table()?)?;
+
+        tracing::info!("Plugin debug log: {:?}", debug_log_path);
 
         Ok(Self {
             lua,
@@ -84,11 +101,18 @@ impl PluginManager {
             plugin_api,
             command_receiver,
             action_callbacks: HashMap::new(),
+            debug_log_path,
+            debug_log_opened,
         })
     }
 
     /// Set up Lua global functions and bindings
-    fn setup_lua_bindings(lua: &Lua, api: &PluginApi) -> Result<(), mlua::Error> {
+    fn setup_lua_bindings(
+        lua: &Lua,
+        api: &PluginApi,
+        debug_log_path: &PathBuf,
+        debug_log_opened: Arc<RwLock<bool>>,
+    ) -> Result<(), mlua::Error> {
         let globals = lua.globals();
 
         // Create editor API table
@@ -168,6 +192,17 @@ impl PluginManager {
         // Clone API for next closure
         let api_clone = api.clone();
 
+        // editor.insert(text) - insert at current cursor position in active buffer
+        let insert = lua.create_function(move |_, text: String| {
+            api_clone
+                .send_command(PluginCommand::InsertAtCursor { text })
+                .map_err(|e| mlua::Error::RuntimeError(e))
+        })?;
+        editor.set("insert", insert)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
         // editor.add_overlay(buffer_id, overlay_id, start, end, r, g, b, underline)
         let add_overlay = lua.create_function(
             move |_,
@@ -223,6 +258,38 @@ impl PluginManager {
 
         // Set the editor table as a global
         globals.set("editor", editor)?;
+
+        // Create debug() global function (not part of editor table)
+        let debug_log_path_clone = debug_log_path.clone();
+        let api_clone = api.clone();
+        let debug = lua.create_function(move |_, message: String| {
+            use std::io::Write;
+
+            // Append to debug log file
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&debug_log_path_clone)
+                .map_err(|e| mlua::Error::RuntimeError(format!("Failed to open debug log: {}", e)))?;
+
+            writeln!(file, "{}", message)
+                .map_err(|e| mlua::Error::RuntimeError(format!("Failed to write to debug log: {}", e)))?;
+
+            // Check if we need to open the debug log in the editor
+            let mut opened = debug_log_opened.write().unwrap();
+            if !*opened {
+                // Send command to open the debug log file in background
+                api_clone
+                    .send_command(PluginCommand::OpenFileInBackground {
+                        path: debug_log_path_clone.clone(),
+                    })
+                    .map_err(|e| mlua::Error::RuntimeError(e))?;
+                *opened = true;
+            }
+
+            Ok(())
+        })?;
+        globals.set("debug", debug)?;
 
         Ok(())
     }

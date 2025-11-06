@@ -22,44 +22,48 @@ editor.register_command({
 -- Register commands with custom Lua callbacks
 editor.register_command({
     name = "Plugin Demo: Say Hello",
-    description = "Show a friendly greeting from Lua",
+    description = "Insert a friendly greeting into the buffer",
     action = "plugin_say_hello",
     contexts = {"normal"},
     callback = function()
-        editor.set_status("👋 Hello from Lua! The plugin system is working!")
-        print("Plugin callback executed: say_hello")
+        editor.insert("👋 Hello from Lua! The plugin system is working!\n")
+        editor.set_status("Inserted greeting at cursor position")
+        debug("Plugin callback executed: say_hello")
     end
 })
 
 editor.register_command({
-    name = "Plugin Demo: Show Time",
-    description = "Display the current time",
-    action = "plugin_show_time",
+    name = "Plugin Demo: Insert Time",
+    description = "Insert the current time at cursor position",
+    action = "plugin_insert_time",
     contexts = {"normal"},
     callback = function()
         local time = os.date("%H:%M:%S")
-        editor.set_status("🕐 Current time: " .. time)
-        print("Plugin callback executed: show_time at " .. time)
+        editor.insert("🕐 Current time: " .. time .. "\n")
+        editor.set_status("Inserted time at cursor position")
+        debug("Plugin callback executed: insert_time at " .. time)
     end
 })
 
 editor.register_command({
-    name = "Plugin Demo: Insert Text",
-    description = "Insert sample text at cursor position",
-    action = "plugin_insert_sample",
+    name = "Plugin Demo: Insert Comment",
+    description = "Insert a sample comment at cursor position",
+    action = "plugin_insert_comment",
     contexts = {"normal"},
     callback = function()
-        editor.insert_text(0, 0, "-- Hello from Lua plugin!\n")
-        editor.set_status("📝 Sample text inserted by plugin")
-        print("Plugin callback executed: insert_sample")
+        editor.insert("-- This comment was inserted by a Lua plugin!\n")
+        editor.set_status("📝 Comment inserted by plugin")
+        debug("Plugin callback executed: insert_comment")
     end
 })
 
--- Print to logs (visible in /tmp/editor.log)
-print("🎉 Welcome plugin initialized successfully!")
-print("📝 Registered 5 commands - try Ctrl+P to see them!")
-print("   - 'Plugin Demo: Open Help' - toggles help screen (built-in action)")
-print("   - 'Plugin Demo: Save File' - saves current file (built-in action)")
-print("   - 'Plugin Demo: Say Hello' - shows greeting (Lua callback)")
-print("   - 'Plugin Demo: Show Time' - displays current time (Lua callback)")
-print("   - 'Plugin Demo: Insert Text' - inserts sample text (Lua callback)")
+-- Debug output (goes to temp file, opens in background tab on first debug call)
+debug("🎉 Welcome plugin initialized successfully!")
+debug("📝 Registered 5 commands - try Ctrl+P to see them!")
+debug("   - 'Plugin Demo: Open Help' - toggles help screen (built-in action)")
+debug("   - 'Plugin Demo: Save File' - saves current file (built-in action)")
+debug("   - 'Plugin Demo: Say Hello' - inserts greeting (Lua callback)")
+debug("   - 'Plugin Demo: Insert Time' - inserts current time (Lua callback)")
+debug("   - 'Plugin Demo: Insert Comment' - inserts sample comment (Lua callback)")
+debug("")
+debug("🔍 You're viewing this in the debug log! It opened automatically when the plugin called debug().")
