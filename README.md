@@ -169,7 +169,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for implementation details.
 - [TODO.md](docs/TODO.md) - Roadmap and planned features
 - [TESTING.md](docs/TESTING.md) - Testing strategy
 - [VISUAL_REGRESSION_TESTING.md](docs/VISUAL_REGRESSION_TESTING.md) - Visual regression testing guide
-- [VISUAL_REGRESSION.md](docs/VISUAL_REGRESSION.md) - Visual test screenshots (auto-generated)
+- [visual-regression/index.md](docs/visual-regression/index.md) - Visual test screenshots (auto-generated)
 - [LSP_ARCHITECTURE.md](docs/LSP_ARCHITECTURE.md) - LSP integration
 - [FILE_EXPLORER.md](docs/FILE_EXPLORER.md) - File explorer details
 
