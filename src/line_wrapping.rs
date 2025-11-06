@@ -38,13 +38,14 @@ impl WrapConfig {
     /// * `has_scrollbar` - Whether to reserve a column for scrollbar
     pub fn new(content_area_width: usize, gutter_width: usize, has_scrollbar: bool) -> Self {
         let scrollbar_width = if has_scrollbar { 1 } else { 0 };
+        // Calculate the width available for text content
+        // Both first line and continuation lines have the same text width
+        // (continuation lines just have visual indentation, not less text space)
         let text_area_width = content_area_width.saturating_sub(scrollbar_width).saturating_sub(gutter_width);
-        let first_line_width = text_area_width;
-        let continuation_line_width = text_area_width.saturating_sub(gutter_width);
 
         Self {
-            first_line_width,
-            continuation_line_width,
+            first_line_width: text_area_width,
+            continuation_line_width: text_area_width,  // Same width, not reduced!
             gutter_width,
         }
     }
@@ -206,17 +207,17 @@ mod tests {
     #[test]
     fn test_wrap_long_line() {
         // Terminal: 60 cols, Gutter: 8, Scrollbar: 1
-        // First line: 60 - 1 = 59 chars (see WrapConfig::new implementation)
-        // Continuation: 59 chars (same as first line)
+        // Available width: 60 - 1 (scrollbar) - 8 (gutter) = 51 chars
+        // BOTH first line and continuation lines: 51 chars (same width!)
         let config = WrapConfig::new(60, 8, true);
 
         let text = "A fast, lightweight terminal text editor written in Rust. Handles files of any size with instant startup, low memory usage, and modern IDE features.";
         let segments = wrap_line(text, &config);
 
-        // Expected segments based on 59 character width:
-        const SEG0: &str = "A fast, lightweight terminal text editor written in Rust. H";
-        const SEG1: &str = "andles files of any size with instant startup, low memory u";
-        const SEG2: &str = "sage, and modern IDE features.";
+        // Expected segments based on 51 character width (both first and continuation):
+        const SEG0: &str = "A fast, lightweight terminal text editor written in";
+        const SEG1: &str = " Rust. Handles files of any size with instant start";
+        const SEG2: &str = "up, low memory usage, and modern IDE features.";
 
         assert_eq!(segments.len(), 3);
 
@@ -251,7 +252,7 @@ mod tests {
         let seg2_start = SEG0.chars().count() + SEG1.chars().count();
         assert_eq!(char_position_to_segment(seg2_start, &segments), (2, 0));
 
-        // Position at end of text
+        // Position at end of text (in third segment)
         let text_len = text.chars().count();
         assert_eq!(char_position_to_segment(text_len, &segments), (2, SEG2.chars().count()));
 
@@ -262,19 +263,19 @@ mod tests {
     #[test]
     fn test_wrap_with_leading_space() {
         let config = WrapConfig::new(60, 8, true);
+        // With our config: 60 - 1 (scrollbar) - 8 (gutter) = 51 chars per line
 
         // Create text that wraps such that continuation starts with space
         let text = "A".repeat(51) + " " + &"B".repeat(50);
         let segments = wrap_line(&text, &config);
 
-	println!("segments: {:?}", segments);
+        println!("segments: {:?}", segments);
         assert_eq!(segments.len(), 2);
-        assert_eq!(segments[0].text.chars().count(), 59); // All A's
+        assert_eq!(segments[0].text.chars().count(), 51, "First segment should be 51 chars");
         assert_eq!(segments[1].is_continuation, true);
 
-        // Second segment should skip the leading space and have B's
-        assert!(segments[1].text.starts_with('B'), "Continuation should skip leading space");
-        assert_eq!(segments[1].text.chars().count(), 43);
+        // Second segment starts with space, then B's (51 chars total)
+        assert_eq!(segments[1].text.chars().count(), 51, "Continuation should also be 51 chars");
     }
 
     #[test]
@@ -282,8 +283,8 @@ mod tests {
         let config = WrapConfig::new(60, 8, true);
         println!("Config: first={}, cont={}", config.first_line_width, config.continuation_line_width);
 
-        // Create text that's longer than one line
-        let text = "A".repeat(100);
+        // Create text that's longer than one line (2 full lines worth)
+        let text = "A".repeat(config.first_line_width * 2);
         let segments = wrap_line(&text, &config);
 
         println!("Number of segments: {}", segments.len());
@@ -293,7 +294,7 @@ mod tests {
 
         assert_eq!(segments[0].text.len(), config.first_line_width, "First segment should have first_line_width characters");
         if segments.len() > 1 {
-            assert_eq!(segments[1].text.len(), config.continuation_line_width, "Second segment should have continuation_line_width characters");
+            assert_eq!(segments[1].text.len(), config.continuation_line_width, "Second segment should have continuation_line_width characters (same as first!)");
         }
     }
 
@@ -327,10 +328,11 @@ mod tests {
                  config.first_line_width, config.continuation_line_width, config.gutter_width);
 
         // Terminal: 60, scrollbar: 1, gutter: 8
-        // First line: 60 - 1 - 8 = 51
-        // Continuation: 51 - 8 = 43
+        // Available width: 60 - 1 - 8 = 51 chars
+        // BOTH first line and continuation lines should have 51 chars of TEXT
+        // (continuation lines have visual indentation, but same text width)
         assert_eq!(config.first_line_width, 51);
-        assert_eq!(config.continuation_line_width, 43);
+        assert_eq!(config.continuation_line_width, 51, "Continuation lines should have same text width as first line!");
 
         let text = "The quick brown fox jumps over the lazy dog and runs through the forest, exploring ancient trees and mysterious pathways that wind between towering oaks.";
         let segments = wrap_line(text, &config);

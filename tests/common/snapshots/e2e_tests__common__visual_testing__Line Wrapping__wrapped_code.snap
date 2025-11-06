@@ -4,17 +4,17 @@ expression: "&screen_text"
 ---
  [No Name]*                                                 
     1 │ This is a very long line of text that will definit █
-        ely exceed the terminal width and should w         █
-        rap to multiple lines when line wrapping i         █
-        s enabled.                                         █
-    5 │ Second extremely long line with even more text to  █
-        demonstrate that multiple lines can be wra         █
-        pped at the same time without any issues i         █
-        n the rendering system.                            █
-    9 │ fn very_long_function_name_with_many_parameters(pa █
-        ram1: String, param2: i32, param3: bool, p         █
-        aram4: Vec<String>) -> Result<String, Erro         █
-        r> {                                               █
+        ely exceed the terminal width and should wrap to m █
+        ultiple lines when line wrapping is enabled.       █
+    4 │ Second extremely long line with even more text to  █
+        demonstrate that multiple lines can be wrapped at  █
+        the same time without any issues in the rendering  █
+        system.                                            █
+    8 │ fn very_long_function_name_with_many_parameters(pa █
+        ram1: String, param2: i32, param3: bool, param4: V █
+        ec<String>) -> Result<String, Error> {             █
+                                                           █
+                                                           █
                                                            █
                                                            █
                                                            █

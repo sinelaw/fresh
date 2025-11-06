@@ -4,9 +4,9 @@ expression: "&screen_text"
 ---
  [No Name]*                                                 
     1 │ This is a very long line of text that will definit █
-        ely exceed the terminal width and should w         █
-        rap to multiple lines when line wrapping i         █
-        s enabled.                                         █
+        ely exceed the terminal width and should wrap to m █
+        ultiple lines when line wrapping is enabled.       █
+                                                           █
                                                            █
                                                            █
                                                            █
