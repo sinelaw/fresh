@@ -487,7 +487,7 @@ impl SplitRenderer {
                         .map(|span| span.color);
 
                     // Find overlays at this position (sorted by priority, low to high)
-                    let overlays = state.overlays.at_position(byte_pos);
+                    let overlays = state.overlays.at_position(byte_pos, &state.marker_list);
 
                     // Build style by layering: base -> syntax -> overlays -> selection
                     let mut style = if let Some(color) = highlight_color {

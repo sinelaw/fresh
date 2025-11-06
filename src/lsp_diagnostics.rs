@@ -93,7 +93,7 @@ pub fn apply_diagnostics_to_state(
         .collect();
 
     for id in overlay_ids {
-        state.overlays.remove_by_id(&id);
+        state.overlays.remove_by_id(&id, &mut state.marker_list);
     }
 
     // Clear existing diagnostic indicators
@@ -110,7 +110,7 @@ pub fn apply_diagnostics_to_state(
             let overlay_id = format!("lsp-diagnostic-{}", idx);
             let message = diagnostic.message.clone();
 
-            let overlay = Overlay::with_id(range, face, overlay_id)
+            let overlay = Overlay::with_id(&mut state.marker_list, range, face, overlay_id)
                 .with_priority_value(priority)
                 .with_message(message);
 
