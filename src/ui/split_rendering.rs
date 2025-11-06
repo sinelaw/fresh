@@ -1,6 +1,7 @@
 //! Split pane layout and buffer rendering
 
 use crate::event::{BufferId, EventLog, SplitDirection};
+use crate::line_wrapping::{wrap_line, WrapConfig};
 use crate::split::SplitManager;
 use crate::state::EditorState;
 use ratatui::layout::Rect;
@@ -23,7 +24,9 @@ impl SplitRenderer {
     /// * `buffers` - All open buffers
     /// * `event_logs` - Event logs for each buffer
     /// * `theme` - The active theme for colors
+    /// * `lsp_waiting` - Whether LSP is waiting
     /// * `large_file_threshold_bytes` - Threshold for using constant scrollbar thumb size
+    /// * `line_wrap` - Whether line wrapping is enabled
     ///
     /// # Returns
     /// * Vec of (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end) for mouse handling
@@ -36,6 +39,7 @@ impl SplitRenderer {
         theme: &crate::theme::Theme,
         lsp_waiting: bool,
         large_file_threshold_bytes: u64,
+        line_wrap: bool,
     ) -> Vec<(crate::event::SplitId, BufferId, Rect, Rect, usize, usize)> {
         let _span = tracing::trace_span!("render_content").entered();
 
@@ -70,7 +74,7 @@ impl SplitRenderer {
             let event_log_opt = event_logs.get_mut(&buffer_id);
 
             if let Some(state) = state_opt {
-                Self::render_buffer_in_split(frame, state, event_log_opt, content_rect, is_active, theme, lsp_waiting);
+                Self::render_buffer_in_split(frame, state, event_log_opt, content_rect, is_active, theme, lsp_waiting, line_wrap);
 
                 // For small files, count actual lines for accurate scrollbar
                 // For large files, we'll use a constant thumb size
@@ -249,6 +253,7 @@ impl SplitRenderer {
         is_active: bool,
         theme: &crate::theme::Theme,
         lsp_waiting: bool,
+        line_wrap: bool,
     ) {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
 
@@ -577,7 +582,50 @@ impl SplitRenderer {
                 }
             }
 
-            lines.push(Line::from(line_spans));
+            // Handle line wrapping
+            if line_wrap && !line_spans.is_empty() {
+                // Use new clean wrapping implementation
+                let config = WrapConfig::new(area.width as usize, gutter_width, true);
+
+                // Extract text from spans for wrapping
+                let line_text: String = line_spans.iter().map(|s| s.content.as_ref()).collect();
+
+                // Wrap the line using the clean transformation
+                let segments = wrap_line(&line_text, &config);
+
+                // Render each wrapped segment
+                for segment in segments {
+                    let mut segment_spans = vec![];
+
+                    // Add gutter indentation for continuation lines
+                    if segment.is_continuation {
+                        segment_spans.push(Span::raw(" ".repeat(gutter_width)));
+                    }
+
+                    // Add the text content (preserving syntax highlighting would require more work)
+                    // For now, use the style from the first span
+                    let style = line_spans.first().map(|s| s.style).unwrap_or_default();
+                    segment_spans.push(Span::styled(segment.text, style));
+
+                    lines.push(Line::from(segment_spans));
+                    lines_rendered += 1;
+
+                    // Check if we've filled the viewport
+                    if lines_rendered >= visible_count {
+                        break;
+                    }
+                }
+
+                // Adjust lines_rendered since we already incremented it in the outer loop
+                lines_rendered = lines_rendered.saturating_sub(1);
+            } else {
+                lines.push(Line::from(line_spans));
+            }
+
+            // Break early if we've filled the viewport during wrapping
+            if lines_rendered >= visible_count {
+                break;
+            }
         }
 
         let paragraph = Paragraph::new(lines).block(Block::default().borders(Borders::NONE));
@@ -622,4 +670,6 @@ impl SplitRenderer {
             }
         }
     }
+
+
 }

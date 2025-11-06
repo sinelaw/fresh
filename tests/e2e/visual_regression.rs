@@ -664,3 +664,43 @@ fn test_lsp_rename_undo_restores_all() {
     assert_eq!(after_redo_content.matches("value").count(), 0,
                "Should have no occurrences of 'value' after redo");
 }
+	
+/// Test line wrapping feature
+#[test]
+fn visual_line_wrapping() {
+    use fresh::config::{Config, EditorConfig};
+
+    // Test with line wrapping enabled (default)
+    let mut harness_wrapped = EditorTestHarness::new(60, 24).unwrap();
+    let mut flow = VisualFlow::new(
+        "Line Wrapping",
+        "View Options",
+        "Wrapping long lines at terminal width",
+    );
+
+    // Step 1: Type a very long line
+    harness_wrapped.type_text("This is a very long line of text that will definitely exceed the terminal width and should wrap to multiple lines when line wrapping is enabled.").unwrap();
+    harness_wrapped.render().unwrap();
+    harness_wrapped.capture_visual_step(&mut flow, "long_line_wrapped", "Long line automatically wrapped (enabled by default)").unwrap();
+
+    // Step 2: Add another long line
+    harness_wrapped.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness_wrapped.type_text("Second extremely long line with even more text to demonstrate that multiple lines can be wrapped at the same time without any issues in the rendering system.").unwrap();
+    harness_wrapped.render().unwrap();
+    harness_wrapped.capture_visual_step(&mut flow, "multiple_wrapped", "Multiple long lines wrapped").unwrap();
+
+    // Step 3: Demonstrate with code that has syntax
+    harness_wrapped.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness_wrapped.type_text("fn very_long_function_name_with_many_parameters(param1: String, param2: i32, param3: bool, param4: Vec<String>) -> Result<String, Error> {").unwrap();
+    harness_wrapped.render().unwrap();
+    harness_wrapped.capture_visual_step(&mut flow, "wrapped_code", "Long code line wrapped with syntax intact").unwrap();
+
+    // Step 4: Test with line wrapping disabled
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
+    let mut harness_nowrap = EditorTestHarness::with_config(60, 24, config).unwrap();
+
+    harness_nowrap.type_text("This is a very long line of text that will definitely exceed the terminal width and would normally wrap but now extends beyond the view.").unwrap();
+    harness_nowrap.render().unwrap();
+    harness_nowrap.capture_visual_step(&mut flow, "wrapping_disabled", "Line wrapping disabled - line extends beyond view").unwrap();
+}

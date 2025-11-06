@@ -682,6 +682,7 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         | Action::AddCursorBelow
         | Action::CommandPalette
         | Action::ShowHelp
+        | Action::ToggleLineWrap
         | Action::IncreaseSplitSize
         | Action::DecreaseSplitSize
         | Action::Undo

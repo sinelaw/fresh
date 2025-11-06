@@ -266,7 +266,8 @@ impl Editor {
         let mut event_logs = HashMap::new();
 
         let buffer_id = BufferId(0);
-        let state = EditorState::new(width, height);
+        let mut state = EditorState::new(width, height);
+        state.viewport.line_wrap_enabled = config.editor.line_wrap;
         tracing::info!(
             "EditorState created with viewport height: {}",
             state.viewport.height
@@ -430,7 +431,8 @@ impl Editor {
             id
         };
 
-        let state = EditorState::from_file(path, self.terminal_width, self.terminal_height)?;
+        let mut state = EditorState::from_file(path, self.terminal_width, self.terminal_height)?;
+        state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
 
@@ -528,10 +530,9 @@ impl Editor {
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
 
-        self.buffers.insert(
-            buffer_id,
-            EditorState::new(self.terminal_width, self.terminal_height),
-        );
+        let mut state = EditorState::new(self.terminal_width, self.terminal_height);
+        state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+        self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
 
         self.active_buffer = buffer_id;
@@ -3018,6 +3019,17 @@ impl Editor {
                     suggestions,
                 );
             }
+            Action::ToggleLineWrap => {
+                self.config.editor.line_wrap = !self.config.editor.line_wrap;
+
+                // Update all viewports to reflect the new line wrap setting
+                for state in self.buffers.values_mut() {
+                    state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+                }
+
+                let state = if self.config.editor.line_wrap { "enabled" } else { "disabled" };
+                self.set_status_message(format!("Line wrap {}", state));
+            }
             Action::LspCompletion => {
                 self.request_completion()?;
             }
@@ -3881,6 +3893,7 @@ impl Editor {
                 &self.theme,
                 lsp_waiting,
                 self.config.editor.large_file_threshold_bytes,
+                self.config.editor.line_wrap,
             );
             self.cached_layout.split_areas = split_areas;
         } else {
@@ -3897,6 +3910,7 @@ impl Editor {
                 &self.theme,
                 lsp_waiting,
                 self.config.editor.large_file_threshold_bytes,
+                self.config.editor.line_wrap,
             );
             self.cached_layout.split_areas = split_areas;
         }

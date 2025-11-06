@@ -18,3 +18,9 @@
 
 *File explorer opened in left pane*
 
+## Step 3: file_selected
+
+![file_selected](../screenshots/File_Explorer_03_file_selected.svg)
+
+*File selected in explorer*
+

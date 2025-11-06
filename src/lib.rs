@@ -20,6 +20,7 @@ pub mod highlighter;
 pub mod hooks;
 pub mod keybindings;
 pub mod line_cache;
+pub mod line_wrapping;
 pub mod lsp;
 pub mod lsp_async;
 pub mod lsp_diagnostics;

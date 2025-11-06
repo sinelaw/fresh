@@ -5,6 +5,7 @@ pub mod file_explorer;
 pub mod git;
 pub mod help;
 pub mod lifecycle;
+pub mod line_wrapping;
 pub mod lsp;
 pub mod margin;
 pub mod mouse;
