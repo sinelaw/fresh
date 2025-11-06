@@ -2397,12 +2397,13 @@ impl Editor {
                 return Ok(());
             }
 
-            // Get the cursor position (should be at the symbol)
-            let state = self.active_state();
-            let cursor_pos = state.cursors.primary().position;
+            // Use the position from when we entered rename mode, NOT the current cursor position
+            // This ensures we send the rename request for the correct symbol even if cursor moved
+            let rename_pos = rename_state.start_pos;
 
             // Convert byte position to line/column
-            let (line, character) = state.buffer.position_to_line_col(cursor_pos);
+            let state = self.active_state();
+            let (line, character) = state.buffer.position_to_line_col(rename_pos);
 
             // Get the current file URI and path
             let metadata = self.buffer_metadata.get(&self.active_buffer);
