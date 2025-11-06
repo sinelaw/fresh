@@ -27,10 +27,8 @@ pub struct FlowMetadata {
     pub steps: Vec<StepMetadata>,
 }
 
-/// Global registry of all visual test flows
-static FLOW_REGISTRY: Mutex<Option<Vec<FlowMetadata>>> = Mutex::new(None);
-
 /// Helper for capturing visual test flows
+/// Each flow writes its own markdown file to avoid race conditions in parallel test execution
 pub struct VisualFlow {
     flow_name: String,
     flow_name_sanitized: String, // For filenames (no spaces)
@@ -38,6 +36,7 @@ pub struct VisualFlow {
     description: String,
     steps: Vec<StepMetadata>,
     step_num: usize,
+    auto_write: bool, // Whether to auto-write on drop
 }
 
 impl VisualFlow {
@@ -53,6 +52,7 @@ impl VisualFlow {
             description: description.to_string(),
             steps: Vec::new(),
             step_num: 1,
+            auto_write: true,
         }
     }
 
@@ -75,7 +75,7 @@ impl VisualFlow {
             "{}_{:02}_{}.svg",
             self.flow_name_sanitized, self.step_num, step_name
         );
-        let image_path = PathBuf::from("docs/visual-regression").join(&image_filename);
+        let image_path = PathBuf::from("docs/visual-regression/screenshots").join(&image_filename);
 
         // Only update image if needed
         if should_update_image(&image_path)? {
@@ -94,8 +94,46 @@ impl VisualFlow {
         Ok(())
     }
 
-    /// Finalize the flow and register it
+    /// Finalize the flow and write its documentation file
     pub fn finalize(mut self) {
+        self.write_documentation_file().ok();
+        // Disable auto-write on drop since we've already written
+        self.auto_write = false;
+    }
+
+    /// Write this flow's documentation to its own markdown file
+    fn write_documentation_file(&self) -> io::Result<()> {
+        if self.steps.is_empty() {
+            return Ok(());
+        }
+
+        // Create docs/visual-regression/tests/ directory
+        let docs_dir = PathBuf::from("docs/visual-regression/tests");
+        fs::create_dir_all(&docs_dir)?;
+
+        // Write individual test markdown file
+        let test_file = docs_dir.join(format!("{}.md", self.flow_name_sanitized));
+        let mut md = String::new();
+
+        md.push_str(&format!("# {}\n\n", self.flow_name));
+        md.push_str(&format!("**Category**: {}\n\n", self.category));
+        if !self.description.is_empty() {
+            md.push_str(&format!("*{}*\n\n", self.description));
+        }
+        md.push_str("---\n\n");
+
+        for step in &self.steps {
+            md.push_str(&format!("## Step {}: {}\n\n", step.step_num, step.name));
+            md.push_str(&format!(
+                "![{}](../screenshots/{})\n\n",
+                step.name, step.image_filename
+            ));
+            md.push_str(&format!("*{}*\n\n", step.description));
+        }
+
+        fs::write(&test_file, md)?;
+
+        // Also write metadata as JSON for index generation
         let metadata = FlowMetadata {
             flow_name: self.flow_name.clone(),
             category: self.category.clone(),
@@ -103,38 +141,21 @@ impl VisualFlow {
             steps: self.steps.clone(),
         };
 
-        let mut registry = FLOW_REGISTRY.lock().unwrap();
-        if registry.is_none() {
-            *registry = Some(Vec::new());
-        }
-        registry.as_mut().unwrap().push(metadata);
+        let metadata_dir = PathBuf::from("target/visual-tests-temp");
+        fs::create_dir_all(&metadata_dir)?;
+        let metadata_file = metadata_dir.join(format!("{}.json", self.flow_name_sanitized));
+        let json = serde_json::to_string_pretty(&metadata)?;
+        fs::write(metadata_file, json)?;
 
-        // Clear steps so Drop doesn't register again
-        self.steps.clear();
+        Ok(())
     }
 }
 
 impl Drop for VisualFlow {
     fn drop(&mut self) {
-        // Auto-register when flow is dropped (unless explicitly finalized)
-        if !self.steps.is_empty() {
-            let metadata = FlowMetadata {
-                flow_name: self.flow_name.clone(),
-                category: self.category.clone(),
-                description: self.description.clone(),
-                steps: self.steps.clone(),
-            };
-
-            let mut registry = FLOW_REGISTRY.lock().unwrap();
-            if registry.is_none() {
-                *registry = Some(Vec::new());
-            }
-            if let Some(flows) = registry.as_mut() {
-                // Only add if not already present
-                if !flows.iter().any(|f| f.flow_name == metadata.flow_name) {
-                    flows.push(metadata);
-                }
-            }
+        // Auto-write documentation when flow is dropped (unless explicitly finalized)
+        if self.auto_write && !self.steps.is_empty() {
+            self.write_documentation_file().ok();
         }
     }
 }
@@ -331,13 +352,30 @@ fn xml_escape(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-/// Generate markdown documentation from all registered flows
-pub fn generate_visual_documentation() -> io::Result<()> {
-    let registry = FLOW_REGISTRY.lock().unwrap();
-    let flows = match registry.as_ref() {
-        Some(f) => f,
-        None => return Ok(()), // No flows registered
-    };
+/// Generate index markdown from all individual test metadata files
+/// This function reads metadata from target/visual-tests-temp/*.json and creates
+/// a unified index at docs/visual-regression/index.md
+pub fn generate_visual_index() -> io::Result<()> {
+    let metadata_dir = PathBuf::from("target/visual-tests-temp");
+
+    // If no metadata directory exists, nothing to do
+    if !metadata_dir.exists() {
+        return Ok(());
+    }
+
+    // Read all metadata JSON files
+    let mut flows: Vec<FlowMetadata> = Vec::new();
+    for entry in fs::read_dir(&metadata_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.extension().and_then(|s| s.to_str()) == Some("json") {
+            let json = fs::read_to_string(&path)?;
+            if let Ok(metadata) = serde_json::from_str::<FlowMetadata>(&json) {
+                flows.push(metadata);
+            }
+        }
+    }
 
     if flows.is_empty() {
         return Ok(());
@@ -345,14 +383,14 @@ pub fn generate_visual_documentation() -> io::Result<()> {
 
     // Group flows by category
     let mut categories: HashMap<String, Vec<&FlowMetadata>> = HashMap::new();
-    for flow in flows {
+    for flow in &flows {
         categories
             .entry(flow.category.clone())
             .or_default()
             .push(flow);
     }
 
-    // Generate markdown
+    // Generate index markdown
     let mut md = String::from(
         r#"# Visual Regression Test Documentation
 
@@ -375,45 +413,103 @@ Screenshots are automatically generated by running `cargo test`.
     for category in sorted_categories {
         md.push_str(&format!("## {}\n\n", category));
 
-        let mut flows = categories.get(category).unwrap().clone();
+        let mut flows_in_cat = categories.get(category).unwrap().clone();
         // Sort flows alphabetically within each category for consistent output
-        flows.sort_by(|a, b| a.flow_name.cmp(&b.flow_name));
+        flows_in_cat.sort_by(|a, b| a.flow_name.cmp(&b.flow_name));
 
-        for flow in flows {
-            md.push_str(&format!("### {}\n\n", flow.flow_name));
+        for flow in flows_in_cat {
+            let flow_file = format!("tests/{}.md", flow.flow_name.replace(' ', "_"));
+            md.push_str(&format!(
+                "### [{}]({})\n\n",
+                flow.flow_name, flow_file
+            ));
             if !flow.description.is_empty() {
                 md.push_str(&format!("*{}*\n\n", flow.description));
             }
 
-            for step in &flow.steps {
-                md.push_str(&format!("#### Step {}: {}\n\n", step.step_num, step.name));
+            // Show first step as preview
+            if let Some(first_step) = flow.steps.first() {
                 md.push_str(&format!(
-                    "![{}](visual-regression/{})\n\n",
-                    step.name, step.image_filename
+                    "![Preview](screenshots/{})\n\n",
+                    first_step.image_filename
                 ));
-                md.push_str(&format!("*{}*\n\n", step.description));
             }
 
             md.push_str("---\n\n");
         }
     }
 
-    fs::write("docs/VISUAL_REGRESSION.md", md)?;
+    // Create docs/visual-regression directory
+    let docs_dir = PathBuf::from("docs/visual-regression");
+    fs::create_dir_all(&docs_dir)?;
 
-    // Also save metadata as JSON for future use
-    let metadata_path = PathBuf::from("target/visual-tests-temp/flows_metadata.json");
-    let json = serde_json::to_string_pretty(&flows)?;
-    fs::write(metadata_path, json)?;
+    fs::write(docs_dir.join("index.md"), md)?;
+
+    // Also write legacy file for backwards compatibility
+    // This maintains the old VISUAL_REGRESSION.md location but with updated structure
+    generate_legacy_documentation(&flows)?;
 
     Ok(())
 }
 
-/// Clear the flow registry (useful for testing)
-#[allow(dead_code)]
-pub fn clear_flow_registry() {
-    let mut registry = FLOW_REGISTRY.lock().unwrap();
-    *registry = None;
+/// Generate the legacy VISUAL_REGRESSION.md file for backwards compatibility
+/// This creates a single-file version that links to individual test files
+fn generate_legacy_documentation(flows: &[FlowMetadata]) -> io::Result<()> {
+    let mut categories: HashMap<String, Vec<&FlowMetadata>> = HashMap::new();
+    for flow in flows {
+        categories
+            .entry(flow.category.clone())
+            .or_default()
+            .push(flow);
+    }
+
+    let mut md = String::from(
+        r#"# Visual Regression Test Documentation
+
+This document shows the visual state of the editor at different steps in user flows.
+Screenshots are automatically generated by running `cargo test`.
+
+**Note**: These screenshots are generated from E2E tests and serve as both:
+- Visual regression tests (detect unintended UI changes)
+- Living documentation (always up-to-date with the current UI)
+
+## Individual Test Documentation
+
+Each test has its own detailed documentation file with all steps and screenshots.
+Browse by category below:
+
+---
+
+"#,
+    );
+
+    let mut sorted_categories: Vec<_> = categories.keys().collect();
+    sorted_categories.sort();
+
+    for category in sorted_categories {
+        md.push_str(&format!("### {}\n\n", category));
+
+        let mut flows_in_cat = categories.get(category).unwrap().clone();
+        flows_in_cat.sort_by(|a, b| a.flow_name.cmp(&b.flow_name));
+
+        for flow in flows_in_cat {
+            let flow_file = format!("visual-regression/tests/{}.md", flow.flow_name.replace(' ', "_"));
+            md.push_str(&format!(
+                "- [{}]({}) - {}\n",
+                flow.flow_name, flow_file, flow.description
+            ));
+        }
+
+        md.push('\n');
+    }
+
+    fs::write("docs/VISUAL_REGRESSION.md", md)?;
+
+    Ok(())
 }
+
+// Note: The old clear_flow_registry() function has been removed.
+// Each test now writes its own file, so no global state needs clearing.
 
 #[cfg(test)]
 mod tests {
