@@ -971,26 +971,27 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
             min_size
         );
 
-        // KNOWN ISSUE: The scrollbar thumb size currently varies during scrolling,
-        // especially when reaching the end of the file. Ideally, the thumb size
-        // should remain consistent (variation <= 1) since it represents the ratio
-        // of viewport height to total content height, which doesn't change.
+        // The scrollbar thumb size should remain very consistent during scrolling
+        // since it represents the ratio of viewport height to total content height.
         //
-        // This test documents the current behavior to prevent regressions.
-        // The ideal fix would be in src/ui/split_rendering.rs::render_scrollbar()
-        // to ensure thumb_size calculation is based on actual line count rather
-        // than estimated_lines which uses an 80-character heuristic.
+        // For files under the large_file_threshold (default 1MB), we count actual
+        // lines for precise scrollbar rendering. Some minor variation (<=5 chars)
+        // may occur due to viewport_height changes near the end of the file when
+        // there aren't enough lines left to fill the viewport.
         //
-        // Current acceptable variation thresholds by file size:
-        // - Small files (50-100 lines): up to 15 chars variation
-        // - Medium files (200 lines): up to 10 chars variation
-        // - Large files (500+ lines): up to 5 chars variation
+        // For files over the threshold, we use a constant 1-character thumb for
+        // performance reasons (no variation).
+        //
+        // Acceptable variation thresholds:
+        // - Small files (50-100 lines): up to 5 chars (viewport changes at EOF)
+        // - Medium files (200+ lines): up to 1 char (rounding differences)
+        // - Large files (500+ lines): 0 chars (should be perfect)
         let max_acceptable_variation = if num_lines <= 100 {
-            15  // Smaller files show more variation due to estimation
+            5  // Viewport height may decrease at EOF
         } else if num_lines <= 200 {
-            10
+            1  // Minor rounding differences
         } else {
-            5
+            1  // Should be nearly perfect
         };
 
         assert!(

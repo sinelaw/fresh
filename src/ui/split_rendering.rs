@@ -23,6 +23,7 @@ impl SplitRenderer {
     /// * `buffers` - All open buffers
     /// * `event_logs` - Event logs for each buffer
     /// * `theme` - The active theme for colors
+    /// * `large_file_threshold_bytes` - Threshold for using constant scrollbar thumb size
     ///
     /// # Returns
     /// * Vec of (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end) for mouse handling
@@ -34,6 +35,7 @@ impl SplitRenderer {
         event_logs: &mut HashMap<BufferId, EventLog>,
         theme: &crate::theme::Theme,
         lsp_waiting: bool,
+        large_file_threshold_bytes: u64,
     ) -> Vec<(crate::event::SplitId, BufferId, Rect, Rect, usize, usize)> {
         let _span = tracing::trace_span!("render_content").entered();
 
@@ -70,8 +72,33 @@ impl SplitRenderer {
             if let Some(state) = state_opt {
                 Self::render_buffer_in_split(frame, state, event_log_opt, content_rect, is_active, theme, lsp_waiting);
 
+                // For small files, count actual lines for accurate scrollbar
+                // For large files, we'll use a constant thumb size
+                let buffer_len = state.buffer.len();
+                let (total_lines, top_line) = if buffer_len <= large_file_threshold_bytes as usize {
+                    // Small file: count actual lines
+                    let total_lines = if buffer_len > 0 {
+                        // Get the line number of the last byte (which gives us total lines)
+                        state.buffer.get_line_number(buffer_len.saturating_sub(1)) + 1
+                    } else {
+                        1
+                    };
+
+                    // Get the line number at the top of the viewport
+                    let top_line = if state.viewport.top_byte < buffer_len {
+                        state.buffer.get_line_number(state.viewport.top_byte)
+                    } else {
+                        0
+                    };
+
+                    (total_lines, top_line)
+                } else {
+                    // Large file: we'll use constant thumb size, so line count doesn't matter
+                    (0, 0)
+                };
+
                 // Render scrollbar for this split and get thumb position
-                let (thumb_start, thumb_end) = Self::render_scrollbar(frame, state, scrollbar_rect, is_active, theme);
+                let (thumb_start, thumb_end) = Self::render_scrollbar(frame, state, scrollbar_rect, is_active, theme, large_file_threshold_bytes, total_lines, top_line);
 
                 // Store the areas for mouse handling
                 split_areas.push((split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end));
@@ -118,6 +145,9 @@ impl SplitRenderer {
         scrollbar_rect: Rect,
         is_active: bool,
         _theme: &crate::theme::Theme,
+        large_file_threshold_bytes: u64,
+        total_lines: usize,
+        top_line: usize,
     ) -> (usize, usize) {
         let height = scrollbar_rect.height as usize;
         if height == 0 {
@@ -128,27 +158,36 @@ impl SplitRenderer {
         let viewport_top = state.viewport.top_byte;
         let viewport_height = state.viewport.visible_line_count();
 
-        // Estimate total lines in buffer (same heuristic as margin width)
-        let estimated_lines = (buffer_len / 80).max(1);
-
         // Calculate scrollbar thumb position and size
-        // thumb_start = (viewport_top / buffer_len) * height
-        // thumb_size = (viewport_height / estimated_lines) * height
-        let thumb_start = if buffer_len > 0 {
-            ((viewport_top as f64 / buffer_len as f64) * height as f64) as usize
+        let (thumb_start, thumb_size) = if buffer_len > large_file_threshold_bytes as usize {
+            // Large file: use constant 1-character thumb for performance
+            let thumb_start = if buffer_len > 0 {
+                ((viewport_top as f64 / buffer_len as f64) * height as f64) as usize
+            } else {
+                0
+            };
+            (thumb_start, 1)
         } else {
-            0
-        };
+            // Small file: use actual line count for accurate scrollbar
+            // total_lines and top_line are passed in (already calculated with mutable access)
+            let thumb_start = if total_lines > 0 {
+                ((top_line as f64 / total_lines as f64) * height as f64) as usize
+            } else {
+                0
+            };
 
-        let thumb_size = if estimated_lines > 0 {
-            ((viewport_height as f64 / estimated_lines as f64) * height as f64).ceil() as usize
-        } else {
-            1
+            let thumb_size = if total_lines > 0 {
+                ((viewport_height as f64 / total_lines as f64) * height as f64).ceil() as usize
+            } else {
+                1
+            };
+
+            // Cap thumb size: minimum 1, maximum 80% of scrollbar height
+            let max_thumb_size = (height as f64 * 0.8).floor() as usize;
+            let thumb_size = thumb_size.max(1).min(max_thumb_size).min(height);
+
+            (thumb_start, thumb_size)
         };
-        // Cap thumb size: minimum 1, maximum 80% of scrollbar height (to leave room for visual feedback)
-        // This prevents the thumb from being too large when buffer is only slightly larger than viewport
-        let max_thumb_size = (height as f64 * 0.8).floor() as usize;
-        let thumb_size = thumb_size.max(1).min(max_thumb_size).min(height);
 
         let thumb_end = (thumb_start + thumb_size).min(height);
 

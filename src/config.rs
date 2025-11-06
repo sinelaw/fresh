@@ -55,10 +55,22 @@ pub struct EditorConfig {
 
     #[serde(default = "default_snapshot_interval")]
     pub snapshot_interval: usize,
+
+    /// File size threshold in bytes for "large file" behavior
+    /// Files larger than this will:
+    /// - Skip LSP features
+    /// - Use constant-size scrollbar thumb (1 char)
+    /// Files smaller will count actual lines for accurate scrollbar rendering
+    #[serde(default = "default_large_file_threshold")]
+    pub large_file_threshold_bytes: u64,
 }
 
 fn default_tab_size() -> usize {
     4
+}
+
+fn default_large_file_threshold() -> u64 {
+    1024 * 1024 // 1MB
 }
 
 fn default_true() -> bool {
@@ -92,6 +104,7 @@ impl Default for EditorConfig {
             syntax_highlighting: true,
             highlight_timeout_ms: default_highlight_timeout(),
             snapshot_interval: default_snapshot_interval(),
+            large_file_threshold_bytes: default_large_file_threshold(),
         }
     }
 }

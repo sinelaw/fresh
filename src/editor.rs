@@ -388,9 +388,9 @@ impl Editor {
                     tracing::debug!("Using URI from metadata: {}", uri);
                     // Get file size to decide whether to send full content
                     let file_size = std::fs::metadata(path).ok().map(|m| m.len()).unwrap_or(0);
-                    const MAX_LSP_FILE_SIZE: u64 = 1024 * 1024; // 1MB limit
+                    let large_file_threshold = self.config.editor.large_file_threshold_bytes;
 
-                    if file_size > MAX_LSP_FILE_SIZE {
+                    if file_size > large_file_threshold {
                         let reason = format!("File too large ({} bytes)", file_size);
                         tracing::warn!(
                             "Skipping LSP for large file: {} ({})",
@@ -2989,6 +2989,7 @@ impl Editor {
                 &mut self.event_logs,
                 &self.theme,
                 lsp_waiting,
+                self.config.editor.large_file_threshold_bytes,
             );
             self.cached_layout.split_areas = split_areas;
         } else {
@@ -3004,6 +3005,7 @@ impl Editor {
                 &mut self.event_logs,
                 &self.theme,
                 lsp_waiting,
+                self.config.editor.large_file_threshold_bytes,
             );
             self.cached_layout.split_areas = split_areas;
         }
