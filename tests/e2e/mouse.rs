@@ -472,3 +472,139 @@ fn test_mouse_focus_after_file_explorer() {
         "Editor should still be functional after clicking"
     );
 }
+
+/// Helper function to extract scrollbar thumb info from screen
+/// Returns (thumb_start_row, thumb_end_row, thumb_size)
+fn extract_scrollbar_thumb_info(screen: &str, terminal_width: u16, terminal_height: u16) -> (usize, usize, usize) {
+    let lines: Vec<&str> = screen.lines().collect();
+    let scrollbar_col = terminal_width - 1; // Rightmost column
+
+    let mut thumb_start = None;
+    let mut thumb_end = None;
+
+    // Skip first line (tab bar) and last line (status bar)
+    // Content area is from row 1 to terminal_height - 2
+    for (row_idx, line) in lines.iter().enumerate().skip(1).take((terminal_height - 2) as usize) {
+        let chars: Vec<char> = line.chars().collect();
+        if (scrollbar_col as usize) < chars.len() {
+            let ch = chars[scrollbar_col as usize];
+            if ch == '█' {
+                if thumb_start.is_none() {
+                    thumb_start = Some(row_idx);
+                }
+                thumb_end = Some(row_idx);
+            }
+        }
+    }
+
+    match (thumb_start, thumb_end) {
+        (Some(start), Some(end)) => {
+            let thumb_size = end - start + 1;
+            (start, end, thumb_size)
+        }
+        _ => (0, 0, 0)
+    }
+}
+
+/// Test dragging scrollbar all the way to bottom to reproduce bug where:
+/// 1. Scrollbar won't drag to absolute bottom (one char short)
+/// 2. Cursor appears beyond EOF (on status bar)
+/// 3. After typing, screen corrects itself
+#[test]
+fn test_scrollbar_drag_to_absolute_bottom() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create a document with 100 lines
+    for i in 1..=100 {
+        harness
+            .type_text(&format!("Line {} content\n", i))
+            .unwrap();
+    }
+
+    // Scroll to top
+    for _ in 0..20 {
+        harness.send_key(KeyCode::PageUp, KeyModifiers::NONE).unwrap();
+    }
+
+    harness.render().unwrap();
+
+    let buffer_len = harness.buffer_len();
+    println!("Buffer length: {} bytes", buffer_len);
+
+    // Verify we're at the top
+    let initial_top_line = harness.top_line_number();
+    println!("Initial top line: {}", initial_top_line);
+    assert!(initial_top_line <= 1, "Should be at top of document");
+
+    // Terminal is 24 rows: row 0 = tab bar, rows 1-22 = content area (22 rows), row 23 = status bar
+    // Scrollbar occupies rows 1-22 (22 rows total)
+    let scrollbar_bottom_row = 22;
+
+    // Drag scrollbar from top (row 1) to absolute bottom (row 22)
+    println!("\nDragging scrollbar from row 1 to row {}", scrollbar_bottom_row);
+    harness.mouse_drag(79, 1, 79, scrollbar_bottom_row as u16).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // Extract scrollbar thumb information
+    let (thumb_start, thumb_end, thumb_size) = extract_scrollbar_thumb_info(&screen, 80, 24);
+    println!("\nAfter drag to bottom:");
+    println!("  Thumb start row: {}", thumb_start);
+    println!("  Thumb end row: {}", thumb_end);
+    println!("  Thumb size: {} chars", thumb_size);
+    println!("  Scrollbar bottom row: {}", scrollbar_bottom_row);
+
+    // INVARIANT: When scrolled to EOF, thumb bottom should be at scrollbar bottom
+    println!("\nChecking invariant: thumb_end ({}) should equal scrollbar_bottom_row ({})", thumb_end, scrollbar_bottom_row);
+
+    // Check cursor position - it should not be beyond buffer
+    let cursor_pos = harness.cursor_position();
+    println!("Cursor position: {} bytes", cursor_pos);
+    println!("Buffer length: {} bytes", buffer_len);
+
+    // BUG REPRODUCTION: The test should fail here showing:
+    // 1. thumb_end < scrollbar_bottom_row (scrollbar not at absolute bottom)
+    // 2. cursor_pos might be at or beyond buffer_len
+    assert_eq!(
+        thumb_end, scrollbar_bottom_row,
+        "BUG: Scrollbar thumb should reach absolute bottom (row {}) when dragged to bottom, but ended at row {}",
+        scrollbar_bottom_row, thumb_end
+    );
+
+    assert!(
+        cursor_pos <= buffer_len,
+        "BUG: Cursor should not be beyond buffer end. Cursor at {}, buffer length {}",
+        cursor_pos, buffer_len
+    );
+
+    // Type a character to trigger screen correction
+    println!("\nTyping character 'x' to trigger correction...");
+    harness.type_text("x").unwrap();
+    harness.render().unwrap();
+
+    let screen_after_typing = harness.screen_to_string();
+    let (thumb_start_after, thumb_end_after, thumb_size_after) = extract_scrollbar_thumb_info(&screen_after_typing, 80, 24);
+
+    println!("\nAfter typing:");
+    println!("  Thumb start row: {}", thumb_start_after);
+    println!("  Thumb end row: {}", thumb_end_after);
+    println!("  Thumb size: {} chars", thumb_size_after);
+
+    let cursor_pos_after = harness.cursor_position();
+    println!("  Cursor position: {} bytes", cursor_pos_after);
+
+    // After typing, the scrollbar should now be at the correct bottom position
+    println!("\nVerifying correction after typing...");
+    assert_eq!(
+        thumb_end_after, scrollbar_bottom_row,
+        "After typing, scrollbar thumb should be at absolute bottom (row {}), but is at row {}",
+        scrollbar_bottom_row, thumb_end_after
+    );
+
+    assert!(
+        cursor_pos_after <= buffer_len + 1, // +1 for the 'x' we typed
+        "After typing, cursor should be within buffer. Cursor at {}, buffer length {}",
+        cursor_pos_after, buffer_len + 1
+    );
+}
