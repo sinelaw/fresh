@@ -2277,6 +2277,20 @@ impl Editor {
                 return Ok(());
             }
 
+            // IMPORTANT: Save the file first if it has unsaved changes
+            // This ensures LSP is working with the same content we have
+            let has_file = self.buffer_metadata.get(&self.active_buffer)
+                .and_then(|m| m.file_path.as_ref())
+                .is_some();
+
+            if has_file && self.active_state().buffer.is_modified() {
+                // File has unsaved changes - save it before renaming
+                tracing::info!("Saving file before rename to sync with LSP");
+                self.save()?;
+                // Give LSP a moment to process the file save notification
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+
             // Get the cursor position (should be at the symbol)
             let state = self.active_state();
             let cursor_pos = state.cursors.primary().position;

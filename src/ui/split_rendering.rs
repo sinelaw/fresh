@@ -518,7 +518,7 @@ impl SplitRenderer {
                     // Only add non-empty spans
                     if !display_char.is_empty() {
                         if is_cursor && is_active {
-                            tracing::debug!(
+                            tracing::trace!(
                                 "Adding span with REVERSED cursor: display_char={:?}, has_reversed={}",
                                 display_char,
                                 style.add_modifier.contains(Modifier::REVERSED)
