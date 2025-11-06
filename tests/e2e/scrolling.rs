@@ -376,6 +376,75 @@ fn test_cursor_wrap_on_long_line_navigation() {
     assert_eq!(screen_pos_back.1, screen_pos_at_end.1, "Cursor should be back on first line visually");
 }
 
+/// Test that cursor skips newline when moving right from end of line
+/// This verifies the fix for a bug where cursor would disappear for 16+ keypresses
+/// when navigating past the end of a horizontally-scrolled long line.
+///
+/// The issue was: pressing Right at position 100 (end of content) would move to
+/// the newline character (which doesn't render), causing viewport to scroll but
+/// cursor to be invisible. Now it skips directly to the next line.
+#[test]
+fn test_cursor_visibility_beyond_long_line_end() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::Config;
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    // Create a long line (100 chars) followed by a second line
+    let long_line = "a".repeat(100);
+    harness.type_text(&long_line).unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.type_text("second line").unwrap();
+
+    // Move to start and navigate character-by-character to position 95
+    // (not quite at the end yet)
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    for _ in 0..95 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    println!("\n=== Testing cursor visibility beyond line end ===");
+
+    // At position 95 (near end but not quite)
+    let start_pos = harness.cursor_position();
+    println!("Starting at position: {}", start_pos);
+    assert_eq!(start_pos, 95);
+
+    let screen_pos = harness.screen_cursor_position();
+    println!("Initial screen cursor: ({}, {})", screen_pos.0, screen_pos.1);
+
+    // Press right arrow multiple times and check cursor visibility
+    // We'll go past the end of line (position 100) and continue onto second line
+    for i in 1..=25 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        let buffer_pos = harness.cursor_position();
+        let screen_pos = harness.screen_cursor_position();
+        let left_col = harness.editor().active_state().viewport.left_column;
+
+        println!("\nAfter {} right arrow(s):", i);
+        println!("  Buffer position: {}", buffer_pos);
+        println!("  Screen cursor: ({}, {})", screen_pos.0, screen_pos.1);
+        println!("  Viewport left_column: {}", left_col);
+
+        // Check if cursor is within visible screen bounds
+        // Terminal is 80 wide, with gutter taking ~8 chars
+        let is_visible_x = screen_pos.0 < 80;
+        let is_visible_y = screen_pos.1 < 24;
+        let is_visible = is_visible_x && is_visible_y;
+
+        println!("  Cursor visible: {} (x: {}, y: {})", is_visible, is_visible_x, is_visible_y);
+
+        // The cursor should ALWAYS be visible
+        assert!(is_visible,
+            "Cursor should be visible at buffer position {} (screen: ({}, {}))",
+            buffer_pos, screen_pos.0, screen_pos.1);
+    }
+}
+
 /// Test vertical scrolling when typing lines to the bottom of screen
 /// The viewport should scroll down to keep the cursor visible
 #[test]
