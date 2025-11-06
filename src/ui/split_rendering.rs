@@ -694,13 +694,10 @@ impl SplitRenderer {
                         segment_spans.push(Span::raw(" ".repeat(gutter_width)));
                     }
 
-                    // For no-wrap mode, apply horizontal scrolling to the single segment
-                    let segment_text = if !line_wrap && left_col > 0 {
-                        // Skip characters before left_column for horizontal scrolling
-                        segment.text.chars().skip(left_col).collect()
-                    } else {
-                        segment.text.clone()
-                    };
+                    // Note: horizontal scrolling is already applied when building line_spans
+                    // (see the loop at line ~462 that skips chars before left_col)
+                    // So we don't need to skip again here - just use the segment text as-is
+                    let segment_text = segment.text.clone();
 
                     // Apply styles to segment (preserving syntax highlighting, selection, overlays, etc.)
                     let styled_spans = Self::apply_styles_to_segment(

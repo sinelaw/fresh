@@ -221,7 +221,17 @@ impl Viewport {
         // When wrapping is enabled, all columns are always visible via wrapping
         if !self.line_wrap_enabled {
             let cursor_column = cursor.position.saturating_sub(cursor_line_start);
-            self.ensure_column_visible(cursor_column, buffer);
+
+            // Get the line content to know its length (for limiting horizontal scroll)
+            let mut line_iter = buffer.line_iterator(cursor_line_start);
+            let line_length = if let Some((_start, content)) = line_iter.next() {
+                // Line length without the newline character
+                content.trim_end_matches('\n').len()
+            } else {
+                0
+            };
+
+            self.ensure_column_visible(cursor_column, line_length, buffer);
         } else {
             // With line wrapping enabled, reset any horizontal scroll
             self.left_column = 0;
@@ -288,7 +298,12 @@ impl Viewport {
     }
 
     /// Ensure a column is visible with horizontal scroll offset applied
-    pub fn ensure_column_visible(&mut self, column: usize, buffer: &Buffer) {
+    ///
+    /// # Arguments
+    /// * `column` - The column position within the line (0-indexed)
+    /// * `line_length` - The length of the line content (without newline)
+    /// * `buffer` - The buffer (for calculating gutter width)
+    pub fn ensure_column_visible(&mut self, column: usize, line_length: usize, buffer: &Buffer) {
         // Calculate visible width (accounting for line numbers gutter which is dynamic)
         let gutter_width = self.gutter_width(buffer);
         let visible_width = (self.width as usize).saturating_sub(gutter_width);
@@ -311,6 +326,23 @@ impl Viewport {
             // Cursor is to the right of the ideal zone - scroll right
             self.left_column =
                 column.saturating_sub(visible_width.saturating_sub(effective_offset));
+        }
+
+        // BUGFIX: Limit left_column to ensure content is always visible
+        // Don't scroll past the point where the end of the line would be off-screen to the left
+        // This prevents the viewport from scrolling into "empty space" past the line content
+        if line_length > 0 {
+            // Calculate the maximum left_column that still shows some content
+            // If the line is shorter than visible width, left_column should be 0
+            // Otherwise, left_column should be at most (line_length - visible_width)
+            let max_left_column = line_length.saturating_sub(visible_width);
+
+            // Also ensure that if we're limiting left_column, the cursor is still visible
+            // The cursor might be at the end of the line or even past it (at newline)
+            // In that case, we want to show the end of the line
+            if self.left_column > max_left_column {
+                self.left_column = max_left_column;
+            }
         }
     }
 
