@@ -10,6 +10,7 @@ pub mod margin;
 pub mod mouse;
 pub mod movement;
 pub mod multicursor;
+pub mod plugin;
 pub mod position_history;
 pub mod position_history_bugs;
 pub mod position_history_debug;
