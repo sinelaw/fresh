@@ -32,10 +32,11 @@ This prevents unnecessary git churn from identical-looking screenshots.
 
 ### 3. Automatic Documentation
 
-After all tests complete, `docs/VISUAL_REGRESSION.md` is automatically generated with:
-- Screenshots organized by category
-- Step-by-step descriptions
-- Links to SVG files (viewable in GitHub)
+After all tests complete, documentation is automatically generated:
+- Each test writes its own file: `docs/visual-regression/tests/{TestName}.md`
+- Index generated: `docs/visual-regression/index.md` (links to all tests)
+- Screenshots saved to: `docs/visual-regression/screenshots/`
+- All files are viewable in GitHub with inline SVG rendering
 
 ## Writing Visual Regression Tests
 
@@ -88,8 +89,9 @@ cargo test
 This will:
 - Run all tests including visual regression tests
 - Update snapshots if UI changed (first time only - will fail)
-- Generate SVG screenshots
-- Update `docs/VISUAL_REGRESSION.md`
+- Generate SVG screenshots in `docs/visual-regression/screenshots/`
+- Generate test documentation in `docs/visual-regression/tests/`
+- Update index at `docs/visual-regression/index.md`
 
 ### First Time Setup (Accept New Snapshots)
 
@@ -127,15 +129,17 @@ SKIP_VISUAL_DOCS=1 cargo test
 ### In GitHub PRs
 
 When you create a PR with UI changes:
-1. GitHub shows diffs in `docs/VISUAL_REGRESSION.md`
+1. GitHub shows diffs in individual test files: `docs/visual-regression/tests/*.md`
 2. SVG screenshots are rendered inline (click to expand)
-3. Reviewers can see exactly what changed visually
+3. Index at `docs/visual-regression/index.md` provides overview with previews
+4. Reviewers can see exactly what changed visually
 
 ### Locally
 
-1. **Markdown**: Open `docs/VISUAL_REGRESSION.md` in any markdown viewer
-2. **SVG Files**: Open `docs/visual-regression/*.svg` in a browser
-3. **Text Snapshots**: Check `tests/common/snapshots/*.snap`
+1. **Index**: Open `docs/visual-regression/index.md` for overview with preview images
+2. **Test Files**: Open `docs/visual-regression/tests/{TestName}.md` for detailed steps
+3. **SVG Files**: Browse `docs/visual-regression/screenshots/*.svg` in a browser
+4. **Text Snapshots**: Check `tests/common/snapshots/*.snap`
 
 ## CI Integration
 
@@ -182,10 +186,15 @@ When you create a PR with UI changes:
 ```
 editor/
 ├── docs/
-│   ├── VISUAL_REGRESSION.md           # Auto-generated documentation
-│   └── visual-regression/              # SVG screenshots (committed)
-│       ├── Basic Editing_01_initial.svg
-│       └── ...
+│   └── visual-regression/
+│       ├── index.md                    # Auto-generated index (committed)
+│       ├── tests/                      # Individual test docs (committed)
+│       │   ├── Basic_Editing.md
+│       │   ├── Command_Palette.md
+│       │   └── ...
+│       └── screenshots/                # SVG screenshots (committed)
+│           ├── Basic_Editing_01_initial.svg
+│           └── ...
 ├── tests/
 │   ├── common/
 │   │   ├── snapshots/                  # Text snapshots (committed)
