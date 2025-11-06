@@ -519,9 +519,9 @@ fn test_select_word_after_scrolling() {
 
     // Initialize tracing
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-    let _ = tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_test_writer()
         .try_init();
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -573,9 +573,9 @@ fn test_expand_selection_after_scrolling() {
 
     // Initialize tracing
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-    let _ = tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_test_writer()
         .try_init();
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -1082,9 +1082,9 @@ fn test_select_prev_word_with_special_chars() {
 fn test_select_up() {
     // Initialize tracing
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-    let _ = tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_test_writer()
         .try_init();
 
     let temp_dir = TempDir::new().unwrap();
@@ -1206,9 +1206,9 @@ fn test_select_down() {
 fn test_select_up_down_reversal() {
     // Initialize tracing
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-    let _ = tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_test_writer()
         .try_init();
 
     let temp_dir = TempDir::new().unwrap();

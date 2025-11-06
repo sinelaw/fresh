@@ -9,9 +9,9 @@ use std::fs;
 fn test_scrollbar_renders() {
     // Initialize tracing
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-    let _ = tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_test_writer()
         .try_init();
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -76,9 +76,9 @@ fn test_scrollbar_in_multiple_splits() {
 fn test_scrollbar_click_jump() {
     // Initialize tracing
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-    let _ = tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_test_writer()
         .try_init();
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -119,9 +119,9 @@ fn test_scrollbar_click_jump() {
 fn test_scrollbar_drag() {
     // Initialize tracing
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-    let _ = tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_test_writer()
         .try_init();
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -534,9 +534,9 @@ fn extract_scrollbar_thumb_info(
 fn test_scrollbar_drag_to_absolute_bottom() {
     // Initialize tracing
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-    let _ = tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_test_writer()
         .try_init();
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();

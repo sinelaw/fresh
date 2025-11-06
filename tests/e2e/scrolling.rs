@@ -579,9 +579,9 @@ fn test_load_big_file_e2e() {
 
     // Initialize tracing
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-    let _ = tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_test_writer()
         .try_init();
 
     println!("\n=== E2E Test: Loading BIG.txt through full editor ===");
