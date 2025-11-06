@@ -22,11 +22,13 @@ pub struct EditorTestHarness {
 
 impl EditorTestHarness {
     /// Create new test harness with virtual terminal
+    /// Uses current directory as working directory
     pub fn new(width: u16, height: u16) -> io::Result<Self> {
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
         let config = Config::default();
-        let editor = Editor::new(config, width, height)?;
+        let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let editor = Editor::with_working_dir(config, width, height, working_dir)?;
 
         Ok(EditorTestHarness {
             editor,
@@ -36,10 +38,12 @@ impl EditorTestHarness {
     }
 
     /// Create with custom config
+    /// Uses current directory as working directory
     pub fn with_config(width: u16, height: u16, config: Config) -> io::Result<Self> {
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
-        let editor = Editor::new(config, width, height)?;
+        let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let editor = Editor::with_working_dir(config, width, height, working_dir)?;
 
         Ok(EditorTestHarness {
             editor,
@@ -61,7 +65,7 @@ impl EditorTestHarness {
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
         let config = Config::default();
-        let editor = Editor::with_working_dir(config, width, height, Some(temp_path))?;
+        let editor = Editor::with_working_dir(config, width, height, temp_path)?;
 
         Ok(EditorTestHarness {
             editor,
@@ -80,7 +84,7 @@ impl EditorTestHarness {
     ) -> io::Result<Self> {
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
-        let editor = Editor::with_working_dir(config, width, height, Some(working_dir))?;
+        let editor = Editor::with_working_dir(config, width, height, working_dir)?;
 
         Ok(EditorTestHarness {
             editor,

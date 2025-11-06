@@ -241,20 +241,17 @@ struct CachedLayout {
 
 impl Editor {
     /// Create a new editor with the given configuration and terminal dimensions
-    /// If working_dir is None, uses the current working directory
+    /// DEPRECATED: Use with_working_dir instead to explicitly specify the working directory
     pub fn new(config: Config, width: u16, height: u16) -> io::Result<Self> {
-        Self::with_working_dir(config, width, height, None)
+        let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        Self::with_working_dir(config, width, height, working_dir)
     }
 
     /// Create a new editor with an explicit working directory
-    /// This is useful for testing with isolated temporary directories
-    pub fn with_working_dir(config: Config, width: u16, height: u16, working_dir: Option<PathBuf>) -> io::Result<Self> {
+    /// The working directory is used for LSP initialization, file operations, and file explorer
+    pub fn with_working_dir(config: Config, width: u16, height: u16, working_dir: PathBuf) -> io::Result<Self> {
         tracing::info!("Editor::new called with width={}, height={}", width, height);
-
-        // Use provided working_dir or capture from environment
-        let working_dir = working_dir.unwrap_or_else(|| {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        });
+        tracing::info!("Working directory: {:?}", working_dir);
 
         // Load theme from config
         let theme = crate::theme::Theme::from_name(&config.theme);
@@ -293,7 +290,7 @@ impl Editor {
         }
 
         // Create LSP manager with async support
-        let mut lsp = LspManager::new(root_uri, Some(working_dir.clone()));
+        let mut lsp = LspManager::new(root_uri, working_dir.clone());
 
         // Configure runtime and bridge if available
         if let Some(ref runtime) = tokio_runtime {

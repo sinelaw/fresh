@@ -25,7 +25,7 @@ pub struct LspManager {
     root_uri: Option<Url>,
 
     /// Working directory for LSP processes
-    working_dir: Option<PathBuf>,
+    working_dir: PathBuf,
 
     /// Tokio runtime reference
     runtime: Option<tokio::runtime::Handle>,
@@ -35,8 +35,9 @@ pub struct LspManager {
 }
 
 impl LspManager {
-    /// Create a new LSP manager
-    pub fn new(root_uri: Option<Url>, working_dir: Option<PathBuf>) -> Self {
+    /// Create a new LSP manager with explicit working directory
+    /// The working directory is where LSP processes will be spawned
+    pub fn new(root_uri: Option<Url>, working_dir: PathBuf) -> Self {
         Self {
             handles: HashMap::new(),
             config: HashMap::new(),
@@ -92,7 +93,7 @@ impl LspManager {
             language.to_string(),
             async_bridge,
             config.process_limits.clone(),
-            self.working_dir.clone(),
+            Some(self.working_dir.clone()),
         ) {
             Ok(handle) => {
                 // Initialize the handle (non-blocking)
@@ -159,7 +160,8 @@ mod tests {
     #[test]
     fn test_lsp_manager_new() {
         let root_uri = Url::parse("file:///test").ok();
-        let manager = LspManager::new(root_uri.clone(), None);
+        let working_dir = PathBuf::from("/test");
+        let manager = LspManager::new(root_uri.clone(), working_dir);
 
         // Manager should start with no handles
         assert_eq!(manager.handles.len(), 0);
@@ -171,7 +173,8 @@ mod tests {
 
     #[test]
     fn test_lsp_manager_set_language_config() {
-        let mut manager = LspManager::new(None, None);
+        let working_dir = PathBuf::from("/test");
+        let mut manager = LspManager::new(None, working_dir);
 
         let config = LspServerConfig {
             enabled: true,
@@ -189,7 +192,8 @@ mod tests {
 
     #[test]
     fn test_lsp_manager_get_or_spawn_no_runtime() {
-        let mut manager = LspManager::new(None, None);
+        let working_dir = PathBuf::from("/test");
+        let mut manager = LspManager::new(None, working_dir);
 
         // Add config for rust
         manager.set_language_config(
@@ -210,7 +214,8 @@ mod tests {
     #[test]
     fn test_lsp_manager_get_or_spawn_no_config() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut manager = LspManager::new(None, None);
+        let working_dir = PathBuf::from("/test");
+        let mut manager = LspManager::new(None, working_dir);
         let async_bridge = AsyncBridge::new();
 
         manager.set_runtime(rt.handle().clone(), async_bridge);
@@ -223,7 +228,8 @@ mod tests {
     #[test]
     fn test_lsp_manager_get_or_spawn_disabled_language() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut manager = LspManager::new(None, None);
+        let working_dir = PathBuf::from("/test");
+        let mut manager = LspManager::new(None, working_dir);
         let async_bridge = AsyncBridge::new();
 
         manager.set_runtime(rt.handle().clone(), async_bridge);
@@ -246,7 +252,8 @@ mod tests {
 
     #[test]
     fn test_lsp_manager_shutdown_all() {
-        let mut manager = LspManager::new(None, None);
+        let working_dir = PathBuf::from("/test");
+        let mut manager = LspManager::new(None, working_dir);
 
         // shutdown_all should not panic even with no handles
         manager.shutdown_all();

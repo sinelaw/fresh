@@ -28,6 +28,10 @@ struct Args {
     /// Enable event logging to the specified file
     #[arg(long, value_name = "LOG_FILE")]
     event_log: Option<PathBuf>,
+
+    /// Working directory for the editor and LSP servers (defaults to current directory)
+    #[arg(long, short = 'C', value_name = "DIR")]
+    working_dir: Option<PathBuf>,
 }
 
 fn main() -> io::Result<()> {
@@ -84,8 +88,14 @@ fn main() -> io::Result<()> {
     let size = terminal.size()?;
     tracing::info!("Terminal size: {}x{}", size.width, size.height);
 
-    // Create editor with actual terminal size
-    let mut editor = Editor::new(config, size.width, size.height)?;
+    // Determine working directory: use CLI argument or default to current directory
+    let working_dir = args.working_dir.unwrap_or_else(|| {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    });
+    tracing::info!("Working directory: {:?}", working_dir);
+
+    // Create editor with actual terminal size and working directory
+    let mut editor = Editor::with_working_dir(config, size.width, size.height, working_dir)?;
 
     // Enable event log streaming if requested
     if let Some(log_path) = &args.event_log {
