@@ -187,3 +187,74 @@ fn visual_multicursor() {
     harness.render().unwrap();
     harness.capture_visual_step(&mut flow, "three_cursors", "All occurrences selected (three cursors)").unwrap();
 }
+
+/// Test LSP diagnostics with margin bullet points
+#[test]
+fn visual_lsp_diagnostics() {
+    use editor::event::{Event, MarginContentData, MarginPositionData, OverlayFace};
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut flow = VisualFlow::new(
+        "LSP Diagnostics",
+        "Language Features",
+        "Displaying LSP diagnostics with margin indicators",
+    );
+
+    // Step 1: Type some code with issues
+    harness.type_text("fn main() {\n").unwrap();
+    harness.type_text("    let x = 5;\n").unwrap();
+    harness.type_text("    let y = 10;\n").unwrap();
+    harness.type_text("    println!(\"Hello\");\n").unwrap();
+    harness.type_text("}\n").unwrap();
+    harness.render().unwrap();
+    harness.capture_visual_step(&mut flow, "code_without_diagnostics", "Code before diagnostics appear").unwrap();
+
+    // Step 2: Add diagnostic overlays and margin annotations (simulating LSP)
+    let state = harness.editor_mut().active_state_mut();
+
+    // Error on line 2 (unused variable x)
+    state.apply(&Event::AddOverlay {
+        overlay_id: "lsp-diagnostic-0".to_string(),
+        range: 20..21, // "x" character
+        face: OverlayFace::Background {
+            color: (60, 20, 20), // Dark red background
+        },
+        priority: 100,
+        message: Some("unused variable: `x`".to_string()),
+    });
+
+    // Warning on line 3 (unused variable y)
+    state.apply(&Event::AddOverlay {
+        overlay_id: "lsp-diagnostic-1".to_string(),
+        range: 35..36, // "y" character
+        face: OverlayFace::Background {
+            color: (60, 50, 0), // Dark yellow background
+        },
+        priority: 50,
+        message: Some("unused variable: `y`".to_string()),
+    });
+
+    // Add red bullet points in the margin for lines with diagnostics
+    state.apply(&Event::AddMarginAnnotation {
+        line: 1, // Line 2 (0-indexed)
+        position: MarginPositionData::Left,
+        content: MarginContentData::Symbol {
+            text: "●".to_string(),
+            color: Some((255, 0, 0)), // Red
+        },
+        annotation_id: Some("lsp-diagnostic-margin".to_string()),
+    });
+
+    state.apply(&Event::AddMarginAnnotation {
+        line: 2, // Line 3 (0-indexed)
+        position: MarginPositionData::Left,
+        content: MarginContentData::Symbol {
+            text: "●".to_string(),
+            color: Some((255, 0, 0)), // Red
+        },
+        annotation_id: Some("lsp-diagnostic-margin".to_string()),
+    });
+
+    harness.render().unwrap();
+    harness.capture_visual_step(&mut flow, "diagnostics_with_bullets", "Diagnostics with red bullet points in margin").unwrap();
+}
