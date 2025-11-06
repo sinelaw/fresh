@@ -103,52 +103,52 @@
   <text x="415" y="50" fill="#cccccc" class="terminal" style="">l</text>
   <text x="424" y="50" fill="#cccccc" class="terminal" style="">d</text>
   <text x="442" y="50" fill="#cccccc" class="terminal" style="">w</text>
+  <text x="451" y="50" fill="#cccccc" class="terminal" style="">r</text>
+  <text x="460" y="50" fill="#cccccc" class="terminal" style="">a</text>
+  <text x="469" y="50" fill="#cccccc" class="terminal" style="">p</text>
+  <text x="487" y="50" fill="#cccccc" class="terminal" style="">t</text>
+  <text x="496" y="50" fill="#cccccc" class="terminal" style="">o</text>
+  <text x="514" y="50" fill="#cccccc" class="terminal" style="">m</text>
   <text x="532" y="50" fill="#6272a4" class="terminal" style="">█</text>
-  <text x="73" y="68" fill="#cccccc" class="terminal" style="">r</text>
-  <text x="82" y="68" fill="#cccccc" class="terminal" style="">a</text>
-  <text x="91" y="68" fill="#cccccc" class="terminal" style="">p</text>
-  <text x="109" y="68" fill="#cccccc" class="terminal" style="">t</text>
-  <text x="118" y="68" fill="#cccccc" class="terminal" style="">o</text>
-  <text x="136" y="68" fill="#cccccc" class="terminal" style="">m</text>
-  <text x="145" y="68" fill="#cccccc" class="terminal" style="">u</text>
-  <text x="154" y="68" fill="#cccccc" class="terminal" style="">l</text>
-  <text x="163" y="68" fill="#cccccc" class="terminal" style="">t</text>
-  <text x="172" y="68" fill="#cccccc" class="terminal" style="">i</text>
-  <text x="181" y="68" fill="#cccccc" class="terminal" style="">p</text>
-  <text x="190" y="68" fill="#cccccc" class="terminal" style="">l</text>
-  <text x="199" y="68" fill="#cccccc" class="terminal" style="">e</text>
-  <text x="217" y="68" fill="#cccccc" class="terminal" style="">l</text>
-  <text x="226" y="68" fill="#cccccc" class="terminal" style="">i</text>
-  <text x="235" y="68" fill="#cccccc" class="terminal" style="">n</text>
-  <text x="244" y="68" fill="#cccccc" class="terminal" style="">e</text>
-  <text x="253" y="68" fill="#cccccc" class="terminal" style="">s</text>
-  <text x="271" y="68" fill="#cccccc" class="terminal" style="">w</text>
-  <text x="280" y="68" fill="#cccccc" class="terminal" style="">h</text>
-  <text x="289" y="68" fill="#cccccc" class="terminal" style="">e</text>
-  <text x="298" y="68" fill="#cccccc" class="terminal" style="">n</text>
-  <text x="316" y="68" fill="#cccccc" class="terminal" style="">l</text>
-  <text x="325" y="68" fill="#cccccc" class="terminal" style="">i</text>
-  <text x="334" y="68" fill="#cccccc" class="terminal" style="">n</text>
-  <text x="343" y="68" fill="#cccccc" class="terminal" style="">e</text>
-  <text x="361" y="68" fill="#cccccc" class="terminal" style="">w</text>
-  <text x="370" y="68" fill="#cccccc" class="terminal" style="">r</text>
-  <text x="379" y="68" fill="#cccccc" class="terminal" style="">a</text>
-  <text x="388" y="68" fill="#cccccc" class="terminal" style="">p</text>
-  <text x="397" y="68" fill="#cccccc" class="terminal" style="">p</text>
-  <text x="406" y="68" fill="#cccccc" class="terminal" style="">i</text>
-  <text x="415" y="68" fill="#cccccc" class="terminal" style="">n</text>
-  <text x="424" y="68" fill="#cccccc" class="terminal" style="">g</text>
-  <text x="442" y="68" fill="#cccccc" class="terminal" style="">i</text>
+  <text x="73" y="68" fill="#cccccc" class="terminal" style="">u</text>
+  <text x="82" y="68" fill="#cccccc" class="terminal" style="">l</text>
+  <text x="91" y="68" fill="#cccccc" class="terminal" style="">t</text>
+  <text x="100" y="68" fill="#cccccc" class="terminal" style="">i</text>
+  <text x="109" y="68" fill="#cccccc" class="terminal" style="">p</text>
+  <text x="118" y="68" fill="#cccccc" class="terminal" style="">l</text>
+  <text x="127" y="68" fill="#cccccc" class="terminal" style="">e</text>
+  <text x="145" y="68" fill="#cccccc" class="terminal" style="">l</text>
+  <text x="154" y="68" fill="#cccccc" class="terminal" style="">i</text>
+  <text x="163" y="68" fill="#cccccc" class="terminal" style="">n</text>
+  <text x="172" y="68" fill="#cccccc" class="terminal" style="">e</text>
+  <text x="181" y="68" fill="#cccccc" class="terminal" style="">s</text>
+  <text x="199" y="68" fill="#cccccc" class="terminal" style="">w</text>
+  <text x="208" y="68" fill="#cccccc" class="terminal" style="">h</text>
+  <text x="217" y="68" fill="#cccccc" class="terminal" style="">e</text>
+  <text x="226" y="68" fill="#cccccc" class="terminal" style="">n</text>
+  <text x="244" y="68" fill="#cccccc" class="terminal" style="">l</text>
+  <text x="253" y="68" fill="#cccccc" class="terminal" style="">i</text>
+  <text x="262" y="68" fill="#cccccc" class="terminal" style="">n</text>
+  <text x="271" y="68" fill="#cccccc" class="terminal" style="">e</text>
+  <text x="289" y="68" fill="#cccccc" class="terminal" style="">w</text>
+  <text x="298" y="68" fill="#cccccc" class="terminal" style="">r</text>
+  <text x="307" y="68" fill="#cccccc" class="terminal" style="">a</text>
+  <text x="316" y="68" fill="#cccccc" class="terminal" style="">p</text>
+  <text x="325" y="68" fill="#cccccc" class="terminal" style="">p</text>
+  <text x="334" y="68" fill="#cccccc" class="terminal" style="">i</text>
+  <text x="343" y="68" fill="#cccccc" class="terminal" style="">n</text>
+  <text x="352" y="68" fill="#cccccc" class="terminal" style="">g</text>
+  <text x="370" y="68" fill="#cccccc" class="terminal" style="">i</text>
+  <text x="379" y="68" fill="#cccccc" class="terminal" style="">s</text>
+  <text x="397" y="68" fill="#cccccc" class="terminal" style="">e</text>
+  <text x="406" y="68" fill="#cccccc" class="terminal" style="">n</text>
+  <text x="415" y="68" fill="#cccccc" class="terminal" style="">a</text>
+  <text x="424" y="68" fill="#cccccc" class="terminal" style="">b</text>
+  <text x="433" y="68" fill="#cccccc" class="terminal" style="">l</text>
+  <text x="442" y="68" fill="#cccccc" class="terminal" style="">e</text>
+  <text x="451" y="68" fill="#cccccc" class="terminal" style="">d</text>
+  <text x="460" y="68" fill="#cccccc" class="terminal" style="">.</text>
   <text x="532" y="68" fill="#6272a4" class="terminal" style="">█</text>
-  <text x="73" y="86" fill="#cccccc" class="terminal" style="">s</text>
-  <text x="91" y="86" fill="#cccccc" class="terminal" style="">e</text>
-  <text x="100" y="86" fill="#cccccc" class="terminal" style="">n</text>
-  <text x="109" y="86" fill="#cccccc" class="terminal" style="">a</text>
-  <text x="118" y="86" fill="#cccccc" class="terminal" style="">b</text>
-  <text x="127" y="86" fill="#cccccc" class="terminal" style="">l</text>
-  <text x="136" y="86" fill="#cccccc" class="terminal" style="">e</text>
-  <text x="145" y="86" fill="#cccccc" class="terminal" style="">d</text>
-  <text x="154" y="86" fill="#cccccc" class="terminal" style="">.</text>
   <text x="532" y="86" fill="#6272a4" class="terminal" style="">█</text>
   <text x="532" y="104" fill="#6272a4" class="terminal" style="">█</text>
   <text x="532" y="122" fill="#6272a4" class="terminal" style="">█</text>
@@ -251,5 +251,5 @@
   <rect x="522" y="414" width="9" height="18" fill="#ffffff"/>
   <rect x="531" y="414" width="9" height="18" fill="#ffffff"/>
   <!-- Cursor indicator -->
-  <rect x="162" y="90" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
+  <rect x="468" y="72" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
 </svg>
