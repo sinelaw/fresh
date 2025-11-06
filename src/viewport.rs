@@ -134,19 +134,21 @@ impl Viewport {
         // We want to be able to scroll so that the last line is at the bottom
         let scrollable_lines = line_count.saturating_sub(viewport_height);
 
-        // Find the byte position of the line at scrollable_lines offset
+        // Find the byte position after skipping scrollable_lines from the start
+        // This will be the maximum top_byte that shows the last line at the bottom
         let mut iter = buffer.line_iterator(0);
         let mut current_line = 0;
-        let mut max_byte_pos = 0;
 
         while current_line < scrollable_lines {
-            if let Some((pos, _content)) = iter.next() {
-                max_byte_pos = pos;
+            if iter.next().is_some() {
                 current_line += 1;
             } else {
                 break;
             }
         }
+
+        // The current position after skipping scrollable_lines is our max top_byte
+        let max_byte_pos = iter.current_position();
 
         // Clamp top_byte to not exceed max_byte_pos
         if self.top_byte > max_byte_pos {
