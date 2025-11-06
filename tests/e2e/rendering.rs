@@ -55,25 +55,26 @@ fn test_screen_cursor_position() {
     // Get the actual screen cursor position from the terminal
     let cursor_pos = harness.screen_cursor_position();
 
-    // After typing "abc", cursor should be at column 10:
-    // "   1 │ abc" - the cursor should be after 'c'
+    // After typing "abc", cursor should be at column 11:
+    // " "  "   1" " │ " "abc" - the cursor should be after 'c'
+    // Indicator column: 1 char (space when no indicator)
     // Line numbers are 4 chars wide: "   1"
     // Then " │ " = 3 chars
     // Then "abc" = 3 chars
-    // Total: 4 + 3 + 3 = 10
-    // So cursor X should be at column 10 (0-indexed)
+    // Total: 1 + 4 + 3 + 3 = 11
+    // So cursor X should be at column 11 (0-indexed)
     // And cursor Y should be at row 1 (0-indexed, because row 0 is the tab bar)
 
     println!("Cursor position after typing 'abc': {{cursor_pos:?}}");
-    println!("Expected: x=10 (4 + 3 + 3), y=1");
+    println!("Expected: x=11 (1 + 4 + 3 + 3), y=1");
 
     assert_eq!(
         cursor_pos.1, 1,
         "Cursor Y should be at row 1 (below tab bar)"
     );
     assert_eq!(
-        cursor_pos.0, 10,
-        "Cursor X should be at column 10 (after 'abc')"
+        cursor_pos.0, 11,
+        "Cursor X should be at column 11 (after 'abc')"
     );
 }
 
@@ -238,13 +239,13 @@ fn test_cursor_position_with_large_line_numbers() {
 
     // Now verify cursor positioning is correct for the gutter width
     // The gutter width is based on estimated lines (~912,500)
-    // 6 digits + " │ " (3 chars) = 9 chars total
-    println!("\nExpected gutter width: 9 (for 6-digit estimated line numbers)");
+    // Format: [indicator (1)] + [6 digits] + [" │ " (3 chars)] = 10 chars total
+    println!("\nExpected gutter width: 10 (1 + 6 + 3 for 6-digit estimated line numbers)");
     println!("Actual gutter_width: {{gutter_width}}");
 
     assert_eq!(
-        gutter_width, 9,
-        "Gutter width {{gutter_width}} doesn't match expected 9"
+        gutter_width, 10,
+        "Gutter width {{gutter_width}} doesn't match expected 10"
     );
 
     // The cursor should be positioned AFTER the gutter (at position gutter_width)

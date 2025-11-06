@@ -43,8 +43,8 @@
   <rect x="189" y="0" width="9" height="18" fill="#bd93f9"/>
   <text x="190" y="14" fill="#f1fa8c" class="terminal" style="font-weight:bold;">]</text>
   <rect x="198" y="0" width="9" height="18" fill="#bd93f9"/>
-  <text x="28" y="32" fill="#858585" class="terminal" style="">1</text>
-  <text x="46" y="32" fill="#858585" class="terminal" style="">│</text>
+  <text x="37" y="32" fill="#858585" class="terminal" style="">1</text>
+  <text x="55" y="32" fill="#858585" class="terminal" style="">│</text>
   <text x="1072" y="32" fill="#44475a" class="terminal" style="">█</text>
   <text x="1072" y="50" fill="#44475a" class="terminal" style="">█</text>
   <text x="1072" y="68" fill="#44475a" class="terminal" style="">█</text>
@@ -179,8 +179,8 @@
   <text x="1054" y="284" fill="#44475a" class="terminal" style="">─</text>
   <text x="1063" y="284" fill="#44475a" class="terminal" style="">─</text>
   <text x="1072" y="284" fill="#44475a" class="terminal" style="">─</text>
-  <text x="28" y="302" fill="#858585" class="terminal" style="">1</text>
-  <text x="46" y="302" fill="#858585" class="terminal" style="">│</text>
+  <text x="37" y="302" fill="#858585" class="terminal" style="">1</text>
+  <text x="55" y="302" fill="#858585" class="terminal" style="">│</text>
   <text x="1072" y="302" fill="#6272a4" class="terminal" style="">█</text>
   <text x="1072" y="320" fill="#6272a4" class="terminal" style="">█</text>
   <text x="1072" y="338" fill="#6272a4" class="terminal" style="">█</text>
@@ -354,5 +354,5 @@
   <rect x="1062" y="522" width="9" height="18" fill="#ffffff"/>
   <rect x="1071" y="522" width="9" height="18" fill="#ffffff"/>
   <!-- Cursor indicator -->
-  <rect x="63" y="288" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
+  <rect x="72" y="288" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
 </svg>

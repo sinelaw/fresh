@@ -3,7 +3,7 @@ source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
  [No Name]*                                                                     
-   1 │ Hello, World!                                                           █
+    1 │ Hello, World!                                                          █
                                                                                █
                                                                                █
                                                                                █

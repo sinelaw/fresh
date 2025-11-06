@@ -3,9 +3,9 @@ source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
  [No Name]*                                                                     
-   1 │ hello                                                                   █
-   2 │ hello                                                                   █
-   3 │ hello                                                                   █
+    1 │ hello                                                                  █
+    2 │ hello                                                                  █
+    3 │ hello                                                                  █
                                                                                █
                                                                                █
                                                                                █
