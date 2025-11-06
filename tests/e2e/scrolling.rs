@@ -971,34 +971,22 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
             min_size
         );
 
-        // The scrollbar thumb size should remain very consistent during scrolling
+        // The scrollbar thumb size MUST remain constant during scrolling
         // since it represents the ratio of viewport height to total content height.
+        // Both values are constant:
+        // - Viewport height = allocated content area (constant terminal rows)
+        // - Total lines = document size (doesn't change during scrolling)
         //
         // For files under the large_file_threshold (default 1MB), we count actual
-        // lines for precise scrollbar rendering. Some minor variation (<=5 chars)
-        // may occur due to viewport_height changes near the end of the file when
-        // there aren't enough lines left to fill the viewport.
+        // lines for precise scrollbar rendering with zero variation.
         //
         // For files over the threshold, we use a constant 1-character thumb for
-        // performance reasons (no variation).
-        //
-        // Acceptable variation thresholds:
-        // - Small files (50-100 lines): up to 5 chars (viewport changes at EOF)
-        // - Medium files (200+ lines): up to 1 char (rounding differences)
-        // - Large files (500+ lines): 0 chars (should be perfect)
-        let max_acceptable_variation = if num_lines <= 100 {
-            5  // Viewport height may decrease at EOF
-        } else if num_lines <= 200 {
-            1  // Minor rounding differences
-        } else {
-            1  // Should be nearly perfect
-        };
-
-        assert!(
-            size_variation <= max_acceptable_variation,
-            "Scrollbar thumb size variation ({}) exceeded acceptable threshold ({}) for {} lines. \
-             Sizes observed: min={}, max={}. This may indicate a regression in scrollbar rendering.",
-            size_variation, max_acceptable_variation, num_lines, min_size, max_size
+        // performance reasons (also zero variation).
+        assert_eq!(
+            size_variation, 0,
+            "Scrollbar thumb size MUST be constant (variation = 0) for {} lines, but varied by {} \
+             (min={}, max={}). This indicates a bug in scrollbar rendering.",
+            num_lines, size_variation, min_size, max_size
         );
     }
 
@@ -1142,12 +1130,14 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
     println!("\nHandle sizes observed: {:?}", all_sizes);
     println!("Min size: {}, Max size: {}, Variation: {}", min_size, max_size, size_variation);
 
-    // Allow minor variation due to viewport height changes near EOF
-    let max_variation = if num_lines <= 100 { 5 } else { 1 };
-    assert!(
-        size_variation <= max_variation,
-        "Scrollbar handle size should be constant (variation <= {}), but varied by {} (sizes: {:?})",
-        max_variation, size_variation, all_sizes
+    // Handle size MUST be constant (variation = 0) because it represents
+    // the ratio of viewport height to total document height, neither of which
+    // changes during scrolling. The viewport height is the allocated content area,
+    // not the number of visible lines.
+    assert_eq!(
+        size_variation, 0,
+        "Scrollbar handle size MUST be constant (variation = 0), but varied by {} (sizes: {:?})",
+        size_variation, all_sizes
     );
 
     // INVARIANT 3: At last line, handle bottom should be at scrollbar bottom

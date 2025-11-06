@@ -156,7 +156,10 @@ impl SplitRenderer {
 
         let buffer_len = state.buffer.len();
         let viewport_top = state.viewport.top_byte;
-        let viewport_height = state.viewport.visible_line_count();
+        // Use the constant viewport height (allocated terminal rows), not visible_line_count()
+        // which varies based on content. The scrollbar should represent the ratio of the
+        // viewport AREA to total document size, remaining constant throughout scrolling.
+        let viewport_height_lines = state.viewport.height as usize;
 
         // Calculate scrollbar thumb position and size
         let (thumb_start, thumb_size) = if buffer_len > large_file_threshold_bytes as usize {
@@ -176,20 +179,24 @@ impl SplitRenderer {
                 0
             };
 
-            let thumb_size = if total_lines > 0 {
-                ((viewport_height as f64 / total_lines as f64) * height as f64).ceil() as usize
+            let thumb_size_raw = if total_lines > 0 {
+                ((viewport_height_lines as f64 / total_lines as f64) * height as f64).ceil() as usize
             } else {
                 1
             };
 
             // Cap thumb size: minimum 1, maximum 80% of scrollbar height
             let max_thumb_size = (height as f64 * 0.8).floor() as usize;
-            let thumb_size = thumb_size.max(1).min(max_thumb_size).min(height);
+            let thumb_size = thumb_size_raw.max(1).min(max_thumb_size).min(height);
 
             (thumb_start, thumb_size)
         };
 
-        let thumb_end = (thumb_start + thumb_size).min(height);
+        // Ensure the thumb doesn't get clipped at the bottom
+        // If thumb_start + thumb_size would exceed the scrollbar height,
+        // adjust thumb_start down so the full thumb remains visible
+        let thumb_start = thumb_start.min(height.saturating_sub(thumb_size));
+        let thumb_end = thumb_start + thumb_size;
 
         // Choose colors based on whether split is active
         let track_color = if is_active {
