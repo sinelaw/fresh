@@ -1,6 +1,16 @@
--- TODO Highlighter Plugin
+-- TODO Highlighter Plugin (Enhanced with marker-based overlays)
 -- Highlights TODO, FIXME, HACK, NOTE, XXX, and BUG comments in the current buffer
--- Demonstrates buffer query, pattern matching, and overlay APIs
+--
+-- MARKER-BASED OVERLAY BENEFIT:
+-- With marker-based overlays, overlays automatically stay anchored to the content
+-- they highlight, even as text is inserted or deleted around them. This means:
+--
+-- 1. CORRECTNESS: Overlays always highlight the right text between scans
+-- 2. FLEXIBILITY: Plugins can choose to re-scan less frequently without losing accuracy
+-- 3. SIMPLICITY: No manual overlay position tracking needed
+--
+-- This plugin still re-scans on every edit to catch new TODO comments immediately.
+-- For better performance, this could be changed to debounced scanning or manual refresh.
 
 -- Plugin state
 local highlighting_enabled = false
@@ -36,6 +46,8 @@ local function clear_overlays()
 end
 
 -- Find and highlight all keywords in the current buffer
+-- This only needs to be called ONCE when enabling, or manually via Refresh
+-- Marker-based overlays automatically adjust as the user types!
 local function highlight_keywords()
     debug("TODO Highlighter: highlight_keywords() called")
     -- Clear existing overlays first
@@ -100,7 +112,8 @@ local function highlight_keywords()
                     -- Generate unique overlay ID
                     local overlay_id = string.format("todo_%s_%d", pattern, highlight_start)
 
-                    -- Add overlay (API expects: buffer_id, overlay_id, start, end, r, g, b, underline)
+                    -- Add overlay with marker-based positioning
+                    -- The overlay will automatically adjust when text is inserted/deleted!
                     editor.add_overlay(
                         buffer_id,
                         overlay_id,
@@ -178,9 +191,11 @@ editor.register_command({
 })
 
 -- Command: Refresh highlighting
+-- This is now OPTIONAL - only needed when new TODO comments are added
+-- Existing highlights automatically adjust as you type!
 editor.register_command({
     name = "TODO Highlighter: Refresh",
-    description = "Re-scan and refresh TODO highlights",
+    description = "Re-scan buffer for new TODO comments (existing ones adjust automatically)",
     action = "todo_highlight_refresh",
     contexts = {"normal"},
     callback = function()
@@ -192,18 +207,30 @@ editor.register_command({
     end
 })
 
--- Register hooks to automatically refresh highlights when buffer changes
+-- ============================================================================
+-- Hooks for real-time highlighting
+-- ============================================================================
+-- These hooks re-scan the buffer on every edit to catch new TODO comments
+-- immediately. With marker-based overlays, we COULD remove these hooks and
+-- rely on manual refresh - existing overlays would stay correct automatically!
+--
+-- Trade-offs:
+--   WITH hooks: New TODO comments highlighted immediately (current behavior)
+--   WITHOUT hooks: Better performance, but need manual refresh for new comments
+--
+-- For this plugin, we keep the hooks for better UX. For a large codebase plugin,
+-- you might want debounced scanning or manual refresh instead.
+-- ============================================================================
+
 editor.on("after-insert", function()
     if highlighting_enabled then
-        debug("TODO Highlighter: after-insert hook triggered, refreshing highlights")
-        highlight_keywords()
+        highlight_keywords()  -- Re-scan to find new keywords
     end
 end)
 
 editor.on("after-delete", function()
     if highlighting_enabled then
-        debug("TODO Highlighter: after-delete hook triggered, refreshing highlights")
-        highlight_keywords()
+        highlight_keywords()  -- Re-scan to find new keywords
     end
 end)
 
@@ -223,5 +250,5 @@ editor.register_command({
     end
 })
 
-debug("TODO Highlighter: Plugin loaded")
+debug("TODO Highlighter: Plugin loaded (simplified with marker-based overlays)")
 editor.set_status("TODO Highlighter plugin loaded! Use 'TODO Highlighter: Toggle' to start.")

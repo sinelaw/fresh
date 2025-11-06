@@ -438,7 +438,7 @@ fn visual_lsp_rename() {
 
     let rename_overlay = overlays[0];
     // The overlay should cover "value" at position 14 (after "fn calculate(")
-    let overlay_text = state.buffer.slice(rename_overlay.range.clone()).to_string();
+    let overlay_text = state.buffer.slice(rename_overlay.range(&state.marker_list)).to_string();
     assert_eq!(
         overlay_text, "value",
         "Overlay should cover the 'value' symbol"
@@ -744,7 +744,7 @@ fn test_lsp_rename_cancel_restores_original() {
         .collect();
     assert_eq!(overlays.len(), 1, "Should have exactly one rename overlay");
 
-    let overlay_text = state.buffer.slice(overlays[0].range.clone()).to_string();
+    let overlay_text = state.buffer.slice(overlays[0].range(&state.marker_list)).to_string();
     assert_eq!(
         overlay_text, "value",
         "Overlay should cover the 'value' symbol"
