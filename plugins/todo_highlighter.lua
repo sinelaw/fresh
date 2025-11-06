@@ -192,6 +192,21 @@ editor.register_command({
     end
 })
 
+-- Register hooks to automatically refresh highlights when buffer changes
+editor.on("after-insert", function()
+    if highlighting_enabled then
+        debug("TODO Highlighter: after-insert hook triggered, refreshing highlights")
+        highlight_keywords()
+    end
+end)
+
+editor.on("after-delete", function()
+    if highlighting_enabled then
+        debug("TODO Highlighter: after-delete hook triggered, refreshing highlights")
+        highlight_keywords()
+    end
+end)
+
 -- Command: Show keyword list
 editor.register_command({
     name = "TODO Highlighter: Show Keywords",

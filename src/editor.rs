@@ -1319,6 +1319,38 @@ impl Editor {
     /// Apply an event to the active buffer
     pub fn apply_event_to_active_buffer(&mut self, event: Event) {
         self.active_state_mut().apply(&event);
+
+        // Trigger plugin hooks for this event
+        self.trigger_plugin_hooks_for_event(&event);
+    }
+
+    /// Trigger plugin hooks for an event (if any)
+    fn trigger_plugin_hooks_for_event(&mut self, event: &Event) {
+        use crate::event_hooks::EventHooks;
+        use crate::hooks::HookArgs;
+
+        if self.plugin_manager.is_some() {
+            // Update plugin state snapshot BEFORE calling hooks
+            // so plugins can query current state
+            self.update_plugin_state_snapshot();
+
+            // Trigger "after" hooks for this event
+            if let Some(hook_args) = event.after_hook(self.active_buffer) {
+                let hook_name = match &hook_args {
+                    HookArgs::AfterInsert { .. } => "after-insert",
+                    HookArgs::AfterDelete { .. } => "after-delete",
+                    _ => "",
+                };
+
+                if !hook_name.is_empty() {
+                    if let Some(plugin_manager) = &self.plugin_manager {
+                        if let Err(e) = plugin_manager.run_hook(hook_name, &hook_args) {
+                            tracing::warn!("Plugin hook '{}' error: {}", hook_name, e);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Get the event log for the active buffer
@@ -3488,6 +3520,7 @@ impl Editor {
                             // Notify LSP of all changes in the batch
                             for event in &events {
                                 self.notify_lsp_change(event);
+                                self.trigger_plugin_hooks_for_event(event);
                             }
                         } else {
                             // Single cursor - no need for batch
@@ -3495,6 +3528,7 @@ impl Editor {
                                 self.active_event_log_mut().append(event.clone());
                                 self.active_state_mut().apply(&event);
                                 self.notify_lsp_change(&event);
+                                self.trigger_plugin_hooks_for_event(&event);
                             }
                         }
                     }
@@ -3514,7 +3548,7 @@ impl Editor {
                         self.active_event_log_mut().append(batch.clone());
                         self.active_state_mut().apply(&batch);
 
-                        // Notify LSP and track position history for all events in the batch
+                        // Notify LSP, track position history, and trigger hooks for all events in the batch
                         for event in &events {
                             self.notify_lsp_change(event);
 
@@ -3531,6 +3565,8 @@ impl Editor {
                                     );
                                 }
                             }
+
+                            self.trigger_plugin_hooks_for_event(event);
                         }
                     } else {
                         // Single cursor - no need for batch
@@ -3552,6 +3588,8 @@ impl Editor {
                                     );
                                 }
                             }
+
+                            self.trigger_plugin_hooks_for_event(&event);
                         }
                     }
                 }

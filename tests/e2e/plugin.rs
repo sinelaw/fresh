@@ -224,3 +224,138 @@ fn test_todo_highlighter_toggle() {
     // Check status message
     harness.assert_screen_contains("TODO Highlighter: Disabled");
 }
+
+/// Test TODO Highlighter updates when buffer content changes
+#[test]
+fn test_todo_highlighter_updates_on_edit() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the TODO highlighter plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/todo_highlighter.lua");
+    let plugin_dest = plugins_dir.join("todo_highlighter.lua");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create test file with TODO comment at the start
+    let test_file_content = "// TODO: Original comment\n";
+    let fixture = TestFixture::new("test_todo.txt", test_file_content).unwrap();
+
+    // Create harness with the project directory (so plugins load)
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Enable highlighting
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("TODO Highlighter: Enable").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify the original TODO is highlighted
+    let screen_before = harness.screen_to_string();
+    println!("Screen before edit:\n{}", screen_before);
+
+    let lines: Vec<&str> = screen_before.lines().collect();
+    let mut found_original_todo = false;
+
+    for (y, line) in lines.iter().enumerate() {
+        if line.contains("TODO: Original") {
+            if let Some(x) = line.find("TODO") {
+                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
+                    if let Some(bg) = style.bg {
+                        // Check it's not just Reset/White, should be a real color
+                        println!("Found TODO at ({}, {}) with background: {:?}", x, y, bg);
+                        found_original_todo = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        found_original_todo,
+        "Expected to find highlighted 'TODO: Original' before edit"
+    );
+
+    // Go to the beginning of the file
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Insert a new line at the top: "// FIXME: New comment\n"
+    harness.type_text("// FIXME: New comment\n").unwrap();
+    harness.render().unwrap();
+
+    let screen_after = harness.screen_to_string();
+    println!("Screen after adding FIXME:\n{}", screen_after);
+
+    // The buffer should now be:
+    // Line 1: // FIXME: New comment
+    // Line 2: // TODO: Original comment
+
+    // Check that FIXME is highlighted
+    let lines: Vec<&str> = screen_after.lines().collect();
+    let mut found_fixme = false;
+    let mut found_todo_on_line_2 = false;
+
+    for (y, line) in lines.iter().enumerate() {
+        if line.contains("FIXME: New") {
+            if let Some(x) = line.find("FIXME") {
+                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
+                    if let Some(bg) = style.bg {
+                        println!("Found FIXME at ({}, {}) with background: {:?}", x, y, bg);
+                        found_fixme = true;
+                    }
+                }
+            }
+        }
+        if line.contains("TODO: Original") {
+            if let Some(x) = line.find("TODO") {
+                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
+                    if let Some(bg) = style.bg {
+                        println!(
+                            "Found TODO on line 2 at ({}, {}) with background: {:?}",
+                            x, y, bg
+                        );
+                        // Check if it's an actual RGB color (orange), not just Reset
+                        if matches!(bg, ratatui::style::Color::Rgb(_, _, _)) {
+                            found_todo_on_line_2 = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Bug: FIXME gets highlighted because it happens to be at the byte position where TODO was
+    // But TODO should ALSO be highlighted, not just have Reset background
+    assert!(
+        found_fixme,
+        "Expected to find highlighted FIXME after inserting new line"
+    );
+
+    // This assertion will FAIL, demonstrating the bug - TODO highlight doesn't update
+    assert!(
+        found_todo_on_line_2,
+        "BUG REPRODUCED: TODO on line 2 is not highlighted! The old overlay at byte 3-7 \
+         now highlights FIXME (which happens to be at those bytes), but TODO moved to a \
+         new byte position and didn't get a new overlay. Overlays need to update when buffer changes!"
+    );
+}
