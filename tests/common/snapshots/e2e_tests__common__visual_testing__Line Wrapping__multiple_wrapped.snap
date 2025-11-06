@@ -7,10 +7,10 @@ expression: "&screen_text"
         ely exceed the terminal width and should w         █
         rap to multiple lines when line wrapping i         █
         s enabled.                                         █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
+    5 │ Second extremely long line with even more text to  █
+        demonstrate that multiple lines can be wra         █
+        pped at the same time without any issues i         █
+        n the rendering system.                            █
                                                            █
                                                            █
                                                            █
@@ -25,4 +25,4 @@ expression: "&screen_text"
                                                            │
                                                            │
                                                            │
-[No Name] [+] | Ln 0, Col 144
+[No Name] [+] | Ln 1, Col 157
