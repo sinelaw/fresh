@@ -137,10 +137,15 @@ impl EditorTestHarness {
     }
 
     /// Simulate typing a string of text
+    /// Optimized to avoid rendering after each character - only renders once at the end
     pub fn type_text(&mut self, text: &str) -> io::Result<()> {
         for ch in text.chars() {
-            self.send_key(KeyCode::Char(ch), KeyModifiers::NONE)?;
+            // Call handle_key directly without rendering (unlike send_key which renders every time)
+            self.editor.handle_key(KeyCode::Char(ch), KeyModifiers::NONE)?;
         }
+        // Process any async messages that accumulated during typing
+        self.editor.process_async_messages();
+        // Render once at the end instead of after every character
         self.render()?;
         Ok(())
     }
