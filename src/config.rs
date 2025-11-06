@@ -563,11 +563,15 @@ impl Config {
         let mut lsp = HashMap::new();
 
         // rust-analyzer (installed via rustup or package manager)
+        // Enable logging to help debug LSP issues
+        let ra_log_path = format!("/tmp/rust-analyzer-{}.log", std::process::id());
+        tracing::info!("rust-analyzer will log to: {}", ra_log_path);
+
         lsp.insert(
             "rust".to_string(),
             LspServerConfig {
                 command: "rust-analyzer".to_string(),
-                args: vec![],
+                args: vec!["--log-file".to_string(), ra_log_path],
                 enabled: true,
                 process_limits: crate::process_limits::ProcessLimits::default(),
             },

@@ -1279,7 +1279,24 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
 
     eprintln!("Created minimal Cargo project at: {:?}", temp_dir.path());
 
-    let mut harness = EditorTestHarness::new(80, 30)?;
+    // Create temp file for rust-analyzer logs
+    let ra_log_file = temp_dir.path().join("rust-analyzer.log");
+    eprintln!("rust-analyzer will log to: {:?}", ra_log_file);
+    tracing::info!("rust-analyzer log file: {:?}", ra_log_file);
+
+    // Create custom config with rust-analyzer logging enabled
+    let mut config = editor::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        editor::lsp::LspServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: vec!["--log-file".to_string(), ra_log_file.to_string_lossy().to_string()],
+            enabled: true,
+            process_limits: editor::process_limits::ProcessLimits::default(),
+        },
+    );
+
+    let mut harness = EditorTestHarness::with_config(80, 30, config)?;
 
     // Open the Rust file - this should trigger LSP initialization
     harness.open_file(&test_file)?;
@@ -1365,10 +1382,29 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     eprintln!("{}", buffer_final);
     eprintln!("========================================\n");
 
+    // Print rust-analyzer log for debugging
+    if ra_log_file.exists() {
+        eprintln!("\n========================================");
+        eprintln!("RUST-ANALYZER LOG:");
+        eprintln!("========================================");
+        if let Ok(log_content) = std::fs::read_to_string(&ra_log_file) {
+            // Print last 100 lines of the log
+            let lines: Vec<&str> = log_content.lines().collect();
+            let start = if lines.len() > 100 { lines.len() - 100 } else { 0 };
+            for line in &lines[start..] {
+                eprintln!("{}", line);
+            }
+        }
+        eprintln!("========================================\n");
+    } else {
+        eprintln!("⚠ rust-analyzer log file not found at {:?}", ra_log_file);
+    }
+
     // CHECK FOR THE BUG: ContentModified error
     if screen_final.contains("content modified") || screen_final.contains("modified") {
         eprintln!("\n⚠️  BUG REPRODUCED! ⚠️");
         eprintln!("Got 'content modified' error from rust-analyzer");
+        eprintln!("Check rust-analyzer log above for details!");
         panic!("REPRODUCED: ContentModified error - this is the bug we need to fix!");
     }
 
