@@ -10,9 +10,10 @@ pub mod visual_testing;
 #[cfg(test)]
 #[ctor::dtor]
 fn finalize_visual_testing() {
-    // After all tests complete, generate the visual documentation
+    // After all tests complete, generate the visual documentation index
     // This runs at process exit, after all tests have completed
+    // Each test writes its own file, this just aggregates them into an index
     if std::env::var("SKIP_VISUAL_DOCS").is_err() {
-        visual_testing::generate_visual_documentation().ok();
+        visual_testing::generate_visual_index().ok();
     }
 }
