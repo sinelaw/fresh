@@ -6,6 +6,7 @@ use crate::event::{
 };
 use crate::highlighter::{Highlighter, Language};
 use crate::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPosition};
+use crate::marker::MarkerList;
 use crate::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::popup::{Popup, PopupContent, PopupListItem, PopupManager, PopupPosition};
 use crate::viewport::Viewport;
@@ -28,10 +29,13 @@ pub struct EditorState {
     /// Overlays for visual decorations (underlines, highlights, etc.)
     pub overlays: OverlayManager,
 
+    /// Marker list for content-anchored overlay positions
+    pub marker_list: MarkerList,
+
     /// Popups for floating windows (completion, documentation, etc.)
     pub popups: PopupManager,
 
-    /// Margins for line numbers, annotations, gutter symbols, etc.
+    /// Margins for line numbers, annotations, gutter symbols, etc.)
     pub margins: MarginManager,
 
     /// Cached line number for primary cursor (0-indexed)
@@ -59,6 +63,7 @@ impl EditorState {
             viewport: Viewport::new(width, content_height),
             highlighter: None, // No file path, so no syntax highlighting
             overlays: OverlayManager::new(),
+            marker_list: MarkerList::new(),
             popups: PopupManager::new(),
             margins: MarginManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
@@ -88,6 +93,7 @@ impl EditorState {
             viewport: Viewport::new(width, content_height),
             highlighter,
             overlays: OverlayManager::new(),
+            marker_list: MarkerList::new(),
             popups: PopupManager::new(),
             margins: MarginManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
@@ -106,6 +112,9 @@ impl EditorState {
             } => {
                 // Count newlines in inserted text to update cursor line number
                 let newlines_inserted = text.matches('\n').count();
+
+                // CRITICAL: Adjust markers BEFORE modifying buffer
+                self.marker_list.adjust_for_insert(*position, text.len());
 
                 // Insert text into buffer
                 self.buffer.insert(*position, text);
@@ -154,6 +163,9 @@ impl EditorState {
                 let len = range.len();
                 // Count newlines in deleted text to update cursor line number
                 let newlines_deleted = deleted_text.matches('\n').count();
+
+                // CRITICAL: Adjust markers BEFORE modifying buffer
+                self.marker_list.adjust_for_delete(range.start, len);
 
                 // Delete from buffer
                 self.buffer.delete(range.clone());
@@ -266,26 +278,27 @@ impl EditorState {
             } => {
                 // Convert event overlay face to overlay face
                 let overlay_face = convert_event_face_to_overlay_face(face);
-                let overlay = Overlay {
-                    range: range.clone(),
-                    face: overlay_face,
-                    priority: *priority,
-                    id: Some(overlay_id.clone()),
-                    message: message.clone(),
-                };
+                let mut overlay = Overlay::with_priority(
+                    &mut self.marker_list,
+                    range.clone(),
+                    overlay_face,
+                    *priority,
+                );
+                overlay.id = Some(overlay_id.clone());
+                overlay.message = message.clone();
                 self.overlays.add(overlay);
             }
 
             Event::RemoveOverlay { overlay_id } => {
-                self.overlays.remove_by_id(overlay_id);
+                self.overlays.remove_by_id(overlay_id, &mut self.marker_list);
             }
 
             Event::RemoveOverlaysInRange { range } => {
-                self.overlays.remove_in_range(range);
+                self.overlays.remove_in_range(range, &mut self.marker_list);
             }
 
             Event::ClearOverlays => {
-                self.overlays = OverlayManager::new();
+                self.overlays.clear(&mut self.marker_list);
             }
 
             Event::ShowPopup { popup } => {

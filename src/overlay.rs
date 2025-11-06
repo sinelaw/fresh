@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn test_overlay_creation_with_markers() {
         let mut marker_list = MarkerList::new();
-        marker_list.entries[0] = crate::marker::MarkerEntry::Gap(100);
+        marker_list.set_buffer_size(100);
 
         let overlay = Overlay::new(&mut marker_list, 5..10, OverlayFace::Background {
             color: Color::Red,
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn test_overlay_adjusts_with_insert() {
         let mut marker_list = MarkerList::new();
-        marker_list.entries[0] = crate::marker::MarkerEntry::Gap(100);
+        marker_list.set_buffer_size(100);
 
         let overlay = Overlay::new(&mut marker_list, 10..20, OverlayFace::Background {
             color: Color::Red,
@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn test_overlay_adjusts_with_delete() {
         let mut marker_list = MarkerList::new();
-        marker_list.entries[0] = crate::marker::MarkerEntry::Gap(100);
+        marker_list.set_buffer_size(100);
 
         let overlay = Overlay::new(&mut marker_list, 20..30, OverlayFace::Background {
             color: Color::Red,
@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn test_overlay_manager_add_remove() {
         let mut marker_list = MarkerList::new();
-        marker_list.entries[0] = crate::marker::MarkerEntry::Gap(100);
+        marker_list.set_buffer_size(100);
         let mut manager = OverlayManager::new();
 
         let overlay = Overlay::with_id(
@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn test_overlay_priority_sorting() {
         let mut marker_list = MarkerList::new();
-        marker_list.entries[0] = crate::marker::MarkerEntry::Gap(100);
+        marker_list.set_buffer_size(100);
         let mut manager = OverlayManager::new();
 
         manager.add(Overlay::with_priority(
@@ -466,7 +466,7 @@ mod tests {
     #[test]
     fn test_overlay_contains_and_overlaps() {
         let mut marker_list = MarkerList::new();
-        marker_list.entries[0] = crate::marker::MarkerEntry::Gap(100);
+        marker_list.set_buffer_size(100);
 
         let overlay = Overlay::new(&mut marker_list, 10..20, OverlayFace::Background {
             color: Color::Red,

@@ -34,7 +34,7 @@ pub struct MarkerId(u64);
 
 /// Entry in the marker list - either a gap (content bytes) or a marker
 #[derive(Debug, Clone, PartialEq)]
-enum MarkerEntry {
+pub enum MarkerEntry {
     /// A gap representing N bytes of buffer content
     Gap(usize),
 
@@ -383,6 +383,15 @@ impl MarkerList {
         self.marker_index.len()
     }
 
+    /// Set the initial buffer size (for tests)
+    /// This resets the marker list to contain a single gap of the given size
+    #[cfg(test)]
+    pub fn set_buffer_size(&mut self, size: usize) {
+        self.entries = vec![MarkerEntry::Gap(size)];
+        self.marker_index.clear();
+        self.next_id = 0;
+    }
+
     /// Iterate through entries (for testing and debugging)
     #[cfg(test)]
     pub fn entries(&self) -> &[MarkerEntry] {
@@ -468,7 +477,7 @@ mod tests {
         let mut list = MarkerList::new();
 
         // Simulate a buffer of 20 bytes
-        list.entries[0] = MarkerEntry::Gap(20);
+        list.set_buffer_size(20);
 
         let m1 = list.create(5, true);
         let m2 = list.create(15, false);
@@ -481,7 +490,7 @@ mod tests {
     #[test]
     fn test_insert_before_marker() {
         let mut list = MarkerList::new();
-        list.entries[0] = MarkerEntry::Gap(20);
+        list.set_buffer_size(20);
 
         let m1 = list.create(10, true);
         assert_eq!(list.get_position(m1), Some(10));
@@ -498,7 +507,7 @@ mod tests {
     #[test]
     fn test_insert_after_marker() {
         let mut list = MarkerList::new();
-        list.entries[0] = MarkerEntry::Gap(20);
+        list.set_buffer_size(20);
 
         let m1 = list.create(10, true);
         assert_eq!(list.get_position(m1), Some(10));
@@ -515,7 +524,7 @@ mod tests {
     #[test]
     fn test_insert_at_marker_left_affinity() {
         let mut list = MarkerList::new();
-        list.entries[0] = MarkerEntry::Gap(20);
+        list.set_buffer_size(20);
 
         // Left affinity: marker stays before inserted text
         let m1 = list.create(10, true);
@@ -532,7 +541,7 @@ mod tests {
     #[test]
     fn test_insert_at_marker_right_affinity() {
         let mut list = MarkerList::new();
-        list.entries[0] = MarkerEntry::Gap(20);
+        list.set_buffer_size(20);
 
         // Right affinity: marker moves after inserted text
         let m1 = list.create(10, false);
@@ -549,7 +558,7 @@ mod tests {
     #[test]
     fn test_delete_before_marker() {
         let mut list = MarkerList::new();
-        list.entries[0] = MarkerEntry::Gap(20);
+        list.set_buffer_size(20);
 
         let m1 = list.create(15, true);
         assert_eq!(list.get_position(m1), Some(15));
@@ -566,7 +575,7 @@ mod tests {
     #[test]
     fn test_delete_after_marker() {
         let mut list = MarkerList::new();
-        list.entries[0] = MarkerEntry::Gap(20);
+        list.set_buffer_size(20);
 
         let m1 = list.create(10, true);
         assert_eq!(list.get_position(m1), Some(10));
@@ -583,7 +592,7 @@ mod tests {
     #[test]
     fn test_delete_marker() {
         let mut list = MarkerList::new();
-        list.entries[0] = MarkerEntry::Gap(20);
+        list.set_buffer_size(20);
 
         let m1 = list.create(10, true);
 
@@ -599,7 +608,7 @@ mod tests {
     #[test]
     fn test_delete_multiple_markers() {
         let mut list = MarkerList::new();
-        list.entries[0] = MarkerEntry::Gap(30);
+        list.set_buffer_size(30);
 
         let m1 = list.create(10, true);
         let m2 = list.create(15, true);
@@ -619,7 +628,7 @@ mod tests {
     #[test]
     fn test_complex_scenario() {
         let mut list = MarkerList::new();
-        list.entries[0] = MarkerEntry::Gap(100);
+        list.set_buffer_size(100);
 
         // Create markers at 10, 20, 30
         let m1 = list.create(10, true);
@@ -645,7 +654,7 @@ mod tests {
     #[test]
     fn test_marker_deletion_with_delete_method() {
         let mut list = MarkerList::new();
-        list.entries[0] = MarkerEntry::Gap(20);
+        list.set_buffer_size(20);
 
         let m1 = list.create(10, true);
         let m2 = list.create(15, false);
@@ -693,7 +702,7 @@ mod tests {
                 ops in prop::collection::vec(arb_edit_op(1000), 1..20)
             ) {
                 let mut list = MarkerList::new();
-                list.entries[0] = MarkerEntry::Gap(buffer_size);
+                list.set_buffer_size(buffer_size);
 
                 // Create some markers
                 let markers: Vec<_> = (0..5)
@@ -735,7 +744,7 @@ mod tests {
                 ops in prop::collection::vec(arb_edit_op(500), 1..10)
             ) {
                 let mut list = MarkerList::new();
-                list.entries[0] = MarkerEntry::Gap(buffer_size);
+                list.set_buffer_size(buffer_size);
 
                 // Create markers in order
                 let markers: Vec<_> = (0..5)
@@ -778,7 +787,7 @@ mod tests {
                 ops in prop::collection::vec(arb_edit_op(500), 1..15)
             ) {
                 let mut list = MarkerList::new();
-                list.entries[0] = MarkerEntry::Gap(buffer_size);
+                list.set_buffer_size(buffer_size);
 
                 let mut expected_size = buffer_size;
 
@@ -811,7 +820,7 @@ mod tests {
                 ops in prop::collection::vec(arb_edit_op(300), 1..10)
             ) {
                 let mut list = MarkerList::new();
-                list.entries[0] = MarkerEntry::Gap(buffer_size);
+                list.set_buffer_size(buffer_size);
 
                 // Create some markers
                 for i in 0..3 {
