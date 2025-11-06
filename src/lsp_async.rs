@@ -124,6 +124,15 @@ enum LspCommand {
         character: u32,
     },
 
+    /// Request rename
+    Rename {
+        request_id: u64,
+        uri: Url,
+        line: u32,
+        character: u32,
+        new_name: String,
+    },
+
     /// Shutdown the server
     Shutdown,
 }
@@ -449,6 +458,64 @@ impl LspState {
         }
     }
 
+    /// Handle rename request
+    async fn handle_rename(
+        &mut self,
+        request_id: u64,
+        uri: Url,
+        line: u32,
+        character: u32,
+        new_name: String,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{Position, RenameParams, TextDocumentIdentifier, TextDocumentPositionParams, WorkDoneProgressParams};
+
+        tracing::debug!("LSP: rename request at {}:{}:{} to '{}'", uri, line, character, new_name);
+
+        let params = RenameParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line, character },
+            },
+            new_name,
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+
+        // Send request and get response
+        match self.send_request_sequential::<_, Value>("textDocument/rename", Some(params), pending).await {
+            Ok(result) => {
+                // Parse the workspace edit response
+                match serde_json::from_value::<lsp_types::WorkspaceEdit>(result) {
+                    Ok(workspace_edit) => {
+                        // Send to main loop
+                        let _ = self.async_tx.send(AsyncMessage::LspRename {
+                            request_id,
+                            result: Ok(workspace_edit),
+                        });
+                        Ok(())
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to parse rename response: {}", e);
+                        let _ = self.async_tx.send(AsyncMessage::LspRename {
+                            request_id,
+                            result: Err(format!("Failed to parse rename response: {}", e)),
+                        });
+                        Err(format!("Failed to parse rename response: {}", e))
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Rename request failed: {}", e);
+                // Send error to main loop
+                let _ = self.async_tx.send(AsyncMessage::LspRename {
+                    request_id,
+                    result: Err(e.clone()),
+                });
+                Err(e)
+            }
+        }
+    }
+
     /// Handle shutdown command
     async fn handle_shutdown(&mut self) -> Result<(), String> {
         tracing::info!("Shutting down async LSP server");
@@ -691,6 +758,18 @@ impl LspTask {
                                 let _ = state.async_tx.send(AsyncMessage::LspGotoDefinition {
                                     request_id,
                                     locations: vec![],
+                                });
+                            }
+                        }
+                        LspCommand::Rename { request_id, uri, line, character, new_name } => {
+                            if state.initialized {
+                                tracing::info!("Processing Rename request for {}", uri);
+                                let _ = state.handle_rename(request_id, uri, line, character, new_name, &pending).await;
+                            } else {
+                                tracing::debug!("LSP not initialized, cannot rename");
+                                let _ = state.async_tx.send(AsyncMessage::LspRename {
+                                    request_id,
+                                    result: Err("LSP not initialized".to_string()),
                                 });
                             }
                         }
@@ -1342,6 +1421,19 @@ impl LspHandle {
                 character,
             })
             .map_err(|_| "Failed to send goto_definition command".to_string())
+    }
+
+    /// Request rename
+    pub fn rename(&self, request_id: u64, uri: Url, line: u32, character: u32, new_name: String) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::Rename {
+                request_id,
+                uri,
+                line,
+                character,
+                new_name,
+            })
+            .map_err(|_| "Failed to send rename command".to_string())
     }
 
     /// Shutdown the server

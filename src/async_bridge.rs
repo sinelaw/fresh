@@ -54,6 +54,12 @@ pub enum AsyncMessage {
         locations: Vec<Location>,
     },
 
+    /// LSP rename response
+    LspRename {
+        request_id: u64,
+        result: Result<lsp_types::WorkspaceEdit, String>,
+    },
+
     /// File changed externally (future: file watching)
     FileChanged { path: String },
 
