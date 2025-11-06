@@ -24,3 +24,9 @@
 
 *File selected in explorer*
 
+## Step 4: dir_expanded
+
+![dir_expanded](../screenshots/File_Explorer_04_dir_expanded.svg)
+
+*Directory expanded to show contents*
+

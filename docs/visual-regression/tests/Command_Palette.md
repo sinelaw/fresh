@@ -18,3 +18,9 @@
 
 *Command palette opened*
 
+## Step 3: filtered
+
+![filtered](../screenshots/Command_Palette_03_filtered.svg)
+
+*Commands filtered by search term*
+
