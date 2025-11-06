@@ -2662,22 +2662,77 @@ impl Editor {
             }
 
             let buffer_len = state.buffer.len();
+            let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
+            let viewport_height = state.viewport.height as usize;
 
-            // Calculate how much to scroll based on the row offset
-            // Each pixel of movement corresponds to (buffer_len / scrollbar_height) bytes
-            let bytes_per_pixel = buffer_len as f64 / scrollbar_height as f64;
-            let byte_offset = (row_offset as f64 * bytes_per_pixel) as i64;
+            // For small files, use precise line-based calculations
+            // For large files, fall back to byte-based estimation
+            let new_top_byte = if buffer_len <= large_file_threshold {
+                // Small file: use line-based calculation for precision
+                // Count total lines
+                let total_lines = if buffer_len > 0 {
+                    state.buffer.get_line_number(buffer_len.saturating_sub(1)) + 1
+                } else {
+                    1
+                };
 
-            // Calculate new top_byte relative to drag start
-            let new_top_byte = if byte_offset >= 0 {
-                drag_start_top_byte.saturating_add(byte_offset as usize)
+                // Calculate max scroll line
+                let max_scroll_line = total_lines.saturating_sub(viewport_height);
+
+                if max_scroll_line == 0 {
+                    // File fits in viewport, no scrolling
+                    0
+                } else {
+                    // Calculate which line the mouse position corresponds to using linear interpolation
+                    // Convert absolute mouse row to relative position within scrollbar
+                    let relative_mouse_row = row.saturating_sub(scrollbar_rect.y) as usize;
+                    // Divide by (height - 1) to map first row to 0.0 and last row to 1.0
+                    let scroll_ratio = if scrollbar_height > 1 {
+                        (relative_mouse_row as f64 / (scrollbar_height - 1) as f64).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+
+                    // Map scroll ratio to target line
+                    let target_line = (scroll_ratio * max_scroll_line as f64).round() as usize;
+                    let target_line = target_line.min(max_scroll_line);
+
+                    // Find byte position of target line
+                    // We need to iterate 'target_line' times to skip past lines 0..target_line-1,
+                    // then one more time to get the position of line 'target_line'
+                    let mut iter = state.buffer.line_iterator(0);
+                    let mut line_byte = 0;
+
+                    for _ in 0..target_line {
+                        if let Some((pos, _content)) = iter.next() {
+                            line_byte = pos;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Get the position of the target line
+                    if let Some((pos, _)) = iter.next() {
+                        pos
+                    } else {
+                        line_byte  // Reached end of buffer
+                    }
+                }
             } else {
-                drag_start_top_byte.saturating_sub((-byte_offset) as usize)
-            };
+                // Large file: use byte-based estimation (original logic)
+                let bytes_per_pixel = buffer_len as f64 / scrollbar_height as f64;
+                let byte_offset = (row_offset as f64 * bytes_per_pixel) as i64;
 
-            // Clamp to valid range with scroll limiting
-            let max_top_byte = Self::calculate_max_scroll_position(&state.buffer, state.viewport.visible_line_count());
-            let new_top_byte = new_top_byte.min(max_top_byte);
+                let new_top_byte = if byte_offset >= 0 {
+                    drag_start_top_byte.saturating_add(byte_offset as usize)
+                } else {
+                    drag_start_top_byte.saturating_sub((-byte_offset) as usize)
+                };
+
+                // Clamp to valid range
+                let max_top_byte = Self::calculate_max_scroll_position(&state.buffer, viewport_height);
+                new_top_byte.min(max_top_byte)
+            };
 
             // Find the line start for this byte position
             let iter = state.buffer.line_iterator(new_top_byte);
@@ -2705,23 +2760,74 @@ impl Editor {
         }
 
         // Get relative position in scrollbar (0.0 to 1.0)
+        // Divide by (height - 1) to map first row to 0.0 and last row to 1.0
         let relative_row = row.saturating_sub(scrollbar_rect.y);
-        let ratio = (relative_row as f64) / (scrollbar_height as f64);
-        let ratio = ratio.clamp(0.0, 1.0);
+        let ratio = if scrollbar_height > 1 {
+            ((relative_row as f64) / ((scrollbar_height - 1) as f64)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
 
         // Get the buffer state
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let buffer_len = state.buffer.len();
-            // Calculate target byte position
-            let target_byte = (buffer_len as f64 * ratio) as usize;
-            let target_byte = target_byte.min(buffer_len.saturating_sub(1));
+            let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
+            let viewport_height = state.viewport.height as usize;
+
+            // For small files, use precise line-based calculations
+            // For large files, fall back to byte-based estimation
+            let target_byte = if buffer_len <= large_file_threshold {
+                // Small file: use line-based calculation for precision
+                let total_lines = if buffer_len > 0 {
+                    state.buffer.get_line_number(buffer_len.saturating_sub(1)) + 1
+                } else {
+                    1
+                };
+
+                let max_scroll_line = total_lines.saturating_sub(viewport_height);
+
+                if max_scroll_line == 0 {
+                    // File fits in viewport, no scrolling
+                    0
+                } else {
+                    // Map ratio to target line
+                    let target_line = (ratio * max_scroll_line as f64).round() as usize;
+                    let target_line = target_line.min(max_scroll_line);
+
+                    // Find byte position of target line
+                    // We need to iterate 'target_line' times to skip past lines 0..target_line-1,
+                    // then one more time to get the position of line 'target_line'
+                    let mut iter = state.buffer.line_iterator(0);
+                    let mut line_byte = 0;
+
+                    for _ in 0..target_line {
+                        if let Some((pos, _content)) = iter.next() {
+                            line_byte = pos;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Get the position of the target line
+                    if let Some((pos, _)) = iter.next() {
+                        pos
+                    } else {
+                        line_byte  // Reached end of buffer
+                    }
+                }
+            } else {
+                // Large file: use byte-based estimation (original logic)
+                let target_byte = (buffer_len as f64 * ratio) as usize;
+                target_byte.min(buffer_len.saturating_sub(1))
+            };
 
             // Find the line start for this byte position
             let iter = state.buffer.line_iterator(target_byte);
             let line_start = iter.current_position();
 
             // Apply scroll limiting
-            let max_top_byte = Self::calculate_max_scroll_position(&state.buffer, state.viewport.visible_line_count());
+            // Use viewport.height (constant allocated rows) not visible_line_count (varies with content)
+            let max_top_byte = Self::calculate_max_scroll_position(&state.buffer, viewport_height);
             let limited_line_start = line_start.min(max_top_byte);
 
             // Set viewport top to this position
