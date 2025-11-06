@@ -851,6 +851,11 @@ impl KeybindingResolver {
             (KeyCode::Char('b'), KeyModifiers::CONTROL),
             Action::FocusEditor,
         );
+        // Command palette also available in file explorer
+        explorer_bindings.insert(
+            (KeyCode::Char('p'), KeyModifiers::CONTROL),
+            Action::CommandPalette,
+        );
         all_bindings.insert(KeyContext::FileExplorer, explorer_bindings);
 
         // Rename context bindings

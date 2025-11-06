@@ -464,6 +464,51 @@ fn test_command_palette_file_explorer_toggles() {
     harness.assert_screen_contains("Toggle Gitignored Files");
 }
 
+/// Test that command palette can be invoked from file explorer
+#[test]
+fn test_command_palette_from_file_explorer() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open file explorer
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Verify file explorer is open by checking for the UI element
+    harness.assert_screen_contains("File Explorer");
+
+    // Now trigger the command palette from file explorer with Ctrl+P
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should show the command palette
+    harness.assert_screen_contains("Command:");
+
+    // Should show commands
+    harness.assert_screen_contains("Open File");
+
+    // Should be able to execute a command
+    harness.type_text("toggle hidden").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Command should execute successfully (Toggle Hidden Files)
+    // We should see a status message about the toggle
+    let screen = harness.screen_to_string();
+    println!("Screen after toggle hidden: {}", screen);
+
+    // The command should have executed (not showing error about unavailable)
+    harness.assert_screen_not_contains("not available");
+}
+
 /// Test that Up arrow stops at the beginning of the list instead of wrapping
 #[test]
 fn test_command_palette_up_no_wraparound() {
