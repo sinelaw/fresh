@@ -18,11 +18,10 @@ fn test_scrollbar_renders() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Type enough content to make the buffer scrollable
-    for i in 1..=50 {
-        harness
-            .type_text(&format!("Line {} with some content\n", i))
-            .unwrap();
-    }
+    let content: String = (1..=50)
+        .map(|i| format!("Line {} with some content\n", i))
+        .collect();
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
     harness.render().unwrap();
 
@@ -88,11 +87,10 @@ fn test_scrollbar_click_jump() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a long document
-    for i in 1..=100 {
-        harness
-            .type_text(&format!("Line {} content here\n", i))
-            .unwrap();
-    }
+    let content: String = (1..=100)
+        .map(|i| format!("Line {} content here\n", i))
+        .collect();
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
     // Scroll to top using multiple PageUp presses
     // Use send_key_repeat to avoid rendering after each key press (much faster)
@@ -132,11 +130,10 @@ fn test_scrollbar_drag() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a long document
-    for i in 1..=100 {
-        harness
-            .type_text(&format!("Line {} with text\n", i))
-            .unwrap();
-    }
+    let content: String = (1..=100)
+        .map(|i| format!("Line {} with text\n", i))
+        .collect();
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
     // Scroll to top using multiple PageUp presses
     // Use send_key_repeat to avoid rendering after each key press (much faster)
@@ -434,12 +431,13 @@ fn test_scrollbar_drag_to_top() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a long document
-    for i in 1..=100 {
-        harness
-            .type_text(&format!("Line {}\n", i))
-            .unwrap();
-    }
+    let content: String = (1..=100)
+        .map(|i| format!("Line {}\n", i))
+        .collect();
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
+    // Move cursor to end to scroll down (loading from file starts at beginning)
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
     harness.render().unwrap();
 
     // Cursor is at bottom, so we're scrolled down
@@ -537,11 +535,10 @@ fn test_scrollbar_drag_to_absolute_bottom() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a document with 100 lines
-    for i in 1..=100 {
-        harness
-            .type_text(&format!("Line {} content\n", i))
-            .unwrap();
-    }
+    let content: String = (1..=100)
+        .map(|i| format!("Line {} content\n", i))
+        .collect();
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
     // Scroll to top
     // Use send_key_repeat to avoid rendering after each key press (much faster)

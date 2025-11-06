@@ -117,6 +117,15 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// Load text content into the editor by creating a temporary file and opening it
+    /// This is much faster than type_text() for large amounts of text in tests
+    /// Returns a TestFixture that must be kept alive for the duration of the test
+    pub fn load_buffer_from_text(&mut self, content: &str) -> io::Result<crate::common::fixtures::TestFixture> {
+        let fixture = crate::common::fixtures::TestFixture::new("test_buffer.txt", content)?;
+        self.open_file(&fixture.path)?;
+        Ok(fixture)
+    }
+
     /// Create a new empty buffer
     pub fn new_buffer(&mut self) -> io::Result<()> {
         self.editor.new_buffer();
