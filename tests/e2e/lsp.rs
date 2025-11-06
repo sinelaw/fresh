@@ -1242,6 +1242,18 @@ fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
 fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     use std::io::Write;
     use std::process::Command;
+    use tracing_subscriber::{fmt, EnvFilter};
+
+    // Initialize tracing for this test (will use RUST_LOG if set, otherwise INFO)
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info"))
+        )
+        .with_test_writer()
+        .try_init();
+
+    tracing::info!("=== Starting rust-analyzer rename test ===");
 
     // Check if rust-analyzer is installed
     let rust_analyzer_check = Command::new("which").arg("rust-analyzer").output();
@@ -1250,6 +1262,7 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
         return Ok(());
     }
 
+    tracing::info!("rust-analyzer found in PATH");
     eprintln!("rust-analyzer found, running REAL SCENARIO test...");
 
     // Create minimal Cargo project (rust-analyzer needs Cargo.toml)
@@ -1277,12 +1290,13 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     writeln!(file, "}}")?;
     drop(file);
 
+    tracing::info!("Created minimal Cargo project at: {:?}", temp_dir.path());
     eprintln!("Created minimal Cargo project at: {:?}", temp_dir.path());
 
     // Create temp file for rust-analyzer logs
     let ra_log_file = temp_dir.path().join("rust-analyzer.log");
+    tracing::info!("rust-analyzer will log to: {:?}", ra_log_file);
     eprintln!("rust-analyzer will log to: {:?}", ra_log_file);
-    tracing::info!("rust-analyzer log file: {:?}", ra_log_file);
 
     // Create custom config with rust-analyzer logging enabled
     let mut config = editor::config::Config::default();
@@ -1299,26 +1313,39 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     let mut harness = EditorTestHarness::with_config(80, 30, config)?;
 
     // Open the Rust file - this should trigger LSP initialization
+    tracing::info!("Opening file: {:?}", test_file);
     harness.open_file(&test_file)?;
     harness.render()?;
 
+    tracing::info!("File opened, waiting for rust-analyzer to initialize...");
     eprintln!("File opened, waiting for rust-analyzer to initialize...");
 
     // Wait INDEFINITELY for LSP to initialize (no timeout as user requested)
+    let mut wait_count = 0;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(500));
         harness.editor_mut().process_async_messages();
         harness.render()?;
+        wait_count += 1;
 
         let screen = harness.screen_to_string();
         if screen.contains("LSP (rust) ready") {
+            tracing::info!("✓ rust-analyzer initialized after {} iterations ({} seconds)", wait_count, wait_count / 2);
             eprintln!("✓ rust-analyzer initialized and ready!");
             break;
         }
 
-        // Print status periodically
-        if screen.contains("LSP") {
-            eprintln!("  Waiting... Status: {}", screen.lines().last().unwrap_or(""));
+        // Print status periodically (every 10 iterations = 5 seconds)
+        if wait_count % 10 == 0 {
+            let status = screen.lines().last().unwrap_or("");
+            tracing::info!("Still waiting for rust-analyzer... ({}s) Status: {}", wait_count / 2, status);
+            eprintln!("  Waiting... ({}s) Status: {}", wait_count / 2, status);
+        }
+
+        // Safety: after 2 minutes, give up
+        if wait_count > 240 {
+            tracing::error!("Timeout waiting for rust-analyzer after 2 minutes!");
+            panic!("rust-analyzer did not initialize after 2 minutes");
         }
     }
 

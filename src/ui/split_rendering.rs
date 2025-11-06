@@ -492,7 +492,7 @@ impl SplitRenderer {
                     // Don't apply REVERSED to primary cursor to preserve terminal cursor visibility
                     let is_secondary_cursor = is_cursor && byte_pos != primary_cursor_position;
                     if is_secondary_cursor && is_active {
-                        tracing::debug!(
+                        tracing::trace!(
                             "Applying REVERSED modifier to secondary cursor at byte_pos={}, char={:?}",
                             byte_pos,
                             ch
@@ -552,7 +552,7 @@ impl SplitRenderer {
                 let line_end_pos = line_start + char_index;
                 let cursor_at_end = cursor_positions.iter().any(|&pos| pos == line_end_pos);
 
-                tracing::debug!(
+                tracing::trace!(
                     "End-of-line check: line_start={}, char_index={}, line_end_pos={}, cursor_at_end={}, is_active={}",
                     line_start,
                     char_index,
