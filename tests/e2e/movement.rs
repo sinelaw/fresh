@@ -239,7 +239,7 @@ fn test_basic_editing_operations() {
 #[test]
 fn test_rapid_typing_middle_of_line_cursor_sync() {
     use crossterm::event::{KeyCode, KeyModifiers};
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = EditorTestHarness::new_no_wrap(80, 24).unwrap();
 
     // Set up initial text: "Hello World"
     harness.type_text("Hello World").unwrap();

@@ -41,7 +41,7 @@ fn test_file_content_rendering() {
 /// Test that screen cursor position matches actual cursor position
 #[test]
 fn test_screen_cursor_position() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = EditorTestHarness::new_no_wrap(80, 24).unwrap();
 
     // Type "abc" on first line
     harness.type_text("abc").unwrap();
@@ -79,7 +79,7 @@ fn test_screen_cursor_position() {
 /// Test cursor position as we type more characters
 #[test]
 fn test_cursor_x_position_advances() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = EditorTestHarness::new_no_wrap(80, 24).unwrap();
 
     // Start with empty buffer
     harness.render().unwrap();

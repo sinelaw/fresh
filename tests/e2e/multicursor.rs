@@ -516,7 +516,7 @@ fn test_multi_cursor_status_bar_indicator() {
 fn test_all_cursors_visible_in_viewport() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::style::Modifier;
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = EditorTestHarness::new_no_wrap(80, 24).unwrap();
 
     // Create three lines
     harness.type_text("Line 1\nLine 2\nLine 3").unwrap();
@@ -628,7 +628,7 @@ fn test_multi_cursor_comprehensive_abc_editing() {
 #[test]
 fn test_single_cursor_visible() {
     use crossterm::event::{KeyCode, KeyModifiers};
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = EditorTestHarness::new_no_wrap(80, 24).unwrap();
 
     // Create multiple lines with various content
     harness

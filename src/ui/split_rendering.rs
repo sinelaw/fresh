@@ -676,7 +676,8 @@ impl SplitRenderer {
                     } else {
                         col_in_segment as u16
                     };
-                    cursor_screen_y = (lines_rendered + segment_idx) as u16;
+                    // lines_rendered is 1-indexed (incremented before processing), but cursor position needs to be 0-indexed
+                    cursor_screen_y = (lines_rendered - 1 + segment_idx) as u16;
                     cursor_found = true;
                 }
 
@@ -701,9 +702,14 @@ impl SplitRenderer {
                         segment.text.clone()
                     };
 
-                    // For now, use simple unstyled text
-                    // TODO: Properly preserve styles from original content_spans
-                    segment_spans.push(Span::raw(segment_text));
+                    // Apply styles to segment (preserving syntax highlighting, selection, overlays, etc.)
+                    let styled_spans = Self::apply_styles_to_segment(
+                        &segment_text,
+                        content_spans,
+                        segment.start_char_offset,
+                        if !line_wrap { left_col } else { 0 },
+                    );
+                    segment_spans.extend(styled_spans);
 
                     lines.push(Line::from(segment_spans));
                     lines_rendered += 1;
