@@ -32,6 +32,21 @@ use std::sync::{Arc, RwLock};
 // Re-export BufferId from event module for backward compatibility
 pub use crate::event::BufferId;
 
+/// Rename state for inline renaming
+#[derive(Debug, Clone)]
+struct RenameState {
+    /// The current text being edited
+    current_text: String,
+    /// The original symbol text (before editing)
+    original_text: String,
+    /// Start position of the symbol in the buffer
+    start_pos: usize,
+    /// End position of the symbol in the buffer
+    end_pos: usize,
+    /// Overlay ID for visual indication
+    overlay_id: String,
+}
+
 /// Metadata associated with a buffer
 #[derive(Debug, Clone)]
 pub struct BufferMetadata {
@@ -175,6 +190,9 @@ pub struct Editor {
 
     /// Pending LSP go-to-definition request ID (if any)
     pending_goto_definition_request: Option<u64>,
+
+    /// Rename state (if rename is active)
+    rename_state: Option<RenameState>,
 
     /// LSP status indicator for status bar
     lsp_status: String,
@@ -347,6 +365,7 @@ impl Editor {
             next_lsp_request_id: 0,
             pending_completion_request: None,
             pending_goto_definition_request: None,
+            rename_state: None,
             lsp_status: String::new(),
             mouse_state: MouseState::default(),
             cached_layout: CachedLayout::default(),
@@ -1607,6 +1626,11 @@ impl Editor {
                         tracing::error!("Error handling goto definition response: {}", e);
                     }
                 }
+                AsyncMessage::LspRename { request_id, result } => {
+                    if let Err(e) = self.handle_rename_response(request_id, result) {
+                        tracing::error!("Error handling rename response: {}", e);
+                    }
+                }
                 AsyncMessage::FileChanged { path } => {
                     tracing::info!("File changed externally: {}", path);
                     // TODO: Handle external file changes
@@ -2045,6 +2069,94 @@ impl Editor {
         Ok(())
     }
 
+    /// Handle rename response from LSP
+    fn handle_rename_response(&mut self, _request_id: u64, result: Result<lsp_types::WorkspaceEdit, String>) -> io::Result<()> {
+        self.lsp_status.clear();
+
+        match result {
+            Ok(workspace_edit) => {
+                // Apply the workspace edit
+                let mut total_changes = 0;
+
+                // Handle changes (map of URI -> Vec<TextEdit>)
+                if let Some(changes) = workspace_edit.changes {
+                    for (uri, edits) in changes {
+                        if let Ok(path) = uri.to_file_path() {
+                            // Open the file if not already open
+                            let buffer_id = self.open_file(&path)?;
+
+                            // Sort edits by position (reverse order to avoid offset issues)
+                            let mut sorted_edits = edits;
+                            sorted_edits.sort_by(|a, b| {
+                                b.range.start.line.cmp(&a.range.start.line)
+                                    .then(b.range.start.character.cmp(&a.range.start.character))
+                            });
+
+                            // Apply edits
+                            for edit in sorted_edits {
+                                let state = self.buffers.get(&buffer_id).ok_or_else(|| {
+                                    io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
+                                })?;
+
+                                // Convert LSP range to byte positions
+                                let start_line = edit.range.start.line as usize;
+                                let start_char = edit.range.start.character as usize;
+                                let end_line = edit.range.end.line as usize;
+                                let end_char = edit.range.end.character as usize;
+
+                                let start_pos = state.buffer.line_col_to_position(start_line, start_char);
+                                let end_pos = state.buffer.line_col_to_position(end_line, end_char);
+
+                                // Delete old text
+                                if start_pos < end_pos {
+                                    let deleted_text = state.buffer.slice(start_pos..end_pos).to_string();
+                                    let cursor_id = state.cursors.primary_id();
+                                    let delete_event = Event::Delete {
+                                        range: start_pos..end_pos,
+                                        deleted_text,
+                                        cursor_id,
+                                    };
+
+                                    let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
+                                        io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
+                                    })?;
+                                    state.apply(&delete_event);
+                                }
+
+                                // Insert new text
+                                if !edit.new_text.is_empty() {
+                                    let state = self.buffers.get(&buffer_id).ok_or_else(|| {
+                                        io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
+                                    })?;
+                                    let cursor_id = state.cursors.primary_id();
+                                    let insert_event = Event::Insert {
+                                        position: start_pos,
+                                        text: edit.new_text.clone(),
+                                        cursor_id,
+                                    };
+
+                                    let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
+                                        io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
+                                    })?;
+                                    state.apply(&insert_event);
+                                }
+
+                                total_changes += 1;
+                            }
+                        }
+                    }
+                }
+
+                self.status_message = Some(format!("Renamed successfully ({} changes)", total_changes));
+            }
+            Err(error) => {
+                self.status_message = Some(format!("Rename failed: {}", error));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Request git grep results for a query
     fn request_git_grep(&mut self, query: String) {
         if let (Some(bridge), Some(runtime)) = (&self.async_bridge, &self.tokio_runtime) {
@@ -2071,17 +2183,152 @@ impl Editor {
         }
     }
 
+    /// Start rename mode - select the symbol at cursor and allow inline editing
+    fn start_rename(&mut self) -> io::Result<()> {
+        use crate::word_navigation::{find_word_start, find_word_end};
+
+        // Get the current buffer and cursor position
+        let state = self.active_state();
+        let cursor_pos = state.cursors.primary().position;
+
+        // Find the word boundaries
+        let word_start = find_word_start(&state.buffer, cursor_pos);
+        let word_end = find_word_end(&state.buffer, cursor_pos);
+
+        // Check if we're on a word
+        if word_start >= word_end {
+            self.status_message = Some("No symbol at cursor".to_string());
+            return Ok(());
+        }
+
+        // Get the word text
+        let word_text = state.buffer.slice(word_start..word_end).to_string();
+
+        // Create an overlay to highlight the symbol being renamed
+        let overlay_id = format!("rename_overlay_{}", self.next_lsp_request_id);
+        let event = crate::event::Event::AddOverlay {
+            overlay_id: overlay_id.clone(),
+            range: word_start..word_end,
+            face: crate::event::OverlayFace::Background {
+                color: (50, 100, 200), // Blue background for rename
+            },
+            priority: 100,
+            message: Some("Renaming".to_string()),
+        };
+
+        // Apply the overlay
+        if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+            state.apply(&event);
+        }
+
+        // Enter rename mode
+        self.rename_state = Some(RenameState {
+            current_text: word_text.clone(),
+            original_text: word_text,
+            start_pos: word_start,
+            end_pos: word_end,
+            overlay_id,
+        });
+
+        self.status_message = Some("Rename mode (Enter to confirm, Esc to cancel)".to_string());
+        Ok(())
+    }
+
+    /// Cancel rename mode
+    fn cancel_rename(&mut self) {
+        if let Some(rename_state) = self.rename_state.take() {
+            // Remove the overlay
+            let event = crate::event::Event::RemoveOverlay {
+                overlay_id: rename_state.overlay_id,
+            };
+            if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+                state.apply(&event);
+            }
+
+            self.status_message = Some("Rename cancelled".to_string());
+        }
+    }
+
+    /// Confirm rename - send request to LSP
+    fn confirm_rename(&mut self) -> io::Result<()> {
+        if let Some(rename_state) = self.rename_state.take() {
+            // Remove the overlay first
+            let event = crate::event::Event::RemoveOverlay {
+                overlay_id: rename_state.overlay_id.clone(),
+            };
+            if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+                state.apply(&event);
+            }
+
+            // Check if the name actually changed
+            if rename_state.current_text == rename_state.original_text {
+                self.status_message = Some("Name unchanged".to_string());
+                return Ok(());
+            }
+
+            // Get the cursor position (should be at the symbol)
+            let state = self.active_state();
+            let cursor_pos = state.cursors.primary().position;
+
+            // Convert byte position to line/column
+            let (line, character) = state.buffer.position_to_line_col(cursor_pos);
+
+            // Get the current file URI and path
+            let metadata = self.buffer_metadata.get(&self.active_buffer);
+            let (uri, file_path) = if let Some(meta) = metadata {
+                (meta.file_uri.as_ref(), meta.file_path.as_ref())
+            } else {
+                (None, None)
+            };
+
+            if let (Some(uri), Some(path)) = (uri, file_path) {
+                // Detect language from file extension
+                if let Some(language) = crate::lsp_manager::detect_language(path) {
+                    // Get LSP handle
+                    if let Some(lsp) = self.lsp.as_mut() {
+                        if let Some(handle) = lsp.get_or_spawn(&language) {
+                            let request_id = self.next_lsp_request_id;
+                            self.next_lsp_request_id += 1;
+                            self.lsp_status = "LSP: rename...".to_string();
+
+                            let _ = handle.rename(
+                                request_id,
+                                uri.clone(),
+                                line as u32,
+                                character as u32,
+                                rename_state.current_text.clone(),
+                            );
+                            tracing::info!(
+                                "Requested rename at {}:{}:{} to '{}'",
+                                uri,
+                                line,
+                                character,
+                                rename_state.current_text
+                            );
+                        }
+                    }
+                }
+            } else {
+                self.status_message = Some("Cannot rename in unsaved buffer".to_string());
+            }
+        }
+
+        Ok(())
+    }
+
     /// Determine the current keybinding context based on UI state
     fn get_key_context(&self) -> crate::keybindings::KeyContext {
         use crate::keybindings::KeyContext;
 
-        // Priority order: Help > Prompt > Popup > Current context (FileExplorer or Normal)
+        // Priority order: Help > Prompt > Popup > Rename > Current context (FileExplorer or Normal)
         if self.help_renderer.is_visible() {
             KeyContext::Help
         } else if self.is_prompting() {
             KeyContext::Prompt
         } else if self.active_state().popups.is_visible() {
             KeyContext::Popup
+        } else if self.rename_state.is_some() {
+            KeyContext::Rename
         } else {
             // Use the current context (can be FileExplorer or Normal)
             self.key_context
@@ -2510,6 +2757,15 @@ impl Editor {
             Action::LspGotoDefinition => {
                 self.request_goto_definition()?;
             }
+            Action::LspRename => {
+                self.start_rename()?;
+            }
+            Action::RenameConfirm => {
+                self.confirm_rename()?;
+            }
+            Action::RenameCancel => {
+                self.cancel_rename();
+            }
             Action::GitGrep => {
                 // Start git grep prompt with empty suggestions (will be populated as user types)
                 self.start_prompt_with_suggestions(
@@ -2575,6 +2831,87 @@ impl Editor {
                 }
             }
             Action::None => {}
+            Action::DeleteBackward => {
+                // Handle backspace in rename mode
+                if let Some(rename_state) = &mut self.rename_state {
+                    if !rename_state.current_text.is_empty() {
+                        rename_state.current_text.pop();
+
+                        // Extract needed values before borrowing self
+                        let start_pos = rename_state.start_pos;
+                        let end_pos = rename_state.end_pos;
+                        let new_text = rename_state.current_text.clone();
+                        let overlay_id = rename_state.overlay_id.clone();
+                        let new_len = new_text.len();
+
+                        // Get cursor ID and deleted text (drop mutable borrow)
+                        drop(rename_state);
+                        let cursor_id = self.active_state().cursors.primary_id();
+                        let deleted_text = self.active_state().buffer.slice(start_pos..end_pos).to_string();
+
+                        // Delete the old text
+                        let delete_event = Event::Delete {
+                            range: start_pos..end_pos,
+                            deleted_text,
+                            cursor_id,
+                        };
+                        self.active_state_mut().apply(&delete_event);
+
+                        // Insert the new text (if not empty)
+                        if !new_text.is_empty() {
+                            let insert_event = Event::Insert {
+                                position: start_pos,
+                                text: new_text.clone(),
+                                cursor_id,
+                            };
+                            self.active_state_mut().apply(&insert_event);
+                        }
+
+                        // Update the end position
+                        if let Some(rename_state) = &mut self.rename_state {
+                            rename_state.end_pos = start_pos + new_len;
+                        }
+
+                        // Update the overlay
+                        let remove_event = Event::RemoveOverlay { overlay_id: overlay_id.clone() };
+                        self.active_state_mut().apply(&remove_event);
+
+                        if !new_text.is_empty() {
+                            let add_event = Event::AddOverlay {
+                                overlay_id,
+                                range: start_pos..(start_pos + new_len),
+                                face: crate::event::OverlayFace::Background {
+                                    color: (50, 100, 200),
+                                },
+                                priority: 100,
+                                message: Some("Renaming".to_string()),
+                            };
+                            self.active_state_mut().apply(&add_event);
+                        }
+                    }
+                } else {
+                    // Normal backspace handling - fall through to default action handling below
+                    if let Some(events) = self.action_to_events(Action::DeleteBackward) {
+                        if events.len() > 1 {
+                            let batch = Event::Batch {
+                                events: events.clone(),
+                                description: "Delete backward".to_string(),
+                            };
+                            self.active_event_log_mut().append(batch.clone());
+                            self.active_state_mut().apply(&batch);
+                            for event in &events {
+                                self.notify_lsp_change(event);
+                            }
+                        } else {
+                            for event in events {
+                                self.active_event_log_mut().append(event.clone());
+                                self.active_state_mut().apply(&event);
+                                self.notify_lsp_change(&event);
+                            }
+                        }
+                    }
+		}
+	    }
             Action::PluginAction(action_name) => {
                 // Execute the plugin callback
                 if let Some(ref manager) = self.plugin_manager {
@@ -2592,8 +2929,60 @@ impl Editor {
                 }
             }
             Action::InsertChar(c) => {
+                // Handle character insertion in rename mode
+                if let Some(rename_state) = &mut self.rename_state {
+                    // Update the rename text and the buffer inline
+                    rename_state.current_text.push(c);
+
+                    // Extract needed values before borrowing self
+                    let start_pos = rename_state.start_pos;
+                    let end_pos = rename_state.end_pos;
+                    let new_text = rename_state.current_text.clone();
+                    let overlay_id = rename_state.overlay_id.clone();
+                    let new_len = new_text.len();
+
+                    // Drop the mutable borrow before calling self methods
+                    drop(rename_state);
+                    let cursor_id = self.active_state().cursors.primary_id();
+                    let deleted_text = self.active_state().buffer.slice(start_pos..end_pos).to_string();
+
+                    // Delete the old text
+                    let delete_event = Event::Delete {
+                        range: start_pos..end_pos,
+                        deleted_text,
+                        cursor_id,
+                    };
+                    self.active_state_mut().apply(&delete_event);
+
+                    // Insert the new text
+                    let insert_event = Event::Insert {
+                        position: start_pos,
+                        text: new_text,
+                        cursor_id,
+                    };
+                    self.active_state_mut().apply(&insert_event);
+
+                    // Update the end position
+                    if let Some(rename_state) = &mut self.rename_state {
+                        rename_state.end_pos = start_pos + new_len;
+                    }
+
+                    // Update the overlay
+                    let remove_event = Event::RemoveOverlay { overlay_id: overlay_id.clone() };
+                    self.active_state_mut().apply(&remove_event);
+
+                    let add_event = Event::AddOverlay {
+                        overlay_id,
+                        range: start_pos..(start_pos + new_len),
+                        face: crate::event::OverlayFace::Background {
+                            color: (50, 100, 200),
+                        },
+                        priority: 100,
+                        message: Some("Renaming".to_string()),
+                    };
+                    self.active_state_mut().apply(&add_event);
                 // Handle character insertion in prompt mode
-                if self.is_prompting() {
+                } else if self.is_prompting() {
                     if let Some(prompt) = self.prompt_mut() {
                         prompt.input.insert(prompt.cursor_pos, c);
                         prompt.cursor_pos += c.len_utf8();

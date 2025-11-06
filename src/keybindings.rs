@@ -15,9 +15,16 @@ pub enum KeyContext {
     Popup,
     /// File explorer has focus
     FileExplorer,
+    /// Rename mode is active
+    Rename,
 }
 
 impl KeyContext {
+    /// Check if a context should allow input
+    pub fn allows_text_input(&self) -> bool {
+        matches!(self, KeyContext::Normal | KeyContext::Prompt | KeyContext::Rename)
+    }
+
     /// Parse context from a "when" string
     pub fn from_when_clause(when: &str) -> Option<Self> {
         match when.trim() {
@@ -38,6 +45,7 @@ impl KeyContext {
             KeyContext::Prompt => "prompt",
             KeyContext::Popup => "popup",
             KeyContext::FileExplorer => "fileExplorer",
+            KeyContext::Rename => "rename",
         }
     }
 }
@@ -164,6 +172,10 @@ pub enum Action {
     PopupConfirm,
     PopupCancel,
 
+    // Rename mode actions
+    RenameConfirm,
+    RenameCancel,
+
     // File explorer operations
     ToggleFileExplorer,
     FocusFileExplorer,
@@ -184,6 +196,7 @@ pub enum Action {
     // LSP operations
     LspCompletion,
     LspGotoDefinition,
+    LspRename,
 
     // Git operations
     GitGrep,
@@ -310,6 +323,9 @@ impl Action {
             "popup_confirm" => Some(Action::PopupConfirm),
             "popup_cancel" => Some(Action::PopupCancel),
 
+            "rename_confirm" => Some(Action::RenameConfirm),
+            "rename_cancel" => Some(Action::RenameCancel),
+
             "toggle_file_explorer" => Some(Action::ToggleFileExplorer),
             "focus_file_explorer" => Some(Action::FocusFileExplorer),
             "focus_editor" => Some(Action::FocusEditor),
@@ -328,6 +344,7 @@ impl Action {
 
             "lsp_completion" => Some(Action::LspCompletion),
             "lsp_goto_definition" => Some(Action::LspGotoDefinition),
+            "lsp_rename" => Some(Action::LspRename),
 
             "git_grep" => Some(Action::GitGrep),
             "git_find_file" => Some(Action::GitFindFile),
@@ -686,6 +703,12 @@ impl KeybindingResolver {
             Action::FocusFileExplorer,
         );
 
+        // LSP operations (F2 for rename, like VS Code)
+        bindings.insert(
+            (KeyCode::F(2), KeyModifiers::empty()),
+            Action::LspRename,
+        );
+
         all_bindings.insert(KeyContext::Normal, bindings);
 
         // Help context bindings
@@ -736,6 +759,12 @@ impl KeybindingResolver {
         explorer_bindings.insert((KeyCode::Char('b'), KeyModifiers::CONTROL), Action::FocusEditor);
         all_bindings.insert(KeyContext::FileExplorer, explorer_bindings);
 
+        // Rename context bindings
+        let mut rename_bindings = HashMap::new();
+        rename_bindings.insert((KeyCode::Enter, KeyModifiers::empty()), Action::RenameConfirm);
+        rename_bindings.insert((KeyCode::Esc, KeyModifiers::empty()), Action::RenameCancel);
+        all_bindings.insert(KeyContext::Rename, rename_bindings);
+
         all_bindings
     }
 
@@ -745,7 +774,7 @@ impl KeybindingResolver {
         let mut bindings = Vec::new();
 
         // Collect all bindings from all contexts
-        for context in &[KeyContext::Normal, KeyContext::Help, KeyContext::Prompt, KeyContext::Popup, KeyContext::FileExplorer] {
+        for context in &[KeyContext::Normal, KeyContext::Help, KeyContext::Prompt, KeyContext::Popup, KeyContext::FileExplorer, KeyContext::Rename] {
             let mut all_keys: HashMap<(KeyCode, KeyModifiers), Action> = HashMap::new();
 
             // Start with defaults for this context
@@ -910,6 +939,8 @@ impl KeybindingResolver {
             Action::PopupPageDown => "Popup page down".to_string(),
             Action::PopupConfirm => "Popup confirm".to_string(),
             Action::PopupCancel => "Popup cancel".to_string(),
+            Action::RenameConfirm => "Rename confirm".to_string(),
+            Action::RenameCancel => "Rename cancel".to_string(),
             Action::ToggleFileExplorer => "Toggle file explorer".to_string(),
             Action::FocusFileExplorer => "Focus file explorer".to_string(),
             Action::FocusEditor => "Focus editor".to_string(),
@@ -927,6 +958,7 @@ impl KeybindingResolver {
             Action::FileExplorerToggleGitignored => "File explorer: toggle gitignored files".to_string(),
             Action::LspCompletion => "LSP: Show completion suggestions".to_string(),
             Action::LspGotoDefinition => "LSP: Go to definition".to_string(),
+            Action::LspRename => "LSP: Rename symbol".to_string(),
             Action::GitGrep => "Git: Grep - search through git-tracked files".to_string(),
             Action::GitFindFile => "Git: Find File - find file by filtering git ls-files".to_string(),
             Action::PluginAction(name) => format!("Plugin action: {}", name),
