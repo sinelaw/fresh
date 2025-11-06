@@ -189,6 +189,9 @@ pub enum Action {
     GitGrep,
     GitFindFile,
 
+    // Plugin custom actions
+    PluginAction(String),
+
     // No-op
     None,
 }
@@ -926,6 +929,7 @@ impl KeybindingResolver {
             Action::LspGotoDefinition => "LSP: Go to definition".to_string(),
             Action::GitGrep => "Git: Grep - search through git-tracked files".to_string(),
             Action::GitFindFile => "Git: Find File - find file by filtering git ls-files".to_string(),
+            Action::PluginAction(name) => format!("Plugin action: {}", name),
             Action::None => "No action".to_string(),
         }
     }

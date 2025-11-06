@@ -47,6 +47,9 @@ pub struct PluginManager {
 
     /// Command receiver (to get commands from plugins)
     command_receiver: std::sync::mpsc::Receiver<PluginCommand>,
+
+    /// Action callbacks (action_name -> Lua registry key)
+    action_callbacks: HashMap<String, mlua::RegistryKey>,
 }
 
 impl PluginManager {
@@ -70,6 +73,9 @@ impl PluginManager {
         // Set up Lua globals and bindings
         Self::setup_lua_bindings(&lua, &plugin_api)?;
 
+        // Create global table for storing callbacks
+        lua.globals().set("_plugin_callbacks", lua.create_table()?)?;
+
         Ok(Self {
             lua,
             plugins: HashMap::new(),
@@ -77,6 +83,7 @@ impl PluginManager {
             commands,
             plugin_api,
             command_receiver,
+            action_callbacks: HashMap::new(),
         })
     }
 
@@ -96,13 +103,29 @@ impl PluginManager {
             let description: String = table.get("description")?;
             let action_name: String = table.get("action")?;
 
+            // Check if there's a callback function
+            let callback: Option<mlua::Function> = table.get("callback").ok();
+
+            // If there's a callback, store it in the global callbacks table
+            if let Some(cb) = callback {
+                let callbacks: Table = lua.globals().get("_plugin_callbacks")?;
+                callbacks.set(action_name.clone(), cb)?;
+            }
+
             // Parse action from string
             let action = match action_name.as_str() {
                 "save" => Action::Save,
                 "quit" => Action::Quit,
                 "open" => Action::Open,
+                "show_help" => Action::ShowHelp,
+                "command_palette" => Action::CommandPalette,
+                "undo" => Action::Undo,
+                "redo" => Action::Redo,
                 "none" => Action::None,
-                _ => Action::None, // Default to None for custom actions
+                _ => {
+                    // For custom actions, use PluginAction variant
+                    Action::PluginAction(action_name.clone())
+                }
             };
 
             // Parse contexts
@@ -315,6 +338,29 @@ impl PluginManager {
             commands.push(cmd);
         }
         commands
+    }
+
+    /// Execute a plugin action callback by name
+    pub fn execute_action(&self, action_name: &str) -> Result<(), String> {
+        tracing::info!("Executing plugin action: {}", action_name);
+
+        // Get the callbacks table
+        let callbacks: mlua::Table = self.lua.globals()
+            .get("_plugin_callbacks")
+            .map_err(|e| format!("Failed to get callbacks table: {}", e))?;
+
+        // Get the callback function
+        let callback: Option<mlua::Function> = callbacks.get(action_name).ok();
+
+        if let Some(cb) = callback {
+            // Call the callback
+            cb.call::<_, ()>(())
+                .map_err(|e| format!("Plugin callback error: {}", e))?;
+            tracing::info!("Plugin action '{}' executed successfully", action_name);
+            Ok(())
+        } else {
+            Err(format!("No callback registered for action: {}", action_name))
+        }
     }
 
     /// Run a Lua snippet (for testing/debugging)

@@ -728,6 +728,7 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         | Action::LspGotoDefinition
         | Action::GitGrep
         | Action::GitFindFile
+        | Action::PluginAction(_)
         | Action::None => return None,
 
         Action::SelectLine => {
