@@ -9,7 +9,7 @@
 use crate::async_bridge::AsyncBridge;
 use crate::lsp::LspServerConfig;
 use crate::lsp_async::LspHandle;
-use lsp_types::{TextDocumentContentChangeEvent, Url};
+use lsp_types::Url;
 use std::collections::HashMap;
 
 /// Manager for multiple language servers (async version)

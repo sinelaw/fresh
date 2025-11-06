@@ -5,8 +5,8 @@
 
 use crate::command_registry::CommandRegistry;
 use crate::commands::Command;
-use crate::event::{BufferId, Event, OverlayFace, UnderlineStyle};
-use crate::hooks::{HookArgs, HookCallback, HookRegistry};
+use crate::event::BufferId;
+use crate::hooks::{HookCallback, HookRegistry};
 use crate::keybindings::Action;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -323,7 +323,6 @@ impl Clone for PluginApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keybindings::KeyContext;
 
     #[test]
     fn test_plugin_api_creation() {

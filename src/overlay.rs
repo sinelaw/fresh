@@ -1,4 +1,4 @@
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use std::ops::Range;
 
 /// Overlay face - defines the visual appearance of an overlay

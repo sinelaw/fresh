@@ -1846,7 +1846,7 @@ impl Editor {
     /// Update the plugin state snapshot with current editor state
     fn update_plugin_state_snapshot(&mut self) {
         if let Some(ref manager) = self.plugin_manager {
-            use crate::plugin_api::{BufferInfo, CursorInfo, EditorStateSnapshot, ViewportInfo};
+            use crate::plugin_api::{BufferInfo, CursorInfo, ViewportInfo};
 
             let snapshot_handle = manager.state_snapshot_handle();
             let mut snapshot = snapshot_handle.write().unwrap();
@@ -2095,7 +2095,7 @@ impl Editor {
         }
 
         // Convert CompletionItem to PopupListItem
-        use crate::popup::{Popup, PopupContent, PopupListItem, PopupPosition};
+        use crate::popup::PopupListItem;
 
         let popup_items: Vec<PopupListItem> = filtered_items
             .iter()
@@ -2828,7 +2828,7 @@ impl Editor {
         modifiers: crossterm::event::KeyModifiers,
     ) -> std::io::Result<()> {
         use crate::keybindings::Action;
-        use crossterm::event::{KeyCode, KeyModifiers};
+
         use std::path::Path;
 
         tracing::debug!(

@@ -667,7 +667,7 @@ impl LspTask {
     }
 
     /// Run the task (processes commands and reads from stdout)
-    async fn run(mut self, mut command_rx: mpsc::Receiver<LspCommand>) {
+    async fn run(self, mut command_rx: mpsc::Receiver<LspCommand>) {
         tracing::info!("LspTask::run() started for language: {}", self.language);
 
         // Create state struct for command processing

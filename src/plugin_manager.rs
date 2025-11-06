@@ -992,8 +992,6 @@ mod tests {
 
     #[test]
     fn test_get_active_buffer_id_from_lua() {
-        use crate::plugin_api::{BufferInfo, EditorStateSnapshot};
-
         let hooks = Arc::new(RwLock::new(HookRegistry::new()));
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let manager = PluginManager::new(hooks, commands).unwrap();
@@ -1012,8 +1010,6 @@ mod tests {
 
     #[test]
     fn test_get_buffer_content_from_lua() {
-        use crate::plugin_api::EditorStateSnapshot;
-
         let hooks = Arc::new(RwLock::new(HookRegistry::new()));
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let manager = PluginManager::new(hooks, commands).unwrap();

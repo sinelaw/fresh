@@ -790,7 +790,7 @@ impl SplitRenderer {
         }
 
         let mut result_spans = Vec::new();
-        let mut segment_chars: Vec<char> = segment_text.chars().collect();
+        let segment_chars: Vec<char> = segment_text.chars().collect();
 
         if segment_chars.is_empty() {
             return vec![Span::raw(String::new())];

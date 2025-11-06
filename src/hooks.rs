@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn test_add_and_run_hook() {
         let mut registry = HookRegistry::new();
-        let mut called = false;
+        let called = false;
 
         // Can't capture mutable reference in Send callback, so use a different approach
         registry.add_hook(

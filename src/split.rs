@@ -427,7 +427,7 @@ impl SplitManager {
     fn remove_split_node(&mut self, target_id: SplitId) -> Result<(), String> {
         // Special case: removing root
         if self.root.id() == target_id {
-            if let SplitNode::Split { first, second, .. } = &self.root {
+            if let SplitNode::Split { first, .. } = &self.root {
                 // Replace root with the other child
                 // Choose first child arbitrarily
                 self.root = (**first).clone();

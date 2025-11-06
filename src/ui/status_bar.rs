@@ -3,7 +3,7 @@
 use crate::prompt::Prompt;
 use crate::state::EditorState;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
