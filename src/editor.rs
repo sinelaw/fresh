@@ -2075,6 +2075,14 @@ impl Editor {
 
         match result {
             Ok(workspace_edit) => {
+                // Log the full workspace edit for debugging
+                tracing::debug!("Received WorkspaceEdit: changes={:?}, document_changes={:?}",
+                    workspace_edit.changes.as_ref().map(|c| c.len()),
+                    workspace_edit.document_changes.as_ref().map(|dc| match dc {
+                        lsp_types::DocumentChanges::Edits(e) => format!("{} edits", e.len()),
+                        lsp_types::DocumentChanges::Operations(o) => format!("{} operations", o.len()),
+                    }));
+
                 // Apply the workspace edit
                 let mut total_changes = 0;
 
@@ -2195,6 +2203,16 @@ impl Editor {
                                     lsp_types::OneOf::Right(annotated) => annotated.text_edit,
                                 })
                                 .collect();
+
+                            // Log the edits for debugging
+                            tracing::info!("Applying {} edits from rust-analyzer for {:?}:", edits.len(), path);
+                            for (i, edit) in edits.iter().enumerate() {
+                                tracing::info!("  Edit {}: line {}:{}-{}:{} -> {:?}",
+                                    i,
+                                    edit.range.start.line, edit.range.start.character,
+                                    edit.range.end.line, edit.range.end.character,
+                                    edit.new_text);
+                            }
 
                             // Sort edits by position (reverse order to avoid offset issues)
                             let mut sorted_edits = edits;
