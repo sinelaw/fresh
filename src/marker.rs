@@ -89,9 +89,19 @@ impl MarkerList {
         let id = MarkerId(self.next_id);
         self.next_id += 1;
 
+        tracing::debug!(
+            "Creating marker {:?} at position {} with {} affinity. Total entries: {}, first entry: {:?}",
+            id,
+            position,
+            if left_affinity { "left" } else { "right" },
+            self.entries.len(),
+            self.entries.get(0)
+        );
+
         // Find which gap contains this position
         let mut cumulative_pos = 0;
         let mut insert_idx = 0;
+        let mut found = false;
 
         for (idx, entry) in self.entries.iter().enumerate() {
             match entry {
@@ -99,9 +109,25 @@ impl MarkerList {
                     let gap_start = cumulative_pos;
                     let gap_end = cumulative_pos + size;
 
+                    tracing::trace!(
+                        "Checking gap at idx={}: start={}, end={}, size={}",
+                        idx,
+                        gap_start,
+                        gap_end,
+                        size
+                    );
+
                     if position >= gap_start && position <= gap_end {
                         // Found the gap containing position
                         let offset_in_gap = position - cumulative_pos;
+
+                        tracing::debug!(
+                            "Found gap for position {}: gap_idx={}, gap_size={}, offset_in_gap={}",
+                            position,
+                            idx,
+                            size,
+                            offset_in_gap
+                        );
 
                         // Split gap: [before, marker, after]
                         let gap_before = offset_in_gap;
@@ -116,6 +142,7 @@ impl MarkerList {
                         self.entries.insert(idx + 2, MarkerEntry::Gap(gap_after));
 
                         insert_idx = idx + 1;
+                        found = true;
                         break;
                     }
 
@@ -125,6 +152,15 @@ impl MarkerList {
                     // Markers don't contribute to position
                 }
             }
+        }
+
+        if !found {
+            tracing::error!(
+                "Failed to find gap for position {}! Cumulative pos reached: {}, total entries: {}",
+                position,
+                cumulative_pos,
+                self.entries.len()
+            );
         }
 
         // Update marker index (adjusting for insertions that shifted other markers)
@@ -179,6 +215,14 @@ impl MarkerList {
             return;
         }
 
+        tracing::debug!(
+            "adjust_for_insert: position={}, length={}, entries_len={}, first_entry={:?}",
+            position,
+            length,
+            self.entries.len(),
+            self.entries.get(0)
+        );
+
         // First pass: find which entry to update
         let mut cumulative_pos = 0;
         let mut target_idx = None;
@@ -225,8 +269,16 @@ impl MarkerList {
         // Second pass: update the target gap
         if let Some(idx) = target_idx {
             if let MarkerEntry::Gap(ref mut size) = self.entries[idx] {
+                tracing::debug!("Adjusting gap at idx={} from {} to {}", idx, *size, *size + length);
                 *size += length;
             }
+        } else {
+            tracing::error!(
+                "adjust_for_insert: Could not find gap for position={}! cumulative_pos={}, entries_len={}",
+                position,
+                cumulative_pos,
+                self.entries.len()
+            );
         }
     }
 
