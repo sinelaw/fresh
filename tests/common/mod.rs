@@ -6,14 +6,5 @@ pub mod git_test_helper;
 pub mod harness;
 pub mod visual_testing;
 
-// Test setup/teardown hooks for visual regression testing
-#[cfg(test)]
-#[ctor::dtor]
-fn finalize_visual_testing() {
-    // After all tests complete, generate the visual documentation index
-    // This runs at process exit, after all tests have completed
-    // Each test writes its own file, this just aggregates them into an index
-    if std::env::var("SKIP_VISUAL_DOCS").is_err() {
-        visual_testing::generate_visual_index().ok();
-    }
-}
+// Note: Visual regression tests write their own documentation files independently.
+// No destructor needed - each test is self-contained and parallel-safe.
