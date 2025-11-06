@@ -109,7 +109,7 @@ impl MarginConfig {
             width: 4, // Minimum 4 digits for line numbers
             enabled: true,
             show_separator: true,
-            separator: "│".to_string(), // Single character separator
+            separator: " │ ".to_string(), // Separator with spaces: " │ " (space before for indicators, space after for readability)
             style: Style::default().fg(Color::DarkGray),
             separator_style: Style::default().fg(Color::DarkGray),
         }
