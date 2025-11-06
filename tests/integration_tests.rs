@@ -322,7 +322,7 @@ fn test_overlay_events() {
     });
 
     // Check overlay was added
-    let overlays_at_pos = state.overlays.at_position(2);
+    let overlays_at_pos = state.overlays.at_position(2, &state.marker_list);
     assert_eq!(overlays_at_pos.len(), 1);
     assert_eq!(overlays_at_pos[0].id, Some("error1".to_string()));
 
@@ -339,7 +339,7 @@ fn test_overlay_events() {
     });
 
     // Position 4 should have both overlays, sorted by priority (ascending)
-    let overlays_at_4 = state.overlays.at_position(4);
+    let overlays_at_4 = state.overlays.at_position(4, &state.marker_list);
     assert_eq!(overlays_at_4.len(), 2);
     assert_eq!(overlays_at_4[0].priority, 50); // Warning (lower priority) comes first
     assert_eq!(overlays_at_4[1].priority, 100); // Error (higher priority) comes second
@@ -350,13 +350,13 @@ fn test_overlay_events() {
     });
 
     // Now position 4 should only have warning
-    let overlays_at_4 = state.overlays.at_position(4);
+    let overlays_at_4 = state.overlays.at_position(4, &state.marker_list);
     assert_eq!(overlays_at_4.len(), 1);
     assert_eq!(overlays_at_4[0].id, Some("warning1".to_string()));
 
     // Clear all overlays
     state.apply(&Event::ClearOverlays);
-    let overlays_after_clear = state.overlays.at_position(4);
+    let overlays_after_clear = state.overlays.at_position(4, &state.marker_list);
     assert_eq!(overlays_after_clear.len(), 0);
 }
 
@@ -463,7 +463,7 @@ fn test_overlay_undo_redo() {
     state.apply(&event2);
 
     // Verify overlay exists
-    assert_eq!(state.overlays.at_position(2).len(), 1);
+    assert_eq!(state.overlays.at_position(2, &state.marker_list).len(), 1);
 
     // Undo the overlay addition
     log.undo();
@@ -475,7 +475,7 @@ fn test_overlay_undo_redo() {
     }
 
     // Overlay should be gone
-    assert_eq!(new_state.overlays.at_position(2).len(), 0);
+    assert_eq!(new_state.overlays.at_position(2, &new_state.marker_list).len(), 0);
 
     // Redo
     log.redo();
@@ -487,7 +487,7 @@ fn test_overlay_undo_redo() {
     }
 
     // Overlay should be back
-    assert_eq!(final_state.overlays.at_position(2).len(), 1);
+    assert_eq!(final_state.overlays.at_position(2, &final_state.marker_list).len(), 1);
 }
 
 /// Test LSP diagnostic to overlay conversion
@@ -581,7 +581,7 @@ fn test_overlay_priority_layering() {
     });
 
     // Position 3 should have both overlays, sorted by priority
-    let overlays = state.overlays.at_position(3);
+    let overlays = state.overlays.at_position(3, &state.marker_list);
     assert_eq!(overlays.len(), 2);
     assert_eq!(overlays[0].priority, 10); // Hint (lower priority first)
     assert_eq!(overlays[1].priority, 100); // Error (higher priority second)
