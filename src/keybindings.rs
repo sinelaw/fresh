@@ -125,6 +125,7 @@ pub enum Action {
     ScrollDown,
     ShowHelp,
     CommandPalette,
+    ToggleLineWrap,
 
     // Buffer navigation
     NextBuffer,
@@ -286,6 +287,7 @@ impl Action {
             "scroll_down" => Some(Action::ScrollDown),
             "show_help" => Some(Action::ShowHelp),
             "command_palette" => Some(Action::CommandPalette),
+            "toggle_line_wrap" => Some(Action::ToggleLineWrap),
 
             "next_buffer" => Some(Action::NextBuffer),
             "prev_buffer" => Some(Action::PrevBuffer),
@@ -927,6 +929,7 @@ impl KeybindingResolver {
             Action::ScrollDown => "Scroll down".to_string(),
             Action::ShowHelp => "Show help".to_string(),
             Action::CommandPalette => "Command palette".to_string(),
+            Action::ToggleLineWrap => "Toggle line wrap".to_string(),
             Action::NextBuffer => "Next buffer".to_string(),
             Action::PrevBuffer => "Previous buffer".to_string(),
             Action::NavigateBack => "Navigate back in history".to_string(),

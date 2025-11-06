@@ -1,6 +1,6 @@
 use crate::buffer::Buffer;
 use crate::cursor::Cursor;
-
+use crate::line_wrapping::{char_position_to_segment, wrap_line, WrapConfig};
 /// The viewport - what portion of the buffer is visible
 #[derive(Debug, Clone)]
 pub struct Viewport {
@@ -21,6 +21,10 @@ pub struct Viewport {
 
     /// Horizontal scroll offset (columns to keep visible left/right of cursor)
     pub horizontal_scroll_offset: usize,
+
+    /// Whether line wrapping is enabled
+    /// When true, horizontal scrolling is disabled
+    pub line_wrap_enabled: bool,
 }
 
 impl Viewport {
@@ -33,6 +37,7 @@ impl Viewport {
             height,
             scroll_offset: 3,
             horizontal_scroll_offset: 5,
+            line_wrap_enabled: false,
         }
     }
 
@@ -212,9 +217,15 @@ impl Viewport {
         // to scroll to show the cursor even if it's at/beyond the end of the buffer.
         // Scroll limiting is only applied for explicit scroll commands (scroll_down).
 
-        // Horizontal scrolling
-        let cursor_column = cursor.position.saturating_sub(cursor_line_start);
-        self.ensure_column_visible(cursor_column, buffer);
+        // Horizontal scrolling - skip if line wrapping is enabled
+        // When wrapping is enabled, all columns are always visible via wrapping
+        if !self.line_wrap_enabled {
+            let cursor_column = cursor.position.saturating_sub(cursor_line_start);
+            self.ensure_column_visible(cursor_column, buffer);
+        } else {
+            // With line wrapping enabled, reset any horizontal scroll
+            self.left_column = 0;
+        }
     }
 
     /// Ensure a line is visible with scroll offset applied
@@ -380,11 +391,37 @@ impl Viewport {
             screen_row += 1;
         }
 
-        // Account for horizontal scrolling - subtract left_column offset
-        let screen_col = column.saturating_sub(self.left_column) as u16;
+        // Calculate screen column and additional wrapped rows if line wrapping is enabled
+        let (screen_col, additional_rows) = if self.line_wrap_enabled {
+            // Use new clean wrapping implementation
+            let gutter_width = self.gutter_width(buffer);
+            let config = WrapConfig::new(self.width as usize, gutter_width, true);
+
+            // Get the line text for wrapping
+            let mut line_iter = buffer.line_iterator(line_start);
+            let line_text = if let Some((_start, content)) = line_iter.next() {
+                // Remove trailing newline if present
+                content.trim_end_matches('\n').to_string()
+            } else {
+                String::new()
+            };
+
+            // Wrap the line
+            let segments = wrap_line(&line_text, &config);
+
+            // Find which segment the cursor is in
+            let (segment_idx, col_in_segment) = char_position_to_segment(column, &segments);
+
+            (col_in_segment as u16, segment_idx)
+        } else {
+            // No wrapping - account for horizontal scrolling
+            let screen_col = column.saturating_sub(self.left_column) as u16;
+            (screen_col, 0)
+        };
 
         // Return (x, y) which is (col, row)
-        (screen_col, screen_row as u16)
+        // Add the additional wrapped rows to the screen row
+        (screen_col, (screen_row + additional_rows) as u16)
     }
 }
 

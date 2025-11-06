@@ -50,6 +50,9 @@ pub struct EditorConfig {
     #[serde(default = "default_true")]
     pub syntax_highlighting: bool,
 
+    #[serde(default = "default_true")]
+    pub line_wrap: bool,
+
     #[serde(default = "default_highlight_timeout")]
     pub highlight_timeout_ms: u64,
 
@@ -102,6 +105,7 @@ impl Default for EditorConfig {
             relative_line_numbers: false,
             scroll_offset: default_scroll_offset(),
             syntax_highlighting: true,
+            line_wrap: true,
             highlight_timeout_ms: default_highlight_timeout(),
             snapshot_interval: default_snapshot_interval(),
             large_file_threshold_bytes: default_large_file_threshold(),

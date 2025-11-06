@@ -187,7 +187,10 @@ fn test_cursor_advances_beyond_viewport_width() {
 /// The viewport should scroll horizontally to keep the cursor visible
 #[test]
 fn test_horizontal_scrolling() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    use fresh::config::Config;
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
     // Calculate visible width (80 - 7 for line number gutter = 73 chars)
     let gutter_width = 7;
@@ -232,7 +235,10 @@ fn test_horizontal_scrolling() {
 #[test]
 fn test_horizontal_scroll_left() {
     use crossterm::event::{KeyCode, KeyModifiers};
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    use fresh::config::Config;
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
     // Type a long line
     let long_text = "a".repeat(100);
@@ -261,7 +267,10 @@ fn test_horizontal_scroll_left() {
 #[test]
 fn test_horizontal_scroll_with_arrows() {
     use crossterm::event::{KeyCode, KeyModifiers};
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    use fresh::config::Config;
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
     // Type a line longer than visible width
     let text = "x".repeat(90);
