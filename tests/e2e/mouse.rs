@@ -8,6 +8,13 @@ use std::io::Write;
 /// Test scrollbar rendering in a single split
 #[test]
 fn test_scrollbar_renders() {
+    // Initialize tracing
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+        .try_init();
+
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Type enough content to make the buffer scrollable
@@ -71,6 +78,13 @@ fn test_scrollbar_in_multiple_splits() {
 /// Test clicking on scrollbar to jump to position
 #[test]
 fn test_scrollbar_click_jump() {
+    // Initialize tracing
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+        .try_init();
+
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a long document
@@ -81,9 +95,8 @@ fn test_scrollbar_click_jump() {
     }
 
     // Scroll to top using multiple PageUp presses
-    for _ in 0..10 {
-        harness.send_key(KeyCode::PageUp, KeyModifiers::NONE).unwrap();
-    }
+    // Use send_key_repeat to avoid rendering after each key press (much faster)
+    harness.send_key_repeat(KeyCode::PageUp, KeyModifiers::NONE, 10).unwrap();
 
     harness.render().unwrap();
 
@@ -109,6 +122,13 @@ fn test_scrollbar_click_jump() {
 /// Test dragging scrollbar to scroll
 #[test]
 fn test_scrollbar_drag() {
+    // Initialize tracing
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+        .try_init();
+
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a long document
@@ -119,9 +139,8 @@ fn test_scrollbar_drag() {
     }
 
     // Scroll to top using multiple PageUp presses
-    for _ in 0..10 {
-        harness.send_key(KeyCode::PageUp, KeyModifiers::NONE).unwrap();
-    }
+    // Use send_key_repeat to avoid rendering after each key press (much faster)
+    harness.send_key_repeat(KeyCode::PageUp, KeyModifiers::NONE, 10).unwrap();
 
     harness.render().unwrap();
 
@@ -371,12 +390,8 @@ fn test_mouse_click_with_horizontal_scroll() {
     harness.render().unwrap();
 
     // Scroll right to see more of the line
-    for _ in 0..10 {
-        harness
-            .send_key(KeyCode::Right, KeyModifiers::NONE)
-            .unwrap();
-    }
-    harness.render().unwrap();
+    // Use send_key_repeat to avoid rendering after each key press (much faster)
+    harness.send_key_repeat(KeyCode::Right, KeyModifiers::NONE, 10).unwrap();
 
     // Click somewhere in the visible area
     harness.mouse_click(40, 2).unwrap();
@@ -512,6 +527,13 @@ fn extract_scrollbar_thumb_info(screen: &str, terminal_width: u16, terminal_heig
 /// 3. After typing, screen corrects itself
 #[test]
 fn test_scrollbar_drag_to_absolute_bottom() {
+    // Initialize tracing
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+        .try_init();
+
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a document with 100 lines
@@ -522,9 +544,8 @@ fn test_scrollbar_drag_to_absolute_bottom() {
     }
 
     // Scroll to top
-    for _ in 0..20 {
-        harness.send_key(KeyCode::PageUp, KeyModifiers::NONE).unwrap();
-    }
+    // Use send_key_repeat to avoid rendering after each key press (much faster)
+    harness.send_key_repeat(KeyCode::PageUp, KeyModifiers::NONE, 20).unwrap();
 
     harness.render().unwrap();
 
