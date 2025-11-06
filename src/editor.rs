@@ -2162,7 +2162,16 @@ impl Editor {
                 self.status_message = Some(format!("Renamed successfully ({} changes)", total_changes));
             }
             Err(error) => {
-                self.status_message = Some(format!("Rename failed: {}", error));
+                // Per LSP spec: ContentModified errors (-32801) should NOT be shown to user
+                // These are expected when document changes during LSP operations
+                // Reference: https://github.com/neovim/neovim/issues/16900
+                if error.contains("content modified") || error.contains("-32801") {
+                    tracing::debug!("LSP rename: ContentModified error (expected, ignoring): {}", error);
+                    self.status_message = Some("Rename cancelled (document was modified)".to_string());
+                } else {
+                    // Show other errors to user
+                    self.status_message = Some(format!("Rename failed: {}", error));
+                }
             }
         }
 
@@ -2275,20 +2284,6 @@ impl Editor {
             if rename_state.current_text == rename_state.original_text {
                 self.status_message = Some("Name unchanged".to_string());
                 return Ok(());
-            }
-
-            // IMPORTANT: Save the file first if it has unsaved changes
-            // This ensures LSP is working with the same content we have
-            let has_file = self.buffer_metadata.get(&self.active_buffer)
-                .and_then(|m| m.file_path.as_ref())
-                .is_some();
-
-            if has_file && self.active_state().buffer.is_modified() {
-                // File has unsaved changes - save it before renaming
-                tracing::info!("Saving file before rename to sync with LSP");
-                self.save()?;
-                // Give LSP a moment to process the file save notification
-                std::thread::sleep(std::time::Duration::from_millis(100));
             }
 
             // Get the cursor position (should be at the symbol)
