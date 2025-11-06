@@ -22,29 +22,39 @@ pub struct EditorTestHarness {
 
 impl EditorTestHarness {
     /// Create new test harness with virtual terminal
+    /// Uses a temporary directory to avoid loading plugins from the project directory
     pub fn new(width: u16, height: u16) -> io::Result<Self> {
+        let temp_dir = TempDir::new()?;
+        let temp_path = temp_dir.path().to_path_buf();
+
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
         let config = Config::default();
-        let editor = Editor::new(config, width, height)?;
+        // Use temp directory to avoid loading project plugins in tests
+        let editor = Editor::with_working_dir(config, width, height, Some(temp_path))?;
 
         Ok(EditorTestHarness {
             editor,
             terminal,
-            _temp_dir: None,
+            _temp_dir: Some(temp_dir),
         })
     }
 
     /// Create with custom config
+    /// Uses a temporary directory to avoid loading plugins from the project directory
     pub fn with_config(width: u16, height: u16, config: Config) -> io::Result<Self> {
+        let temp_dir = TempDir::new()?;
+        let temp_path = temp_dir.path().to_path_buf();
+
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
-        let editor = Editor::new(config, width, height)?;
+        // Use temp directory to avoid loading project plugins in tests
+        let editor = Editor::with_working_dir(config, width, height, Some(temp_path))?;
 
         Ok(EditorTestHarness {
             editor,
             terminal,
-            _temp_dir: None,
+            _temp_dir: Some(temp_dir),
         })
     }
 
