@@ -2159,6 +2159,117 @@ impl Editor {
                     }
                 }
 
+                // Handle document_changes (TextDocumentEdit[])
+                // This is what rust-analyzer sends instead of changes
+                if let Some(document_changes) = workspace_edit.document_changes {
+                    use lsp_types::DocumentChanges;
+
+                    let text_edits = match document_changes {
+                        DocumentChanges::Edits(edits) => edits,
+                        DocumentChanges::Operations(ops) => {
+                            // Extract TextDocumentEdit from operations
+                            ops.into_iter()
+                                .filter_map(|op| {
+                                    if let lsp_types::DocumentChangeOperation::Edit(edit) = op {
+                                        Some(edit)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect()
+                        }
+                    };
+
+                    for text_doc_edit in text_edits {
+                        let uri = text_doc_edit.text_document.uri;
+
+                        if let Ok(path) = uri.to_file_path() {
+                            // Open the file if not already open
+                            let buffer_id = self.open_file(&path)?;
+
+                            // Extract TextEdit from OneOf<TextEdit, AnnotatedTextEdit>
+                            let edits: Vec<lsp_types::TextEdit> = text_doc_edit.edits
+                                .into_iter()
+                                .map(|one_of| match one_of {
+                                    lsp_types::OneOf::Left(text_edit) => text_edit,
+                                    lsp_types::OneOf::Right(annotated) => annotated.text_edit,
+                                })
+                                .collect();
+
+                            // Sort edits by position (reverse order to avoid offset issues)
+                            let mut sorted_edits = edits;
+                            sorted_edits.sort_by(|a, b| {
+                                b.range.start.line.cmp(&a.range.start.line)
+                                    .then(b.range.start.character.cmp(&a.range.start.character))
+                            });
+
+                            // Collect all events for this buffer into a batch
+                            let mut batch_events = Vec::new();
+
+                            // Create events for all edits
+                            for edit in sorted_edits {
+                                let state = self.buffers.get(&buffer_id).ok_or_else(|| {
+                                    io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
+                                })?;
+
+                                // Convert LSP range to byte positions
+                                let start_line = edit.range.start.line as usize;
+                                let start_char = edit.range.start.character as usize;
+                                let end_line = edit.range.end.line as usize;
+                                let end_char = edit.range.end.character as usize;
+
+                                let start_pos = state.buffer.line_col_to_position(start_line, start_char);
+                                let end_pos = state.buffer.line_col_to_position(end_line, end_char);
+
+                                // Delete old text
+                                if start_pos < end_pos {
+                                    let deleted_text = state.buffer.slice(start_pos..end_pos).to_string();
+                                    let cursor_id = state.cursors.primary_id();
+                                    let delete_event = Event::Delete {
+                                        range: start_pos..end_pos,
+                                        deleted_text,
+                                        cursor_id,
+                                    };
+                                    batch_events.push(delete_event);
+                                }
+
+                                // Insert new text
+                                if !edit.new_text.is_empty() {
+                                    let state = self.buffers.get(&buffer_id).ok_or_else(|| {
+                                        io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
+                                    })?;
+                                    let cursor_id = state.cursors.primary_id();
+                                    let insert_event = Event::Insert {
+                                        position: start_pos,
+                                        text: edit.new_text.clone(),
+                                        cursor_id,
+                                    };
+                                    batch_events.push(insert_event);
+                                }
+
+                                total_changes += 1;
+                            }
+
+                            // Create a batch event for all rename changes
+                            if !batch_events.is_empty() {
+                                let batch = Event::Batch {
+                                    events: batch_events,
+                                    description: "LSP Rename".to_string(),
+                                };
+
+                                // Add to event log and apply to state
+                                if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+                                    event_log.append(batch.clone());
+                                }
+
+                                let state = self.buffers.get_mut(&buffer_id)
+                                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Buffer not found"))?;
+                                state.apply(&batch);
+                            }
+                        }
+                    }
+                }
+
                 self.status_message = Some(format!("Renamed successfully ({} changes)", total_changes));
             }
             Err(error) => {
