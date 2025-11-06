@@ -175,6 +175,10 @@ pub enum Action {
     // Rename mode actions
     RenameConfirm,
     RenameCancel,
+    RenameMoveLeft,
+    RenameMoveRight,
+    RenameMoveHome,
+    RenameMoveEnd,
 
     // File explorer operations
     ToggleFileExplorer,
@@ -325,6 +329,10 @@ impl Action {
 
             "rename_confirm" => Some(Action::RenameConfirm),
             "rename_cancel" => Some(Action::RenameCancel),
+            "rename_move_left" => Some(Action::RenameMoveLeft),
+            "rename_move_right" => Some(Action::RenameMoveRight),
+            "rename_move_home" => Some(Action::RenameMoveHome),
+            "rename_move_end" => Some(Action::RenameMoveEnd),
 
             "toggle_file_explorer" => Some(Action::ToggleFileExplorer),
             "focus_file_explorer" => Some(Action::FocusFileExplorer),
@@ -766,6 +774,17 @@ impl KeybindingResolver {
         rename_bindings.insert((KeyCode::Esc, KeyModifiers::empty()), Action::RenameCancel);
         rename_bindings.insert((KeyCode::Backspace, KeyModifiers::empty()), Action::DeleteBackward);
         rename_bindings.insert((KeyCode::Delete, KeyModifiers::empty()), Action::DeleteForward);
+        // Arrow keys for restricted movement within the renamed symbol
+        rename_bindings.insert((KeyCode::Left, KeyModifiers::empty()), Action::RenameMoveLeft);
+        rename_bindings.insert((KeyCode::Right, KeyModifiers::empty()), Action::RenameMoveRight);
+        rename_bindings.insert((KeyCode::Home, KeyModifiers::empty()), Action::RenameMoveHome);
+        rename_bindings.insert((KeyCode::End, KeyModifiers::empty()), Action::RenameMoveEnd);
+        // Cancel rename on PageUp/PageDown (these would normally move viewport)
+        rename_bindings.insert((KeyCode::PageUp, KeyModifiers::empty()), Action::RenameCancel);
+        rename_bindings.insert((KeyCode::PageDown, KeyModifiers::empty()), Action::RenameCancel);
+        // Also cancel on Up/Down arrow keys (navigating away from current line)
+        rename_bindings.insert((KeyCode::Up, KeyModifiers::empty()), Action::RenameCancel);
+        rename_bindings.insert((KeyCode::Down, KeyModifiers::empty()), Action::RenameCancel);
         all_bindings.insert(KeyContext::Rename, rename_bindings);
 
         all_bindings
@@ -944,6 +963,10 @@ impl KeybindingResolver {
             Action::PopupCancel => "Popup cancel".to_string(),
             Action::RenameConfirm => "Rename confirm".to_string(),
             Action::RenameCancel => "Rename cancel".to_string(),
+            Action::RenameMoveLeft => "Rename: move cursor left".to_string(),
+            Action::RenameMoveRight => "Rename: move cursor right".to_string(),
+            Action::RenameMoveHome => "Rename: move to start".to_string(),
+            Action::RenameMoveEnd => "Rename: move to end".to_string(),
             Action::ToggleFileExplorer => "Toggle file explorer".to_string(),
             Action::FocusFileExplorer => "Focus file explorer".to_string(),
             Action::FocusEditor => "Focus editor".to_string(),

@@ -2766,6 +2766,56 @@ impl Editor {
             Action::RenameCancel => {
                 self.cancel_rename();
             }
+            Action::RenameMoveLeft => {
+                // Move cursor left, but constrain to rename boundaries
+                if let Some(rename_state) = &self.rename_state {
+                    let current_pos = self.active_state().cursors.primary().position;
+                    if current_pos > rename_state.start_pos {
+                        let event = Event::MoveCursor {
+                            cursor_id: self.active_state().cursors.primary_id(),
+                            position: current_pos - 1,
+                            anchor: None,
+                        };
+                        self.active_state_mut().apply(&event);
+                    }
+                }
+            }
+            Action::RenameMoveRight => {
+                // Move cursor right, but constrain to rename boundaries
+                if let Some(rename_state) = &self.rename_state {
+                    let current_pos = self.active_state().cursors.primary().position;
+                    if current_pos < rename_state.end_pos {
+                        let event = Event::MoveCursor {
+                            cursor_id: self.active_state().cursors.primary_id(),
+                            position: current_pos + 1,
+                            anchor: None,
+                        };
+                        self.active_state_mut().apply(&event);
+                    }
+                }
+            }
+            Action::RenameMoveHome => {
+                // Move cursor to start of rename range
+                if let Some(rename_state) = &self.rename_state {
+                    let event = Event::MoveCursor {
+                        cursor_id: self.active_state().cursors.primary_id(),
+                        position: rename_state.start_pos,
+                        anchor: None,
+                    };
+                    self.active_state_mut().apply(&event);
+                }
+            }
+            Action::RenameMoveEnd => {
+                // Move cursor to end of rename range
+                if let Some(rename_state) = &self.rename_state {
+                    let event = Event::MoveCursor {
+                        cursor_id: self.active_state().cursors.primary_id(),
+                        position: rename_state.end_pos,
+                        anchor: None,
+                    };
+                    self.active_state_mut().apply(&event);
+                }
+            }
             Action::GitGrep => {
                 // Start git grep prompt with empty suggestions (will be populated as user types)
                 self.start_prompt_with_suggestions(
@@ -3071,6 +3121,11 @@ impl Editor {
     /// Handle a mouse event
     pub fn handle_mouse(&mut self, mouse_event: crossterm::event::MouseEvent) -> std::io::Result<()> {
         use crossterm::event::{MouseButton, MouseEventKind};
+
+        // Cancel rename mode on any mouse interaction
+        if self.rename_state.is_some() {
+            self.cancel_rename();
+        }
 
         let col = mouse_event.column;
         let row = mouse_event.row;
