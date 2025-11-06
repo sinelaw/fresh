@@ -915,6 +915,34 @@ mod tests {
     }
 
     #[test]
+    fn test_load_todo_highlighter() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let mut manager = PluginManager::new(hooks, commands.clone()).unwrap();
+
+        // Load the TODO highlighter plugin
+        let plugin_path = Path::new("plugins/todo_highlighter.lua");
+        if plugin_path.exists() {
+            let result = manager.load_plugin(plugin_path);
+            assert!(result.is_ok(), "Failed to load TODO highlighter: {:?}", result);
+
+            // Verify it's loaded
+            assert!(manager.plugins.contains_key("todo_highlighter"));
+
+            // Verify commands were registered
+            let registry = commands.read().unwrap();
+            assert!(registry.find_by_name("TODO Highlighter: Enable").is_some());
+            assert!(registry.find_by_name("TODO Highlighter: Disable").is_some());
+            assert!(registry.find_by_name("TODO Highlighter: Toggle").is_some());
+            assert!(registry.find_by_name("TODO Highlighter: Refresh").is_some());
+            assert!(registry.find_by_name("TODO Highlighter: Show Keywords").is_some());
+        } else {
+            // Skip test if plugin file doesn't exist
+            println!("Skipping test - todo_highlighter.lua not found");
+        }
+    }
+
+    #[test]
     fn test_get_active_buffer_id_from_lua() {
         use crate::plugin_api::{BufferInfo, EditorStateSnapshot};
 

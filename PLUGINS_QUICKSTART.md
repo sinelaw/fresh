@@ -397,6 +397,36 @@ editor/
 
 ---
 
+## Complete Plugin Examples
+
+### TODO Highlighter (`plugins/todo_highlighter.lua`)
+
+A fully functional plugin that demonstrates Phase 2 capabilities. It highlights TODO/FIXME/HACK/NOTE/XXX/BUG keywords in comments with different colors.
+
+**Features:**
+- Pattern matching across multiple comment styles (C, Python, Lua, HTML)
+- Color-coded overlays for different keyword types
+- Five interactive commands:
+  - `TODO Highlighter: Enable` - Start highlighting
+  - `TODO Highlighter: Disable` - Stop and clear highlights
+  - `TODO Highlighter: Toggle` - Quick on/off
+  - `TODO Highlighter: Refresh` - Re-scan current buffer
+  - `TODO Highlighter: Show Keywords` - Display tracked keywords
+
+**APIs Demonstrated:**
+- `editor.get_active_buffer_id()` - Get current buffer
+- `editor.get_buffer_content()` - Read buffer text
+- `editor.add_overlay()` / `editor.remove_overlay()` - Visual highlights
+- `editor.register_command()` - Add commands to palette
+- `editor.set_status()` - User feedback
+
+**Try it:**
+1. Open a file with TODO comments (e.g., `test_todo_comments.txt`)
+2. Press `Ctrl+P` and run `TODO Highlighter: Toggle`
+3. See keywords highlighted with different colors!
+
+---
+
 ## What's Next?
 
 ### Already Working ✅
@@ -406,14 +436,15 @@ editor/
 - ✅ Text insertion
 - ✅ Visual overlays
 - ✅ Event-driven hooks (automatic hook invocation from events)
+- ✅ **Buffer query API (Phase 2)** - get content, cursor position, buffer info
+- ✅ **Async process spawning (Phase 2)** - run external commands
 
 ### Coming Soon 🚧
-- 🚧 Buffer query API (get content, cursor position, etc.)
-- 🚧 More hook types (file-open, mode-change, etc.)
-- 🚧 Hook exposure to Lua (editor.on() currently exists but needs more hook types)
-- 🚧 Async task spawning (for git, external commands)
+- 🚧 More hook types (on_buffer_changed, on_file_open, etc.)
+- 🚧 Virtual buffers & custom UI
 - 🚧 Popup API (custom dialogs, menus)
 - 🚧 Custom keybindings from plugins
+- 🚧 Process cancellation / kill support
 - 🚧 WASM plugin support
 
 ---

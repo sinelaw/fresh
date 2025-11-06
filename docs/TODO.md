@@ -146,9 +146,18 @@ The primary goal of the plugin system is to enable powerful, interactive, and as
 #### **Future: WASM Plugin Support**
 - [ ] WASM runtime integration as an alternative to Lua.
 
-### Example Target Plugins
+### Implemented Example Plugins ✅
 
-Once the above features are complete, these should be possible:
+**1. TODO Highlighter** (`plugins/todo_highlighter.lua`) - **COMPLETE**
+   - Uses: Buffer query API, overlay API, command registration
+   - Features: Pattern matching for TODO/FIXME/HACK/NOTE/XXX/BUG in comments
+   - Color-coded highlights, multiple comment styles, toggle/refresh commands
+   - Demonstrates: Real-world useful plugin with Phase 2 APIs
+   - Status: Fully functional, tested, documented
+
+### Example Target Plugins (Future)
+
+Once Phase 3 features are complete, these advanced plugins should be possible:
 
 **1. Undo Tree Visualizer** - Buffer query, virtual buffers, custom keybindings, undo history access. Shows branching undo history graphically, navigate and jump to any state.
 

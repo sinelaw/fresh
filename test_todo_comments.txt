@@ -1,0 +1,29 @@
+// This is a test file for the TODO Highlighter plugin
+
+// TODO: Implement user authentication
+// FIXME: Memory leak in connection pool
+// HACK: Temporary workaround for parser bug
+// NOTE: This function is performance-critical
+// XXX: Needs review before production
+// BUG: Off-by-one error in loop counter
+
+# Python-style comments
+# TODO: Add type hints to all functions
+# FIXME: Handle edge case when list is empty
+# NOTE: Uses deprecated API, migrate to v2
+
+-- Lua-style comments
+-- TODO: Refactor this module
+-- HACK: Quick fix for deadline
+-- BUG: Crashes on null input
+
+/* C-style block comments */
+/* TODO: Add error handling */
+/* FIXME: Race condition in multi-threaded code */
+
+Regular text without keywords should not be highlighted:
+TODO FIXME HACK NOTE XXX BUG (not in comments)
+
+<!-- HTML comments -->
+<!-- TODO: Improve accessibility -->
+<!-- FIXME: Broken link on mobile -->
