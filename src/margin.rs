@@ -109,7 +109,7 @@ impl MarginConfig {
             width: 4, // Minimum 4 digits for line numbers
             enabled: true,
             show_separator: true,
-            separator: " │ ".to_string(),
+            separator: "│".to_string(), // Single character separator
             style: Style::default().fg(Color::DarkGray),
             separator_style: Style::default().fg(Color::DarkGray),
         }
@@ -394,15 +394,10 @@ impl MarginManager {
         }
     }
 
-    /// Get the total width of the left margin (including separator and diagnostic column)
+    /// Get the total width of the left margin (including separator)
+    /// The separator includes the diagnostic indicator when present
     pub fn left_total_width(&self) -> usize {
-        let base_width = self.left_config.total_width();
-        // Add 1 for the diagnostic indicator column (always present, shows space if no diagnostic)
-        if self.show_line_numbers {
-            base_width + 1
-        } else {
-            base_width
-        }
+        self.left_config.total_width()
     }
 
     /// Get the total width of the right margin (including separator)
