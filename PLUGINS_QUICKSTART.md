@@ -184,6 +184,78 @@ editor.on("after-file-save", function(args)
 end)
 ```
 
+### Query Buffer State (Phase 2 - NEW!)
+
+**Get Active Buffer ID:**
+```lua
+local buffer_id = editor.get_active_buffer_id()
+-- Returns: number (buffer ID)
+```
+
+**Get Buffer Content:**
+```lua
+local content = editor.get_buffer_content(buffer_id)
+-- Returns: string or nil
+```
+
+**Get Specific Line (1-indexed):**
+```lua
+local line = editor.get_line(buffer_id, 5)  -- Get line 5
+-- Returns: string or nil
+```
+
+**List All Open Buffers:**
+```lua
+local buffers = editor.list_buffers()
+-- Returns: array of {id, path, modified, length}
+for _, buf in ipairs(buffers) do
+    print(string.format("Buffer %d: %s (%d bytes)", buf.id, buf.path, buf.length))
+end
+```
+
+**Get Buffer Info:**
+```lua
+local info = editor.get_buffer_info(buffer_id)
+-- Returns: {id, path, modified, length} or nil
+if info then
+    print("Path: " .. info.path)
+    print("Modified: " .. tostring(info.modified))
+    print("Size: " .. info.length .. " bytes")
+end
+```
+
+**Get Primary Cursor:**
+```lua
+local cursor = editor.get_primary_cursor()
+-- Returns: {position, selection} or nil
+if cursor then
+    print("Cursor at: " .. cursor.position)
+    if cursor.selection then
+        print("Selection: " .. cursor.selection.start .. "-" .. cursor.selection["end"])
+    end
+end
+```
+
+**Get All Cursors (Multi-cursor Support):**
+```lua
+local cursors = editor.get_all_cursors()
+-- Returns: array of {position, selection}
+print("Active cursors: " .. #cursors)
+for i, cursor in ipairs(cursors) do
+    print(string.format("Cursor %d at position %d", i, cursor.position))
+end
+```
+
+**Get Viewport Info:**
+```lua
+local vp = editor.get_viewport()
+-- Returns: {top_byte, left_column, width, height} or nil
+if vp then
+    print(string.format("Viewport: %dx%d", vp.width, vp.height))
+    print("Scrolled to byte: " .. vp.top_byte)
+end
+```
+
 ---
 
 ## Example: Auto-Save Message Plugin

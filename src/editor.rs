@@ -1711,6 +1711,9 @@ impl Editor {
             }
         }
 
+        // Update plugin state snapshot before processing commands
+        self.update_plugin_state_snapshot();
+
         // Process plugin commands
         if let Some(ref mut manager) = self.plugin_manager {
             let commands = manager.process_commands();
@@ -1718,6 +1721,68 @@ impl Editor {
                 if let Err(e) = self.handle_plugin_command(command) {
                     tracing::error!("Error handling plugin command: {}", e);
                 }
+            }
+        }
+    }
+
+    /// Update the plugin state snapshot with current editor state
+    fn update_plugin_state_snapshot(&mut self) {
+        if let Some(ref manager) = self.plugin_manager {
+            use crate::plugin_api::{BufferInfo, CursorInfo, EditorStateSnapshot, ViewportInfo};
+
+            let snapshot_handle = manager.state_snapshot_handle();
+            let mut snapshot = snapshot_handle.write().unwrap();
+
+            // Update active buffer ID
+            snapshot.active_buffer_id = self.active_buffer;
+
+            // Clear and update buffer info
+            snapshot.buffers.clear();
+            snapshot.buffer_contents.clear();
+
+            for (buffer_id, state) in &self.buffers {
+                let buffer_info = BufferInfo {
+                    id: *buffer_id,
+                    path: state.buffer.file_path().map(|p| p.to_path_buf()),
+                    modified: state.buffer.is_modified(),
+                    length: state.buffer.len(),
+                };
+                snapshot.buffers.insert(*buffer_id, buffer_info);
+
+                // Store buffer content
+                snapshot.buffer_contents.insert(*buffer_id, state.buffer.to_string());
+            }
+
+            // Update cursor information for active buffer
+            if let Some(active_state) = self.buffers.get(&self.active_buffer) {
+                // Primary cursor
+                let primary = active_state.cursors.primary();
+                snapshot.primary_cursor = Some(CursorInfo {
+                    position: primary.position,
+                    selection: primary.selection_range(),
+                });
+
+                // All cursors
+                snapshot.all_cursors = active_state
+                    .cursors
+                    .iter()
+                    .map(|(_, cursor)| CursorInfo {
+                        position: cursor.position,
+                        selection: cursor.selection_range(),
+                    })
+                    .collect();
+
+                // Viewport
+                snapshot.viewport = Some(ViewportInfo {
+                    top_byte: active_state.viewport.top_byte,
+                    left_column: active_state.viewport.left_column,
+                    width: active_state.viewport.width,
+                    height: active_state.viewport.height,
+                });
+            } else {
+                snapshot.primary_cursor = None;
+                snapshot.all_cursors.clear();
+                snapshot.viewport = None;
             }
         }
     }

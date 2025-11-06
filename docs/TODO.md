@@ -84,12 +84,12 @@ The primary goal of the plugin system is to enable powerful, interactive, and as
 ### **Phase 2: Core APIs for Advanced Plugins**
 *Consolidates the essential features required to build initial versions of Magit and Telescope.*
 
-#### **High Priority: Buffer & Editor State API (Querying)**
+#### **High Priority: Buffer & Editor State API (Querying)** ✅ COMPLETE
 *Required for almost all plugin functionality.*
-- [ ] `editor.get_buffer_content(buffer_id)` & `editor.get_line(buffer_id, line_num)`
-- [ ] `editor.get_selection()` & `editor.get_all_cursors()`
-- [ ] `editor.get_active_buffer_id()` & `editor.get_buffer_info(buffer_id)`
-- [ ] `editor.get_viewport()`
+- [x] `editor.get_buffer_content(buffer_id)` & `editor.get_line(buffer_id, line_num)`
+- [x] `editor.get_selection()` & `editor.get_all_cursors()` (implemented as `editor.get_primary_cursor()` & `editor.get_all_cursors()`)
+- [x] `editor.get_active_buffer_id()` & `editor.get_buffer_info(buffer_id)` & `editor.list_buffers()`
+- [x] `editor.get_viewport()`
 
 #### **High Priority: Async Task & Process API**
 *Essential for git operations and external tools (`fd`, `rg`).*

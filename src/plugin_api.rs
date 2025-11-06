@@ -8,9 +8,76 @@ use crate::commands::Command;
 use crate::event::{BufferId, Event, OverlayFace, UnderlineStyle};
 use crate::hooks::{HookArgs, HookCallback, HookRegistry};
 use crate::keybindings::Action;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+
+/// Information about a cursor in the editor
+#[derive(Debug, Clone)]
+pub struct CursorInfo {
+    /// Byte position of the cursor
+    pub position: usize,
+    /// Selection range (if any)
+    pub selection: Option<Range<usize>>,
+}
+
+/// Information about a buffer
+#[derive(Debug, Clone)]
+pub struct BufferInfo {
+    /// Buffer ID
+    pub id: BufferId,
+    /// File path (if any)
+    pub path: Option<PathBuf>,
+    /// Whether the buffer has been modified
+    pub modified: bool,
+    /// Length of buffer in bytes
+    pub length: usize,
+}
+
+/// Information about the viewport
+#[derive(Debug, Clone)]
+pub struct ViewportInfo {
+    /// Byte position of the first visible line
+    pub top_byte: usize,
+    /// Left column offset (horizontal scroll)
+    pub left_column: usize,
+    /// Viewport width
+    pub width: u16,
+    /// Viewport height
+    pub height: u16,
+}
+
+/// Snapshot of editor state for plugin queries
+/// This is updated by the editor on each loop iteration
+#[derive(Debug, Clone)]
+pub struct EditorStateSnapshot {
+    /// Currently active buffer ID
+    pub active_buffer_id: BufferId,
+    /// Information about all open buffers
+    pub buffers: HashMap<BufferId, BufferInfo>,
+    /// Buffer contents (stored separately to avoid cloning large strings unnecessarily)
+    pub buffer_contents: HashMap<BufferId, String>,
+    /// Primary cursor position for the active buffer
+    pub primary_cursor: Option<CursorInfo>,
+    /// All cursor positions for the active buffer
+    pub all_cursors: Vec<CursorInfo>,
+    /// Viewport information for the active buffer
+    pub viewport: Option<ViewportInfo>,
+}
+
+impl EditorStateSnapshot {
+    pub fn new() -> Self {
+        Self {
+            active_buffer_id: BufferId(0),
+            buffers: HashMap::new(),
+            buffer_contents: HashMap::new(),
+            primary_cursor: None,
+            all_cursors: Vec::new(),
+            viewport: None,
+        }
+    }
+}
 
 /// Plugin command - allows plugins to send commands to the editor
 #[derive(Debug, Clone)]
@@ -69,6 +136,9 @@ pub struct PluginApi {
 
     /// Command queue for sending commands to editor
     command_sender: std::sync::mpsc::Sender<PluginCommand>,
+
+    /// Snapshot of editor state (read-only for plugins)
+    state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
 }
 
 impl PluginApi {
@@ -77,11 +147,13 @@ impl PluginApi {
         hooks: Arc<RwLock<HookRegistry>>,
         commands: Arc<RwLock<CommandRegistry>>,
         command_sender: std::sync::mpsc::Sender<PluginCommand>,
+        state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
     ) -> Self {
         Self {
             hooks,
             commands,
             command_sender,
+            state_snapshot,
         }
     }
 
@@ -173,6 +245,68 @@ impl PluginApi {
     pub fn set_status(&self, message: String) -> Result<(), String> {
         self.send_command(PluginCommand::SetStatus { message })
     }
+
+    // === Query Methods ===
+
+    /// Get the currently active buffer ID
+    pub fn get_active_buffer_id(&self) -> BufferId {
+        let snapshot = self.state_snapshot.read().unwrap();
+        snapshot.active_buffer_id
+    }
+
+    /// Get information about a specific buffer
+    pub fn get_buffer_info(&self, buffer_id: BufferId) -> Option<BufferInfo> {
+        let snapshot = self.state_snapshot.read().unwrap();
+        snapshot.buffers.get(&buffer_id).cloned()
+    }
+
+    /// Get the content of a specific buffer
+    pub fn get_buffer_content(&self, buffer_id: BufferId) -> Option<String> {
+        let snapshot = self.state_snapshot.read().unwrap();
+        snapshot.buffer_contents.get(&buffer_id).cloned()
+    }
+
+    /// Get a specific line from a buffer (1-indexed line number)
+    pub fn get_line(&self, buffer_id: BufferId, line_num: usize) -> Option<String> {
+        let snapshot = self.state_snapshot.read().unwrap();
+        let content = snapshot.buffer_contents.get(&buffer_id)?;
+
+        // Line numbers are 1-indexed for the API
+        if line_num == 0 {
+            return None;
+        }
+
+        content.lines().nth(line_num - 1).map(|s| s.to_string())
+    }
+
+    /// Get all buffer IDs
+    pub fn list_buffers(&self) -> Vec<BufferInfo> {
+        let snapshot = self.state_snapshot.read().unwrap();
+        snapshot.buffers.values().cloned().collect()
+    }
+
+    /// Get primary cursor information for the active buffer
+    pub fn get_primary_cursor(&self) -> Option<CursorInfo> {
+        let snapshot = self.state_snapshot.read().unwrap();
+        snapshot.primary_cursor.clone()
+    }
+
+    /// Get all cursor information for the active buffer
+    pub fn get_all_cursors(&self) -> Vec<CursorInfo> {
+        let snapshot = self.state_snapshot.read().unwrap();
+        snapshot.all_cursors.clone()
+    }
+
+    /// Get viewport information for the active buffer
+    pub fn get_viewport(&self) -> Option<ViewportInfo> {
+        let snapshot = self.state_snapshot.read().unwrap();
+        snapshot.viewport.clone()
+    }
+
+    /// Get access to the state snapshot Arc (for internal use)
+    pub fn state_snapshot_handle(&self) -> Arc<RwLock<EditorStateSnapshot>> {
+        Arc::clone(&self.state_snapshot)
+    }
 }
 
 impl Clone for PluginApi {
@@ -181,6 +315,7 @@ impl Clone for PluginApi {
             hooks: Arc::clone(&self.hooks),
             commands: Arc::clone(&self.commands),
             command_sender: self.command_sender.clone(),
+            state_snapshot: Arc::clone(&self.state_snapshot),
         }
     }
 }
@@ -195,8 +330,9 @@ mod tests {
         let hooks = Arc::new(RwLock::new(HookRegistry::new()));
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let (tx, _rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
 
-        let api = PluginApi::new(hooks, commands, tx);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         // Should not panic
         let _clone = api.clone();
@@ -207,8 +343,9 @@ mod tests {
         let hooks = Arc::new(RwLock::new(HookRegistry::new()));
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let (tx, _rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
 
-        let api = PluginApi::new(hooks.clone(), commands, tx);
+        let api = PluginApi::new(hooks.clone(), commands, tx, state_snapshot);
 
         api.register_hook("test-hook", Box::new(|_| true));
 
@@ -221,8 +358,9 @@ mod tests {
         let hooks = Arc::new(RwLock::new(HookRegistry::new()));
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let (tx, _rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
 
-        let api = PluginApi::new(hooks, commands.clone(), tx);
+        let api = PluginApi::new(hooks, commands.clone(), tx, state_snapshot);
 
         let command = Command {
             name: "Test Command".to_string(),
@@ -242,8 +380,9 @@ mod tests {
         let hooks = Arc::new(RwLock::new(HookRegistry::new()));
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let (tx, rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
 
-        let api = PluginApi::new(hooks, commands, tx);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         let result = api.insert_text(BufferId(1), 0, "test".to_string());
         assert!(result.is_ok());
@@ -271,8 +410,9 @@ mod tests {
         let hooks = Arc::new(RwLock::new(HookRegistry::new()));
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let (tx, rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
 
-        let api = PluginApi::new(hooks, commands, tx);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         let result = api.add_overlay(
             BufferId(1),
@@ -307,8 +447,9 @@ mod tests {
         let hooks = Arc::new(RwLock::new(HookRegistry::new()));
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let (tx, rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
 
-        let api = PluginApi::new(hooks, commands, tx);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         let result = api.set_status("Test status".to_string());
         assert!(result.is_ok());
@@ -320,5 +461,236 @@ mod tests {
             }
             _ => panic!("Wrong command type"),
         }
+    }
+
+    #[test]
+    fn test_get_active_buffer_id() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
+        // Set active buffer to 5
+        {
+            let mut snapshot = state_snapshot.write().unwrap();
+            snapshot.active_buffer_id = BufferId(5);
+        }
+
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
+
+        let active_id = api.get_active_buffer_id();
+        assert_eq!(active_id.0, 5);
+    }
+
+    #[test]
+    fn test_get_buffer_info() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
+        // Add buffer info
+        {
+            let mut snapshot = state_snapshot.write().unwrap();
+            let buffer_info = BufferInfo {
+                id: BufferId(1),
+                path: Some(std::path::PathBuf::from("/test/file.txt")),
+                modified: true,
+                length: 100,
+            };
+            snapshot.buffers.insert(BufferId(1), buffer_info);
+        }
+
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
+
+        let info = api.get_buffer_info(BufferId(1));
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.id.0, 1);
+        assert_eq!(info.path.as_ref().unwrap().to_str().unwrap(), "/test/file.txt");
+        assert!(info.modified);
+        assert_eq!(info.length, 100);
+
+        // Non-existent buffer
+        let no_info = api.get_buffer_info(BufferId(999));
+        assert!(no_info.is_none());
+    }
+
+    #[test]
+    fn test_get_buffer_content() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
+        // Add buffer content
+        {
+            let mut snapshot = state_snapshot.write().unwrap();
+            snapshot.buffer_contents.insert(BufferId(1), "Hello, World!\nLine 2\nLine 3".to_string());
+        }
+
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
+
+        let content = api.get_buffer_content(BufferId(1));
+        assert!(content.is_some());
+        assert_eq!(content.unwrap(), "Hello, World!\nLine 2\nLine 3");
+
+        // Non-existent buffer
+        let no_content = api.get_buffer_content(BufferId(999));
+        assert!(no_content.is_none());
+    }
+
+    #[test]
+    fn test_get_line() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
+        // Add buffer content
+        {
+            let mut snapshot = state_snapshot.write().unwrap();
+            snapshot.buffer_contents.insert(BufferId(1), "Line 1\nLine 2\nLine 3".to_string());
+        }
+
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
+
+        // Test 1-indexed line access
+        assert_eq!(api.get_line(BufferId(1), 1).unwrap(), "Line 1");
+        assert_eq!(api.get_line(BufferId(1), 2).unwrap(), "Line 2");
+        assert_eq!(api.get_line(BufferId(1), 3).unwrap(), "Line 3");
+
+        // Line 0 should return None (0 is invalid)
+        assert!(api.get_line(BufferId(1), 0).is_none());
+
+        // Out of range line
+        assert!(api.get_line(BufferId(1), 10).is_none());
+
+        // Non-existent buffer
+        assert!(api.get_line(BufferId(999), 1).is_none());
+    }
+
+    #[test]
+    fn test_list_buffers() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
+        // Add multiple buffers
+        {
+            let mut snapshot = state_snapshot.write().unwrap();
+            snapshot.buffers.insert(BufferId(1), BufferInfo {
+                id: BufferId(1),
+                path: Some(std::path::PathBuf::from("/file1.txt")),
+                modified: false,
+                length: 50,
+            });
+            snapshot.buffers.insert(BufferId(2), BufferInfo {
+                id: BufferId(2),
+                path: Some(std::path::PathBuf::from("/file2.txt")),
+                modified: true,
+                length: 100,
+            });
+            snapshot.buffers.insert(BufferId(3), BufferInfo {
+                id: BufferId(3),
+                path: None,
+                modified: false,
+                length: 0,
+            });
+        }
+
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
+
+        let buffers = api.list_buffers();
+        assert_eq!(buffers.len(), 3);
+
+        // Verify all buffers are present
+        assert!(buffers.iter().any(|b| b.id.0 == 1));
+        assert!(buffers.iter().any(|b| b.id.0 == 2));
+        assert!(buffers.iter().any(|b| b.id.0 == 3));
+    }
+
+    #[test]
+    fn test_get_primary_cursor() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
+        // Add cursor info
+        {
+            let mut snapshot = state_snapshot.write().unwrap();
+            snapshot.primary_cursor = Some(CursorInfo {
+                position: 42,
+                selection: Some(10..42),
+            });
+        }
+
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
+
+        let cursor = api.get_primary_cursor();
+        assert!(cursor.is_some());
+        let cursor = cursor.unwrap();
+        assert_eq!(cursor.position, 42);
+        assert_eq!(cursor.selection, Some(10..42));
+    }
+
+    #[test]
+    fn test_get_all_cursors() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
+        // Add multiple cursors
+        {
+            let mut snapshot = state_snapshot.write().unwrap();
+            snapshot.all_cursors = vec![
+                CursorInfo { position: 10, selection: None },
+                CursorInfo { position: 20, selection: Some(15..20) },
+                CursorInfo { position: 30, selection: Some(25..30) },
+            ];
+        }
+
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
+
+        let cursors = api.get_all_cursors();
+        assert_eq!(cursors.len(), 3);
+        assert_eq!(cursors[0].position, 10);
+        assert_eq!(cursors[0].selection, None);
+        assert_eq!(cursors[1].position, 20);
+        assert_eq!(cursors[1].selection, Some(15..20));
+        assert_eq!(cursors[2].position, 30);
+        assert_eq!(cursors[2].selection, Some(25..30));
+    }
+
+    #[test]
+    fn test_get_viewport() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
+        // Add viewport info
+        {
+            let mut snapshot = state_snapshot.write().unwrap();
+            snapshot.viewport = Some(ViewportInfo {
+                top_byte: 100,
+                left_column: 5,
+                width: 80,
+                height: 24,
+            });
+        }
+
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
+
+        let viewport = api.get_viewport();
+        assert!(viewport.is_some());
+        let viewport = viewport.unwrap();
+        assert_eq!(viewport.top_byte, 100);
+        assert_eq!(viewport.left_column, 5);
+        assert_eq!(viewport.width, 80);
+        assert_eq!(viewport.height, 24);
     }
 }
