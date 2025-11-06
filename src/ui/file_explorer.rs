@@ -83,10 +83,7 @@ impl FileExplorerRenderer {
             } else {
                 "! "
             };
-            spans.push(Span::styled(
-                indicator,
-                Style::default().fg(Color::Yellow),
-            ));
+            spans.push(Span::styled(indicator, Style::default().fg(Color::Yellow)));
         } else {
             spans.push(Span::raw("  "));
         }
@@ -98,7 +95,13 @@ impl FileExplorerRenderer {
         // Name
         let name_style = if is_selected && is_focused {
             Style::default().fg(Color::White)
-        } else if node.entry.metadata.as_ref().map(|m| m.is_hidden).unwrap_or(false) {
+        } else if node
+            .entry
+            .metadata
+            .as_ref()
+            .map(|m| m.is_hidden)
+            .unwrap_or(false)
+        {
             Style::default().fg(Color::DarkGray)
         } else if node.is_dir() {
             Style::default().fg(Color::Cyan)
@@ -113,20 +116,14 @@ impl FileExplorerRenderer {
             if let Some(metadata) = &node.entry.metadata {
                 if let Some(size) = metadata.size {
                     let size_str = format!(" ({})", Self::format_size(size));
-                    spans.push(Span::styled(
-                        size_str,
-                        Style::default().fg(Color::DarkGray),
-                    ));
+                    spans.push(Span::styled(size_str, Style::default().fg(Color::DarkGray)));
                 }
             }
         }
 
         // Error indicator
         if node.is_error() {
-            spans.push(Span::styled(
-                " [Error]",
-                Style::default().fg(Color::Red),
-            ));
+            spans.push(Span::styled(" [Error]", Style::default().fg(Color::Red)));
         }
 
         ListItem::new(Line::from(spans))

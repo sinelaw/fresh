@@ -139,7 +139,10 @@ impl CommandRegistry {
         }
 
         // Then check built-in commands
-        self.builtin_commands.iter().find(|c| c.name == name).cloned()
+        self.builtin_commands
+            .iter()
+            .find(|c| c.name == name)
+            .cloned()
     }
 }
 

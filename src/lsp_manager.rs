@@ -45,11 +45,7 @@ impl LspManager {
     /// Set the Tokio runtime and async bridge
     ///
     /// Must be called before spawning any servers
-    pub fn set_runtime(
-        &mut self,
-        runtime: tokio::runtime::Handle,
-        async_bridge: AsyncBridge,
-    ) {
+    pub fn set_runtime(&mut self, runtime: tokio::runtime::Handle, async_bridge: AsyncBridge) {
         self.runtime = Some(runtime);
         self.async_bridge = Some(async_bridge);
     }
@@ -96,7 +92,10 @@ impl LspManager {
                     return None;
                 }
 
-                tracing::info!("LSP initialization started for {}, will be ready asynchronously", language);
+                tracing::info!(
+                    "LSP initialization started for {}, will be ready asynchronously",
+                    language
+                );
                 self.handles.insert(language.to_string(), handle);
                 self.handles.get_mut(language)
             }
@@ -249,8 +248,14 @@ mod tests {
 
     #[test]
     fn test_detect_language_rust() {
-        assert_eq!(detect_language(Path::new("main.rs")), Some("rust".to_string()));
-        assert_eq!(detect_language(Path::new("lib.rs")), Some("rust".to_string()));
+        assert_eq!(
+            detect_language(Path::new("main.rs")),
+            Some("rust".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("lib.rs")),
+            Some("rust".to_string())
+        );
         assert_eq!(
             detect_language(Path::new("/path/to/file.rs")),
             Some("rust".to_string())
@@ -304,12 +309,30 @@ mod tests {
     #[test]
     fn test_detect_language_c_cpp() {
         assert_eq!(detect_language(Path::new("main.c")), Some("c".to_string()));
-        assert_eq!(detect_language(Path::new("header.h")), Some("c".to_string()));
-        assert_eq!(detect_language(Path::new("main.cpp")), Some("cpp".to_string()));
-        assert_eq!(detect_language(Path::new("main.cc")), Some("cpp".to_string()));
-        assert_eq!(detect_language(Path::new("main.cxx")), Some("cpp".to_string()));
-        assert_eq!(detect_language(Path::new("header.hpp")), Some("cpp".to_string()));
-        assert_eq!(detect_language(Path::new("header.hxx")), Some("cpp".to_string()));
+        assert_eq!(
+            detect_language(Path::new("header.h")),
+            Some("c".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("main.cpp")),
+            Some("cpp".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("main.cc")),
+            Some("cpp".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("main.cxx")),
+            Some("cpp".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("header.hpp")),
+            Some("cpp".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("header.hxx")),
+            Some("cpp".to_string())
+        );
     }
 
     #[test]
@@ -350,7 +373,10 @@ mod tests {
 
     #[test]
     fn test_detect_language_go() {
-        assert_eq!(detect_language(Path::new("main.go")), Some("go".to_string()));
+        assert_eq!(
+            detect_language(Path::new("main.go")),
+            Some("go".to_string())
+        );
     }
 
     #[test]

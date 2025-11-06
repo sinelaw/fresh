@@ -23,7 +23,6 @@
 /// └────────────────────┘      └──────────┴─────────┘
 ///  (horizontal split)          (mixed splits)
 /// ```
-
 use crate::event::{BufferId, SplitDirection, SplitId};
 use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
@@ -104,9 +103,9 @@ impl SplitNode {
 
         match self {
             SplitNode::Leaf { .. } => None,
-            SplitNode::Split { first, second, .. } => {
-                first.find_mut(target_id).or_else(|| second.find_mut(target_id))
-            }
+            SplitNode::Split { first, second, .. } => first
+                .find_mut(target_id)
+                .or_else(|| second.find_mut(target_id)),
         }
     }
 
@@ -212,9 +211,7 @@ impl SplitNode {
     pub fn count_leaves(&self) -> usize {
         match self {
             SplitNode::Leaf { .. } => 1,
-            SplitNode::Split { first, second, .. } => {
-                first.count_leaves() + second.count_leaves()
-            }
+            SplitNode::Split { first, second, .. } => first.count_leaves() + second.count_leaves(),
         }
     }
 }
@@ -377,10 +374,8 @@ impl SplitManager {
 
         // Special case: if target is root, replace root
         if self.root.id() == target_id {
-            let old_root = std::mem::replace(
-                &mut self.root,
-                SplitNode::leaf(new_buffer_id, temp_id),
-            );
+            let old_root =
+                std::mem::replace(&mut self.root, SplitNode::leaf(new_buffer_id, temp_id));
 
             self.root = SplitNode::split(
                 direction,
@@ -395,10 +390,7 @@ impl SplitManager {
 
         // Find and replace the target node
         if let Some(node) = self.root.find_mut(target_id) {
-            let old_node = std::mem::replace(
-                node,
-                SplitNode::leaf(new_buffer_id, temp_id),
-            );
+            let old_node = std::mem::replace(node, SplitNode::leaf(new_buffer_id, temp_id));
 
             *node = SplitNode::split(
                 direction,
@@ -451,9 +443,7 @@ impl SplitManager {
     fn remove_child_static(node: &mut SplitNode, target_id: SplitId) -> Result<(), String> {
         match node {
             SplitNode::Leaf { .. } => Err("Target not found".to_string()),
-            SplitNode::Split {
-                first, second, ..
-            } => {
+            SplitNode::Split { first, second, .. } => {
                 // Check if either child is the target
                 if first.id() == target_id {
                     // Replace this node with the second child
@@ -510,11 +500,7 @@ impl SplitManager {
     pub fn prev_split(&mut self) {
         let all_ids = self.root.all_split_ids();
         if let Some(pos) = all_ids.iter().position(|id| *id == self.active_split) {
-            let prev_pos = if pos == 0 {
-                all_ids.len() - 1
-            } else {
-                pos - 1
-            };
+            let prev_pos = if pos == 0 { all_ids.len() - 1 } else { pos - 1 };
             self.active_split = all_ids[prev_pos];
         }
     }

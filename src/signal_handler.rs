@@ -140,4 +140,3 @@ fn read_thread_name(tid: i32) -> String {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|_| String::from("unknown"))
 }
-

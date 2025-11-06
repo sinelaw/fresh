@@ -73,10 +73,7 @@ pub enum AsyncMessage {
     },
 
     /// Git ls-files results for file finding
-    GitLsFilesResults {
-        query: String,
-        files: Vec<String>,
-    },
+    GitLsFilesResults { query: String, files: Vec<String> },
 
     /// File explorer initialized with tree view
     FileExplorerInitialized(FileTreeView),
@@ -182,9 +179,11 @@ mod tests {
         let sender = bridge.sender();
 
         // Send a message
-        sender.send(AsyncMessage::LspInitialized {
-            language: "rust".to_string(),
-        }).unwrap();
+        sender
+            .send(AsyncMessage::LspInitialized {
+                language: "rust".to_string(),
+            })
+            .unwrap();
 
         // Receive it
         let messages = bridge.try_recv_all();
@@ -257,28 +256,26 @@ mod tests {
         let sender = bridge.sender();
 
         // Send diagnostic message
-        let diagnostics = vec![
-            lsp_types::Diagnostic {
-                range: lsp_types::Range {
-                    start: lsp_types::Position {
-                        line: 0,
-                        character: 0,
-                    },
-                    end: lsp_types::Position {
-                        line: 0,
-                        character: 5,
-                    },
+        let diagnostics = vec![lsp_types::Diagnostic {
+            range: lsp_types::Range {
+                start: lsp_types::Position {
+                    line: 0,
+                    character: 0,
                 },
-                severity: Some(lsp_types::DiagnosticSeverity::ERROR),
-                code: None,
-                code_description: None,
-                source: Some("rust-analyzer".to_string()),
-                message: "test error".to_string(),
-                related_information: None,
-                tags: None,
-                data: None,
+                end: lsp_types::Position {
+                    line: 0,
+                    character: 5,
+                },
             },
-        ];
+            severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+            code: None,
+            code_description: None,
+            source: Some("rust-analyzer".to_string()),
+            message: "test error".to_string(),
+            related_information: None,
+            tags: None,
+            data: None,
+        }];
 
         sender
             .send(AsyncMessage::LspDiagnostics {
@@ -291,7 +288,10 @@ mod tests {
         assert_eq!(messages.len(), 1);
 
         match &messages[0] {
-            AsyncMessage::LspDiagnostics { uri, diagnostics: diags } => {
+            AsyncMessage::LspDiagnostics {
+                uri,
+                diagnostics: diags,
+            } => {
                 assert_eq!(uri, "file:///test.rs");
                 assert_eq!(diags.len(), 1);
                 assert_eq!(diags[0].message, "test error");

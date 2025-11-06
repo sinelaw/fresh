@@ -3,10 +3,9 @@
 /// Provides cross-platform support for limiting memory and CPU usage of spawned processes.
 /// On Linux, uses user-delegated cgroups v2 if available, otherwise falls back to setrlimit.
 /// Memory and CPU limits are decoupled - memory can work without CPU delegation.
-
 use serde::{Deserialize, Serialize};
-use std::io;
 use std::fs;
+use std::io;
 use std::path::PathBuf;
 
 /// Configuration for process resource limits
@@ -34,7 +33,7 @@ impl Default for ProcessLimits {
     fn default() -> Self {
         Self {
             max_memory_mb: Self::default_memory_limit_mb(),
-            max_cpu_percent: Some(90), // 90% of total CPU
+            max_cpu_percent: Some(90),          // 90% of total CPU
             enabled: cfg!(target_os = "linux"), // Only enabled on Linux by default
         }
     }
@@ -140,9 +139,13 @@ impl ProcessLimits {
 
                     tracing::info!(
                         "Using resource limits: memory={} ({}), CPU={} ({})",
-                        self.max_memory_mb.map(|m| format!("{} MB", m)).unwrap_or("unlimited".to_string()),
+                        self.max_memory_mb
+                            .map(|m| format!("{} MB", m))
+                            .unwrap_or("unlimited".to_string()),
                         memory_method,
-                        self.max_cpu_percent.map(|c| format!("{}%", c)).unwrap_or("unlimited".to_string()),
+                        self.max_cpu_percent
+                            .map(|c| format!("{}%", c))
+                            .unwrap_or("unlimited".to_string()),
                         cpu_method
                     );
                     return Ok(());
@@ -161,7 +164,10 @@ impl ProcessLimits {
                         if let Err(e) = apply_memory_limit_setrlimit(mem_limit) {
                             tracing::warn!("Failed to apply memory limit via setrlimit: {}", e);
                         } else {
-                            tracing::debug!("Applied memory limit via setrlimit: {} MB", mem_limit / 1024 / 1024);
+                            tracing::debug!(
+                                "Applied memory limit via setrlimit: {} MB",
+                                mem_limit / 1024 / 1024
+                            );
                         }
                     }
                     Ok(())
@@ -172,10 +178,18 @@ impl ProcessLimits {
 
         tracing::info!(
             "Using resource limits: memory={} ({}), CPU={} ({})",
-            self.max_memory_mb.map(|m| format!("{} MB", m)).unwrap_or("unlimited".to_string()),
+            self.max_memory_mb
+                .map(|m| format!("{} MB", m))
+                .unwrap_or("unlimited".to_string()),
             memory_method,
-            self.max_cpu_percent.map(|c| format!("{}%", c)).unwrap_or("unlimited".to_string()),
-            if cpu_method == "none" { "unavailable" } else { cpu_method }
+            self.max_cpu_percent
+                .map(|c| format!("{}%", c))
+                .unwrap_or("unlimited".to_string()),
+            if cpu_method == "none" {
+                "unavailable"
+            } else {
+                cpu_method
+            }
         );
 
         Ok(())
@@ -195,8 +209,14 @@ fn find_user_cgroup() -> Option<PathBuf> {
 
     // Try common locations for user-delegated cgroups
     let locations = vec![
-        cgroup_root.join(format!("user.slice/user-{}.slice/user@{}.service/app.slice", uid, uid)),
-        cgroup_root.join(format!("user.slice/user-{}.slice/user@{}.service", uid, uid)),
+        cgroup_root.join(format!(
+            "user.slice/user-{}.slice/user@{}.service/app.slice",
+            uid, uid
+        )),
+        cgroup_root.join(format!(
+            "user.slice/user-{}.slice/user@{}.service",
+            uid, uid
+        )),
         cgroup_root.join(format!("user.slice/user-{}.slice", uid)),
         cgroup_root.join(format!("user-{}", uid)),
     ];
@@ -283,7 +303,7 @@ impl SystemResources {
             // TODO: Implement for other platforms
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "Memory detection not implemented for this platform"
+                "Memory detection not implemented for this platform",
             ))
         }
     }
@@ -307,7 +327,7 @@ impl SystemResources {
 
         Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "Could not parse MemTotal from /proc/meminfo"
+            "Could not parse MemTotal from /proc/meminfo",
         ))
     }
 
@@ -323,7 +343,7 @@ impl SystemResources {
             // TODO: Implement for other platforms
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "CPU detection not implemented for this platform"
+                "CPU detection not implemented for this platform",
             ))
         }
     }
@@ -332,7 +352,7 @@ impl SystemResources {
 /// Apply memory limit via setrlimit (fallback method)
 #[cfg(target_os = "linux")]
 fn apply_memory_limit_setrlimit(bytes: u64) -> io::Result<()> {
-    use nix::sys::resource::{Resource, setrlimit};
+    use nix::sys::resource::{setrlimit, Resource};
 
     // Set RLIMIT_AS (address space / virtual memory limit)
     setrlimit(Resource::RLIMIT_AS, bytes, bytes)

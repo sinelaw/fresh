@@ -19,40 +19,48 @@ pub trait EventHooks {
 impl EventHooks for Event {
     fn before_hook(&self, buffer_id: BufferId) -> Option<HookArgs> {
         match self {
-            Event::Insert { position, text, cursor_id } => {
-                Some(HookArgs::BeforeInsert {
-                    buffer_id,
-                    position: *position,
-                    text: text.clone(),
-                })
-            }
-            Event::Delete { range, .. } => {
-                Some(HookArgs::BeforeDelete {
-                    buffer_id,
-                    range: range.clone(),
-                })
-            }
+            Event::Insert {
+                position,
+                text,
+                cursor_id,
+            } => Some(HookArgs::BeforeInsert {
+                buffer_id,
+                position: *position,
+                text: text.clone(),
+            }),
+            Event::Delete { range, .. } => Some(HookArgs::BeforeDelete {
+                buffer_id,
+                range: range.clone(),
+            }),
             _ => None, // Most events don't have "before" hooks
         }
     }
 
     fn after_hook(&self, buffer_id: BufferId) -> Option<HookArgs> {
         match self {
-            Event::Insert { position, text, cursor_id } => {
-                Some(HookArgs::AfterInsert {
-                    buffer_id,
-                    position: *position,
-                    text: text.clone(),
-                })
-            }
-            Event::Delete { range, deleted_text, .. } => {
-                Some(HookArgs::AfterDelete {
-                    buffer_id,
-                    range: range.clone(),
-                    deleted_text: deleted_text.clone(),
-                })
-            }
-            Event::MoveCursor { cursor_id, position, .. } => {
+            Event::Insert {
+                position,
+                text,
+                cursor_id,
+            } => Some(HookArgs::AfterInsert {
+                buffer_id,
+                position: *position,
+                text: text.clone(),
+            }),
+            Event::Delete {
+                range,
+                deleted_text,
+                ..
+            } => Some(HookArgs::AfterDelete {
+                buffer_id,
+                range: range.clone(),
+                deleted_text: deleted_text.clone(),
+            }),
+            Event::MoveCursor {
+                cursor_id,
+                position,
+                ..
+            } => {
                 Some(HookArgs::CursorMoved {
                     buffer_id,
                     cursor_id: *cursor_id,

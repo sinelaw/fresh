@@ -71,21 +71,20 @@ impl FsManager {
             if let Some(senders) = pending.remove(&path) {
                 for sender in senders {
                     // Clone the result for each waiter
-                    let _ = sender.send(result.as_ref().map(|v| v.clone()).map_err(|e| {
-                        io::Error::new(e.kind(), e.to_string())
-                    }));
+                    let _ = sender.send(
+                        result
+                            .as_ref()
+                            .map(|v| v.clone())
+                            .map_err(|e| io::Error::new(e.kind(), e.to_string())),
+                    );
                 }
             }
 
             result
         } else {
             // Wait for the other request to complete
-            rx.await.unwrap_or_else(|_| {
-                Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Request cancelled",
-                ))
-            })
+            rx.await
+                .unwrap_or_else(|_| Err(io::Error::new(io::ErrorKind::Other, "Request cancelled")))
         }
     }
 
@@ -100,12 +99,10 @@ impl FsManager {
     /// Get metadata for a single path
     pub async fn get_single_metadata(&self, path: &PathBuf) -> io::Result<FsMetadata> {
         let results = self.backend.get_metadata_batch(&[path.clone()]).await;
-        results.into_iter().next().unwrap_or_else(|| {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "No result returned",
-            ))
-        })
+        results
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| Err(io::Error::new(io::ErrorKind::Other, "No result returned")))
     }
 
     /// Check if a path exists
@@ -203,8 +200,11 @@ mod tests {
 
         // Create test files
         for i in 0..10 {
-            std_fs::write(temp_path.join(format!("file{}.txt", i)), format!("content{}", i))
-                .unwrap();
+            std_fs::write(
+                temp_path.join(format!("file{}.txt", i)),
+                format!("content{}", i),
+            )
+            .unwrap();
         }
 
         let backend = Arc::new(LocalFsBackend::new());
@@ -215,9 +215,7 @@ mod tests {
         for _ in 0..10 {
             let manager = manager.clone();
             let path = temp_path.to_path_buf();
-            handles.push(tokio::spawn(async move {
-                manager.list_dir(path).await
-            }));
+            handles.push(tokio::spawn(async move { manager.list_dir(path).await }));
         }
 
         // All requests should succeed and return the same data
@@ -245,10 +243,7 @@ mod tests {
         let backend = Arc::new(LocalFsBackend::new());
         let manager = FsManager::new(backend);
 
-        let paths = vec![
-            temp_path.join("file1.txt"),
-            temp_path.join("file2.txt"),
-        ];
+        let paths = vec![temp_path.join("file1.txt"), temp_path.join("file2.txt")];
 
         let results = manager.get_metadata(paths).await;
 
@@ -361,8 +356,11 @@ mod tests {
             let dir_path = temp_path.join(format!("dir{}", i));
             std_fs::create_dir(&dir_path).unwrap();
             for j in 0..3 {
-                std_fs::write(dir_path.join(format!("file{}.txt", j)), format!("content{}", j))
-                    .unwrap();
+                std_fs::write(
+                    dir_path.join(format!("file{}.txt", j)),
+                    format!("content{}", j),
+                )
+                .unwrap();
             }
         }
 
@@ -374,9 +372,7 @@ mod tests {
         for i in 0..5 {
             let manager = manager.clone();
             let path = temp_path.join(format!("dir{}", i));
-            handles.push(tokio::spawn(async move {
-                manager.list_dir(path).await
-            }));
+            handles.push(tokio::spawn(async move { manager.list_dir(path).await }));
         }
 
         // All should succeed

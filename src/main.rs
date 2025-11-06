@@ -1,8 +1,9 @@
 use clap::Parser;
 use crossterm::{
     event::{
-        poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent, MouseEvent,
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent,
+        KeyboardEnhancementFlags, MouseEvent, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     },
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,

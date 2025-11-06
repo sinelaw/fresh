@@ -1,4 +1,3 @@
-use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use tempfile::TempDir;
@@ -262,7 +261,7 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
 
     // Get initial screen cursor position
     let initial_screen_pos = harness.screen_cursor_position();
-    println!("Initial screen cursor position (after 'Hello '): {:?}", initial_screen_pos);
+    println!("Initial screen cursor position (after 'Hello '): {initial_screen_pos:?}");
 
     // Expected: Indicator (1) + Line numbers (4) + " │ " (3) + "Hello " (6) = 14
     assert_eq!(
@@ -291,8 +290,7 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
         let actual_cursor_pos = harness.cursor_position();
         assert_eq!(
             actual_cursor_pos, expected_cursor_pos,
-            "After typing '{}', cursor position should be {} but is {}",
-            ch, expected_cursor_pos, actual_cursor_pos
+            "After typing '{ch}', cursor position should be {expected_cursor_pos} but is {actual_cursor_pos}"
         );
 
         // 3. Verify screen cursor position matches logical position
@@ -317,7 +315,10 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
         final_screen_pos.0, 24,
         "Final screen cursor X should be at column 24"
     );
-    assert_eq!(final_screen_pos.1, 1, "Final screen cursor Y should be at row 1");
+    assert_eq!(
+        final_screen_pos.1, 1,
+        "Final screen cursor Y should be at row 1"
+    );
 }
 
 /// Test rapid typing with multiple insertions at different positions
@@ -406,8 +407,7 @@ fn test_rapid_type_delete_cursor_sync() {
 
         let screen_pos = harness.screen_cursor_position();
         println!(
-            "After insert {}: screen cursor = {:?}, buffer pos = {}",
-            i, screen_pos, pos_after_insert
+            "After insert {i}: screen cursor = {screen_pos:?}, buffer pos = {pos_after_insert}"
         );
 
         // Verify buffer content has the X
@@ -425,8 +425,7 @@ fn test_rapid_type_delete_cursor_sync() {
 
         let screen_pos2 = harness.screen_cursor_position();
         println!(
-            "After delete {}: screen cursor = {:?}, buffer pos = {}",
-            i, screen_pos2, pos_after_delete
+            "After delete {i}: screen cursor = {screen_pos2:?}, buffer pos = {pos_after_delete}"
         );
 
         // Verify buffer is back to original
@@ -472,8 +471,7 @@ fn test_movement_across_empty_lines() {
     // BUG: This currently goes to position 0 (Line 1) instead of position 7 (empty line)
     assert_eq!(
         pos_after_up, 7,
-        "BUG: Pressing Up from Line 3 should go to empty line 2 (pos 7), but went to pos {}",
-        pos_after_up
+        "BUG: Pressing Up from Line 3 should go to empty line 2 (pos 7), but went to pos {pos_after_up}"
     );
 
     // Press Up again - should now go to Line 1
@@ -509,11 +507,7 @@ fn test_movement_through_multiple_empty_lines() {
 
     // Move down from empty line 2 to Line 3
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    assert_eq!(
-        harness.cursor_position(),
-        8,
-        "Should be at start of Line 3"
-    );
+    assert_eq!(harness.cursor_position(), 8, "Should be at start of Line 3");
 
     // Move down from Line 3 to empty line 4
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -534,12 +528,7 @@ fn test_movement_through_multiple_empty_lines() {
     // Move down from empty line 5 to Line 6
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     let pos = harness.cursor_position();
-    assert_eq!(
-        pos,
-        17,
-        "Should be at start of Line 6, got {}",
-        pos
-    );
+    assert_eq!(pos, 17, "Should be at start of Line 6, got {pos}");
 
     // Now move back up through the empty lines
     // Note: cursor movement may skip directly to content lines in some implementations
@@ -551,8 +540,7 @@ fn test_movement_through_multiple_empty_lines() {
     // Let's just verify we moved up and continue the test
     assert!(
         pos_after_up1 < pos,
-        "Should have moved up from position {}, got {}",
-        pos, pos_after_up1
+        "Should have moved up from position {pos}, got {pos_after_up1}"
     );
 
     // Continue moving up to verify the pattern
@@ -566,8 +554,7 @@ fn test_movement_through_multiple_empty_lines() {
     assert_eq!(
         *positions.last().unwrap(),
         0,
-        "Should eventually reach Line 1 start, positions: {:?}",
-        positions
+        "Should eventually reach Line 1 start, positions: {positions:?}"
     );
 
     // Test left/right movement across line boundaries
@@ -576,7 +563,9 @@ fn test_movement_through_multiple_empty_lines() {
     assert_eq!(harness.cursor_position(), 6, "Should be at end of Line 1");
 
     // Move right once to go to newline character
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     assert_eq!(
         harness.cursor_position(),
         7,
@@ -584,12 +573,10 @@ fn test_movement_through_multiple_empty_lines() {
     );
 
     // Move right once more to go to next newline
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
-    assert_eq!(
-        harness.cursor_position(),
-        8,
-        "Should be at start of Line 3"
-    );
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    assert_eq!(harness.cursor_position(), 8, "Should be at start of Line 3");
 
     // Move left to go back to empty line
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
@@ -609,12 +596,8 @@ fn test_movement_through_multiple_empty_lines() {
 
     // Test movement from middle of a line across empty lines
     // Go to Line 3, position in middle
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Right, KeyModifiers::NONE)
         .unwrap();
@@ -625,7 +608,11 @@ fn test_movement_through_multiple_empty_lines() {
         .send_key(KeyCode::Right, KeyModifiers::NONE)
         .unwrap();
     // Now at position 11: "Lin|e 3" (where | is cursor)
-    assert_eq!(harness.cursor_position(), 11, "Should be in middle of Line 3");
+    assert_eq!(
+        harness.cursor_position(),
+        11,
+        "Should be in middle of Line 3"
+    );
 
     // Move down to empty line - cursor should go to position 0 of that line
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -649,8 +636,7 @@ fn test_movement_through_multiple_empty_lines() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     let final_pos = harness.cursor_position();
     assert!(
-        final_pos >= 17 && final_pos <= 23,
-        "Should be somewhere on Line 6, got position {}",
-        final_pos
+        (17..=23).contains(&final_pos),
+        "Should be somewhere on Line 6, got position {final_pos}"
     );
 }

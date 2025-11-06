@@ -1,6 +1,5 @@
 use crate::common::harness::EditorTestHarness;
 use std::fs;
-use tempfile::TempDir;
 
 /// Test file explorer toggle
 #[test]
@@ -14,7 +13,9 @@ fn test_file_explorer_toggle() {
     let screen_before = harness.screen_to_string();
 
     // Toggle file explorer on with Ctrl+B
-    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
@@ -29,7 +30,9 @@ fn test_file_explorer_toggle() {
     );
 
     // Toggle file explorer off with Ctrl+B
-    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // File Explorer text should no longer be visible
@@ -51,7 +54,6 @@ fn test_file_explorer_toggle() {
 /// Test file explorer displays directory structure
 #[test]
 fn test_file_explorer_shows_directory_structure() {
-
     use crossterm::event::{KeyCode, KeyModifiers};
 
     // Create harness with isolated temp project
@@ -66,7 +68,9 @@ fn test_file_explorer_shows_directory_structure() {
     fs::write(project_root.join("README.md"), "# Project").unwrap();
 
     // Toggle file explorer on with Ctrl+B
-    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
@@ -78,17 +82,15 @@ fn test_file_explorer_shows_directory_structure() {
     // Check that we see the project structure
     // Note: The exact rendering might differ, but we should see some files
     let screen = harness.screen_to_string();
-    println!("File explorer screen:\n{}", screen);
+    println!("File explorer screen:\n{screen}");
 
     // Should show at least the root directory name or some indication of files
     // (This is a basic check - the exact content depends on rendering)
-
 }
 
 /// Test file explorer navigation
 #[test]
 fn test_file_explorer_navigation() {
-
     use crossterm::event::{KeyCode, KeyModifiers};
 
     // Create harness with isolated temp project
@@ -100,7 +102,9 @@ fn test_file_explorer_navigation() {
     fs::write(project_root.join("file3.txt"), "File 3").unwrap();
 
     // Toggle file explorer on with Ctrl+B
-    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
 
@@ -111,25 +115,27 @@ fn test_file_explorer_navigation() {
     let screen_initial = harness.screen_to_string();
 
     // Navigate down with Alt+J
-    harness.send_key(KeyCode::Char('j'), KeyModifiers::ALT).unwrap();
+    harness
+        .send_key(KeyCode::Char('j'), KeyModifiers::ALT)
+        .unwrap();
     harness.render().unwrap();
 
     let screen_after_down = harness.screen_to_string();
 
     // Screen should change (selection moved)
     // Note: This might be subtle depending on rendering
-    println!("After navigate down:\n{}", screen_after_down);
+    println!("After navigate down:\n{screen_after_down}");
 
     // Navigate up with Alt+K
-    harness.send_key(KeyCode::Char('k'), KeyModifiers::ALT).unwrap();
+    harness
+        .send_key(KeyCode::Char('k'), KeyModifiers::ALT)
+        .unwrap();
     harness.render().unwrap();
-
 }
 
 /// Test file explorer expand/collapse
 #[test]
 fn test_file_explorer_expand_collapse() {
-
     use crossterm::event::{KeyCode, KeyModifiers};
 
     // Create harness with isolated temp project
@@ -141,7 +147,9 @@ fn test_file_explorer_expand_collapse() {
     fs::write(project_root.join("src/main.rs"), "fn main() {}").unwrap();
 
     // Toggle file explorer on with Ctrl+B
-    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
 
@@ -150,10 +158,12 @@ fn test_file_explorer_expand_collapse() {
     harness.render().unwrap();
 
     let screen_before_expand = harness.screen_to_string();
-    println!("Before expand:\n{}", screen_before_expand);
+    println!("Before expand:\n{screen_before_expand}");
 
     // Expand the root directory with Alt+L
-    harness.send_key(KeyCode::Char('l'), KeyModifiers::ALT).unwrap();
+    harness
+        .send_key(KeyCode::Char('l'), KeyModifiers::ALT)
+        .unwrap();
 
     // Wait for async operation
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -161,24 +171,24 @@ fn test_file_explorer_expand_collapse() {
     harness.render().unwrap();
 
     let screen_after_expand = harness.screen_to_string();
-    println!("After expand:\n{}", screen_after_expand);
+    println!("After expand:\n{screen_after_expand}");
 
     // The screen should show more content after expanding
     // (exact assertion depends on rendering details)
 
     // Collapse with Alt+L (toggle)
-    harness.send_key(KeyCode::Char('l'), KeyModifiers::ALT).unwrap();
+    harness
+        .send_key(KeyCode::Char('l'), KeyModifiers::ALT)
+        .unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
-
 }
 
 /// Test opening a file from file explorer
 #[test]
 fn test_file_explorer_open_file() {
-
     // Create harness with isolated temp project
     let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
     let project_root = harness.project_dir().unwrap();
@@ -194,7 +204,7 @@ fn test_file_explorer_open_file() {
     harness.render().unwrap();
 
     let screen_with_explorer = harness.screen_to_string();
-    println!("File explorer visible:\n{}", screen_with_explorer);
+    println!("File explorer visible:\n{screen_with_explorer}");
 
     // Verify file explorer is showing
     assert!(
@@ -209,7 +219,7 @@ fn test_file_explorer_open_file() {
     harness.render().unwrap();
 
     let screen_after_expand = harness.screen_to_string();
-    println!("After expand:\n{}", screen_after_expand);
+    println!("After expand:\n{screen_after_expand}");
 
     // Navigate down to the file (first child after root)
     harness.editor_mut().file_explorer_navigate_down();
@@ -224,7 +234,7 @@ fn test_file_explorer_open_file() {
 
     harness.render().unwrap();
     let screen_after_open = harness.screen_to_string();
-    println!("After trying to open:\n{}", screen_after_open);
+    println!("After trying to open:\n{screen_after_open}");
 
     // If a file was opened, buffer should have content
     let buffer_content = harness.get_buffer_content();
@@ -236,13 +246,11 @@ fn test_file_explorer_open_file() {
         );
     }
     // Note: We don't fail the test if no file was opened, as navigation might not land on the file
-
 }
 
 /// Test file explorer refresh
 #[test]
 fn test_file_explorer_refresh() {
-
     // Create harness with isolated temp project
     let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
     let project_root = harness.project_dir().unwrap();
@@ -273,8 +281,7 @@ fn test_file_explorer_refresh() {
     // The new file should now be visible
     // (This is hard to assert precisely without introspecting the tree structure)
     let screen = harness.screen_to_string();
-    println!("After refresh:\n{}", screen);
-
+    println!("After refresh:\n{screen}");
 }
 
 /// Test focus switching between file explorer and editor
@@ -294,7 +301,9 @@ fn test_file_explorer_focus_switching() {
     assert!(harness.editor().file_explorer_visible());
 
     // Try using arrow keys - in FileExplorer context, these should navigate the explorer
-    harness.send_key(KeyCode::Down, KeyModifiers::empty()).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::empty())
+        .unwrap();
     harness.render().unwrap();
 
     // Toggle file explorer off
@@ -324,7 +333,6 @@ fn test_file_explorer_focus_switching() {
 /// Test that file explorer keybindings only work when explorer has focus
 #[test]
 fn test_file_explorer_context_aware_keybindings() {
-
     use crossterm::event::{KeyCode, KeyModifiers};
 
     // Create harness with isolated temp project
@@ -339,17 +347,22 @@ fn test_file_explorer_context_aware_keybindings() {
     harness.render().unwrap();
 
     // Arrow keys should work in file explorer context
-    harness.send_key(KeyCode::Down, KeyModifiers::empty()).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::empty())
+        .unwrap();
     harness.render().unwrap();
 
     // Switch to editor context
-    harness.send_key(KeyCode::Esc, KeyModifiers::empty()).unwrap();
+    harness
+        .send_key(KeyCode::Esc, KeyModifiers::empty())
+        .unwrap();
     harness.render().unwrap();
 
     // Now arrow keys should work for editor navigation, not file explorer
-    harness.send_key(KeyCode::Down, KeyModifiers::empty()).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::empty())
+        .unwrap();
     harness.render().unwrap();
-
 }
 
 /// Test opening file explorer with focus
@@ -407,7 +420,7 @@ fn test_file_explorer_displays_opened_file_content() {
     // Open the first file directly
     harness.open_file(&file1).unwrap();
     let screen1 = harness.screen_to_string();
-    println!("Screen after opening first file:\n{}", screen1);
+    println!("Screen after opening first file:\n{screen1}");
 
     // Verify first file content is displayed on screen
     assert!(
@@ -416,7 +429,9 @@ fn test_file_explorer_displays_opened_file_content() {
     );
 
     // Now open file explorer with Ctrl+B
-    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
@@ -427,7 +442,9 @@ fn test_file_explorer_displays_opened_file_content() {
     harness.render().unwrap();
 
     // Expand the root directory with Alt+L
-    harness.send_key(KeyCode::Char('l'), KeyModifiers::ALT).unwrap();
+    harness
+        .send_key(KeyCode::Char('l'), KeyModifiers::ALT)
+        .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
@@ -435,37 +452,36 @@ fn test_file_explorer_displays_opened_file_content() {
     // Navigate down to find second.txt with Alt+J
     // We need to find it in the list (first.txt comes before second.txt alphabetically)
     for _ in 0..3 {
-        harness.send_key(KeyCode::Char('j'), KeyModifiers::ALT).unwrap();
+        harness
+            .send_key(KeyCode::Char('j'), KeyModifiers::ALT)
+            .unwrap();
     }
     harness.render().unwrap();
 
     let screen_before_open = harness.screen_to_string();
-    println!("Screen before opening second file:\n{}", screen_before_open);
+    println!("Screen before opening second file:\n{screen_before_open}");
 
     // Open the selected file from file explorer with Alt+Enter
     let result = harness.send_key(KeyCode::Enter, KeyModifiers::ALT);
-    assert!(result.is_ok(), "Failed to send Alt+Enter: {:?}", result);
+    assert!(result.is_ok(), "Failed to send Alt+Enter: {result:?}");
 
     std::thread::sleep(std::time::Duration::from_millis(50));
     harness.render().unwrap();
 
     let screen_after_open = harness.screen_to_string();
-    println!("Screen after opening second file:\n{}", screen_after_open);
+    println!("Screen after opening second file:\n{screen_after_open}");
 
     // The critical assertion: the screen should now show the second file's content
     // NOT the first file's content
     assert!(
         screen_after_open.contains(content2),
-        "Second file content should be visible on screen after opening from file explorer.\nScreen:\n{}",
-        screen_after_open
+        "Second file content should be visible on screen after opening from file explorer.\nScreen:\n{screen_after_open}"
     );
 
     assert!(
         !screen_after_open.contains(content1),
-        "First file content should NOT be visible anymore after opening second file.\nScreen:\n{}",
-        screen_after_open
+        "First file content should NOT be visible anymore after opening second file.\nScreen:\n{screen_after_open}"
     );
-
 }
 
 /// Test that file_explorer_toggle_hidden can be called (smoke test)
@@ -535,7 +551,6 @@ fn test_file_explorer_new_file_smoke() {
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
-
     // Test passes if no panic occurs
 }
 
@@ -557,7 +572,6 @@ fn test_file_explorer_new_directory_smoke() {
     harness.editor_mut().file_explorer_new_directory();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
-
 
     // Test passes if no panic occurs
 }
@@ -593,7 +607,6 @@ fn test_file_explorer_delete_smoke() {
     harness.editor_mut().file_explorer_delete();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
-
 
     // Test passes if no panic occurs
 }

@@ -156,10 +156,7 @@ impl OverlayManager {
 
     /// Get all overlays that overlap with a range, sorted by priority
     pub fn in_range(&self, range: &Range<usize>) -> Vec<&Overlay> {
-        self.overlays
-            .iter()
-            .filter(|o| o.overlaps(range))
-            .collect()
+        self.overlays.iter().filter(|o| o.overlaps(range)).collect()
     }
 
     /// Get overlay by ID
@@ -169,7 +166,9 @@ impl OverlayManager {
 
     /// Get mutable overlay by ID
     pub fn get_by_id_mut(&mut self, id: &str) -> Option<&mut Overlay> {
-        self.overlays.iter_mut().find(|o| o.id.as_deref() == Some(id))
+        self.overlays
+            .iter_mut()
+            .find(|o| o.id.as_deref() == Some(id))
     }
 
     /// Get total number of overlays
@@ -306,8 +305,14 @@ mod tests {
     fn test_overlay_manager_add_and_query() {
         let mut manager = OverlayManager::new();
 
-        manager.add(Overlay::new(5..10, OverlayFace::Background { color: Color::Red }));
-        manager.add(Overlay::new(15..20, OverlayFace::Background { color: Color::Blue }));
+        manager.add(Overlay::new(
+            5..10,
+            OverlayFace::Background { color: Color::Red },
+        ));
+        manager.add(Overlay::new(
+            15..20,
+            OverlayFace::Background { color: Color::Blue },
+        ));
 
         assert_eq!(manager.len(), 2);
 
@@ -339,7 +344,9 @@ mod tests {
         ));
         manager.add(Overlay::with_priority(
             5..10,
-            OverlayFace::Background { color: Color::Green },
+            OverlayFace::Background {
+                color: Color::Green,
+            },
             15,
         ));
 
@@ -382,9 +389,20 @@ mod tests {
     fn test_overlay_manager_remove_in_range() {
         let mut manager = OverlayManager::new();
 
-        manager.add(Overlay::new(5..10, OverlayFace::Background { color: Color::Red }));
-        manager.add(Overlay::new(15..20, OverlayFace::Background { color: Color::Blue }));
-        manager.add(Overlay::new(25..30, OverlayFace::Background { color: Color::Green }));
+        manager.add(Overlay::new(
+            5..10,
+            OverlayFace::Background { color: Color::Red },
+        ));
+        manager.add(Overlay::new(
+            15..20,
+            OverlayFace::Background { color: Color::Blue },
+        ));
+        manager.add(Overlay::new(
+            25..30,
+            OverlayFace::Background {
+                color: Color::Green,
+            },
+        ));
 
         assert_eq!(manager.len(), 3);
 

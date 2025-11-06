@@ -73,7 +73,8 @@ impl PluginManager {
         let (command_sender, command_receiver) = std::sync::mpsc::channel();
 
         // Create debug log file in temp directory
-        let debug_log_path = std::env::temp_dir().join(format!("editor_plugin_debug_{}.log", std::process::id()));
+        let debug_log_path =
+            std::env::temp_dir().join(format!("editor_plugin_debug_{}.log", std::process::id()));
 
         // Create or truncate the debug log file
         std::fs::write(&debug_log_path, "=== Plugin Debug Log ===\n")
@@ -94,7 +95,8 @@ impl PluginManager {
         Self::setup_lua_bindings(&lua, &plugin_api, &debug_log_path)?;
 
         // Create global table for storing callbacks
-        lua.globals().set("_plugin_callbacks", lua.create_table()?)?;
+        lua.globals()
+            .set("_plugin_callbacks", lua.create_table()?)?;
 
         // Create global table for storing spawn callbacks
         lua.globals().set("_spawn_callbacks", lua.create_table()?)?;
@@ -116,7 +118,10 @@ impl PluginManager {
     }
 
     /// Set the async bridge sender (called by editor after construction)
-    pub fn set_async_sender(&mut self, sender: std::sync::mpsc::Sender<crate::async_bridge::AsyncMessage>) {
+    pub fn set_async_sender(
+        &mut self,
+        sender: std::sync::mpsc::Sender<crate::async_bridge::AsyncMessage>,
+    ) {
         self.async_sender = Some(sender);
     }
 
@@ -195,11 +200,13 @@ impl PluginManager {
         let api_clone = api.clone();
 
         // editor.insert_text(buffer_id, position, text)
-        let insert_text = lua.create_function(move |_, (buffer_id, position, text): (usize, usize, String)| {
-            api_clone
-                .insert_text(BufferId(buffer_id), position, text)
-                .map_err(|e| mlua::Error::RuntimeError(e))
-        })?;
+        let insert_text = lua.create_function(
+            move |_, (buffer_id, position, text): (usize, usize, String)| {
+                api_clone
+                    .insert_text(BufferId(buffer_id), position, text)
+                    .map_err(|e| mlua::Error::RuntimeError(e))
+            },
+        )?;
         editor.set("insert_text", insert_text)?;
 
         // Clone API for next closure
@@ -230,7 +237,13 @@ impl PluginManager {
                 bool,
             )| {
                 api_clone
-                    .add_overlay(BufferId(buffer_id), overlay_id, start..end, (r, g, b), underline)
+                    .add_overlay(
+                        BufferId(buffer_id),
+                        overlay_id,
+                        start..end,
+                        (r, g, b),
+                        underline,
+                    )
                     .map_err(|e| mlua::Error::RuntimeError(e))
             },
         )?;
@@ -251,22 +264,24 @@ impl PluginManager {
         let api_clone = api.clone();
 
         // editor.on(hook_name, callback)
-        let on_hook = lua.create_function(move |lua, (hook_name, callback): (String, mlua::Function)| {
-            // Store callback in registry to keep it alive
-            let registry_key = lua.create_registry_value(callback)?;
+        let on_hook = lua.create_function(
+            move |lua, (hook_name, callback): (String, mlua::Function)| {
+                // Store callback in registry to keep it alive
+                let registry_key = lua.create_registry_value(callback)?;
 
-            // Create Rust callback that calls Lua function
-            // Note: This is a simplified version - real implementation would need
-            // to handle the registry key lifetime properly
-            let hook_callback = Box::new(move |_args: &HookArgs| -> bool {
-                // In real implementation, we'd call the Lua function here
-                // For now, just return true
-                true
-            });
+                // Create Rust callback that calls Lua function
+                // Note: This is a simplified version - real implementation would need
+                // to handle the registry key lifetime properly
+                let hook_callback = Box::new(move |_args: &HookArgs| -> bool {
+                    // In real implementation, we'd call the Lua function here
+                    // For now, just return true
+                    true
+                });
 
-            api_clone.register_hook(&hook_name, hook_callback);
-            Ok(())
-        })?;
+                api_clone.register_hook(&hook_name, hook_callback);
+                Ok(())
+            },
+        )?;
         editor.set("on", on_hook)?;
 
         // Clone API for query functions
@@ -307,7 +322,14 @@ impl PluginManager {
             for (idx, buf_info) in buffers.iter().enumerate() {
                 let buf_table = lua.create_table()?;
                 buf_table.set("id", buf_info.id.0)?;
-                buf_table.set("path", buf_info.path.as_ref().and_then(|p| p.to_str()).unwrap_or(""))?;
+                buf_table.set(
+                    "path",
+                    buf_info
+                        .path
+                        .as_ref()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or(""),
+                )?;
                 buf_table.set("modified", buf_info.modified)?;
                 buf_table.set("length", buf_info.length)?;
                 result.set(idx + 1, buf_table)?;
@@ -324,7 +346,14 @@ impl PluginManager {
             if let Some(buf_info) = api_clone.get_buffer_info(BufferId(buffer_id)) {
                 let buf_table = lua.create_table()?;
                 buf_table.set("id", buf_info.id.0)?;
-                buf_table.set("path", buf_info.path.as_ref().and_then(|p| p.to_str()).unwrap_or(""))?;
+                buf_table.set(
+                    "path",
+                    buf_info
+                        .path
+                        .as_ref()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or(""),
+                )?;
                 buf_table.set("modified", buf_info.modified)?;
                 buf_table.set("length", buf_info.length)?;
                 Ok(Some(buf_table))
@@ -409,7 +438,7 @@ impl PluginManager {
 
             if args_vec.len() < 3 {
                 return Err(mlua::Error::RuntimeError(
-                    "spawn requires at least 3 arguments: command, args, callback".to_string()
+                    "spawn requires at least 3 arguments: command, args, callback".to_string(),
                 ));
             }
 
@@ -445,13 +474,14 @@ impl PluginManager {
             spawn_callbacks.set(callback_id, callback)?;
 
             // Send spawn command via plugin API
-            api_clone.send_command(PluginCommand::SpawnProcess {
-                command,
-                args: command_args,
-                cwd,
-                callback_id,
-            })
-            .map_err(|e| mlua::Error::RuntimeError(e))?;
+            api_clone
+                .send_command(PluginCommand::SpawnProcess {
+                    command,
+                    args: command_args,
+                    cwd,
+                    callback_id,
+                })
+                .map_err(|e| mlua::Error::RuntimeError(e))?;
 
             Ok(())
         })?;
@@ -470,10 +500,13 @@ impl PluginManager {
                 .create(true)
                 .append(true)
                 .open(&debug_log_path_clone)
-                .map_err(|e| mlua::Error::RuntimeError(format!("Failed to open debug log: {}", e)))?;
+                .map_err(|e| {
+                    mlua::Error::RuntimeError(format!("Failed to open debug log: {}", e))
+                })?;
 
-            writeln!(file, "{}", message)
-                .map_err(|e| mlua::Error::RuntimeError(format!("Failed to write to debug log: {}", e)))?;
+            writeln!(file, "{}", message).map_err(|e| {
+                mlua::Error::RuntimeError(format!("Failed to write to debug log: {}", e))
+            })?;
 
             // Debug messages are written to the log file but don't automatically open it
             // Users can manually open the debug log if needed
@@ -603,7 +636,9 @@ impl PluginManager {
         tracing::info!("Executing plugin action: {}", action_name);
 
         // Get the callbacks table
-        let callbacks: mlua::Table = self.lua.globals()
+        let callbacks: mlua::Table = self
+            .lua
+            .globals()
             .get("_plugin_callbacks")
             .map_err(|e| format!("Failed to get callbacks table: {}", e))?;
 
@@ -617,7 +652,10 @@ impl PluginManager {
             tracing::info!("Plugin action '{}' executed successfully", action_name);
             Ok(())
         } else {
-            Err(format!("No callback registered for action: {}", action_name))
+            Err(format!(
+                "No callback registered for action: {}",
+                action_name
+            ))
         }
     }
 
@@ -635,7 +673,9 @@ impl PluginManager {
         callback_id: u64,
     ) -> Result<u64, String> {
         // Get the async sender
-        let sender = self.async_sender.as_ref()
+        let sender = self
+            .async_sender
+            .as_ref()
             .ok_or_else(|| "Async bridge not initialized".to_string())?
             .clone();
 
@@ -644,11 +684,7 @@ impl PluginManager {
 
         // Spawn the process asynchronously
         tokio::spawn(crate::plugin_process::spawn_plugin_process(
-            process_id,
-            command,
-            args,
-            cwd,
-            sender,
+            process_id, command, args, cwd, sender,
         ));
 
         Ok(process_id)
@@ -663,19 +699,25 @@ impl PluginManager {
         exit_code: i32,
     ) -> Result<(), String> {
         // Get the spawn callbacks table
-        let spawn_callbacks: mlua::Table = self.lua.globals().get("_spawn_callbacks")
+        let spawn_callbacks: mlua::Table = self
+            .lua
+            .globals()
+            .get("_spawn_callbacks")
             .map_err(|e| format!("Failed to get _spawn_callbacks table: {}", e))?;
 
         // Get and remove the callback function
-        let callback: mlua::Function = spawn_callbacks.get(callback_id)
+        let callback: mlua::Function = spawn_callbacks
+            .get(callback_id)
             .map_err(|e| format!("No callback registered for process {}: {}", callback_id, e))?;
 
         // Remove from table to prevent memory leak
-        spawn_callbacks.set(callback_id, mlua::Value::Nil)
+        spawn_callbacks
+            .set(callback_id, mlua::Value::Nil)
             .map_err(|e| format!("Failed to remove callback: {}", e))?;
 
         // Call the callback with results
-        callback.call::<_, ()>((stdout, stderr, exit_code))
+        callback
+            .call::<_, ()>((stdout, stderr, exit_code))
             .map_err(|e| format!("Process callback error: {}", e))?;
 
         Ok(())
@@ -924,7 +966,11 @@ mod tests {
         let plugin_path = Path::new("plugins/todo_highlighter.lua");
         if plugin_path.exists() {
             let result = manager.load_plugin(plugin_path);
-            assert!(result.is_ok(), "Failed to load TODO highlighter: {:?}", result);
+            assert!(
+                result.is_ok(),
+                "Failed to load TODO highlighter: {:?}",
+                result
+            );
 
             // Verify it's loaded
             assert!(manager.plugins.contains_key("todo_highlighter"));
@@ -935,7 +981,9 @@ mod tests {
             assert!(registry.find_by_name("TODO Highlighter: Disable").is_some());
             assert!(registry.find_by_name("TODO Highlighter: Toggle").is_some());
             assert!(registry.find_by_name("TODO Highlighter: Refresh").is_some());
-            assert!(registry.find_by_name("TODO Highlighter: Show Keywords").is_some());
+            assert!(registry
+                .find_by_name("TODO Highlighter: Show Keywords")
+                .is_some());
         } else {
             // Skip test if plugin file doesn't exist
             println!("Skipping test - todo_highlighter.lua not found");
@@ -974,7 +1022,9 @@ mod tests {
         {
             let snapshot_handle = manager.state_snapshot_handle();
             let mut snapshot = snapshot_handle.write().unwrap();
-            snapshot.buffer_contents.insert(BufferId(1), "Test content".to_string());
+            snapshot
+                .buffer_contents
+                .insert(BufferId(1), "Test content".to_string());
         }
 
         let result = manager.eval("return editor.get_buffer_content(1)");
@@ -993,7 +1043,9 @@ mod tests {
         {
             let snapshot_handle = manager.state_snapshot_handle();
             let mut snapshot = snapshot_handle.write().unwrap();
-            snapshot.buffer_contents.insert(BufferId(1), "Line 1\nLine 2\nLine 3".to_string());
+            snapshot
+                .buffer_contents
+                .insert(BufferId(1), "Line 1\nLine 2\nLine 3".to_string());
         }
 
         // Test getting line 2 (1-indexed)
@@ -1015,18 +1067,24 @@ mod tests {
         {
             let snapshot_handle = manager.state_snapshot_handle();
             let mut snapshot = snapshot_handle.write().unwrap();
-            snapshot.buffers.insert(BufferId(1), BufferInfo {
-                id: BufferId(1),
-                path: Some(std::path::PathBuf::from("/file1.txt")),
-                modified: false,
-                length: 100,
-            });
-            snapshot.buffers.insert(BufferId(2), BufferInfo {
-                id: BufferId(2),
-                path: Some(std::path::PathBuf::from("/file2.txt")),
-                modified: true,
-                length: 200,
-            });
+            snapshot.buffers.insert(
+                BufferId(1),
+                BufferInfo {
+                    id: BufferId(1),
+                    path: Some(std::path::PathBuf::from("/file1.txt")),
+                    modified: false,
+                    length: 100,
+                },
+            );
+            snapshot.buffers.insert(
+                BufferId(2),
+                BufferInfo {
+                    id: BufferId(2),
+                    path: Some(std::path::PathBuf::from("/file2.txt")),
+                    modified: true,
+                    length: 200,
+                },
+            );
         }
 
         // Test list_buffers
@@ -1052,12 +1110,15 @@ mod tests {
         {
             let snapshot_handle = manager.state_snapshot_handle();
             let mut snapshot = snapshot_handle.write().unwrap();
-            snapshot.buffers.insert(BufferId(5), BufferInfo {
-                id: BufferId(5),
-                path: Some(std::path::PathBuf::from("/test.txt")),
-                modified: true,
-                length: 150,
-            });
+            snapshot.buffers.insert(
+                BufferId(5),
+                BufferInfo {
+                    id: BufferId(5),
+                    path: Some(std::path::PathBuf::from("/test.txt")),
+                    modified: true,
+                    length: 150,
+                },
+            );
         }
 
         // Test get_buffer_info
@@ -1093,11 +1154,13 @@ mod tests {
         }
 
         // Test get_primary_cursor
-        let result = manager.eval("local cursor = editor.get_primary_cursor(); return cursor.position");
+        let result =
+            manager.eval("local cursor = editor.get_primary_cursor(); return cursor.position");
         assert!(result.is_ok());
         assert!(result.unwrap().contains("123"));
 
-        let result = manager.eval("local cursor = editor.get_primary_cursor(); return cursor.selection.start");
+        let result = manager
+            .eval("local cursor = editor.get_primary_cursor(); return cursor.selection.start");
         assert!(result.is_ok());
         assert!(result.unwrap().contains("100"));
     }
@@ -1115,9 +1178,18 @@ mod tests {
             let snapshot_handle = manager.state_snapshot_handle();
             let mut snapshot = snapshot_handle.write().unwrap();
             snapshot.all_cursors = vec![
-                CursorInfo { position: 10, selection: None },
-                CursorInfo { position: 20, selection: Some(15..20) },
-                CursorInfo { position: 30, selection: None },
+                CursorInfo {
+                    position: 10,
+                    selection: None,
+                },
+                CursorInfo {
+                    position: 20,
+                    selection: Some(15..20),
+                },
+                CursorInfo {
+                    position: 30,
+                    selection: None,
+                },
             ];
         }
 
@@ -1126,7 +1198,8 @@ mod tests {
         assert!(result.is_ok());
         assert!(result.unwrap().contains("3"));
 
-        let result = manager.eval("local cursors = editor.get_all_cursors(); return cursors[2].position");
+        let result =
+            manager.eval("local cursors = editor.get_all_cursors(); return cursors[2].position");
         assert!(result.is_ok());
         assert!(result.unwrap().contains("20"));
     }
@@ -1176,23 +1249,27 @@ mod tests {
         manager.set_async_sender(sender);
 
         // Test that spawn function exists and can be called
-        let result = manager.eval(r#"
+        let result = manager.eval(
+            r#"
             local callback_called = false
             editor.spawn("echo", {"hello"}, function(stdout, stderr, exit_code)
                 callback_called = true
             end)
             return "spawn_called"
-        "#);
+        "#,
+        );
 
         assert!(result.is_ok());
         assert!(result.unwrap().contains("spawn_called"));
 
         // Check that the callback was stored in _spawn_callbacks
-        let result = manager.eval(r#"
+        let result = manager.eval(
+            r#"
             local count = 0
             for _ in pairs(_spawn_callbacks) do count = count + 1 end
             return count
-        "#);
+        "#,
+        );
 
         assert!(result.is_ok());
         assert!(result.unwrap().contains("1"), "Expected 1 callback stored");
@@ -1209,12 +1286,14 @@ mod tests {
         manager.set_async_sender(sender);
 
         // Test spawn with working directory option
-        let result = manager.eval(r#"
+        let result = manager.eval(
+            r#"
             editor.spawn("pwd", {}, {cwd = "/tmp"}, function(stdout, stderr, exit_code)
                 -- callback
             end)
             return "spawn_with_cwd_called"
-        "#);
+        "#,
+        );
 
         assert!(result.is_ok());
         assert!(result.unwrap().contains("spawn_with_cwd_called"));

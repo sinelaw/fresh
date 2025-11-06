@@ -35,10 +35,6 @@ tempfile = "3.15.0"
 insta = { version = "1.43", features = ["yaml"] }
 ctor = "0.2"
 
-[[bench]]
-name = "fresh_benchmarks"
-harness = false
-
 [profile.release]
 debug = true
 

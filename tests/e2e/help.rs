@@ -1,7 +1,4 @@
-use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
-use tempfile::TempDir;
 
 /// Test help page display and toggle
 #[test]
@@ -86,8 +83,7 @@ fn test_help_page_scrolling() {
 
     // After scrolling back to top, should match the initial screen
     assert_eq!(
-        screen_top,
-        screen_before,
+        screen_top, screen_before,
         "Scrolling back to top should restore original view"
     );
 }

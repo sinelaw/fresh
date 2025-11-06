@@ -299,16 +299,16 @@ fn test_viewport_resize_maintains_cursor() {
 #[test]
 fn test_overlay_events() {
     use fresh::event::{OverlayFace, UnderlineStyle};
-    
+
     let mut state = EditorState::new(80, 24);
-    
+
     // Insert some text
     state.apply(&Event::Insert {
         position: 0,
         text: "hello world".to_string(),
         cursor_id: CursorId(0),
     });
-    
+
     // Add an error overlay
     state.apply(&Event::AddOverlay {
         overlay_id: "error1".to_string(),
@@ -320,12 +320,12 @@ fn test_overlay_events() {
         priority: 100,
         message: Some("Error here".to_string()),
     });
-    
+
     // Check overlay was added
     let overlays_at_pos = state.overlays.at_position(2);
     assert_eq!(overlays_at_pos.len(), 1);
     assert_eq!(overlays_at_pos[0].id, Some("error1".to_string()));
-    
+
     // Add a warning overlay with lower priority
     state.apply(&Event::AddOverlay {
         overlay_id: "warning1".to_string(),
@@ -337,23 +337,23 @@ fn test_overlay_events() {
         priority: 50,
         message: Some("Warning here".to_string()),
     });
-    
+
     // Position 4 should have both overlays, sorted by priority (ascending)
     let overlays_at_4 = state.overlays.at_position(4);
     assert_eq!(overlays_at_4.len(), 2);
-    assert_eq!(overlays_at_4[0].priority, 50);  // Warning (lower priority) comes first
+    assert_eq!(overlays_at_4[0].priority, 50); // Warning (lower priority) comes first
     assert_eq!(overlays_at_4[1].priority, 100); // Error (higher priority) comes second
-    
+
     // Remove error overlay
     state.apply(&Event::RemoveOverlay {
         overlay_id: "error1".to_string(),
     });
-    
+
     // Now position 4 should only have warning
     let overlays_at_4 = state.overlays.at_position(4);
     assert_eq!(overlays_at_4.len(), 1);
     assert_eq!(overlays_at_4[0].id, Some("warning1".to_string()));
-    
+
     // Clear all overlays
     state.apply(&Event::ClearOverlays);
     let overlays_after_clear = state.overlays.at_position(4);
@@ -364,9 +364,9 @@ fn test_overlay_events() {
 #[test]
 fn test_popup_events() {
     use fresh::event::{PopupContentData, PopupData, PopupListItemData, PopupPositionData};
-    
+
     let mut state = EditorState::new(80, 24);
-    
+
     // Create a popup with list items
     let popup_data = PopupData {
         title: Some("Test Popup".to_string()),
@@ -398,37 +398,35 @@ fn test_popup_events() {
         max_height: 10,
         bordered: true,
     };
-    
+
     // Show the popup
-    state.apply(&Event::ShowPopup {
-        popup: popup_data,
-    });
-    
+    state.apply(&Event::ShowPopup { popup: popup_data });
+
     // Check popup is visible
     assert!(state.popups.is_visible());
     let popup = state.popups.top().unwrap();
     assert_eq!(popup.title, Some("Test Popup".to_string()));
-    
+
     // Navigate down
     state.apply(&Event::PopupSelectNext);
-    
+
     // Check selection moved to item 1
     let popup = state.popups.top().unwrap();
     let selected_item = popup.selected_item().unwrap();
     assert_eq!(selected_item.text, "Item 2");
-    
+
     // Navigate down again
     state.apply(&Event::PopupSelectNext);
     let popup = state.popups.top().unwrap();
     let selected_item = popup.selected_item().unwrap();
     assert_eq!(selected_item.text, "Item 3");
-    
+
     // Navigate up
     state.apply(&Event::PopupSelectPrev);
     let popup = state.popups.top().unwrap();
     let selected_item = popup.selected_item().unwrap();
     assert_eq!(selected_item.text, "Item 2");
-    
+
     // Hide popup
     state.apply(&Event::HidePopup);
     assert!(!state.popups.is_visible());
@@ -585,7 +583,7 @@ fn test_overlay_priority_layering() {
     // Position 3 should have both overlays, sorted by priority
     let overlays = state.overlays.at_position(3);
     assert_eq!(overlays.len(), 2);
-    assert_eq!(overlays[0].priority, 10);  // Hint (lower priority first)
+    assert_eq!(overlays[0].priority, 10); // Hint (lower priority first)
     assert_eq!(overlays[1].priority, 100); // Error (higher priority second)
 
     // Verify IDs
@@ -635,7 +633,10 @@ fn test_diagnostic_overlay_visual_rendering() {
 
     // Get the style of the "x" character
     let style = harness.get_cell_style(x_column, x_row);
-    assert!(style.is_some(), "Expected cell at ({}, {}) to have a style", x_column, x_row);
+    assert!(
+        style.is_some(),
+        "Expected cell at ({x_column}, {x_row}) to have a style"
+    );
 
     let style = style.unwrap();
 
@@ -655,5 +656,9 @@ fn test_diagnostic_overlay_visual_rendering() {
 
     // Verify the text itself is correct
     let text = harness.get_cell(x_column, x_row);
-    assert_eq!(text, Some("x".to_string()), "Expected 'x' character at position");
+    assert_eq!(
+        text,
+        Some("x".to_string()),
+        "Expected 'x' character at position"
+    );
 }

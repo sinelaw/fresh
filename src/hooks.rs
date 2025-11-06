@@ -356,7 +356,8 @@ mod tests {
         );
 
         let args = HookArgs::EditorInitialized;
-        let result = registry.run_hooks_with_timeout("timeout-test", &args, Duration::from_millis(10));
+        let result =
+            registry.run_hooks_with_timeout("timeout-test", &args, Duration::from_millis(10));
         assert!(result); // Should complete quickly
     }
 }

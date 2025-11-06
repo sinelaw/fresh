@@ -247,11 +247,15 @@ impl Popup {
     pub fn calculate_area(&self, terminal_area: Rect, cursor_pos: Option<(u16, u16)>) -> Rect {
         match self.position {
             PopupPosition::AtCursor | PopupPosition::BelowCursor | PopupPosition::AboveCursor => {
-                let (cursor_x, cursor_y) = cursor_pos.unwrap_or((terminal_area.width / 2, terminal_area.height / 2));
+                let (cursor_x, cursor_y) =
+                    cursor_pos.unwrap_or((terminal_area.width / 2, terminal_area.height / 2));
 
                 let width = self.width.min(terminal_area.width);
                 // Use the minimum of max_height, actual content height, and terminal height
-                let height = self.content_height().min(self.max_height).min(terminal_area.height);
+                let height = self
+                    .content_height()
+                    .min(self.max_height)
+                    .min(terminal_area.height);
 
                 let x = if cursor_x + width > terminal_area.width {
                     terminal_area.width.saturating_sub(width)
@@ -269,9 +273,7 @@ impl Popup {
                             cursor_y + 1
                         }
                     }
-                    PopupPosition::AboveCursor => {
-                        cursor_y.saturating_sub(height)
-                    }
+                    PopupPosition::AboveCursor => cursor_y.saturating_sub(height),
                     _ => cursor_y,
                 };
 
@@ -284,15 +286,31 @@ impl Popup {
             }
             PopupPosition::Fixed { x, y } => {
                 let width = self.width.min(terminal_area.width);
-                let height = self.content_height().min(self.max_height).min(terminal_area.height);
-                Rect { x, y, width, height }
+                let height = self
+                    .content_height()
+                    .min(self.max_height)
+                    .min(terminal_area.height);
+                Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                }
             }
             PopupPosition::Centered => {
                 let width = self.width.min(terminal_area.width);
-                let height = self.content_height().min(self.max_height).min(terminal_area.height);
+                let height = self
+                    .content_height()
+                    .min(self.max_height)
+                    .min(terminal_area.height);
                 let x = (terminal_area.width.saturating_sub(width)) / 2;
                 let y = (terminal_area.height.saturating_sub(height)) / 2;
-                Rect { x, y, width, height }
+                Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                }
             }
         }
     }
@@ -396,9 +414,7 @@ pub struct PopupManager {
 
 impl PopupManager {
     pub fn new() -> Self {
-        Self {
-            popups: Vec::new(),
-        }
+        Self { popups: Vec::new() }
     }
 
     /// Show a popup (adds to top of stack)

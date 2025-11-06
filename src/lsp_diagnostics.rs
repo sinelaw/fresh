@@ -2,7 +2,6 @@
 ///!
 ///! This module handles converting LSP diagnostics to visual overlays in the editor.
 ///! Diagnostics are displayed as colored underlines (red for errors, yellow for warnings, etc.)
-
 use crate::buffer::Buffer;
 use crate::overlay::OverlayFace;
 use crate::state::EditorState;
@@ -69,7 +68,11 @@ pub fn diagnostic_to_overlay(
 /// 2. Converts diagnostics to overlays
 /// 3. Adds overlays to the editor state
 /// 4. Adds red bullet point indicators in the margin for lines with diagnostics
-pub fn apply_diagnostics_to_state(state: &mut EditorState, diagnostics: &[Diagnostic], theme: &crate::theme::Theme) {
+pub fn apply_diagnostics_to_state(
+    state: &mut EditorState,
+    diagnostics: &[Diagnostic],
+    theme: &crate::theme::Theme,
+) {
     use crate::overlay::Overlay;
 
     // Clear existing diagnostic overlays
@@ -101,7 +104,9 @@ pub fn apply_diagnostics_to_state(state: &mut EditorState, diagnostics: &[Diagno
 
     // Add new diagnostic overlays and collect diagnostic lines
     for (idx, diagnostic) in diagnostics.iter().enumerate() {
-        if let Some((range, face, priority)) = diagnostic_to_overlay(diagnostic, &state.buffer, theme) {
+        if let Some((range, face, priority)) =
+            diagnostic_to_overlay(diagnostic, &state.buffer, theme)
+        {
             let overlay_id = format!("lsp-diagnostic-{}", idx);
             let message = diagnostic.message.clone();
 
@@ -119,7 +124,9 @@ pub fn apply_diagnostics_to_state(state: &mut EditorState, diagnostics: &[Diagno
 
     // Add red bullet point indicators for each unique diagnostic line
     for line in diagnostic_lines {
-        state.margins.set_diagnostic_indicator(line, "●".to_string(), Color::Red);
+        state
+            .margins
+            .set_diagnostic_indicator(line, "●".to_string(), Color::Red);
     }
 }
 

@@ -93,7 +93,9 @@ impl FileTree {
 
     /// Get a node by path
     pub fn get_node_by_path(&self, path: &Path) -> Option<&TreeNode> {
-        self.path_to_node.get(path).and_then(|id| self.get_node(*id))
+        self.path_to_node
+            .get(path)
+            .and_then(|id| self.get_node(*id))
     }
 
     /// Get all nodes
@@ -140,12 +142,10 @@ impl FileTree {
             Ok(entries) => {
                 // Sort entries: directories first, then by name
                 let mut sorted_entries = entries;
-                sorted_entries.sort_by(|a, b| {
-                    match (a.is_dir(), b.is_dir()) {
-                        (true, false) => std::cmp::Ordering::Less,
-                        (false, true) => std::cmp::Ordering::Greater,
-                        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                    }
+                sorted_entries.sort_by(|a, b| match (a.is_dir(), b.is_dir()) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
                 });
 
                 // Create child nodes

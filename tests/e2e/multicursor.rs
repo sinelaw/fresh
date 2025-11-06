@@ -1,7 +1,4 @@
-use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
-use tempfile::TempDir;
 
 /// Test adding cursor at next match with Ctrl+D
 #[test]
@@ -204,11 +201,13 @@ fn test_multi_cursor_undo_atomic() {
     let x_count = result.matches('X').count();
     assert_eq!(
         x_count, 3,
-        "Should have inserted exactly 3 X's, one per cursor. Buffer: {}", result
+        "Should have inserted exactly 3 X's, one per cursor. Buffer: {result}"
     );
 
     // Undo once - this should undo ALL three insertions atomically
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // All X's should be gone after a single undo
@@ -216,12 +215,14 @@ fn test_multi_cursor_undo_atomic() {
     let x_count_after_undo = result_after_undo.matches('X').count();
     assert_eq!(
         x_count_after_undo, 0,
-        "Should have removed all X's with single undo. Buffer: {}", result_after_undo
+        "Should have removed all X's with single undo. Buffer: {result_after_undo}"
     );
     harness.assert_buffer_content("aaa\nbbb\nccc\nddd");
 
     // Redo once - this should redo ALL three insertions atomically
-    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('y'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // All X's should be back after a single redo
@@ -229,7 +230,7 @@ fn test_multi_cursor_undo_atomic() {
     let x_count_after_redo = result_after_redo.matches('X').count();
     assert_eq!(
         x_count_after_redo, 3,
-        "Should have restored all 3 X's with single redo. Buffer: {}", result_after_redo
+        "Should have restored all 3 X's with single redo. Buffer: {result_after_redo}"
     );
 }
 
@@ -263,7 +264,9 @@ fn test_multi_cursor_delete_undo_atomic() {
     harness.assert_buffer_content("aa\nbb\ncc");
 
     // Undo once - should restore all three characters
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // All characters should be restored
@@ -302,21 +305,27 @@ fn test_add_cursor_undo() {
     assert_eq!(harness.editor().active_state().cursors.count(), 3);
 
     // Undo - should remove the last cursor added
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Should be back to 2 cursors
     assert_eq!(harness.editor().active_state().cursors.count(), 2);
 
     // Undo again - should remove the second cursor
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Should be back to 1 cursor
     assert_eq!(harness.editor().active_state().cursors.count(), 1);
 
     // Redo - should add cursor back
-    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('y'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Should be back to 2 cursors
@@ -352,14 +361,18 @@ fn test_remove_cursor_undo() {
     assert_eq!(harness.editor().active_state().cursors.count(), 1);
 
     // Undo - should restore the secondary cursors
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Should be back to 3 cursors
     assert_eq!(harness.editor().active_state().cursors.count(), 3);
 
     // Redo - should remove them again
-    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('y'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Should be back to 1 cursor
@@ -396,40 +409,48 @@ fn test_undo_beyond_cursor_add() {
     // Should have X inserted at both positions
     let result = harness.get_buffer_content();
     let x_count = result.matches('X').count();
-    assert_eq!(x_count, 2, "Should have 2 X's. Buffer: {}", result);
+    assert_eq!(x_count, 2, "Should have 2 X's. Buffer: {result}");
 
     // Undo - should undo the batch insertion
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // X's should be gone, but we should still have 2 cursors
     let result = harness.get_buffer_content();
     let x_count = result.matches('X').count();
-    assert_eq!(x_count, 0, "Should have 0 X's. Buffer: {}", result);
+    assert_eq!(x_count, 0, "Should have 0 X's. Buffer: {result}");
     assert_eq!(harness.editor().active_state().cursors.count(), 2);
 
     // Undo again - should remove the second cursor
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Should be back to 1 cursor
     assert_eq!(harness.editor().active_state().cursors.count(), 1);
 
     // Redo - should add the cursor back
-    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('y'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Should have 2 cursors again
     assert_eq!(harness.editor().active_state().cursors.count(), 2);
 
     // Redo again - should redo the batch insertion
-    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('y'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // X's should be back
     let result = harness.get_buffer_content();
     let x_count = result.matches('X').count();
-    assert_eq!(x_count, 2, "Should have 2 X's back. Buffer: {}", result);
+    assert_eq!(x_count, 2, "Should have 2 X's back. Buffer: {result}");
 }
 
 /// Test that status bar shows cursor count when multiple cursors exist
@@ -451,7 +472,10 @@ fn test_multi_cursor_status_bar_indicator() {
 
     // Status bar should NOT show cursor count when single cursor
     let screen = harness.screen_to_string();
-    assert!(!screen.contains(" cursors"), "Should not show cursor count with single cursor");
+    assert!(
+        !screen.contains(" cursors"),
+        "Should not show cursor count with single cursor"
+    );
 
     // Add a cursor below
     harness.editor_mut().add_cursor_below();
@@ -459,7 +483,10 @@ fn test_multi_cursor_status_bar_indicator() {
 
     // Status bar should show "2 cursors"
     let screen = harness.screen_to_string();
-    assert!(screen.contains("2 cursors"), "Status bar should show '2 cursors'. Screen:\n{}", screen);
+    assert!(
+        screen.contains("2 cursors"),
+        "Status bar should show '2 cursors'. Screen:\n{screen}"
+    );
 
     // Add another cursor
     harness.editor_mut().add_cursor_below();
@@ -467,7 +494,10 @@ fn test_multi_cursor_status_bar_indicator() {
 
     // Status bar should show "3 cursors"
     let screen = harness.screen_to_string();
-    assert!(screen.contains("3 cursors"), "Status bar should show '3 cursors'. Screen:\n{}", screen);
+    assert!(
+        screen.contains("3 cursors"),
+        "Status bar should show '3 cursors'. Screen:\n{screen}"
+    );
 
     // Remove secondary cursors
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -475,7 +505,10 @@ fn test_multi_cursor_status_bar_indicator() {
 
     // Status bar should NOT show cursor count again
     let screen = harness.screen_to_string();
-    assert!(!screen.contains(" cursors"), "Should not show cursor count after removing cursors");
+    assert!(
+        !screen.contains(" cursors"),
+        "Should not show cursor count after removing cursors"
+    );
 }
 
 /// Test that all cursors are visible in the viewport
@@ -532,8 +565,7 @@ fn test_all_cursors_visible_in_viewport() {
 
     assert!(
         cursor_indicators_found >= 2,
-        "Expected at least 2 visible cursors (secondary cursors), found {}",
-        cursor_indicators_found
+        "Expected at least 2 visible cursors (secondary cursors), found {cursor_indicators_found}"
     );
 }
 
@@ -572,18 +604,20 @@ fn test_multi_cursor_comprehensive_abc_editing() {
     let x_count = result.matches('X').count();
     assert_eq!(
         x_count, 4,
-        "Should have inserted exactly 4 X's, one per cursor. Buffer: {}", result
+        "Should have inserted exactly 4 X's, one per cursor. Buffer: {result}"
     );
 
     // Test 2: Undo should remove all X's atomically
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     let result_after_undo = harness.get_buffer_content();
     let x_count_after_undo = result_after_undo.matches('X').count();
     assert_eq!(
         x_count_after_undo, 0,
-        "Should have removed all X's with single undo. Buffer: {}", result_after_undo
+        "Should have removed all X's with single undo. Buffer: {result_after_undo}"
     );
 
     // Verify we still have 4 cursors after undo
@@ -597,18 +631,22 @@ fn test_single_cursor_visible() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create multiple lines with various content
-    harness.type_text("Hello World\nSecond Line Here\nThird Line\nFourth").unwrap();
+    harness
+        .type_text("Hello World\nSecond Line Here\nThird Line\nFourth")
+        .unwrap();
 
     let expected_content = "Hello World\nSecond Line Here\nThird Line\nFourth";
     harness.assert_buffer_content(expected_content);
 
     // Move to start of document
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Expected positions for "Hello World\nSecond Line Here\nThird Line\nFourth"
     let expected_chars = vec![
-        'H', 'e', 'l', 'l', 'o', ' ', 'W', 'o', 'r', 'l', 'd', // end of line 1
+        'H', 'e', 'l', 'l', 'o', ' ', 'W', 'o', 'r', 'l', 'd',  // end of line 1
         '\n', // newline is at position 11
     ];
 
@@ -620,20 +658,17 @@ fn test_single_cursor_visible() {
         harness.render().unwrap();
 
         let cursor_pos = harness.cursor_position();
-        println!("\nStep {}: cursor at buffer position {}", step, cursor_pos);
+        println!("\nStep {step}: cursor at buffer position {cursor_pos}");
 
         // Find cursor on screen using the harness's cursor detection
         let cursors = harness.find_all_cursors();
         assert!(
             !cursors.is_empty(),
-            "Step {}: Cursor not visible at buffer position {}! Expected char: '{}'",
-            step,
-            cursor_pos,
-            expected_char
+            "Step {step}: Cursor not visible at buffer position {cursor_pos}! Expected char: '{expected_char}'"
         );
 
         let (x, y, char_at_cursor, _is_primary) = &cursors[0];
-        println!("  Screen position: ({}, {}), char: '{}'", x, y, char_at_cursor);
+        println!("  Screen position: ({x}, {y}), char: '{char_at_cursor}'");
 
         // For newline, we expect to see a space since we add it for visibility
         if *expected_char == '\n' {
@@ -643,14 +678,15 @@ fn test_single_cursor_visible() {
             let expected_str = expected_char.to_string();
             assert_eq!(
                 *char_at_cursor, expected_str,
-                "Step {}: Cursor at wrong character. Expected '{}', got '{}'",
-                step, expected_str, char_at_cursor
+                "Step {step}: Cursor at wrong character. Expected '{expected_str}', got '{char_at_cursor}'"
             );
         }
 
         // Move right for next iteration
         if step < expected_chars.len() - 1 {
-            harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+            harness
+                .send_key(KeyCode::Right, KeyModifiers::NONE)
+                .unwrap();
         }
     }
 
@@ -659,18 +695,23 @@ fn test_single_cursor_visible() {
     // Move to start of second line
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     let after_down = harness.cursor_position();
-    println!("After Down: cursor at buffer position {}", after_down);
+    println!("After Down: cursor at buffer position {after_down}");
 
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     let after_home = harness.cursor_position();
-    println!("After Home: cursor at buffer position {}", after_home);
+    println!("After Home: cursor at buffer position {after_home}");
 
     harness.render().unwrap();
 
     let cursors = harness.find_all_cursors();
-    assert!(!cursors.is_empty(), "Cursor should be visible at start of second line");
+    assert!(
+        !cursors.is_empty(),
+        "Cursor should be visible at start of second line"
+    );
     let (x, y, char_at_cursor, _is_primary) = &cursors[0];
-    println!("At start of line 2: screen ({}, {}), char: '{}', buffer pos: {}", x, y, char_at_cursor, after_home);
+    println!(
+        "At start of line 2: screen ({x}, {y}), char: '{char_at_cursor}', buffer pos: {after_home}"
+    );
 
     // Position 12 should be 'S' (first char of "Second")
     // But we need to be flexible in case the cursor is shown differently
@@ -678,31 +719,31 @@ fn test_single_cursor_visible() {
         // If we're at the 'S', it should show 'S' with REVERSED
         assert_eq!(*char_at_cursor, "S", "Should be at 'S' of 'Second'");
     } else {
-        println!("WARNING: Cursor not at expected position 12, it's at {}", after_home);
+        println!("WARNING: Cursor not at expected position 12, it's at {after_home}");
     }
 
     // Move through "Second" character by character
-    let second_chars = vec!['S', 'e', 'c', 'o', 'n', 'd'];
+    let second_chars = ['S', 'e', 'c', 'o', 'n', 'd'];
     for (i, expected_char) in second_chars.iter().enumerate() {
         harness.render().unwrap();
 
         let cursors = harness.find_all_cursors();
         assert!(
             !cursors.is_empty(),
-            "Cursor not visible at char {} of 'Second'",
-            i
+            "Cursor not visible at char {i} of 'Second'"
         );
 
         let (_, _, char_at_cursor, _is_primary) = &cursors[0];
         let expected_str = expected_char.to_string();
         assert_eq!(
             *char_at_cursor, expected_str,
-            "At position {} of 'Second': expected '{}', got '{}'",
-            i, expected_str, char_at_cursor
+            "At position {i} of 'Second': expected '{expected_str}', got '{char_at_cursor}'"
         );
 
         if i < second_chars.len() - 1 {
-            harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+            harness
+                .send_key(KeyCode::Right, KeyModifiers::NONE)
+                .unwrap();
         }
     }
 
@@ -713,22 +754,33 @@ fn test_single_cursor_visible() {
     harness.render().unwrap();
 
     let cursors = harness.find_all_cursors();
-    assert!(!cursors.is_empty(), "Cursor should be visible after moving down");
+    assert!(
+        !cursors.is_empty(),
+        "Cursor should be visible after moving down"
+    );
     println!("After Down: cursor at {:?}", cursors[0]);
 
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     let cursors = harness.find_all_cursors();
-    assert!(!cursors.is_empty(), "Cursor should be visible after moving up");
+    assert!(
+        !cursors.is_empty(),
+        "Cursor should be visible after moving up"
+    );
     println!("After Up: cursor at {:?}", cursors[0]);
 
     // Move to end of document
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     let cursors = harness.find_all_cursors();
-    assert!(!cursors.is_empty(), "Cursor should be visible at end of document");
+    assert!(
+        !cursors.is_empty(),
+        "Cursor should be visible at end of document"
+    );
     println!("At end of document: cursor at {:?}", cursors[0]);
 
     println!("\nCursor visibility test completed successfully!");
@@ -748,19 +800,27 @@ fn test_cursor_visible_on_empty_line() {
 
     // Cursor should be visible on the empty line
     let cursors = harness.find_all_cursors();
-    assert!(!cursors.is_empty(), "Cursor should be visible on empty line");
+    assert!(
+        !cursors.is_empty(),
+        "Cursor should be visible on empty line"
+    );
     assert_eq!(cursors.len(), 1, "Should have exactly 1 visible cursor");
 
     // Type some text, then delete it to create an empty line again
     harness.type_text("Test").unwrap();
     for _ in 0..4 {
-        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
     }
     harness.render().unwrap();
 
     // Cursor should still be visible on empty line
     let cursors_after_delete = harness.find_all_cursors();
-    assert!(!cursors_after_delete.is_empty(), "Cursor should be visible on empty line after deleting text");
+    assert!(
+        !cursors_after_delete.is_empty(),
+        "Cursor should be visible on empty line after deleting text"
+    );
 
     // Add multiple empty lines and test cursor on different empty lines
     harness.type_text("\n\n\n").unwrap();
@@ -769,7 +829,10 @@ fn test_cursor_visible_on_empty_line() {
 
     // Cursor should be visible on the empty line we moved to
     let cursors_on_middle_empty = harness.find_all_cursors();
-    assert!(!cursors_on_middle_empty.is_empty(), "Cursor should be visible on middle empty line");
+    assert!(
+        !cursors_on_middle_empty.is_empty(),
+        "Cursor should be visible on middle empty line"
+    );
 }
 
 /// Test cursor visibility when editor first opens with empty buffer
@@ -780,23 +843,34 @@ fn test_cursor_visible_on_initial_empty_buffer() {
     harness.render().unwrap();
 
     println!("Testing initial empty buffer cursor visibility...");
-    println!("Buffer length: {}", harness.editor().active_state().buffer.len());
-    println!("Cursor position: {}", harness.editor().active_state().cursors.primary().position);
+    println!(
+        "Buffer length: {}",
+        harness.editor().active_state().buffer.len()
+    );
+    println!(
+        "Cursor position: {}",
+        harness.editor().active_state().cursors.primary().position
+    );
 
     // Use the harness's cursor detection which handles both hardware cursor and REVERSED cells
     let cursors = harness.find_all_cursors();
-    assert!(!cursors.is_empty(), "Cursor must be visible when editor opens with empty buffer");
+    assert!(
+        !cursors.is_empty(),
+        "Cursor must be visible when editor opens with empty buffer"
+    );
 
     let (x, y, char_at_cursor, is_primary) = &cursors[0];
-    println!("Found cursor at screen position ({}, {}): '{}' (primary: {})", x, y, char_at_cursor, is_primary);
+    println!(
+        "Found cursor at screen position ({x}, {y}): '{char_at_cursor}' (primary: {is_primary})"
+    );
     assert!(*is_primary, "The only cursor should be the primary cursor");
 }
 
 /// Test cursor visibility when opening a file
 #[test]
 fn test_cursor_visible_when_opening_file() {
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.txt");
@@ -807,16 +881,30 @@ fn test_cursor_visible_when_opening_file() {
     harness.render().unwrap();
 
     println!("Testing cursor visibility when opening file...");
-    println!("Buffer content: {}", harness.editor().active_state().buffer.to_string());
-    println!("Buffer length: {}", harness.editor().active_state().buffer.len());
-    println!("Cursor position: {}", harness.editor().active_state().cursors.primary().position);
+    println!(
+        "Buffer content: {}",
+        harness.editor().active_state().buffer.to_string()
+    );
+    println!(
+        "Buffer length: {}",
+        harness.editor().active_state().buffer.len()
+    );
+    println!(
+        "Cursor position: {}",
+        harness.editor().active_state().cursors.primary().position
+    );
 
     // Use the harness's cursor detection which handles both hardware cursor and REVERSED cells
     let cursors = harness.find_all_cursors();
-    assert!(!cursors.is_empty(), "Cursor must be visible when opening a file");
+    assert!(
+        !cursors.is_empty(),
+        "Cursor must be visible when opening a file"
+    );
 
     let (x, y, char_at_cursor, is_primary) = &cursors[0];
-    println!("Found cursor at screen position ({}, {}): '{}' (primary: {})", x, y, char_at_cursor, is_primary);
+    println!(
+        "Found cursor at screen position ({x}, {y}): '{char_at_cursor}' (primary: {is_primary})"
+    );
     assert!(*is_primary, "The only cursor should be the primary cursor");
 }
 
@@ -831,47 +919,61 @@ fn test_identical_lines_cursor_positions() {
     harness.assert_buffer_content("abc\nabc\nabc\nabc");
 
     // Go to start
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
 
     // Get initial cursor position
     let initial_pos = harness.cursor_position();
-    println!("Initial cursor position: {}", initial_pos);
+    println!("Initial cursor position: {initial_pos}");
 
     // Add first cursor below
     harness.editor_mut().add_cursor_below();
     println!("After adding 1st cursor below:");
     for (id, cursor) in harness.editor().active_state().cursors.iter() {
-        println!("  Cursor {:?}: position={}, anchor={:?}", id, cursor.position, cursor.anchor);
+        println!(
+            "  Cursor {:?}: position={}, anchor={:?}",
+            id, cursor.position, cursor.anchor
+        );
     }
 
     // Add second cursor below
     harness.editor_mut().add_cursor_below();
     println!("After adding 2nd cursor below:");
     for (id, cursor) in harness.editor().active_state().cursors.iter() {
-        println!("  Cursor {:?}: position={}, anchor={:?}", id, cursor.position, cursor.anchor);
+        println!(
+            "  Cursor {:?}: position={}, anchor={:?}",
+            id, cursor.position, cursor.anchor
+        );
     }
 
     // Add third cursor below
     harness.editor_mut().add_cursor_below();
     println!("After adding 3rd cursor below:");
     for (id, cursor) in harness.editor().active_state().cursors.iter() {
-        println!("  Cursor {:?}: position={}, anchor={:?}", id, cursor.position, cursor.anchor);
+        println!(
+            "  Cursor {:?}: position={}, anchor={:?}",
+            id, cursor.position, cursor.anchor
+        );
     }
 
     let cursor_count = harness.editor().active_state().cursors.iter().count();
-    println!("Total cursors: {}", cursor_count);
+    println!("Total cursors: {cursor_count}");
 
     // Type X
     harness.type_text("X").unwrap();
 
     let result = harness.get_buffer_content();
-    println!("Buffer after typing X:\n{}", result);
+    println!("Buffer after typing X:\n{result}");
 
     let x_count = result.matches('X').count();
-    println!("X count: {}", x_count);
+    println!("X count: {x_count}");
 
     // This should pass if cursors are positioned correctly
-    assert_eq!(x_count, 4, "Should have 4 X's, one per cursor. Buffer:\n{}", result);
+    assert_eq!(
+        x_count, 4,
+        "Should have 4 X's, one per cursor. Buffer:\n{result}"
+    );
 }
 
 /// Test that pressing Esc returns to original cursor position, not last added cursor
@@ -881,15 +983,19 @@ fn test_esc_returns_to_original_cursor_position() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create multiple lines
-    harness.type_text("Line 1\nLine 2\nLine 3\nLine 4\nLine 5").unwrap();
+    harness
+        .type_text("Line 1\nLine 2\nLine 3\nLine 4\nLine 5")
+        .unwrap();
     harness.assert_buffer_content("Line 1\nLine 2\nLine 3\nLine 4\nLine 5");
 
     // Go to start of Line 1
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
 
     // Get the original cursor position (should be at start of Line 1, position 0)
     let original_position = harness.cursor_position();
-    println!("Original cursor position: {} (should be at start of Line 1)", original_position);
+    println!("Original cursor position: {original_position} (should be at start of Line 1)");
     assert_eq!(original_position, 0, "Should start at position 0");
 
     // Add cursors to lines below (Line 2, 3, 4)
@@ -919,11 +1025,10 @@ fn test_esc_returns_to_original_cursor_position() {
     // The cursor should be at the ORIGINAL position (Line 1, position 0)
     // NOT at the last added cursor position (Line 4)
     let final_position = harness.cursor_position();
-    println!("Final cursor position: {} (should be back at original position 0)", final_position);
+    println!("Final cursor position: {final_position} (should be back at original position 0)");
 
     assert_eq!(
         final_position, original_position,
-        "After pressing Esc, cursor should return to original position {} but is at {}",
-        original_position, final_position
+        "After pressing Esc, cursor should return to original position {original_position} but is at {final_position}"
     );
 }

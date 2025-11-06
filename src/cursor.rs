@@ -179,7 +179,7 @@ impl Cursors {
     pub fn insert_with_id(&mut self, id: CursorId, cursor: Cursor) {
         self.cursors.insert(id, cursor);
         self.primary_id = id; // New cursor becomes primary
-        // Update next_id if necessary to avoid collisions
+                              // Update next_id if necessary to avoid collisions
         if id.0 >= self.next_id {
             self.next_id = id.0 + 1;
         }
@@ -210,9 +210,14 @@ impl Cursors {
     /// When exiting multi-cursor mode, return to the original cursor position
     pub fn remove_secondary(&mut self) {
         // Find the cursor with the minimum ID (the original/first cursor)
-        let first_id = *self.cursors.keys().min_by_key(|id| id.0)
+        let first_id = *self
+            .cursors
+            .keys()
+            .min_by_key(|id| id.0)
             .expect("Should have at least one cursor");
-        let first_cursor = *self.cursors.get(&first_id)
+        let first_cursor = *self
+            .cursors
+            .get(&first_id)
             .expect("First cursor should exist");
 
         self.cursors.clear();

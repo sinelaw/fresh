@@ -1,8 +1,5 @@
-
 use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
-use tempfile::TempDir;
 
 /// Test command palette trigger and rendering
 #[test]
@@ -204,7 +201,9 @@ fn test_command_palette_tab_on_disabled() {
     // Now clear and try a different command
     // Clear input
     for _ in 0..4 {
-        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
     }
 
     // Type "focus" which will match "Focus Editor" and "Focus File Explorer"
@@ -222,7 +221,7 @@ fn test_command_palette_tab_on_disabled() {
     // Let's just check that SOMETHING happened (either it completed or stayed as is)
     // This test is to verify the behavior - we'll fix it if it's broken
     let screen = harness.screen_to_string();
-    println!("Screen after Tab on 'focus e': {}", screen);
+    println!("Screen after Tab on 'focus e': {screen}");
 
     // For now, just assert we still have the command palette open
     harness.assert_screen_contains("Command:");
@@ -253,7 +252,7 @@ fn test_command_palette_tab_all_disabled() {
     // The input should NOT have been auto-completed to disabled command
     // It should still be "focus ed" not "Focus Editor"
     let screen = harness.screen_to_string();
-    println!("Screen after Tab on disabled 'focus ed': {}", screen);
+    println!("Screen after Tab on disabled 'focus ed': {screen}");
 
     // Check that input didn't change (tab should do nothing on disabled suggestions)
     harness.assert_screen_contains("Command: focus ed");
@@ -277,7 +276,9 @@ fn test_command_palette_enter_uses_selection() {
     harness.assert_screen_contains("New File");
 
     // Press Enter - should execute "New File" command, not try to find "new" command
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Should NOT see error about unknown command
@@ -307,7 +308,9 @@ fn test_command_palette_enter_partial_match() {
     harness.render().unwrap();
 
     // Press Enter - should execute the selected command
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Should execute the selected command, not fail on "sav"
@@ -349,7 +352,9 @@ fn test_command_palette_scroll_beyond_visible() {
 
     // Now press Enter - it should execute the selected command (whatever is selected)
     // not fail with "Unknown command"
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Should NOT see "Unknown command" error
@@ -377,9 +382,13 @@ fn test_command_palette_new_file_switches_buffer() {
     harness.assert_screen_contains("test.txt");
 
     // Now use command palette to create a new file
-    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.type_text("new").unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Should see status message confirming new buffer
@@ -396,7 +405,7 @@ fn test_command_palette_new_file_switches_buffer() {
 
     // The cursor should be at the start of an empty buffer
     let screen = harness.screen_to_string();
-    println!("Screen after New File:\n{}", screen);
+    println!("Screen after New File:\n{screen}");
 
     // Verify we can type in the new buffer
     harness.type_text("New buffer text").unwrap();

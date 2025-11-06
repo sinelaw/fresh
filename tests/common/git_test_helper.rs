@@ -1,7 +1,7 @@
 //! Git test helper - creates hermetic git repositories for testing
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -27,7 +27,10 @@ impl GitTestRepo {
             .expect("Failed to initialize git repository");
 
         if !output.status.success() {
-            panic!("git init failed: {}", String::from_utf8_lossy(&output.stderr));
+            panic!(
+                "git init failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         // Configure git user for commits
@@ -85,7 +88,10 @@ impl GitTestRepo {
                 .expect("Failed to run git add");
 
             if !output.status.success() {
-                panic!("git add failed: {}", String::from_utf8_lossy(&output.stderr));
+                panic!(
+                    "git add failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
         }
     }
@@ -99,7 +105,10 @@ impl GitTestRepo {
             .expect("Failed to run git add .");
 
         if !output.status.success() {
-            panic!("git add . failed: {}", String::from_utf8_lossy(&output.stderr));
+            panic!(
+                "git add . failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 
@@ -112,7 +121,10 @@ impl GitTestRepo {
             .expect("Failed to run git commit");
 
         if !output.status.success() {
-            panic!("git commit failed: {}", String::from_utf8_lossy(&output.stderr));
+            panic!(
+                "git commit failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 
@@ -230,8 +242,8 @@ A sample project for testing.
     pub fn setup_many_files(&self, count: usize) {
         for i in 0..count {
             let dir_num = i / 10;
-            let file_name = format!("dir{}/file{}.txt", dir_num, i);
-            let content = format!("This is file number {}\nSearchable content here\nLine 3", i);
+            let file_name = format!("dir{dir_num}/file{i}.txt");
+            let content = format!("This is file number {i}\nSearchable content here\nLine 3");
             self.create_file(&file_name, &content);
         }
 

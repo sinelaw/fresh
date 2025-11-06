@@ -134,7 +134,10 @@ fn test_light_theme_renders_differently_than_dark() {
     let light_style = light_harness.get_cell_style(1, 0);
 
     // The colors should be different
-    assert_ne!(dark_style, light_style, "Dark and light themes should render with different colors");
+    assert_ne!(
+        dark_style, light_style,
+        "Dark and light themes should render with different colors"
+    );
 }
 
 #[test]
@@ -182,7 +185,10 @@ fn test_all_available_themes_can_be_loaded() {
         let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
         let theme = harness.editor().theme();
 
-        assert_eq!(theme.name, theme_name, "Theme '{}' should load correctly", theme_name);
+        assert_eq!(
+            theme.name, theme_name,
+            "Theme '{theme_name}' should load correctly"
+        );
     }
 }
 

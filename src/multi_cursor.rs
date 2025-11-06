@@ -6,7 +6,10 @@ use crate::state::EditorState;
 /// Result of attempting to add a cursor
 pub enum AddCursorResult {
     /// Cursor was added successfully
-    Success { cursor: Cursor, total_cursors: usize },
+    Success {
+        cursor: Cursor,
+        total_cursors: usize,
+    },
     /// Operation failed with a message
     Failed { message: String },
 }

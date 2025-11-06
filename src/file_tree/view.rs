@@ -245,7 +245,9 @@ impl FileTreeView {
     /// Check if a node should be visible (not filtered by ignore patterns)
     pub fn is_node_visible(&self, node_id: NodeId) -> bool {
         if let Some(node) = self.tree.get_node(node_id) {
-            !self.ignore_patterns.is_ignored(&node.entry.path, node.is_dir())
+            !self
+                .ignore_patterns
+                .is_ignored(&node.entry.path, node.is_dir())
         } else {
             false
         }

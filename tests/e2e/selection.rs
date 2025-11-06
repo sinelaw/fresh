@@ -1,4 +1,3 @@
-use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use tempfile::TempDir;
@@ -57,8 +56,7 @@ fn test_selection_visual_rendering() {
     let h_cell = &buffer.content[h_pos];
     assert_eq!(h_cell.symbol(), "H");
     assert_eq!(
-        h_cell.bg,
-        selection_bg,
+        h_cell.bg, selection_bg,
         "Selected character 'H' should have selection background"
     );
 
@@ -67,8 +65,7 @@ fn test_selection_visual_rendering() {
     let l_cell = &buffer.content[l_pos];
     assert_eq!(l_cell.symbol(), "l");
     assert_eq!(
-        l_cell.bg,
-        selection_bg,
+        l_cell.bg, selection_bg,
         "Selected character 'l' should have selection background"
     );
 
@@ -79,8 +76,7 @@ fn test_selection_visual_rendering() {
     // This 'o' is at byte position 4, which is in the selection range 0..5
     // But the cursor is at position 5, not 4, so this should have selection background
     assert_eq!(
-        o_cell.bg,
-        selection_bg,
+        o_cell.bg, selection_bg,
         "Selected character 'o' (byte 4) should have selection background"
     );
 
@@ -92,8 +88,7 @@ fn test_selection_visual_rendering() {
     // It should NOT have selection background (cursor takes precedence over selection)
     // Also, position 5 is not in the selection range 0..5 anyway
     assert_ne!(
-        space_cell.bg,
-        selection_bg,
+        space_cell.bg, selection_bg,
         "Cursor position (byte 5, space) should NOT have selection background"
     );
 }
@@ -543,12 +538,16 @@ fn test_select_word_after_scrolling() {
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .unwrap();
     // Use send_key_repeat to avoid rendering after each key press (much faster)
-    harness.send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 50).unwrap();
+    harness
+        .send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 50)
+        .unwrap();
 
     // Move to middle of a word on line 50
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     // Use send_key_repeat to avoid rendering after each key press (much faster)
-    harness.send_key_repeat(KeyCode::Right, KeyModifiers::NONE, 10).unwrap();
+    harness
+        .send_key_repeat(KeyCode::Right, KeyModifiers::NONE, 10)
+        .unwrap();
 
     // Select word with Ctrl+W
     harness
@@ -593,7 +592,9 @@ fn test_expand_selection_after_scrolling() {
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .unwrap();
     // Use send_key_repeat to avoid rendering after each key press (much faster)
-    harness.send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 30).unwrap();
+    harness
+        .send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 30)
+        .unwrap();
 
     // Move to middle of "alpha" (position 3, 'h')
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -1108,14 +1109,20 @@ fn test_select_up() {
 
     // No selection yet
     harness.assert_no_selection();
-    tracing::trace!("Initial state - selected text: {:?}", harness.get_selected_text());
+    tracing::trace!(
+        "Initial state - selected text: {:?}",
+        harness.get_selected_text()
+    );
 
     // Press Shift+Up to select upward
     harness.send_key(KeyCode::Up, KeyModifiers::SHIFT).unwrap();
     harness.render().unwrap();
 
     // Should now have a selection
-    assert!(harness.has_selection(), "Should have selection after Shift+Up");
+    assert!(
+        harness.has_selection(),
+        "Should have selection after Shift+Up"
+    );
 
     // The selection should include "Line 2\n"
     let selected = harness.get_selected_text();
@@ -1129,7 +1136,10 @@ fn test_select_up() {
     // Selection should now include both lines
     let selected = harness.get_selected_text();
     tracing::trace!("After second Shift+Up - selected text: {:?}", selected);
-    assert_eq!(selected, "Line 1\nLine 2\n", "Selection should span two lines");
+    assert_eq!(
+        selected, "Line 1\nLine 2\n",
+        "Selection should span two lines"
+    );
 }
 
 /// Test Shift+Down selection (select from cursor to next line)
@@ -1149,26 +1159,38 @@ fn test_select_down() {
     harness.assert_no_selection();
 
     // Press Shift+Down to select downward
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
 
     // Should now have a selection
-    assert!(harness.has_selection(), "Should have selection after Shift+Down");
+    assert!(
+        harness.has_selection(),
+        "Should have selection after Shift+Down"
+    );
 
     // The selection should include "Line 1\n"
     let selected = harness.get_selected_text();
     assert_eq!(selected, "Line 1\n", "Selection should be 'Line 1\n'");
 
     // Press Shift+Down again to extend selection
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
 
     // Selection should now include two lines
     let selected = harness.get_selected_text();
-    assert_eq!(selected, "Line 1\nLine 2\n", "Selection should span two lines");
+    assert_eq!(
+        selected, "Line 1\nLine 2\n",
+        "Selection should span two lines"
+    );
 
     // Press Shift+Down once more
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
 
     // Selection should now include three lines
@@ -1200,14 +1222,24 @@ fn test_select_up_down_reversal() {
 
     // Move to line 2
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    tracing::trace!("Initial state (at line 2) - selected text: {:?}", harness.get_selected_text());
+    tracing::trace!(
+        "Initial state (at line 2) - selected text: {:?}",
+        harness.get_selected_text()
+    );
 
     // Select down two lines
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
-    tracing::trace!("After first Shift+Down - selected text: {:?}", harness.get_selected_text());
+    tracing::trace!(
+        "After first Shift+Down - selected text: {:?}",
+        harness.get_selected_text()
+    );
 
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
 
     let selected = harness.get_selected_text();
@@ -1219,7 +1251,10 @@ fn test_select_up_down_reversal() {
     harness.render().unwrap();
 
     let selected = harness.get_selected_text();
-    tracing::trace!("After first Shift+Up (shrinking) - selected text: {:?}", selected);
+    tracing::trace!(
+        "After first Shift+Up (shrinking) - selected text: {:?}",
+        selected
+    );
     assert_eq!(selected, "Line 2\n", "Selection should shrink");
 
     // Go up again - this should collapse the selection (back to anchor)
@@ -1229,7 +1264,10 @@ fn test_select_up_down_reversal() {
     // After going past the anchor, selection collapses
     // This is expected behavior - we've moved back to where we started
     let selected = harness.get_selected_text();
-    tracing::trace!("After second Shift+Up (at/past anchor) - selected text: {:?}", selected);
+    tracing::trace!(
+        "After second Shift+Up (at/past anchor) - selected text: {:?}",
+        selected
+    );
     // Selection might be empty now (collapsed at anchor) or might have reversed
     // Either behavior is acceptable
 }
@@ -1243,7 +1281,7 @@ fn test_select_page_down() {
     // Create a file with many lines (more than can fit on screen)
     let mut content = String::new();
     for i in 1..=50 {
-        content.push_str(&format!("Line {}\n", i));
+        content.push_str(&format!("Line {i}\n"));
     }
     std::fs::write(&file_path, &content).unwrap();
 
@@ -1255,7 +1293,9 @@ fn test_select_page_down() {
     harness.assert_no_selection();
 
     // Press Shift+PageDown to select a page down
-    harness.send_key(KeyCode::PageDown, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
 
     // Should have a selection
@@ -1269,9 +1309,8 @@ fn test_select_page_down() {
     // Selection should include approximately 8 lines
     let selected_lines = selected.lines().count();
     assert!(
-        selected_lines >= 6 && selected_lines <= 10,
-        "Should select approximately a page of lines, got {} lines",
-        selected_lines
+        (6..=10).contains(&selected_lines),
+        "Should select approximately a page of lines, got {selected_lines} lines"
     );
 
     // Verify selection includes multiple lines starting from Line 1
@@ -1288,7 +1327,7 @@ fn test_select_page_up() {
     // Create a file with many lines
     let mut content = String::new();
     for i in 1..=50 {
-        content.push_str(&format!("Line {}\n", i));
+        content.push_str(&format!("Line {i}\n"));
     }
     std::fs::write(&file_path, &content).unwrap();
 
@@ -1297,9 +1336,15 @@ fn test_select_page_up() {
     harness.open_file(&file_path).unwrap();
 
     // Move down several pages first
-    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Now we're somewhere in the middle of the file
@@ -1309,7 +1354,9 @@ fn test_select_page_up() {
     harness.assert_no_selection();
 
     // Press Shift+PageUp to select a page up
-    harness.send_key(KeyCode::PageUp, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
 
     // Should have a selection
@@ -1321,9 +1368,8 @@ fn test_select_page_up() {
     let selected = harness.get_selected_text();
     let selected_lines = selected.lines().count();
     assert!(
-        selected_lines >= 6 && selected_lines <= 10,
-        "Should select approximately a page of lines, got {} lines",
-        selected_lines
+        (6..=10).contains(&selected_lines),
+        "Should select approximately a page of lines, got {selected_lines} lines"
     );
 
     // Selection should not be empty
@@ -1339,7 +1385,7 @@ fn test_select_page_up_down_combination() {
     // Create a file with many lines
     let mut content = String::new();
     for i in 1..=100 {
-        content.push_str(&format!("Line {}\n", i));
+        content.push_str(&format!("Line {i}\n"));
     }
     std::fs::write(&file_path, &content).unwrap();
 
@@ -1348,11 +1394,15 @@ fn test_select_page_up_down_combination() {
 
     // Move to middle of file
     for _ in 0..5 {
-        harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
     }
 
     // Select page down
-    harness.send_key(KeyCode::PageDown, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
 
     assert!(harness.has_selection());
@@ -1360,7 +1410,9 @@ fn test_select_page_up_down_combination() {
     let lines_down = selection_after_page_down.lines().count();
 
     // Now select page up (should shrink/reverse selection)
-    harness.send_key(KeyCode::PageUp, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
 
     // Selection might still exist but should be different
@@ -1368,8 +1420,7 @@ fn test_select_page_up_down_combination() {
 
     // The selections should be different
     assert_ne!(
-        selection_after_page_down,
-        selection_after_page_up,
+        selection_after_page_down, selection_after_page_up,
         "Selections should differ after PageUp"
     );
 }
@@ -1392,11 +1443,15 @@ fn test_select_at_file_boundaries() {
     // Either no selection or empty selection is fine
 
     // Go to end of file
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // At end of file, Shift+Down should not panic
-    harness.send_key(KeyCode::Down, KeyModifiers::SHIFT).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
 
     // Select all the way up from end

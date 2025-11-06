@@ -4,7 +4,6 @@ use crate::common::harness::EditorTestHarness;
 use crate::common::visual_testing::VisualFlow;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
-use tempfile::TempDir;
 
 /// Test basic editing workflow with visual captures
 #[test]
@@ -17,16 +16,24 @@ fn visual_basic_editing() {
     );
 
     // Step 1: Initial empty buffer
-    harness.capture_visual_step(&mut flow, "initial", "Empty editor on startup").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "initial", "Empty editor on startup")
+        .unwrap();
 
     // Step 2: Type some text
     harness.type_text("Hello, World!").unwrap();
-    harness.capture_visual_step(&mut flow, "typed_text", "Text typed into buffer").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "typed_text", "Text typed into buffer")
+        .unwrap();
 
     // Step 3: Add a new line
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.type_text("Second line").unwrap();
-    harness.capture_visual_step(&mut flow, "multiline", "Multiple lines of text").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "multiline", "Multiple lines of text")
+        .unwrap();
 }
 
 /// Test file explorer workflow with visual captures
@@ -37,7 +44,11 @@ fn visual_file_explorer() {
 
     // Create some test files
     fs::create_dir_all(project_dir.join("src")).unwrap();
-    fs::write(project_dir.join("src/main.rs"), "fn main() {\n    println!(\"Hello\");\n}").unwrap();
+    fs::write(
+        project_dir.join("src/main.rs"),
+        "fn main() {\n    println!(\"Hello\");\n}",
+    )
+    .unwrap();
     fs::write(project_dir.join("README.md"), "# Test Project\n").unwrap();
 
     let mut flow = VisualFlow::new(
@@ -47,22 +58,42 @@ fn visual_file_explorer() {
     );
 
     // Step 1: Initial state
-    harness.capture_visual_step(&mut flow, "initial", "Editor before opening file explorer").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "initial", "Editor before opening file explorer")
+        .unwrap();
 
     // Step 2: Open file explorer with Ctrl+B
-    harness.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
-    harness.capture_visual_step(&mut flow, "explorer_open", "File explorer opened in left pane").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "explorer_open",
+            "File explorer opened in left pane",
+        )
+        .unwrap();
 
     // Step 3: Navigate down
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    harness.capture_visual_step(&mut flow, "file_selected", "File selected in explorer").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "file_selected", "File selected in explorer")
+        .unwrap();
 
     // Step 4: Expand directory
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
-    harness.capture_visual_step(&mut flow, "dir_expanded", "Directory expanded to show contents").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "dir_expanded",
+            "Directory expanded to show contents",
+        )
+        .unwrap();
 }
 
 /// Test command palette workflow
@@ -76,16 +107,28 @@ fn visual_command_palette() {
     );
 
     // Step 1: Initial state
-    harness.capture_visual_step(&mut flow, "initial", "Editor before opening command palette").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "initial",
+            "Editor before opening command palette",
+        )
+        .unwrap();
 
     // Step 2: Open command palette with Ctrl+P
-    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
-    harness.capture_visual_step(&mut flow, "palette_open", "Command palette opened").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "palette_open", "Command palette opened")
+        .unwrap();
 
     // Step 3: Type to filter commands
     harness.type_text("help").unwrap();
-    harness.capture_visual_step(&mut flow, "filtered", "Commands filtered by search term").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "filtered", "Commands filtered by search term")
+        .unwrap();
 }
 
 /// Test help system
@@ -99,12 +142,18 @@ fn visual_help_system() {
     );
 
     // Step 1: Initial state
-    harness.capture_visual_step(&mut flow, "initial", "Editor before opening help").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "initial", "Editor before opening help")
+        .unwrap();
 
     // Step 2: Open help with Ctrl+H
-    harness.send_key(KeyCode::Char('h'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('h'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
-    harness.capture_visual_step(&mut flow, "help_open", "Help panel showing all keybindings").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "help_open", "Help panel showing all keybindings")
+        .unwrap();
 }
 
 /// Test split view workflow
@@ -119,24 +168,28 @@ fn visual_split_view() {
     fs::write(&file2, "Content of file 2").unwrap();
 
     let mut harness = EditorTestHarness::new(120, 30).unwrap();
-    let mut flow = VisualFlow::new(
-        "Split View",
-        "Layout",
-        "Working with split panes",
-    );
+    let mut flow = VisualFlow::new("Split View", "Layout", "Working with split panes");
 
     // Step 1: Open first file
     harness.open_file(&file1).unwrap();
-    harness.capture_visual_step(&mut flow, "single_file", "Single file open").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "single_file", "Single file open")
+        .unwrap();
 
     // Step 2: Split horizontally with Alt+H
-    harness.send_key(KeyCode::Char('h'), KeyModifiers::ALT).unwrap();
+    harness
+        .send_key(KeyCode::Char('h'), KeyModifiers::ALT)
+        .unwrap();
     harness.render().unwrap();
-    harness.capture_visual_step(&mut flow, "horizontal_split", "Editor split horizontally").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "horizontal_split", "Editor split horizontally")
+        .unwrap();
 
     // Step 3: Open second file in split
     harness.open_file(&file2).unwrap();
-    harness.capture_visual_step(&mut flow, "two_files", "Two files visible in split panes").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "two_files", "Two files visible in split panes")
+        .unwrap();
 }
 
 /// Test theme display
@@ -155,7 +208,13 @@ fn visual_theme() {
     harness.type_text("    let x = 42;\n").unwrap();
     harness.type_text("}\n").unwrap();
 
-    harness.capture_visual_step(&mut flow, "syntax_highlighting", "Syntax highlighting for Rust code").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "syntax_highlighting",
+            "Syntax highlighting for Rust code",
+        )
+        .unwrap();
 }
 
 /// Test multicursor editing
@@ -170,22 +229,44 @@ fn visual_multicursor() {
 
     // Step 1: Type some text
     harness.type_text("hello\nhello\nhello").unwrap();
-    harness.capture_visual_step(&mut flow, "initial_text", "Three lines with 'hello'").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "initial_text", "Three lines with 'hello'")
+        .unwrap();
 
     // Step 2: Select word
-    harness.send_key(KeyCode::Char('w'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
-    harness.capture_visual_step(&mut flow, "word_selected", "First word selected").unwrap();
+    harness
+        .capture_visual_step(&mut flow, "word_selected", "First word selected")
+        .unwrap();
 
     // Step 3: Add next occurrence with Ctrl+D
-    harness.send_key(KeyCode::Char('d'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
-    harness.capture_visual_step(&mut flow, "two_cursors", "Second occurrence selected (two cursors)").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "two_cursors",
+            "Second occurrence selected (two cursors)",
+        )
+        .unwrap();
 
     // Step 4: Add third occurrence
-    harness.send_key(KeyCode::Char('d'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
-    harness.capture_visual_step(&mut flow, "three_cursors", "All occurrences selected (three cursors)").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "three_cursors",
+            "All occurrences selected (three cursors)",
+        )
+        .unwrap();
 }
 
 /// Test LSP diagnostics with margin bullet points
@@ -208,7 +289,13 @@ fn visual_lsp_diagnostics() {
     harness.type_text("    println!(\"Hello\");\n").unwrap();
     harness.type_text("}\n").unwrap();
     harness.render().unwrap();
-    harness.capture_visual_step(&mut flow, "code_without_diagnostics", "Code before diagnostics appear").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "code_without_diagnostics",
+            "Code before diagnostics appear",
+        )
+        .unwrap();
 
     // Step 2: Add diagnostic overlays and margin indicators (simulating LSP)
     let state = harness.editor_mut().active_state_mut();
@@ -237,17 +324,26 @@ fn visual_lsp_diagnostics() {
 
     // Add red bullet points in the margin for lines with diagnostics
     // Using the new diagnostic indicator API
-    state.margins.set_diagnostic_indicator(1, "●".to_string(), Color::Red); // Line 2 (0-indexed)
-    state.margins.set_diagnostic_indicator(2, "●".to_string(), Color::Red); // Line 3 (0-indexed)
+    state
+        .margins
+        .set_diagnostic_indicator(1, "●".to_string(), Color::Red); // Line 2 (0-indexed)
+    state
+        .margins
+        .set_diagnostic_indicator(2, "●".to_string(), Color::Red); // Line 3 (0-indexed)
 
     harness.render().unwrap();
-    harness.capture_visual_step(&mut flow, "diagnostics_with_bullets", "Diagnostics with red bullet points in separate margin column").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "diagnostics_with_bullets",
+            "Diagnostics with red bullet points in separate margin column",
+        )
+        .unwrap();
 }
 
 /// Test LSP rename refactoring workflow
 #[test]
 fn visual_lsp_rename() {
-    use fresh::event::Event;
     use fresh::overlay::OverlayFace;
     use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
     use ratatui::style::Color;
@@ -261,23 +357,37 @@ fn visual_lsp_rename() {
     );
 
     // Step 1: Create code with a symbol used in multiple places
-    harness.type_text("fn calculate(value: i32) -> i32 {\n").unwrap();
+    harness
+        .type_text("fn calculate(value: i32) -> i32 {\n")
+        .unwrap();
     harness.type_text("    let result = value * 2;\n").unwrap();
-    harness.type_text("    println!(\"Value: {}\", value);\n").unwrap();
+    harness
+        .type_text("    println!(\"Value: {}\", value);\n")
+        .unwrap();
     harness.type_text("    result\n").unwrap();
     harness.type_text("}\n").unwrap();
-    harness.capture_visual_step(&mut flow, "initial_code", "Function with 'value' parameter used twice").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "initial_code",
+            "Function with 'value' parameter used twice",
+        )
+        .unwrap();
 
     // Step 2: Position cursor on the symbol 'value' (on the parameter)
     // Move to the first line, after "fn calculate("
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap(); // Go to document start
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap(); // Go to document start
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap(); // Go to line start
 
     // Move right to position cursor on "value" - it starts at column 14
     // "fn calculate(value..."
     //  0123456789012345
     for _ in 0..14 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
     harness.render().unwrap();
 
@@ -289,10 +399,18 @@ fn visual_lsp_rename() {
         let end = (cursor_pos + 10).min(buffer.len());
         buffer.slice(start..end).to_string()
     };
-    assert!(word_at_cursor.contains("value"),
-            "Cursor should be near 'value', but found: '{}'", word_at_cursor);
+    assert!(
+        word_at_cursor.contains("value"),
+        "Cursor should be near 'value', but found: '{word_at_cursor}'"
+    );
 
-    harness.capture_visual_step(&mut flow, "cursor_on_symbol", "Cursor positioned on 'value' parameter").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "cursor_on_symbol",
+            "Cursor positioned on 'value' parameter",
+        )
+        .unwrap();
 
     // Step 3: Press F2 to enter rename mode
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
@@ -300,34 +418,58 @@ fn visual_lsp_rename() {
 
     // Validate rename mode is active
     let screen = harness.screen_to_string();
-    assert!(screen.contains("Rename mode"), "Status should show rename mode message");
+    assert!(
+        screen.contains("Rename mode"),
+        "Status should show rename mode message"
+    );
 
     // Check that an overlay exists for the symbol being renamed
     let state = harness.editor().active_state();
-    let overlays: Vec<_> = state.overlays.all().iter()
-        .filter(|o| o.id.as_ref().map_or(false, |id| id.starts_with("rename_overlay_")))
+    let overlays: Vec<_> = state
+        .overlays
+        .all()
+        .iter()
+        .filter(|o| {
+            o.id.as_ref()
+                .is_some_and(|id| id.starts_with("rename_overlay_"))
+        })
         .collect();
     assert_eq!(overlays.len(), 1, "Should have exactly one rename overlay");
 
     let rename_overlay = overlays[0];
     // The overlay should cover "value" at position 14 (after "fn calculate(")
     let overlay_text = state.buffer.slice(rename_overlay.range.clone()).to_string();
-    assert_eq!(overlay_text, "value", "Overlay should cover the 'value' symbol");
+    assert_eq!(
+        overlay_text, "value",
+        "Overlay should cover the 'value' symbol"
+    );
 
     // Verify it's a background overlay with blue color
     if let OverlayFace::Background { color } = rename_overlay.face {
-        assert_eq!(color, Color::Rgb(50, 100, 200), "Rename overlay should have blue background");
+        assert_eq!(
+            color,
+            Color::Rgb(50, 100, 200),
+            "Rename overlay should have blue background"
+        );
     } else {
         panic!("Rename overlay should have Background face");
     }
 
-    harness.capture_visual_step(&mut flow, "rename_mode_active", "Rename mode activated - 'value' highlighted in blue").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "rename_mode_active",
+            "Rename mode activated - 'value' highlighted in blue",
+        )
+        .unwrap();
 
     // Step 4: Type the new name
     // First clear the old name by backspacing
     for _ in 0..5 {
         // Delete "value" (5 characters)
-        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
     }
 
     // Render to see the intermediate state after backspace
@@ -335,10 +477,20 @@ fn visual_lsp_rename() {
 
     // Verify the rename overlay still exists during editing
     let state_during_edit = harness.editor().active_state();
-    let overlays_during_edit: Vec<_> = state_during_edit.overlays.all().iter()
-        .filter(|o| o.id.as_ref().map_or(false, |id| id.starts_with("rename_overlay_")))
+    let overlays_during_edit: Vec<_> = state_during_edit
+        .overlays
+        .all()
+        .iter()
+        .filter(|o| {
+            o.id.as_ref()
+                .is_some_and(|id| id.starts_with("rename_overlay_"))
+        })
         .collect();
-    assert_eq!(overlays_during_edit.len(), 1, "Rename overlay should persist during editing");
+    assert_eq!(
+        overlays_during_edit.len(),
+        1,
+        "Rename overlay should persist during editing"
+    );
 
     // Now type the new name
     harness.type_text("amount").unwrap();
@@ -346,24 +498,52 @@ fn visual_lsp_rename() {
 
     // The overlay should still be present after typing
     let state_after_typing = harness.editor().active_state();
-    let overlays_after_typing: Vec<_> = state_after_typing.overlays.all().iter()
-        .filter(|o| o.id.as_ref().map_or(false, |id| id.starts_with("rename_overlay_")))
+    let overlays_after_typing: Vec<_> = state_after_typing
+        .overlays
+        .all()
+        .iter()
+        .filter(|o| {
+            o.id.as_ref()
+                .is_some_and(|id| id.starts_with("rename_overlay_"))
+        })
         .collect();
-    assert_eq!(overlays_after_typing.len(), 1, "Rename overlay should still exist after typing");
+    assert_eq!(
+        overlays_after_typing.len(),
+        1,
+        "Rename overlay should still exist after typing"
+    );
 
-    harness.capture_visual_step(&mut flow, "typing_new_name", "Typing new name 'amount' - live preview in editor").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "typing_new_name",
+            "Typing new name 'amount' - live preview in editor",
+        )
+        .unwrap();
 
     // Step 5: Press Enter to confirm - this would trigger LSP rename request
     // We'll simulate the LSP response
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Verify rename mode is exited (overlay should be removed)
     let state_after_enter = harness.editor().active_state();
-    let overlays_after_enter: Vec<_> = state_after_enter.overlays.all().iter()
-        .filter(|o| o.id.as_ref().map_or(false, |id| id.starts_with("rename_overlay_")))
+    let overlays_after_enter: Vec<_> = state_after_enter
+        .overlays
+        .all()
+        .iter()
+        .filter(|o| {
+            o.id.as_ref()
+                .is_some_and(|id| id.starts_with("rename_overlay_"))
+        })
         .collect();
-    assert_eq!(overlays_after_enter.len(), 0, "Rename overlay should be removed after confirming");
+    assert_eq!(
+        overlays_after_enter.len(),
+        0,
+        "Rename overlay should be removed after confirming"
+    );
 
     // Step 6: Simulate LSP WorkspaceEdit response
     // In real usage, the LSP would return edits for all occurrences
@@ -380,32 +560,56 @@ fn visual_lsp_rename() {
             // Edit 1: parameter name (line 0, col 14-19)
             TextEdit {
                 range: Range {
-                    start: Position { line: 0, character: 14 },
-                    end: Position { line: 0, character: 19 },
+                    start: Position {
+                        line: 0,
+                        character: 14,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 19,
+                    },
                 },
                 new_text: "amount".to_string(),
             },
             // Edit 2: parameter type annotation (line 0, col 21-26)
             TextEdit {
                 range: Range {
-                    start: Position { line: 0, character: 21 },
-                    end: Position { line: 0, character: 26 },
+                    start: Position {
+                        line: 0,
+                        character: 21,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 26,
+                    },
                 },
                 new_text: "amount".to_string(),
             },
             // Edit 3: first usage in let statement (line 1, col 17-22)
             TextEdit {
                 range: Range {
-                    start: Position { line: 1, character: 17 },
-                    end: Position { line: 1, character: 22 },
+                    start: Position {
+                        line: 1,
+                        character: 17,
+                    },
+                    end: Position {
+                        line: 1,
+                        character: 22,
+                    },
                 },
                 new_text: "amount".to_string(),
             },
             // Edit 4: second usage in println (line 2, col 28-33)
             TextEdit {
                 range: Range {
-                    start: Position { line: 2, character: 28 },
-                    end: Position { line: 2, character: 33 },
+                    start: Position {
+                        line: 2,
+                        character: 28,
+                    },
+                    end: Position {
+                        line: 2,
+                        character: 33,
+                    },
                 },
                 new_text: "amount".to_string(),
             },
@@ -423,12 +627,20 @@ fn visual_lsp_rename() {
     // For this test, we'll reconstruct the buffer with the renamed code
 
     // Clear the buffer and type the renamed code
-    harness.send_key(KeyCode::Char('a'), KeyModifiers::CONTROL).unwrap(); // Select all
-    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap(); // Delete
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap(); // Select all
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap(); // Delete
 
-    harness.type_text("fn calculate(amount: i32) -> i32 {\n").unwrap();
+    harness
+        .type_text("fn calculate(amount: i32) -> i32 {\n")
+        .unwrap();
     harness.type_text("    let result = amount * 2;\n").unwrap();
-    harness.type_text("    println!(\"Value: {}\", amount);\n").unwrap();
+    harness
+        .type_text("    println!(\"Value: {}\", amount);\n")
+        .unwrap();
     harness.type_text("    result\n").unwrap();
     harness.type_text("}\n").unwrap();
 
@@ -443,38 +655,56 @@ fn visual_lsp_rename() {
 
     // Verify "value" is no longer present (except in the string literal "Value:")
     let value_count = final_buffer.matches("value").count();
-    assert_eq!(value_count, 0, "Should have no occurrences of 'value' as identifier");
+    assert_eq!(
+        value_count, 0,
+        "Should have no occurrences of 'value' as identifier"
+    );
 
     // Verify specific locations
-    assert!(final_buffer.contains("fn calculate(amount: i32)"),
-            "Parameter should be renamed");
-    assert!(final_buffer.contains("let result = amount * 2;"),
-            "First usage should be renamed");
-    assert!(final_buffer.contains("println!(\"Value: {}\", amount);"),
-            "Second usage should be renamed");
+    assert!(
+        final_buffer.contains("fn calculate(amount: i32)"),
+        "Parameter should be renamed"
+    );
+    assert!(
+        final_buffer.contains("let result = amount * 2;"),
+        "First usage should be renamed"
+    );
+    assert!(
+        final_buffer.contains("println!(\"Value: {}\", amount);"),
+        "Second usage should be renamed"
+    );
 
-    harness.capture_visual_step(&mut flow, "rename_complete", "Rename complete - all 3 occurrences of 'value' renamed to 'amount'").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "rename_complete",
+            "Rename complete - all 3 occurrences of 'value' renamed to 'amount'",
+        )
+        .unwrap();
 }
 
 /// Test that canceling rename after deleting characters restores original name
 #[test]
 fn test_lsp_rename_cancel_restores_original() {
-    use fresh::overlay::OverlayFace;
-    use ratatui::style::Color;
-
     let mut harness = EditorTestHarness::new(80, 30).unwrap();
 
     // Step 1: Create code with a symbol
-    harness.type_text("fn calculate(value: i32) -> i32 {\n").unwrap();
+    harness
+        .type_text("fn calculate(value: i32) -> i32 {\n")
+        .unwrap();
     harness.type_text("    let result = value * 2;\n").unwrap();
     harness.type_text("    result\n").unwrap();
     harness.type_text("}\n").unwrap();
     harness.render().unwrap();
 
     // Step 2: Position cursor on the symbol 'value' (on the parameter)
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap(); // Go to document start
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap(); // Go to document start
     for _ in 0..14 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
 
     // Verify cursor is positioned on "value"
@@ -485,13 +715,17 @@ fn test_lsp_rename_cancel_restores_original() {
         let end = (initial_cursor_pos + 10).min(buffer.len());
         buffer.slice(start..end).to_string()
     };
-    assert!(word_at_cursor.contains("value"),
-            "Cursor should be near 'value', but found: '{}'", word_at_cursor);
+    assert!(
+        word_at_cursor.contains("value"),
+        "Cursor should be near 'value', but found: '{word_at_cursor}'"
+    );
 
     // Get the full buffer content before rename
     let original_buffer_content = harness.get_buffer_content();
-    assert!(original_buffer_content.contains("fn calculate(value: i32)"),
-            "Original buffer should contain 'value' parameter");
+    assert!(
+        original_buffer_content.contains("fn calculate(value: i32)"),
+        "Original buffer should contain 'value' parameter"
+    );
 
     // Step 3: Press F2 to enter rename mode
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
@@ -499,36 +733,61 @@ fn test_lsp_rename_cancel_restores_original() {
 
     // Verify rename mode is active
     let state = harness.editor().active_state();
-    let overlays: Vec<_> = state.overlays.all().iter()
-        .filter(|o| o.id.as_ref().map_or(false, |id| id.starts_with("rename_overlay_")))
+    let overlays: Vec<_> = state
+        .overlays
+        .all()
+        .iter()
+        .filter(|o| {
+            o.id.as_ref()
+                .is_some_and(|id| id.starts_with("rename_overlay_"))
+        })
         .collect();
     assert_eq!(overlays.len(), 1, "Should have exactly one rename overlay");
 
     let overlay_text = state.buffer.slice(overlays[0].range.clone()).to_string();
-    assert_eq!(overlay_text, "value", "Overlay should cover the 'value' symbol");
+    assert_eq!(
+        overlay_text, "value",
+        "Overlay should cover the 'value' symbol"
+    );
 
     // Step 4: Delete some characters
     for _ in 0..3 {
-        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
     }
     harness.render().unwrap();
 
     // Verify the buffer has NOT been modified - it should still have original "value"
     let state_after_delete = harness.editor().active_state();
     let buffer_after_delete = state_after_delete.buffer.to_string();
-    assert!(buffer_after_delete.contains("fn calculate(value: i32)"),
-            "Buffer should STILL show original 'value' (not modified during typing)");
+    assert!(
+        buffer_after_delete.contains("fn calculate(value: i32)"),
+        "Buffer should STILL show original 'value' (not modified during typing)"
+    );
 
     // The typed text should be tracked in status message or rename state, not in buffer
     let screen_after_delete = harness.screen_to_string();
-    assert!(screen_after_delete.contains("Renaming to:"),
-            "Status should show what's being typed");
+    assert!(
+        screen_after_delete.contains("Renaming to:"),
+        "Status should show what's being typed"
+    );
 
     // Verify overlay still exists during editing
-    let overlays_after_delete: Vec<_> = state_after_delete.overlays.all().iter()
-        .filter(|o| o.id.as_ref().map_or(false, |id| id.starts_with("rename_overlay_")))
+    let overlays_after_delete: Vec<_> = state_after_delete
+        .overlays
+        .all()
+        .iter()
+        .filter(|o| {
+            o.id.as_ref()
+                .is_some_and(|id| id.starts_with("rename_overlay_"))
+        })
         .collect();
-    assert_eq!(overlays_after_delete.len(), 1, "Rename overlay should still exist after deletion");
+    assert_eq!(
+        overlays_after_delete.len(),
+        1,
+        "Rename overlay should still exist after deletion"
+    );
 
     // Step 5: Press Escape to cancel
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -536,21 +795,38 @@ fn test_lsp_rename_cancel_restores_original() {
 
     // Step 6: Verify the buffer still has original name (no restore needed since we never modified it)
     let final_buffer_content = harness.get_buffer_content();
-    assert_eq!(final_buffer_content, original_buffer_content,
-               "Buffer should still be unchanged (never modified during rename)");
-    assert!(final_buffer_content.contains("fn calculate(value: i32)"),
-            "Original 'value' parameter should still be there");
+    assert_eq!(
+        final_buffer_content, original_buffer_content,
+        "Buffer should still be unchanged (never modified during rename)"
+    );
+    assert!(
+        final_buffer_content.contains("fn calculate(value: i32)"),
+        "Original 'value' parameter should still be there"
+    );
 
     // Verify rename overlay is removed
     let state_after_cancel = harness.editor().active_state();
-    let overlays_after_cancel: Vec<_> = state_after_cancel.overlays.all().iter()
-        .filter(|o| o.id.as_ref().map_or(false, |id| id.starts_with("rename_overlay_")))
+    let overlays_after_cancel: Vec<_> = state_after_cancel
+        .overlays
+        .all()
+        .iter()
+        .filter(|o| {
+            o.id.as_ref()
+                .is_some_and(|id| id.starts_with("rename_overlay_"))
+        })
         .collect();
-    assert_eq!(overlays_after_cancel.len(), 0, "Rename overlay should be removed after cancel");
+    assert_eq!(
+        overlays_after_cancel.len(),
+        0,
+        "Rename overlay should be removed after cancel"
+    );
 
     // Verify we're back in normal mode (not rename mode)
     let screen = harness.screen_to_string();
-    assert!(!screen.contains("Rename mode"), "Should exit rename mode after cancel");
+    assert!(
+        !screen.contains("Rename mode"),
+        "Should exit rename mode after cancel"
+    );
 }
 
 /// Test that undo after successful rename restores all occurrences in one step
@@ -594,24 +870,42 @@ fn test_lsp_rename_undo_restores_all() {
             // Edit 1: parameter name (line 0, col 14-19: "value")
             TextEdit {
                 range: Range {
-                    start: Position { line: 0, character: 13 },
-                    end: Position { line: 0, character: 18 },
+                    start: Position {
+                        line: 0,
+                        character: 13,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 18,
+                    },
                 },
                 new_text: "amount".to_string(),
             },
             // Edit 2: first usage in let statement (line 1, col 17-22: "value")
             TextEdit {
                 range: Range {
-                    start: Position { line: 1, character: 17 },
-                    end: Position { line: 1, character: 22 },
+                    start: Position {
+                        line: 1,
+                        character: 17,
+                    },
+                    end: Position {
+                        line: 1,
+                        character: 22,
+                    },
                 },
                 new_text: "amount".to_string(),
             },
             // Edit 3: second usage in println (line 2, col 28-33: "value")
             TextEdit {
                 range: Range {
-                    start: Position { line: 2, character: 28 },
-                    end: Position { line: 2, character: 33 },
+                    start: Position {
+                        line: 2,
+                        character: 28,
+                    },
+                    end: Position {
+                        line: 2,
+                        character: 33,
+                    },
                 },
                 new_text: "amount".to_string(),
             },
@@ -625,50 +919,83 @@ fn test_lsp_rename_undo_restores_all() {
     };
 
     // Call handle_rename_response directly to simulate LSP rename response
-    harness.editor_mut().handle_rename_response(1, Ok(workspace_edit)).unwrap();
+    harness
+        .editor_mut()
+        .handle_rename_response(1, Ok(workspace_edit))
+        .unwrap();
     harness.render().unwrap();
 
     // Step 5: Verify all occurrences were renamed
     let renamed_content = harness.get_buffer_content();
-    assert!(renamed_content.contains("fn calculate(amount: i32)"),
-            "Parameter should be renamed to 'amount'");
-    assert_eq!(renamed_content.matches("amount").count(), 3,
-               "Should have 3 occurrences of 'amount'");
-    assert_eq!(renamed_content.matches("value").count(), 0,
-               "Should have no occurrences of 'value' as identifier");
+    assert!(
+        renamed_content.contains("fn calculate(amount: i32)"),
+        "Parameter should be renamed to 'amount'"
+    );
+    assert_eq!(
+        renamed_content.matches("amount").count(),
+        3,
+        "Should have 3 occurrences of 'amount'"
+    );
+    assert_eq!(
+        renamed_content.matches("value").count(),
+        0,
+        "Should have no occurrences of 'value' as identifier"
+    );
 
     // Step 6: Perform undo (Ctrl+Z)
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Step 7: Verify ALL occurrences are restored to original in ONE undo step
     let after_undo_content = harness.get_buffer_content();
-    assert_eq!(after_undo_content, original_content,
-               "Single undo should restore all occurrences to 'value'");
-    assert!(after_undo_content.contains("fn calculate(value: i32)"),
-            "Parameter should be restored to 'value'");
-    assert_eq!(after_undo_content.matches("value").count(), 3,
-               "Should have 3 occurrences of 'value' after undo");
-    assert_eq!(after_undo_content.matches("amount").count(), 0,
-               "Should have no occurrences of 'amount' after undo");
+    assert_eq!(
+        after_undo_content, original_content,
+        "Single undo should restore all occurrences to 'value'"
+    );
+    assert!(
+        after_undo_content.contains("fn calculate(value: i32)"),
+        "Parameter should be restored to 'value'"
+    );
+    assert_eq!(
+        after_undo_content.matches("value").count(),
+        3,
+        "Should have 3 occurrences of 'value' after undo"
+    );
+    assert_eq!(
+        after_undo_content.matches("amount").count(),
+        0,
+        "Should have no occurrences of 'amount' after undo"
+    );
 
     // Step 8: Verify we can redo (Ctrl+Y or Ctrl+Shift+Z)
-    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('y'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     let after_redo_content = harness.get_buffer_content();
-    assert_eq!(after_redo_content, renamed_content,
-               "Redo should restore the renamed content");
-    assert_eq!(after_redo_content.matches("amount").count(), 3,
-               "Should have 3 occurrences of 'amount' after redo");
-    assert_eq!(after_redo_content.matches("value").count(), 0,
-               "Should have no occurrences of 'value' after redo");
+    assert_eq!(
+        after_redo_content, renamed_content,
+        "Redo should restore the renamed content"
+    );
+    assert_eq!(
+        after_redo_content.matches("amount").count(),
+        3,
+        "Should have 3 occurrences of 'amount' after redo"
+    );
+    assert_eq!(
+        after_redo_content.matches("value").count(),
+        0,
+        "Should have no occurrences of 'value' after redo"
+    );
 }
-	
+
 /// Test line wrapping feature
 #[test]
 fn visual_line_wrapping() {
-    use fresh::config::{Config, EditorConfig};
+    use fresh::config::Config;
 
     // Test with line wrapping enabled (default)
     let mut harness_wrapped = EditorTestHarness::new(60, 24).unwrap();
@@ -681,19 +1008,37 @@ fn visual_line_wrapping() {
     // Step 1: Type a very long line
     harness_wrapped.type_text("This is a very long line of text that will definitely exceed the terminal width and should wrap to multiple lines when line wrapping is enabled.").unwrap();
     harness_wrapped.render().unwrap();
-    harness_wrapped.capture_visual_step(&mut flow, "long_line_wrapped", "Long line automatically wrapped (enabled by default)").unwrap();
+    harness_wrapped
+        .capture_visual_step(
+            &mut flow,
+            "long_line_wrapped",
+            "Long line automatically wrapped (enabled by default)",
+        )
+        .unwrap();
 
     // Step 2: Add another long line
-    harness_wrapped.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness_wrapped
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness_wrapped.type_text("Second extremely long line with even more text to demonstrate that multiple lines can be wrapped at the same time without any issues in the rendering system.").unwrap();
     harness_wrapped.render().unwrap();
-    harness_wrapped.capture_visual_step(&mut flow, "multiple_wrapped", "Multiple long lines wrapped").unwrap();
+    harness_wrapped
+        .capture_visual_step(&mut flow, "multiple_wrapped", "Multiple long lines wrapped")
+        .unwrap();
 
     // Step 3: Demonstrate with code that has syntax
-    harness_wrapped.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness_wrapped
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness_wrapped.type_text("fn very_long_function_name_with_many_parameters(param1: String, param2: i32, param3: bool, param4: Vec<String>) -> Result<String, Error> {").unwrap();
     harness_wrapped.render().unwrap();
-    harness_wrapped.capture_visual_step(&mut flow, "wrapped_code", "Long code line wrapped with syntax intact").unwrap();
+    harness_wrapped
+        .capture_visual_step(
+            &mut flow,
+            "wrapped_code",
+            "Long code line wrapped with syntax intact",
+        )
+        .unwrap();
 
     // Step 4: Test with line wrapping disabled
     let mut config = Config::default();
@@ -702,5 +1047,11 @@ fn visual_line_wrapping() {
 
     harness_nowrap.type_text("This is a very long line of text that will definitely exceed the terminal width and would normally wrap but now extends beyond the view.").unwrap();
     harness_nowrap.render().unwrap();
-    harness_nowrap.capture_visual_step(&mut flow, "wrapping_disabled", "Line wrapping disabled - line extends beyond view").unwrap();
+    harness_nowrap
+        .capture_visual_step(
+            &mut flow,
+            "wrapping_disabled",
+            "Line wrapping disabled - line extends beyond view",
+        )
+        .unwrap();
 }

@@ -7,17 +7,22 @@ use crate::event::{CursorId, Event, EventLog, SplitId};
 use crate::file_tree::{FileTree, FileTreeView};
 use crate::fs::{FsManager, LocalFsBackend};
 use crate::hooks::HookRegistry;
-use crate::keybindings::{Action, KeybindingResolver, KeyContext};
+use crate::keybindings::{Action, KeyContext, KeybindingResolver};
 use crate::lsp_diagnostics;
 use crate::lsp_manager::{detect_language, LspManager};
-use crate::multi_cursor::{add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult};
+use crate::multi_cursor::{
+    add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult,
+};
 use crate::plugin_api::PluginCommand;
 use crate::plugin_manager::PluginManager;
 use crate::position_history::PositionHistory;
 use crate::prompt::{Prompt, PromptType};
 use crate::split::SplitManager;
 use crate::state::EditorState;
-use crate::ui::{FileExplorerRenderer, HelpRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer, TabsRenderer};
+use crate::ui::{
+    FileExplorerRenderer, HelpRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer,
+    TabsRenderer,
+};
 use lsp_types::{TextDocumentContentChangeEvent, Url};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
@@ -102,7 +107,6 @@ impl BufferMetadata {
         self.lsp_disabled_reason = Some(reason);
     }
 }
-
 
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
 pub struct Editor {
@@ -236,7 +240,14 @@ struct CachedLayout {
     editor_content_area: Option<ratatui::layout::Rect>,
     /// Individual split areas with their scrollbar areas and thumb positions
     /// (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end)
-    split_areas: Vec<(SplitId, BufferId, ratatui::layout::Rect, ratatui::layout::Rect, usize, usize)>,
+    split_areas: Vec<(
+        SplitId,
+        BufferId,
+        ratatui::layout::Rect,
+        ratatui::layout::Rect,
+        usize,
+        usize,
+    )>,
 }
 
 impl Editor {
@@ -248,13 +259,17 @@ impl Editor {
 
     /// Create a new editor with an explicit working directory
     /// This is useful for testing with isolated temporary directories
-    pub fn with_working_dir(config: Config, width: u16, height: u16, working_dir: Option<PathBuf>) -> io::Result<Self> {
+    pub fn with_working_dir(
+        config: Config,
+        width: u16,
+        height: u16,
+        working_dir: Option<PathBuf>,
+    ) -> io::Result<Self> {
         tracing::info!("Editor::new called with width={}, height={}", width, height);
 
         // Use provided working_dir or capture from environment
-        let working_dir = working_dir.unwrap_or_else(|| {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        });
+        let working_dir = working_dir
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
         // Load theme from config
         let theme = crate::theme::Theme::from_name(&config.theme);
@@ -317,10 +332,8 @@ impl Editor {
         let hook_registry = Arc::new(RwLock::new(HookRegistry::new()));
         let command_registry = Arc::new(RwLock::new(CommandRegistry::new()));
 
-        let mut plugin_manager = PluginManager::new(
-            Arc::clone(&hook_registry),
-            Arc::clone(&command_registry),
-        ).ok();
+        let mut plugin_manager =
+            PluginManager::new(Arc::clone(&hook_registry), Arc::clone(&command_registry)).ok();
 
         if let Some(ref mut manager) = plugin_manager {
             // Set async bridge sender for spawn support
@@ -398,7 +411,9 @@ impl Editor {
     /// Open a file and return its buffer ID
     pub fn open_file(&mut self, path: &Path) -> io::Result<BufferId> {
         // Check if file is already open
-        let already_open = self.buffers.iter()
+        let already_open = self
+            .buffers
+            .iter()
             .find(|(_, state)| state.buffer.file_path() == Some(path))
             .map(|(id, _)| *id);
 
@@ -444,7 +459,11 @@ impl Editor {
         if let Some(lsp) = &mut self.lsp {
             tracing::debug!("LSP manager available for file: {}", path.display());
             if let Some(language) = detect_language(path) {
-                tracing::debug!("Detected language: {} for file: {}", language, path.display());
+                tracing::debug!(
+                    "Detected language: {} for file: {}",
+                    language,
+                    path.display()
+                );
 
                 // Use the URI from metadata (already computed in with_file)
                 if let Some(uri) = &metadata.file_uri {
@@ -470,7 +489,10 @@ impl Editor {
                         };
 
                         // Spawn or get existing LSP client (non-blocking now)
-                        tracing::debug!("Attempting to get or spawn LSP client for language: {}", language);
+                        tracing::debug!(
+                            "Attempting to get or spawn LSP client for language: {}",
+                            language
+                        );
                         if let Some(client) = lsp.get_or_spawn(&language) {
                             tracing::info!("Sending didOpen to LSP for: {}", uri);
                             if let Err(e) = client.did_open(uri.clone(), text, language) {
@@ -479,11 +501,17 @@ impl Editor {
                                 tracing::info!("Successfully sent didOpen to LSP");
                             }
                         } else {
-                            tracing::warn!("Failed to get or spawn LSP client for language: {}", language);
+                            tracing::warn!(
+                                "Failed to get or spawn LSP client for language: {}",
+                                language
+                            );
                         }
                     }
                 } else {
-                    tracing::warn!("No URI in metadata for file: {} (failed to compute absolute path)", path.display());
+                    tracing::warn!(
+                        "No URI in metadata for file: {} (failed to compute absolute path)",
+                        path.display()
+                    );
                 }
             } else {
                 tracing::debug!("No language detected for file: {}", path.display());
@@ -503,7 +531,8 @@ impl Editor {
             let current_state = self.active_state();
             let position = current_state.cursors.primary().position;
             let anchor = current_state.cursors.primary().anchor;
-            self.position_history.record_movement(self.active_buffer, position, anchor);
+            self.position_history
+                .record_movement(self.active_buffer, position, anchor);
             self.position_history.commit_pending_movement();
         }
 
@@ -524,7 +553,8 @@ impl Editor {
         let current_state = self.active_state();
         let position = current_state.cursors.primary().position;
         let anchor = current_state.cursors.primary().anchor;
-        self.position_history.record_movement(self.active_buffer, position, anchor);
+        self.position_history
+            .record_movement(self.active_buffer, position, anchor);
         self.position_history.commit_pending_movement();
 
         let buffer_id = BufferId(self.next_buffer_id);
@@ -580,7 +610,8 @@ impl Editor {
             let current_state = self.active_state();
             let position = current_state.cursors.primary().position;
             let anchor = current_state.cursors.primary().anchor;
-            self.position_history.record_movement(self.active_buffer, position, anchor);
+            self.position_history
+                .record_movement(self.active_buffer, position, anchor);
             self.position_history.commit_pending_movement();
 
             self.active_buffer = id;
@@ -601,7 +632,8 @@ impl Editor {
                 let current_state = self.active_state();
                 let position = current_state.cursors.primary().position;
                 let anchor = current_state.cursors.primary().anchor;
-                self.position_history.record_movement(self.active_buffer, position, anchor);
+                self.position_history
+                    .record_movement(self.active_buffer, position, anchor);
                 self.position_history.commit_pending_movement();
 
                 self.active_buffer = ids[next_idx];
@@ -625,7 +657,8 @@ impl Editor {
                 let current_state = self.active_state();
                 let position = current_state.cursors.primary().position;
                 let anchor = current_state.cursors.primary().anchor;
-                self.position_history.record_movement(self.active_buffer, position, anchor);
+                self.position_history
+                    .record_movement(self.active_buffer, position, anchor);
                 self.position_history.commit_pending_movement();
 
                 self.active_buffer = ids[prev_idx];
@@ -649,7 +682,8 @@ impl Editor {
             let current_state = self.active_state();
             let position = current_state.cursors.primary().position;
             let anchor = current_state.cursors.primary().anchor;
-            self.position_history.record_movement(self.active_buffer, position, anchor);
+            self.position_history
+                .record_movement(self.active_buffer, position, anchor);
             self.position_history.commit_pending_movement();
         }
 
@@ -910,9 +944,13 @@ impl Editor {
             let result = runtime.block_on(tree.toggle_node(selected_id));
 
             // Get final state for status message
-            let final_name = explorer.tree().get_node(selected_id)
+            let final_name = explorer
+                .tree()
+                .get_node(selected_id)
                 .map(|n| n.entry.name.clone());
-            let final_expanded = explorer.tree().get_node(selected_id)
+            let final_expanded = explorer
+                .tree()
+                .get_node(selected_id)
                 .map(|n| n.is_expanded())
                 .unwrap_or(false);
 
@@ -921,13 +959,19 @@ impl Editor {
                     // If directory was just expanded, load its .gitignore
                     if final_expanded {
                         // Extract the path before calling mutable method
-                        let dir_path = explorer.tree().get_node(selected_id)
+                        let dir_path = explorer
+                            .tree()
+                            .get_node(selected_id)
                             .map(|n| n.entry.path.clone());
 
                         if let Some(dir_path) = dir_path {
                             // Load .gitignore for this directory
                             if let Err(e) = explorer.load_gitignore_for_dir(&dir_path) {
-                                tracing::warn!("Failed to load .gitignore from {:?}: {}", dir_path, e);
+                                tracing::warn!(
+                                    "Failed to load .gitignore from {:?}: {}",
+                                    dir_path,
+                                    e
+                                );
                                 // Don't fail the expansion, just log the warning
                             }
                         }
@@ -952,7 +996,8 @@ impl Editor {
     /// Handle file explorer open file
     pub fn file_explorer_open_file(&mut self) -> io::Result<()> {
         // Clone the path and name before calling open_file to avoid borrow checker issues
-        let file_info = self.file_explorer
+        let file_info = self
+            .file_explorer
             .as_ref()
             .and_then(|explorer| explorer.get_selected_entry())
             .filter(|entry| entry.is_file())
@@ -970,7 +1015,9 @@ impl Editor {
         // Extract needed data first
         let (selected_id, node_name) = if let Some(explorer) = &self.file_explorer {
             if let Some(selected_id) = explorer.get_selected() {
-                let node_name = explorer.tree().get_node(selected_id)
+                let node_name = explorer
+                    .tree()
+                    .get_node(selected_id)
                     .map(|n| n.entry.name.clone());
                 (Some(selected_id), node_name)
             } else {
@@ -1021,7 +1068,10 @@ impl Editor {
                         node.entry.path.clone()
                     } else {
                         // If file selected, use its parent directory
-                        node.entry.path.parent().map(|p| p.to_path_buf())
+                        node.entry
+                            .path
+                            .parent()
+                            .map(|p| p.to_path_buf())
                             .unwrap_or_else(|| node.entry.path.clone())
                     };
 
@@ -1038,24 +1088,31 @@ impl Editor {
                     if let Some(runtime) = &self.tokio_runtime {
                         let path_clone = file_path.clone();
                         let selected_id = selected_id;
-                        let result = runtime.block_on(async {
-                            tokio::fs::File::create(&path_clone).await
-                        });
+                        let result =
+                            runtime.block_on(async { tokio::fs::File::create(&path_clone).await });
 
                         match result {
                             Ok(_) => {
                                 // Refresh the parent directory to show the new file
-                                let parent_id = if node.is_dir() { selected_id } else {
-                                    explorer.tree().get_node(selected_id)
+                                let parent_id = if node.is_dir() {
+                                    selected_id
+                                } else {
+                                    explorer
+                                        .tree()
+                                        .get_node(selected_id)
                                         .and_then(|n| n.parent)
                                         .unwrap_or(selected_id)
                                 };
 
-                                let _ = runtime.block_on(explorer.tree_mut().refresh_node(parent_id));
+                                let _ =
+                                    runtime.block_on(explorer.tree_mut().refresh_node(parent_id));
 
                                 // Try to open the new file
                                 if let Ok(_) = self.open_file(&file_path) {
-                                    self.set_status_message(format!("Created and opened: {}", filename));
+                                    self.set_status_message(format!(
+                                        "Created and opened: {}",
+                                        filename
+                                    ));
                                 } else {
                                     self.set_status_message(format!("Created: {}", filename));
                                 }
@@ -1081,7 +1138,10 @@ impl Editor {
                         node.entry.path.clone()
                     } else {
                         // If file selected, use its parent directory
-                        node.entry.path.parent().map(|p| p.to_path_buf())
+                        node.entry
+                            .path
+                            .parent()
+                            .map(|p| p.to_path_buf())
                             .unwrap_or_else(|| node.entry.path.clone())
                     };
 
@@ -1097,24 +1157,31 @@ impl Editor {
                     // Create the directory asynchronously
                     if let Some(runtime) = &self.tokio_runtime {
                         let path_clone = dir_path.clone();
-                        let result = runtime.block_on(async {
-                            tokio::fs::create_dir(&path_clone).await
-                        });
+                        let result =
+                            runtime.block_on(async { tokio::fs::create_dir(&path_clone).await });
 
                         match result {
                             Ok(_) => {
                                 // Refresh the parent directory to show the new folder
-                                let parent_id = if node.is_dir() { selected_id } else {
-                                    explorer.tree().get_node(selected_id)
+                                let parent_id = if node.is_dir() {
+                                    selected_id
+                                } else {
+                                    explorer
+                                        .tree()
+                                        .get_node(selected_id)
                                         .and_then(|n| n.parent)
                                         .unwrap_or(selected_id)
                                 };
 
-                                let _ = runtime.block_on(explorer.tree_mut().refresh_node(parent_id));
+                                let _ =
+                                    runtime.block_on(explorer.tree_mut().refresh_node(parent_id));
                                 self.set_status_message(format!("Created directory: {}", dirname));
                             }
                             Err(e) => {
-                                self.set_status_message(format!("Failed to create directory: {}", e));
+                                self.set_status_message(format!(
+                                    "Failed to create directory: {}",
+                                    e
+                                ));
                             }
                         }
                     }
@@ -1146,7 +1213,10 @@ impl Editor {
 
                     // Simple confirmation: check if path contains certain patterns to prevent accidents
                     if path.to_string_lossy().contains("important") || name.starts_with('.') {
-                        self.set_status_message(format!("Refusing to delete: {} (safety check)", name));
+                        self.set_status_message(format!(
+                            "Refusing to delete: {} (safety check)",
+                            name
+                        ));
                         return;
                     }
 
@@ -1164,12 +1234,16 @@ impl Editor {
                             Ok(_) => {
                                 // Refresh the parent directory
                                 if let Some(parent_id) = parent_id {
-                                    let _ = runtime.block_on(explorer.tree_mut().refresh_node(parent_id));
+                                    let _ = runtime
+                                        .block_on(explorer.tree_mut().refresh_node(parent_id));
                                 }
                                 self.set_status_message(format!("Deleted: {}", name));
                             }
                             Err(e) => {
-                                self.set_status_message(format!("Failed to delete {}: {}", name, e));
+                                self.set_status_message(format!(
+                                    "Failed to delete {}: {}",
+                                    name, e
+                                ));
                             }
                         }
                     }
@@ -1195,7 +1269,10 @@ impl Editor {
 
                     // TODO: Implement input dialog to get new name from user
                     // For now, just show a message that this needs implementation
-                    self.set_status_message(format!("Rename '{}': Input dialog not yet implemented", node_name));
+                    self.set_status_message(format!(
+                        "Rename '{}': Input dialog not yet implemented",
+                        node_name
+                    ));
                 }
             }
         }
@@ -1340,7 +1417,10 @@ impl Editor {
     pub fn add_cursor_at_next_match(&mut self) {
         let state = self.active_state();
         match add_cursor_at_next_match(state) {
-            AddCursorResult::Success { cursor, total_cursors } => {
+            AddCursorResult::Success {
+                cursor,
+                total_cursors,
+            } => {
                 // Create AddCursor event with the next cursor ID
                 let next_id = CursorId(self.active_state().cursors.count());
                 let event = Event::AddCursor {
@@ -1365,7 +1445,10 @@ impl Editor {
     pub fn add_cursor_above(&mut self) {
         let state = self.active_state();
         match add_cursor_above(state) {
-            AddCursorResult::Success { cursor, total_cursors } => {
+            AddCursorResult::Success {
+                cursor,
+                total_cursors,
+            } => {
                 // Create AddCursor event with the next cursor ID
                 let next_id = CursorId(self.active_state().cursors.count());
                 let event = Event::AddCursor {
@@ -1390,7 +1473,10 @@ impl Editor {
     pub fn add_cursor_below(&mut self) {
         let state = self.active_state();
         match add_cursor_below(state) {
-            AddCursorResult::Success { cursor, total_cursors } => {
+            AddCursorResult::Success {
+                cursor,
+                total_cursors,
+            } => {
                 // Create AddCursor event with the next cursor ID
                 let next_id = CursorId(self.active_state().cursors.count());
                 let event = Event::AddCursor {
@@ -1527,7 +1613,6 @@ impl Editor {
         self.status_message = Some(message);
     }
 
-
     /// Update prompt suggestions based on current input
     pub fn update_prompt_suggestions(&mut self) {
         // Extract prompt type and input to avoid borrow checker issues
@@ -1541,7 +1626,11 @@ impl Editor {
             PromptType::Command => {
                 if let Some(prompt) = &mut self.prompt {
                     // Use the underlying context (not Prompt context) for filtering
-                    prompt.suggestions = self.command_registry.read().unwrap().filter(&input, self.key_context);
+                    prompt.suggestions = self
+                        .command_registry
+                        .read()
+                        .unwrap()
+                        .filter(&input, self.key_context);
                     prompt.selected_suggestion = if prompt.suggestions.is_empty() {
                         None
                     } else {
@@ -1625,7 +1714,10 @@ impl Editor {
                         tracing::error!("Error handling completion response: {}", e);
                     }
                 }
-                AsyncMessage::LspGotoDefinition { request_id, locations } => {
+                AsyncMessage::LspGotoDefinition {
+                    request_id,
+                    locations,
+                } => {
                     if let Err(e) = self.handle_goto_definition_response(request_id, locations) {
                         tracing::error!("Error handling goto definition response: {}", e);
                     }
@@ -1646,7 +1738,9 @@ impl Editor {
                 AsyncMessage::GitGrepResults { query, results } => {
                     // Update prompt suggestions with git grep results
                     if let Some(prompt) = &mut self.prompt {
-                        if matches!(prompt.prompt_type, PromptType::GitGrep) && prompt.input == query {
+                        if matches!(prompt.prompt_type, PromptType::GitGrep)
+                            && prompt.input == query
+                        {
                             // Convert git grep results to suggestions
                             prompt.suggestions = results
                                 .into_iter()
@@ -1668,7 +1762,9 @@ impl Editor {
                 AsyncMessage::GitLsFilesResults { query, files } => {
                     // Update prompt suggestions with git ls-files results
                     if let Some(prompt) = &mut self.prompt {
-                        if matches!(prompt.prompt_type, PromptType::GitFindFile) && prompt.input == query {
+                        if matches!(prompt.prompt_type, PromptType::GitFindFile)
+                            && prompt.input == query
+                        {
                             // Convert file list to suggestions
                             prompt.suggestions = files
                                 .into_iter()
@@ -1689,12 +1785,15 @@ impl Editor {
 
                     // Load root .gitignore
                     let root_id = view.tree().root_id();
-                    let root_path = view.tree().get_node(root_id)
-                        .map(|n| n.entry.path.clone());
+                    let root_path = view.tree().get_node(root_id).map(|n| n.entry.path.clone());
 
                     if let Some(root_path) = root_path {
                         if let Err(e) = view.load_gitignore_for_dir(&root_path) {
-                            tracing::warn!("Failed to load root .gitignore from {:?}: {}", root_path, e);
+                            tracing::warn!(
+                                "Failed to load root .gitignore from {:?}: {}",
+                                root_path,
+                                e
+                            );
                         } else {
                             tracing::debug!("Loaded root .gitignore from {:?}", root_path);
                         }
@@ -1720,7 +1819,9 @@ impl Editor {
                 } => {
                     // Plugin process completed - execute callback
                     if let Some(ref mut manager) = self.plugin_manager {
-                        if let Err(e) = manager.execute_process_callback(process_id, stdout, stderr, exit_code) {
+                        if let Err(e) =
+                            manager.execute_process_callback(process_id, stdout, stderr, exit_code)
+                        {
                             tracing::error!("Error executing process callback: {}", e);
                         }
                     }
@@ -1767,7 +1868,9 @@ impl Editor {
                 snapshot.buffers.insert(*buffer_id, buffer_info);
 
                 // Store buffer content
-                snapshot.buffer_contents.insert(*buffer_id, state.buffer.to_string());
+                snapshot
+                    .buffer_contents
+                    .insert(*buffer_id, state.buffer.to_string());
             }
 
             // Update cursor information for active buffer
@@ -1807,7 +1910,11 @@ impl Editor {
     /// Handle a plugin command
     fn handle_plugin_command(&mut self, command: PluginCommand) -> io::Result<()> {
         match command {
-            PluginCommand::InsertText { buffer_id, position, text } => {
+            PluginCommand::InsertText {
+                buffer_id,
+                position,
+                text,
+            } => {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     let event = Event::Insert {
                         position,
@@ -1834,7 +1941,13 @@ impl Editor {
                     }
                 }
             }
-            PluginCommand::AddOverlay { buffer_id, overlay_id, range, color, underline } => {
+            PluginCommand::AddOverlay {
+                buffer_id,
+                overlay_id,
+                range,
+                color,
+                underline,
+            } => {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     let face = if underline {
                         crate::event::OverlayFace::Underline {
@@ -1857,7 +1970,10 @@ impl Editor {
                     }
                 }
             }
-            PluginCommand::RemoveOverlay { buffer_id, overlay_id } => {
+            PluginCommand::RemoveOverlay {
+                buffer_id,
+                overlay_id,
+            } => {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     let event = Event::RemoveOverlay { overlay_id };
                     state.apply(&event);
@@ -1917,10 +2033,17 @@ impl Editor {
     }
 
     /// Handle LSP completion response
-    fn handle_completion_response(&mut self, request_id: u64, items: Vec<lsp_types::CompletionItem>) -> io::Result<()> {
+    fn handle_completion_response(
+        &mut self,
+        request_id: u64,
+        items: Vec<lsp_types::CompletionItem>,
+    ) -> io::Result<()> {
         // Check if this is the pending completion request
         if self.pending_completion_request != Some(request_id) {
-            tracing::debug!("Ignoring completion response for outdated request {}", request_id);
+            tracing::debug!(
+                "Ignoring completion response for outdated request {}",
+                request_id
+            );
             return Ok(());
         }
 
@@ -1938,7 +2061,11 @@ impl Editor {
         let cursor_pos = state.cursors.primary().position;
         let word_start = find_completion_word_start(&state.buffer, cursor_pos);
         let prefix = if word_start < cursor_pos {
-            state.buffer.slice(word_start..cursor_pos).to_string().to_lowercase()
+            state
+                .buffer
+                .slice(word_start..cursor_pos)
+                .to_string()
+                .to_lowercase()
         } else {
             String::new()
         };
@@ -1949,10 +2076,17 @@ impl Editor {
             items.iter().collect()
         } else {
             // Filter to items that start with the prefix (case-insensitive)
-            items.iter().filter(|item| {
-                item.label.to_lowercase().starts_with(&prefix) ||
-                item.filter_text.as_ref().map(|ft| ft.to_lowercase().starts_with(&prefix)).unwrap_or(false)
-            }).collect()
+            items
+                .iter()
+                .filter(|item| {
+                    item.label.to_lowercase().starts_with(&prefix)
+                        || item
+                            .filter_text
+                            .as_ref()
+                            .map(|ft| ft.to_lowercase().starts_with(&prefix))
+                            .unwrap_or(false)
+                })
+                .collect()
         };
 
         if filtered_items.is_empty() {
@@ -1961,46 +2095,57 @@ impl Editor {
         }
 
         // Convert CompletionItem to PopupListItem
-        use crate::popup::{PopupListItem, PopupContent, Popup, PopupPosition};
+        use crate::popup::{Popup, PopupContent, PopupListItem, PopupPosition};
 
-        let popup_items: Vec<PopupListItem> = filtered_items.iter().map(|item| {
-            let text = item.label.clone();
-            let detail = item.detail.clone();
-            let icon = match item.kind {
-                Some(lsp_types::CompletionItemKind::FUNCTION) | Some(lsp_types::CompletionItemKind::METHOD) => Some("λ".to_string()),
-                Some(lsp_types::CompletionItemKind::VARIABLE) => Some("v".to_string()),
-                Some(lsp_types::CompletionItemKind::STRUCT) | Some(lsp_types::CompletionItemKind::CLASS) => Some("S".to_string()),
-                Some(lsp_types::CompletionItemKind::CONSTANT) => Some("c".to_string()),
-                Some(lsp_types::CompletionItemKind::KEYWORD) => Some("k".to_string()),
-                _ => None,
-            };
+        let popup_items: Vec<PopupListItem> = filtered_items
+            .iter()
+            .map(|item| {
+                let text = item.label.clone();
+                let detail = item.detail.clone();
+                let icon = match item.kind {
+                    Some(lsp_types::CompletionItemKind::FUNCTION)
+                    | Some(lsp_types::CompletionItemKind::METHOD) => Some("λ".to_string()),
+                    Some(lsp_types::CompletionItemKind::VARIABLE) => Some("v".to_string()),
+                    Some(lsp_types::CompletionItemKind::STRUCT)
+                    | Some(lsp_types::CompletionItemKind::CLASS) => Some("S".to_string()),
+                    Some(lsp_types::CompletionItemKind::CONSTANT) => Some("c".to_string()),
+                    Some(lsp_types::CompletionItemKind::KEYWORD) => Some("k".to_string()),
+                    _ => None,
+                };
 
-            let mut list_item = PopupListItem::new(text);
-            if let Some(detail) = detail {
-                list_item = list_item.with_detail(detail);
-            }
-            if let Some(icon) = icon {
-                list_item = list_item.with_icon(icon);
-            }
-            // Store the insert_text or label as data
-            let data = item.insert_text.clone().or_else(|| Some(item.label.clone()));
-            if let Some(data) = data {
-                list_item = list_item.with_data(data);
-            }
-            list_item
-        }).collect();
+                let mut list_item = PopupListItem::new(text);
+                if let Some(detail) = detail {
+                    list_item = list_item.with_detail(detail);
+                }
+                if let Some(icon) = icon {
+                    list_item = list_item.with_icon(icon);
+                }
+                // Store the insert_text or label as data
+                let data = item
+                    .insert_text
+                    .clone()
+                    .or_else(|| Some(item.label.clone()));
+                if let Some(data) = data {
+                    list_item = list_item.with_data(data);
+                }
+                list_item
+            })
+            .collect();
 
         // Show the popup
-        use crate::event::{PopupData, PopupContentData, PopupListItemData, PopupPositionData};
+        use crate::event::{PopupContentData, PopupData, PopupListItemData, PopupPositionData};
         let popup_data = PopupData {
             title: Some("Completion".to_string()),
             content: PopupContentData::List {
-                items: popup_items.into_iter().map(|item| PopupListItemData {
-                    text: item.text,
-                    detail: item.detail,
-                    icon: item.icon,
-                    data: item.data,
-                }).collect(),
+                items: popup_items
+                    .into_iter()
+                    .map(|item| PopupListItemData {
+                        text: item.text,
+                        detail: item.detail,
+                        icon: item.icon,
+                        data: item.data,
+                    })
+                    .collect(),
                 selected: 0,
             },
             position: PopupPositionData::BelowCursor,
@@ -2009,7 +2154,8 @@ impl Editor {
             bordered: true,
         };
 
-        self.active_state_mut().apply(&crate::event::Event::ShowPopup { popup: popup_data });
+        self.active_state_mut()
+            .apply(&crate::event::Event::ShowPopup { popup: popup_data });
 
         tracing::info!("Showing completion popup with {} items", items.len());
 
@@ -2017,10 +2163,17 @@ impl Editor {
     }
 
     /// Handle LSP go-to-definition response
-    fn handle_goto_definition_response(&mut self, request_id: u64, locations: Vec<lsp_types::Location>) -> io::Result<()> {
+    fn handle_goto_definition_response(
+        &mut self,
+        request_id: u64,
+        locations: Vec<lsp_types::Location>,
+    ) -> io::Result<()> {
         // Check if this is the pending request
         if self.pending_goto_definition_request != Some(request_id) {
-            tracing::debug!("Ignoring go-to-definition response for outdated request {}", request_id);
+            tracing::debug!(
+                "Ignoring go-to-definition response for outdated request {}",
+                request_id
+            );
             return Ok(());
         }
 
@@ -2060,7 +2213,11 @@ impl Editor {
                 }
             }
 
-            self.status_message = Some(format!("Jumped to definition at {}:{}", path.display(), line + 1));
+            self.status_message = Some(format!(
+                "Jumped to definition at {}:{}",
+                path.display(),
+                line + 1
+            ));
         } else {
             self.status_message = Some("Could not open definition location".to_string());
         }
@@ -2117,7 +2274,12 @@ impl Editor {
                         self.pending_completion_request = Some(request_id);
                         self.lsp_status = "LSP: completion...".to_string();
 
-                        let _ = handle.completion(request_id, uri.clone(), line as u32, character as u32);
+                        let _ = handle.completion(
+                            request_id,
+                            uri.clone(),
+                            line as u32,
+                            character as u32,
+                        );
                         tracing::info!("Requested completion at {}:{}:{}", uri, line, character);
                     }
                 }
@@ -2154,8 +2316,18 @@ impl Editor {
                         self.next_lsp_request_id += 1;
                         self.pending_goto_definition_request = Some(request_id);
 
-                        let _ = handle.goto_definition(request_id, uri.clone(), line as u32, character as u32);
-                        tracing::info!("Requested go-to-definition at {}:{}:{}", uri, line, character);
+                        let _ = handle.goto_definition(
+                            request_id,
+                            uri.clone(),
+                            line as u32,
+                            character as u32,
+                        );
+                        tracing::info!(
+                            "Requested go-to-definition at {}:{}:{}",
+                            uri,
+                            line,
+                            character
+                        );
                     }
                 }
             }
@@ -2165,18 +2337,25 @@ impl Editor {
     }
 
     /// Handle rename response from LSP
-    pub fn handle_rename_response(&mut self, _request_id: u64, result: Result<lsp_types::WorkspaceEdit, String>) -> io::Result<()> {
+    pub fn handle_rename_response(
+        &mut self,
+        _request_id: u64,
+        result: Result<lsp_types::WorkspaceEdit, String>,
+    ) -> io::Result<()> {
         self.lsp_status.clear();
 
         match result {
             Ok(workspace_edit) => {
                 // Log the full workspace edit for debugging
-                tracing::debug!("Received WorkspaceEdit: changes={:?}, document_changes={:?}",
+                tracing::debug!(
+                    "Received WorkspaceEdit: changes={:?}, document_changes={:?}",
                     workspace_edit.changes.as_ref().map(|c| c.len()),
                     workspace_edit.document_changes.as_ref().map(|dc| match dc {
                         lsp_types::DocumentChanges::Edits(e) => format!("{} edits", e.len()),
-                        lsp_types::DocumentChanges::Operations(o) => format!("{} operations", o.len()),
-                    }));
+                        lsp_types::DocumentChanges::Operations(o) =>
+                            format!("{} operations", o.len()),
+                    })
+                );
 
                 // Apply the workspace edit
                 let mut total_changes = 0;
@@ -2191,7 +2370,10 @@ impl Editor {
                             // Sort edits by position (reverse order to avoid offset issues)
                             let mut sorted_edits = edits;
                             sorted_edits.sort_by(|a, b| {
-                                b.range.start.line.cmp(&a.range.start.line)
+                                b.range
+                                    .start
+                                    .line
+                                    .cmp(&a.range.start.line)
                                     .then(b.range.start.character.cmp(&a.range.start.character))
                             });
 
@@ -2211,22 +2393,30 @@ impl Editor {
                                 let end_line = edit.range.end.line as usize;
                                 let end_char = edit.range.end.character as usize;
 
-                                let start_pos = state.buffer.lsp_position_to_byte(start_line, start_char);
+                                let start_pos =
+                                    state.buffer.lsp_position_to_byte(start_line, start_char);
                                 let end_pos = state.buffer.lsp_position_to_byte(end_line, end_char);
 
                                 // Log the conversion for debugging
-                                let old_text = if start_pos < end_pos && end_pos <= state.buffer.len() {
-                                    state.buffer.slice(start_pos..end_pos).to_string()
-                                } else {
-                                    format!("<invalid range: start={}, end={}, buffer_len={}>", start_pos, end_pos, state.buffer.len())
-                                };
+                                let old_text =
+                                    if start_pos < end_pos && end_pos <= state.buffer.len() {
+                                        state.buffer.slice(start_pos..end_pos).to_string()
+                                    } else {
+                                        format!(
+                                            "<invalid range: start={}, end={}, buffer_len={}>",
+                                            start_pos,
+                                            end_pos,
+                                            state.buffer.len()
+                                        )
+                                    };
                                 tracing::debug!("  Converting LSP range line {}:{}-{}:{} to bytes {}..{} (replacing {:?} with {:?})",
                                     start_line, start_char, end_line, end_char,
                                     start_pos, end_pos, old_text, edit.new_text);
 
                                 // Delete old text
                                 if start_pos < end_pos {
-                                    let deleted_text = state.buffer.slice(start_pos..end_pos).to_string();
+                                    let deleted_text =
+                                        state.buffer.slice(start_pos..end_pos).to_string();
                                     let cursor_id = state.cursors.primary_id();
                                     let delete_event = Event::Delete {
                                         range: start_pos..end_pos,
@@ -2265,8 +2455,9 @@ impl Editor {
                                     event_log.append(batch.clone());
                                 }
 
-                                let state = self.buffers.get_mut(&buffer_id)
-                                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Buffer not found"))?;
+                                let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
+                                    io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
+                                })?;
                                 state.apply(&batch);
                             }
                         }
@@ -2302,7 +2493,8 @@ impl Editor {
                             let buffer_id = self.open_file(&path)?;
 
                             // Extract TextEdit from OneOf<TextEdit, AnnotatedTextEdit>
-                            let edits: Vec<lsp_types::TextEdit> = text_doc_edit.edits
+                            let edits: Vec<lsp_types::TextEdit> = text_doc_edit
+                                .edits
                                 .into_iter()
                                 .map(|one_of| match one_of {
                                     lsp_types::OneOf::Left(text_edit) => text_edit,
@@ -2311,19 +2503,30 @@ impl Editor {
                                 .collect();
 
                             // Log the edits for debugging
-                            tracing::info!("Applying {} edits from rust-analyzer for {:?}:", edits.len(), path);
+                            tracing::info!(
+                                "Applying {} edits from rust-analyzer for {:?}:",
+                                edits.len(),
+                                path
+                            );
                             for (i, edit) in edits.iter().enumerate() {
-                                tracing::info!("  Edit {}: line {}:{}-{}:{} -> {:?}",
+                                tracing::info!(
+                                    "  Edit {}: line {}:{}-{}:{} -> {:?}",
                                     i,
-                                    edit.range.start.line, edit.range.start.character,
-                                    edit.range.end.line, edit.range.end.character,
-                                    edit.new_text);
+                                    edit.range.start.line,
+                                    edit.range.start.character,
+                                    edit.range.end.line,
+                                    edit.range.end.character,
+                                    edit.new_text
+                                );
                             }
 
                             // Sort edits by position (reverse order to avoid offset issues)
                             let mut sorted_edits = edits;
                             sorted_edits.sort_by(|a, b| {
-                                b.range.start.line.cmp(&a.range.start.line)
+                                b.range
+                                    .start
+                                    .line
+                                    .cmp(&a.range.start.line)
                                     .then(b.range.start.character.cmp(&a.range.start.character))
                             });
 
@@ -2343,22 +2546,30 @@ impl Editor {
                                 let end_line = edit.range.end.line as usize;
                                 let end_char = edit.range.end.character as usize;
 
-                                let start_pos = state.buffer.lsp_position_to_byte(start_line, start_char);
+                                let start_pos =
+                                    state.buffer.lsp_position_to_byte(start_line, start_char);
                                 let end_pos = state.buffer.lsp_position_to_byte(end_line, end_char);
 
                                 // Log the conversion for debugging
-                                let old_text = if start_pos < end_pos && end_pos <= state.buffer.len() {
-                                    state.buffer.slice(start_pos..end_pos).to_string()
-                                } else {
-                                    format!("<invalid range: start={}, end={}, buffer_len={}>", start_pos, end_pos, state.buffer.len())
-                                };
+                                let old_text =
+                                    if start_pos < end_pos && end_pos <= state.buffer.len() {
+                                        state.buffer.slice(start_pos..end_pos).to_string()
+                                    } else {
+                                        format!(
+                                            "<invalid range: start={}, end={}, buffer_len={}>",
+                                            start_pos,
+                                            end_pos,
+                                            state.buffer.len()
+                                        )
+                                    };
                                 tracing::debug!("  Converting LSP range line {}:{}-{}:{} to bytes {}..{} (replacing {:?} with {:?})",
                                     start_line, start_char, end_line, end_char,
                                     start_pos, end_pos, old_text, edit.new_text);
 
                                 // Delete old text
                                 if start_pos < end_pos {
-                                    let deleted_text = state.buffer.slice(start_pos..end_pos).to_string();
+                                    let deleted_text =
+                                        state.buffer.slice(start_pos..end_pos).to_string();
                                     let cursor_id = state.cursors.primary_id();
                                     let delete_event = Event::Delete {
                                         range: start_pos..end_pos,
@@ -2397,23 +2608,29 @@ impl Editor {
                                     event_log.append(batch.clone());
                                 }
 
-                                let state = self.buffers.get_mut(&buffer_id)
-                                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Buffer not found"))?;
+                                let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
+                                    io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
+                                })?;
                                 state.apply(&batch);
                             }
                         }
                     }
                 }
 
-                self.status_message = Some(format!("Renamed successfully ({} changes)", total_changes));
+                self.status_message =
+                    Some(format!("Renamed successfully ({} changes)", total_changes));
             }
             Err(error) => {
                 // Per LSP spec: ContentModified errors (-32801) should NOT be shown to user
                 // These are expected when document changes during LSP operations
                 // Reference: https://github.com/neovim/neovim/issues/16900
                 if error.contains("content modified") || error.contains("-32801") {
-                    tracing::debug!("LSP rename: ContentModified error (expected, ignoring): {}", error);
-                    self.status_message = Some("Rename cancelled (document was modified)".to_string());
+                    tracing::debug!(
+                        "LSP rename: ContentModified error (expected, ignoring): {}",
+                        error
+                    );
+                    self.status_message =
+                        Some("Rename cancelled (document was modified)".to_string());
                 } else {
                     // Show other errors to user
                     self.status_message = Some(format!("Rename failed: {}", error));
@@ -2452,7 +2669,7 @@ impl Editor {
 
     /// Start rename mode - select the symbol at cursor and allow inline editing
     fn start_rename(&mut self) -> io::Result<()> {
-        use crate::word_navigation::{find_word_start, find_word_end};
+        use crate::word_navigation::{find_word_end, find_word_start};
 
         // Get the current buffer and cursor position
         let state = self.active_state();
@@ -2614,7 +2831,11 @@ impl Editor {
         use crossterm::event::{KeyCode, KeyModifiers};
         use std::path::Path;
 
-        tracing::debug!("Editor.handle_key: code={:?}, modifiers={:?}", code, modifiers);
+        tracing::debug!(
+            "Editor.handle_key: code={:?}, modifiers={:?}",
+            code,
+            modifiers
+        );
 
         // Determine the current context
         let context = self.get_key_context();
@@ -2669,13 +2890,17 @@ impl Editor {
                             }
                         }
                         PromptType::SaveFileAs => {
-                            self.set_status_message(format!("Save-as not yet implemented: {input}"));
+                            self.set_status_message(format!(
+                                "Save-as not yet implemented: {input}"
+                            ));
                         }
                         PromptType::Search => {
                             self.set_status_message(format!("Search not yet implemented: {input}"));
                         }
                         PromptType::Replace { search: _ } => {
-                            self.set_status_message(format!("Replace not yet implemented: {input}"));
+                            self.set_status_message(format!(
+                                "Replace not yet implemented: {input}"
+                            ));
                         }
                         PromptType::Command => {
                             let commands = self.command_registry.read().unwrap().get_all();
@@ -2732,16 +2957,19 @@ impl Editor {
 
                                     // Ensure we don't go past the buffer end
                                     let buffer_len = state.buffer.len();
-                                    state.cursors.primary_mut().position = final_position.min(buffer_len);
+                                    state.cursors.primary_mut().position =
+                                        final_position.min(buffer_len);
                                     state.cursors.primary_mut().anchor = None;
 
                                     // Ensure the position is visible
-                                    state.viewport.ensure_visible(
-                                        &mut state.buffer,
-                                        state.cursors.primary(),
-                                    );
+                                    state
+                                        .viewport
+                                        .ensure_visible(&mut state.buffer, state.cursors.primary());
 
-                                    self.set_status_message(format!("Jumped to {}:{}:{}", file, line, column));
+                                    self.set_status_message(format!(
+                                        "Jumped to {}:{}:{}",
+                                        file, line, column
+                                    ));
                                 }
                             } else {
                                 self.set_status_message(format!(
@@ -2793,7 +3021,9 @@ impl Editor {
                 if let Some(prompt) = self.prompt_mut() {
                     if prompt.cursor_pos < prompt.input.len() {
                         let mut new_pos = prompt.cursor_pos + 1;
-                        while new_pos < prompt.input.len() && !prompt.input.is_char_boundary(new_pos) {
+                        while new_pos < prompt.input.len()
+                            && !prompt.input.is_char_boundary(new_pos)
+                        {
                             new_pos += 1;
                         }
                         prompt.cursor_pos = new_pos;
@@ -2827,7 +3057,8 @@ impl Editor {
                 if let Some(prompt) = self.prompt_mut() {
                     if !prompt.suggestions.is_empty() {
                         if let Some(selected) = prompt.selected_suggestion {
-                            prompt.selected_suggestion = Some((selected + 1) % prompt.suggestions.len());
+                            prompt.selected_suggestion =
+                                Some((selected + 1) % prompt.suggestions.len());
                         }
                     }
                 }
@@ -2992,7 +3223,9 @@ impl Editor {
             Action::Quit => self.quit(),
             Action::Save => self.save()?,
             Action::Open => self.start_prompt("Find file: ".to_string(), PromptType::OpenFile),
-            Action::New => { self.new_buffer(); },
+            Action::New => {
+                self.new_buffer();
+            }
             Action::Copy => self.copy_selection(),
             Action::Cut => self.cut_selection(),
             Action::Paste => self.paste(),
@@ -3012,7 +3245,11 @@ impl Editor {
             Action::ShowHelp => self.help_renderer.toggle(),
             Action::CommandPalette => {
                 // Use the current context for filtering commands
-                let suggestions = self.command_registry.read().unwrap().filter("", self.key_context);
+                let suggestions = self
+                    .command_registry
+                    .read()
+                    .unwrap()
+                    .filter("", self.key_context);
                 self.start_prompt_with_suggestions(
                     "Command: ".to_string(),
                     PromptType::Command,
@@ -3027,7 +3264,11 @@ impl Editor {
                     state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
                 }
 
-                let state = if self.config.editor.line_wrap { "enabled" } else { "disabled" };
+                let state = if self.config.editor.line_wrap {
+                    "enabled"
+                } else {
+                    "disabled"
+                };
                 self.set_status_message(format!("Line wrap {}", state));
             }
             Action::LspCompletion => {
@@ -3169,8 +3410,14 @@ impl Editor {
                         let new_text = rename_state.current_text.clone();
 
                         // Update status message to show what's being typed
-                        self.status_message = Some(format!("Renaming to: {}",
-                            if new_text.is_empty() { "<empty>" } else { &new_text }));
+                        self.status_message = Some(format!(
+                            "Renaming to: {}",
+                            if new_text.is_empty() {
+                                "<empty>"
+                            } else {
+                                &new_text
+                            }
+                        ));
                     }
                 } else {
                     // Normal backspace handling - fall through to default action handling below
@@ -3193,8 +3440,8 @@ impl Editor {
                             }
                         }
                     }
-		}
-	    }
+                }
+            }
             Action::PluginAction(action_name) => {
                 // Execute the plugin callback
                 if let Some(ref manager) = self.plugin_manager {
@@ -3273,7 +3520,10 @@ impl Editor {
 
                             // Track cursor movements in position history (but not during navigation)
                             if !self.in_navigation {
-                                if let Event::MoveCursor { position, anchor, .. } = event {
+                                if let Event::MoveCursor {
+                                    position, anchor, ..
+                                } = event
+                                {
                                     self.position_history.record_movement(
                                         self.active_buffer,
                                         *position,
@@ -3291,7 +3541,10 @@ impl Editor {
 
                             // Track cursor movements in position history (but not during navigation)
                             if !self.in_navigation {
-                                if let Event::MoveCursor { position, anchor, .. } = event {
+                                if let Event::MoveCursor {
+                                    position, anchor, ..
+                                } = event
+                                {
                                     self.position_history.record_movement(
                                         self.active_buffer,
                                         position,
@@ -3309,7 +3562,10 @@ impl Editor {
     }
 
     /// Handle a mouse event
-    pub fn handle_mouse(&mut self, mouse_event: crossterm::event::MouseEvent) -> std::io::Result<()> {
+    pub fn handle_mouse(
+        &mut self,
+        mouse_event: crossterm::event::MouseEvent,
+    ) -> std::io::Result<()> {
         use crossterm::event::{MouseButton, MouseEventKind};
 
         // Cancel rename mode on any mouse interaction
@@ -3364,7 +3620,9 @@ impl Editor {
         }
 
         // Check if click is on a scrollbar
-        for (split_id, buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in &self.cached_layout.split_areas {
+        for (split_id, buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
+            &self.cached_layout.split_areas
+        {
             if col >= scrollbar_rect.x
                 && col < scrollbar_rect.x + scrollbar_rect.width
                 && row >= scrollbar_rect.y
@@ -3394,7 +3652,9 @@ impl Editor {
         }
 
         // Check if click is in editor content area
-        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in &self.cached_layout.split_areas {
+        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
+            &self.cached_layout.split_areas
+        {
             if col >= content_rect.x
                 && col < content_rect.x + content_rect.width
                 && row >= content_rect.y
@@ -3414,7 +3674,9 @@ impl Editor {
         // If dragging scrollbar, update scroll position
         if let Some(dragging_split_id) = self.mouse_state.dragging_scrollbar {
             // Find the buffer and scrollbar rect for this split
-            for (split_id, buffer_id, _content_rect, scrollbar_rect, _thumb_start, _thumb_end) in &self.cached_layout.split_areas {
+            for (split_id, buffer_id, _content_rect, scrollbar_rect, _thumb_start, _thumb_end) in
+                &self.cached_layout.split_areas
+            {
                 if *split_id == dragging_split_id {
                     // Check if we started dragging from the thumb (have drag_start_row)
                     if self.mouse_state.drag_start_row.is_some() {
@@ -3512,7 +3774,7 @@ impl Editor {
                     if let Some((pos, _)) = iter.next() {
                         pos
                     } else {
-                        line_byte  // Reached end of buffer
+                        line_byte // Reached end of buffer
                     }
                 }
             } else {
@@ -3527,7 +3789,8 @@ impl Editor {
                 };
 
                 // Clamp to valid range
-                let max_top_byte = Self::calculate_max_scroll_position(&state.buffer, viewport_height);
+                let max_top_byte =
+                    Self::calculate_max_scroll_position(&state.buffer, viewport_height);
                 new_top_byte.min(max_top_byte)
             };
 
@@ -3609,7 +3872,7 @@ impl Editor {
                     if let Some((pos, _)) = iter.next() {
                         pos
                     } else {
-                        line_byte  // Reached end of buffer
+                        line_byte // Reached end of buffer
                     }
                 }
             } else {
@@ -3636,7 +3899,10 @@ impl Editor {
 
     /// Calculate the maximum allowed scroll position
     /// Ensures the last line is always at the bottom unless the buffer is smaller than viewport
-    fn calculate_max_scroll_position(buffer: &crate::buffer::Buffer, viewport_height: usize) -> usize {
+    fn calculate_max_scroll_position(
+        buffer: &crate::buffer::Buffer,
+        viewport_height: usize,
+    ) -> usize {
         if viewport_height == 0 {
             return 0;
         }
@@ -3758,11 +4024,8 @@ impl Editor {
 
             // Track position history
             if !self.in_navigation {
-                self.position_history.record_movement(
-                    buffer_id,
-                    target_position,
-                    None,
-                );
+                self.position_history
+                    .record_movement(buffer_id, target_position, None);
             }
         }
 
@@ -3820,7 +4083,8 @@ impl Editor {
 
         // If help is visible, render help page instead
         if self.help_renderer.is_visible() {
-            self.help_renderer.render(frame, size, &self.keybindings, &self.theme);
+            self.help_renderer
+                .render(frame, size, &self.keybindings, &self.theme);
             return;
         }
 
@@ -3855,10 +4119,17 @@ impl Editor {
             .split(size);
 
         // Render tabs
-        TabsRenderer::render(frame, chunks[0], &self.buffers, self.active_buffer, &self.theme);
+        TabsRenderer::render(
+            frame,
+            chunks[0],
+            &self.buffers,
+            self.active_buffer,
+            &self.theme,
+        );
 
         // Render content (with file explorer if visible)
-        let lsp_waiting = self.pending_completion_request.is_some() || self.pending_goto_definition_request.is_some();
+        let lsp_waiting = self.pending_completion_request.is_some()
+            || self.pending_goto_definition_request.is_some();
         let content_area = chunks[1];
 
         // Cache layout for mouse handling
@@ -3868,8 +4139,8 @@ impl Editor {
             let horizontal_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Percentage(30),  // File explorer
-                    Constraint::Percentage(70),  // Content
+                    Constraint::Percentage(30), // File explorer
+                    Constraint::Percentage(70), // Content
                 ])
                 .split(content_area);
 
@@ -3953,7 +4224,9 @@ impl Editor {
         if state.popups.is_visible() {
             // Get the primary cursor position for popup positioning
             let primary_cursor = state.cursors.primary();
-            let cursor_screen_pos = state.viewport.cursor_screen_position(&mut state.buffer, primary_cursor);
+            let cursor_screen_pos = state
+                .viewport
+                .cursor_screen_position(&mut state.buffer, primary_cursor);
 
             // Adjust cursor position to account for tab bar (1 line offset)
             let cursor_screen_pos = (cursor_screen_pos.0, cursor_screen_pos.1 + 1);
@@ -3965,8 +4238,6 @@ impl Editor {
             }
         }
     }
-
-
 
     // === Overlay Management (Event-Driven) ===
 
@@ -4083,7 +4354,6 @@ impl Editor {
     // NOTE: Diagnostics are now applied automatically via process_async_messages()
     // when received from the LSP server asynchronously. No manual polling needed!
 
-
     /// Notify LSP of a text change event
     fn notify_lsp_change(&mut self, event: &Event) {
         // Only notify for insert and delete events
@@ -4098,7 +4368,10 @@ impl Editor {
         let metadata = match self.buffer_metadata.get(&self.active_buffer) {
             Some(m) => m,
             None => {
-                tracing::debug!("notify_lsp_change: no metadata for buffer {:?}", self.active_buffer);
+                tracing::debug!(
+                    "notify_lsp_change: no metadata for buffer {:?}",
+                    self.active_buffer
+                );
                 return;
             }
         };
@@ -4113,7 +4386,9 @@ impl Editor {
         let uri = match &metadata.file_uri {
             Some(u) => u.clone(),
             None => {
-                tracing::debug!("notify_lsp_change: no URI for buffer (not a file or URI creation failed)");
+                tracing::debug!(
+                    "notify_lsp_change: no URI for buffer (not a file or URI creation failed)"
+                );
                 return;
             }
         };
@@ -4137,7 +4412,11 @@ impl Editor {
 
         // Get the full text before borrowing lsp mutably
         let full_text = self.active_state().buffer.to_string();
-        tracing::debug!("notify_lsp_change: sending didChange to {} (text length: {} bytes)", uri, full_text.len());
+        tracing::debug!(
+            "notify_lsp_change: sending didChange to {} (text length: {} bytes)",
+            uri,
+            full_text.len()
+        );
 
         if let Some(lsp) = &mut self.lsp {
             if let Some(client) = lsp.get_or_spawn(&language) {
@@ -4155,7 +4434,10 @@ impl Editor {
                     tracing::info!("Successfully sent didChange to LSP");
                 }
             } else {
-                tracing::warn!("notify_lsp_change: failed to get or spawn LSP client for {}", language);
+                tracing::warn!(
+                    "notify_lsp_change: failed to get or spawn LSP client for {}",
+                    language
+                );
             }
         } else {
             tracing::debug!("notify_lsp_change: no LSP manager available");
@@ -4168,7 +4450,10 @@ impl Editor {
         let metadata = match self.buffer_metadata.get(&self.active_buffer) {
             Some(m) => m,
             None => {
-                tracing::debug!("notify_lsp_save: no metadata for buffer {:?}", self.active_buffer);
+                tracing::debug!(
+                    "notify_lsp_save: no metadata for buffer {:?}",
+                    self.active_buffer
+                );
                 return;
             }
         };
@@ -4206,7 +4491,11 @@ impl Editor {
 
         // Get the full text to send with didSave
         let full_text = self.active_state().buffer.to_string();
-        tracing::debug!("notify_lsp_save: sending didSave to {} (text length: {} bytes)", uri, full_text.len());
+        tracing::debug!(
+            "notify_lsp_save: sending didSave to {} (text length: {} bytes)",
+            uri,
+            full_text.len()
+        );
 
         if let Some(lsp) = &mut self.lsp {
             if let Some(client) = lsp.get_or_spawn(&language) {
@@ -4217,7 +4506,10 @@ impl Editor {
                     tracing::info!("Successfully sent didSave to LSP");
                 }
             } else {
-                tracing::warn!("notify_lsp_save: failed to get or spawn LSP client for {}", language);
+                tracing::warn!(
+                    "notify_lsp_save: failed to get or spawn LSP client for {}",
+                    language
+                );
             }
         } else {
             tracing::debug!("notify_lsp_save: no LSP manager available");
@@ -4593,7 +4885,10 @@ mod tests {
         }
 
         // Find the first cursor ID (the one that will be kept)
-        let first_id = editor.active_state().cursors.iter()
+        let first_id = editor
+            .active_state()
+            .cursors
+            .iter()
             .map(|(id, _)| id)
             .min_by_key(|id| id.0)
             .expect("Should have at least one cursor");

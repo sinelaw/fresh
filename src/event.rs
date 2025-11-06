@@ -61,13 +61,19 @@ pub enum Event {
     },
 
     /// Scroll the viewport
-    Scroll { line_offset: isize },
+    Scroll {
+        line_offset: isize,
+    },
 
     /// Set viewport to specific position
-    SetViewport { top_line: usize },
+    SetViewport {
+        top_line: usize,
+    },
 
     /// Change mode (if implementing modal editing)
-    ChangeMode { mode: String },
+    ChangeMode {
+        mode: String,
+    },
 
     /// Add an overlay (for decorations like underlines, highlights)
     AddOverlay {
@@ -79,16 +85,22 @@ pub enum Event {
     },
 
     /// Remove overlay by ID
-    RemoveOverlay { overlay_id: String },
+    RemoveOverlay {
+        overlay_id: String,
+    },
 
     /// Remove all overlays in a range
-    RemoveOverlaysInRange { range: Range<usize> },
+    RemoveOverlaysInRange {
+        range: Range<usize>,
+    },
 
     /// Clear all overlays
     ClearOverlays,
 
     /// Show a popup
-    ShowPopup { popup: PopupData },
+    ShowPopup {
+        popup: PopupData,
+    },
 
     /// Hide the topmost popup
     HidePopup,
@@ -112,7 +124,9 @@ pub enum Event {
     },
 
     /// Remove margin annotation by ID
-    RemoveMarginAnnotation { annotation_id: String },
+    RemoveMarginAnnotation {
+        annotation_id: String,
+    },
 
     /// Remove all margin annotations at a specific line
     RemoveMarginAnnotationsAtLine {
@@ -121,13 +135,17 @@ pub enum Event {
     },
 
     /// Clear all margin annotations in a position
-    ClearMarginPosition { position: MarginPositionData },
+    ClearMarginPosition {
+        position: MarginPositionData,
+    },
 
     /// Clear all margin annotations
     ClearMargins,
 
     /// Enable/disable line numbers
-    SetLineNumbers { enabled: bool },
+    SetLineNumbers {
+        enabled: bool,
+    },
 
     /// Split view events
     /// Split the active pane
@@ -138,13 +156,20 @@ pub enum Event {
     },
 
     /// Close a split pane
-    CloseSplit { split_id: SplitId },
+    CloseSplit {
+        split_id: SplitId,
+    },
 
     /// Set the active split pane
-    SetActiveSplit { split_id: SplitId },
+    SetActiveSplit {
+        split_id: SplitId,
+    },
 
     /// Adjust the split ratio
-    AdjustSplitRatio { split_id: SplitId, delta: f32 },
+    AdjustSplitRatio {
+        split_id: SplitId,
+        delta: f32,
+    },
 
     /// Navigate to next split
     NextSplit,
@@ -267,13 +292,13 @@ impl Event {
                 text: deleted_text.clone(),
                 cursor_id: *cursor_id,
             }),
-            Event::Batch { events, description } => {
+            Event::Batch {
+                events,
+                description,
+            } => {
                 // Invert all events in the batch in reverse order
-                let inverted: Option<Vec<Event>> = events
-                    .iter()
-                    .rev()
-                    .map(|e| e.inverse())
-                    .collect();
+                let inverted: Option<Vec<Event>> =
+                    events.iter().rev().map(|e| e.inverse()).collect();
 
                 inverted.map(|inverted_events| Event::Batch {
                     events: inverted_events,

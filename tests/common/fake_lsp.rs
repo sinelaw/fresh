@@ -4,8 +4,6 @@
 //! with predefined responses. It's used for testing LSP features without requiring
 //! a real language server.
 
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 

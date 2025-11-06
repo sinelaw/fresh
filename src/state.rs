@@ -1,6 +1,9 @@
 use crate::buffer::{Buffer, LineNumber};
 use crate::cursor::{Cursor, Cursors};
-use crate::event::{Event, MarginContentData, MarginPositionData, OverlayFace as EventOverlayFace, PopupData, PopupPositionData};
+use crate::event::{
+    Event, MarginContentData, MarginPositionData, OverlayFace as EventOverlayFace, PopupData,
+    PopupPositionData,
+};
 use crate::highlighter::{Highlighter, Language};
 use crate::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPosition};
 use crate::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};

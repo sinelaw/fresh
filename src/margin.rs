@@ -133,7 +133,12 @@ impl MarginConfig {
     pub fn total_width(&self) -> usize {
         if self.enabled {
             // 1 char for indicator column + line number width + separator
-            1 + self.width + if self.show_separator { self.separator.chars().count() } else { 0 }
+            1 + self.width
+                + if self.show_separator {
+                    self.separator.chars().count()
+                } else {
+                    0
+                }
         } else {
             0
         }
@@ -168,7 +173,12 @@ impl MarginAnnotation {
     }
 
     /// Create an annotation with an ID
-    pub fn with_id(line: usize, position: MarginPosition, content: MarginContent, id: String) -> Self {
+    pub fn with_id(
+        line: usize,
+        position: MarginPosition,
+        content: MarginContent,
+        id: String,
+    ) -> Self {
         Self {
             line,
             position,
@@ -345,7 +355,11 @@ impl MarginManager {
     }
 
     /// Get all annotations at a specific line
-    pub fn get_at_line(&self, line: usize, position: MarginPosition) -> Option<&[MarginAnnotation]> {
+    pub fn get_at_line(
+        &self,
+        line: usize,
+        position: MarginPosition,
+    ) -> Option<&[MarginAnnotation]> {
         let annotations = match position {
             MarginPosition::Left => &self.left_annotations,
             MarginPosition::Right => &self.right_annotations,
@@ -355,7 +369,12 @@ impl MarginManager {
 
     /// Get the content to render for a specific line in a margin
     /// If show_line_numbers is true and position is Left, includes line number
-    pub fn render_line(&self, line: usize, position: MarginPosition, buffer_total_lines: usize) -> MarginContent {
+    pub fn render_line(
+        &self,
+        line: usize,
+        position: MarginPosition,
+        buffer_total_lines: usize,
+    ) -> MarginContent {
         let annotations = match position {
             MarginPosition::Left => &self.left_annotations,
             MarginPosition::Right => &self.right_annotations,

@@ -47,7 +47,11 @@ impl Suggestion {
         }
     }
 
-    pub fn with_description_and_disabled(text: String, description: String, disabled: bool) -> Self {
+    pub fn with_description_and_disabled(
+        text: String,
+        description: String,
+        disabled: bool,
+    ) -> Self {
         Self {
             text,
             description: Some(description),
@@ -101,7 +105,6 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::Quit,
             contexts: vec![],
         },
-
         // Edit operations
         Command {
             name: "Undo".to_string(),
@@ -139,7 +142,6 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::DeleteLine,
             contexts: vec![KeyContext::Normal],
         },
-
         // Selection
         Command {
             name: "Select All".to_string(),
@@ -165,7 +167,6 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::ExpandSelection,
             contexts: vec![KeyContext::Normal],
         },
-
         // Multi-cursor
         Command {
             name: "Add Cursor Above".to_string(),
@@ -191,7 +192,6 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::RemoveSecondaryCursors,
             contexts: vec![KeyContext::Normal],
         },
-
         // Buffer navigation
         Command {
             name: "Next Buffer".to_string(),
@@ -205,7 +205,6 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::PrevBuffer,
             contexts: vec![KeyContext::Normal],
         },
-
         // Split operations
         Command {
             name: "Split Horizontal".to_string(),
@@ -249,7 +248,6 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::DecreaseSplitSize,
             contexts: vec![KeyContext::Normal],
         },
-
         // File explorer
         Command {
             name: "Toggle File Explorer".to_string(),
@@ -299,7 +297,6 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::FileExplorerRename,
             contexts: vec![KeyContext::FileExplorer],
         },
-
         // View
         Command {
             name: "Show Help".to_string(),
@@ -313,7 +310,6 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::CommandPalette,
             contexts: vec![KeyContext::Normal],
         },
-
         // Git operations
         Command {
             name: "Git: Grep".to_string(),
@@ -370,11 +366,7 @@ pub fn filter_commands(query: &str, current_context: KeyContext) -> Vec<Suggesti
         .filter(|cmd| matches_query(cmd))
         .map(|cmd| {
             let available = is_available(&cmd);
-            Suggestion::with_description_and_disabled(
-                cmd.name.clone(),
-                cmd.description,
-                !available,
-            )
+            Suggestion::with_description_and_disabled(cmd.name.clone(), cmd.description, !available)
         })
         .collect();
 

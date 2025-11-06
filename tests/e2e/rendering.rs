@@ -1,6 +1,4 @@
-use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
 use tempfile::TempDir;
 
 /// Test rendering of empty buffer
@@ -136,7 +134,7 @@ fn test_cursor_position_with_large_line_numbers() {
     let mut content = String::new();
     for i in 0..1_000_000 {
         content.push_str(&format!(
-            "Line {:07} with some padding text to reach approximately 80 characters\n", i
+            "Line {i:07} with some padding text to reach approximately 80 characters\n"
         ));
     }
     std::fs::write(&file_path, &content).unwrap();
@@ -155,13 +153,14 @@ fn test_cursor_position_with_large_line_numbers() {
     // Check buffer length and gutter width calculation
     let buffer_len = harness.editor().active_state().buffer.len();
     let gutter_width = harness
-        .editor()        .active_state()
+        .editor()
+        .active_state()
         .viewport
         .gutter_width(&harness.editor().active_state().buffer);
 
-    println!("\nBuffer length: {} bytes", buffer_len);
+    println!("\nBuffer length: {buffer_len} bytes");
     println!("Estimated lines (buffer_len / 80): {}", buffer_len / 80);
-    println!("Calculated gutter_width: {}", gutter_width);
+    println!("Calculated gutter_width: {gutter_width}");
 
     harness.render().unwrap();
     let screen_pos = harness.screen_cursor_position();
@@ -173,7 +172,7 @@ fn test_cursor_position_with_large_line_numbers() {
     println!("\nWith 7-digit line numbers (file with 1,000,000 lines - at end of file):");
     println!("Full screen dump (last visible lines):");
     for (i, line) in lines.iter().take(5).enumerate() {
-	 println!("Row {i}: {line:?}");
+        println!("Row {i}: {line:?}");
     }
 
     println!("\nVisual character position ruler:");
@@ -181,9 +180,7 @@ fn test_cursor_position_with_large_line_numbers() {
     println!("01234567890123456789012345678901234567890");
     if let Some(content_line) = lines.get(screen_pos.1 as usize) {
         println!("{}", &content_line.chars().take(40).collect::<String>());
-        println!(
-            "{}^", " ".repeat(screen_pos.0 as usize)
-        );
+        println!("{}^", " ".repeat(screen_pos.0 as usize));
         println!(" cursor is here (pos {})", screen_pos.0);
     }
 
@@ -209,12 +206,12 @@ fn test_cursor_position_with_large_line_numbers() {
     if let Some(last_line) = content_lines.last() {
         let line_num_part = last_line.split("│").next().unwrap_or("").trim();
         let line_num: usize = line_num_part.parse().unwrap_or(0);
-        println!("Last visible line number: {} (may be estimated)", line_num);
+        println!("Last visible line number: {line_num} (may be estimated)");
 
         // For a 73MB file (1M lines * 73 bytes avg), estimated lines ~= 912,500
         // This is correct behavior - we estimate rather than iterate all lines
         let expected_estimate = buffer_len / 80;
-        println!("Expected estimated line number: ~{}", expected_estimate);
+        println!("Expected estimated line number: ~{expected_estimate}");
 
         // Line number should be close to the estimate (within 10%)
         let lower_bound = expected_estimate.saturating_sub(expected_estimate / 10);
@@ -222,8 +219,7 @@ fn test_cursor_position_with_large_line_numbers() {
 
         assert!(
             line_num >= lower_bound && line_num <= upper_bound,
-            "Expected line number near {}, but got {}",
-            expected_estimate, line_num
+            "Expected line number near {expected_estimate}, but got {line_num}"
         );
 
         // Verify this is a 6-digit number (912,500 range)
@@ -283,12 +279,12 @@ fn test_line_numbers_rendered_correctly() {
         );
 
         let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join(format!("test_{}_lines.txt", line_count));
+        let file_path = temp_dir.path().join(format!("test_{line_count}_lines.txt"));
 
         // Create a file with the specified number of lines
         let mut content = String::new();
         for i in 1..=line_count {
-            content.push_str(&format!("Line {{i}}\n"));
+            content.push_str("Line {i}\n");
         }
         std::fs::write(&file_path, &content).unwrap();
 
@@ -376,7 +372,9 @@ fn test_page_down_line_numbers() {
     // Verify the first line is visible on screen
     harness.assert_screen_contains("x1");
     let initial_cursor = harness.cursor_position();
-    println!("Initial state: line {{initial_line}}, cursor at {{initial_cursor}}, screen contains x1");
+    println!(
+        "Initial state: line {{initial_line}}, cursor at {{initial_cursor}}, screen contains x1"
+    );
     println!("Initial screen:\n{}", harness.screen_to_string());
 
     // Press page down once
@@ -387,7 +385,9 @@ fn test_page_down_line_numbers() {
     let after_first_pagedown = harness.top_line_number();
     let cursor_after_first = harness.cursor_position();
 
-    println!("\nAfter first PageDown: line {{after_first_pagedown}}, cursor at {{cursor_after_first}}");
+    println!(
+        "\nAfter first PageDown: line {{after_first_pagedown}}, cursor at {{cursor_after_first}}"
+    );
     println!(
         "Screen after first PageDown:\n{}",
         harness.screen_to_string()

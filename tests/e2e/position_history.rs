@@ -7,15 +7,21 @@ fn test_navigate_back_forward_single_buffer() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create some content
-    harness.type_text("Line 1\nLine 2\nLine 3\nLine 4\nLine 5").unwrap();
+    harness
+        .type_text("Line 1\nLine 2\nLine 3\nLine 4\nLine 5")
+        .unwrap();
     harness.assert_buffer_content("Line 1\nLine 2\nLine 3\nLine 4\nLine 5");
 
     // Move to beginning
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     assert_eq!(harness.cursor_position(), 0);
 
     // Move to end (this should create a history entry)
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     let end_pos = harness.cursor_position();
     assert!(end_pos > 0);
 
@@ -37,14 +43,18 @@ fn test_navigate_back_forward_across_buffers() {
     let buffer1_pos = harness.cursor_position();
 
     // Create a new buffer (Ctrl+N)
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
 
     // Buffer 2: Type different content
     harness.type_text("Buffer 2 content").unwrap();
     let buffer2_pos = harness.cursor_position();
 
     // Create another buffer
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
 
     // Buffer 3: Type more content
     harness.type_text("Buffer 3 content").unwrap();
@@ -81,16 +91,24 @@ fn test_buffer_switching_creates_history() {
     harness.type_text("First").unwrap();
     let first_pos = harness.cursor_position();
 
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.type_text("Second").unwrap();
     let second_pos = harness.cursor_position();
 
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.type_text("Third").unwrap();
 
     // Switch back to first buffer using Ctrl+PageUp twice
-    harness.send_key(KeyCode::PageUp, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::PageUp, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_buffer_content("First");
 
     // Navigate back should take us through the history
@@ -107,14 +125,20 @@ fn test_cursor_position_preserved() {
     // Buffer 1: Create content and position cursor in the middle
     harness.type_text("0123456789").unwrap();
     // Move cursor to position 5
-    harness.send_key(KeyCode::Home, KeyModifiers::empty()).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::empty())
+        .unwrap();
     for _ in 0..5 {
-        harness.send_key(KeyCode::Right, KeyModifiers::empty()).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::empty())
+            .unwrap();
     }
     assert_eq!(harness.cursor_position(), 5);
 
     // Create new buffer
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.type_text("ABCDEFGHIJ").unwrap();
 
     // Navigate back - cursor should be at position 5
@@ -146,7 +170,9 @@ fn test_navigate_forward_at_end() {
 
     // Create two buffers
     harness.type_text("First").unwrap();
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.type_text("Second").unwrap();
 
     // Try to navigate forward when we're at the end of history
@@ -163,9 +189,13 @@ fn test_new_navigation_truncates_forward_history() {
 
     // Create 3 buffers
     harness.type_text("Buffer 1").unwrap();
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.type_text("Buffer 2").unwrap();
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.type_text("Buffer 3").unwrap();
 
     // Navigate back twice
@@ -174,7 +204,9 @@ fn test_new_navigation_truncates_forward_history() {
     harness.assert_buffer_content("Buffer 1");
 
     // Create a new buffer - this should truncate forward history
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.type_text("Buffer 4").unwrap();
 
     // Try to navigate forward - should not be able to go to Buffer 2 or 3
@@ -191,16 +223,24 @@ fn test_position_history_with_next_prev_buffer() {
 
     // Create 3 buffers
     harness.type_text("First").unwrap();
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.type_text("Second").unwrap();
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.type_text("Third").unwrap();
 
     // Use Ctrl+PageDown to cycle through buffers
-    harness.send_key(KeyCode::PageDown, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_buffer_content("First");
 
-    harness.send_key(KeyCode::PageDown, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_buffer_content("Second");
 
     // Navigate back twice using Alt+Left

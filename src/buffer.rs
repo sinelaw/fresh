@@ -857,19 +857,28 @@ mod tests {
         let start_pos = buffer.lsp_position_to_byte(1, 8);
         let end_pos = buffer.lsp_position_to_byte(1, 16);
         let text = buffer.slice(start_pos..end_pos);
-        assert_eq!(text, "log_line", "Edit 1: declaration should be 'log_line' at line 1, chars 8-16");
+        assert_eq!(
+            text, "log_line",
+            "Edit 1: declaration should be 'log_line' at line 1, chars 8-16"
+        );
 
         // Edit 2: line 2, character 19-27 (the println! argument)
         let start_pos = buffer.lsp_position_to_byte(2, 19);
         let end_pos = buffer.lsp_position_to_byte(2, 27);
         let text = buffer.slice(start_pos..end_pos);
-        assert_eq!(text, "log_line", "Edit 2: println! arg should be 'log_line' at line 2, chars 19-27");
+        assert_eq!(
+            text, "log_line",
+            "Edit 2: println! arg should be 'log_line' at line 2, chars 19-27"
+        );
 
         // Edit 3: line 3, character 17-25 (the .len() call)
         let start_pos = buffer.lsp_position_to_byte(3, 17);
         let end_pos = buffer.lsp_position_to_byte(3, 25);
         let text = buffer.slice(start_pos..end_pos);
-        assert_eq!(text, "log_line", "Edit 3: .len() call should be 'log_line' at line 3, chars 17-25");
+        assert_eq!(
+            text, "log_line",
+            "Edit 3: .len() call should be 'log_line' at line 3, chars 17-25"
+        );
     }
 
     #[test]

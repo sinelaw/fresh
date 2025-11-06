@@ -153,7 +153,11 @@ mod tests {
         spawn_plugin_process(
             2,
             "printf".to_string(),
-            vec!["%s %s".to_string(), "hello".to_string(), "world".to_string()],
+            vec![
+                "%s %s".to_string(),
+                "hello".to_string(),
+                "world".to_string(),
+            ],
             None,
             sender,
         )

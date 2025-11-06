@@ -118,7 +118,7 @@ impl TestFixture {
                 file.write_all(line.as_bytes())?;
             }
             file.flush()?;
-            eprintln!("Generated shared large test file at {:?}", path);
+            eprintln!("Generated shared large test file at {path:?}");
         }
 
         Ok(path)
@@ -128,7 +128,7 @@ impl TestFixture {
 /// Create a consistent temporary directory for a test
 /// This ensures snapshot tests use the same paths on each run
 pub fn test_temp_dir(test_name: &str) -> std::io::Result<PathBuf> {
-    let path = std::env::temp_dir().join(format!("editor-test-{}", test_name));
+    let path = std::env::temp_dir().join(format!("editor-test-{test_name}"));
     if path.exists() {
         fs::remove_dir_all(&path)?;
     }

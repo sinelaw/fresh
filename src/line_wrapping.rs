@@ -41,11 +41,13 @@ impl WrapConfig {
         // Calculate the width available for text content
         // Both first line and continuation lines have the same text width
         // (continuation lines just have visual indentation, not less text space)
-        let text_area_width = content_area_width.saturating_sub(scrollbar_width).saturating_sub(gutter_width);
+        let text_area_width = content_area_width
+            .saturating_sub(scrollbar_width)
+            .saturating_sub(gutter_width);
 
         Self {
             first_line_width: text_area_width,
-            continuation_line_width: text_area_width,  // Same width, not reduced!
+            continuation_line_width: text_area_width, // Same width, not reduced!
             gutter_width,
         }
     }
@@ -239,10 +241,16 @@ mod tests {
         assert_eq!(char_position_to_segment(25, &segments), (0, 25));
 
         // Position at end of first segment (where 'H' is)
-        assert_eq!(char_position_to_segment(SEG0.chars().count() - 1, &segments), (0, SEG0.chars().count() - 1));
+        assert_eq!(
+            char_position_to_segment(SEG0.chars().count() - 1, &segments),
+            (0, SEG0.chars().count() - 1)
+        );
 
         // Position at start of second segment (where 'a' in "andles" is)
-        assert_eq!(char_position_to_segment(SEG0.chars().count(), &segments), (1, 0));
+        assert_eq!(
+            char_position_to_segment(SEG0.chars().count(), &segments),
+            (1, 0)
+        );
 
         // Position in middle of second segment
         let pos_in_seg1 = SEG0.chars().count() + 30;
@@ -254,10 +262,16 @@ mod tests {
 
         // Position at end of text (in third segment)
         let text_len = text.chars().count();
-        assert_eq!(char_position_to_segment(text_len, &segments), (2, SEG2.chars().count()));
+        assert_eq!(
+            char_position_to_segment(text_len, &segments),
+            (2, SEG2.chars().count())
+        );
 
         // Position beyond end of text
-        assert_eq!(char_position_to_segment(text_len + 10, &segments), (2, SEG2.chars().count()));
+        assert_eq!(
+            char_position_to_segment(text_len + 10, &segments),
+            (2, SEG2.chars().count())
+        );
     }
 
     #[test]
@@ -271,17 +285,28 @@ mod tests {
 
         println!("segments: {:?}", segments);
         assert_eq!(segments.len(), 2);
-        assert_eq!(segments[0].text.chars().count(), 51, "First segment should be 51 chars");
+        assert_eq!(
+            segments[0].text.chars().count(),
+            51,
+            "First segment should be 51 chars"
+        );
         assert_eq!(segments[1].is_continuation, true);
 
         // Second segment starts with space, then B's (51 chars total)
-        assert_eq!(segments[1].text.chars().count(), 51, "Continuation should also be 51 chars");
+        assert_eq!(
+            segments[1].text.chars().count(),
+            51,
+            "Continuation should also be 51 chars"
+        );
     }
 
     #[test]
     fn test_wrap_exact_width() {
         let config = WrapConfig::new(60, 8, true);
-        println!("Config: first={}, cont={}", config.first_line_width, config.continuation_line_width);
+        println!(
+            "Config: first={}, cont={}",
+            config.first_line_width, config.continuation_line_width
+        );
 
         // Create text that's longer than one line (2 full lines worth)
         let text = "A".repeat(config.first_line_width * 2);
@@ -289,19 +314,36 @@ mod tests {
 
         println!("Number of segments: {}", segments.len());
         for (i, seg) in segments.iter().enumerate() {
-            println!("Segment {}: len={}, start={}, end={}", i, seg.text.len(), seg.start_char_offset, seg.end_char_offset);
+            println!(
+                "Segment {}: len={}, start={}, end={}",
+                i,
+                seg.text.len(),
+                seg.start_char_offset,
+                seg.end_char_offset
+            );
         }
 
-        assert_eq!(segments[0].text.len(), config.first_line_width, "First segment should have first_line_width characters");
+        assert_eq!(
+            segments[0].text.len(),
+            config.first_line_width,
+            "First segment should have first_line_width characters"
+        );
         if segments.len() > 1 {
-            assert_eq!(segments[1].text.len(), config.continuation_line_width, "Second segment should have continuation_line_width characters (same as first!)");
+            assert_eq!(
+                segments[1].text.len(),
+                config.continuation_line_width,
+                "Second segment should have continuation_line_width characters (same as first!)"
+            );
         }
     }
 
     #[test]
     fn test_wrap_with_real_text() {
         let config = WrapConfig::new(60, 8, true);
-        println!("Config: first={}, cont={}", config.first_line_width, config.continuation_line_width);
+        println!(
+            "Config: first={}, cont={}",
+            config.first_line_width, config.continuation_line_width
+        );
 
         let text = "The quick brown fox jumps over the lazy dog and runs through the forest, exploring ancient trees and mysterious pathways that wind between towering oaks.";
         println!("Text len: {}", text.len());
@@ -310,13 +352,23 @@ mod tests {
         let segments = wrap_line(&text, &config);
 
         for (i, seg) in segments.iter().enumerate() {
-            println!("Segment {}: len={}, start={}, end={}, text[..10]={:?}",
-                     i, seg.text.len(), seg.start_char_offset, seg.end_char_offset,
-                     &seg.text[..seg.text.len().min(10)]);
+            println!(
+                "Segment {}: len={}, start={}, end={}, text[..10]={:?}",
+                i,
+                seg.text.len(),
+                seg.start_char_offset,
+                seg.end_char_offset,
+                &seg.text[..seg.text.len().min(10)]
+            );
         }
 
-        assert_eq!(segments[0].text.len(), config.first_line_width,
-                   "First segment should have {} chars but has {}", config.first_line_width, segments[0].text.len());
+        assert_eq!(
+            segments[0].text.len(),
+            config.first_line_width,
+            "First segment should have {} chars but has {}",
+            config.first_line_width,
+            segments[0].text.len()
+        );
     }
 
     #[test]
@@ -324,15 +376,20 @@ mod tests {
         // Test that WrapConfig calculates widths correctly
         let config = WrapConfig::new(60, 8, true);
 
-        println!("Config: first_line_width={}, continuation_line_width={}, gutter_width={}",
-                 config.first_line_width, config.continuation_line_width, config.gutter_width);
+        println!(
+            "Config: first_line_width={}, continuation_line_width={}, gutter_width={}",
+            config.first_line_width, config.continuation_line_width, config.gutter_width
+        );
 
         // Terminal: 60, scrollbar: 1, gutter: 8
         // Available width: 60 - 1 - 8 = 51 chars
         // BOTH first line and continuation lines should have 51 chars of TEXT
         // (continuation lines have visual indentation, but same text width)
         assert_eq!(config.first_line_width, 51);
-        assert_eq!(config.continuation_line_width, 51, "Continuation lines should have same text width as first line!");
+        assert_eq!(
+            config.continuation_line_width, 51,
+            "Continuation lines should have same text width as first line!"
+        );
 
         let text = "The quick brown fox jumps over the lazy dog and runs through the forest, exploring ancient trees and mysterious pathways that wind between towering oaks.";
         let segments = wrap_line(text, &config);
@@ -341,16 +398,24 @@ mod tests {
         println!("Number of segments: {}", segments.len());
 
         for (i, seg) in segments.iter().enumerate() {
-            println!("Segment {}: start={}, end={}, len={}, is_continuation={}",
-                     i, seg.start_char_offset, seg.end_char_offset, seg.text.len(), seg.is_continuation);
+            println!(
+                "Segment {}: start={}, end={}, len={}, is_continuation={}",
+                i,
+                seg.start_char_offset,
+                seg.end_char_offset,
+                seg.text.len(),
+                seg.is_continuation
+            );
             println!("  Text: {:?}", &seg.text[..seg.text.len().min(40)]);
         }
 
         // Check position 51 (should be first char of segment 1)
         let (seg_idx, col_in_seg) = char_position_to_segment(51, &segments);
-        println!("Position 51: segment_idx={}, col_in_segment={}", seg_idx, col_in_seg);
+        println!(
+            "Position 51: segment_idx={}, col_in_segment={}",
+            seg_idx, col_in_seg
+        );
         assert_eq!(seg_idx, 1, "Position 51 should be in segment 1");
         assert_eq!(col_in_seg, 0, "Position 51 should be at start of segment 1");
     }
-
 }

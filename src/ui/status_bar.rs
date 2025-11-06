@@ -155,8 +155,11 @@ impl StatusBarRenderer {
             format!("{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{cursor_count_indicator}{lsp_indicator}")
         };
 
-        let status_line =
-            Paragraph::new(status).style(Style::default().fg(theme.status_bar_fg).bg(theme.status_bar_bg));
+        let status_line = Paragraph::new(status).style(
+            Style::default()
+                .fg(theme.status_bar_fg)
+                .bg(theme.status_bar_bg),
+        );
 
         frame.render_widget(status_line, area);
     }

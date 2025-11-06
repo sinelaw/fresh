@@ -179,11 +179,7 @@ mod tests {
         // Create a simple tree structure
         let root = TreeNode::new(
             NodeId(0),
-            FsEntry::new(
-                PathBuf::from("/"),
-                "/".to_string(),
-                FsEntryType::Directory,
-            ),
+            FsEntry::new(PathBuf::from("/"), "/".to_string(), FsEntryType::Directory),
             None,
         );
 

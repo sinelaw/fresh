@@ -107,7 +107,9 @@ impl EditorTestHarness {
     /// Get the path to the temp project directory (if created with with_temp_project)
     /// Returns the "project_root" subdirectory path for deterministic naming
     pub fn project_dir(&self) -> Option<PathBuf> {
-        self._temp_dir.as_ref().map(|d| d.path().join("project_root"))
+        self._temp_dir
+            .as_ref()
+            .map(|d| d.path().join("project_root"))
     }
 
     /// Open a file in the editor
@@ -120,7 +122,10 @@ impl EditorTestHarness {
     /// Load text content into the editor by creating a temporary file and opening it
     /// This is much faster than type_text() for large amounts of text in tests
     /// Returns a TestFixture that must be kept alive for the duration of the test
-    pub fn load_buffer_from_text(&mut self, content: &str) -> io::Result<crate::common::fixtures::TestFixture> {
+    pub fn load_buffer_from_text(
+        &mut self,
+        content: &str,
+    ) -> io::Result<crate::common::fixtures::TestFixture> {
         let fixture = crate::common::fixtures::TestFixture::new("test_buffer.txt", content)?;
         self.open_file(&fixture.path)?;
         Ok(fixture)
@@ -148,7 +153,12 @@ impl EditorTestHarness {
     /// Send the same key press multiple times without rendering after each one
     /// This is optimized for tests that need to send many keys in a row (e.g., scrolling)
     /// Only renders once at the end, which is much faster than calling send_key() in a loop
-    pub fn send_key_repeat(&mut self, code: KeyCode, modifiers: KeyModifiers, count: usize) -> io::Result<()> {
+    pub fn send_key_repeat(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        count: usize,
+    ) -> io::Result<()> {
         for _ in 0..count {
             // Call handle_key directly without rendering (unlike send_key which renders every time)
             self.editor.handle_key(code, modifiers)?;
@@ -165,7 +175,8 @@ impl EditorTestHarness {
     pub fn type_text(&mut self, text: &str) -> io::Result<()> {
         for ch in text.chars() {
             // Call handle_key directly without rendering (unlike send_key which renders every time)
-            self.editor.handle_key(KeyCode::Char(ch), KeyModifiers::NONE)?;
+            self.editor
+                .handle_key(KeyCode::Char(ch), KeyModifiers::NONE)?;
         }
         // Process any async messages that accumulated during typing
         self.editor.process_async_messages();
@@ -204,7 +215,13 @@ impl EditorTestHarness {
     }
 
     /// Simulate a mouse drag from one position to another
-    pub fn mouse_drag(&mut self, start_col: u16, start_row: u16, end_col: u16, end_row: u16) -> io::Result<()> {
+    pub fn mouse_drag(
+        &mut self,
+        start_col: u16,
+        start_row: u16,
+        end_col: u16,
+        end_row: u16,
+    ) -> io::Result<()> {
         // Send initial press
         let mouse_down = MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -215,7 +232,9 @@ impl EditorTestHarness {
         self.send_mouse(mouse_down)?;
 
         // Interpolate intermediate positions for smooth dragging
-        let steps = ((end_row as i32 - start_row as i32).abs()).max((end_col as i32 - start_col as i32).abs()).max(1);
+        let steps = ((end_row as i32 - start_row as i32).abs())
+            .max((end_col as i32 - start_col as i32).abs())
+            .max(1);
         for i in 1..=steps {
             let t = i as f32 / steps as f32;
             let col = start_col as f32 + (end_col as f32 - start_col as f32) * t;
@@ -312,10 +331,7 @@ impl EditorTestHarness {
     pub fn get_cell_style(&self, x: u16, y: u16) -> Option<ratatui::style::Style> {
         let buffer = self.buffer();
         let pos = buffer.index_of(x, y);
-        buffer
-            .content
-            .get(pos)
-            .map(|cell| cell.style())
+        buffer.content.get(pos).map(|cell| cell.style())
     }
 
     /// Get entire screen as string (for debugging)
@@ -464,7 +480,11 @@ impl EditorTestHarness {
 
     /// Get the primary cursor's selection range, if any
     pub fn get_selection_range(&self) -> Option<std::ops::Range<usize>> {
-        self.editor.active_state().cursors.primary().selection_range()
+        self.editor
+            .active_state()
+            .cursors
+            .primary()
+            .selection_range()
     }
 
     /// Check if there's an active selection

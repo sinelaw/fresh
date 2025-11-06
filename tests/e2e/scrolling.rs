@@ -1,7 +1,5 @@
-
 use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
 use tempfile::TempDir;
 
 /// Test viewport scrolling with large file
@@ -42,9 +40,7 @@ fn test_edits_persist_through_scrolling() {
 
     // Create content with many lines (more than viewport can show)
     // This ensures we can scroll away from edited content
-    let lines: Vec<String> = (0..100)
-        .map(|i| format!("Line {i}"))
-        .collect();
+    let lines: Vec<String> = (0..100).map(|i| format!("Line {i}")).collect();
     let content = lines.join("\n");
     let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
@@ -625,7 +621,7 @@ fn test_load_big_file_e2e() {
             .send_key(KeyCode::PageDown, KeyModifiers::NONE)
             .unwrap();
         let time = start.elapsed();
-        println!("✓ PageDown #{i} in: {:?}", time);
+        println!("✓ PageDown #{i} in: {time:?}");
     }
 
     println!("\nTotal time: {:?}", harness_time + open_time);
@@ -813,7 +809,11 @@ fn test_line_numbers_absolute_after_jump_to_beginning() {
 
 /// Helper function to extract scrollbar thumb size from screen
 /// Returns (thumb_start_row, thumb_size, scrollbar_col)
-fn extract_scrollbar_info(screen: &str, terminal_width: u16, terminal_height: u16) -> (usize, usize, u16) {
+fn extract_scrollbar_info(
+    screen: &str,
+    terminal_width: u16,
+    terminal_height: u16,
+) -> (usize, usize, u16) {
     let lines: Vec<&str> = screen.lines().collect();
     let scrollbar_col = terminal_width - 1; // Rightmost column
 
@@ -822,7 +822,12 @@ fn extract_scrollbar_info(screen: &str, terminal_width: u16, terminal_height: u1
 
     // Skip first line (tab bar) and last line (status bar)
     // Content area is from row 1 to terminal_height - 2
-    for (row_idx, line) in lines.iter().enumerate().skip(1).take((terminal_height - 2) as usize) {
+    for (row_idx, line) in lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .take((terminal_height - 2) as usize)
+    {
         // Get character at scrollbar column
         let chars: Vec<char> = line.chars().collect();
         if (scrollbar_col as usize) < chars.len() {
@@ -842,7 +847,7 @@ fn extract_scrollbar_info(screen: &str, terminal_width: u16, terminal_height: u1
             let thumb_size = end - start + 1;
             (start, thumb_size, scrollbar_col)
         }
-        _ => (0, 0, scrollbar_col) // No thumb found
+        _ => (0, 0, scrollbar_col), // No thumb found
     }
 }
 
@@ -858,7 +863,7 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
 
     // Create file with specified number of lines
     let content: String = (1..=num_lines)
-        .map(|i| format!("Line {} with some content here\n", i))
+        .map(|i| format!("Line {i} with some content here\n"))
         .collect();
     std::fs::write(&file_path, content).unwrap();
 
@@ -867,7 +872,7 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
     let mut harness = EditorTestHarness::new(terminal_width, terminal_height).unwrap();
     harness.open_file(&file_path).unwrap();
 
-    println!("\n=== Testing file with {} lines ===", num_lines);
+    println!("\n=== Testing file with {num_lines} lines ===");
 
     // Go to beginning
     harness
@@ -885,11 +890,15 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
     scrollbar_sizes.push(size);
     positions.push((0, harness.top_line_number()));
 
-    println!("Initial: top_line={}, scrollbar thumb size={}, start_row={}",
-             harness.top_line_number(), size, start_row);
+    println!(
+        "Initial: top_line={}, scrollbar thumb size={}, start_row={}",
+        harness.top_line_number(),
+        size,
+        start_row
+    );
 
     if num_lines <= 100 {
-        println!("\nInitial screen:\n{}\n", screen);
+        println!("\nInitial screen:\n{screen}\n");
     }
 
     // Scroll with PageDown multiple times
@@ -908,7 +917,7 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
 
         // Check if we've stopped moving (reached end)
         if before_line == after_line && before_cursor == after_cursor {
-            println!("Reached end of file at line {}", after_line);
+            println!("Reached end of file at line {after_line}");
             break;
         }
 
@@ -918,8 +927,7 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
         scrollbar_sizes.push(size);
         positions.push((step, after_line));
 
-        println!("PageDown step {}: top_line={}, scrollbar thumb size={}, start_row={}",
-                 step, after_line, size, start_row);
+        println!("PageDown step {step}: top_line={after_line}, scrollbar thumb size={size}, start_row={start_row}");
 
         // Safety: prevent infinite loops
         if step > 100 {
@@ -933,9 +941,7 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
         let before_line = harness.top_line_number();
         let before_cursor = harness.cursor_position();
 
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
 
         let after_line = harness.top_line_number();
@@ -952,13 +958,18 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
         scrollbar_sizes.push(size);
         positions.push((step, after_line));
 
-        println!("Down step {}: top_line={}, scrollbar thumb size={}, start_row={}",
-                 step - pagedown_steps, after_line, size, start_row);
+        println!(
+            "Down step {}: top_line={}, scrollbar thumb size={}, start_row={}",
+            step - pagedown_steps,
+            after_line,
+            size,
+            start_row
+        );
     }
 
     // Analyze scrollbar sizes
-    println!("\n=== Analysis for {} lines ===", num_lines);
-    println!("Scrollbar sizes observed: {:?}", scrollbar_sizes);
+    println!("\n=== Analysis for {num_lines} lines ===");
+    println!("Scrollbar sizes observed: {scrollbar_sizes:?}");
 
     // The scrollbar size should be consistent throughout scrolling
     // It may vary by 1 due to rounding, but should not change dramatically
@@ -967,15 +978,14 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
         let max_size = *scrollbar_sizes.iter().max().unwrap();
         let size_variation = max_size.saturating_sub(min_size);
 
-        println!("Min scrollbar size: {}", min_size);
-        println!("Max scrollbar size: {}", max_size);
-        println!("Size variation: {}", size_variation);
+        println!("Min scrollbar size: {min_size}");
+        println!("Max scrollbar size: {max_size}");
+        println!("Size variation: {size_variation}");
 
         // All sizes should be positive (thumb should always be visible)
         assert!(
             min_size > 0,
-            "Scrollbar thumb should always be visible (min size > 0), but got min={}",
-            min_size
+            "Scrollbar thumb should always be visible (min size > 0), but got min={min_size}"
         );
 
         // The scrollbar thumb size MUST remain constant during scrolling
@@ -991,15 +1001,20 @@ fn test_scrollbar_consistency_with_file_size(num_lines: usize) {
         // performance reasons (also zero variation).
         assert_eq!(
             size_variation, 0,
-            "Scrollbar thumb size MUST be constant (variation = 0) for {} lines, but varied by {} \
-             (min={}, max={}). This indicates a bug in scrollbar rendering.",
-            num_lines, size_variation, min_size, max_size
+            "Scrollbar thumb size MUST be constant (variation = 0) for {num_lines} lines, but varied by {size_variation} \
+             (min={min_size}, max={max_size}). This indicates a bug in scrollbar rendering."
         );
     }
 
-    println!("✓ Scrollbar consistency test passed for {} lines (variation: {} chars)",
-             num_lines,
-             scrollbar_sizes.iter().max().unwrap_or(&0).saturating_sub(*scrollbar_sizes.iter().min().unwrap_or(&0)));
+    println!(
+        "✓ Scrollbar consistency test passed for {} lines (variation: {} chars)",
+        num_lines,
+        scrollbar_sizes
+            .iter()
+            .max()
+            .unwrap_or(&0)
+            .saturating_sub(*scrollbar_sizes.iter().min().unwrap_or(&0))
+    );
 }
 
 /// Test scrollbar handle size remains consistent when scrolling with PageDown
@@ -1040,7 +1055,7 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
 
     // Create file with specified number of lines
     let content: String = (1..=num_lines)
-        .map(|i| format!("Line {} with some content here\n", i))
+        .map(|i| format!("Line {i} with some content here\n"))
         .collect();
     std::fs::write(&file_path, content).unwrap();
 
@@ -1049,7 +1064,7 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
     let mut harness = EditorTestHarness::new(terminal_width, terminal_height).unwrap();
     harness.open_file(&file_path).unwrap();
 
-    println!("\n=== Testing scrollbar invariants for {} lines ===", num_lines);
+    println!("\n=== Testing scrollbar invariants for {num_lines} lines ===");
 
     // The scrollbar height is terminal_height - 2 (for tab bar and status bar)
     let scrollbar_height = (terminal_height - 2) as usize;
@@ -1062,13 +1077,13 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
 
     // INVARIANT 1: At first line, handle top should be at scrollbar top (row 1, after tab bar)
     let screen = harness.screen_to_string();
-    let (start_row, initial_size, _) = extract_scrollbar_info(&screen, terminal_width, terminal_height);
+    let (start_row, initial_size, _) =
+        extract_scrollbar_info(&screen, terminal_width, terminal_height);
 
-    println!("At first line: handle start_row={}, size={}", start_row, initial_size);
+    println!("At first line: handle start_row={start_row}, size={initial_size}");
     assert_eq!(
         start_row, 1,
-        "When at first line, scrollbar handle top should be at row 1 (scrollbar top), but got row {}",
-        start_row
+        "When at first line, scrollbar handle top should be at row 1 (scrollbar top), but got row {start_row}"
     );
 
     // Track handle sizes throughout scrolling
@@ -1098,8 +1113,7 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
         let (start_row, size, _) = extract_scrollbar_info(&screen, terminal_width, terminal_height);
         all_sizes.push(size);
 
-        println!("After PageDown {}: top_line={}, handle start_row={}, size={}",
-                 scroll_steps, after_line, start_row, size);
+        println!("After PageDown {scroll_steps}: top_line={after_line}, handle start_row={start_row}, size={size}");
 
         // Safety: prevent infinite loops
         if scroll_steps > 100 {
@@ -1112,9 +1126,7 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
         let before_line = harness.top_line_number();
         let before_cursor = harness.cursor_position();
 
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
 
         let after_line = harness.top_line_number();
@@ -1134,8 +1146,8 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
     let max_size = *all_sizes.iter().max().unwrap();
     let size_variation = max_size.saturating_sub(min_size);
 
-    println!("\nHandle sizes observed: {:?}", all_sizes);
-    println!("Min size: {}, Max size: {}, Variation: {}", min_size, max_size, size_variation);
+    println!("\nHandle sizes observed: {all_sizes:?}");
+    println!("Min size: {min_size}, Max size: {max_size}, Variation: {size_variation}");
 
     // Handle size MUST be constant (variation = 0) because it represents
     // the ratio of viewport height to total document height, neither of which
@@ -1143,8 +1155,7 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
     // not the number of visible lines.
     assert_eq!(
         size_variation, 0,
-        "Scrollbar handle size MUST be constant (variation = 0), but varied by {} (sizes: {:?})",
-        size_variation, all_sizes
+        "Scrollbar handle size MUST be constant (variation = 0), but varied by {size_variation} (sizes: {all_sizes:?})"
     );
 
     // INVARIANT 3: At last line, handle bottom should be at scrollbar bottom
@@ -1152,8 +1163,8 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
     let (start_row, size, _) = extract_scrollbar_info(&screen, terminal_width, terminal_height);
     let end_row = start_row + size;
 
-    println!("\nAt last line: handle start_row={}, size={}, end_row={}", start_row, size, end_row);
-    println!("Scrollbar height (rows 1-{}): {}", scrollbar_height, scrollbar_height);
+    println!("\nAt last line: handle start_row={start_row}, size={size}, end_row={end_row}");
+    println!("Scrollbar height (rows 1-{scrollbar_height}): {scrollbar_height}");
 
     // The scrollbar goes from row 1 to row (terminal_height - 2)
     // So the last row is at index (terminal_height - 2)
@@ -1161,8 +1172,7 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
 
     assert_eq!(
         end_row, scrollbar_bottom_row as usize,
-        "When at last line, scrollbar handle bottom (row {}) should be at scrollbar bottom (row {})",
-        end_row, scrollbar_bottom_row
+        "When at last line, scrollbar handle bottom (row {end_row}) should be at scrollbar bottom (row {scrollbar_bottom_row})"
     );
 
     // Go back to beginning
@@ -1173,24 +1183,23 @@ fn test_scrollbar_invariants_with_file_size(num_lines: usize) {
 
     // Verify INVARIANT 1 again
     let screen = harness.screen_to_string();
-    let (start_row_final, size_final, _) = extract_scrollbar_info(&screen, terminal_width, terminal_height);
+    let (start_row_final, size_final, _) =
+        extract_scrollbar_info(&screen, terminal_width, terminal_height);
 
-    println!("\nBack at first line: handle start_row={}, size={}", start_row_final, size_final);
+    println!("\nBack at first line: handle start_row={start_row_final}, size={size_final}");
 
     assert_eq!(
         start_row_final, 1,
-        "When back at first line, scrollbar handle top should be at row 1, but got row {}",
-        start_row_final
+        "When back at first line, scrollbar handle top should be at row 1, but got row {start_row_final}"
     );
 
     // Size should match initial size (total lines haven't changed)
     assert_eq!(
         size_final, initial_size,
-        "Handle size at end ({}) should match initial size ({})",
-        size_final, initial_size
+        "Handle size at end ({size_final}) should match initial size ({initial_size})"
     );
 
-    println!("✓ All scrollbar invariants verified for {} lines", num_lines);
+    println!("✓ All scrollbar invariants verified for {num_lines} lines");
 }
 
 /// Test scrollbar invariants for 50-line file

@@ -1,6 +1,4 @@
-use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
 use tempfile::TempDir;
 
 /// Test basic file creation and editing workflow
@@ -194,7 +192,9 @@ fn test_large_file_with_lsp() {
     // Generate ~1.1MB of content (to exceed the 1MB threshold)
     // Each line is ~50 characters
     for i in 0..25000 {
-        content.push_str(&format!("    println!(\"Line number {} of test content\");\n", i));
+        content.push_str(&format!(
+            "    println!(\"Line number {i} of test content\");\n"
+        ));
     }
     content.push_str("}\n");
 
@@ -202,7 +202,10 @@ fn test_large_file_with_lsp() {
 
     // Verify file is actually large
     let file_size = std::fs::metadata(&file_path).unwrap().len();
-    assert!(file_size > 1024 * 1024, "Test file should be > 1MB (got {} bytes)", file_size);
+    assert!(
+        file_size > 1024 * 1024,
+        "Test file should be > 1MB (got {file_size} bytes)"
+    );
 
     // Create harness with LSP enabled (default config has LSP)
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -212,7 +215,10 @@ fn test_large_file_with_lsp() {
     let result = harness.open_file(&file_path);
 
     // Should succeed in opening the file
-    assert!(result.is_ok(), "Should be able to open large file without hanging");
+    assert!(
+        result.is_ok(),
+        "Should be able to open large file without hanging"
+    );
 
     // Verify the file is actually loaded
     harness.render().unwrap();
@@ -236,7 +242,7 @@ fn test_medium_file_with_lsp() {
 
     // Generate ~500KB of content
     for i in 0..10000 {
-        content.push_str(&format!("    println!(\"Line {}\");\n", i));
+        content.push_str(&format!("    println!(\"Line {i}\");\n"));
     }
     content.push_str("}\n");
 
@@ -244,7 +250,10 @@ fn test_medium_file_with_lsp() {
 
     // Verify file is under 1MB
     let file_size = std::fs::metadata(&file_path).unwrap().len();
-    assert!(file_size < 1024 * 1024, "Test file should be < 1MB (got {} bytes)", file_size);
+    assert!(
+        file_size < 1024 * 1024,
+        "Test file should be < 1MB (got {file_size} bytes)"
+    );
 
     // Create harness with default config
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -253,7 +262,10 @@ fn test_medium_file_with_lsp() {
     let result = harness.open_file(&file_path);
 
     // Should succeed even with LSP initialization
-    assert!(result.is_ok(), "Should be able to open medium file with LSP");
+    assert!(
+        result.is_ok(),
+        "Should be able to open medium file with LSP"
+    );
 
     // Verify the file is loaded
     harness.render().unwrap();

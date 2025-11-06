@@ -211,11 +211,7 @@ impl PluginApi {
     }
 
     /// Delete a range of text from a buffer
-    pub fn delete_range(
-        &self,
-        buffer_id: BufferId,
-        range: Range<usize>,
-    ) -> Result<(), String> {
+    pub fn delete_range(&self, buffer_id: BufferId, range: Range<usize>) -> Result<(), String> {
         self.send_command(PluginCommand::DeleteRange { buffer_id, range })
     }
 
@@ -238,11 +234,7 @@ impl PluginApi {
     }
 
     /// Remove an overlay from a buffer
-    pub fn remove_overlay(
-        &self,
-        buffer_id: BufferId,
-        overlay_id: String,
-    ) -> Result<(), String> {
+    pub fn remove_overlay(&self, buffer_id: BufferId, overlay_id: String) -> Result<(), String> {
         self.send_command(PluginCommand::RemoveOverlay {
             buffer_id,
             overlay_id,
@@ -515,7 +507,10 @@ mod tests {
         assert!(info.is_some());
         let info = info.unwrap();
         assert_eq!(info.id.0, 1);
-        assert_eq!(info.path.as_ref().unwrap().to_str().unwrap(), "/test/file.txt");
+        assert_eq!(
+            info.path.as_ref().unwrap().to_str().unwrap(),
+            "/test/file.txt"
+        );
         assert!(info.modified);
         assert_eq!(info.length, 100);
 
@@ -534,7 +529,9 @@ mod tests {
         // Add buffer content
         {
             let mut snapshot = state_snapshot.write().unwrap();
-            snapshot.buffer_contents.insert(BufferId(1), "Hello, World!\nLine 2\nLine 3".to_string());
+            snapshot
+                .buffer_contents
+                .insert(BufferId(1), "Hello, World!\nLine 2\nLine 3".to_string());
         }
 
         let api = PluginApi::new(hooks, commands, tx, state_snapshot);
@@ -558,7 +555,9 @@ mod tests {
         // Add buffer content
         {
             let mut snapshot = state_snapshot.write().unwrap();
-            snapshot.buffer_contents.insert(BufferId(1), "Line 1\nLine 2\nLine 3".to_string());
+            snapshot
+                .buffer_contents
+                .insert(BufferId(1), "Line 1\nLine 2\nLine 3".to_string());
         }
 
         let api = PluginApi::new(hooks, commands, tx, state_snapshot);
@@ -588,24 +587,33 @@ mod tests {
         // Add multiple buffers
         {
             let mut snapshot = state_snapshot.write().unwrap();
-            snapshot.buffers.insert(BufferId(1), BufferInfo {
-                id: BufferId(1),
-                path: Some(std::path::PathBuf::from("/file1.txt")),
-                modified: false,
-                length: 50,
-            });
-            snapshot.buffers.insert(BufferId(2), BufferInfo {
-                id: BufferId(2),
-                path: Some(std::path::PathBuf::from("/file2.txt")),
-                modified: true,
-                length: 100,
-            });
-            snapshot.buffers.insert(BufferId(3), BufferInfo {
-                id: BufferId(3),
-                path: None,
-                modified: false,
-                length: 0,
-            });
+            snapshot.buffers.insert(
+                BufferId(1),
+                BufferInfo {
+                    id: BufferId(1),
+                    path: Some(std::path::PathBuf::from("/file1.txt")),
+                    modified: false,
+                    length: 50,
+                },
+            );
+            snapshot.buffers.insert(
+                BufferId(2),
+                BufferInfo {
+                    id: BufferId(2),
+                    path: Some(std::path::PathBuf::from("/file2.txt")),
+                    modified: true,
+                    length: 100,
+                },
+            );
+            snapshot.buffers.insert(
+                BufferId(3),
+                BufferInfo {
+                    id: BufferId(3),
+                    path: None,
+                    modified: false,
+                    length: 0,
+                },
+            );
         }
 
         let api = PluginApi::new(hooks, commands, tx, state_snapshot);
@@ -655,9 +663,18 @@ mod tests {
         {
             let mut snapshot = state_snapshot.write().unwrap();
             snapshot.all_cursors = vec![
-                CursorInfo { position: 10, selection: None },
-                CursorInfo { position: 20, selection: Some(15..20) },
-                CursorInfo { position: 30, selection: Some(25..30) },
+                CursorInfo {
+                    position: 10,
+                    selection: None,
+                },
+                CursorInfo {
+                    position: 20,
+                    selection: Some(15..20),
+                },
+                CursorInfo {
+                    position: 30,
+                    selection: Some(25..30),
+                },
             ];
         }
 

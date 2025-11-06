@@ -74,7 +74,16 @@ impl SplitRenderer {
             let event_log_opt = event_logs.get_mut(&buffer_id);
 
             if let Some(state) = state_opt {
-                Self::render_buffer_in_split(frame, state, event_log_opt, content_rect, is_active, theme, lsp_waiting, line_wrap);
+                Self::render_buffer_in_split(
+                    frame,
+                    state,
+                    event_log_opt,
+                    content_rect,
+                    is_active,
+                    theme,
+                    lsp_waiting,
+                    line_wrap,
+                );
 
                 // For small files, count actual lines for accurate scrollbar
                 // For large files, we'll use a constant thumb size
@@ -102,10 +111,26 @@ impl SplitRenderer {
                 };
 
                 // Render scrollbar for this split and get thumb position
-                let (thumb_start, thumb_end) = Self::render_scrollbar(frame, state, scrollbar_rect, is_active, theme, large_file_threshold_bytes, total_lines, top_line);
+                let (thumb_start, thumb_end) = Self::render_scrollbar(
+                    frame,
+                    state,
+                    scrollbar_rect,
+                    is_active,
+                    theme,
+                    large_file_threshold_bytes,
+                    total_lines,
+                    top_line,
+                );
 
                 // Store the areas for mouse handling
-                split_areas.push((split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end));
+                split_areas.push((
+                    split_id,
+                    buffer_id,
+                    content_rect,
+                    scrollbar_rect,
+                    thumb_start,
+                    thumb_end,
+                ));
             }
         }
 
@@ -119,7 +144,14 @@ impl SplitRenderer {
     }
 
     /// Render a split separator line
-    fn render_separator(frame: &mut Frame, direction: SplitDirection, x: u16, y: u16, length: u16, theme: &crate::theme::Theme) {
+    fn render_separator(
+        frame: &mut Frame,
+        direction: SplitDirection,
+        x: u16,
+        y: u16,
+        length: u16,
+        theme: &crate::theme::Theme,
+    ) {
         match direction {
             SplitDirection::Horizontal => {
                 // Draw horizontal line
@@ -180,7 +212,8 @@ impl SplitRenderer {
 
             // Calculate thumb size based on viewport ratio to total document
             let thumb_size_raw = if total_lines > 0 {
-                ((viewport_height_lines as f64 / total_lines as f64) * height as f64).ceil() as usize
+                ((viewport_height_lines as f64 / total_lines as f64) * height as f64).ceil()
+                    as usize
             } else {
                 1
             };
@@ -373,7 +406,9 @@ impl SplitRenderer {
             if state.margins.left_config.enabled {
                 // First column: render indicator or space
                 // Check for diagnostic indicator on this line
-                if let Some((symbol, color)) = state.margins.get_diagnostic_indicator(current_line_num) {
+                if let Some((symbol, color)) =
+                    state.margins.get_diagnostic_indicator(current_line_num)
+                {
                     // Show diagnostic indicator
                     line_spans.push(Span::styled(symbol.clone(), Style::default().fg(*color)));
                 } else {
@@ -387,19 +422,22 @@ impl SplitRenderer {
                     crate::margin::MarginPosition::Left,
                     estimated_lines,
                 );
-                let (rendered_text, style_opt) = margin_content.render(state.margins.left_config.width);
+                let (rendered_text, style_opt) =
+                    margin_content.render(state.margins.left_config.width);
 
                 // Use custom style if provided, otherwise use default theme color
-                let margin_style = style_opt.unwrap_or_else(|| {
-                    Style::default().fg(theme.line_number_fg)
-                });
+                let margin_style =
+                    style_opt.unwrap_or_else(|| Style::default().fg(theme.line_number_fg));
 
                 line_spans.push(Span::styled(rendered_text, margin_style));
 
                 // Render separator
                 if state.margins.left_config.show_separator {
                     let separator_style = Style::default().fg(theme.line_number_fg);
-                    line_spans.push(Span::styled(state.margins.left_config.separator.clone(), separator_style));
+                    line_spans.push(Span::styled(
+                        state.margins.left_config.separator.clone(),
+                        separator_style,
+                    ));
                 }
             }
 
@@ -576,7 +614,9 @@ impl SplitRenderer {
                     let is_primary_at_end = line_end_pos == primary_cursor_position;
                     if !is_primary_at_end {
                         // Add a space character with REVERSED style to show secondary cursor at end of line
-                        tracing::debug!("Adding REVERSED cursor indicator at end of line for secondary cursor");
+                        tracing::debug!(
+                            "Adding REVERSED cursor indicator at end of line for secondary cursor"
+                        );
                         let cursor_style = Style::default()
                             .fg(theme.editor_fg)
                             .bg(theme.editor_bg)
@@ -620,8 +660,10 @@ impl SplitRenderer {
                 let segments = wrap_line(&line_text, &config);
 
                 // Check if primary cursor is on this line and calculate its position
-                if !cursor_found && primary_cursor_position >= line_start
-                    && primary_cursor_position <= line_start + line_text.len() {
+                if !cursor_found
+                    && primary_cursor_position >= line_start
+                    && primary_cursor_position <= line_start + line_text.len()
+                {
                     let column = primary_cursor_position.saturating_sub(line_start);
                     let (segment_idx, col_in_segment) = char_position_to_segment(column, &segments);
 
@@ -808,5 +850,4 @@ impl SplitRenderer {
             result_spans
         }
     }
-
 }

@@ -80,7 +80,12 @@ impl LocalFsBackend {
 
         let metadata = FsMetadata::new()
             .with_size(std_metadata.len())
-            .with_modified(std_metadata.modified().ok().unwrap_or(std::time::UNIX_EPOCH))
+            .with_modified(
+                std_metadata
+                    .modified()
+                    .ok()
+                    .unwrap_or(std::time::UNIX_EPOCH),
+            )
             .with_hidden(is_hidden)
             .with_readonly(std_metadata.permissions().readonly());
 
@@ -117,10 +122,7 @@ impl FsBackend for LocalFsBackend {
 
         while let Some(entry) = read_dir.next_entry().await? {
             let path = entry.path();
-            let name = entry
-                .file_name()
-                .to_string_lossy()
-                .into_owned();
+            let name = entry.file_name().to_string_lossy().into_owned();
 
             let entry_type = if let Ok(file_type) = entry.file_type().await {
                 if file_type.is_symlink() {
@@ -158,10 +160,9 @@ impl FsBackend for LocalFsBackend {
             match task.await {
                 Ok(Ok(metadata)) => results.push(Ok(metadata)),
                 Ok(Err(e)) => results.push(Err(e)),
-                Err(_) => results.push(Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Task join error",
-                ))),
+                Err(_) => {
+                    results.push(Err(io::Error::new(io::ErrorKind::Other, "Task join error")))
+                }
             }
         }
 
@@ -265,10 +266,7 @@ mod tests {
         std_fs::write(temp_path.join("file2.txt"), "content2").unwrap();
 
         let backend = LocalFsBackend::new();
-        let paths = vec![
-            temp_path.join("file1.txt"),
-            temp_path.join("file2.txt"),
-        ];
+        let paths = vec![temp_path.join("file1.txt"), temp_path.join("file2.txt")];
 
         let results = backend.get_metadata_batch(&paths).await;
 
@@ -378,8 +376,11 @@ mod tests {
 
         // Create 100 test files
         for i in 0..100 {
-            std_fs::write(temp_path.join(format!("file{}.txt", i)), format!("content{}", i))
-                .unwrap();
+            std_fs::write(
+                temp_path.join(format!("file{}.txt", i)),
+                format!("content{}", i),
+            )
+            .unwrap();
         }
 
         let backend = LocalFsBackend::new();

@@ -1,8 +1,4 @@
-
-use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
-use tempfile::TempDir;
 
 /// Test that the prompt is rendered correctly
 #[test]

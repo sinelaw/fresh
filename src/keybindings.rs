@@ -22,7 +22,10 @@ pub enum KeyContext {
 impl KeyContext {
     /// Check if a context should allow input
     pub fn allows_text_input(&self) -> bool {
-        matches!(self, KeyContext::Normal | KeyContext::Prompt | KeyContext::Rename)
+        matches!(
+            self,
+            KeyContext::Normal | KeyContext::Prompt | KeyContext::Rename
+        )
     }
 
     /// Parse context from a "when" string
@@ -394,7 +397,8 @@ impl KeybindingResolver {
                         KeyContext::Normal
                     };
 
-                    resolver.bindings
+                    resolver
+                        .bindings
                         .entry(context)
                         .or_insert_with(HashMap::new)
                         .insert((key_code, modifiers), action);
@@ -415,7 +419,7 @@ impl KeybindingResolver {
                 | Action::ShowHelp
                 | Action::HelpToggle
                 | Action::PromptCancel  // Esc should always cancel
-                | Action::PopupCancel   // Esc should always cancel
+                | Action::PopupCancel // Esc should always cancel
         )
     }
 
@@ -431,7 +435,11 @@ impl KeybindingResolver {
         // Try context-specific custom bindings first (highest priority)
         if let Some(context_bindings) = self.bindings.get(&context) {
             if let Some(action) = context_bindings.get(&(event.code, event.modifiers)) {
-                tracing::debug!("  -> Found in custom {} bindings: {:?}", context.to_when_clause(), action);
+                tracing::debug!(
+                    "  -> Found in custom {} bindings: {:?}",
+                    context.to_when_clause(),
+                    action
+                );
                 return action.clone();
             }
         }
@@ -439,7 +447,11 @@ impl KeybindingResolver {
         // Try context-specific default bindings
         if let Some(context_bindings) = self.default_bindings.get(&context) {
             if let Some(action) = context_bindings.get(&(event.code, event.modifiers)) {
-                tracing::debug!("  -> Found in default {} bindings: {:?}", context.to_when_clause(), action);
+                tracing::debug!(
+                    "  -> Found in default {} bindings: {:?}",
+                    context.to_when_clause(),
+                    action
+                );
                 return action.clone();
             }
         }
@@ -450,7 +462,10 @@ impl KeybindingResolver {
             if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
                 if let Some(action) = normal_bindings.get(&(event.code, event.modifiers)) {
                     if Self::is_application_wide_action(action) {
-                        tracing::debug!("  -> Found application-wide action in custom normal bindings: {:?}", action);
+                        tracing::debug!(
+                            "  -> Found application-wide action in custom normal bindings: {:?}",
+                            action
+                        );
                         return action.clone();
                     }
                 }
@@ -459,7 +474,10 @@ impl KeybindingResolver {
             if let Some(normal_bindings) = self.default_bindings.get(&KeyContext::Normal) {
                 if let Some(action) = normal_bindings.get(&(event.code, event.modifiers)) {
                     if Self::is_application_wide_action(action) {
-                        tracing::debug!("  -> Found application-wide action in default normal bindings: {:?}", action);
+                        tracing::debug!(
+                            "  -> Found application-wide action in default normal bindings: {:?}",
+                            action
+                        );
                         return action.clone();
                     }
                 }
@@ -679,33 +697,30 @@ impl KeybindingResolver {
 
         // Git operations (Ctrl+Shift+F for grep, Ctrl+Shift+P for find file)
         bindings.insert(
-            (KeyCode::Char('F'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            (
+                KeyCode::Char('F'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
             Action::GitGrep,
         );
         bindings.insert(
-            (KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            (
+                KeyCode::Char('P'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
             Action::GitFindFile,
         );
 
         // Buffer navigation (Ctrl+PageUp/PageDown - standard in terminals and browsers)
-        bindings.insert(
-            (KeyCode::PageUp, KeyModifiers::CONTROL),
-            Action::PrevBuffer,
-        );
+        bindings.insert((KeyCode::PageUp, KeyModifiers::CONTROL), Action::PrevBuffer);
         bindings.insert(
             (KeyCode::PageDown, KeyModifiers::CONTROL),
             Action::NextBuffer,
         );
 
         // Position history navigation (Alt+Left/Right - like VS Code)
-        bindings.insert(
-            (KeyCode::Left, KeyModifiers::ALT),
-            Action::NavigateBack,
-        );
-        bindings.insert(
-            (KeyCode::Right, KeyModifiers::ALT),
-            Action::NavigateForward,
-        );
+        bindings.insert((KeyCode::Left, KeyModifiers::ALT), Action::NavigateBack);
+        bindings.insert((KeyCode::Right, KeyModifiers::ALT), Action::NavigateForward);
 
         // File explorer focus (Ctrl+B to toggle focus to file explorer)
         bindings.insert(
@@ -714,76 +729,169 @@ impl KeybindingResolver {
         );
 
         // LSP operations (F2 for rename, like VS Code)
-        bindings.insert(
-            (KeyCode::F(2), KeyModifiers::empty()),
-            Action::LspRename,
-        );
+        bindings.insert((KeyCode::F(2), KeyModifiers::empty()), Action::LspRename);
 
         all_bindings.insert(KeyContext::Normal, bindings);
 
         // Help context bindings
         let mut help_bindings = HashMap::new();
         help_bindings.insert((KeyCode::Esc, KeyModifiers::empty()), Action::HelpToggle);
-        help_bindings.insert((KeyCode::Char('h'), KeyModifiers::CONTROL), Action::HelpToggle);
+        help_bindings.insert(
+            (KeyCode::Char('h'), KeyModifiers::CONTROL),
+            Action::HelpToggle,
+        );
         help_bindings.insert((KeyCode::Up, KeyModifiers::empty()), Action::HelpScrollUp);
-        help_bindings.insert((KeyCode::Down, KeyModifiers::empty()), Action::HelpScrollDown);
+        help_bindings.insert(
+            (KeyCode::Down, KeyModifiers::empty()),
+            Action::HelpScrollDown,
+        );
         help_bindings.insert((KeyCode::PageUp, KeyModifiers::empty()), Action::HelpPageUp);
-        help_bindings.insert((KeyCode::PageDown, KeyModifiers::empty()), Action::HelpPageDown);
+        help_bindings.insert(
+            (KeyCode::PageDown, KeyModifiers::empty()),
+            Action::HelpPageDown,
+        );
         all_bindings.insert(KeyContext::Help, help_bindings);
 
         // Prompt context bindings
         let mut prompt_bindings = HashMap::new();
-        prompt_bindings.insert((KeyCode::Enter, KeyModifiers::empty()), Action::PromptConfirm);
+        prompt_bindings.insert(
+            (KeyCode::Enter, KeyModifiers::empty()),
+            Action::PromptConfirm,
+        );
         prompt_bindings.insert((KeyCode::Esc, KeyModifiers::empty()), Action::PromptCancel);
-        prompt_bindings.insert((KeyCode::Backspace, KeyModifiers::empty()), Action::PromptBackspace);
-        prompt_bindings.insert((KeyCode::Left, KeyModifiers::empty()), Action::PromptMoveLeft);
-        prompt_bindings.insert((KeyCode::Right, KeyModifiers::empty()), Action::PromptMoveRight);
-        prompt_bindings.insert((KeyCode::Home, KeyModifiers::empty()), Action::PromptMoveStart);
+        prompt_bindings.insert(
+            (KeyCode::Backspace, KeyModifiers::empty()),
+            Action::PromptBackspace,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Left, KeyModifiers::empty()),
+            Action::PromptMoveLeft,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Right, KeyModifiers::empty()),
+            Action::PromptMoveRight,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Home, KeyModifiers::empty()),
+            Action::PromptMoveStart,
+        );
         prompt_bindings.insert((KeyCode::End, KeyModifiers::empty()), Action::PromptMoveEnd);
-        prompt_bindings.insert((KeyCode::Up, KeyModifiers::empty()), Action::PromptSelectPrev);
-        prompt_bindings.insert((KeyCode::Down, KeyModifiers::empty()), Action::PromptSelectNext);
-        prompt_bindings.insert((KeyCode::PageUp, KeyModifiers::empty()), Action::PromptPageUp);
-        prompt_bindings.insert((KeyCode::PageDown, KeyModifiers::empty()), Action::PromptPageDown);
-        prompt_bindings.insert((KeyCode::Tab, KeyModifiers::empty()), Action::PromptAcceptSuggestion);
+        prompt_bindings.insert(
+            (KeyCode::Up, KeyModifiers::empty()),
+            Action::PromptSelectPrev,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Down, KeyModifiers::empty()),
+            Action::PromptSelectNext,
+        );
+        prompt_bindings.insert(
+            (KeyCode::PageUp, KeyModifiers::empty()),
+            Action::PromptPageUp,
+        );
+        prompt_bindings.insert(
+            (KeyCode::PageDown, KeyModifiers::empty()),
+            Action::PromptPageDown,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Tab, KeyModifiers::empty()),
+            Action::PromptAcceptSuggestion,
+        );
         all_bindings.insert(KeyContext::Prompt, prompt_bindings);
 
         // Popup context bindings
         let mut popup_bindings = HashMap::new();
-        popup_bindings.insert((KeyCode::Up, KeyModifiers::empty()), Action::PopupSelectPrev);
-        popup_bindings.insert((KeyCode::Down, KeyModifiers::empty()), Action::PopupSelectNext);
-        popup_bindings.insert((KeyCode::PageUp, KeyModifiers::empty()), Action::PopupPageUp);
-        popup_bindings.insert((KeyCode::PageDown, KeyModifiers::empty()), Action::PopupPageDown);
-        popup_bindings.insert((KeyCode::Enter, KeyModifiers::empty()), Action::PopupConfirm);
+        popup_bindings.insert(
+            (KeyCode::Up, KeyModifiers::empty()),
+            Action::PopupSelectPrev,
+        );
+        popup_bindings.insert(
+            (KeyCode::Down, KeyModifiers::empty()),
+            Action::PopupSelectNext,
+        );
+        popup_bindings.insert(
+            (KeyCode::PageUp, KeyModifiers::empty()),
+            Action::PopupPageUp,
+        );
+        popup_bindings.insert(
+            (KeyCode::PageDown, KeyModifiers::empty()),
+            Action::PopupPageDown,
+        );
+        popup_bindings.insert(
+            (KeyCode::Enter, KeyModifiers::empty()),
+            Action::PopupConfirm,
+        );
         popup_bindings.insert((KeyCode::Esc, KeyModifiers::empty()), Action::PopupCancel);
         all_bindings.insert(KeyContext::Popup, popup_bindings);
 
         // File Explorer context bindings
         let mut explorer_bindings = HashMap::new();
         explorer_bindings.insert((KeyCode::Up, KeyModifiers::empty()), Action::FileExplorerUp);
-        explorer_bindings.insert((KeyCode::Down, KeyModifiers::empty()), Action::FileExplorerDown);
-        explorer_bindings.insert((KeyCode::Enter, KeyModifiers::empty()), Action::FileExplorerOpen);
-        explorer_bindings.insert((KeyCode::Right, KeyModifiers::empty()), Action::FileExplorerExpand);
-        explorer_bindings.insert((KeyCode::Left, KeyModifiers::empty()), Action::FileExplorerCollapse);
-        explorer_bindings.insert((KeyCode::Char('r'), KeyModifiers::CONTROL), Action::FileExplorerRefresh);
+        explorer_bindings.insert(
+            (KeyCode::Down, KeyModifiers::empty()),
+            Action::FileExplorerDown,
+        );
+        explorer_bindings.insert(
+            (KeyCode::Enter, KeyModifiers::empty()),
+            Action::FileExplorerOpen,
+        );
+        explorer_bindings.insert(
+            (KeyCode::Right, KeyModifiers::empty()),
+            Action::FileExplorerExpand,
+        );
+        explorer_bindings.insert(
+            (KeyCode::Left, KeyModifiers::empty()),
+            Action::FileExplorerCollapse,
+        );
+        explorer_bindings.insert(
+            (KeyCode::Char('r'), KeyModifiers::CONTROL),
+            Action::FileExplorerRefresh,
+        );
         explorer_bindings.insert((KeyCode::Esc, KeyModifiers::empty()), Action::FocusEditor);
-        explorer_bindings.insert((KeyCode::Char('b'), KeyModifiers::CONTROL), Action::FocusEditor);
+        explorer_bindings.insert(
+            (KeyCode::Char('b'), KeyModifiers::CONTROL),
+            Action::FocusEditor,
+        );
         all_bindings.insert(KeyContext::FileExplorer, explorer_bindings);
 
         // Rename context bindings
         // Note: Character input is handled by allows_text_input() in resolve()
         let mut rename_bindings = HashMap::new();
-        rename_bindings.insert((KeyCode::Enter, KeyModifiers::empty()), Action::RenameConfirm);
+        rename_bindings.insert(
+            (KeyCode::Enter, KeyModifiers::empty()),
+            Action::RenameConfirm,
+        );
         rename_bindings.insert((KeyCode::Esc, KeyModifiers::empty()), Action::RenameCancel);
-        rename_bindings.insert((KeyCode::Backspace, KeyModifiers::empty()), Action::DeleteBackward);
-        rename_bindings.insert((KeyCode::Delete, KeyModifiers::empty()), Action::DeleteForward);
+        rename_bindings.insert(
+            (KeyCode::Backspace, KeyModifiers::empty()),
+            Action::DeleteBackward,
+        );
+        rename_bindings.insert(
+            (KeyCode::Delete, KeyModifiers::empty()),
+            Action::DeleteForward,
+        );
         // Arrow keys for restricted movement within the renamed symbol
-        rename_bindings.insert((KeyCode::Left, KeyModifiers::empty()), Action::RenameMoveLeft);
-        rename_bindings.insert((KeyCode::Right, KeyModifiers::empty()), Action::RenameMoveRight);
-        rename_bindings.insert((KeyCode::Home, KeyModifiers::empty()), Action::RenameMoveHome);
+        rename_bindings.insert(
+            (KeyCode::Left, KeyModifiers::empty()),
+            Action::RenameMoveLeft,
+        );
+        rename_bindings.insert(
+            (KeyCode::Right, KeyModifiers::empty()),
+            Action::RenameMoveRight,
+        );
+        rename_bindings.insert(
+            (KeyCode::Home, KeyModifiers::empty()),
+            Action::RenameMoveHome,
+        );
         rename_bindings.insert((KeyCode::End, KeyModifiers::empty()), Action::RenameMoveEnd);
         // Cancel rename on PageUp/PageDown (these would normally move viewport)
-        rename_bindings.insert((KeyCode::PageUp, KeyModifiers::empty()), Action::RenameCancel);
-        rename_bindings.insert((KeyCode::PageDown, KeyModifiers::empty()), Action::RenameCancel);
+        rename_bindings.insert(
+            (KeyCode::PageUp, KeyModifiers::empty()),
+            Action::RenameCancel,
+        );
+        rename_bindings.insert(
+            (KeyCode::PageDown, KeyModifiers::empty()),
+            Action::RenameCancel,
+        );
         // Also cancel on Up/Down arrow keys (navigating away from current line)
         rename_bindings.insert((KeyCode::Up, KeyModifiers::empty()), Action::RenameCancel);
         rename_bindings.insert((KeyCode::Down, KeyModifiers::empty()), Action::RenameCancel);
@@ -798,7 +906,14 @@ impl KeybindingResolver {
         let mut bindings = Vec::new();
 
         // Collect all bindings from all contexts
-        for context in &[KeyContext::Normal, KeyContext::Help, KeyContext::Prompt, KeyContext::Popup, KeyContext::FileExplorer, KeyContext::Rename] {
+        for context in &[
+            KeyContext::Normal,
+            KeyContext::Help,
+            KeyContext::Prompt,
+            KeyContext::Popup,
+            KeyContext::FileExplorer,
+            KeyContext::Rename,
+        ] {
             let mut all_keys: HashMap<(KeyCode, KeyModifiers), Action> = HashMap::new();
 
             // Start with defaults for this context
@@ -984,12 +1099,16 @@ impl KeybindingResolver {
             Action::FileExplorerDelete => "File explorer: delete".to_string(),
             Action::FileExplorerRename => "File explorer: rename".to_string(),
             Action::FileExplorerToggleHidden => "File explorer: toggle hidden files".to_string(),
-            Action::FileExplorerToggleGitignored => "File explorer: toggle gitignored files".to_string(),
+            Action::FileExplorerToggleGitignored => {
+                "File explorer: toggle gitignored files".to_string()
+            }
             Action::LspCompletion => "LSP: Show completion suggestions".to_string(),
             Action::LspGotoDefinition => "LSP: Go to definition".to_string(),
             Action::LspRename => "LSP: Rename symbol".to_string(),
             Action::GitGrep => "Git: Grep - search through git-tracked files".to_string(),
-            Action::GitFindFile => "Git: Find File - find file by filtering git ls-files".to_string(),
+            Action::GitFindFile => {
+                "Git: Find File - find file by filtering git ls-files".to_string()
+            }
             Action::PluginAction(name) => format!("Plugin action: {}", name),
             Action::None => "No action".to_string(),
         }
@@ -1054,10 +1173,16 @@ mod tests {
         let resolver = KeybindingResolver::new(&config);
 
         let event = KeyEvent::new(KeyCode::Left, KeyModifiers::empty());
-        assert_eq!(resolver.resolve(&event, KeyContext::Normal), Action::MoveLeft);
+        assert_eq!(
+            resolver.resolve(&event, KeyContext::Normal),
+            Action::MoveLeft
+        );
 
         let event = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::empty());
-        assert_eq!(resolver.resolve(&event, KeyContext::Normal), Action::InsertChar('a'));
+        assert_eq!(
+            resolver.resolve(&event, KeyContext::Normal),
+            Action::InsertChar('a')
+        );
     }
 
     #[test]
@@ -1068,18 +1193,39 @@ mod tests {
         assert_eq!(Action::from_str("unknown", &args), None);
 
         // Test new context-specific actions
-        assert_eq!(Action::from_str("help_toggle", &args), Some(Action::HelpToggle));
-        assert_eq!(Action::from_str("prompt_confirm", &args), Some(Action::PromptConfirm));
-        assert_eq!(Action::from_str("popup_cancel", &args), Some(Action::PopupCancel));
+        assert_eq!(
+            Action::from_str("help_toggle", &args),
+            Some(Action::HelpToggle)
+        );
+        assert_eq!(
+            Action::from_str("prompt_confirm", &args),
+            Some(Action::PromptConfirm)
+        );
+        assert_eq!(
+            Action::from_str("popup_cancel", &args),
+            Some(Action::PopupCancel)
+        );
     }
 
     #[test]
     fn test_key_context_from_when_clause() {
-        assert_eq!(KeyContext::from_when_clause("normal"), Some(KeyContext::Normal));
+        assert_eq!(
+            KeyContext::from_when_clause("normal"),
+            Some(KeyContext::Normal)
+        );
         assert_eq!(KeyContext::from_when_clause("help"), Some(KeyContext::Help));
-        assert_eq!(KeyContext::from_when_clause("prompt"), Some(KeyContext::Prompt));
-        assert_eq!(KeyContext::from_when_clause("popup"), Some(KeyContext::Popup));
-        assert_eq!(KeyContext::from_when_clause("  help  "), Some(KeyContext::Help)); // Test trimming
+        assert_eq!(
+            KeyContext::from_when_clause("prompt"),
+            Some(KeyContext::Prompt)
+        );
+        assert_eq!(
+            KeyContext::from_when_clause("popup"),
+            Some(KeyContext::Popup)
+        );
+        assert_eq!(
+            KeyContext::from_when_clause("  help  "),
+            Some(KeyContext::Help)
+        ); // Test trimming
         assert_eq!(KeyContext::from_when_clause("unknown"), None);
         assert_eq!(KeyContext::from_when_clause(""), None);
     }
@@ -1099,18 +1245,36 @@ mod tests {
 
         // Test help context bindings
         let esc_event = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
-        assert_eq!(resolver.resolve(&esc_event, KeyContext::Help), Action::HelpToggle);
-        assert_eq!(resolver.resolve(&esc_event, KeyContext::Normal), Action::RemoveSecondaryCursors);
+        assert_eq!(
+            resolver.resolve(&esc_event, KeyContext::Help),
+            Action::HelpToggle
+        );
+        assert_eq!(
+            resolver.resolve(&esc_event, KeyContext::Normal),
+            Action::RemoveSecondaryCursors
+        );
 
         // Test prompt context bindings
         let enter_event = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
-        assert_eq!(resolver.resolve(&enter_event, KeyContext::Prompt), Action::PromptConfirm);
-        assert_eq!(resolver.resolve(&enter_event, KeyContext::Normal), Action::InsertNewline);
+        assert_eq!(
+            resolver.resolve(&enter_event, KeyContext::Prompt),
+            Action::PromptConfirm
+        );
+        assert_eq!(
+            resolver.resolve(&enter_event, KeyContext::Normal),
+            Action::InsertNewline
+        );
 
         // Test popup context bindings
         let up_event = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());
-        assert_eq!(resolver.resolve(&up_event, KeyContext::Popup), Action::PopupSelectPrev);
-        assert_eq!(resolver.resolve(&up_event, KeyContext::Normal), Action::MoveUp);
+        assert_eq!(
+            resolver.resolve(&up_event, KeyContext::Popup),
+            Action::PopupSelectPrev
+        );
+        assert_eq!(
+            resolver.resolve(&up_event, KeyContext::Normal),
+            Action::MoveUp
+        );
     }
 
     #[test]
@@ -1120,9 +1284,18 @@ mod tests {
 
         // Ctrl+S should work in all contexts (falls back to normal)
         let save_event = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
-        assert_eq!(resolver.resolve(&save_event, KeyContext::Normal), Action::Save);
-        assert_eq!(resolver.resolve(&save_event, KeyContext::Help), Action::Save);
-        assert_eq!(resolver.resolve(&save_event, KeyContext::Popup), Action::Save);
+        assert_eq!(
+            resolver.resolve(&save_event, KeyContext::Normal),
+            Action::Save
+        );
+        assert_eq!(
+            resolver.resolve(&save_event, KeyContext::Help),
+            Action::Save
+        );
+        assert_eq!(
+            resolver.resolve(&save_event, KeyContext::Popup),
+            Action::Save
+        );
         // Note: Prompt context might handle this differently in practice
     }
 
@@ -1147,7 +1320,10 @@ mod tests {
         assert_eq!(resolver.resolve(&esc_event, KeyContext::Help), Action::Quit);
 
         // In normal context, should still be RemoveSecondaryCursors
-        assert_eq!(resolver.resolve(&esc_event, KeyContext::Normal), Action::RemoveSecondaryCursors);
+        assert_eq!(
+            resolver.resolve(&esc_event, KeyContext::Normal),
+            Action::RemoveSecondaryCursors
+        );
     }
 
     #[test]
@@ -1158,12 +1334,24 @@ mod tests {
         let char_event = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::empty());
 
         // Character input should work in Normal and Prompt contexts
-        assert_eq!(resolver.resolve(&char_event, KeyContext::Normal), Action::InsertChar('a'));
-        assert_eq!(resolver.resolve(&char_event, KeyContext::Prompt), Action::InsertChar('a'));
+        assert_eq!(
+            resolver.resolve(&char_event, KeyContext::Normal),
+            Action::InsertChar('a')
+        );
+        assert_eq!(
+            resolver.resolve(&char_event, KeyContext::Prompt),
+            Action::InsertChar('a')
+        );
 
         // But not in Help or Popup contexts (returns None)
-        assert_eq!(resolver.resolve(&char_event, KeyContext::Help), Action::None);
-        assert_eq!(resolver.resolve(&char_event, KeyContext::Popup), Action::None);
+        assert_eq!(
+            resolver.resolve(&char_event, KeyContext::Help),
+            Action::None
+        );
+        assert_eq!(
+            resolver.resolve(&char_event, KeyContext::Popup),
+            Action::None
+        );
     }
 
     #[test]
@@ -1194,12 +1382,19 @@ mod tests {
 
         // Test normal context custom binding
         let ctrl_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
-        assert_eq!(resolver.resolve(&ctrl_f, KeyContext::Normal), Action::CommandPalette);
+        assert_eq!(
+            resolver.resolve(&ctrl_f, KeyContext::Normal),
+            Action::CommandPalette
+        );
 
         // Test prompt context custom binding
         let ctrl_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
-        assert_eq!(resolver.resolve(&ctrl_k, KeyContext::Prompt), Action::PromptCancel);
-        assert_eq!(resolver.resolve(&ctrl_k, KeyContext::Normal), Action::None); // Not bound in normal
+        assert_eq!(
+            resolver.resolve(&ctrl_k, KeyContext::Prompt),
+            Action::PromptCancel
+        );
+        assert_eq!(resolver.resolve(&ctrl_k, KeyContext::Normal), Action::None);
+        // Not bound in normal
     }
 
     #[test]
@@ -1266,7 +1461,7 @@ mod tests {
         assert_eq!(action_no_mod, Action::InsertChar('s'));
         assert_eq!(action_ctrl, Action::Save);
         assert_eq!(action_shift, Action::InsertChar('s')); // Shift alone is still character input
-        // Ctrl+Shift+S is not bound by default, should return None
+                                                           // Ctrl+Shift+S is not bound by default, should return None
         assert_eq!(action_ctrl_shift, Action::None);
     }
 }

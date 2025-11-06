@@ -3,7 +3,9 @@
 use crate::event::Event;
 use crate::keybindings::Action;
 use crate::state::EditorState;
-use crate::word_navigation::{find_word_end, find_word_start, find_word_start_left, find_word_start_right};
+use crate::word_navigation::{
+    find_word_end, find_word_start, find_word_start_left, find_word_start_right,
+};
 
 /// Convert an action into a sequence of events that can be applied to the editor state
 ///
@@ -15,7 +17,11 @@ use crate::word_navigation::{find_word_end, find_word_start, find_word_start_lef
 /// # Returns
 /// * `Some(Vec<Event>)` - Events to apply for this action
 /// * `None` - If the action doesn't generate events (like Quit, Save, etc.)
-pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) -> Option<Vec<Event>> {
+pub fn action_to_events(
+    state: &EditorState,
+    action: Action,
+    tab_size: usize,
+) -> Option<Vec<Event>> {
     let mut events = Vec::new();
 
     match action {
@@ -634,7 +640,9 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
         Action::RemoveSecondaryCursors => {
             // Generate RemoveCursor events for all cursors except the first (original) one
             // Find the first cursor ID (lowest ID = original cursor)
-            let first_id = state.cursors.iter()
+            let first_id = state
+                .cursors
+                .iter()
                 .map(|(id, _)| id)
                 .min_by_key(|id| id.0)
                 .expect("Should have at least one cursor");
@@ -777,18 +785,17 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
 
                     // If cursor is on non-word char OR at the end of a word,
                     // select from current position to end of next word
-                    let (final_start, final_end) = if word_start == word_end
-                        || cursor.position == word_end
-                    {
-                        // Find the next word (skip non-word characters to find it)
-                        let next_start = find_word_start_right(&state.buffer, cursor.position);
-                        let next_end = find_word_end(&state.buffer, next_start);
-                        // Select FROM cursor position TO the end of next word
-                        (cursor.position, next_end)
-                    } else {
-                        // On a word char - select from cursor to end of current word
-                        (cursor.position, word_end)
-                    };
+                    let (final_start, final_end) =
+                        if word_start == word_end || cursor.position == word_end {
+                            // Find the next word (skip non-word characters to find it)
+                            let next_start = find_word_start_right(&state.buffer, cursor.position);
+                            let next_end = find_word_end(&state.buffer, next_start);
+                            // Select FROM cursor position TO the end of next word
+                            (cursor.position, next_end)
+                        } else {
+                            // On a word char - select from cursor to end of current word
+                            (cursor.position, word_end)
+                        };
 
                     events.push(Event::MoveCursor {
                         cursor_id,
@@ -806,40 +813,40 @@ pub fn action_to_events(state: &EditorState, action: Action, tab_size: usize) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::{CursorId, Event};
     use crate::state::EditorState;
-    use crate::event::{Event, CursorId};
-    
+
     #[test]
     fn test_backspace_deletes_newline() {
         let mut state = EditorState::new(80, 24);
-        
+
         // Insert "Hello\nWorld"
         state.apply(&Event::Insert {
             position: 0,
             text: "Hello\nWorld".to_string(),
             cursor_id: CursorId(0),
         });
-        
+
         assert_eq!(state.buffer.to_string(), "Hello\nWorld");
         assert_eq!(state.cursors.primary().position, 11);
-        
+
         // Move cursor to position 6 (beginning of "World")
         state.apply(&Event::MoveCursor {
             cursor_id: CursorId(0),
             position: 6,
             anchor: None,
         });
-        
+
         assert_eq!(state.cursors.primary().position, 6);
-        
+
         // Press Backspace - should delete the newline at position 5
         let events = action_to_events(&state, Action::DeleteBackward, 4).unwrap();
         println!("Generated events: {:?}", events);
-        
+
         for event in events {
             state.apply(&event);
         }
-        
+
         assert_eq!(state.buffer.to_string(), "HelloWorld");
         assert_eq!(state.cursors.primary().position, 5);
     }

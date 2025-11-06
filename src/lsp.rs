@@ -108,19 +108,13 @@ impl LspClient {
             .stderr(Stdio::piped())
             .spawn()?;
 
-        let stdin = BufWriter::new(
-            process
-                .stdin
-                .take()
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "Failed to get stdin"))?,
-        );
+        let stdin = BufWriter::new(process.stdin.take().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::Other, "Failed to get stdin")
+        })?);
 
-        let stdout = BufReader::new(
-            process
-                .stdout
-                .take()
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "Failed to get stdout"))?,
-        );
+        let stdout = BufReader::new(process.stdout.take().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::Other, "Failed to get stdout")
+        })?);
 
         Ok(Self {
             process,
@@ -289,7 +283,10 @@ impl LspClient {
                     self.pending.remove(&id);
 
                     if let Some(error) = response.error {
-                        return Err(format!("LSP error: {} (code {})", error.message, error.code));
+                        return Err(format!(
+                            "LSP error: {} (code {})",
+                            error.message, error.code
+                        ));
                     }
 
                     let result = response
@@ -330,7 +327,8 @@ impl LspClient {
 
     /// Write a message to the server
     fn write_message<T: Serialize>(&mut self, message: &T) -> Result<(), String> {
-        let json = serde_json::to_string(message).map_err(|e| format!("Serialization error: {}", e))?;
+        let json =
+            serde_json::to_string(message).map_err(|e| format!("Serialization error: {}", e))?;
 
         let content = format!("Content-Length: {}\r\n\r\n{}", json.len(), json);
 
@@ -372,7 +370,8 @@ impl LspClient {
             }
         }
 
-        let content_length = content_length.ok_or_else(|| "Missing Content-Length header".to_string())?;
+        let content_length =
+            content_length.ok_or_else(|| "Missing Content-Length header".to_string())?;
 
         // Read content
         let mut content = vec![0u8; content_length];
@@ -406,11 +405,10 @@ impl LspClient {
             }
             "window/showMessage" | "window/logMessage" => {
                 if let Some(params) = notification.params {
-                    if let Ok(msg) = serde_json::from_value::<serde_json::Map<String, Value>>(params) {
-                        let message_type = msg
-                            .get("type")
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(0);
+                    if let Ok(msg) =
+                        serde_json::from_value::<serde_json::Map<String, Value>>(params)
+                    {
+                        let message_type = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(0);
                         let message = msg
                             .get("message")
                             .and_then(|v| v.as_str())

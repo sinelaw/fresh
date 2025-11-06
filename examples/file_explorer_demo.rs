@@ -3,10 +3,8 @@
 /// This example shows how to use the file tree, view, and renderer components.
 ///
 /// To run: cargo run --example file_explorer_demo
-
 use fresh::file_tree::{FileTree, FileTreeView};
 use fresh::fs::{FsManager, LocalFsBackend};
-use fresh::ui::FileExplorerRenderer;
 use std::env;
 use std::io;
 use std::path::PathBuf;
@@ -58,17 +56,21 @@ async fn main() -> io::Result<()> {
         if let Some(node) = view.tree().get_node(*node_id) {
             let indent_str = "  ".repeat(*indent);
             let icon = if node.is_dir() {
-                if node.is_expanded() { "[-]" } else { "[+]" }
+                if node.is_expanded() {
+                    "[-]"
+                } else {
+                    "[+]"
+                }
             } else {
                 "[F]"
             };
             let name = &node.entry.name;
-            println!("{}{} {}", indent_str, icon, name);
+            println!("{indent_str}{icon} {name}");
 
             if let Some(metadata) = &node.entry.metadata {
                 if let Some(size) = metadata.size {
                     if !node.is_dir() {
-                        println!("{}   Size: {} bytes", indent_str, size);
+                        println!("{indent_str}   Size: {size} bytes");
                     }
                 }
             }

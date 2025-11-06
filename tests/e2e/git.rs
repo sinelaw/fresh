@@ -16,7 +16,10 @@ fn test_git_grep_shows_results() {
 
     // Trigger git grep with Ctrl+Shift+F
     harness
-        .send_key(KeyCode::Char('F'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('F'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
@@ -42,7 +45,7 @@ fn test_git_grep_shows_results() {
 
     // Verify results are visible
     let screen = harness.screen_to_string();
-    println!("Git grep screen:\n{}", screen);
+    println!("Git grep screen:\n{screen}");
 
     // Should show at least one match
     assert!(
@@ -63,7 +66,10 @@ fn test_git_grep_interactive_updates() {
 
     // Trigger git grep
     harness
-        .send_key(KeyCode::Char('F'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('F'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
@@ -72,17 +78,16 @@ fn test_git_grep_interactive_updates() {
 
     // Wait for initial results
     harness
-        .wait_for_async(
-            |h| h.screen_to_string().contains("src/"),
-            2000,
-        )
+        .wait_for_async(|h| h.screen_to_string().contains("src/"), 2000)
         .unwrap();
 
     let screen_config = harness.screen_to_string();
 
     // Backspace to clear and type different query
     for _ in 0..6 {
-        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     harness.render().unwrap();
@@ -103,8 +108,8 @@ fn test_git_grep_interactive_updates() {
     let screen_println = harness.screen_to_string();
 
     // Results should have changed
-    println!("After 'Config' query:\n{}", screen_config);
-    println!("After 'println' query:\n{}", screen_println);
+    println!("After 'Config' query:\n{screen_config}");
+    println!("After 'println' query:\n{screen_println}");
 
     // Both searches should show some results
     assert!(
@@ -125,7 +130,10 @@ fn test_git_grep_selection_navigation() {
 
     // Trigger git grep
     harness
-        .send_key(KeyCode::Char('F'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('F'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
@@ -134,10 +142,7 @@ fn test_git_grep_selection_navigation() {
 
     // Wait for results
     harness
-        .wait_for_async(
-            |h| h.screen_to_string().contains("src/"),
-            2000,
-        )
+        .wait_for_async(|h| h.screen_to_string().contains("src/"), 2000)
         .unwrap();
 
     // Navigate down through suggestions
@@ -152,8 +157,8 @@ fn test_git_grep_selection_navigation() {
 
     let screen_after_up = harness.screen_to_string();
 
-    println!("After down:\n{}", screen_after_down);
-    println!("After up:\n{}", screen_after_up);
+    println!("After down:\n{screen_after_down}");
+    println!("After up:\n{screen_after_up}");
 
     // The screens should show the prompt is still active
     assert!(screen_after_down.contains("Git grep:"));
@@ -171,7 +176,10 @@ fn test_git_grep_confirm_jumps_to_location() {
 
     // Trigger git grep
     harness
-        .send_key(KeyCode::Char('F'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('F'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
@@ -180,14 +188,13 @@ fn test_git_grep_confirm_jumps_to_location() {
 
     // Wait for results
     harness
-        .wait_for_async(
-            |h| h.screen_to_string().contains("main.rs"),
-            2000,
-        )
+        .wait_for_async(|h| h.screen_to_string().contains("main.rs"), 2000)
         .unwrap();
 
     // Confirm selection (Enter) - this should open file and jump to line
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Give it time to open the file
@@ -195,7 +202,7 @@ fn test_git_grep_confirm_jumps_to_location() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    println!("After confirming grep result:\n{}", screen);
+    println!("After confirming grep result:\n{screen}");
 
     // Restore directory
     let _guard = DirGuard::new(original_dir);
@@ -215,7 +222,9 @@ fn test_git_grep_confirm_jumps_to_location() {
     if !has_file_content {
         // If file didn't open (due to relative path issues in test environment),
         // at least verify we exited the prompt successfully
-        println!("Note: File content not visible (likely due to relative path in test environment)");
+        println!(
+            "Note: File content not visible (likely due to relative path in test environment)"
+        );
     }
 }
 
@@ -231,7 +240,10 @@ fn test_git_grep_cancel() {
 
     // Trigger git grep
     harness
-        .send_key(KeyCode::Char('F'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('F'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
@@ -260,7 +272,10 @@ fn test_git_find_file_shows_results() {
 
     // Trigger git find file with Ctrl+Shift+P
     harness
-        .send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('P'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
@@ -281,7 +296,7 @@ fn test_git_find_file_shows_results() {
     assert!(found, "File list should appear within timeout");
 
     let screen = harness.screen_to_string();
-    println!("Git find file screen:\n{}", screen);
+    println!("Git find file screen:\n{screen}");
 
     // Should show files from the project
     assert!(
@@ -302,16 +317,16 @@ fn test_git_find_file_interactive_filtering() {
 
     // Trigger git find file
     harness
-        .send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('P'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
     // Wait for initial results
     harness
-        .wait_for_async(
-            |h| h.screen_to_string().contains("src/"),
-            2000,
-        )
+        .wait_for_async(|h| h.screen_to_string().contains("src/"), 2000)
         .unwrap();
 
     // Type filter to narrow down results
@@ -319,14 +334,11 @@ fn test_git_find_file_interactive_filtering() {
 
     // Wait for filtered results
     harness
-        .wait_for_async(
-            |h| h.screen_to_string().contains("main"),
-            2000,
-        )
+        .wait_for_async(|h| h.screen_to_string().contains("main"), 2000)
         .unwrap();
 
     let screen_main = harness.screen_to_string();
-    println!("After filtering 'main':\n{}", screen_main);
+    println!("After filtering 'main':\n{screen_main}");
 
     // Should show main.rs in results
     assert!(
@@ -336,21 +348,20 @@ fn test_git_find_file_interactive_filtering() {
 
     // Change filter
     for _ in 0..4 {
-        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     harness.type_text("lib").unwrap();
 
     // Wait for new filtered results
     harness
-        .wait_for_async(
-            |h| h.screen_to_string().contains("lib"),
-            2000,
-        )
+        .wait_for_async(|h| h.screen_to_string().contains("lib"), 2000)
         .unwrap();
 
     let screen_lib = harness.screen_to_string();
-    println!("After filtering 'lib':\n{}", screen_lib);
+    println!("After filtering 'lib':\n{screen_lib}");
 
     // Should show lib.rs
     assert!(
@@ -371,16 +382,16 @@ fn test_git_find_file_selection_navigation() {
 
     // Trigger git find file
     harness
-        .send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('P'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
     // Wait for results
     harness
-        .wait_for_async(
-            |h| h.screen_to_string().contains("src/"),
-            2000,
-        )
+        .wait_for_async(|h| h.screen_to_string().contains("src/"), 2000)
         .unwrap();
 
     // Navigate down
@@ -396,7 +407,7 @@ fn test_git_find_file_selection_navigation() {
     harness.process_async_and_render().unwrap();
 
     let screen = harness.screen_to_string();
-    println!("After navigation:\n{}", screen);
+    println!("After navigation:\n{screen}");
 
     // Prompt should still be active
     assert!(screen.contains("Find file:"));
@@ -413,7 +424,10 @@ fn test_git_find_file_confirm_opens_file() {
 
     // Trigger git find file
     harness
-        .send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('P'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
@@ -422,14 +436,13 @@ fn test_git_find_file_confirm_opens_file() {
 
     // Wait for results
     harness
-        .wait_for_async(
-            |h| h.screen_to_string().contains("main.rs"),
-            2000,
-        )
+        .wait_for_async(|h| h.screen_to_string().contains("main.rs"), 2000)
         .unwrap();
 
     // Confirm selection - should open the file
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Give it time to open the file
@@ -437,7 +450,7 @@ fn test_git_find_file_confirm_opens_file() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    println!("After confirming file:\n{}", screen);
+    println!("After confirming file:\n{screen}");
 
     // Restore directory
     let _guard = DirGuard::new(original_dir);
@@ -446,12 +459,13 @@ fn test_git_find_file_confirm_opens_file() {
     harness.assert_screen_not_contains("Find file:");
 
     // Check if file content is visible
-    let has_file_content = screen.contains("fn main()")
-        || screen.contains("println")
-        || screen.contains("Hello");
+    let has_file_content =
+        screen.contains("fn main()") || screen.contains("println") || screen.contains("Hello");
 
     if !has_file_content {
-        println!("Note: File content not visible (likely due to relative path in test environment)");
+        println!(
+            "Note: File content not visible (likely due to relative path in test environment)"
+        );
     }
 }
 
@@ -470,7 +484,10 @@ fn test_git_grep_scrolling_many_results() {
 
     // Trigger git grep
     harness
-        .send_key(KeyCode::Char('F'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('F'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
@@ -479,10 +496,7 @@ fn test_git_grep_scrolling_many_results() {
 
     // Wait for results (should be truncated to 100 max)
     harness
-        .wait_for_async(
-            |h| h.screen_to_string().contains("file"),
-            2000,
-        )
+        .wait_for_async(|h| h.screen_to_string().contains("file"), 2000)
         .unwrap();
 
     // Navigate down multiple times to test scrolling
@@ -493,7 +507,7 @@ fn test_git_grep_scrolling_many_results() {
     }
 
     let screen = harness.screen_to_string();
-    println!("After scrolling down:\n{}", screen);
+    println!("After scrolling down:\n{screen}");
 
     // Should still show the prompt and results
     assert!(screen.contains("Git grep:"));
@@ -513,16 +527,16 @@ fn test_git_find_file_scrolling_many_files() {
 
     // Trigger git find file
     harness
-        .send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('P'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
     // Wait for file list
     harness
-        .wait_for_async(
-            |h| h.screen_to_string().contains("file"),
-            2000,
-        )
+        .wait_for_async(|h| h.screen_to_string().contains("file"), 2000)
         .unwrap();
 
     // Navigate down multiple times
@@ -540,7 +554,7 @@ fn test_git_find_file_scrolling_many_files() {
     }
 
     let screen = harness.screen_to_string();
-    println!("After scrolling:\n{}", screen);
+    println!("After scrolling:\n{screen}");
 
     // Should still show the prompt
     assert!(screen.contains("Find file:"));
@@ -569,7 +583,9 @@ fn test_git_commands_via_command_palette() {
     harness.render().unwrap();
 
     // Confirm
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Should now be in git grep mode
@@ -588,11 +604,17 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
 
     // Verify we start with an empty buffer
     let initial_content = harness.get_buffer_content();
-    assert!(initial_content.is_empty() || initial_content == "\n", "Should start with empty buffer");
+    assert!(
+        initial_content.is_empty() || initial_content == "\n",
+        "Should start with empty buffer"
+    );
 
     // Trigger git grep
     harness
-        .send_key(KeyCode::Char('F'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('F'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
@@ -601,18 +623,17 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
 
     // Wait for results
     let found = harness
-        .wait_for_async(
-            |h| h.screen_to_string().contains("main.rs"),
-            2000,
-        )
+        .wait_for_async(|h| h.screen_to_string().contains("main.rs"), 2000)
         .unwrap();
     assert!(found, "Should find grep results");
 
     let screen_before = harness.screen_to_string();
-    println!("Screen with results:\n{}", screen_before);
+    println!("Screen with results:\n{screen_before}");
 
     // Confirm selection (Enter)
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Give time for file to load
@@ -623,35 +644,32 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
 
     // 1. Buffer content should have changed from empty to the file content
     let buffer_content = harness.get_buffer_content();
-    println!("Buffer content after selection:\n{}", buffer_content);
+    println!("Buffer content after selection:\n{buffer_content}");
 
     assert!(
         !buffer_content.is_empty() && buffer_content != "\n",
-        "BUG: Buffer is still empty! File was not opened. Buffer: {:?}",
-        buffer_content
+        "BUG: Buffer is still empty! File was not opened. Buffer: {buffer_content:?}"
     );
 
     assert!(
         buffer_content.contains("println"),
-        "BUG: Buffer does not contain expected file content. Expected 'println' in buffer. Buffer: {:?}",
-        buffer_content
+        "BUG: Buffer does not contain expected file content. Expected 'println' in buffer. Buffer: {buffer_content:?}"
     );
 
     // 2. The cursor should be at the line with println (line 2)
     let cursor_pos = harness.cursor_position();
-    println!("Cursor position: {}", cursor_pos);
+    println!("Cursor position: {cursor_pos}");
 
     // The cursor should NOT be at position 0 (start of file)
     // It should be near the "println" line
     assert!(
         cursor_pos > 0,
-        "BUG: Cursor is at position 0! It should have jumped to the match line. Position: {}",
-        cursor_pos
+        "BUG: Cursor is at position 0! It should have jumped to the match line. Position: {cursor_pos}"
     );
 
     // 3. Verify screen shows the file content
     let screen_after = harness.screen_to_string();
-    println!("Screen after selection:\n{}", screen_after);
+    println!("Screen after selection:\n{screen_after}");
 
     assert!(
         screen_after.contains("fn main") || screen_after.contains("println"),
@@ -671,11 +689,17 @@ fn test_git_find_file_actually_opens_file() {
 
     // Verify we start with an empty buffer
     let initial_content = harness.get_buffer_content();
-    assert!(initial_content.is_empty() || initial_content == "\n", "Should start with empty buffer");
+    assert!(
+        initial_content.is_empty() || initial_content == "\n",
+        "Should start with empty buffer"
+    );
 
     // Trigger git find file
     harness
-        .send_key(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('P'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
@@ -695,12 +719,17 @@ fn test_git_find_file_actually_opens_file() {
         .unwrap();
 
     let screen_before = harness.screen_to_string();
-    println!("Screen with file list:\n{}", screen_before);
+    println!("Screen with file list:\n{screen_before}");
 
-    assert!(found, "Should find lib.rs in results. Screen:\n{}", screen_before);
+    assert!(
+        found,
+        "Should find lib.rs in results. Screen:\n{screen_before}"
+    );
 
     // Confirm selection (Enter)
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Give time for file to load
@@ -711,28 +740,25 @@ fn test_git_find_file_actually_opens_file() {
 
     // 1. Buffer content should have changed from empty to lib.rs content
     let buffer_content = harness.get_buffer_content();
-    println!("Buffer content after selection:\n{}", buffer_content);
+    println!("Buffer content after selection:\n{buffer_content}");
 
     assert!(
         !buffer_content.is_empty() && buffer_content != "\n",
-        "BUG: Buffer is still empty! File lib.rs was not opened. Buffer: {:?}",
-        buffer_content
+        "BUG: Buffer is still empty! File lib.rs was not opened. Buffer: {buffer_content:?}"
     );
 
     assert!(
         buffer_content.contains("pub struct Config") || buffer_content.contains("impl Default"),
-        "BUG: Buffer does not contain lib.rs content. Expected 'Config' or 'impl Default'. Buffer: {:?}",
-        buffer_content
+        "BUG: Buffer does not contain lib.rs content. Expected 'Config' or 'impl Default'. Buffer: {buffer_content:?}"
     );
 
     // 2. Verify screen shows the file content
     let screen_after = harness.screen_to_string();
-    println!("Screen after selection:\n{}", screen_after);
+    println!("Screen after selection:\n{screen_after}");
 
     assert!(
         screen_after.contains("Config") || screen_after.contains("pub struct"),
-        "BUG: Screen does not show lib.rs content after selection. Screen:\n{}",
-        screen_after
+        "BUG: Screen does not show lib.rs content after selection. Screen:\n{screen_after}"
     );
 
     // 3. Status bar should show we're no longer in prompt mode
@@ -747,7 +773,7 @@ fn test_git_grep_cursor_position_accuracy() {
     // Create a file with known line content
     repo.create_file(
         "test.txt",
-        "Line 1\nLine 2\nLine 3 with MARKER\nLine 4\nLine 5\n"
+        "Line 1\nLine 2\nLine 3 with MARKER\nLine 4\nLine 5\n",
     );
     repo.git_add(&["test.txt"]);
     repo.git_commit("Add test file");
@@ -759,7 +785,10 @@ fn test_git_grep_cursor_position_accuracy() {
 
     // Trigger git grep
     harness
-        .send_key(KeyCode::Char('F'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .send_key(
+            KeyCode::Char('F'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
         .unwrap();
     harness.render().unwrap();
 
@@ -768,14 +797,13 @@ fn test_git_grep_cursor_position_accuracy() {
 
     // Wait for results
     harness
-        .wait_for_async(
-            |h| h.screen_to_string().contains("test.txt"),
-            2000,
-        )
+        .wait_for_async(|h| h.screen_to_string().contains("test.txt"), 2000)
         .unwrap();
 
     // Confirm selection
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -783,12 +811,11 @@ fn test_git_grep_cursor_position_accuracy() {
 
     // Check buffer content
     let buffer_content = harness.get_buffer_content();
-    println!("Buffer content:\n{}", buffer_content);
+    println!("Buffer content:\n{buffer_content}");
 
     assert!(
         buffer_content.contains("MARKER"),
-        "BUG: File not opened or wrong file opened. Buffer: {:?}",
-        buffer_content
+        "BUG: File not opened or wrong file opened. Buffer: {buffer_content:?}"
     );
 
     // The cursor should be on line 3 (0-indexed = line 2)
@@ -797,13 +824,12 @@ fn test_git_grep_cursor_position_accuracy() {
     // Line 2: "Line 2\n" = 7 bytes
     // Line 3 starts at byte 14
     let cursor_pos = harness.cursor_position();
-    println!("Cursor position: {}", cursor_pos);
+    println!("Cursor position: {cursor_pos}");
 
     // Cursor should be at line 3 (byte position should be at or after byte 14)
     assert!(
         cursor_pos >= 14,
-        "BUG: Cursor should be at line 3 (position >= 14), but is at position {}",
-        cursor_pos
+        "BUG: Cursor should be at line 3 (position >= 14), but is at position {cursor_pos}"
     );
 
     // Verify the line at cursor contains MARKER

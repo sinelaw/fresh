@@ -14,7 +14,6 @@
 ///
 /// This matches VS Code's behavior where you can navigate back through your
 /// editing trail, not through every single keystroke.
-
 use crate::event::BufferId;
 
 /// A single entry in the position history
@@ -127,9 +126,7 @@ impl PositionHistory {
         }
 
         // Start a new pending movement
-        self.pending_movement = Some(PendingMovement {
-            start_entry: entry,
-        });
+        self.pending_movement = Some(PendingMovement { start_entry: entry });
     }
 
     /// Commit any pending movement to history
@@ -241,8 +238,7 @@ impl PositionHistory {
 
     /// Get the current position entry
     pub fn current(&self) -> Option<&PositionEntry> {
-        self.current_index
-            .and_then(|idx| self.entries.get(idx))
+        self.current_index.and_then(|idx| self.entries.get(idx))
     }
 
     /// Clear all history

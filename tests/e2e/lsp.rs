@@ -45,7 +45,7 @@ fn test_lsp_completion_popup_text_not_mangled() -> std::io::Result<()> {
     let screen = harness.screen_to_string();
 
     // Debug: print the screen to see what's there
-    println!("Screen content:\n{}", screen);
+    println!("Screen content:\n{screen}");
 
     // Verify the completion items are visible and not mangled
     assert!(
@@ -122,8 +122,7 @@ fn test_lsp_completion_replaces_word() -> std::io::Result<()> {
     let buffer_after = harness.get_buffer_content();
     assert_eq!(
         buffer_after, "test_function",
-        "Expected completion to replace 'test_f' with 'test_function', but got '{}'",
-        buffer_after
+        "Expected completion to replace 'test_f' with 'test_function', but got '{buffer_after}'"
     );
 
     Ok(())
@@ -132,7 +131,7 @@ fn test_lsp_completion_replaces_word() -> std::io::Result<()> {
 /// Test LSP diagnostics display in the editor
 #[test]
 fn test_lsp_diagnostics_display() -> std::io::Result<()> {
-    use fresh::event::{Event, OverlayFace, UnderlineStyle};
+    use fresh::event::{Event, OverlayFace};
 
     let mut harness = EditorTestHarness::new(80, 24)?;
 
@@ -230,8 +229,7 @@ fn test_lsp_completion_popup() -> std::io::Result<()> {
     let buffer_content = harness.get_buffer_content();
     assert!(
         buffer_content.contains("test_variable"),
-        "Expected 'test_variable' to be inserted into buffer, got: {}",
-        buffer_content
+        "Expected 'test_variable' to be inserted into buffer, got: {buffer_content}"
     );
 
     Ok(())
@@ -253,9 +251,7 @@ fn test_lsp_diagnostics_status_bar() -> std::io::Result<()> {
     state.apply(&Event::AddOverlay {
         overlay_id: "lsp-diagnostic-error1".to_string(),
         range: 4..5,
-        face: OverlayFace::Background {
-            color: (40, 0, 0),
-        },
+        face: OverlayFace::Background { color: (40, 0, 0) },
         priority: 100, // Error priority
         message: Some("unused variable: `x`".to_string()),
     });
@@ -264,9 +260,7 @@ fn test_lsp_diagnostics_status_bar() -> std::io::Result<()> {
     state.apply(&Event::AddOverlay {
         overlay_id: "lsp-diagnostic-warning1".to_string(),
         range: 15..16,
-        face: OverlayFace::Background {
-            color: (40, 40, 0),
-        },
+        face: OverlayFace::Background { color: (40, 40, 0) },
         priority: 50, // Warning priority
         message: Some("unused variable: `y`".to_string()),
     });
@@ -303,9 +297,7 @@ fn test_lsp_clear_diagnostics() -> std::io::Result<()> {
     state.apply(&Event::AddOverlay {
         overlay_id: "lsp-diagnostic-test".to_string(),
         range: 4..5,
-        face: OverlayFace::Background {
-            color: (40, 0, 0),
-        },
+        face: OverlayFace::Background { color: (40, 0, 0) },
         priority: 100,
         message: Some("test error".to_string()),
     });
@@ -391,8 +383,7 @@ fn test_lsp_completion_navigation() -> std::io::Result<()> {
     let buffer_content = harness.get_buffer_content();
     assert!(
         buffer_content.contains("item3"),
-        "Expected 'item3' to be inserted, got: {}",
-        buffer_content
+        "Expected 'item3' to be inserted, got: {buffer_content}"
     );
 
     Ok(())
@@ -500,8 +491,7 @@ fn test_lsp_completion_after_dot() -> std::io::Result<()> {
     let buffer_content = harness.get_buffer_content();
     assert_eq!(
         buffer_content, "args.len",
-        "Expected 'args.len', got: {}",
-        buffer_content
+        "Expected 'args.len', got: {buffer_content}"
     );
     assert!(
         !buffer_content.contains(".."),
@@ -553,8 +543,7 @@ fn test_lsp_completion_after_dot_with_partial() -> std::io::Result<()> {
     let buffer_content = harness.get_buffer_content();
     assert_eq!(
         buffer_content, "args.length",
-        "Expected 'args.length', got: {}",
-        buffer_content
+        "Expected 'args.length', got: {buffer_content}"
     );
 
     Ok(())
@@ -645,8 +634,7 @@ fn test_lsp_completion_filtering() -> std::io::Result<()> {
     let buffer_content = harness.get_buffer_content();
     assert_eq!(
         buffer_content, "test_function",
-        "Expected 'test_function', got: {}",
-        buffer_content
+        "Expected 'test_function', got: {buffer_content}"
     );
 
     Ok(())
@@ -687,7 +675,7 @@ fn test_lsp_completion_popup_size() -> std::io::Result<()> {
             },
             position: PopupPositionData::BelowCursor,
             width: 40,
-            max_height: 15,  // Much larger than needed for 2 items
+            max_height: 15, // Much larger than needed for 2 items
             bordered: true,
         },
     });
@@ -696,7 +684,7 @@ fn test_lsp_completion_popup_size() -> std::io::Result<()> {
 
     // Get the screen content
     let screen = harness.screen_to_string();
-    println!("Screen content:\n{}", screen);
+    println!("Screen content:\n{screen}");
 
     // Count the number of visible lines in the popup
     // The popup should show:
@@ -725,17 +713,16 @@ fn test_lsp_completion_popup_size() -> std::io::Result<()> {
 
     if let (Some(start), Some(end)) = (popup_start_line, popup_end_line) {
         let popup_height = end - start + 1;
-        println!("Popup height: {} lines", popup_height);
+        println!("Popup height: {popup_height} lines");
 
         // The popup should be sized for content (2 items + 2 borders = 4)
         // not for max_height (15)
         assert_eq!(
             popup_height, 4,
-            "Expected popup to be sized for content (4 lines), but got {} lines",
-            popup_height
+            "Expected popup to be sized for content (4 lines), but got {popup_height} lines"
         );
 
-        println!("✓ Popup is appropriately sized: {} lines for 2 items", popup_height);
+        println!("✓ Popup is appropriately sized: {popup_height} lines for 2 items");
     } else {
         panic!("Could not find popup borders in screen output");
     }
@@ -770,13 +757,12 @@ fn test_lsp_waiting_indicator() -> std::io::Result<()> {
 
     // Get the screen content and check for LSP indicator
     let screen = harness.screen_to_string();
-    println!("Screen with LSP indicator:\n{}", screen);
+    println!("Screen with LSP indicator:\n{screen}");
 
     // Check that "LSP: completion..." appears in the status bar
     assert!(
         screen.contains("LSP: completion..."),
-        "Expected LSP waiting indicator in status bar, got:\n{}",
-        screen
+        "Expected LSP waiting indicator in status bar, got:\n{screen}"
     );
 
     Ok(())
@@ -790,7 +776,9 @@ fn test_lsp_completion_popup_hides_background() -> std::io::Result<()> {
     let mut harness = EditorTestHarness::new(80, 24)?;
 
     // Insert text that would be visible behind the popup if not properly cleared
-    harness.type_text("let args = Args::parse();\nargs.log_file.create_log();\nsome_other_code_here();")?;
+    harness.type_text(
+        "let args = Args::parse();\nargs.log_file.create_log();\nsome_other_code_here();",
+    )?;
     harness.render()?;
 
     // Position cursor at the start of line 2 where we'll show the popup
@@ -832,7 +820,7 @@ fn test_lsp_completion_popup_hides_background() -> std::io::Result<()> {
 
     // Get the screen content
     let screen = harness.screen_to_string();
-    println!("Screen content:\n{}", screen);
+    println!("Screen content:\n{screen}");
 
     // Find the popup area by looking for the popup border and title
     let lines: Vec<&str> = screen.lines().collect();
@@ -853,7 +841,7 @@ fn test_lsp_completion_popup_hides_background() -> std::io::Result<()> {
 
     // Join popup lines to check content
     let popup_content = popup_lines.join("\n");
-    println!("Popup area content:\n{}", popup_content);
+    println!("Popup area content:\n{popup_content}");
 
     // Verify that buffer text is NOT bleeding through in the popup area
     // These strings from the buffer should NOT appear within the popup borders
@@ -867,13 +855,11 @@ fn test_lsp_completion_popup_hides_background() -> std::io::Result<()> {
     );
     assert!(
         !popup_content.contains("code_here"),
-        "Buffer text 'code_here' should not be visible through popup, found:\n{}",
-        popup_content
+        "Buffer text 'code_here' should not be visible through popup, found:\n{popup_content}"
     );
     assert!(
         !popup_content.contains("parse()"),
-        "Buffer text 'parse()' should not be visible through popup, found:\n{}",
-        popup_content
+        "Buffer text 'parse()' should not be visible through popup, found:\n{popup_content}"
     );
 
     // Verify the actual completion items ARE visible
@@ -944,7 +930,7 @@ fn test_lsp_completion_canceled_on_cursor_move() -> std::io::Result<()> {
 fn test_lsp_cursor_animation() -> std::io::Result<()> {
     let mut harness = EditorTestHarness::new(80, 24)?;
 
-    // Open a test file  
+    // Open a test file
     let temp_dir = tempfile::tempdir()?;
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {\n    test_\n}\n")?;
@@ -966,8 +952,8 @@ fn test_lsp_cursor_animation() -> std::io::Result<()> {
 
     // Get screen during LSP wait
     let screen_during = harness.screen_to_string();
-    println!("Screen before LSP:\n{}", screen_before);
-    println!("Screen during LSP wait:\n{}", screen_during);
+    println!("Screen before LSP:\n{screen_before}");
+    println!("Screen during LSP wait:\n{screen_during}");
 
     // The cursor character should be replaced with the waiting indicator
     // Look for the waiting character "⋯" in the buffer area
@@ -1094,13 +1080,17 @@ fn test_rust_analyzer_rename_content_modified() -> std::io::Result<()> {
 
     // Get buffer content - should still show original "value" (NOT "amount")
     let buffer_content = harness.get_buffer_content();
-    println!("Buffer content before Enter:\n{}", buffer_content);
+    println!("Buffer content before Enter:\n{buffer_content}");
 
     // Verify the buffer was NOT modified - it should still contain "value"
-    assert!(buffer_content.contains("fn calculate(value: i32)"),
-            "Buffer should still contain original 'value' text (fix working!)");
-    assert!(!buffer_content.contains("amount"),
-            "Buffer should NOT contain 'amount' yet (not applied until LSP responds)");
+    assert!(
+        buffer_content.contains("fn calculate(value: i32)"),
+        "Buffer should still contain original 'value' text (fix working!)"
+    );
+    assert!(
+        !buffer_content.contains("amount"),
+        "Buffer should NOT contain 'amount' yet (not applied until LSP responds)"
+    );
 
     // Press Enter to confirm rename - this will send LSP request
     harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
@@ -1124,7 +1114,7 @@ fn test_rust_analyzer_rename_content_modified() -> std::io::Result<()> {
 
     // Check screen - should NOT contain "content modified" error anymore
     let screen = harness.screen_to_string();
-    println!("Screen output:\n{}", screen);
+    println!("Screen output:\n{screen}");
 
     // After fix, we should NOT see "content modified" error
     // The buffer content was not modified, so LSP can successfully rename
@@ -1133,20 +1123,26 @@ fn test_rust_analyzer_rename_content_modified() -> std::io::Result<()> {
     }
 
     // We should see either success message or pending LSP request
-    assert!(screen.contains("LSP:") || screen.contains("Renamed") || screen.contains("Renaming"),
-            "Should show LSP status message");
+    assert!(
+        screen.contains("LSP:") || screen.contains("Renamed") || screen.contains("Renaming"),
+        "Should show LSP status message"
+    );
 
     // CRITICAL: Verify the buffer content was actually changed!
     let buffer_content_after = harness.get_buffer_content();
-    println!("Buffer content after rename:\n{}", buffer_content_after);
+    println!("Buffer content after rename:\n{buffer_content_after}");
 
     // The rename should have been applied - buffer should contain "amount" NOT "value"
-    assert!(buffer_content_after.contains("fn calculate(amount: i32)"),
-            "Buffer should contain 'amount' after successful rename! Got:\n{}", buffer_content_after);
-    assert!(buffer_content_after.contains("println!(\"Value: {{}}\", amount)"),
-            "All references to 'value' should be renamed to 'amount'! Got:\n{}", buffer_content_after);
+    assert!(
+        buffer_content_after.contains("fn calculate(amount: i32)"),
+        "Buffer should contain 'amount' after successful rename! Got:\n{buffer_content_after}"
+    );
+    assert!(
+        buffer_content_after.contains("println!(\"Value: {{}}\", amount)"),
+        "All references to 'value' should be renamed to 'amount'! Got:\n{buffer_content_after}"
+    );
     assert!(!buffer_content_after.contains("fn calculate(value: i32)"),
-            "Buffer should NOT contain old 'value' parameter after rename! Got:\n{}", buffer_content_after);
+            "Buffer should NOT contain old 'value' parameter after rename! Got:\n{buffer_content_after}");
 
     println!("\n========================================");
     println!("SUCCESS: Rename applied successfully!");
@@ -1163,8 +1159,8 @@ fn test_rust_analyzer_rename_content_modified() -> std::io::Result<()> {
 #[test]
 fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
     use lsp_types::{
-        DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier,
-        Position, Range, TextDocumentEdit, TextEdit, Url, WorkspaceEdit,
+        DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Position, Range,
+        TextDocumentEdit, TextEdit, Url, WorkspaceEdit,
     };
 
     let mut harness = EditorTestHarness::new(80, 30)?;
@@ -1182,15 +1178,27 @@ fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
     let uri = Url::from_file_path(&test_file).unwrap();
     let text_edit_1 = TextEdit {
         range: Range {
-            start: Position { line: 0, character: 13 },
-            end: Position { line: 0, character: 18 },
+            start: Position {
+                line: 0,
+                character: 13,
+            },
+            end: Position {
+                line: 0,
+                character: 18,
+            },
         },
         new_text: "amount".to_string(),
     };
     let text_edit_2 = TextEdit {
         range: Range {
-            start: Position { line: 2, character: 26 },
-            end: Position { line: 2, character: 31 },
+            start: Position {
+                line: 2,
+                character: 26,
+            },
+            end: Position {
+                line: 2,
+                character: 31,
+            },
         },
         new_text: "amount".to_string(),
     };
@@ -1200,34 +1208,41 @@ fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
             uri,
             version: Some(1),
         },
-        edits: vec![
-            OneOf::Left(text_edit_1),
-            OneOf::Left(text_edit_2),
-        ],
+        edits: vec![OneOf::Left(text_edit_1), OneOf::Left(text_edit_2)],
     };
 
     let workspace_edit = WorkspaceEdit {
-        changes: None,  // rust-analyzer doesn't send this
+        changes: None, // rust-analyzer doesn't send this
         document_changes: Some(DocumentChanges::Edits(vec![text_doc_edit])),
         change_annotations: None,
     };
 
     // Call handle_rename_response directly
-    harness.editor_mut().handle_rename_response(0, Ok(workspace_edit))?;
+    harness
+        .editor_mut()
+        .handle_rename_response(0, Ok(workspace_edit))?;
     harness.render()?;
 
     // Verify the buffer was modified
     let buffer_content = harness.get_buffer_content();
-    println!("Buffer content after rename:\n{}", buffer_content);
+    println!("Buffer content after rename:\n{buffer_content}");
 
-    assert!(buffer_content.contains("fn calculate(amount: i32)"),
-            "Buffer should contain 'amount' in function parameter! Got:\n{}", buffer_content);
-    assert!(buffer_content.contains("amount);"),
-            "Buffer should contain 'amount' in println! Got:\n{}", buffer_content);
-    assert!(buffer_content.contains("let result = value * 2"),
-            "The second occurrence of 'value' should NOT be replaced (we only specified 2 edits)");
-    assert!(!buffer_content.contains("value: i32") && !buffer_content.contains("value);"),
-            "Buffer should NOT contain old 'value' in parameter or println! Got:\n{}", buffer_content);
+    assert!(
+        buffer_content.contains("fn calculate(amount: i32)"),
+        "Buffer should contain 'amount' in function parameter! Got:\n{buffer_content}"
+    );
+    assert!(
+        buffer_content.contains("amount);"),
+        "Buffer should contain 'amount' in println! Got:\n{buffer_content}"
+    );
+    assert!(
+        buffer_content.contains("let result = value * 2"),
+        "The second occurrence of 'value' should NOT be replaced (we only specified 2 edits)"
+    );
+    assert!(
+        !buffer_content.contains("value: i32") && !buffer_content.contains("value);"),
+        "Buffer should NOT contain old 'value' in parameter or println! Got:\n{buffer_content}"
+    );
 
     println!("SUCCESS: documentChanges handled correctly!");
 
@@ -1242,13 +1257,12 @@ fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
 fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     use std::io::Write;
     use std::process::Command;
-    use tracing_subscriber::{fmt, EnvFilter};
+    use tracing_subscriber::EnvFilter;
 
     // Initialize tracing for this test (will use RUST_LOG if set, otherwise INFO)
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info"))
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .with_test_writer()
         .try_init();
@@ -1296,7 +1310,7 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     // Create temp file for rust-analyzer logs
     let ra_log_file = temp_dir.path().join("rust-analyzer.log");
     tracing::info!("rust-analyzer will log to: {:?}", ra_log_file);
-    eprintln!("rust-analyzer will log to: {:?}", ra_log_file);
+    eprintln!("rust-analyzer will log to: {ra_log_file:?}");
 
     // Create custom config with rust-analyzer logging enabled
     let mut config = fresh::config::Config::default();
@@ -1304,7 +1318,10 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
         "rust".to_string(),
         fresh::lsp::LspServerConfig {
             command: "rust-analyzer".to_string(),
-            args: vec!["--log-file".to_string(), ra_log_file.to_string_lossy().to_string()],
+            args: vec![
+                "--log-file".to_string(),
+                ra_log_file.to_string_lossy().to_string(),
+            ],
             enabled: true,
             process_limits: fresh::process_limits::ProcessLimits::default(),
         },
@@ -1334,7 +1351,11 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
 
         let screen = harness.screen_to_string();
         if screen.contains("LSP (rust) ready") {
-            tracing::info!("✓ rust-analyzer initialized after {} iterations ({} seconds)", wait_count, wait_count / 2);
+            tracing::info!(
+                "✓ rust-analyzer initialized after {} iterations ({} seconds)",
+                wait_count,
+                wait_count / 2
+            );
             eprintln!("✓ rust-analyzer initialized and ready!");
             break;
         }
@@ -1342,7 +1363,11 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
         // Print status periodically (every 10 iterations = 5 seconds)
         if wait_count % 10 == 0 {
             let status = screen.lines().last().unwrap_or("");
-            tracing::info!("Still waiting for rust-analyzer... ({}s) Status: {}", wait_count / 2, status);
+            tracing::info!(
+                "Still waiting for rust-analyzer... ({}s) Status: {}",
+                wait_count / 2,
+                status
+            );
             eprintln!("  Waiting... ({}s) Status: {}", wait_count / 2, status);
         }
 
@@ -1362,7 +1387,7 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     harness.render()?;
 
     let buffer_before = harness.get_buffer_content();
-    eprintln!("\nBuffer before rename:\n{}", buffer_before);
+    eprintln!("\nBuffer before rename:\n{buffer_before}");
     eprintln!("Cursor positioned on 'log_line' variable");
 
     // Press F2 to enter rename mode
@@ -1408,9 +1433,9 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
 
     eprintln!("\n========================================");
     eprintln!("FINAL SCREEN:");
-    eprintln!("{}", screen_final);
+    eprintln!("{screen_final}");
     eprintln!("\nFINAL BUFFER:");
-    eprintln!("{}", buffer_final);
+    eprintln!("{buffer_final}");
     eprintln!("========================================\n");
 
     // Print rust-analyzer log for debugging
@@ -1421,14 +1446,18 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
         if let Ok(log_content) = std::fs::read_to_string(&ra_log_file) {
             // Print last 100 lines of the log
             let lines: Vec<&str> = log_content.lines().collect();
-            let start = if lines.len() > 100 { lines.len() - 100 } else { 0 };
+            let start = if lines.len() > 100 {
+                lines.len() - 100
+            } else {
+                0
+            };
             for line in &lines[start..] {
-                eprintln!("{}", line);
+                eprintln!("{line}");
             }
         }
         eprintln!("========================================\n");
     } else {
-        eprintln!("⚠ rust-analyzer log file not found at {:?}", ra_log_file);
+        eprintln!("⚠ rust-analyzer log file not found at {ra_log_file:?}");
     }
 
     // CHECK FOR THE BUG: ContentModified error

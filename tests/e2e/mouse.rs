@@ -3,7 +3,6 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
-use std::io::Write;
 
 /// Test scrollbar rendering in a single split
 #[test]
@@ -19,7 +18,7 @@ fn test_scrollbar_renders() {
 
     // Type enough content to make the buffer scrollable
     let content: String = (1..=50)
-        .map(|i| format!("Line {} with some content\n", i))
+        .map(|i| format!("Line {i} with some content\n"))
         .collect();
     let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
@@ -44,9 +43,7 @@ fn test_scrollbar_in_multiple_splits() {
 
     // Type content in first split
     for i in 1..=30 {
-        harness
-            .type_text(&format!("Left pane line {}\n", i))
-            .unwrap();
+        harness.type_text(&format!("Left pane line {i}\n")).unwrap();
     }
 
     // Create vertical split
@@ -57,7 +54,7 @@ fn test_scrollbar_in_multiple_splits() {
     // Type content in second split
     for i in 1..=30 {
         harness
-            .type_text(&format!("Right pane line {}\n", i))
+            .type_text(&format!("Right pane line {i}\n"))
             .unwrap();
     }
 
@@ -88,13 +85,15 @@ fn test_scrollbar_click_jump() {
 
     // Create a long document
     let content: String = (1..=100)
-        .map(|i| format!("Line {} content here\n", i))
+        .map(|i| format!("Line {i} content here\n"))
         .collect();
     let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
     // Scroll to top using multiple PageUp presses
     // Use send_key_repeat to avoid rendering after each key press (much faster)
-    harness.send_key_repeat(KeyCode::PageUp, KeyModifiers::NONE, 10).unwrap();
+    harness
+        .send_key_repeat(KeyCode::PageUp, KeyModifiers::NONE, 10)
+        .unwrap();
 
     harness.render().unwrap();
 
@@ -111,9 +110,7 @@ fn test_scrollbar_click_jump() {
     let new_top_line = harness.top_line_number();
     assert!(
         new_top_line > initial_top_line + 10,
-        "Clicking near bottom of scrollbar should scroll down significantly (was {}, now {})",
-        initial_top_line,
-        new_top_line
+        "Clicking near bottom of scrollbar should scroll down significantly (was {initial_top_line}, now {new_top_line})"
     );
 }
 
@@ -130,14 +127,14 @@ fn test_scrollbar_drag() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a long document
-    let content: String = (1..=100)
-        .map(|i| format!("Line {} with text\n", i))
-        .collect();
+    let content: String = (1..=100).map(|i| format!("Line {i} with text\n")).collect();
     let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
     // Scroll to top using multiple PageUp presses
     // Use send_key_repeat to avoid rendering after each key press (much faster)
-    harness.send_key_repeat(KeyCode::PageUp, KeyModifiers::NONE, 10).unwrap();
+    harness
+        .send_key_repeat(KeyCode::PageUp, KeyModifiers::NONE, 10)
+        .unwrap();
 
     harness.render().unwrap();
 
@@ -155,9 +152,7 @@ fn test_scrollbar_drag() {
     let new_top_line = harness.top_line_number();
     assert!(
         new_top_line > initial_top_line + 10,
-        "Dragging scrollbar should scroll content (was {}, now {})",
-        initial_top_line,
-        new_top_line
+        "Dragging scrollbar should scroll content (was {initial_top_line}, now {new_top_line})"
     );
 }
 
@@ -189,8 +184,7 @@ fn test_mouse_click_positions_cursor() {
     let new_pos = harness.cursor_position();
     assert!(
         new_pos < 15,
-        "Cursor should be near start after clicking first line (position: {})",
-        new_pos
+        "Cursor should be near start after clicking first line (position: {new_pos})"
     );
 }
 
@@ -228,7 +222,10 @@ fn test_mouse_click_switches_split_focus() {
     // After clicking and typing, content should update in the clicked split
     // This is a basic test - just verify no crash
     let screen = harness.screen_to_string();
-    assert!(!screen.is_empty(), "Editor should still be rendering after split click");
+    assert!(
+        !screen.is_empty(),
+        "Editor should still be rendering after split click"
+    );
 }
 
 /// Test mouse interaction with file explorer
@@ -344,9 +341,7 @@ fn test_scrollbar_horizontal_split() {
 
     // Type content in first split
     for i in 1..=30 {
-        harness
-            .type_text(&format!("Top pane line {}\n", i))
-            .unwrap();
+        harness.type_text(&format!("Top pane line {i}\n")).unwrap();
     }
 
     // Create horizontal split (Alt+h)
@@ -357,7 +352,7 @@ fn test_scrollbar_horizontal_split() {
     // Type content in second split
     for i in 1..=30 {
         harness
-            .type_text(&format!("Bottom pane line {}\n", i))
+            .type_text(&format!("Bottom pane line {i}\n"))
             .unwrap();
     }
 
@@ -388,7 +383,9 @@ fn test_mouse_click_with_horizontal_scroll() {
 
     // Scroll right to see more of the line
     // Use send_key_repeat to avoid rendering after each key press (much faster)
-    harness.send_key_repeat(KeyCode::Right, KeyModifiers::NONE, 10).unwrap();
+    harness
+        .send_key_repeat(KeyCode::Right, KeyModifiers::NONE, 10)
+        .unwrap();
 
     // Click somewhere in the visible area
     harness.mouse_click(40, 2).unwrap();
@@ -422,7 +419,10 @@ fn test_mouse_click_in_gutter() {
     // Clicking in gutter should not move cursor (or might, depending on implementation)
     // At minimum, it should not crash
     let screen = harness.screen_to_string();
-    assert!(!screen.is_empty(), "Editor should still work after gutter click");
+    assert!(
+        !screen.is_empty(),
+        "Editor should still work after gutter click"
+    );
 }
 
 /// Test dragging scrollbar to top
@@ -431,13 +431,13 @@ fn test_scrollbar_drag_to_top() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a long document
-    let content: String = (1..=100)
-        .map(|i| format!("Line {}\n", i))
-        .collect();
+    let content: String = (1..=100).map(|i| format!("Line {i}\n")).collect();
     let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
     // Move cursor to end to scroll down (loading from file starts at beginning)
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Cursor is at bottom, so we're scrolled down
@@ -453,9 +453,7 @@ fn test_scrollbar_drag_to_top() {
     let new_pos = harness.top_line_number();
     assert!(
         new_pos < scrolled_pos - 10,
-        "Dragging up should scroll up (was {}, now {})",
-        scrolled_pos,
-        new_pos
+        "Dragging up should scroll up (was {scrolled_pos}, now {new_pos})"
     );
 }
 
@@ -488,7 +486,11 @@ fn test_mouse_focus_after_file_explorer() {
 
 /// Helper function to extract scrollbar thumb info from screen
 /// Returns (thumb_start_row, thumb_end_row, thumb_size)
-fn extract_scrollbar_thumb_info(screen: &str, terminal_width: u16, terminal_height: u16) -> (usize, usize, usize) {
+fn extract_scrollbar_thumb_info(
+    screen: &str,
+    terminal_width: u16,
+    terminal_height: u16,
+) -> (usize, usize, usize) {
     let lines: Vec<&str> = screen.lines().collect();
     let scrollbar_col = terminal_width - 1; // Rightmost column
 
@@ -497,7 +499,12 @@ fn extract_scrollbar_thumb_info(screen: &str, terminal_width: u16, terminal_heig
 
     // Skip first line (tab bar) and last line (status bar)
     // Content area is from row 1 to terminal_height - 2
-    for (row_idx, line) in lines.iter().enumerate().skip(1).take((terminal_height - 2) as usize) {
+    for (row_idx, line) in lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .take((terminal_height - 2) as usize)
+    {
         let chars: Vec<char> = line.chars().collect();
         if (scrollbar_col as usize) < chars.len() {
             let ch = chars[scrollbar_col as usize];
@@ -515,7 +522,7 @@ fn extract_scrollbar_thumb_info(screen: &str, terminal_width: u16, terminal_heig
             let thumb_size = end - start + 1;
             (start, end, thumb_size)
         }
-        _ => (0, 0, 0)
+        _ => (0, 0, 0),
     }
 }
 
@@ -535,23 +542,23 @@ fn test_scrollbar_drag_to_absolute_bottom() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a document with 100 lines
-    let content: String = (1..=100)
-        .map(|i| format!("Line {} content\n", i))
-        .collect();
+    let content: String = (1..=100).map(|i| format!("Line {i} content\n")).collect();
     let _fixture = harness.load_buffer_from_text(&content).unwrap();
 
     // Scroll to top
     // Use send_key_repeat to avoid rendering after each key press (much faster)
-    harness.send_key_repeat(KeyCode::PageUp, KeyModifiers::NONE, 20).unwrap();
+    harness
+        .send_key_repeat(KeyCode::PageUp, KeyModifiers::NONE, 20)
+        .unwrap();
 
     harness.render().unwrap();
 
     let buffer_len = harness.buffer_len();
-    println!("Buffer length: {} bytes", buffer_len);
+    println!("Buffer length: {buffer_len} bytes");
 
     // Verify we're at the top
     let initial_top_line = harness.top_line_number();
-    println!("Initial top line: {}", initial_top_line);
+    println!("Initial top line: {initial_top_line}");
     assert!(initial_top_line <= 1, "Should be at top of document");
 
     // Terminal is 24 rows: row 0 = tab bar, rows 1-22 = content area (22 rows), row 23 = status bar
@@ -559,8 +566,10 @@ fn test_scrollbar_drag_to_absolute_bottom() {
     let scrollbar_bottom_row = 22;
 
     // Drag scrollbar from top (row 1) to absolute bottom (row 22)
-    println!("\nDragging scrollbar from row 1 to row {}", scrollbar_bottom_row);
-    harness.mouse_drag(79, 1, 79, scrollbar_bottom_row as u16).unwrap();
+    println!("\nDragging scrollbar from row 1 to row {scrollbar_bottom_row}");
+    harness
+        .mouse_drag(79, 1, 79, scrollbar_bottom_row as u16)
+        .unwrap();
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
@@ -570,40 +579,37 @@ fn test_scrollbar_drag_to_absolute_bottom() {
     let top_line_after_drag = harness.top_line_number();
 
     println!("\nAfter drag to bottom:");
-    println!("  Thumb start row: {}", thumb_start);
-    println!("  Thumb end row: {}", thumb_end);
-    println!("  Thumb size: {} chars", thumb_size);
-    println!("  Scrollbar bottom row: {}", scrollbar_bottom_row);
-    println!("  Top line number: {}", top_line_after_drag);
+    println!("  Thumb start row: {thumb_start}");
+    println!("  Thumb end row: {thumb_end}");
+    println!("  Thumb size: {thumb_size} chars");
+    println!("  Scrollbar bottom row: {scrollbar_bottom_row}");
+    println!("  Top line number: {top_line_after_drag}");
     println!("  Total lines in file: 100");
     println!("  Viewport height: 22 rows");
     println!("  Expected max top line: {} (100 - 22)", 100 - 22);
 
     // INVARIANT: When scrolled to EOF, thumb bottom should be at scrollbar bottom
-    println!("\nChecking invariant: thumb_end ({}) should equal scrollbar_bottom_row ({})", thumb_end, scrollbar_bottom_row);
+    println!("\nChecking invariant: thumb_end ({thumb_end}) should equal scrollbar_bottom_row ({scrollbar_bottom_row})");
 
     // Check cursor position - it should not be beyond buffer
     let cursor_pos = harness.cursor_position();
-    println!("Cursor position: {} bytes", cursor_pos);
-    println!("Buffer length: {} bytes", buffer_len);
+    println!("Cursor position: {cursor_pos} bytes");
+    println!("Buffer length: {buffer_len} bytes");
 
     // VERIFY FIX: Scrollbar should reach absolute bottom when dragged to row 22
     assert_eq!(
         thumb_end, scrollbar_bottom_row,
-        "Scrollbar thumb should reach absolute bottom (row {}) when dragged to bottom, but ended at row {}",
-        scrollbar_bottom_row, thumb_end
+        "Scrollbar thumb should reach absolute bottom (row {scrollbar_bottom_row}) when dragged to bottom, but ended at row {thumb_end}"
     );
 
     // VERIFY FIX: Viewport should be scrolled to maximum position
     assert_eq!(
         top_line_after_drag, 78,
-        "Viewport should be scrolled to line 78 (100 - 22), but is at line {}",
-        top_line_after_drag
+        "Viewport should be scrolled to line 78 (100 - 22), but is at line {top_line_after_drag}"
     );
 
     assert!(
         cursor_pos <= buffer_len,
-        "Cursor should not be beyond buffer end. Cursor at {}, buffer length {}",
-        cursor_pos, buffer_len
+        "Cursor should not be beyond buffer end. Cursor at {cursor_pos}, buffer length {buffer_len}"
     );
 }

@@ -58,7 +58,13 @@ impl HelpRenderer {
     /// * `area` - The rectangular area to render in
     /// * `keybindings` - The keybinding resolver to get bindings from
     /// * `theme` - The active theme for colors
-    pub fn render(&self, frame: &mut Frame, area: Rect, keybindings: &KeybindingResolver, theme: &crate::theme::Theme) {
+    pub fn render(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        keybindings: &KeybindingResolver,
+        theme: &crate::theme::Theme,
+    ) {
         // Get all keybindings
         let bindings = keybindings.get_all_bindings();
 
@@ -102,7 +108,9 @@ impl HelpRenderer {
                 end_idx,
                 bindings.len()
             ),
-            Style::default().fg(theme.status_bar_fg).bg(theme.status_bar_bg),
+            Style::default()
+                .fg(theme.status_bar_fg)
+                .bg(theme.status_bar_bg),
         )]));
 
         let help = Paragraph::new(lines)

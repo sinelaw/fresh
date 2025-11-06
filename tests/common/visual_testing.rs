@@ -3,11 +3,9 @@
 use ratatui::buffer::Buffer;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 /// Metadata for a single step in a visual test flow
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,7 +181,11 @@ fn should_update_image(image_path: &Path) -> io::Result<bool> {
 }
 
 /// Render a ratatui Buffer to SVG format
-pub fn render_buffer_to_svg(buffer: &Buffer, cursor_pos: (u16, u16), path: &Path) -> io::Result<()> {
+pub fn render_buffer_to_svg(
+    buffer: &Buffer,
+    cursor_pos: (u16, u16),
+    path: &Path,
+) -> io::Result<()> {
     const CHAR_WIDTH: u16 = 9;
     const CHAR_HEIGHT: u16 = 18;
     const FONT_SIZE: u16 = 14;
@@ -195,13 +197,12 @@ pub fn render_buffer_to_svg(buffer: &Buffer, cursor_pos: (u16, u16), path: &Path
 
     let mut svg = format!(
         r##"<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}" viewBox="0 0 {} {}">
+<svg xmlns="http://www.w3.org/2000/svg" width="{svg_width}" height="{svg_height}" viewBox="0 0 {svg_width} {svg_height}">
 <style>
-    .terminal {{ font-family: 'Courier New', 'Consolas', monospace; font-size: {}px; white-space: pre; }}
+    .terminal {{ font-family: 'Courier New', 'Consolas', monospace; font-size: {FONT_SIZE}px; white-space: pre; }}
 </style>
 <rect width="100%" height="100%" fill="#000000"/>
-"##,
-        svg_width, svg_height, svg_width, svg_height, FONT_SIZE
+"##
     );
 
     // Render cells
@@ -235,16 +236,22 @@ pub fn render_buffer_to_svg(buffer: &Buffer, cursor_pos: (u16, u16), path: &Path
                 let escaped = xml_escape(symbol);
 
                 // Add bold/italic/underline classes
-                let mut classes = String::from("terminal");
+                let classes = String::from("terminal");
                 let mut style_str = String::new();
 
                 if style.add_modifier.contains(ratatui::style::Modifier::BOLD) {
                     style_str.push_str("font-weight:bold;");
                 }
-                if style.add_modifier.contains(ratatui::style::Modifier::ITALIC) {
+                if style
+                    .add_modifier
+                    .contains(ratatui::style::Modifier::ITALIC)
+                {
                     style_str.push_str("font-style:italic;");
                 }
-                if style.add_modifier.contains(ratatui::style::Modifier::UNDERLINED) {
+                if style
+                    .add_modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED)
+                {
                     style_str.push_str("text-decoration:underline;");
                 }
 
@@ -303,7 +310,7 @@ fn color_to_hex(color: Color) -> String {
         Color::LightMagenta => "#ff92df".to_string(),
         Color::LightCyan => "#a4ffff".to_string(),
         Color::White => "#ffffff".to_string(),
-        Color::Rgb(r, g, b) => format!("#{:02x}{:02x}{:02x}", r, g, b),
+        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
         Color::Indexed(i) => {
             // Basic 16 colors approximation
             match i {
