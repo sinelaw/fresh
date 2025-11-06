@@ -63,15 +63,20 @@ impl EditorTestHarness {
     /// and automatically cleaned up when the harness is dropped.
     /// This method does NOT modify the process's current directory, making tests
     /// fully hermetic and safe to run in parallel.
+    ///
+    /// Creates a subdirectory named "project_root" for deterministic paths in snapshots.
     pub fn with_temp_project(width: u16, height: u16) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
-        let temp_path = temp_dir.path().to_path_buf();
+
+        // Create a subdirectory with a constant name for deterministic paths
+        let project_root = temp_dir.path().join("project_root");
+        std::fs::create_dir(&project_root)?;
 
         // Create editor with explicit working directory (no global state modification!)
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
         let config = Config::default();
-        let editor = Editor::with_working_dir(config, width, height, Some(temp_path))?;
+        let editor = Editor::with_working_dir(config, width, height, Some(project_root))?;
 
         Ok(EditorTestHarness {
             editor,
@@ -100,8 +105,9 @@ impl EditorTestHarness {
     }
 
     /// Get the path to the temp project directory (if created with with_temp_project)
+    /// Returns the "project_root" subdirectory path for deterministic naming
     pub fn project_dir(&self) -> Option<PathBuf> {
-        self._temp_dir.as_ref().map(|d| d.path().to_path_buf())
+        self._temp_dir.as_ref().map(|d| d.path().join("project_root"))
     }
 
     /// Open a file in the editor
