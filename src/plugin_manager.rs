@@ -11,7 +11,7 @@ use crate::commands::Command;
 use crate::event::BufferId;
 use crate::hooks::{HookArgs, HookRegistry};
 use crate::keybindings::{Action, KeyContext};
-use crate::plugin_api::{PluginApi, PluginCommand};
+use crate::plugin_api::{EditorStateSnapshot, PluginApi, PluginCommand};
 use mlua::{Lua, Table};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -73,11 +73,15 @@ impl PluginManager {
         std::fs::write(&debug_log_path, "=== Plugin Debug Log ===\n")
             .map_err(|e| mlua::Error::RuntimeError(format!("Failed to create debug log: {}", e)))?;
 
+        // Create editor state snapshot for query API
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
         // Create plugin API
         let plugin_api = PluginApi::new(
             Arc::clone(&hooks),
             Arc::clone(&commands),
             command_sender,
+            Arc::clone(&state_snapshot),
         );
 
         // Set up Lua globals and bindings
@@ -248,6 +252,136 @@ impl PluginManager {
             Ok(())
         })?;
         editor.set("on", on_hook)?;
+
+        // Clone API for query functions
+        let api_clone = api.clone();
+
+        // editor.get_active_buffer_id() - Get the ID of the currently active buffer
+        let get_active_buffer_id = lua.create_function(move |_, ()| {
+            let buffer_id = api_clone.get_active_buffer_id();
+            Ok(buffer_id.0)
+        })?;
+        editor.set("get_active_buffer_id", get_active_buffer_id)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.get_buffer_content(buffer_id) - Get the full content of a buffer
+        let get_buffer_content = lua.create_function(move |_, buffer_id: usize| {
+            Ok(api_clone.get_buffer_content(BufferId(buffer_id)))
+        })?;
+        editor.set("get_buffer_content", get_buffer_content)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.get_line(buffer_id, line_num) - Get a specific line from a buffer (1-indexed)
+        let get_line = lua.create_function(move |_, (buffer_id, line_num): (usize, usize)| {
+            Ok(api_clone.get_line(BufferId(buffer_id), line_num))
+        })?;
+        editor.set("get_line", get_line)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.list_buffers() - Get info about all open buffers
+        let list_buffers = lua.create_function(move |lua, ()| {
+            let buffers = api_clone.list_buffers();
+            let result = lua.create_table()?;
+            for (idx, buf_info) in buffers.iter().enumerate() {
+                let buf_table = lua.create_table()?;
+                buf_table.set("id", buf_info.id.0)?;
+                buf_table.set("path", buf_info.path.as_ref().and_then(|p| p.to_str()).unwrap_or(""))?;
+                buf_table.set("modified", buf_info.modified)?;
+                buf_table.set("length", buf_info.length)?;
+                result.set(idx + 1, buf_table)?;
+            }
+            Ok(result)
+        })?;
+        editor.set("list_buffers", list_buffers)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.get_buffer_info(buffer_id) - Get info about a specific buffer
+        let get_buffer_info = lua.create_function(move |lua, buffer_id: usize| {
+            if let Some(buf_info) = api_clone.get_buffer_info(BufferId(buffer_id)) {
+                let buf_table = lua.create_table()?;
+                buf_table.set("id", buf_info.id.0)?;
+                buf_table.set("path", buf_info.path.as_ref().and_then(|p| p.to_str()).unwrap_or(""))?;
+                buf_table.set("modified", buf_info.modified)?;
+                buf_table.set("length", buf_info.length)?;
+                Ok(Some(buf_table))
+            } else {
+                Ok(None)
+            }
+        })?;
+        editor.set("get_buffer_info", get_buffer_info)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.get_primary_cursor() - Get primary cursor info for active buffer
+        let get_primary_cursor = lua.create_function(move |lua, ()| {
+            if let Some(cursor) = api_clone.get_primary_cursor() {
+                let cursor_table = lua.create_table()?;
+                cursor_table.set("position", cursor.position)?;
+                if let Some(sel) = cursor.selection {
+                    let sel_table = lua.create_table()?;
+                    sel_table.set("start", sel.start)?;
+                    sel_table.set("end", sel.end)?;
+                    cursor_table.set("selection", sel_table)?;
+                } else {
+                    cursor_table.set("selection", mlua::Value::Nil)?;
+                }
+                Ok(Some(cursor_table))
+            } else {
+                Ok(None)
+            }
+        })?;
+        editor.set("get_primary_cursor", get_primary_cursor)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.get_all_cursors() - Get all cursor info for active buffer
+        let get_all_cursors = lua.create_function(move |lua, ()| {
+            let cursors = api_clone.get_all_cursors();
+            let result = lua.create_table()?;
+            for (idx, cursor) in cursors.iter().enumerate() {
+                let cursor_table = lua.create_table()?;
+                cursor_table.set("position", cursor.position)?;
+                if let Some(sel) = &cursor.selection {
+                    let sel_table = lua.create_table()?;
+                    sel_table.set("start", sel.start)?;
+                    sel_table.set("end", sel.end)?;
+                    cursor_table.set("selection", sel_table)?;
+                } else {
+                    cursor_table.set("selection", mlua::Value::Nil)?;
+                }
+                result.set(idx + 1, cursor_table)?;
+            }
+            Ok(result)
+        })?;
+        editor.set("get_all_cursors", get_all_cursors)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.get_viewport() - Get viewport information for active buffer
+        let get_viewport = lua.create_function(move |lua, ()| {
+            if let Some(viewport) = api_clone.get_viewport() {
+                let vp_table = lua.create_table()?;
+                vp_table.set("top_byte", viewport.top_byte)?;
+                vp_table.set("left_column", viewport.left_column)?;
+                vp_table.set("width", viewport.width)?;
+                vp_table.set("height", viewport.height)?;
+                Ok(Some(vp_table))
+            } else {
+                Ok(None)
+            }
+        })?;
+        editor.set("get_viewport", get_viewport)?;
 
         // Set the editor table as a global
         globals.set("editor", editor)?;
@@ -420,6 +554,11 @@ impl PluginManager {
             .eval::<mlua::Value>()
             .map(|v| format!("{:?}", v))
             .map_err(|e| format!("{}", e))
+    }
+
+    /// Get access to the state snapshot for updating (used by Editor)
+    pub fn state_snapshot_handle(&self) -> Arc<RwLock<EditorStateSnapshot>> {
+        self.plugin_api.state_snapshot_handle()
     }
 }
 
@@ -639,5 +778,228 @@ mod tests {
         assert!(result.is_ok());
 
         assert_eq!(manager.list_plugins().len(), 0);
+    }
+
+    #[test]
+    fn test_get_active_buffer_id_from_lua() {
+        use crate::plugin_api::{BufferInfo, EditorStateSnapshot};
+
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let manager = PluginManager::new(hooks, commands).unwrap();
+
+        // Set up state snapshot
+        {
+            let snapshot_handle = manager.state_snapshot_handle();
+            let mut snapshot = snapshot_handle.write().unwrap();
+            snapshot.active_buffer_id = BufferId(42);
+        }
+
+        let result = manager.eval("return editor.get_active_buffer_id()");
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("42"));
+    }
+
+    #[test]
+    fn test_get_buffer_content_from_lua() {
+        use crate::plugin_api::EditorStateSnapshot;
+
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let manager = PluginManager::new(hooks, commands).unwrap();
+
+        // Set up state snapshot
+        {
+            let snapshot_handle = manager.state_snapshot_handle();
+            let mut snapshot = snapshot_handle.write().unwrap();
+            snapshot.buffer_contents.insert(BufferId(1), "Test content".to_string());
+        }
+
+        let result = manager.eval("return editor.get_buffer_content(1)");
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("Test content"), "Output: {}", output);
+    }
+
+    #[test]
+    fn test_get_line_from_lua() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let manager = PluginManager::new(hooks, commands).unwrap();
+
+        // Set up state snapshot
+        {
+            let snapshot_handle = manager.state_snapshot_handle();
+            let mut snapshot = snapshot_handle.write().unwrap();
+            snapshot.buffer_contents.insert(BufferId(1), "Line 1\nLine 2\nLine 3".to_string());
+        }
+
+        // Test getting line 2 (1-indexed)
+        let result = manager.eval("return editor.get_line(1, 2)");
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("Line 2"), "Output: {}", output);
+    }
+
+    #[test]
+    fn test_list_buffers_from_lua() {
+        use crate::plugin_api::BufferInfo;
+
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let manager = PluginManager::new(hooks, commands).unwrap();
+
+        // Set up state snapshot
+        {
+            let snapshot_handle = manager.state_snapshot_handle();
+            let mut snapshot = snapshot_handle.write().unwrap();
+            snapshot.buffers.insert(BufferId(1), BufferInfo {
+                id: BufferId(1),
+                path: Some(std::path::PathBuf::from("/file1.txt")),
+                modified: false,
+                length: 100,
+            });
+            snapshot.buffers.insert(BufferId(2), BufferInfo {
+                id: BufferId(2),
+                path: Some(std::path::PathBuf::from("/file2.txt")),
+                modified: true,
+                length: 200,
+            });
+        }
+
+        // Test list_buffers
+        let result = manager.eval("local buffers = editor.list_buffers(); return #buffers");
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("2"), "Output: {}", output);
+
+        // Test accessing buffer properties
+        let result = manager.eval("local buffers = editor.list_buffers(); return buffers[1].id");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_get_buffer_info_from_lua() {
+        use crate::plugin_api::BufferInfo;
+
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let manager = PluginManager::new(hooks, commands).unwrap();
+
+        // Set up state snapshot
+        {
+            let snapshot_handle = manager.state_snapshot_handle();
+            let mut snapshot = snapshot_handle.write().unwrap();
+            snapshot.buffers.insert(BufferId(5), BufferInfo {
+                id: BufferId(5),
+                path: Some(std::path::PathBuf::from("/test.txt")),
+                modified: true,
+                length: 150,
+            });
+        }
+
+        // Test get_buffer_info
+        let result = manager.eval("local info = editor.get_buffer_info(5); return info.id");
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("5"));
+
+        let result = manager.eval("local info = editor.get_buffer_info(5); return info.modified");
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("true"));
+
+        let result = manager.eval("local info = editor.get_buffer_info(5); return info.length");
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("150"));
+    }
+
+    #[test]
+    fn test_get_primary_cursor_from_lua() {
+        use crate::plugin_api::CursorInfo;
+
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let manager = PluginManager::new(hooks, commands).unwrap();
+
+        // Set up state snapshot
+        {
+            let snapshot_handle = manager.state_snapshot_handle();
+            let mut snapshot = snapshot_handle.write().unwrap();
+            snapshot.primary_cursor = Some(CursorInfo {
+                position: 123,
+                selection: Some(100..123),
+            });
+        }
+
+        // Test get_primary_cursor
+        let result = manager.eval("local cursor = editor.get_primary_cursor(); return cursor.position");
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("123"));
+
+        let result = manager.eval("local cursor = editor.get_primary_cursor(); return cursor.selection.start");
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("100"));
+    }
+
+    #[test]
+    fn test_get_all_cursors_from_lua() {
+        use crate::plugin_api::CursorInfo;
+
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let manager = PluginManager::new(hooks, commands).unwrap();
+
+        // Set up state snapshot
+        {
+            let snapshot_handle = manager.state_snapshot_handle();
+            let mut snapshot = snapshot_handle.write().unwrap();
+            snapshot.all_cursors = vec![
+                CursorInfo { position: 10, selection: None },
+                CursorInfo { position: 20, selection: Some(15..20) },
+                CursorInfo { position: 30, selection: None },
+            ];
+        }
+
+        // Test get_all_cursors
+        let result = manager.eval("local cursors = editor.get_all_cursors(); return #cursors");
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("3"));
+
+        let result = manager.eval("local cursors = editor.get_all_cursors(); return cursors[2].position");
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("20"));
+    }
+
+    #[test]
+    fn test_get_viewport_from_lua() {
+        use crate::plugin_api::ViewportInfo;
+
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let manager = PluginManager::new(hooks, commands).unwrap();
+
+        // Set up state snapshot
+        {
+            let snapshot_handle = manager.state_snapshot_handle();
+            let mut snapshot = snapshot_handle.write().unwrap();
+            snapshot.viewport = Some(ViewportInfo {
+                top_byte: 500,
+                left_column: 10,
+                width: 120,
+                height: 40,
+            });
+        }
+
+        // Test get_viewport
+        let result = manager.eval("local vp = editor.get_viewport(); return vp.top_byte");
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("500"));
+
+        let result = manager.eval("local vp = editor.get_viewport(); return vp.width");
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("120"));
+
+        let result = manager.eval("local vp = editor.get_viewport(); return vp.height");
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("40"));
     }
 }
