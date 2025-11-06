@@ -299,6 +299,83 @@ fn test_horizontal_scroll_with_arrows() {
     );
 }
 
+/// Test cursor wrapping behavior when navigating horizontally on long lines
+/// This test verifies that when line wrap is disabled and a line extends beyond
+/// the viewport width, pressing right arrow at the end of the line moves directly
+/// to the start of the next line, and pressing left from the start of a line moves
+/// to the end of the previous line.
+#[test]
+fn test_cursor_wrap_on_long_line_navigation() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::Config;
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    // Create a long line that extends well beyond viewport width (100 chars)
+    // followed by a second line
+    let long_line = "a".repeat(100);
+    harness.type_text(&long_line).unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.type_text("second line").unwrap();
+
+    // Move to start of document
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Navigate character-by-character to the end of the first line
+    // This simulates a user holding down the right arrow key
+    for i in 0..100 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        assert_eq!(harness.cursor_position(), i + 1, "Cursor should advance byte by byte");
+    }
+    harness.render().unwrap();
+
+    // After 100 right arrows, we should be at position 100
+    // Let's check what's at this position
+    let buffer_content = harness.get_buffer_content();
+    println!("Buffer length: {}", buffer_content.len());
+    println!("Character at position 99 (last 'a'): {:?}", buffer_content.chars().nth(99));
+    println!("Character at position 100 (should be newline): {:?}", buffer_content.chars().nth(100));
+    println!("Character at position 101 (first char of second line): {:?}", buffer_content.chars().nth(101));
+
+    assert_eq!(harness.cursor_position(), 100, "Should be at position 100");
+
+    let screen_pos_at_end = harness.screen_cursor_position();
+    println!("Screen position at end of long line: ({}, {})", screen_pos_at_end.0, screen_pos_at_end.1);
+
+    // Now press right one more time - this should take us to the next line
+    // User expectation: cursor wraps to start of next line
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let pos_after_wrap = harness.cursor_position();
+    println!("Cursor position after wrapping: {}", pos_after_wrap);
+
+    // Position 101 is start of second line (after the newline at position 100)
+    assert_eq!(pos_after_wrap, 101, "Cursor should be on next line");
+
+    // Verify cursor is visually on the second line
+    let screen_pos_on_second_line = harness.screen_cursor_position();
+    println!("Screen position on second line: ({}, {})", screen_pos_on_second_line.0, screen_pos_on_second_line.1);
+    assert_eq!(screen_pos_on_second_line.1, screen_pos_at_end.1 + 1, "Cursor should move down one line visually");
+
+    // Now test the reverse: press left to wrap back to the previous line
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let pos_after_left_wrap = harness.cursor_position();
+    println!("Cursor position after left wrap: {}", pos_after_left_wrap);
+
+    // Should be back at position 100 (end of first line)
+    assert_eq!(pos_after_left_wrap, 100, "Cursor should wrap back to end of previous line");
+
+    // Verify cursor is visually back on the first line
+    let screen_pos_back = harness.screen_cursor_position();
+    println!("Screen position back on first line: ({}, {})", screen_pos_back.0, screen_pos_back.1);
+    assert_eq!(screen_pos_back.1, screen_pos_at_end.1, "Cursor should be back on first line visually");
+}
+
 /// Test vertical scrolling when typing lines to the bottom of screen
 /// The viewport should scroll down to keep the cursor visible
 #[test]
