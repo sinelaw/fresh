@@ -12,6 +12,7 @@ pub mod cursor;
 pub mod edit;
 pub mod editor;
 pub mod event;
+pub mod event_hooks;
 pub mod file_tree;
 pub mod fs;
 pub mod git;
