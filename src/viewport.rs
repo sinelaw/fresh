@@ -53,9 +53,11 @@ impl Viewport {
     }
 
     /// Calculate the gutter width based on buffer length
-    /// Format is: "{:>N} │ " where N is the number of digits
-    /// Total width = N + 3 (for " │ ")
+    /// Format is: "{:>N} │ " where N is the number of digits for line numbers
+    /// The actual separator " │ " has 3 characters (space, box char, space)
+    /// Total width = N + 3 (where N >= 4 minimum)
     /// This is a heuristic that assumes approximately 80 chars per line
+    /// Note: The space before │ is reserved for margin indicators (breakpoints, errors, etc)
     pub fn gutter_width(&self, buffer: &Buffer) -> usize {
         let buffer_len = buffer.len();
         let estimated_lines = (buffer_len / 80).max(1);
