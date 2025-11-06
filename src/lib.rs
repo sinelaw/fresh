@@ -30,6 +30,7 @@ pub mod overlay;
 pub mod persistence;
 pub mod plugin_api;
 pub mod plugin_manager;
+pub mod plugin_process;
 pub mod popup;
 pub mod position_history;
 pub mod process_limits;

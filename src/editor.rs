@@ -1708,6 +1708,19 @@ impl Editor {
                     tracing::debug!("File explorer refresh completed for node {:?}", node_id);
                     self.set_status_message("Refreshed".to_string());
                 }
+                AsyncMessage::PluginProcessOutput {
+                    process_id,
+                    stdout,
+                    stderr,
+                    exit_code,
+                } => {
+                    // Plugin process completed - execute callback
+                    if let Some(ref mut manager) = self.plugin_manager {
+                        if let Err(e) = manager.execute_process_callback(process_id, stdout, stderr, exit_code) {
+                            tracing::error!("Error executing process callback: {}", e);
+                        }
+                    }
+                }
             }
         }
 

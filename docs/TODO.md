@@ -91,12 +91,15 @@ The primary goal of the plugin system is to enable powerful, interactive, and as
 - [x] `editor.get_active_buffer_id()` & `editor.get_buffer_info(buffer_id)` & `editor.list_buffers()`
 - [x] `editor.get_viewport()`
 
-#### **High Priority: Async Task & Process API**
+#### **High Priority: Async Task & Process API** 🚧 IN PROGRESS
 *Essential for git operations and external tools (`fd`, `rg`).*
-- [ ] `editor.spawn(command, args, callback)` - Spawn async process with stdout/stderr streaming.
-- [ ] Process cancellation/kill support.
-- [ ] Working directory control.
-- [ ] `editor.async(function)` for running Lua asynchronously.
+- [x] Core infrastructure: `spawn_plugin_process()` function with tokio
+- [x] `AsyncMessage::PluginProcessOutput` for result delivery
+- [x] Process callback execution in PluginManager
+- [ ] Lua binding for `editor.spawn(command, args, callback)` (Lua↔Rust callback integration complex)
+- [ ] Working directory control (infrastructure ready, needs Lua binding)
+- [ ] Process cancellation/kill support
+- [ ] `editor.async(function)` for running Lua asynchronously
 
 #### **High Priority: Interactive UI API**
 *Required for interactive selection, dialogs, and custom views.*
