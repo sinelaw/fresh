@@ -136,6 +136,21 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// Send the same key press multiple times without rendering after each one
+    /// This is optimized for tests that need to send many keys in a row (e.g., scrolling)
+    /// Only renders once at the end, which is much faster than calling send_key() in a loop
+    pub fn send_key_repeat(&mut self, code: KeyCode, modifiers: KeyModifiers, count: usize) -> io::Result<()> {
+        for _ in 0..count {
+            // Call handle_key directly without rendering (unlike send_key which renders every time)
+            self.editor.handle_key(code, modifiers)?;
+        }
+        // Process any async messages that accumulated
+        self.editor.process_async_messages();
+        // Render once at the end instead of after every key press
+        self.render()?;
+        Ok(())
+    }
+
     /// Simulate typing a string of text
     /// Optimized to avoid rendering after each character - only renders once at the end
     pub fn type_text(&mut self, text: &str) -> io::Result<()> {

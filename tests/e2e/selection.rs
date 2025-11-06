@@ -542,17 +542,13 @@ fn test_select_word_after_scrolling() {
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .unwrap();
-    for _ in 0..50 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
+    // Use send_key_repeat to avoid rendering after each key press (much faster)
+    harness.send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 50).unwrap();
 
     // Move to middle of a word on line 50
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
-    for _ in 0..10 {
-        harness
-            .send_key(KeyCode::Right, KeyModifiers::NONE)
-            .unwrap();
-    }
+    // Use send_key_repeat to avoid rendering after each key press (much faster)
+    harness.send_key_repeat(KeyCode::Right, KeyModifiers::NONE, 10).unwrap();
 
     // Select word with Ctrl+W
     harness
@@ -575,6 +571,14 @@ fn test_select_word_after_scrolling() {
 #[test]
 fn test_expand_selection_after_scrolling() {
     use crossterm::event::{KeyCode, KeyModifiers};
+
+    // Initialize tracing
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
+        .try_init();
+
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Create a buffer with many lines
@@ -588,9 +592,8 @@ fn test_expand_selection_after_scrolling() {
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .unwrap();
-    for _ in 0..30 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
+    // Use send_key_repeat to avoid rendering after each key press (much faster)
+    harness.send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 30).unwrap();
 
     // Move to middle of "alpha" (position 3, 'h')
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
