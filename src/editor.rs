@@ -2872,22 +2872,21 @@ impl Editor {
                             rename_state.end_pos = start_pos + new_len;
                         }
 
-                        // Update the overlay
+                        // Update the overlay - keep it visible even when empty to show rename mode is active
                         let remove_event = Event::RemoveOverlay { overlay_id: overlay_id.clone() };
                         self.active_state_mut().apply(&remove_event);
 
-                        if !new_text.is_empty() {
-                            let add_event = Event::AddOverlay {
-                                overlay_id,
-                                range: start_pos..(start_pos + new_len),
-                                face: crate::event::OverlayFace::Background {
-                                    color: (50, 100, 200),
-                                },
-                                priority: 100,
-                                message: Some("Renaming".to_string()),
-                            };
-                            self.active_state_mut().apply(&add_event);
-                        }
+                        // Always add overlay back, even for empty text (0-length range is fine)
+                        let add_event = Event::AddOverlay {
+                            overlay_id,
+                            range: start_pos..(start_pos + new_len),
+                            face: crate::event::OverlayFace::Background {
+                                color: (50, 100, 200),
+                            },
+                            priority: 100,
+                            message: Some("Renaming".to_string()),
+                        };
+                        self.active_state_mut().apply(&add_event);
                     }
                 } else {
                     // Normal backspace handling - fall through to default action handling below

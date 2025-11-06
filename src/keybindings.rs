@@ -456,8 +456,8 @@ impl KeybindingResolver {
             }
         }
 
-        // Handle regular character input (only in Normal and Prompt contexts)
-        if matches!(context, KeyContext::Normal | KeyContext::Prompt) {
+        // Handle regular character input in text input contexts
+        if context.allows_text_input() {
             if event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT {
                 if let KeyCode::Char(c) = event.code {
                     tracing::debug!("  -> Character input: '{}'", c);
@@ -760,9 +760,12 @@ impl KeybindingResolver {
         all_bindings.insert(KeyContext::FileExplorer, explorer_bindings);
 
         // Rename context bindings
+        // Note: Character input is handled by allows_text_input() in resolve()
         let mut rename_bindings = HashMap::new();
         rename_bindings.insert((KeyCode::Enter, KeyModifiers::empty()), Action::RenameConfirm);
         rename_bindings.insert((KeyCode::Esc, KeyModifiers::empty()), Action::RenameCancel);
+        rename_bindings.insert((KeyCode::Backspace, KeyModifiers::empty()), Action::DeleteBackward);
+        rename_bindings.insert((KeyCode::Delete, KeyModifiers::empty()), Action::DeleteForward);
         all_bindings.insert(KeyContext::Rename, rename_bindings);
 
         all_bindings
