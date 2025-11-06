@@ -104,6 +104,14 @@ impl EditorTestHarness {
         })
     }
 
+    /// Create new test harness with line wrapping disabled
+    /// Useful for tests that expect specific cursor positions without line wrapping
+    pub fn new_no_wrap(width: u16, height: u16) -> io::Result<Self> {
+        let mut config = Config::default();
+        config.editor.line_wrap = false;
+        Self::with_config(width, height, config)
+    }
+
     /// Get the path to the temp project directory (if created with with_temp_project)
     /// Returns the "project_root" subdirectory path for deterministic naming
     pub fn project_dir(&self) -> Option<PathBuf> {

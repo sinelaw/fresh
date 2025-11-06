@@ -184,7 +184,7 @@ fn test_margin_after_editing() {
 /// Test cursor position with margin (cursor should account for margin width)
 #[test]
 fn test_cursor_position_with_margin() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = EditorTestHarness::new_no_wrap(80, 24).unwrap();
 
     harness.type_text("abc").unwrap();
     harness.render().unwrap();

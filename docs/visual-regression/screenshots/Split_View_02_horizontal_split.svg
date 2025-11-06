@@ -354,5 +354,5 @@
   <rect x="1062" y="522" width="9" height="18" fill="#ffffff"/>
   <rect x="1071" y="522" width="9" height="18" fill="#ffffff"/>
   <!-- Cursor indicator -->
-  <rect x="72" y="306" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
+  <rect x="72" y="288" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
 </svg>
