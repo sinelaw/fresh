@@ -308,7 +308,7 @@ impl EditorTestHarness {
 
     /// Apply an event directly to the active buffer
     pub fn apply_event(&mut self, event: fresh::event::Event) -> io::Result<()> {
-        self.editor.apply_event_to_active_buffer(event);
+        self.editor.apply_event_to_active_buffer(&event);
         Ok(())
     }
 

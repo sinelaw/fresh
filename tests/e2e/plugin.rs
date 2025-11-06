@@ -359,3 +359,136 @@ fn test_todo_highlighter_updates_on_edit() {
          new byte position and didn't get a new overlay. Overlays need to update when buffer changes!"
     );
 }
+
+/// Test TODO Highlighter updates correctly when deleting text
+#[test]
+fn test_todo_highlighter_updates_on_delete() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the TODO highlighter plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/todo_highlighter.lua");
+    let plugin_dest = plugins_dir.join("todo_highlighter.lua");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create test file with TODO on second line
+    let test_file_content = "// FIXME: Delete this line\n// TODO: Keep this one\n";
+    let fixture = TestFixture::new("test_todo.txt", test_file_content).unwrap();
+
+    // Create harness with the project directory (so plugins load)
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Enable highlighting
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("TODO Highlighter: Enable").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify both keywords are highlighted initially
+    let screen_before = harness.screen_to_string();
+    println!("Screen before delete:\n{}", screen_before);
+
+    let mut found_fixme_before = false;
+    let mut found_todo_before = false;
+
+    for (y, line) in screen_before.lines().enumerate() {
+        if line.contains("FIXME") {
+            if let Some(x) = line.find("FIXME") {
+                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
+                    if let Some(bg) = style.bg {
+                        if matches!(bg, ratatui::style::Color::Rgb(_, _, _)) {
+                            println!("Found FIXME highlighted at ({}, {}) before delete", x, y);
+                            found_fixme_before = true;
+                        }
+                    }
+                }
+            }
+        }
+        if line.contains("TODO") {
+            if let Some(x) = line.find("TODO") {
+                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
+                    if let Some(bg) = style.bg {
+                        if matches!(bg, ratatui::style::Color::Rgb(_, _, _)) {
+                            println!("Found TODO highlighted at ({}, {}) before delete", x, y);
+                            found_todo_before = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(found_fixme_before, "FIXME should be highlighted initially");
+    assert!(found_todo_before, "TODO should be highlighted initially");
+
+    // Now delete the first line (FIXME line)
+    // Go to beginning
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Select the entire first line
+    harness
+        .send_key(KeyCode::End, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap(); // Include the newline
+    harness.render().unwrap();
+
+    // Delete the selection
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_after = harness.screen_to_string();
+    println!("Screen after deleting FIXME line:\n{}", screen_after);
+
+    // The buffer should now only contain: "// TODO: Keep this one\n"
+    // TODO should still be highlighted (now on line 1)
+
+    let mut found_todo_after = false;
+
+    for (y, line) in screen_after.lines().enumerate() {
+        if line.contains("TODO") {
+            if let Some(x) = line.find("TODO") {
+                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
+                    if let Some(bg) = style.bg {
+                        println!(
+                            "Found TODO at ({}, {}) after delete with background: {:?}",
+                            x, y, bg
+                        );
+                        if matches!(bg, ratatui::style::Color::Rgb(_, _, _)) {
+                            found_todo_after = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        found_todo_after,
+        "BUG: TODO should still be highlighted after deleting the line above it! \
+         Instead, the highlight either disappeared or shifted to the wrong position."
+    );
+}
