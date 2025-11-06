@@ -1108,10 +1108,19 @@ fn test_rust_analyzer_rename_content_modified() -> std::io::Result<()> {
 
     println!("Pressed Enter to confirm rename");
 
-    // Wait for LSP response
-    std::thread::sleep(std::time::Duration::from_millis(1000));
-    harness.editor_mut().process_async_messages();
-    harness.render()?;
+    // Wait for LSP response (rust-analyzer can take several seconds)
+    for i in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        harness.editor_mut().process_async_messages();
+        harness.render()?;
+
+        // Check if response has arrived
+        let screen = harness.screen_to_string();
+        if !screen.contains("LSP: rename...") {
+            println!("LSP response received after {}ms", (i + 1) * 500);
+            break;
+        }
+    }
 
     // Check screen - should NOT contain "content modified" error anymore
     let screen = harness.screen_to_string();
@@ -1127,11 +1136,100 @@ fn test_rust_analyzer_rename_content_modified() -> std::io::Result<()> {
     assert!(screen.contains("LSP:") || screen.contains("Renamed") || screen.contains("Renaming"),
             "Should show LSP status message");
 
+    // CRITICAL: Verify the buffer content was actually changed!
+    let buffer_content_after = harness.get_buffer_content();
+    println!("Buffer content after rename:\n{}", buffer_content_after);
+
+    // The rename should have been applied - buffer should contain "amount" NOT "value"
+    assert!(buffer_content_after.contains("fn calculate(amount: i32)"),
+            "Buffer should contain 'amount' after successful rename! Got:\n{}", buffer_content_after);
+    assert!(buffer_content_after.contains("println!(\"Value: {{}}\", amount)"),
+            "All references to 'value' should be renamed to 'amount'! Got:\n{}", buffer_content_after);
+    assert!(!buffer_content_after.contains("fn calculate(value: i32)"),
+            "Buffer should NOT contain old 'value' parameter after rename! Got:\n{}", buffer_content_after);
+
     println!("\n========================================");
-    println!("SUCCESS: No 'content modified' error!");
+    println!("SUCCESS: Rename applied successfully!");
     println!("Buffer was NOT modified during typing");
-    println!("LSP rename can now proceed successfully");
+    println!("LSP rename proceeded successfully");
+    println!("All references renamed from 'value' to 'amount'");
     println!("========================================\n");
+
+    Ok(())
+}
+
+/// Test that handle_rename_response correctly processes documentChanges
+/// (This tests the fix for rust-analyzer which sends documentChanges instead of changes)
+#[test]
+fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
+    use lsp_types::{
+        DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier,
+        Position, Range, TextDocumentEdit, TextEdit, Url, WorkspaceEdit,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 30)?;
+
+    // Create a temporary file with some Rust code
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn calculate(value: i32) -> i32 {\n    let result = value * 2;\n    println!(\"Value: {}\", value);\n    result\n}\n")?;
+
+    // Open the file
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Create a WorkspaceEdit with documentChanges (like rust-analyzer sends)
+    let uri = Url::from_file_path(&test_file).unwrap();
+    let text_edit_1 = TextEdit {
+        range: Range {
+            start: Position { line: 0, character: 13 },
+            end: Position { line: 0, character: 18 },
+        },
+        new_text: "amount".to_string(),
+    };
+    let text_edit_2 = TextEdit {
+        range: Range {
+            start: Position { line: 2, character: 26 },
+            end: Position { line: 2, character: 31 },
+        },
+        new_text: "amount".to_string(),
+    };
+
+    let text_doc_edit = TextDocumentEdit {
+        text_document: OptionalVersionedTextDocumentIdentifier {
+            uri,
+            version: Some(1),
+        },
+        edits: vec![
+            OneOf::Left(text_edit_1),
+            OneOf::Left(text_edit_2),
+        ],
+    };
+
+    let workspace_edit = WorkspaceEdit {
+        changes: None,  // rust-analyzer doesn't send this
+        document_changes: Some(DocumentChanges::Edits(vec![text_doc_edit])),
+        change_annotations: None,
+    };
+
+    // Call handle_rename_response directly
+    harness.editor_mut().handle_rename_response(0, Ok(workspace_edit))?;
+    harness.render()?;
+
+    // Verify the buffer was modified
+    let buffer_content = harness.get_buffer_content();
+    println!("Buffer content after rename:\n{}", buffer_content);
+
+    assert!(buffer_content.contains("fn calculate(amount: i32)"),
+            "Buffer should contain 'amount' in function parameter! Got:\n{}", buffer_content);
+    assert!(buffer_content.contains("amount);"),
+            "Buffer should contain 'amount' in println! Got:\n{}", buffer_content);
+    assert!(buffer_content.contains("let result = value * 2"),
+            "The second occurrence of 'value' should NOT be replaced (we only specified 2 edits)");
+    assert!(!buffer_content.contains("value: i32") && !buffer_content.contains("value);"),
+            "Buffer should NOT contain old 'value' in parameter or println! Got:\n{}", buffer_content);
+
+    println!("SUCCESS: documentChanges handled correctly!");
 
     Ok(())
 }
