@@ -303,7 +303,7 @@ impl SplitRenderer {
             // Build line with selection highlighting
             let mut line_spans = Vec::new();
 
-            // Render left margin (line numbers + diagnostic indicators + separator)
+            // Render left margin (line numbers + separator/diagnostic)
             if state.margins.left_config.enabled {
                 // Render line number
                 let margin_content = state.margins.render_line(
@@ -320,19 +320,17 @@ impl SplitRenderer {
 
                 line_spans.push(Span::styled(rendered_text, margin_style));
 
-                // Render diagnostic indicator column (1 character wide)
-                if state.margins.show_line_numbers {
+                // Render separator or diagnostic indicator (single character)
+                // If there's a diagnostic, show the indicator; otherwise show the separator
+                if state.margins.left_config.show_separator {
                     if let Some((symbol, color)) = state.margins.get_diagnostic_indicator(current_line_num) {
+                        // Show diagnostic indicator instead of separator
                         line_spans.push(Span::styled(symbol.clone(), Style::default().fg(*color)));
                     } else {
-                        line_spans.push(Span::raw(" "));
+                        // Show normal separator
+                        let separator_style = Style::default().fg(theme.line_number_fg);
+                        line_spans.push(Span::styled(state.margins.left_config.separator.clone(), separator_style));
                     }
-                }
-
-                // Render separator
-                if state.margins.left_config.show_separator {
-                    let separator_style = Style::default().fg(theme.line_number_fg);
-                    line_spans.push(Span::styled(state.margins.left_config.separator.clone(), separator_style));
                 }
             }
 
