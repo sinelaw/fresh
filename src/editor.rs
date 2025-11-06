@@ -2551,6 +2551,22 @@ impl Editor {
                 }
             }
             Action::None => {}
+            Action::PluginAction(action_name) => {
+                // Execute the plugin callback
+                if let Some(ref manager) = self.plugin_manager {
+                    match manager.execute_action(&action_name) {
+                        Ok(()) => {
+                            tracing::info!("Plugin action '{}' executed successfully", action_name);
+                        }
+                        Err(e) => {
+                            self.set_status_message(format!("Plugin error: {}", e));
+                            tracing::error!("Plugin action error: {}", e);
+                        }
+                    }
+                } else {
+                    self.set_status_message("Plugin manager not available".to_string());
+                }
+            }
             Action::InsertChar(c) => {
                 // Handle character insertion in prompt mode
                 if self.is_prompting() {
