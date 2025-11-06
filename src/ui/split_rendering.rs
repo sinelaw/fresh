@@ -173,12 +173,8 @@ impl SplitRenderer {
         } else {
             // Small file: use actual line count for accurate scrollbar
             // total_lines and top_line are passed in (already calculated with mutable access)
-            let thumb_start = if total_lines > 0 {
-                ((top_line as f64 / total_lines as f64) * height as f64) as usize
-            } else {
-                0
-            };
 
+            // Calculate thumb size based on viewport ratio to total document
             let thumb_size_raw = if total_lines > 0 {
                 ((viewport_height_lines as f64 / total_lines as f64) * height as f64).ceil() as usize
             } else {
@@ -189,13 +185,27 @@ impl SplitRenderer {
             let max_thumb_size = (height as f64 * 0.8).floor() as usize;
             let thumb_size = thumb_size_raw.max(1).min(max_thumb_size).min(height);
 
+            // Calculate thumb position using proper linear mapping:
+            // - At line 0: thumb_start = 0
+            // - At max scroll position: thumb_start = height - thumb_size
+            //
+            // The maximum scroll position is when the last line of the file is at
+            // the bottom of the viewport, i.e., max_scroll_line = total_lines - viewport_height
+            let max_scroll_line = total_lines.saturating_sub(viewport_height_lines);
+
+            let thumb_start = if max_scroll_line > 0 {
+                // Linear interpolation from 0 to (height - thumb_size)
+                let scroll_ratio = top_line.min(max_scroll_line) as f64 / max_scroll_line as f64;
+                let max_thumb_start = height.saturating_sub(thumb_size);
+                (scroll_ratio * max_thumb_start as f64) as usize
+            } else {
+                // File fits in viewport, thumb stays at top
+                0
+            };
+
             (thumb_start, thumb_size)
         };
 
-        // Ensure the thumb doesn't get clipped at the bottom
-        // If thumb_start + thumb_size would exceed the scrollbar height,
-        // adjust thumb_start down so the full thumb remains visible
-        let thumb_start = thumb_start.min(height.saturating_sub(thumb_size));
         let thumb_end = thumb_start + thumb_size;
 
         // Choose colors based on whether split is active
