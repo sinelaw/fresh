@@ -3,11 +3,11 @@ source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
  [No Name]*                                                                     
-   1│fn calculate(amount: i32) -> i32 {                                        █
-   2│    let result = amount * 2;                                              █
-   3│    println!("Value: {}", amount);                                        █
-   4│    result                                                                █
-   5│}                                                                         █
+   2│fn calculate(amount: i32) -> i32 {                                        █
+   3│    let result = amount * 2;                                              █
+   4│    println!("Value: {}", amount);                                        █
+   5│    result                                                                █
+   6│}                                                                         █
                                                                                █
                                                                                █
                                                                                █

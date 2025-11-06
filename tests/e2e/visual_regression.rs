@@ -513,11 +513,16 @@ fn test_lsp_rename_cancel_restores_original() {
     }
     harness.render().unwrap();
 
-    // Verify the text has been modified during rename mode
+    // Verify the buffer has NOT been modified - it should still have original "value"
     let state_after_delete = harness.editor().active_state();
     let buffer_after_delete = state_after_delete.buffer.to_string();
-    assert!(buffer_after_delete.contains("fn calculate(va: i32)"),
-            "Buffer should show partially deleted name 'va'");
+    assert!(buffer_after_delete.contains("fn calculate(value: i32)"),
+            "Buffer should STILL show original 'value' (not modified during typing)");
+
+    // The typed text should be tracked in status message or rename state, not in buffer
+    let screen_after_delete = harness.screen_to_string();
+    assert!(screen_after_delete.contains("Renaming to:"),
+            "Status should show what's being typed");
 
     // Verify overlay still exists during editing
     let overlays_after_delete: Vec<_> = state_after_delete.overlays.all().iter()
@@ -529,12 +534,12 @@ fn test_lsp_rename_cancel_restores_original() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Step 6: Verify the original name "value" is restored
+    // Step 6: Verify the buffer still has original name (no restore needed since we never modified it)
     let final_buffer_content = harness.get_buffer_content();
     assert_eq!(final_buffer_content, original_buffer_content,
-               "Buffer content should be restored to original after canceling rename");
+               "Buffer should still be unchanged (never modified during rename)");
     assert!(final_buffer_content.contains("fn calculate(value: i32)"),
-            "Original 'value' parameter should be restored");
+            "Original 'value' parameter should still be there");
 
     // Verify rename overlay is removed
     let state_after_cancel = harness.editor().active_state();

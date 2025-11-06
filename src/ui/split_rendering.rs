@@ -286,7 +286,7 @@ impl SplitRenderer {
         // Get primary cursor position - we won't apply REVERSED to it to preserve terminal cursor visibility
         let primary_cursor_position = state.cursors.primary().position;
 
-        tracing::debug!(
+        tracing::trace!(
             "Rendering buffer with {} cursors at positions: {:?}, primary at {}, is_active: {}, buffer_len: {}",
             cursor_positions.len(),
             cursor_positions,
@@ -417,7 +417,7 @@ impl SplitRenderer {
 
                     // Debug: Log when we find a cursor position
                     if is_cursor && is_active {
-                        tracing::debug!(
+                        tracing::trace!(
                             "Found cursor at byte_pos={}, char_index={}, ch={:?}, is_active={}",
                             byte_pos,
                             char_index,
@@ -592,7 +592,7 @@ impl SplitRenderer {
                 .viewport
                 .cursor_screen_position(&mut state.buffer, primary_cursor);
 
-            tracing::debug!(
+            tracing::trace!(
                 "Setting hardware cursor to PRIMARY cursor position: ({}, {})",
                 x,
                 y
@@ -602,7 +602,7 @@ impl SplitRenderer {
             // and adjust Y for the content area offset (area.y accounts for tab bar)
             let screen_x = area.x.saturating_add(x).saturating_add(gutter_width as u16);
             let screen_y = area.y.saturating_add(y);
-            tracing::debug!(
+            tracing::trace!(
                 "Hardware cursor: area.x={}, area.y={}, gutter_width={}, cursor(x={},y={}) => screen({},{})",
                 area.x,
                 area.y,

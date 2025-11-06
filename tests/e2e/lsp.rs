@@ -1028,3 +1028,110 @@ fn test_lsp_completion_canceled_on_text_edit() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test LSP rename with real rust-analyzer to reproduce "content modified" error
+/// Skip if rust-analyzer is not installed
+#[test]
+fn test_rust_analyzer_rename_content_modified() -> std::io::Result<()> {
+    use std::io::Write;
+    use std::process::Command;
+
+    // Check if rust-analyzer is installed
+    let rust_analyzer_check = Command::new("which").arg("rust-analyzer").output();
+    if rust_analyzer_check.is_err() || !rust_analyzer_check.unwrap().status.success() {
+        eprintln!("Skipping test: rust-analyzer not found in PATH");
+        return Ok(());
+    }
+
+    eprintln!("rust-analyzer found, running test...");
+
+    // Create a temporary directory and Rust file
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    let mut file = std::fs::File::create(&test_file)?;
+    writeln!(file, "fn calculate(value: i32) -> i32 {{")?;
+    writeln!(file, "    let result = value * 2;")?;
+    writeln!(file, "    println!(\"Value: {{}}\", value);")?;
+    writeln!(file, "    result")?;
+    writeln!(file, "}}")?;
+    drop(file);
+
+    let mut harness = EditorTestHarness::new(80, 30)?;
+
+    // Open the Rust file - this should trigger LSP initialization
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait a bit for LSP to initialize
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+
+    // Process any async messages
+    harness.editor_mut().process_async_messages();
+
+    // Position cursor on "value" parameter (column 13)
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?; // Go to document start
+    for _ in 0..13 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    }
+    harness.render()?;
+
+    println!("Cursor positioned on 'value' parameter");
+
+    // Press F2 to enter rename mode
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE)?;
+    harness.render()?;
+
+    println!("Entered rename mode");
+
+    // Delete "value" and type "amount" - this modifies the buffer
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE)?;
+    }
+    harness.type_text("amount")?;
+    harness.render()?;
+
+    println!("Typed new name 'amount'");
+
+    // Get buffer content - should still show original "value" (NOT "amount")
+    let buffer_content = harness.get_buffer_content();
+    println!("Buffer content before Enter:\n{}", buffer_content);
+
+    // Verify the buffer was NOT modified - it should still contain "value"
+    assert!(buffer_content.contains("fn calculate(value: i32)"),
+            "Buffer should still contain original 'value' text (fix working!)");
+    assert!(!buffer_content.contains("amount"),
+            "Buffer should NOT contain 'amount' yet (not applied until LSP responds)");
+
+    // Press Enter to confirm rename - this will send LSP request
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    println!("Pressed Enter to confirm rename");
+
+    // Wait for LSP response
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+    harness.editor_mut().process_async_messages();
+    harness.render()?;
+
+    // Check screen - should NOT contain "content modified" error anymore
+    let screen = harness.screen_to_string();
+    println!("Screen output:\n{}", screen);
+
+    // After fix, we should NOT see "content modified" error
+    // The buffer content was not modified, so LSP can successfully rename
+    if screen.contains("content modified") {
+        panic!("Still got 'content modified' error - fix didn't work!");
+    }
+
+    // We should see either success message or pending LSP request
+    assert!(screen.contains("LSP:") || screen.contains("Renamed") || screen.contains("Renaming"),
+            "Should show LSP status message");
+
+    println!("\n========================================");
+    println!("SUCCESS: No 'content modified' error!");
+    println!("Buffer was NOT modified during typing");
+    println!("LSP rename can now proceed successfully");
+    println!("========================================\n");
+
+    Ok(())
+}

@@ -2249,38 +2249,12 @@ impl Editor {
     /// Cancel rename mode
     fn cancel_rename(&mut self) {
         if let Some(rename_state) = self.rename_state.take() {
-            // Restore the original text
-            let cursor_id = self.active_state().cursors.primary_id();
-            let state = self.active_state_mut();
-
-            // Get the current end position (start + current text length)
-            let current_end = rename_state.start_pos + rename_state.current_text.len();
-
-            // Delete the current (modified) text
-            if current_end > rename_state.start_pos {
-                let delete_event = crate::event::Event::Delete {
-                    range: rename_state.start_pos..current_end,
-                    deleted_text: state.buffer.slice(rename_state.start_pos..current_end).to_string(),
-                    cursor_id,
-                };
-                state.apply(&delete_event);
-            }
-
-            // Insert the original text back
-            if !rename_state.original_text.is_empty() {
-                let insert_event = crate::event::Event::Insert {
-                    position: rename_state.start_pos,
-                    text: rename_state.original_text.clone(),
-                    cursor_id,
-                };
-                state.apply(&insert_event);
-            }
-
-            // Remove the overlay
+            // The buffer was never modified during rename mode, so no need to restore
+            // Just remove the overlay and clear the state
             let remove_overlay_event = crate::event::Event::RemoveOverlay {
                 overlay_id: rename_state.overlay_id,
             };
-            state.apply(&remove_overlay_event);
+            self.active_state_mut().apply(&remove_overlay_event);
 
             self.status_message = Some("Rename cancelled".to_string());
         }
@@ -2922,58 +2896,13 @@ impl Editor {
                 // Handle backspace in rename mode
                 if let Some(rename_state) = &mut self.rename_state {
                     if !rename_state.current_text.is_empty() {
+                        // Just update the current_text, don't modify the buffer
                         rename_state.current_text.pop();
-
-                        // Extract needed values before borrowing self
-                        let start_pos = rename_state.start_pos;
-                        let end_pos = rename_state.end_pos;
                         let new_text = rename_state.current_text.clone();
-                        let overlay_id = rename_state.overlay_id.clone();
-                        let new_len = new_text.len();
 
-                        // Get cursor ID and deleted text (drop mutable borrow)
-                        drop(rename_state);
-                        let cursor_id = self.active_state().cursors.primary_id();
-                        let deleted_text = self.active_state().buffer.slice(start_pos..end_pos).to_string();
-
-                        // Delete the old text
-                        let delete_event = Event::Delete {
-                            range: start_pos..end_pos,
-                            deleted_text,
-                            cursor_id,
-                        };
-                        self.active_state_mut().apply(&delete_event);
-
-                        // Insert the new text (if not empty)
-                        if !new_text.is_empty() {
-                            let insert_event = Event::Insert {
-                                position: start_pos,
-                                text: new_text.clone(),
-                                cursor_id,
-                            };
-                            self.active_state_mut().apply(&insert_event);
-                        }
-
-                        // Update the end position
-                        if let Some(rename_state) = &mut self.rename_state {
-                            rename_state.end_pos = start_pos + new_len;
-                        }
-
-                        // Update the overlay - keep it visible even when empty to show rename mode is active
-                        let remove_event = Event::RemoveOverlay { overlay_id: overlay_id.clone() };
-                        self.active_state_mut().apply(&remove_event);
-
-                        // Always add overlay back, even for empty text (0-length range is fine)
-                        let add_event = Event::AddOverlay {
-                            overlay_id,
-                            range: start_pos..(start_pos + new_len),
-                            face: crate::event::OverlayFace::Background {
-                                color: (50, 100, 200),
-                            },
-                            priority: 100,
-                            message: Some("Renaming".to_string()),
-                        };
-                        self.active_state_mut().apply(&add_event);
+                        // Update status message to show what's being typed
+                        self.status_message = Some(format!("Renaming to: {}",
+                            if new_text.is_empty() { "<empty>" } else { &new_text }));
                     }
                 } else {
                     // Normal backspace handling - fall through to default action handling below
@@ -3017,56 +2946,12 @@ impl Editor {
             Action::InsertChar(c) => {
                 // Handle character insertion in rename mode
                 if let Some(rename_state) = &mut self.rename_state {
-                    // Update the rename text and the buffer inline
+                    // Just update the current_text, don't modify the buffer
                     rename_state.current_text.push(c);
-
-                    // Extract needed values before borrowing self
-                    let start_pos = rename_state.start_pos;
-                    let end_pos = rename_state.end_pos;
                     let new_text = rename_state.current_text.clone();
-                    let overlay_id = rename_state.overlay_id.clone();
-                    let new_len = new_text.len();
 
-                    // Drop the mutable borrow before calling self methods
-                    drop(rename_state);
-                    let cursor_id = self.active_state().cursors.primary_id();
-                    let deleted_text = self.active_state().buffer.slice(start_pos..end_pos).to_string();
-
-                    // Delete the old text
-                    let delete_event = Event::Delete {
-                        range: start_pos..end_pos,
-                        deleted_text,
-                        cursor_id,
-                    };
-                    self.active_state_mut().apply(&delete_event);
-
-                    // Insert the new text
-                    let insert_event = Event::Insert {
-                        position: start_pos,
-                        text: new_text,
-                        cursor_id,
-                    };
-                    self.active_state_mut().apply(&insert_event);
-
-                    // Update the end position
-                    if let Some(rename_state) = &mut self.rename_state {
-                        rename_state.end_pos = start_pos + new_len;
-                    }
-
-                    // Update the overlay
-                    let remove_event = Event::RemoveOverlay { overlay_id: overlay_id.clone() };
-                    self.active_state_mut().apply(&remove_event);
-
-                    let add_event = Event::AddOverlay {
-                        overlay_id,
-                        range: start_pos..(start_pos + new_len),
-                        face: crate::event::OverlayFace::Background {
-                            color: (50, 100, 200),
-                        },
-                        priority: 100,
-                        message: Some("Renaming".to_string()),
-                    };
-                    self.active_state_mut().apply(&add_event);
+                    // Update status message to show what's being typed
+                    self.status_message = Some(format!("Renaming to: {}", new_text));
                 // Handle character insertion in prompt mode
                 } else if self.is_prompting() {
                     if let Some(prompt) = self.prompt_mut() {

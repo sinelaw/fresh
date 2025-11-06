@@ -3,7 +3,7 @@ source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
  [No Name]*                                                                     
-   1│fn calculate(amount: i32) -> i32 {                                        █
+   1│fn calculate(value: i32) -> i32 {                                         █
    2│    let result = value * 2;                                               █
    3│    println!("Value: {}", value);                                         █
    4│    result                                                                █
@@ -31,4 +31,4 @@ expression: "&screen_text"
                                                                                │
                                                                                │
                                                                                │
-[No Name] [+] | Ln 0, Col 19 | Rename mode (Enter to confirm, Esc to cancel)
+[No Name] [+] | Ln 0, Col 14 | Renaming to: amount
