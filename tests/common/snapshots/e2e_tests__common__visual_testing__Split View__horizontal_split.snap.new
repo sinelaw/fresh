@@ -1,0 +1,35 @@
+---
+source: tests/common/visual_testing.rs
+assertion_line: 71
+expression: "&screen_text"
+---
+ file1.txt   editor_plugin_debug_12360.log                                                                              
+    1 │ === Plugin Debug Log ===                                                                                       █
+    2 │    - 'Plugin Demo: Insert Time' - inserts current time (Lua callback)                                          █
+    3 │    - 'Plugin Demo: Insert Comment' - inserts sample comment (Lua callback)                                     █
+    4 │                                                                                                                █
+    5 │ 🔍  You're viewing this in the debug log! It opened automatically when the plugin called debug().               █
+    6 │ 🎉  Welcome plugin initialized successfully!                                                                    █
+    7 │ 📝  Registered 5 commands - try Ctrl+P to see them!                                                             █
+    8 │    - 'Plugin Demo: Open Help' - toggles help screen (built-in action)                                          █
+    9 │    - 'Plugin Demo: Save File' - saves current file (built-in action)                                           █
+   10 │    - 'Plugin Demo: Say Hello' - inserts greeting (Lua callback)                                                █
+   11 │    - 'Plugin Demo: Insert Time' - inserts current time (Lua callback)                                          █
+   12 │    - 'Plugin Demo: Insert Comment' - inserts sample comment (Lua callback)                                     │
+   13 │                                                                                                                │
+   14 │ 🔍  You're viewing this in the debug log! It opened automatically when the plugin called debug().               │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    1 │ === Plugin Debug Log ===                                                                                       █
+    2 │    - 'Plugin Demo: Insert Time' - inserts current time (Lua callback)                                          █
+    3 │    - 'Plugin Demo: Insert Comment' - inserts sample comment (Lua callback)                                     █
+    4 │                                                                                                                █
+    5 │ 🔍  You're viewing this in the debug log! It opened automatically when the plugin called debug().               █
+    6 │ 🎉  Welcome plugin initialized successfully!                                                                    █
+    7 │ 📝  Registered 5 commands - try Ctrl+P to see them!                                                             █
+    8 │    - 'Plugin Demo: Open Help' - toggles help screen (built-in action)                                          █
+    9 │    - 'Plugin Demo: Save File' - saves current file (built-in action)                                           █
+   10 │    - 'Plugin Demo: Say Hello' - inserts greeting (Lua callback)                                                █
+   11 │    - 'Plugin Demo: Insert Time' - inserts current time (Lua callback)                                          │
+   12 │    - 'Plugin Demo: Insert Comment' - inserts sample comment (Lua callback)                                     │
+   13 │                                                                                                                │
+/tmp/editor_plugin_debug_12360.log | Ln 0, Col 0 | Opened /tmp/editor_plugin_debug_12360.log

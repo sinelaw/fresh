@@ -191,7 +191,7 @@ fn visual_multicursor() {
 /// Test LSP diagnostics with margin bullet points
 #[test]
 fn visual_lsp_diagnostics() {
-    use editor::event::{Event, OverlayFace};
+    use fresh::event::{Event, OverlayFace};
     use ratatui::style::Color;
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();

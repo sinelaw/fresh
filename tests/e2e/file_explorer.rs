@@ -388,7 +388,7 @@ fn test_focus_file_explorer_action() {
 /// This reproduces the bug where a new buffer is created but the content area
 /// still shows the old buffer
 #[test]
-#[ignore = "Async file loading in tests needs improvement - file content doesn't load synchronously in test harness"]
+#[ignore = "File explorer directory expansion not working properly - needs investigation of Alt+L keybinding"]
 fn test_file_explorer_displays_opened_file_content() {
     use crossterm::event::{KeyCode, KeyModifiers};
 

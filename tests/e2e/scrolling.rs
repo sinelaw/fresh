@@ -630,16 +630,16 @@ fn test_load_big_file_e2e() {
 /// Fix: LineNumber enum allows buffer to return relative line numbers without
 /// forcing expensive scans, and viewport handles this transparently.
 #[test]
-#[ignore = "Test fails when run with other tests due to BIG.txt file generation timing - passes when run individually"]
 fn test_jump_to_eof_large_file() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use std::time::Instant;
 
-    // Generate BIG.txt if it doesn't exist (this is cached across test runs)
-    let big_txt_path = TestFixture::big_txt().unwrap();
+    // Create a test-specific large file to avoid interference with other tests
+    let big_txt_fixture = TestFixture::big_txt_for_test("jump_to_eof_large_file").unwrap();
+    let big_txt_path = &big_txt_fixture.path;
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    harness.open_file(&big_txt_path).unwrap();
+    harness.open_file(big_txt_path).unwrap();
 
     println!("\n=== Testing Ctrl+End on 61MB file ===");
 
@@ -731,16 +731,16 @@ fn test_jump_to_eof_large_file() {
 /// Test that we can navigate to EOF and back to beginning in a large file
 /// Verifies that navigation works correctly and cursor ends up at the right positions
 #[test]
-#[ignore = "Test fails when run with other tests due to BIG.txt file generation timing - passes when run individually"]
 fn test_line_numbers_absolute_after_jump_to_beginning() {
     use crossterm::event::{KeyCode, KeyModifiers};
 
     println!("\n=== Testing navigation: EOF -> Home ===");
 
-    // Use the big file
-    let big_txt_path = TestFixture::big_txt().unwrap();
+    // Create a test-specific large file to avoid interference with other tests
+    let big_txt_fixture = TestFixture::big_txt_for_test("line_numbers_absolute").unwrap();
+    let big_txt_path = &big_txt_fixture.path;
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    harness.open_file(&big_txt_path).unwrap();
+    harness.open_file(big_txt_path).unwrap();
 
     println!("✓ Opened 61MB file");
     let buffer_len = harness.editor().active_state().buffer.len();
