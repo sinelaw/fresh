@@ -276,8 +276,17 @@ impl EditorState {
                 priority,
                 message,
             } => {
+                tracing::debug!(
+                    "AddOverlay: id={}, range={:?}, face={:?}, priority={}",
+                    overlay_id,
+                    range,
+                    face,
+                    priority
+                );
                 // Convert event overlay face to overlay face
                 let overlay_face = convert_event_face_to_overlay_face(face);
+                tracing::trace!("Converted face: {:?}", overlay_face);
+
                 let mut overlay = Overlay::with_priority(
                     &mut self.marker_list,
                     range.clone(),
@@ -286,10 +295,20 @@ impl EditorState {
                 );
                 overlay.id = Some(overlay_id.clone());
                 overlay.message = message.clone();
+
+                let actual_range = overlay.range(&self.marker_list);
+                tracing::debug!(
+                    "Created overlay with markers - actual range: {:?}, start_marker={:?}, end_marker={:?}",
+                    actual_range,
+                    overlay.start_marker,
+                    overlay.end_marker
+                );
+
                 self.overlays.add(overlay);
             }
 
             Event::RemoveOverlay { overlay_id } => {
+                tracing::debug!("RemoveOverlay: id={}", overlay_id);
                 self.overlays.remove_by_id(overlay_id, &mut self.marker_list);
             }
 

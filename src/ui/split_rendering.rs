@@ -510,21 +510,39 @@ impl SplitRenderer {
                                 // native wavy underlines. We'll add a colored underline modifier.
                                 // TODO: Render actual wavy/dotted underlines in a second pass
                                 tracing::trace!(
-                                    "Applying underline overlay at byte {}: color={:?}",
+                                    "Applying underline overlay {:?} at byte {}: color={:?}",
+                                    overlay.id,
                                     byte_pos,
                                     color
                                 );
                                 style = style.add_modifier(Modifier::UNDERLINED).fg(*color);
                             }
                             OverlayFace::Background { color } => {
+                                tracing::trace!(
+                                    "Applying background overlay {:?} at byte {}: color={:?}",
+                                    overlay.id,
+                                    byte_pos,
+                                    color
+                                );
                                 style = style.bg(*color);
                             }
                             OverlayFace::Foreground { color } => {
+                                tracing::trace!(
+                                    "Applying foreground overlay {:?} at byte {}: color={:?}",
+                                    overlay.id,
+                                    byte_pos,
+                                    color
+                                );
                                 style = style.fg(*color);
                             }
                             OverlayFace::Style {
                                 style: overlay_style,
                             } => {
+                                tracing::trace!(
+                                    "Applying style overlay {:?} at byte {}",
+                                    overlay.id,
+                                    byte_pos
+                                );
                                 // Merge the overlay style
                                 style = style.patch(*overlay_style);
                             }

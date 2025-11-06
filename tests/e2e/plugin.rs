@@ -228,6 +228,13 @@ fn test_todo_highlighter_toggle() {
 /// Test TODO Highlighter updates when buffer content changes
 #[test]
 fn test_todo_highlighter_updates_on_edit() {
+    // Enable tracing for debugging
+    use tracing_subscriber::{fmt, EnvFilter};
+    let _ = fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive("fresh=trace".parse().unwrap()))
+        .with_test_writer()
+        .try_init();
+
     // Create a temporary project directory
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
