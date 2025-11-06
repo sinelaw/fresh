@@ -1,14 +1,18 @@
 use crate::actions::action_to_events as convert_action_to_events;
 use crate::async_bridge::{AsyncBridge, AsyncMessage};
-use crate::commands::{filter_commands, get_all_commands, Suggestion};
+use crate::command_registry::CommandRegistry;
+use crate::commands::Suggestion;
 use crate::config::Config;
 use crate::event::{CursorId, Event, EventLog, SplitId};
 use crate::file_tree::{FileTree, FileTreeView};
 use crate::fs::{FsManager, LocalFsBackend};
+use crate::hooks::HookRegistry;
 use crate::keybindings::{Action, KeybindingResolver, KeyContext};
 use crate::lsp_diagnostics;
 use crate::lsp_manager::{detect_language, LspManager};
 use crate::multi_cursor::{add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult};
+use crate::plugin_api::PluginCommand;
+use crate::plugin_manager::PluginManager;
 use crate::position_history::PositionHistory;
 use crate::prompt::{Prompt, PromptType};
 use crate::split::SplitManager;
@@ -23,7 +27,7 @@ use std::collections::HashMap;
 use std::io;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 // Re-export BufferId from event module for backward compatibility
 pub use crate::event::BufferId;
@@ -180,6 +184,15 @@ pub struct Editor {
 
     /// Cached layout areas from last render (for mouse hit testing)
     cached_layout: CachedLayout,
+
+    /// Hook registry for plugins
+    hook_registry: Arc<RwLock<HookRegistry>>,
+
+    /// Command registry for dynamic commands
+    command_registry: Arc<RwLock<CommandRegistry>>,
+
+    /// Plugin manager
+    plugin_manager: Option<PluginManager>,
 }
 
 /// Mouse state tracking
@@ -281,6 +294,29 @@ impl Editor {
         let fs_backend = Arc::new(LocalFsBackend::new());
         let fs_manager = Arc::new(FsManager::new(fs_backend));
 
+        // Initialize plugin system
+        let hook_registry = Arc::new(RwLock::new(HookRegistry::new()));
+        let command_registry = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        let mut plugin_manager = PluginManager::new(
+            Arc::clone(&hook_registry),
+            Arc::clone(&command_registry),
+        ).ok();
+
+        if let Some(ref mut manager) = plugin_manager {
+            // Try to load plugins from the plugins directory
+            let plugin_dir = working_dir.join("plugins");
+            if plugin_dir.exists() {
+                tracing::info!("Loading plugins from: {:?}", plugin_dir);
+                let errors = manager.load_plugins_from_dir(&plugin_dir);
+                if !errors.is_empty() {
+                    for err in errors {
+                        tracing::warn!("Plugin load error: {}", err);
+                    }
+                }
+            }
+        }
+
         Ok(Editor {
             buffers,
             active_buffer: buffer_id,
@@ -314,6 +350,9 @@ impl Editor {
             lsp_status: String::new(),
             mouse_state: MouseState::default(),
             cached_layout: CachedLayout::default(),
+            hook_registry,
+            command_registry,
+            plugin_manager,
         })
     }
 
@@ -1479,7 +1518,7 @@ impl Editor {
             PromptType::Command => {
                 if let Some(prompt) = &mut self.prompt {
                     // Use the underlying context (not Prompt context) for filtering
-                    prompt.suggestions = filter_commands(&input, self.key_context);
+                    prompt.suggestions = self.command_registry.read().unwrap().filter(&input, self.key_context);
                     prompt.selected_suggestion = if prompt.suggestions.is_empty() {
                         None
                     } else {
@@ -1647,6 +1686,91 @@ impl Editor {
                 }
             }
         }
+
+        // Process plugin commands
+        if let Some(ref mut manager) = self.plugin_manager {
+            let commands = manager.process_commands();
+            for command in commands {
+                if let Err(e) = self.handle_plugin_command(command) {
+                    tracing::error!("Error handling plugin command: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Handle a plugin command
+    fn handle_plugin_command(&mut self, command: PluginCommand) -> io::Result<()> {
+        match command {
+            PluginCommand::InsertText { buffer_id, position, text } => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    let event = Event::Insert {
+                        position,
+                        text,
+                        cursor_id: CursorId(0),
+                    };
+                    state.apply(&event);
+                    if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                        log.append(event);
+                    }
+                }
+            }
+            PluginCommand::DeleteRange { buffer_id, range } => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    let deleted_text = state.buffer.slice(range.clone()).to_string();
+                    let event = Event::Delete {
+                        range,
+                        deleted_text,
+                        cursor_id: CursorId(0),
+                    };
+                    state.apply(&event);
+                    if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                        log.append(event);
+                    }
+                }
+            }
+            PluginCommand::AddOverlay { buffer_id, overlay_id, range, color, underline } => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    let face = if underline {
+                        crate::event::OverlayFace::Underline {
+                            color,
+                            style: crate::event::UnderlineStyle::Wavy,
+                        }
+                    } else {
+                        crate::event::OverlayFace::Background { color }
+                    };
+                    let event = Event::AddOverlay {
+                        overlay_id,
+                        range,
+                        face,
+                        priority: 10,
+                        message: None,
+                    };
+                    state.apply(&event);
+                    if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                        log.append(event);
+                    }
+                }
+            }
+            PluginCommand::RemoveOverlay { buffer_id, overlay_id } => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    let event = Event::RemoveOverlay { overlay_id };
+                    state.apply(&event);
+                    if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                        log.append(event);
+                    }
+                }
+            }
+            PluginCommand::SetStatus { message } => {
+                self.status_message = Some(message);
+            }
+            PluginCommand::RegisterCommand { command } => {
+                self.command_registry.read().unwrap().register(command);
+            }
+            PluginCommand::UnregisterCommand { name } => {
+                self.command_registry.read().unwrap().unregister(&name);
+            }
+        }
+        Ok(())
     }
 
     /// Handle LSP completion response
@@ -2015,7 +2139,7 @@ impl Editor {
                             self.set_status_message(format!("Replace not yet implemented: {input}"));
                         }
                         PromptType::Command => {
-                            let commands = get_all_commands();
+                            let commands = self.command_registry.read().unwrap().get_all();
 
                             // input now contains the selected command name (from confirm_prompt)
                             if let Some(cmd) = commands.iter().find(|c| c.name == input) {
@@ -2349,7 +2473,7 @@ impl Editor {
             Action::ShowHelp => self.help_renderer.toggle(),
             Action::CommandPalette => {
                 // Use the current context for filtering commands
-                let suggestions = filter_commands("", self.key_context);
+                let suggestions = self.command_registry.read().unwrap().filter("", self.key_context);
                 self.start_prompt_with_suggestions(
                     "Command: ".to_string(),
                     PromptType::Command,
