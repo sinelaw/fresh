@@ -2070,7 +2070,7 @@ impl Editor {
     }
 
     /// Handle rename response from LSP
-    fn handle_rename_response(&mut self, _request_id: u64, result: Result<lsp_types::WorkspaceEdit, String>) -> io::Result<()> {
+    pub fn handle_rename_response(&mut self, _request_id: u64, result: Result<lsp_types::WorkspaceEdit, String>) -> io::Result<()> {
         self.lsp_status.clear();
 
         match result {
@@ -2092,7 +2092,10 @@ impl Editor {
                                     .then(b.range.start.character.cmp(&a.range.start.character))
                             });
 
-                            // Apply edits
+                            // Collect all events for this buffer into a batch
+                            let mut batch_events = Vec::new();
+
+                            // Create events for all edits
                             for edit in sorted_edits {
                                 let state = self.buffers.get(&buffer_id).ok_or_else(|| {
                                     io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
@@ -2116,11 +2119,7 @@ impl Editor {
                                         deleted_text,
                                         cursor_id,
                                     };
-
-                                    let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
-                                        io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
-                                    })?;
-                                    state.apply(&delete_event);
+                                    batch_events.push(delete_event);
                                 }
 
                                 // Insert new text
@@ -2134,14 +2133,27 @@ impl Editor {
                                         text: edit.new_text.clone(),
                                         cursor_id,
                                     };
-
-                                    let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
-                                        io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
-                                    })?;
-                                    state.apply(&insert_event);
+                                    batch_events.push(insert_event);
                                 }
 
                                 total_changes += 1;
+                            }
+
+                            // Create a batch event for all rename changes
+                            if !batch_events.is_empty() {
+                                let batch = Event::Batch {
+                                    events: batch_events,
+                                    description: "LSP Rename".to_string(),
+                                };
+
+                                // Add to event log and apply to state
+                                if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+                                    event_log.append(batch.clone());
+                                }
+
+                                let state = self.buffers.get_mut(&buffer_id)
+                                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Buffer not found"))?;
+                                state.apply(&batch);
                             }
                         }
                     }
@@ -2237,13 +2249,38 @@ impl Editor {
     /// Cancel rename mode
     fn cancel_rename(&mut self) {
         if let Some(rename_state) = self.rename_state.take() {
+            // Restore the original text
+            let cursor_id = self.active_state().cursors.primary_id();
+            let state = self.active_state_mut();
+
+            // Get the current end position (start + current text length)
+            let current_end = rename_state.start_pos + rename_state.current_text.len();
+
+            // Delete the current (modified) text
+            if current_end > rename_state.start_pos {
+                let delete_event = crate::event::Event::Delete {
+                    range: rename_state.start_pos..current_end,
+                    deleted_text: state.buffer.slice(rename_state.start_pos..current_end).to_string(),
+                    cursor_id,
+                };
+                state.apply(&delete_event);
+            }
+
+            // Insert the original text back
+            if !rename_state.original_text.is_empty() {
+                let insert_event = crate::event::Event::Insert {
+                    position: rename_state.start_pos,
+                    text: rename_state.original_text.clone(),
+                    cursor_id,
+                };
+                state.apply(&insert_event);
+            }
+
             // Remove the overlay
-            let event = crate::event::Event::RemoveOverlay {
+            let remove_overlay_event = crate::event::Event::RemoveOverlay {
                 overlay_id: rename_state.overlay_id,
             };
-            if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
-                state.apply(&event);
-            }
+            state.apply(&remove_overlay_event);
 
             self.status_message = Some("Rename cancelled".to_string());
         }
