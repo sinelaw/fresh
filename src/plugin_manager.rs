@@ -51,11 +51,8 @@ pub struct PluginManager {
     /// Action callbacks (action_name -> Lua registry key)
     action_callbacks: HashMap<String, mlua::RegistryKey>,
 
-    /// Process callbacks (process_id -> Lua registry key)
-    process_callbacks: HashMap<u64, mlua::RegistryKey>,
-
-    /// Next process ID
-    next_process_id: u64,
+    /// Next callback ID for spawn processes
+    next_callback_id: u64,
 
     /// Async bridge sender (for spawning processes)
     async_sender: Option<std::sync::mpsc::Sender<crate::async_bridge::AsyncMessage>>,
@@ -99,6 +96,9 @@ impl PluginManager {
         // Create global table for storing callbacks
         lua.globals().set("_plugin_callbacks", lua.create_table()?)?;
 
+        // Create global table for storing spawn callbacks
+        lua.globals().set("_spawn_callbacks", lua.create_table()?)?;
+
         tracing::info!("Plugin debug log: {:?}", debug_log_path);
 
         Ok(Self {
@@ -109,8 +109,7 @@ impl PluginManager {
             plugin_api,
             command_receiver,
             action_callbacks: HashMap::new(),
-            process_callbacks: HashMap::new(),
-            next_process_id: 1,
+            next_callback_id: 1,
             async_sender: None,
             debug_log_path,
         })
@@ -400,6 +399,64 @@ impl PluginManager {
         })?;
         editor.set("get_viewport", get_viewport)?;
 
+        // Clone API for spawn function
+        let api_clone = api.clone();
+
+        // editor.spawn(command, args, callback) or editor.spawn(command, args, options, callback)
+        // where options = {cwd = "/path"}
+        let spawn = lua.create_function(move |lua, args: mlua::Variadic<mlua::Value>| {
+            let args_vec: Vec<mlua::Value> = args.into_iter().collect();
+
+            if args_vec.len() < 3 {
+                return Err(mlua::Error::RuntimeError(
+                    "spawn requires at least 3 arguments: command, args, callback".to_string()
+                ));
+            }
+
+            // Parse command
+            let command: String = lua.unpack(args_vec[0].clone())?;
+
+            // Parse args array
+            let args_table: mlua::Table = lua.unpack(args_vec[1].clone())?;
+            let mut command_args = Vec::new();
+            for pair in args_table.pairs::<mlua::Value, String>() {
+                let (_, arg) = pair?;
+                command_args.push(arg);
+            }
+
+            // Check if we have 3 or 4 arguments
+            let (cwd, callback) = if args_vec.len() == 4 {
+                // Format: spawn(command, args, options, callback)
+                let options: mlua::Table = lua.unpack(args_vec[2].clone())?;
+                let cwd: Option<String> = options.get("cwd").ok();
+                let callback: mlua::Function = lua.unpack(args_vec[3].clone())?;
+                (cwd, callback)
+            } else {
+                // Format: spawn(command, args, callback)
+                let callback: mlua::Function = lua.unpack(args_vec[2].clone())?;
+                (None, callback)
+            };
+
+            // Get next callback ID from global counter
+            let spawn_callbacks: mlua::Table = lua.globals().get("_spawn_callbacks")?;
+            let callback_id: u64 = spawn_callbacks.raw_len() as u64 + 1;
+
+            // Store callback in _spawn_callbacks table
+            spawn_callbacks.set(callback_id, callback)?;
+
+            // Send spawn command via plugin API
+            api_clone.send_command(PluginCommand::SpawnProcess {
+                command,
+                args: command_args,
+                cwd,
+                callback_id,
+            })
+            .map_err(|e| mlua::Error::RuntimeError(e))?;
+
+            Ok(())
+        })?;
+        editor.set("spawn", spawn)?;
+
         // Set the editor table as a global
         globals.set("editor", editor)?;
 
@@ -567,28 +624,23 @@ impl PluginManager {
     /// Spawn an async process for a plugin
     ///
     /// This method:
-    /// 1. Generates a unique process ID
-    /// 2. Stores the Lua callback in the registry
-    /// 3. Spawns the process asynchronously via tokio
-    /// 4. Returns the process ID for tracking
+    /// 1. Uses the provided callback_id to identify the callback
+    /// 2. Spawns the process asynchronously via tokio
+    /// 3. Returns the callback_id as process_id for tracking
     pub fn spawn_process(
         &mut self,
         command: String,
         args: Vec<String>,
         cwd: Option<String>,
-        callback: mlua::RegistryKey,
+        callback_id: u64,
     ) -> Result<u64, String> {
         // Get the async sender
         let sender = self.async_sender.as_ref()
             .ok_or_else(|| "Async bridge not initialized".to_string())?
             .clone();
 
-        // Generate process ID
-        let process_id = self.next_process_id;
-        self.next_process_id += 1;
-
-        // Store callback
-        self.process_callbacks.insert(process_id, callback);
+        // Use callback_id as process_id (they're the same thing)
+        let process_id = callback_id;
 
         // Spawn the process asynchronously
         tokio::spawn(crate::plugin_process::spawn_plugin_process(
@@ -605,49 +657,28 @@ impl PluginManager {
     /// Execute a process callback when the process completes
     pub fn execute_process_callback(
         &mut self,
-        process_id: u64,
+        callback_id: u64,
         stdout: String,
         stderr: String,
         exit_code: i32,
     ) -> Result<(), String> {
-        // Get and remove the callback
-        let callback = self.process_callbacks.remove(&process_id)
-            .ok_or_else(|| format!("No callback registered for process {}", process_id))?;
+        // Get the spawn callbacks table
+        let spawn_callbacks: mlua::Table = self.lua.globals().get("_spawn_callbacks")
+            .map_err(|e| format!("Failed to get _spawn_callbacks table: {}", e))?;
 
-        // Get the callback function from registry
-        let callback_fn: mlua::Function = self.lua.registry_value(&callback)
-            .map_err(|e| format!("Failed to get callback from registry: {}", e))?;
+        // Get and remove the callback function
+        let callback: mlua::Function = spawn_callbacks.get(callback_id)
+            .map_err(|e| format!("No callback registered for process {}: {}", callback_id, e))?;
+
+        // Remove from table to prevent memory leak
+        spawn_callbacks.set(callback_id, mlua::Value::Nil)
+            .map_err(|e| format!("Failed to remove callback: {}", e))?;
 
         // Call the callback with results
-        callback_fn.call::<_, ()>((stdout, stderr, exit_code))
+        callback.call::<_, ()>((stdout, stderr, exit_code))
             .map_err(|e| format!("Process callback error: {}", e))?;
 
-        // Remove the registry value to prevent memory leak
-        self.lua.remove_registry_value(callback)
-            .map_err(|e| format!("Failed to remove registry value: {}", e))?;
-
         Ok(())
-    }
-
-    /// Process spawn requests from Lua (called in main loop)
-    pub fn process_spawn_requests(&mut self) {
-        // Check if _spawn_callbacks table exists
-        let callbacks_table: Result<mlua::Table, _> = self.lua.globals().get("_spawn_callbacks");
-        if callbacks_table.is_err() {
-            return;
-        }
-
-        let callbacks = callbacks_table.unwrap();
-
-        // Process each callback - collect first to avoid borrow issues
-        let pairs: Vec<_> = callbacks.clone().pairs::<u64, mlua::RegistryKey>().filter_map(|p| p.ok()).collect();
-        for (process_id, callback_key) in pairs {
-            // Remove from table
-            let _ = callbacks.set(process_id, mlua::Value::Nil);
-
-            // Store in our hashmap
-            self.process_callbacks.insert(process_id, callback_key);
-        }
     }
 
     /// Run a Lua snippet (for testing/debugging)
@@ -1104,5 +1135,60 @@ mod tests {
         let result = manager.eval("local vp = editor.get_viewport(); return vp.height");
         assert!(result.is_ok());
         assert!(result.unwrap().contains("40"));
+    }
+
+    #[test]
+    fn test_spawn_from_lua() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let mut manager = PluginManager::new(hooks, commands).unwrap();
+
+        // Set up async bridge (normally done by editor)
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        manager.set_async_sender(sender);
+
+        // Test that spawn function exists and can be called
+        let result = manager.eval(r#"
+            local callback_called = false
+            editor.spawn("echo", {"hello"}, function(stdout, stderr, exit_code)
+                callback_called = true
+            end)
+            return "spawn_called"
+        "#);
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("spawn_called"));
+
+        // Check that the callback was stored in _spawn_callbacks
+        let result = manager.eval(r#"
+            local count = 0
+            for _ in pairs(_spawn_callbacks) do count = count + 1 end
+            return count
+        "#);
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("1"), "Expected 1 callback stored");
+    }
+
+    #[test]
+    fn test_spawn_with_cwd_from_lua() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let mut manager = PluginManager::new(hooks, commands).unwrap();
+
+        // Set up async bridge
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        manager.set_async_sender(sender);
+
+        // Test spawn with working directory option
+        let result = manager.eval(r#"
+            editor.spawn("pwd", {}, {cwd = "/tmp"}, function(stdout, stderr, exit_code)
+                -- callback
+            end)
+            return "spawn_with_cwd_called"
+        "#);
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("spawn_with_cwd_called"));
     }
 }

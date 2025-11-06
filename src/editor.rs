@@ -322,6 +322,9 @@ impl Editor {
         ).ok();
 
         if let Some(ref mut manager) = plugin_manager {
+            // Set async bridge sender for spawn support
+            manager.set_async_sender(async_bridge.sender());
+
             // Try to load plugins from the plugins directory
             let plugin_dir = working_dir.join("plugins");
             if plugin_dir.exists() {
@@ -1894,6 +1897,19 @@ impl Editor {
                 };
                 state.apply(&event);
                 self.active_event_log_mut().append(event);
+            }
+            PluginCommand::SpawnProcess {
+                command,
+                args,
+                cwd,
+                callback_id,
+            } => {
+                // Spawn async process via plugin manager
+                if let Some(ref mut manager) = self.plugin_manager {
+                    if let Err(e) = manager.spawn_process(command, args, cwd, callback_id) {
+                        tracing::error!("Failed to spawn process: {}", e);
+                    }
+                }
             }
         }
         Ok(())

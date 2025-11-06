@@ -124,6 +124,14 @@ pub enum PluginCommand {
 
     /// Insert text at the current cursor position in the active buffer
     InsertAtCursor { text: String },
+
+    /// Spawn an async process
+    SpawnProcess {
+        command: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+        callback_id: u64, // ID to look up callback in _spawn_callbacks Lua table
+    },
 }
 
 /// Plugin API context - provides safe access to editor functionality
