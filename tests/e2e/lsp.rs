@@ -1299,14 +1299,14 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     eprintln!("rust-analyzer will log to: {:?}", ra_log_file);
 
     // Create custom config with rust-analyzer logging enabled
-    let mut config = editor::config::Config::default();
+    let mut config = fresh::config::Config::default();
     config.lsp.insert(
         "rust".to_string(),
-        editor::lsp::LspServerConfig {
+        fresh::lsp::LspServerConfig {
             command: "rust-analyzer".to_string(),
             args: vec!["--log-file".to_string(), ra_log_file.to_string_lossy().to_string()],
             enabled: true,
-            process_limits: editor::process_limits::ProcessLimits::default(),
+            process_limits: fresh::process_limits::ProcessLimits::default(),
         },
     );
 

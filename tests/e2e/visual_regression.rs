@@ -247,8 +247,8 @@ fn visual_lsp_diagnostics() {
 /// Test LSP rename refactoring workflow
 #[test]
 fn visual_lsp_rename() {
-    use editor::event::Event;
-    use editor::overlay::OverlayFace;
+    use fresh::event::Event;
+    use fresh::overlay::OverlayFace;
     use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
     use ratatui::style::Color;
     use std::collections::HashMap;
@@ -459,7 +459,7 @@ fn visual_lsp_rename() {
 /// Test that canceling rename after deleting characters restores original name
 #[test]
 fn test_lsp_rename_cancel_restores_original() {
-    use editor::overlay::OverlayFace;
+    use fresh::overlay::OverlayFace;
     use ratatui::style::Color;
 
     let mut harness = EditorTestHarness::new(80, 30).unwrap();
