@@ -22,6 +22,26 @@ Core editing, multi-cursor, event-driven architecture, LSP integration (diagnost
 - [ ] Signature help
 - [ ] Inlay hints
 
+### Line Wrapping Refactoring
+- [ ] **Unify wrapping and no-wrapping code paths**: Treat no-wrapping as infinite-width wrapping
+  - Modify rendering to always use `wrap_line()` with `WrapConfig::new(usize::MAX, gutter_width, false)` for no-wrap mode
+  - Remove all `if line_wrap` branches in `split_rendering.rs::render_buffer_in_split()`
+  - Handle horizontal scrolling as post-processing on the single segment returned for infinite-width lines
+
+- [ ] **Move cursor position calculation into rendering traversal**: Eliminate duplicate line iteration
+  - In `split_rendering.rs::render_buffer_in_split()`, track cursor screen position during the existing line rendering loop (lines 344-629)
+  - As each line is rendered, check if it contains the primary cursor position
+  - Use the already-computed `segments` from `wrap_line()` to calculate position via `char_position_to_segment()`
+  - After loop completes, use tracked position instead of calling `viewport.cursor_screen_position()`
+  - Delete `viewport.rs::cursor_screen_position()` entirely
+
+- [ ] **Fix style preservation during wrapping**: Currently loses syntax highlighting/selection styles when wrapping
+  - In wrapping section (lines 586-620), preserve the original `line_spans` styling instead of using only first span's style
+  - Track character-to-span mapping to apply correct styles to each character in wrapped segments
+  - Ensure selections, syntax highlighting, and overlays render correctly across wrapped segments
+
+**Benefits**: Single source of truth for wrapping (line_wrapping.rs), single line traversal (better performance), cursor positioning and rendering always agree by construction, massive code deduplication.
+
 ### Editing Features
 - [ ] Search & replace with regex
 - [ ] Rectangular selection (Alt+drag)
