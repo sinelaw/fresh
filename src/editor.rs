@@ -1769,6 +1769,30 @@ impl Editor {
             PluginCommand::UnregisterCommand { name } => {
                 self.command_registry.read().unwrap().unregister(&name);
             }
+            PluginCommand::OpenFileInBackground { path } => {
+                // Open file in a new tab without switching to it
+                let current_buffer = self.active_buffer;
+                if let Err(e) = self.open_file(&path) {
+                    tracing::error!("Failed to open file in background: {}", e);
+                } else {
+                    // Switch back to the original buffer
+                    self.active_buffer = current_buffer;
+                    self.split_manager.set_active_buffer_id(current_buffer);
+                    tracing::info!("Opened debug log in background: {:?}", path);
+                }
+            }
+            PluginCommand::InsertAtCursor { text } => {
+                // Insert text at current cursor position in active buffer
+                let state = self.active_state_mut();
+                let cursor_pos = state.cursors.primary().position;
+                let event = Event::Insert {
+                    position: cursor_pos,
+                    text,
+                    cursor_id: CursorId(0),
+                };
+                state.apply(&event);
+                self.active_event_log_mut().append(event);
+            }
         }
         Ok(())
     }
