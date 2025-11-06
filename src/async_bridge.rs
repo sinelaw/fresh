@@ -86,6 +86,18 @@ pub enum AsyncMessage {
 
     /// File explorer node refresh completed
     FileExplorerRefreshNode(NodeId),
+
+    /// Plugin process completed with output
+    PluginProcessOutput {
+        /// Unique ID for this process (to match with callback)
+        process_id: u64,
+        /// Standard output
+        stdout: String,
+        /// Standard error
+        stderr: String,
+        /// Exit code
+        exit_code: i32,
+    },
 }
 
 /// Bridge between async Tokio runtime and sync main loop

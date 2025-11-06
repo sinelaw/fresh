@@ -51,6 +51,15 @@ pub struct PluginManager {
     /// Action callbacks (action_name -> Lua registry key)
     action_callbacks: HashMap<String, mlua::RegistryKey>,
 
+    /// Process callbacks (process_id -> Lua registry key)
+    process_callbacks: HashMap<u64, mlua::RegistryKey>,
+
+    /// Next process ID
+    next_process_id: u64,
+
+    /// Async bridge sender (for spawning processes)
+    async_sender: Option<std::sync::mpsc::Sender<crate::async_bridge::AsyncMessage>>,
+
     /// Debug log file path
     debug_log_path: PathBuf,
 }
@@ -100,8 +109,16 @@ impl PluginManager {
             plugin_api,
             command_receiver,
             action_callbacks: HashMap::new(),
+            process_callbacks: HashMap::new(),
+            next_process_id: 1,
+            async_sender: None,
             debug_log_path,
         })
+    }
+
+    /// Set the async bridge sender (called by editor after construction)
+    pub fn set_async_sender(&mut self, sender: std::sync::mpsc::Sender<crate::async_bridge::AsyncMessage>) {
+        self.async_sender = Some(sender);
     }
 
     /// Set up Lua global functions and bindings
@@ -544,6 +561,92 @@ impl PluginManager {
             Ok(())
         } else {
             Err(format!("No callback registered for action: {}", action_name))
+        }
+    }
+
+    /// Spawn an async process for a plugin
+    ///
+    /// This method:
+    /// 1. Generates a unique process ID
+    /// 2. Stores the Lua callback in the registry
+    /// 3. Spawns the process asynchronously via tokio
+    /// 4. Returns the process ID for tracking
+    pub fn spawn_process(
+        &mut self,
+        command: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+        callback: mlua::RegistryKey,
+    ) -> Result<u64, String> {
+        // Get the async sender
+        let sender = self.async_sender.as_ref()
+            .ok_or_else(|| "Async bridge not initialized".to_string())?
+            .clone();
+
+        // Generate process ID
+        let process_id = self.next_process_id;
+        self.next_process_id += 1;
+
+        // Store callback
+        self.process_callbacks.insert(process_id, callback);
+
+        // Spawn the process asynchronously
+        tokio::spawn(crate::plugin_process::spawn_plugin_process(
+            process_id,
+            command,
+            args,
+            cwd,
+            sender,
+        ));
+
+        Ok(process_id)
+    }
+
+    /// Execute a process callback when the process completes
+    pub fn execute_process_callback(
+        &mut self,
+        process_id: u64,
+        stdout: String,
+        stderr: String,
+        exit_code: i32,
+    ) -> Result<(), String> {
+        // Get and remove the callback
+        let callback = self.process_callbacks.remove(&process_id)
+            .ok_or_else(|| format!("No callback registered for process {}", process_id))?;
+
+        // Get the callback function from registry
+        let callback_fn: mlua::Function = self.lua.registry_value(&callback)
+            .map_err(|e| format!("Failed to get callback from registry: {}", e))?;
+
+        // Call the callback with results
+        callback_fn.call::<_, ()>((stdout, stderr, exit_code))
+            .map_err(|e| format!("Process callback error: {}", e))?;
+
+        // Remove the registry value to prevent memory leak
+        self.lua.remove_registry_value(callback)
+            .map_err(|e| format!("Failed to remove registry value: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Process spawn requests from Lua (called in main loop)
+    pub fn process_spawn_requests(&mut self) {
+        // Check if _spawn_callbacks table exists
+        let callbacks_table: Result<mlua::Table, _> = self.lua.globals().get("_spawn_callbacks");
+        if callbacks_table.is_err() {
+            return;
+        }
+
+        let callbacks = callbacks_table.unwrap();
+
+        // Process each callback - collect first to avoid borrow issues
+        let pairs: Vec<_> = callbacks.clone().pairs::<u64, mlua::RegistryKey>().filter_map(|p| p.ok()).collect();
+        for (process_id, callback_key) in pairs {
+            // Remove from table
+            let _ = callbacks.set(process_id, mlua::Value::Nil);
+
+            // Store in our hashmap
+            self.process_callbacks.insert(process_id, callback_key);
         }
     }
 
