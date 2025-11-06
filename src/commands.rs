@@ -326,7 +326,7 @@ pub fn get_all_commands() -> Vec<Command> {
             name: "Command Palette".to_string(),
             description: "Open the command palette".to_string(),
             action: Action::CommandPalette,
-            contexts: vec![KeyContext::Normal],
+            contexts: vec![KeyContext::Normal, KeyContext::FileExplorer],
         },
         // Git operations
         Command {
