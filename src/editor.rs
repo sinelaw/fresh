@@ -1317,11 +1317,11 @@ impl Editor {
     }
 
     /// Apply an event to the active buffer
-    pub fn apply_event_to_active_buffer(&mut self, event: Event) {
-        self.active_state_mut().apply(&event);
+    pub fn apply_event_to_active_buffer(&mut self, event: &Event) {
+        self.active_state_mut().apply(event);
 
         // Trigger plugin hooks for this event
-        self.trigger_plugin_hooks_for_event(&event);
+        self.trigger_plugin_hooks_for_event(event);
     }
 
     /// Trigger plugin hooks for an event (if any)
@@ -1414,7 +1414,7 @@ impl Editor {
         // Apply events
         for event in events {
             self.active_event_log_mut().append(event.clone());
-            self.active_state_mut().apply(&event);
+            self.apply_event_to_active_buffer(&event);
         }
 
         if !deletions.is_empty() {
@@ -1439,7 +1439,7 @@ impl Editor {
         };
 
         self.active_event_log_mut().append(event.clone());
-        self.active_state_mut().apply(&event);
+        self.apply_event_to_active_buffer(&event);
 
         self.status_message = Some("Pasted".to_string());
     }
@@ -3453,14 +3453,14 @@ impl Editor {
                                 description: "Delete backward".to_string(),
                             };
                             self.active_event_log_mut().append(batch.clone());
-                            self.active_state_mut().apply(&batch);
+                            self.apply_event_to_active_buffer(&batch);
                             for event in &events {
                                 self.notify_lsp_change(event);
                             }
                         } else {
                             for event in events {
                                 self.active_event_log_mut().append(event.clone());
-                                self.active_state_mut().apply(&event);
+                                self.apply_event_to_active_buffer(&event);
                                 self.notify_lsp_change(&event);
                             }
                         }
@@ -3509,19 +3509,17 @@ impl Editor {
                                 description: format!("Insert '{}'", c),
                             };
                             self.active_event_log_mut().append(batch.clone());
-                            self.active_state_mut().apply(&batch);
+                            self.apply_event_to_active_buffer(&batch);
                             // Notify LSP of all changes in the batch
                             for event in &events {
                                 self.notify_lsp_change(event);
-                                self.trigger_plugin_hooks_for_event(event);
                             }
                         } else {
                             // Single cursor - no need for batch
                             for event in events {
                                 self.active_event_log_mut().append(event.clone());
-                                self.active_state_mut().apply(&event);
+                                self.apply_event_to_active_buffer(&event);
                                 self.notify_lsp_change(&event);
-                                self.trigger_plugin_hooks_for_event(&event);
                             }
                         }
                     }
@@ -3539,9 +3537,9 @@ impl Editor {
                             description: action_description,
                         };
                         self.active_event_log_mut().append(batch.clone());
-                        self.active_state_mut().apply(&batch);
+                        self.apply_event_to_active_buffer(&batch);
 
-                        // Notify LSP, track position history, and trigger hooks for all events in the batch
+                        // Notify LSP and track position history for all events in the batch
                         for event in &events {
                             self.notify_lsp_change(event);
 
@@ -3558,14 +3556,12 @@ impl Editor {
                                     );
                                 }
                             }
-
-                            self.trigger_plugin_hooks_for_event(event);
                         }
                     } else {
                         // Single cursor - no need for batch
                         for event in events {
                             self.active_event_log_mut().append(event.clone());
-                            self.active_state_mut().apply(&event);
+                            self.apply_event_to_active_buffer(&event);
                             self.notify_lsp_change(&event);
 
                             // Track cursor movements in position history (but not during navigation)
@@ -3581,8 +3577,6 @@ impl Editor {
                                     );
                                 }
                             }
-
-                            self.trigger_plugin_hooks_for_event(&event);
                         }
                     }
                 }

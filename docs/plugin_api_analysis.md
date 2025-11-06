@@ -4,6 +4,8 @@
 
 The TODO Highlighter plugin exhibited a critical bug where highlights would "slide around" instead of updating when buffer content changed. This document analyzes the root causes and proposes API improvements to prevent similar issues.
 
+**Update:** After initial fixes, a deeper architectural issue was discovered: hook invocations are scattered throughout action handlers instead of being centralized in the event system. This violates separation of concerns and makes bugs inevitable.
+
 ## The Bug
 
 **Symptom:** When text was inserted at the beginning of a buffer, TODO keyword highlights remained at their original byte positions instead of moving with the text or being recalculated.
@@ -272,13 +274,106 @@ Even after fixing the bugs, the plugin still requires:
 
 This is tedious and error-prone. A better API would handle common patterns automatically.
 
+## Deeper Architectural Issue: Scattered Hook Invocations
+
+### The Problem
+
+After implementing hooks, we discovered they only worked for some operations (InsertChar) but not others (DeleteBackward, Cut, Paste). The root cause: **hook invocations are scattered throughout action handlers**.
+
+**Current (broken) pattern:**
+```rust
+// In DeleteBackward handler:
+for event in events {
+    self.active_state_mut().apply(&event);
+    self.notify_lsp_change(&event);
+    // Forgot to call trigger_plugin_hooks_for_event() ❌
+}
+
+// In InsertChar handler:
+for event in events {
+    self.active_state_mut().apply(&event);
+    self.notify_lsp_change(&event);
+    self.trigger_plugin_hooks_for_event(&event); // Remembered! ✅
+}
+```
+
+This is a **pit of failure**: every action handler must remember to call hooks, or plugins break silently.
+
+### Proper Architecture (User Insight)
+
+```
+Event generated → Before hook (can cancel) → Event applied → After hook
+```
+
+**Key insight:** Hooks should be automatic, not manual. The event system should handle this:
+
+```rust
+impl Editor {
+    pub fn apply_event(&mut self, event: &Event) {
+        // 1. Run before hooks (can cancel)
+        if !self.run_before_hooks(event) {
+            return; // Hook cancelled
+        }
+
+        // 2. Apply event
+        self.active_state_mut().apply(event);
+
+        // 3. Run after hooks (always)
+        self.run_after_hooks(event);
+    }
+}
+```
+
+**Benefits:**
+- Actions don't need to know about hooks
+- Hooks always fire (can't forget)
+- Centralized place for cross-cutting concerns (hooks, LSP, history tracking)
+- Easier to add new observers (logging, analytics, etc.)
+
+### Current Workaround
+
+We created a centralized `apply_event_to_active_buffer()` method that triggers hooks, but action handlers must remember to use it instead of calling `.apply()` directly. This is better but still error-prone.
+
+**Partial fix:**
+```rust
+pub fn apply_event_to_active_buffer(&mut self, event: &Event) {
+    self.active_state_mut().apply(event);
+    self.trigger_plugin_hooks_for_event(event); // Automatic!
+}
+```
+
+But code still needs to call this method instead of `.apply()` directly.
+
+### Ideal Future Architecture
+
+```rust
+// Event application ALWAYS goes through one method
+impl EditorState {
+    pub fn apply(&mut self, event: &Event, observers: &mut Observers) {
+        // 1. Before hooks
+        observers.before_hook(event);
+
+        // 2. Apply to buffer
+        self.buffer.apply(event);
+
+        // 3. After hooks + other observers
+        observers.after_hook(event);
+        observers.notify_lsp(event);
+        observers.track_position(event);
+    }
+}
+```
+
+All cross-cutting concerns handled in one place, impossible to forget.
+
 ## Conclusion
 
 The root cause was a combination of:
 1. Low-level API (absolute positions) without high-level helpers
 2. Incomplete implementation (hooks didn't work)
 3. State consistency issues (stale snapshots)
-4. Lack of documentation
+4. **Scattered cross-cutting concerns (hooks, LSP, history tracking)**
+5. Lack of documentation
 
 The fix made it *possible* to write correct plugins, but didn't make it *easy*. The proposed improvements aim to make correct code the default path.
 
@@ -286,12 +381,18 @@ The fix made it *possible* to write correct plugins, but didn't make it *easy*. 
 
 1. ✅ Implement hooks
 2. ✅ Fix snapshot staleness
-3. Document the current limitations
-4. Add warnings/errors for common mistakes
+3. ✅ Create centralized `apply_event_to_active_buffer()` (partial fix)
+4. ⚠️ Document that action handlers MUST use centralized method
+5. Add warnings/errors for common mistakes
 
-### Future Work
+### Future Work (Priority Order)
 
-1. Implement content-anchored overlays
-2. Add buffer change deltas to hook events
-3. Provide higher-level overlay management APIs
-4. Add validation mode for development
+1. **Centralize event application** - All events go through one method that automatically handles hooks/LSP/history
+2. Implement content-anchored overlays
+3. Add buffer change deltas to hook events
+4. Provide higher-level overlay management APIs
+5. Add validation mode for development
+
+### Key Takeaway
+
+**Good architecture makes bugs impossible, not just unlikely.** The current scattered approach makes forgetting hooks inevitable. Centralizing cross-cutting concerns in the event system is the proper fix.
