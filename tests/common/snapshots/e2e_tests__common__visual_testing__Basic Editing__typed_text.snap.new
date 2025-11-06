@@ -1,0 +1,29 @@
+---
+source: tests/common/visual_testing.rs
+assertion_line: 71
+expression: "&screen_text"
+---
+ [No Name]*   editor_plugin_debug_12360.log                                     
+    1 │ Hello, World!                                                          █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+[No Name] [+] | Ln 0, Col 13 | Opened /tmp/editor_plugin_debug_12360.log

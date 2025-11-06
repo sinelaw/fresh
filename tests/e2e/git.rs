@@ -6,7 +6,6 @@ use crossterm::event::{KeyCode, KeyModifiers};
 
 /// Test git grep basic functionality - visibility of results
 #[test]
-#[ignore = "Async file loading in tests needs improvement - file content doesn't load synchronously in test harness"]
 fn test_git_grep_shows_results() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
@@ -579,7 +578,6 @@ fn test_git_commands_via_command_palette() {
 
 /// REPRODUCTION TEST: Git grep selection should open file and jump to exact line
 #[test]
-#[ignore = "Async file loading in tests needs improvement - file content doesn't load synchronously in test harness"]
 fn test_git_grep_opens_correct_file_and_jumps_to_line() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
@@ -663,7 +661,6 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
 
 /// REPRODUCTION TEST: Git find file selection should actually open the file
 #[test]
-#[ignore = "Async file loading in tests needs improvement - file content doesn't load synchronously in test harness"]
 fn test_git_find_file_actually_opens_file() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
@@ -744,7 +741,6 @@ fn test_git_find_file_actually_opens_file() {
 
 /// REPRODUCTION TEST: Verify cursor jumps to correct line in git grep
 #[test]
-#[ignore = "Async file loading in tests needs improvement - file content doesn't load synchronously in test harness"]
 fn test_git_grep_cursor_position_accuracy() {
     let repo = GitTestRepo::new();
 

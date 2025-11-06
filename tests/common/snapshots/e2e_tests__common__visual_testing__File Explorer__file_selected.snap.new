@@ -1,0 +1,35 @@
+---
+source: tests/common/visual_testing.rs
+assertion_line: 71
+expression: "&screen_text"
+---
+ [No Name]                                                                      
+┌ File Explorer ───────┐    1 │                                                █
+│▶ [D] .tmprs7Obg      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       █
+│                      │                                                       │
+│                      │                                                       │
+│                      │                                                       │
+│                      │                                                       │
+│                      │                                                       │
+└──────────────────────┘                                                       │
+[No Name] | Ln 0, Col 0 | File explorer ready

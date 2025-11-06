@@ -1,0 +1,29 @@
+---
+source: tests/common/visual_testing.rs
+assertion_line: 71
+expression: "&screen_text"
+---
+ editor_plugin_debug_12360.log                                                  
+    1 │ === Plugin Debug Log ===                                               █
+    2 │ 🎉  Welcome plugin initialized successfully!                            █
+    3 │ 📝  Registered 5 commands - try Ctrl+P to see them!                     █
+    4 │    - 'Plugin Demo: Open Help' - toggles help screen (built-in action)  █
+    5 │    - 'Plugin Demo: Save File' - saves current file (built-in action)   █
+    6 │    - 'Plugin Demo: Say Hello' - inserts greeting (Lua callback)        █
+    7 │    - 'Plugin Demo: Insert Time' - inserts current time (Lua callback)  █
+    8 │    - 'Plugin Demo: Insert Comment' - inserts sample comment (Lua callba█
+    9 │                                                                        │
+   10 │ 🔍  You're viewing this in the debug log! It opened automatically when t│
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Open File  -  Open a file in a new or existing buffer                       │
+│  Save File  -  Save the current buffer to disk                               │
+│  Save File As  -  Save the current buffer to a new file                      │
+│  New File  -  Create a new empty buffer                                      │
+│  Close Buffer  -  Close the current buffer                                   │
+│  Quit  -  Exit the editor                                                    │
+│  Undo  -  Undo the last edit                                                 │
+│  Redo  -  Redo the last undone edit                                          │
+│  Copy  -  Copy selection to clipboard                                        │
+│  Cut  -  Cut selection to clipboard                                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+Command:

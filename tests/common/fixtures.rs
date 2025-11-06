@@ -59,6 +59,9 @@ impl TestFixture {
 
     /// Get or create BIG.txt in tests/ directory (61MB, persistent across test runs)
     /// This file is gitignored and generated on first use
+    ///
+    /// **DEPRECATED**: Use `big_txt_for_test()` instead to avoid test interference.
+    /// This method is kept for backwards compatibility but should not be used in new tests.
     pub fn big_txt() -> std::io::Result<PathBuf> {
         let path = PathBuf::from("tests/BIG.txt");
 
@@ -78,6 +81,34 @@ impl TestFixture {
         }
 
         Ok(path)
+    }
+
+    /// Create a test-specific large file (61MB) in a temporary directory.
+    /// This ensures tests are hermetic and don't interfere with each other.
+    /// Each test gets its own copy, preventing race conditions during parallel test execution.
+    ///
+    /// The file is automatically cleaned up when the returned TestFixture is dropped.
+    pub fn big_txt_for_test(test_name: &str) -> std::io::Result<Self> {
+        let temp_dir = tempfile::tempdir()?;
+        let filename = format!("BIG-{}.txt", test_name);
+        let path = temp_dir.path().join(&filename);
+
+        eprintln!("Generating temporary large file for test '{}' (61MB)...", test_name);
+        let mut file = fs::File::create(&path)?;
+        let line = "x".repeat(80) + "\n";
+        let lines_per_mb = 1024 * 1024 / line.len();
+        let size_mb = 61;
+
+        for _ in 0..(size_mb * lines_per_mb) {
+            file.write_all(line.as_bytes())?;
+        }
+        file.flush()?;
+        eprintln!("Generated temporary large file for test '{}'", test_name);
+
+        Ok(TestFixture {
+            _temp_dir: temp_dir,
+            path,
+        })
     }
 }
 
