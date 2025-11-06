@@ -70,6 +70,25 @@ impl EditorTestHarness {
         })
     }
 
+    /// Create with custom config and explicit working directory
+    /// The working directory is used for LSP initialization and file operations
+    pub fn with_config_and_working_dir(
+        width: u16,
+        height: u16,
+        config: Config,
+        working_dir: std::path::PathBuf,
+    ) -> io::Result<Self> {
+        let backend = TestBackend::new(width, height);
+        let terminal = Terminal::new(backend)?;
+        let editor = Editor::with_working_dir(config, width, height, Some(working_dir))?;
+
+        Ok(EditorTestHarness {
+            editor,
+            terminal,
+            _temp_dir: None,
+        })
+    }
+
     /// Get the path to the temp project directory (if created with with_temp_project)
     pub fn project_dir(&self) -> Option<PathBuf> {
         self._temp_dir.as_ref().map(|d| d.path().to_path_buf())

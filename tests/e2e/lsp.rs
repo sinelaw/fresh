@@ -1310,7 +1310,11 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
         },
     );
 
-    let mut harness = EditorTestHarness::with_config(80, 30, config)?;
+    // CRITICAL: Set working directory to the temp project so rust-analyzer
+    // analyzes the test code, NOT the editor's source code!
+    let working_dir = temp_dir.path().to_path_buf();
+    tracing::info!("Setting working directory for LSP: {:?}", working_dir);
+    let mut harness = EditorTestHarness::with_config_and_working_dir(80, 30, config, working_dir)?;
 
     // Open the Rust file - this should trigger LSP initialization
     tracing::info!("Opening file: {:?}", test_file);
