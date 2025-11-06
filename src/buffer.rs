@@ -841,6 +841,38 @@ mod tests {
     }
 
     #[test]
+    fn test_lsp_position_to_byte_rust_rename_scenario() {
+        // Reproduce the exact scenario from the bug report:
+        // fn main() {
+        //     let log_line = "hello world";
+        //     println!("{}", log_line);
+        //     let result = log_line.len();
+        // }
+        let code = "fn main() {\n    let log_line = \"hello world\";\n    println!(\"{}\", log_line);\n    let result = log_line.len();\n}\n";
+        let buffer = Buffer::from_str(code);
+
+        // Test the 3 edits from rust-analyzer (as shown in VSCode logs):
+
+        // Edit 1: line 1, character 8-16 (the declaration)
+        let start_pos = buffer.lsp_position_to_byte(1, 8);
+        let end_pos = buffer.lsp_position_to_byte(1, 16);
+        let text = buffer.slice(start_pos..end_pos);
+        assert_eq!(text, "log_line", "Edit 1: declaration should be 'log_line' at line 1, chars 8-16");
+
+        // Edit 2: line 2, character 19-27 (the println! argument)
+        let start_pos = buffer.lsp_position_to_byte(2, 19);
+        let end_pos = buffer.lsp_position_to_byte(2, 27);
+        let text = buffer.slice(start_pos..end_pos);
+        assert_eq!(text, "log_line", "Edit 2: println! arg should be 'log_line' at line 2, chars 19-27");
+
+        // Edit 3: line 3, character 17-25 (the .len() call)
+        let start_pos = buffer.lsp_position_to_byte(3, 17);
+        let end_pos = buffer.lsp_position_to_byte(3, 25);
+        let text = buffer.slice(start_pos..end_pos);
+        assert_eq!(text, "log_line", "Edit 3: .len() call should be 'log_line' at line 3, chars 17-25");
+    }
+
+    #[test]
     fn test_line_iterator_next_then_prev() {
         // Correct semantics for cursor-based bidirectional iterator:
         // If items are [a, b, c] and cursor is between a and b:

@@ -2119,6 +2119,16 @@ impl Editor {
                                 let start_pos = state.buffer.lsp_position_to_byte(start_line, start_char);
                                 let end_pos = state.buffer.lsp_position_to_byte(end_line, end_char);
 
+                                // Log the conversion for debugging
+                                let old_text = if start_pos < end_pos && end_pos <= state.buffer.len() {
+                                    state.buffer.slice(start_pos..end_pos).to_string()
+                                } else {
+                                    format!("<invalid range: start={}, end={}, buffer_len={}>", start_pos, end_pos, state.buffer.len())
+                                };
+                                tracing::debug!("  Converting LSP range line {}:{}-{}:{} to bytes {}..{} (replacing {:?} with {:?})",
+                                    start_line, start_char, end_line, end_char,
+                                    start_pos, end_pos, old_text, edit.new_text);
+
                                 // Delete old text
                                 if start_pos < end_pos {
                                     let deleted_text = state.buffer.slice(start_pos..end_pos).to_string();
@@ -2240,6 +2250,16 @@ impl Editor {
 
                                 let start_pos = state.buffer.lsp_position_to_byte(start_line, start_char);
                                 let end_pos = state.buffer.lsp_position_to_byte(end_line, end_char);
+
+                                // Log the conversion for debugging
+                                let old_text = if start_pos < end_pos && end_pos <= state.buffer.len() {
+                                    state.buffer.slice(start_pos..end_pos).to_string()
+                                } else {
+                                    format!("<invalid range: start={}, end={}, buffer_len={}>", start_pos, end_pos, state.buffer.len())
+                                };
+                                tracing::debug!("  Converting LSP range line {}:{}-{}:{} to bytes {}..{} (replacing {:?} with {:?})",
+                                    start_line, start_char, end_line, end_char,
+                                    start_pos, end_pos, old_text, edit.new_text);
 
                                 // Delete old text
                                 if start_pos < end_pos {
