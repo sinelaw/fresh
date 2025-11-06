@@ -53,9 +53,6 @@ pub struct PluginManager {
 
     /// Debug log file path
     debug_log_path: PathBuf,
-
-    /// Whether debug log has been opened in editor
-    debug_log_opened: Arc<RwLock<bool>>,
 }
 
 impl PluginManager {
@@ -76,8 +73,6 @@ impl PluginManager {
         std::fs::write(&debug_log_path, "=== Plugin Debug Log ===\n")
             .map_err(|e| mlua::Error::RuntimeError(format!("Failed to create debug log: {}", e)))?;
 
-        let debug_log_opened = Arc::new(RwLock::new(false));
-
         // Create plugin API
         let plugin_api = PluginApi::new(
             Arc::clone(&hooks),
@@ -86,7 +81,7 @@ impl PluginManager {
         );
 
         // Set up Lua globals and bindings
-        Self::setup_lua_bindings(&lua, &plugin_api, &debug_log_path, Arc::clone(&debug_log_opened))?;
+        Self::setup_lua_bindings(&lua, &plugin_api, &debug_log_path)?;
 
         // Create global table for storing callbacks
         lua.globals().set("_plugin_callbacks", lua.create_table()?)?;
@@ -102,7 +97,6 @@ impl PluginManager {
             command_receiver,
             action_callbacks: HashMap::new(),
             debug_log_path,
-            debug_log_opened,
         })
     }
 
@@ -111,7 +105,6 @@ impl PluginManager {
         lua: &Lua,
         api: &PluginApi,
         debug_log_path: &PathBuf,
-        debug_log_opened: Arc<RwLock<bool>>,
     ) -> Result<(), mlua::Error> {
         let globals = lua.globals();
 
@@ -261,7 +254,6 @@ impl PluginManager {
 
         // Create debug() global function (not part of editor table)
         let debug_log_path_clone = debug_log_path.clone();
-        let api_clone = api.clone();
         let debug = lua.create_function(move |_, message: String| {
             use std::io::Write;
 
@@ -275,17 +267,8 @@ impl PluginManager {
             writeln!(file, "{}", message)
                 .map_err(|e| mlua::Error::RuntimeError(format!("Failed to write to debug log: {}", e)))?;
 
-            // Check if we need to open the debug log in the editor
-            let mut opened = debug_log_opened.write().unwrap();
-            if !*opened {
-                // Send command to open the debug log file in background
-                api_clone
-                    .send_command(PluginCommand::OpenFileInBackground {
-                        path: debug_log_path_clone.clone(),
-                    })
-                    .map_err(|e| mlua::Error::RuntimeError(e))?;
-                *opened = true;
-            }
+            // Debug messages are written to the log file but don't automatically open it
+            // Users can manually open the debug log if needed
 
             Ok(())
         })?;
