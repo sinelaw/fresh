@@ -1,7 +1,7 @@
 //! Split pane layout and buffer rendering
 
 use crate::event::{BufferId, EventLog, SplitDirection};
-use crate::line_wrapping::{wrap_line, WrapConfig};
+use crate::line_wrapping::{char_position_to_segment, wrap_line, WrapConfig};
 use crate::split::SplitManager;
 use crate::state::EditorState;
 use ratatui::layout::Rect;
@@ -338,6 +338,11 @@ impl SplitRenderer {
         let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
         let mut lines_rendered = 0;
 
+        // Track cursor position during rendering (eliminates duplicate line iteration)
+        let mut cursor_screen_x = 0u16;
+        let mut cursor_screen_y = 0u16;
+        let mut cursor_found = false;
+
         // For empty buffers, render at least one line with the margin
         let is_empty_buffer = state.buffer.is_empty();
 
@@ -582,30 +587,87 @@ impl SplitRenderer {
                 }
             }
 
-            // Handle line wrapping
-            if line_wrap && !line_spans.is_empty() {
-                // Use new clean wrapping implementation
-                let config = WrapConfig::new(area.width as usize, gutter_width, true);
+            // Always use wrap_line() - unifies wrapping and no-wrapping code paths
+            // For no-wrap mode, we use infinite width so everything stays in one segment
+            if !line_spans.is_empty() {
+                let config = if line_wrap {
+                    WrapConfig::new(area.width as usize, gutter_width, true)
+                } else {
+                    WrapConfig::no_wrap(gutter_width)
+                };
 
-                // Extract text from spans for wrapping
-                let line_text: String = line_spans.iter().map(|s| s.content.as_ref()).collect();
+                // Separate gutter spans from content spans
+                // Count characters in gutter to find where content starts
+                let mut gutter_char_count = 0;
+                let mut gutter_span_count = 0;
+                for span in &line_spans {
+                    let span_len = span.content.chars().count();
+                    if gutter_char_count + span_len <= gutter_width {
+                        gutter_char_count += span_len;
+                        gutter_span_count += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Extract only the content spans (skip gutter spans)
+                let content_spans = &line_spans[gutter_span_count..];
+
+                // Extract text from content spans only (not gutter) for wrapping
+                let line_text: String = content_spans.iter().map(|s| s.content.as_ref()).collect();
 
                 // Wrap the line using the clean transformation
                 let segments = wrap_line(&line_text, &config);
 
+                // Check if primary cursor is on this line and calculate its position
+                if !cursor_found && primary_cursor_position >= line_start
+                    && primary_cursor_position <= line_start + line_text.len() {
+                    let column = primary_cursor_position.saturating_sub(line_start);
+                    let (segment_idx, col_in_segment) = char_position_to_segment(column, &segments);
+
+                    // Cursor screen position relative to this line's rendered segments
+                    // For no-wrap mode with horizontal scrolling, adjust for left_column
+                    // Note: cursor_screen_x is the column in the text content, NOT including
+                    // the line number gutter (which gets added later at hardware cursor setting)
+                    cursor_screen_x = if !line_wrap {
+                        col_in_segment.saturating_sub(left_col) as u16
+                    } else {
+                        col_in_segment as u16
+                    };
+                    cursor_screen_y = (lines_rendered + segment_idx) as u16;
+                    cursor_found = true;
+                }
+
                 // Render each wrapped segment
-                for segment in segments {
+                for (seg_idx, segment) in segments.iter().enumerate() {
                     let mut segment_spans = vec![];
 
-                    // Add gutter indentation for continuation lines
-                    if segment.is_continuation {
+                    // Add gutter for each segment
+                    if seg_idx == 0 {
+                        // First segment gets the actual gutter (line numbers, etc.)
+                        segment_spans.extend_from_slice(&line_spans[..gutter_span_count]);
+                    } else {
+                        // Continuation lines get spaces in the gutter area
                         segment_spans.push(Span::raw(" ".repeat(gutter_width)));
                     }
 
-                    // Add the text content (preserving syntax highlighting would require more work)
-                    // For now, use the style from the first span
-                    let style = line_spans.first().map(|s| s.style).unwrap_or_default();
-                    segment_spans.push(Span::styled(segment.text, style));
+                    // For no-wrap mode, apply horizontal scrolling to the single segment
+                    let segment_text = if !line_wrap && left_col > 0 {
+                        // Skip characters before left_column for horizontal scrolling
+                        segment.text.chars().skip(left_col).collect()
+                    } else {
+                        segment.text.clone()
+                    };
+
+                    // Preserve styles from original content_spans (not line_spans which includes gutter)
+                    // Map each character in segment to its original style
+                    let styled_spans = Self::apply_styles_to_segment(
+                        &segment_text,
+                        content_spans,
+                        segment.start_char_offset,
+                        if !line_wrap { left_col } else { 0 },
+                    );
+                    segment_spans.extend(styled_spans);
 
                     lines.push(Line::from(segment_spans));
                     lines_rendered += 1;
@@ -619,6 +681,7 @@ impl SplitRenderer {
                 // Adjust lines_rendered since we already incremented it in the outer loop
                 lines_rendered = lines_rendered.saturating_sub(1);
             } else {
+                // Empty line - just add the gutter
                 lines.push(Line::from(line_spans));
             }
 
@@ -634,11 +697,8 @@ impl SplitRenderer {
 
         // Render cursor and log state (only for active split)
         if is_active {
-            // Position hardware cursor at PRIMARY cursor only
-            let primary_cursor = state.cursors.primary();
-            let (x, y) = state
-                .viewport
-                .cursor_screen_position(&mut state.buffer, primary_cursor);
+            // Use cursor position calculated during rendering (no need to call cursor_screen_position)
+            let (x, y) = (cursor_screen_x, cursor_screen_y);
 
             tracing::trace!(
                 "Setting hardware cursor to PRIMARY cursor position: ({}, {})",
@@ -648,6 +708,8 @@ impl SplitRenderer {
 
             // Adjust for line numbers (gutter width is dynamic based on max line number)
             // and adjust Y for the content area offset (area.y accounts for tab bar)
+            // NOTE: cursor_screen_x is already the column within the CONTENT (after gutter),
+            // so we need to add gutter_width to account for the gutter that's rendered in the line
             let screen_x = area.x.saturating_add(x).saturating_add(gutter_width as u16);
             let screen_y = area.y.saturating_add(y);
             tracing::trace!(
@@ -671,5 +733,86 @@ impl SplitRenderer {
         }
     }
 
+    /// Apply styles from original line_spans to a wrapped segment
+    ///
+    /// Maps each character in the segment text back to its original span to preserve
+    /// syntax highlighting, selections, and other styling across wrapped lines.
+    ///
+    /// # Arguments
+    /// * `segment_text` - The text content of this wrapped segment
+    /// * `line_spans` - The original styled spans for the entire line
+    /// * `segment_start_offset` - Character offset where this segment starts in the original line
+    /// * `scroll_offset` - Additional offset for horizontal scrolling (non-wrap mode)
+    fn apply_styles_to_segment(
+        segment_text: &str,
+        line_spans: &[Span<'static>],
+        segment_start_offset: usize,
+        scroll_offset: usize,
+    ) -> Vec<Span<'static>> {
+        if line_spans.is_empty() {
+            return vec![Span::raw(segment_text.to_string())];
+        }
+
+        let mut result_spans = Vec::new();
+        let mut segment_chars: Vec<char> = segment_text.chars().collect();
+
+        if segment_chars.is_empty() {
+            return vec![Span::raw(String::new())];
+        }
+
+        // Build a map of character position -> style
+        let mut char_styles: Vec<(char, Style)> = Vec::new();
+        let mut char_pos = 0;
+
+        for span in line_spans {
+            let span_text = span.content.as_ref();
+            let style = span.style;
+
+            for ch in span_text.chars() {
+                char_styles.push((ch, style));
+                char_pos += 1;
+            }
+        }
+
+        // Extract the styles for this segment
+        let mut current_text = String::new();
+        let mut current_style = None;
+
+        for (i, &ch) in segment_chars.iter().enumerate() {
+            let original_pos = segment_start_offset + scroll_offset + i;
+
+            let style_for_char = if original_pos < char_styles.len() {
+                char_styles[original_pos].1
+            } else {
+                Style::default()
+            };
+
+            // If style changed, flush current span and start new one
+            if let Some(prev_style) = current_style {
+                if prev_style != style_for_char {
+                    result_spans.push(Span::styled(current_text.clone(), prev_style));
+                    current_text.clear();
+                    current_style = Some(style_for_char);
+                }
+            } else {
+                current_style = Some(style_for_char);
+            }
+
+            current_text.push(ch);
+        }
+
+        // Flush remaining text
+        if !current_text.is_empty() {
+            if let Some(style) = current_style {
+                result_spans.push(Span::styled(current_text, style));
+            }
+        }
+
+        if result_spans.is_empty() {
+            vec![Span::raw(String::new())]
+        } else {
+            result_spans
+        }
+    }
 
 }

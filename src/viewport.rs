@@ -374,6 +374,10 @@ impl Viewport {
 
     /// Get the cursor screen position (x, y) which is (col, row) for rendering
     /// This returns the position relative to the viewport, accounting for horizontal scrolling
+    ///
+    /// NOTE: This function is kept for popup positioning and multi-cursor display,
+    /// but is NO LONGER used for primary cursor rendering, which now happens during
+    /// the line rendering loop in split_rendering.rs to eliminate duplicate line iteration.
     pub fn cursor_screen_position(&self, buffer: &mut Buffer, cursor: &Cursor) -> (u16, u16) {
         // Find line start using iterator
         let cursor_iter = buffer.line_iterator(cursor.position);

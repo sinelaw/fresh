@@ -33,18 +33,28 @@ impl WrapConfig {
     /// Create a new wrap configuration
     ///
     /// # Arguments
-    /// * `terminal_width` - Total terminal width in characters
+    /// * `content_area_width` - Width of the content area (after UI elements like tabs/status bar, but including scrollbar and gutter)
     /// * `gutter_width` - Width of the line number gutter
     /// * `has_scrollbar` - Whether to reserve a column for scrollbar
-    pub fn new(terminal_width: usize, gutter_width: usize, has_scrollbar: bool) -> Self {
+    pub fn new(content_area_width: usize, gutter_width: usize, has_scrollbar: bool) -> Self {
         let scrollbar_width = if has_scrollbar { 1 } else { 0 };
-        let content_width = terminal_width.saturating_sub(scrollbar_width);
-        let first_line_width = content_width.saturating_sub(gutter_width);
-        let continuation_line_width = first_line_width.saturating_sub(gutter_width);
+        let text_area_width = content_area_width.saturating_sub(scrollbar_width).saturating_sub(gutter_width);
+        let first_line_width = text_area_width;
+        let continuation_line_width = text_area_width.saturating_sub(gutter_width);
 
         Self {
-            first_line_width: content_width,
-            continuation_line_width: content_width,
+            first_line_width,
+            continuation_line_width,
+            gutter_width,
+        }
+    }
+
+    /// Create a "no wrap" configuration (infinite width)
+    /// This treats the line as having unlimited width, so it never wraps
+    pub fn no_wrap(gutter_width: usize) -> Self {
+        Self {
+            first_line_width: usize::MAX,
+            continuation_line_width: usize::MAX,
             gutter_width,
         }
     }
@@ -265,6 +275,80 @@ mod tests {
         // Second segment should skip the leading space and have B's
         assert!(segments[1].text.starts_with('B'), "Continuation should skip leading space");
         assert_eq!(segments[1].text.chars().count(), 43);
+    }
+
+    #[test]
+    fn test_wrap_exact_width() {
+        let config = WrapConfig::new(60, 8, true);
+        println!("Config: first={}, cont={}", config.first_line_width, config.continuation_line_width);
+
+        // Create text that's longer than one line
+        let text = "A".repeat(100);
+        let segments = wrap_line(&text, &config);
+
+        println!("Number of segments: {}", segments.len());
+        for (i, seg) in segments.iter().enumerate() {
+            println!("Segment {}: len={}, start={}, end={}", i, seg.text.len(), seg.start_char_offset, seg.end_char_offset);
+        }
+
+        assert_eq!(segments[0].text.len(), config.first_line_width, "First segment should have first_line_width characters");
+        if segments.len() > 1 {
+            assert_eq!(segments[1].text.len(), config.continuation_line_width, "Second segment should have continuation_line_width characters");
+        }
+    }
+
+    #[test]
+    fn test_wrap_with_real_text() {
+        let config = WrapConfig::new(60, 8, true);
+        println!("Config: first={}, cont={}", config.first_line_width, config.continuation_line_width);
+
+        let text = "The quick brown fox jumps over the lazy dog and runs through the forest, exploring ancient trees and mysterious pathways that wind between towering oaks.";
+        println!("Text len: {}", text.len());
+        println!("Text[48..55]: {:?}", &text[48..55]);
+
+        let segments = wrap_line(&text, &config);
+
+        for (i, seg) in segments.iter().enumerate() {
+            println!("Segment {}: len={}, start={}, end={}, text[..10]={:?}",
+                     i, seg.text.len(), seg.start_char_offset, seg.end_char_offset,
+                     &seg.text[..seg.text.len().min(10)]);
+        }
+
+        assert_eq!(segments[0].text.len(), config.first_line_width,
+                   "First segment should have {} chars but has {}", config.first_line_width, segments[0].text.len());
+    }
+
+    #[test]
+    fn test_wrap_config_widths() {
+        // Test that WrapConfig calculates widths correctly
+        let config = WrapConfig::new(60, 8, true);
+
+        println!("Config: first_line_width={}, continuation_line_width={}, gutter_width={}",
+                 config.first_line_width, config.continuation_line_width, config.gutter_width);
+
+        // Terminal: 60, scrollbar: 1, gutter: 8
+        // First line: 60 - 1 - 8 = 51
+        // Continuation: 51 - 8 = 43
+        assert_eq!(config.first_line_width, 51);
+        assert_eq!(config.continuation_line_width, 43);
+
+        let text = "The quick brown fox jumps over the lazy dog and runs through the forest, exploring ancient trees and mysterious pathways that wind between towering oaks.";
+        let segments = wrap_line(text, &config);
+
+        println!("Text length: {}", text.len());
+        println!("Number of segments: {}", segments.len());
+
+        for (i, seg) in segments.iter().enumerate() {
+            println!("Segment {}: start={}, end={}, len={}, is_continuation={}",
+                     i, seg.start_char_offset, seg.end_char_offset, seg.text.len(), seg.is_continuation);
+            println!("  Text: {:?}", &seg.text[..seg.text.len().min(40)]);
+        }
+
+        // Check position 51 (should be first char of segment 1)
+        let (seg_idx, col_in_seg) = char_position_to_segment(51, &segments);
+        println!("Position 51: segment_idx={}, col_in_segment={}", seg_idx, col_in_seg);
+        assert_eq!(seg_idx, 1, "Position 51 should be in segment 1");
+        assert_eq!(col_in_seg, 0, "Position 51 should be at start of segment 1");
     }
 
 }
