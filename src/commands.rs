@@ -297,12 +297,30 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::FileExplorerRename,
             contexts: vec![KeyContext::FileExplorer],
         },
+        Command {
+            name: "Toggle Hidden Files".to_string(),
+            description: "Show or hide hidden files in the file explorer".to_string(),
+            action: Action::FileExplorerToggleHidden,
+            contexts: vec![KeyContext::FileExplorer],
+        },
+        Command {
+            name: "Toggle Gitignored Files".to_string(),
+            description: "Show or hide gitignored files in the file explorer".to_string(),
+            action: Action::FileExplorerToggleGitignored,
+            contexts: vec![KeyContext::FileExplorer],
+        },
         // View
         Command {
             name: "Show Help".to_string(),
             description: "Display the help page with all keybindings".to_string(),
             action: Action::ShowHelp,
             contexts: vec![],
+        },
+        Command {
+            name: "Toggle Line Wrap".to_string(),
+            description: "Enable or disable line wrapping in the editor".to_string(),
+            action: Action::ToggleLineWrap,
+            contexts: vec![KeyContext::Normal],
         },
         Command {
             name: "Command Palette".to_string(),

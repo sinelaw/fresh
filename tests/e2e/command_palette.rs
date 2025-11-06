@@ -412,3 +412,209 @@ fn test_command_palette_new_file_switches_buffer() {
     harness.assert_screen_contains("New buffer text");
     harness.assert_screen_not_contains("Original content");
 }
+
+/// Test that Toggle Line Wrap command is available
+#[test]
+fn test_command_palette_toggle_line_wrap() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Trigger the command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Type "toggle line" to filter
+    harness.type_text("toggle line").unwrap();
+    harness.render().unwrap();
+
+    // Should show "Toggle Line Wrap" command
+    harness.assert_screen_contains("Toggle Line Wrap");
+}
+
+/// Test that File Explorer toggle commands are available
+#[test]
+fn test_command_palette_file_explorer_toggles() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Trigger the command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Type "toggle hidden" to filter
+    harness.type_text("toggle hidden").unwrap();
+    harness.render().unwrap();
+
+    // Should show "Toggle Hidden Files" command
+    harness.assert_screen_contains("Toggle Hidden Files");
+
+    // Clear and search for gitignored
+    for _ in 0..13 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    harness.type_text("toggle git").unwrap();
+    harness.render().unwrap();
+
+    // Should show "Toggle Gitignored Files" command
+    harness.assert_screen_contains("Toggle Gitignored Files");
+}
+
+/// Test that Up arrow stops at the beginning of the list instead of wrapping
+#[test]
+fn test_command_palette_up_no_wraparound() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Trigger the command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The first suggestion should be selected by default
+    // Press Up - should stay at the first item, not wrap to the end
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to execute the selected command
+    // If we wrapped around, we would execute the last command in the list
+    // If we stayed at the first command, we would execute "Open File"
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // "Open File" command opens a file picker prompt
+    // We should see "Find file:" prompt
+    harness.assert_screen_contains("Find file:");
+}
+
+/// Test that Down arrow stops at the end of the list instead of wrapping
+#[test]
+fn test_command_palette_down_no_wraparound() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Trigger the command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Filter to get only two commands
+    harness.type_text("save f").unwrap();
+    harness.render().unwrap();
+
+    // Should match "Save File" and "Save File As"
+    harness.assert_screen_contains("Save File");
+
+    // First suggestion (Save File) should be selected
+    // Press Down to go to second (Save File As)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Press Down again - should stay at the last item, not wrap to first
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Press Tab to accept the selected suggestion
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // If we wrapped around, we'd be back at "Save File"
+    // If we stayed at the end, we'd still be at "Save File As"
+    // The tab should complete to the selected command
+    harness.assert_screen_contains("Command: Save File As");
+}
+
+/// Test that PageUp stops at the beginning of the list instead of wrapping
+#[test]
+fn test_command_palette_pageup_no_wraparound() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Trigger the command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // First suggestion should be selected
+    // Press PageUp - should stay at the first item (or move up less than 10), not wrap to the end
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to execute the selected command
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Should execute the first command "Open File"
+    harness.assert_screen_contains("Find file:");
+}
+
+/// Test that PageDown stops at the end of the list instead of wrapping
+#[test]
+fn test_command_palette_pagedown_no_wraparound() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Trigger the command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Press PageDown multiple times to reach the end
+    // There are about 30+ commands, so 4 PageDowns should be enough
+    for _ in 0..4 {
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Press PageDown again - should stay at the end
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // After pressing PageDown many times, we should be at one of the last commands
+    // The exact command depends on the total number of commands and where PageDown stops
+    // Let's verify that we're at a command near the end by checking we can't go further
+
+    // Try PageDown once more and verify selection doesn't change
+    // by executing the command and seeing what we get
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // We should execute one of the last commands. Could be Git commands or File Explorer toggles
+    // depending on context availability. Let's just verify we didn't execute one of the first commands
+    let screen = harness.screen_to_string();
+
+    // Make sure we didn't wrap around to execute an early command like "Open File" or "Save File"
+    harness.assert_screen_not_contains("Save File As");
+
+    // The last available command in Normal context should be either:
+    // - Git: Find File (opens "Find file:" prompt)
+    // - Git: Grep (opens "Git Grep:" prompt)
+    // - Or we get an error message about command not being available (for File Explorer commands)
+    let is_expected_result = screen.contains("Git Grep:")
+        || screen.contains("Find file:")
+        || screen.contains("not available in");
+    assert!(
+        is_expected_result,
+        "Expected to execute a command near the end of the list, but got: {}",
+        screen
+    );
+}

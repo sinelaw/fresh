@@ -3044,8 +3044,9 @@ impl Editor {
                 if let Some(prompt) = self.prompt_mut() {
                     if !prompt.suggestions.is_empty() {
                         if let Some(selected) = prompt.selected_suggestion {
+                            // Don't wrap around - stay at 0 if already at the beginning
                             prompt.selected_suggestion = if selected == 0 {
-                                Some(prompt.suggestions.len() - 1)
+                                Some(0)
                             } else {
                                 Some(selected - 1)
                             };
@@ -3057,8 +3058,9 @@ impl Editor {
                 if let Some(prompt) = self.prompt_mut() {
                     if !prompt.suggestions.is_empty() {
                         if let Some(selected) = prompt.selected_suggestion {
-                            prompt.selected_suggestion =
-                                Some((selected + 1) % prompt.suggestions.len());
+                            // Don't wrap around - stay at the end if already at the last item
+                            let new_pos = selected + 1;
+                            prompt.selected_suggestion = Some(new_pos.min(prompt.suggestions.len() - 1));
                         }
                     }
                 }
@@ -3067,13 +3069,8 @@ impl Editor {
                 if let Some(prompt) = self.prompt_mut() {
                     if !prompt.suggestions.is_empty() {
                         if let Some(selected) = prompt.selected_suggestion {
-                            // Move up by 10, wrapping to end if needed
-                            let len = prompt.suggestions.len();
-                            prompt.selected_suggestion = if selected < 10 {
-                                Some(len.saturating_sub(10 - selected))
-                            } else {
-                                Some(selected - 10)
-                            };
+                            // Move up by 10, but stop at 0 instead of wrapping
+                            prompt.selected_suggestion = Some(selected.saturating_sub(10));
                         }
                     }
                 }
@@ -3082,14 +3079,10 @@ impl Editor {
                 if let Some(prompt) = self.prompt_mut() {
                     if !prompt.suggestions.is_empty() {
                         if let Some(selected) = prompt.selected_suggestion {
-                            // Move down by 10, wrapping to start if needed
+                            // Move down by 10, but stop at the end instead of wrapping
                             let len = prompt.suggestions.len();
                             let new_pos = selected + 10;
-                            prompt.selected_suggestion = if new_pos >= len {
-                                Some((new_pos - len).min(9))
-                            } else {
-                                Some(new_pos)
-                            };
+                            prompt.selected_suggestion = Some(new_pos.min(len - 1));
                         }
                     }
                 }
