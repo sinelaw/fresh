@@ -5,7 +5,7 @@ use crate::commands::Suggestion;
 use crate::config::Config;
 use crate::event::{CursorId, Event, EventLog, SplitId};
 use crate::file_tree::{FileTree, FileTreeView};
-use crate::fs::{FsManager, LocalFsBackend};
+use crate::fs::{FsBackend, FsManager, LocalFsBackend};
 use crate::hooks::HookRegistry;
 use crate::keybindings::{Action, KeyContext, KeybindingResolver};
 use crate::lsp_diagnostics;
@@ -283,6 +283,31 @@ impl Editor {
         height: u16,
         working_dir: Option<PathBuf>,
     ) -> io::Result<Self> {
+        Self::with_custom_backend(config, width, height, working_dir, None)
+    }
+
+    /// Create a new editor with a custom filesystem backend (for testing)
+    /// This allows injecting slow or mock backends to test editor behavior
+    pub fn with_fs_backend_for_test(
+        config: Config,
+        width: u16,
+        height: u16,
+        working_dir: Option<PathBuf>,
+        fs_backend: Arc<dyn FsBackend>,
+    ) -> io::Result<Self> {
+        Self::with_custom_backend(config, width, height, working_dir, Some(fs_backend))
+    }
+
+    /// Create a new editor with a custom filesystem backend
+    /// This is primarily used for testing with slow or mock backends
+    /// to verify editor behavior under various I/O conditions
+    fn with_custom_backend(
+        config: Config,
+        width: u16,
+        height: u16,
+        working_dir: Option<PathBuf>,
+        fs_backend: Option<Arc<dyn FsBackend>>,
+    ) -> io::Result<Self> {
         tracing::info!("Editor::new called with width={}, height={}", width, height);
 
         // Use provided working_dir or capture from environment
@@ -343,7 +368,8 @@ impl Editor {
         let split_manager = SplitManager::new(buffer_id);
 
         // Initialize filesystem manager for file explorer
-        let fs_backend = Arc::new(LocalFsBackend::new());
+        // Use provided backend or create default LocalFsBackend
+        let fs_backend = fs_backend.unwrap_or_else(|| Arc::new(LocalFsBackend::new()));
         let fs_manager = Arc::new(FsManager::new(fs_backend));
 
         // Initialize plugin system
