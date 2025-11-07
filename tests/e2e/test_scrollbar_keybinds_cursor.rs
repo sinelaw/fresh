@@ -294,3 +294,66 @@ fn test_empty_last_line_delete_preserves_margin() {
         cursor_after_right
     );
 }
+
+/// Test 6: Cursor X position should be 0 (leftmost column) after pressing Enter at end of line
+#[test]
+fn test_cursor_x_position_after_enter_at_end_of_line() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create a buffer with text on the last line
+    let content = "line1\nline2";
+    let _fixture = harness.load_buffer_from_text(content).unwrap();
+    harness.render().unwrap();
+
+    // Move cursor to end of buffer (end of "line2")
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Cursor should be at position 11
+    assert_eq!(harness.cursor_position(), 11);
+
+    // Press Enter to create a new line
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Cursor should be at position 12 (on the new empty line)
+    assert_eq!(harness.cursor_position(), 12);
+
+    // Get screen cursor position
+    let (screen_x, screen_y) = harness.screen_cursor_position();
+
+    // The cursor should be at the leftmost column of the content area (after the gutter)
+    // For a buffer with 3 lines (line1, line2, empty), the gutter width is:
+    // 1 (indicator) + 4 (line number) + 3 (separator " │ ") = 8
+    // So screen_x should be 8 (the first column after the gutter)
+    let expected_x = 8; // gutter width
+    assert_eq!(
+        screen_x, expected_x,
+        "BUG: Cursor X should be at leftmost column {} (after gutter), got {}",
+        expected_x,
+        screen_x
+    );
+
+    // Now type a character - it should appear in the correct place
+    harness.type_text("x").unwrap();
+    harness.render().unwrap();
+
+    // Cursor should now be at position 13 (after the 'x')
+    assert_eq!(harness.cursor_position(), 13);
+
+    // Buffer should be "line1\nline2\nx"
+    harness.assert_buffer_content("line1\nline2\nx");
+
+    // Screen cursor should be at column 9 (gutter + 1 character)
+    let (screen_x_after, _) = harness.screen_cursor_position();
+    assert_eq!(
+        screen_x_after,
+        expected_x + 1,
+        "After typing 'x', cursor should be at column {}",
+        expected_x + 1
+    );
+}
