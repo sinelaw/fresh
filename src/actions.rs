@@ -1,11 +1,34 @@
 //! Action to event conversion - translates high-level actions into buffer events
 
+use crate::buffer::Buffer;
 use crate::event::Event;
 use crate::keybindings::Action;
 use crate::state::EditorState;
 use crate::word_navigation::{
     find_word_end, find_word_start, find_word_start_left, find_word_start_right,
 };
+
+/// Calculate the maximum valid cursor position in the buffer.
+/// This is the end of the last line (excluding trailing newline).
+/// For empty buffers, returns 0.
+fn max_cursor_position(buffer: &Buffer) -> usize {
+    if buffer.is_empty() {
+        return 0;
+    }
+
+    // Find the last line by iterating from the end
+    let mut iter = buffer.line_iterator(buffer.len().saturating_sub(1));
+
+    // Get the current line (which should be the last line)
+    if let Some((line_start, line_content)) = iter.next() {
+        // Calculate end position excluding the trailing newline
+        let line_len = line_content.trim_end_matches('\n').len();
+        line_start + line_len
+    } else {
+        // Fallback to 0 if we can't find a line
+        0
+    }
+}
 
 /// Convert an action into a sequence of events that can be applied to the editor state
 ///
@@ -111,7 +134,8 @@ pub fn action_to_events(
 
         Action::MoveRight => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let new_pos = (cursor.position + 1).min(state.buffer.len());
+                let max_pos = max_cursor_position(&state.buffer);
+                let new_pos = (cursor.position + 1).min(max_pos);
                 events.push(Event::MoveCursor {
                     cursor_id,
                     position: new_pos,
@@ -229,9 +253,10 @@ pub fn action_to_events(
 
         Action::MoveDocumentEnd => {
             for (cursor_id, _) in state.cursors.iter() {
+                let max_pos = max_cursor_position(&state.buffer);
                 events.push(Event::MoveCursor {
                     cursor_id,
-                    position: state.buffer.len(),
+                    position: max_pos,
                     anchor: None,
                 });
             }
@@ -281,7 +306,8 @@ pub fn action_to_events(
                         let line_len = line_content.trim_end_matches('\n').len();
                         new_pos = line_start + col_offset.min(line_len);
                     } else {
-                        new_pos = state.buffer.len();
+                        // Reached end of buffer - clamp to last valid position
+                        new_pos = max_cursor_position(&state.buffer);
                         break;
                     }
                 }
@@ -309,7 +335,8 @@ pub fn action_to_events(
 
         Action::SelectRight => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let new_pos = (cursor.position + 1).min(state.buffer.len());
+                let max_pos = max_cursor_position(&state.buffer);
+                let new_pos = (cursor.position + 1).min(max_pos);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 events.push(Event::MoveCursor {
                     cursor_id,
@@ -432,10 +459,11 @@ pub fn action_to_events(
 
         Action::SelectDocumentEnd => {
             for (cursor_id, cursor) in state.cursors.iter() {
+                let max_pos = max_cursor_position(&state.buffer);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 events.push(Event::MoveCursor {
                     cursor_id,
-                    position: state.buffer.len(),
+                    position: max_pos,
                     anchor: Some(anchor),
                 });
             }
@@ -485,7 +513,8 @@ pub fn action_to_events(
                         let line_len = line_content.trim_end_matches('\n').len();
                         new_pos = line_start + col_offset.min(line_len);
                     } else {
-                        new_pos = state.buffer.len();
+                        // Reached end of buffer - clamp to last valid position
+                        new_pos = max_cursor_position(&state.buffer);
                         break;
                     }
                 }
@@ -501,9 +530,10 @@ pub fn action_to_events(
         Action::SelectAll => {
             // Select entire buffer for primary cursor only
             let primary_id = state.cursors.primary_id();
+            let max_pos = max_cursor_position(&state.buffer);
             events.push(Event::MoveCursor {
                 cursor_id: primary_id,
-                position: state.buffer.len(),
+                position: max_pos,
                 anchor: Some(0),
             });
             // Note: RemoveSecondaryCursors is handled in handle_key, not as an event

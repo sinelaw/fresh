@@ -10,39 +10,27 @@ Core editing, multi-cursor, event-driven architecture, LSP integration (diagnost
 
 ### Known Issues / Tech Debt
 
-#### **CRITICAL: Cursor Position Out-of-Sync with Visual Display**
-**Location**: `src/ui/split_rendering.rs:733-744`
+#### **FIXED: Cursor Position Clamping** ✅
+**Solution**: Implemented proper cursor position clamping in movement commands.
 
-**Problem**: The cursor logical position can be set to locations beyond the buffer's last line (e.g., at `buffer.len()`), but the rendering code has no well-defined visual position for this case. Currently using a **band-aid fix** that guesses the visual position by placing the cursor at the last rendered line when it's not found during line iteration.
+**What was fixed**:
+- Added `max_cursor_position()` helper function in `src/actions.rs` that calculates the end of the last line (excluding trailing newline)
+- Updated all movement commands to clamp cursor to valid positions:
+  - `MoveRight`, `MoveDocumentEnd`, `MovePageDown`
+  - `SelectRight`, `SelectDocumentEnd`, `SelectPageDown`, `SelectAll`
+- Cursor is never positioned beyond the last valid line in the buffer
+- Removed band-aid fix from rendering code
 
-**Why this is wrong**:
-- Cursor position should always have a direct, deterministic translation from logical position to visual position
-- The current fix is a fallback/guess rather than a proper architectural solution
-- Creates an implicit dependency where rendering code must handle "invalid" cursor positions
-
-**Root Cause**: Movement commands (e.g., PageDown in `src/actions.rs:267-295`) can position the cursor beyond valid buffer content. The cursor position is then clamped or handled inconsistently across different code paths.
-
-**Proper Solution**:
-1. **Option A**: Prevent cursor from ever being positioned beyond last valid line
-   - Clamp cursor position in movement commands before generating `MoveCursor` event
-   - Ensure `buffer.len()` maps to end of last line, not "beyond" it
-   - Make cursor position always representable as (line, column) within actual buffer content
-
-2. **Option B**: Define explicit semantics for "end-of-buffer" position
-   - If cursor can be at `buffer.len()`, define what this means visually
-   - Document when/why cursor can be beyond last line
-   - Make rendering logic handle this as a first-class case, not a fallback
-
-**Impact**: Medium - Current band-aid works for common cases but could break with:
-- Empty buffers or single-line files
-- Complex wrapping scenarios
-- Split views with different viewport sizes
-- Any future cursor positioning edge cases
+**Why this is correct**:
+- Cursor logical position always has a direct translation to visual position
+- Appending at end of file still works correctly (cursor can be at end of last line)
+- No special case handling needed in rendering code
+- Consistent behavior across all movement commands
 
 **References**:
-- Commit: 57cd694 "Fix cursor rendering at top when positioned beyond last line"
-- Issue first discovered during PageDown buffer scroll testing
-- Related to viewport scroll limiting (`src/viewport.rs:137-156`)
+- Commits: Multiple commits implementing clamping
+- Test: `test_append_at_end_of_file` verifies appending still works
+- Tests: `test_page_down_when_buffer_equals_viewport_height`, `test_last_line_never_above_bottom` verify correct behavior
 
 ### File Explorer Polish
 - [ ] Input dialog system for custom file/directory names
