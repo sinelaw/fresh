@@ -52,6 +52,21 @@ struct RenameState {
     overlay_id: String,
 }
 
+/// Search state for find/replace functionality
+#[derive(Debug, Clone)]
+struct SearchState {
+    /// The search query
+    query: String,
+    /// All match positions in the buffer (byte offsets)
+    matches: Vec<usize>,
+    /// Index of the currently selected match
+    current_match_index: Option<usize>,
+    /// Case sensitive search
+    case_sensitive: bool,
+    /// Whether search wraps around at document boundaries
+    wrap_search: bool,
+}
+
 /// Metadata associated with a buffer
 #[derive(Debug, Clone)]
 pub struct BufferMetadata {
@@ -197,6 +212,9 @@ pub struct Editor {
 
     /// Rename state (if rename is active)
     rename_state: Option<RenameState>,
+
+    /// Search state (if search is active)
+    search_state: Option<SearchState>,
 
     /// LSP status indicator for status bar
     lsp_status: String,
@@ -383,6 +401,7 @@ impl Editor {
             pending_completion_request: None,
             pending_goto_definition_request: None,
             rename_state: None,
+            search_state: None,
             lsp_status: String::new(),
             mouse_state: MouseState::default(),
             cached_layout: CachedLayout::default(),
@@ -3030,12 +3049,12 @@ impl Editor {
                             ));
                         }
                         PromptType::Search => {
-                            self.set_status_message(format!("Search not yet implemented: {input}"));
+                            // Perform search with the given query
+                            self.perform_search(&input);
                         }
-                        PromptType::Replace { search: _ } => {
-                            self.set_status_message(format!(
-                                "Replace not yet implemented: {input}"
-                            ));
+                        PromptType::Replace { search } => {
+                            // Perform replace of search term with input
+                            self.perform_replace(&search, &input);
                         }
                         PromptType::Command => {
                             let commands = self.command_registry.read().unwrap().get_all();
@@ -3478,6 +3497,35 @@ impl Editor {
                 );
                 // Trigger initial git ls-files with empty query
                 self.request_git_ls_files(String::new());
+            }
+            Action::Search => {
+                // Start search prompt
+                self.start_prompt("Search: ".to_string(), PromptType::Search);
+            }
+            Action::Replace => {
+                // Start replace prompt - first get the search query, then replacement
+                if let Some(ref search_state) = self.search_state {
+                    // If there's an active search, use it
+                    let search_query = search_state.query.clone();
+                    self.start_prompt(
+                        format!("Replace '{}' with: ", search_query),
+                        PromptType::Replace {
+                            search: search_query,
+                        },
+                    );
+                } else {
+                    // No active search, start a new search first
+                    self.start_prompt("Search: ".to_string(), PromptType::Search);
+                    self.set_status_message(
+                        "No active search. Enter search query first.".to_string(),
+                    );
+                }
+            }
+            Action::FindNext => {
+                self.find_next();
+            }
+            Action::FindPrevious => {
+                self.find_previous();
             }
             Action::AddCursorNextMatch => self.add_cursor_at_next_match(),
             Action::AddCursorAbove => self.add_cursor_above(),
@@ -4653,6 +4701,160 @@ impl Editor {
     /// Returns None for actions that don't generate events (like Quit)
     pub fn action_to_events(&self, action: Action) -> Option<Vec<Event>> {
         convert_action_to_events(self.active_state(), action, self.config.editor.tab_size)
+    }
+
+    // === Search and Replace Methods ===
+
+    /// Perform a search and update search state
+    fn perform_search(&mut self, query: &str) {
+        if query.is_empty() {
+            self.search_state = None;
+            self.set_status_message("Search cancelled.".to_string());
+            return;
+        }
+
+        let buffer_content = {
+            let state = self.active_state();
+            state.buffer.to_string()
+        };
+
+        // Find all matches (case-insensitive for now)
+        let query_lower = query.to_lowercase();
+        let mut matches = Vec::new();
+
+        let buffer_lower = buffer_content.to_lowercase();
+        let mut start = 0;
+        while let Some(pos) = buffer_lower[start..].find(&query_lower) {
+            let absolute_pos = start + pos;
+            matches.push(absolute_pos);
+            start = absolute_pos + 1;
+        }
+
+        if matches.is_empty() {
+            self.search_state = None;
+            self.set_status_message(format!("No matches found for '{}'", query));
+            return;
+        }
+
+        // Find the first match at or after the current cursor position
+        let cursor_pos = {
+            let state = self.active_state();
+            state.cursors.primary().position
+        };
+        let current_match_index = matches
+            .iter()
+            .position(|&pos| pos >= cursor_pos)
+            .unwrap_or(0);
+
+        // Move cursor to the first match
+        let match_pos = matches[current_match_index];
+        {
+            let state = self.active_state_mut();
+            state.cursors.primary_mut().position = match_pos;
+            state.cursors.primary_mut().anchor = None;
+            state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
+        }
+
+        // Update search state
+        self.search_state = Some(SearchState {
+            query: query.to_string(),
+            matches,
+            current_match_index: Some(current_match_index),
+            case_sensitive: false,
+            wrap_search: true,
+        });
+
+        self.set_status_message(format!(
+            "Found {} match{} for '{}'",
+            self.search_state.as_ref().unwrap().matches.len(),
+            if self.search_state.as_ref().unwrap().matches.len() == 1 {
+                ""
+            } else {
+                "es"
+            },
+            query
+        ));
+    }
+
+    /// Find the next match
+    fn find_next(&mut self) {
+        if let Some(ref mut search_state) = self.search_state {
+            if search_state.matches.is_empty() {
+                return;
+            }
+
+            let current_index = search_state.current_match_index.unwrap_or(0);
+            let next_index = if current_index + 1 < search_state.matches.len() {
+                current_index + 1
+            } else if search_state.wrap_search {
+                0 // Wrap to beginning
+            } else {
+                self.set_status_message("No more matches.".to_string());
+                return;
+            };
+
+            search_state.current_match_index = Some(next_index);
+            let match_pos = search_state.matches[next_index];
+            let matches_len = search_state.matches.len();
+
+            {
+                let state = self.active_state_mut();
+                state.cursors.primary_mut().position = match_pos;
+                state.cursors.primary_mut().anchor = None;
+                state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
+            }
+
+            self.set_status_message(format!(
+                "Match {} of {}",
+                next_index + 1,
+                matches_len
+            ));
+        } else {
+            self.set_status_message("No active search. Press Ctrl+F to search.".to_string());
+        }
+    }
+
+    /// Find the previous match
+    fn find_previous(&mut self) {
+        if let Some(ref mut search_state) = self.search_state {
+            if search_state.matches.is_empty() {
+                return;
+            }
+
+            let current_index = search_state.current_match_index.unwrap_or(0);
+            let prev_index = if current_index > 0 {
+                current_index - 1
+            } else if search_state.wrap_search {
+                search_state.matches.len() - 1 // Wrap to end
+            } else {
+                self.set_status_message("No more matches.".to_string());
+                return;
+            };
+
+            search_state.current_match_index = Some(prev_index);
+            let match_pos = search_state.matches[prev_index];
+            let matches_len = search_state.matches.len();
+
+            {
+                let state = self.active_state_mut();
+                state.cursors.primary_mut().position = match_pos;
+                state.cursors.primary_mut().anchor = None;
+                state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
+            }
+
+            self.set_status_message(format!(
+                "Match {} of {}",
+                prev_index + 1,
+                matches_len
+            ));
+        } else {
+            self.set_status_message("No active search. Press Ctrl+F to search.".to_string());
+        }
+    }
+
+    /// Perform a replace operation (stub for now)
+    fn perform_replace(&mut self, _search: &str, _replacement: &str) {
+        self.set_status_message("Replace not yet implemented.".to_string());
     }
 }
 

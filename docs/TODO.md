@@ -25,7 +25,8 @@
 ### High Priority: Core Editor Features
 
 #### Search & Replace
-- [ ] Basic text search (forward/backward)
+- [x] Basic text search (forward/backward with F3/Shift+F3)
+- [x] Search wrap-around at document boundaries
 - [ ] Search with regex support
 - [ ] Replace (single occurrence)
 - [ ] Replace all

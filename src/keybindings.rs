@@ -210,6 +210,12 @@ pub enum Action {
     GitGrep,
     GitFindFile,
 
+    // Search and replace
+    Search,
+    FindNext,
+    FindPrevious,
+    Replace,
+
     // Plugin custom actions
     PluginAction(String),
 
@@ -361,6 +367,11 @@ impl Action {
 
             "git_grep" => Some(Action::GitGrep),
             "git_find_file" => Some(Action::GitFindFile),
+
+            "search" => Some(Action::Search),
+            "find_next" => Some(Action::FindNext),
+            "find_previous" => Some(Action::FindPrevious),
+            "replace" => Some(Action::Replace),
 
             _ => None,
         }
@@ -693,6 +704,18 @@ impl KeybindingResolver {
             (KeyCode::Char('p'), KeyModifiers::CONTROL),
             Action::CommandPalette,
         );
+
+        // Search and replace (Ctrl+F for search, Ctrl+R for replace, F3/Shift+F3 for next/prev)
+        bindings.insert(
+            (KeyCode::Char('f'), KeyModifiers::CONTROL),
+            Action::Search,
+        );
+        bindings.insert(
+            (KeyCode::Char('r'), KeyModifiers::CONTROL),
+            Action::Replace,
+        );
+        bindings.insert((KeyCode::F(3), KeyModifiers::empty()), Action::FindNext);
+        bindings.insert((KeyCode::F(3), KeyModifiers::SHIFT), Action::FindPrevious);
 
         // Git operations (Ctrl+Shift+F for grep, Ctrl+Shift+P for find file)
         bindings.insert(
@@ -1113,6 +1136,10 @@ impl KeybindingResolver {
             Action::GitFindFile => {
                 "Git: Find File - find file by filtering git ls-files".to_string()
             }
+            Action::Search => "Search for text in buffer".to_string(),
+            Action::FindNext => "Find next search match".to_string(),
+            Action::FindPrevious => "Find previous search match".to_string(),
+            Action::Replace => "Replace text in buffer".to_string(),
             Action::PluginAction(name) => format!("Plugin action: {}", name),
             Action::None => "No action".to_string(),
         }
