@@ -2074,10 +2074,14 @@ impl Editor {
                 };
                 snapshot.buffers.insert(*buffer_id, buffer_info);
 
-                // Store buffer content
-                snapshot
-                    .buffer_contents
-                    .insert(*buffer_id, state.buffer.to_string());
+                // OPTIMIZATION: Only cache content for the active buffer
+                // This avoids copying potentially large strings for all buffers on every update
+                // Plugins can still access other buffers if needed, but we optimize the common case
+                if *buffer_id == self.active_buffer {
+                    snapshot
+                        .buffer_contents
+                        .insert(*buffer_id, state.buffer.to_string());
+                }
             }
 
             // Update cursor information for active buffer
