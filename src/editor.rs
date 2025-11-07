@@ -421,12 +421,7 @@ impl Editor {
             // Commit pending movement before switching to existing buffer
             if id != self.active_buffer {
                 self.position_history.commit_pending_movement();
-                self.active_buffer = id;
-                // Update the split manager to show this buffer
-                self.split_manager.set_active_buffer_id(id);
-
-                // Sync file explorer to the new active file
-                self.sync_file_explorer_to_active_file();
+                self.set_active_buffer(id);
             }
             return Ok(id);
         }
@@ -539,13 +534,8 @@ impl Editor {
             self.position_history.commit_pending_movement();
         }
 
-        self.active_buffer = buffer_id;
-        // Update the split manager to show the new buffer
-        self.split_manager.set_active_buffer_id(buffer_id);
+        self.set_active_buffer(buffer_id);
         self.status_message = Some(format!("Opened {}", path.display()));
-
-        // Sync file explorer to the newly opened file
-        self.sync_file_explorer_to_active_file();
 
         Ok(buffer_id)
     }
@@ -571,15 +561,8 @@ impl Editor {
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
 
-        self.active_buffer = buffer_id;
-
-        // Update the active split to display the new buffer
-        self.split_manager.set_active_buffer_id(buffer_id);
-
+        self.set_active_buffer(buffer_id);
         self.status_message = Some("New buffer".to_string());
-
-        // Sync file explorer (will be no-op for new empty buffers)
-        self.sync_file_explorer_to_active_file();
 
         buffer_id
     }
@@ -603,7 +586,8 @@ impl Editor {
 
         // Switch to another buffer if we closed the active one
         if self.active_buffer == id {
-            self.active_buffer = *self.buffers.keys().next().unwrap();
+            let next_buffer = *self.buffers.keys().next().unwrap();
+            self.set_active_buffer(next_buffer);
         }
 
         Ok(())
@@ -623,10 +607,7 @@ impl Editor {
                 .record_movement(self.active_buffer, position, anchor);
             self.position_history.commit_pending_movement();
 
-            self.active_buffer = id;
-
-            // Sync file explorer to the new active file
-            self.sync_file_explorer_to_active_file();
+            self.set_active_buffer(id);
         }
     }
 
@@ -648,12 +629,7 @@ impl Editor {
                     .record_movement(self.active_buffer, position, anchor);
                 self.position_history.commit_pending_movement();
 
-                self.active_buffer = ids[next_idx];
-                // Update the split manager to show the new buffer
-                self.split_manager.set_active_buffer_id(ids[next_idx]);
-
-                // Sync file explorer to the new active file
-                self.sync_file_explorer_to_active_file();
+                self.set_active_buffer(ids[next_idx]);
             }
         }
     }
@@ -676,12 +652,7 @@ impl Editor {
                     .record_movement(self.active_buffer, position, anchor);
                 self.position_history.commit_pending_movement();
 
-                self.active_buffer = ids[prev_idx];
-                // Update the split manager to show the new buffer
-                self.split_manager.set_active_buffer_id(ids[prev_idx]);
-
-                // Sync file explorer to the new active file
-                self.sync_file_explorer_to_active_file();
+                self.set_active_buffer(ids[prev_idx]);
             }
         }
     }
@@ -713,9 +684,7 @@ impl Editor {
 
             // Switch to the target buffer
             if self.buffers.contains_key(&target_buffer) {
-                self.active_buffer = target_buffer;
-                // Update the split manager to show the new buffer
-                self.split_manager.set_active_buffer_id(target_buffer);
+                self.set_active_buffer(target_buffer);
 
                 // Move cursor to the saved position
                 let state = self.active_state_mut();
@@ -745,9 +714,7 @@ impl Editor {
 
             // Switch to the target buffer
             if self.buffers.contains_key(&target_buffer) {
-                self.active_buffer = target_buffer;
-                // Update the split manager to show the new buffer
-                self.split_manager.set_active_buffer_id(target_buffer);
+                self.set_active_buffer(target_buffer);
 
                 // Move cursor to the saved position
                 let state = self.active_state_mut();
@@ -858,12 +825,33 @@ impl Editor {
         }
     }
 
+    /// Set the active buffer and trigger all necessary side effects
+    ///
+    /// This is the centralized method for switching buffers. It:
+    /// - Updates self.active_buffer
+    /// - Updates split manager
+    /// - Syncs file explorer to the new active file (if visible)
+    ///
+    /// Use this instead of directly setting self.active_buffer to ensure
+    /// all side effects happen consistently.
+    fn set_active_buffer(&mut self, buffer_id: BufferId) {
+        if self.active_buffer == buffer_id {
+            return; // No change
+        }
+
+        self.active_buffer = buffer_id;
+
+        // Update split manager to show this buffer
+        self.split_manager.set_active_buffer_id(buffer_id);
+
+        // Sync file explorer to the new active file (if visible and applicable)
+        self.sync_file_explorer_to_active_file();
+    }
+
     /// Sync file explorer to show the currently active file
     ///
     /// This expands all parent directories and selects the active file in the tree.
-    /// Called automatically when:
-    /// - Switching buffers/tabs (if file explorer is visible)
-    /// - Switching focus to file explorer
+    /// Called automatically by set_active_buffer() when switching buffers.
     fn sync_file_explorer_to_active_file(&mut self) {
         // Only sync if file explorer is visible
         if !self.file_explorer_visible {
@@ -2137,8 +2125,7 @@ impl Editor {
                     tracing::error!("Failed to open file in background: {}", e);
                 } else {
                     // Switch back to the original buffer
-                    self.active_buffer = current_buffer;
-                    self.split_manager.set_active_buffer_id(current_buffer);
+                    self.set_active_buffer(current_buffer);
                     tracing::info!("Opened debug log in background: {:?}", path);
                 }
             }
@@ -4083,7 +4070,7 @@ impl Editor {
         self.split_manager.set_active_split(split_id);
         if buffer_id != self.active_buffer {
             self.position_history.commit_pending_movement();
-            self.active_buffer = buffer_id;
+            self.set_active_buffer(buffer_id);
         }
 
         // Calculate clicked position in buffer
