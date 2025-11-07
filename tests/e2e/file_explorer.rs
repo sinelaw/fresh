@@ -1209,3 +1209,103 @@ fn test_auto_select_file_on_focus_switch() {
         "File explorer should show README.md after switching focus"
     );
 }
+
+/// Test bug: Explorer sync fails after hide -> tab switch -> show
+#[test]
+fn test_file_explorer_sync_after_hide_and_tab_switch() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create two files
+    fs::write(project_root.join("file1.txt"), "content 1").unwrap();
+    fs::write(project_root.join("file2.txt"), "content 2").unwrap();
+
+    // Open file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Open file1.txt
+    harness
+        .editor_mut()
+        .open_file(&project_root.join("file1.txt"))
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen_file1 = harness.screen_to_string();
+    println!("Screen with file1.txt open:\n{}", screen_file1);
+
+    // Open file2.txt (should auto-sync explorer to file2)
+    harness
+        .editor_mut()
+        .open_file(&project_root.join("file2.txt"))
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen_file2 = harness.screen_to_string();
+    println!("Screen with file2.txt open:\n{}", screen_file2);
+
+    // Close (hide) the file explorer
+    harness.editor_mut().toggle_file_explorer();
+    harness.render().unwrap();
+
+    let screen_explorer_hidden = harness.screen_to_string();
+    println!("Screen with explorer hidden:\n{}", screen_explorer_hidden);
+    assert!(
+        !screen_explorer_hidden.contains("File Explorer"),
+        "File explorer should be hidden"
+    );
+
+    // Switch to file1.txt (while explorer is hidden)
+    harness.editor_mut().prev_buffer();
+    harness.render().unwrap();
+
+    let screen_switched = harness.screen_to_string();
+    println!("Screen after switching to file1 (explorer hidden):\n{}", screen_switched);
+
+    // Verify we're on file1.txt
+    assert!(
+        screen_switched.contains("file1.txt"),
+        "Should be viewing file1.txt now"
+    );
+
+    // Re-open the file explorer
+    harness.editor_mut().toggle_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen_explorer_reopened = harness.screen_to_string();
+    println!("Screen after re-opening explorer:\n{}", screen_explorer_reopened);
+
+    // BUG: The explorer should now show file1.txt selected (the current active file)
+    // but it might still be showing file2.txt from before it was hidden
+
+    // Check that file explorer is showing file1.txt as selected
+    // We can verify this by checking internal state
+    let explorer_state = harness.editor().file_explorer();
+    assert!(explorer_state.is_some(), "File explorer should exist");
+
+    let selected_entry = explorer_state.unwrap().get_selected_entry();
+
+    assert!(
+        selected_entry.is_some(),
+        "Explorer should have a selected entry"
+    );
+
+    let selected_name = selected_entry.unwrap().name.as_str();
+    assert_eq!(
+        selected_name, "file1.txt",
+        "Explorer should show file1.txt as selected (current active file), but shows: {}",
+        selected_name
+    );
+}
