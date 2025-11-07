@@ -85,7 +85,7 @@ impl Viewport {
                 break;
             }
         }
-        self.top_byte = iter.current_position();
+        self.set_top_byte_with_limit(buffer, iter.current_position());
     }
 
     /// Scroll down by N lines (byte-based)
@@ -97,17 +97,16 @@ impl Viewport {
                 break;
             }
         }
-        self.top_byte = iter.current_position();
-
-        // Apply scroll limiting
-        self.apply_scroll_limit(buffer);
+        self.set_top_byte_with_limit(buffer, iter.current_position());
     }
 
-    /// Apply scroll limiting to prevent scrolling past the end of the buffer
-    /// Ensures the last line is always at the bottom unless the buffer is smaller than viewport
-    pub fn apply_scroll_limit(&mut self, buffer: &Buffer) {
+    /// Set top_byte with automatic scroll limit enforcement
+    /// This prevents scrolling past the end of the buffer by ensuring
+    /// the viewport can be filled from the proposed position
+    fn set_top_byte_with_limit(&mut self, buffer: &Buffer, proposed_top_byte: usize) {
         let viewport_height = self.visible_line_count();
         if viewport_height == 0 {
+            self.top_byte = proposed_top_byte;
             return;
         }
 
@@ -117,16 +116,17 @@ impl Viewport {
             return;
         }
 
-        // Try to iterate viewport_height lines from top_byte
+        // Try to iterate viewport_height lines from proposed_top_byte
         // If we can't reach viewport_height lines before hitting EOF,
-        // then we've scrolled too far and need to scroll back
-        let mut iter = buffer.line_iterator(self.top_byte);
+        // then we need to adjust backward
+        let mut iter = buffer.line_iterator(proposed_top_byte);
         let mut lines_visible = 0;
 
         while let Some((_, _)) = iter.next() {
             lines_visible += 1;
             if lines_visible >= viewport_height {
-                // We have a full viewport of content, no need to adjust
+                // We have a full viewport of content, use proposed position
+                self.top_byte = proposed_top_byte;
                 return;
             }
         }
@@ -144,15 +144,15 @@ impl Viewport {
 
         // If we have enough lines to fill the viewport, we're good
         if lines_visible >= viewport_height {
+            self.top_byte = proposed_top_byte;
             return;
         }
 
-        // We don't have enough lines to fill the viewport from top_byte
-        // Calculate how many lines we're short
+        // We don't have enough lines to fill the viewport from proposed_top_byte
+        // Calculate how many lines we're short and scroll back
         let lines_short = viewport_height - lines_visible;
 
-        // Scroll back by the number of lines we're short
-        let mut backtrack_iter = buffer.line_iterator(self.top_byte);
+        let mut backtrack_iter = buffer.line_iterator(proposed_top_byte);
         for _ in 0..lines_short {
             if backtrack_iter.prev().is_none() {
                 break; // Hit the beginning of the buffer
@@ -172,7 +172,7 @@ impl Viewport {
         while current_line < line {
             if let Some((line_start, _)) = iter.next() {
                 if current_line + 1 == line {
-                    self.top_byte = line_start;
+                    self.set_top_byte_with_limit(buffer, line_start);
                     return;
                 }
                 current_line += 1;
@@ -183,7 +183,7 @@ impl Viewport {
         }
 
         // If we didn't find the line, stay at the last valid position
-        self.top_byte = iter.current_position();
+        self.set_top_byte_with_limit(buffer, iter.current_position());
     }
 
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)
@@ -218,7 +218,7 @@ impl Viewport {
                 }
             }
 
-            self.top_byte = iter.current_position();
+            self.set_top_byte_with_limit(buffer, iter.current_position());
         }
 
         // Horizontal scrolling - skip if line wrapping is enabled
@@ -240,10 +240,6 @@ impl Viewport {
             // With line wrapping enabled, reset any horizontal scroll
             self.left_column = 0;
         }
-
-        // Always apply scroll limiting to prevent empty space below the last line
-        // This ensures the last line never scrolls above the bottom of the viewport
-        self.apply_scroll_limit(buffer);
     }
 
     /// Ensure a line is visible with scroll offset applied
@@ -297,11 +293,7 @@ impl Viewport {
                     break;
                 }
             }
-            self.top_byte = iter.current_position();
-            // Line number is now tracked automatically via LineCache
-
-            // Apply scroll limiting
-            self.apply_scroll_limit(buffer);
+            self.set_top_byte_with_limit(buffer, iter.current_position());
         }
     }
 
@@ -403,8 +395,7 @@ impl Viewport {
                     break;
                 }
             }
-            self.top_byte = iter.current_position();
-            // Line number is now tracked automatically via LineCache
+            self.set_top_byte_with_limit(buffer, iter.current_position());
         } else {
             // Can't fit all cursors, ensure primary is visible
             let primary_cursor = sorted_cursors[0].1;
