@@ -8,6 +8,7 @@ expression: "&screen_text"
     3 │     let y = 10;                                                        █
     4 │     println!("Hello");                                                 █
     5 │ }                                                                      █
+    6 │                                                                        █
                                                                                █
                                                                                █
                                                                                █
@@ -20,9 +21,8 @@ expression: "&screen_text"
                                                                                █
                                                                                █
                                                                                █
-                                                                               │
-                                                                               │
-                                                                               │
-                                                                               │
-                                                                               │
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
 [No Name] [+] | Ln 5, Col 0

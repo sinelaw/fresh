@@ -87,6 +87,8 @@
   <text x="55" y="104" fill="#858585" class="terminal" style="">│</text>
   <text x="73" y="104" fill="#d4d4d4" class="terminal" style="">}</text>
   <text x="712" y="104" fill="#6272a4" class="terminal" style="">█</text>
+  <text x="37" y="122" fill="#858585" class="terminal" style="">6</text>
+  <text x="55" y="122" fill="#858585" class="terminal" style="">│</text>
   <text x="712" y="122" fill="#6272a4" class="terminal" style="">█</text>
   <text x="712" y="140" fill="#6272a4" class="terminal" style="">█</text>
   <text x="712" y="158" fill="#6272a4" class="terminal" style="">█</text>
@@ -99,11 +101,11 @@
   <text x="712" y="284" fill="#6272a4" class="terminal" style="">█</text>
   <text x="712" y="302" fill="#6272a4" class="terminal" style="">█</text>
   <text x="712" y="320" fill="#6272a4" class="terminal" style="">█</text>
-  <text x="712" y="338" fill="#44475a" class="terminal" style="">│</text>
-  <text x="712" y="356" fill="#44475a" class="terminal" style="">│</text>
-  <text x="712" y="374" fill="#44475a" class="terminal" style="">│</text>
-  <text x="712" y="392" fill="#44475a" class="terminal" style="">│</text>
-  <text x="712" y="410" fill="#44475a" class="terminal" style="">│</text>
+  <text x="712" y="338" fill="#6272a4" class="terminal" style="">█</text>
+  <text x="712" y="356" fill="#6272a4" class="terminal" style="">█</text>
+  <text x="712" y="374" fill="#6272a4" class="terminal" style="">█</text>
+  <text x="712" y="392" fill="#6272a4" class="terminal" style="">█</text>
+  <text x="712" y="410" fill="#6272a4" class="terminal" style="">█</text>
   <rect x="0" y="414" width="9" height="18" fill="#ffffff"/>
   <text x="1" y="428" fill="#000000" class="terminal" style="">[</text>
   <rect x="9" y="414" width="9" height="18" fill="#ffffff"/>
@@ -212,5 +214,5 @@
   <rect x="702" y="414" width="9" height="18" fill="#ffffff"/>
   <rect x="711" y="414" width="9" height="18" fill="#ffffff"/>
   <!-- Cursor indicator -->
-  <rect x="72" y="18" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
+  <rect x="72" y="108" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
 </svg>

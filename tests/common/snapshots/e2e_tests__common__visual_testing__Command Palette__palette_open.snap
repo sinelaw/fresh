@@ -11,18 +11,18 @@ expression: "&screen_text"
                                                                                █
                                                                                █
                                                                                █
-                                                                               │
-                                                                               │
+                                                                               █
+                                                                               █
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  Open File  -  Open a file in a new or existing buffer                       │
-│  Save File  -  Save the current buffer to disk                               │
-│  Save File As  -  Save the current buffer to a new file                      │
-│  New File  -  Create a new empty buffer                                      │
-│  Close Buffer  -  Close the current buffer                                   │
-│  Quit  -  Exit the editor                                                    │
-│  Undo  -  Undo the last edit                                                 │
-│  Redo  -  Redo the last undone edit                                          │
-│  Copy  -  Copy selection to clipboard                                        │
-│  Cut  -  Cut selection to clipboard                                          │
+│  Open File     Ctrl+O  Open a file in a new or existing buffer               │
+│  Save File     Ctrl+S  Save the current buffer to disk                       │
+│  Save File As          Save the current buffer to a new file                 │
+│  New File      Ctrl+N  Create a new empty buffer                             │
+│  Close Buffer          Close the current buffer                              │
+│  Quit          Ctrl+Q  Exit the editor                                       │
+│  Undo          Ctrl+Z  Undo the last edit                                    │
+│  Redo          Ctrl+Y  Redo the last undone edit                             │
+│  Copy          Ctrl+C  Copy selection to clipboard                           │
+│  Cut           Ctrl+X  Cut selection to clipboard                            │
 └──────────────────────────────────────────────────────────────────────────────┘
 Command:

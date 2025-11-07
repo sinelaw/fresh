@@ -3,7 +3,7 @@ source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
  [No Name]*                                                 
-    1 │                                                    █
+    1 │ would normally wrap but now extends beyond the view█
                                                            █
                                                            █
                                                            █
@@ -20,9 +20,9 @@ expression: "&screen_text"
                                                            █
                                                            █
                                                            █
-                                                           │
-                                                           │
-                                                           │
-                                                           │
-                                                           │
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
 [No Name] [+] | Ln 0, Col 136

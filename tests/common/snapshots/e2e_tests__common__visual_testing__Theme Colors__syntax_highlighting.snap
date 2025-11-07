@@ -7,6 +7,7 @@ expression: "&screen_text"
     2 │ fn main() {                                                            █
     3 │     let x = 42;                                                        █
     4 │ }                                                                      █
+    5 │                                                                        █
                                                                                █
                                                                                █
                                                                                █
@@ -20,9 +21,8 @@ expression: "&screen_text"
                                                                                █
                                                                                █
                                                                                █
-                                                                               │
-                                                                               │
-                                                                               │
-                                                                               │
-                                                                               │
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
 [No Name] [+] | Ln 4, Col 0
