@@ -1309,3 +1309,111 @@ fn test_file_explorer_sync_after_hide_and_tab_switch() {
         selected_name
     );
 }
+
+/// Test that file explorer shows the keybinding for toggling it (or just the title if no binding)
+#[test]
+fn test_file_explorer_shows_keybinding_in_title() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Toggle file explorer on with Ctrl+B
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // File explorer should show in the UI
+    // If ToggleFileExplorer has a keybinding, it should appear in parentheses
+    // Otherwise, just "File Explorer" should appear
+    assert!(
+        screen.contains("File Explorer"),
+        "File explorer title should be visible. Screen:\n{}",
+        screen
+    );
+
+    // If a keybinding is shown, verify it's in the correct format
+    if screen.contains("File Explorer (") {
+        // Keybinding format should be correct (e.g., "Ctrl+B", "Ctrl+Shift+B", etc.)
+        let has_valid_format = screen.contains("File Explorer (Ctrl+")
+            || screen.contains("File Explorer (Alt+")
+            || screen.contains("File Explorer (Shift+");
+        assert!(
+            has_valid_format,
+            "File explorer keybinding should be in a valid format. Screen:\n{}",
+            screen
+        );
+    }
+}
+
+/// Test that file explorer keybinding is shown when focused (or just title if no binding)
+#[test]
+fn test_file_explorer_keybinding_when_focused() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Toggle file explorer on
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+
+    // Focus the file explorer
+    harness
+        .send_key(KeyCode::Char('\\'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // File explorer should be visible when focused
+    assert!(
+        screen.contains("File Explorer"),
+        "File explorer title should be visible when focused. Screen:\n{}",
+        screen
+    );
+}
+
+/// Test that the file explorer can be toggled and the title is present
+#[test]
+fn test_file_explorer_keybinding_matches_behavior() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Toggle file explorer on with Ctrl+B
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen_with_explorer = harness.screen_to_string();
+
+    // File explorer should be visible
+    assert!(
+        screen_with_explorer.contains("File Explorer"),
+        "File explorer title should be visible after toggling on"
+    );
+
+    // Toggle it off using the same key
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_without_explorer = harness.screen_to_string();
+
+    // Screen should change when toggling
+    assert_ne!(
+        screen_with_explorer, screen_without_explorer,
+        "File explorer should toggle off when the keybinding is pressed again"
+    );
+}

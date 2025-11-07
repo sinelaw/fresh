@@ -663,3 +663,97 @@ fn test_command_palette_pagedown_no_wraparound() {
         screen
     );
 }
+
+/// Test that keyboard shortcuts are displayed in the command palette
+#[test]
+fn test_command_palette_shows_shortcuts() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+
+    // Trigger the command palette with Ctrl+P
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Check that the command palette is visible
+    harness.assert_screen_contains("Command: ");
+
+    // Check that some commands with shortcuts are visible
+    // Save File should show Ctrl+S
+    harness.assert_screen_contains("Save File");
+    harness.assert_screen_contains("Ctrl+S");
+
+    // Quit should show Ctrl+Q
+    harness.assert_screen_contains("Quit");
+    harness.assert_screen_contains("Ctrl+Q");
+
+    // Open File should show Ctrl+O
+    harness.assert_screen_contains("Open File");
+    harness.assert_screen_contains("Ctrl+O");
+}
+
+/// Test that shortcuts are displayed for filtered commands
+#[test]
+fn test_command_palette_shortcuts_with_filtering() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+
+    // Trigger the command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Type "save" to filter commands
+    harness.type_text("save").unwrap();
+    harness.render().unwrap();
+
+    // Should show filtered results with shortcuts
+    harness.assert_screen_contains("Save File");
+    harness.assert_screen_contains("Ctrl+S");
+
+    // Save As should also appear with its shortcut
+    harness.assert_screen_contains("Save File As");
+    // Ctrl+Shift+S is the typical shortcut for Save As, but it might not be bound by default
+    // So we just check that the command appears
+}
+
+/// Test that shortcuts are right-aligned in the command palette
+#[test]
+fn test_command_palette_shortcuts_alignment() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+
+    // Trigger the command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // Check that shortcuts appear towards the right side of the screen
+    // Find a line with both a command and a shortcut
+    let lines: Vec<&str> = screen.lines().collect();
+    let mut found_aligned_shortcut = false;
+
+    for line in lines {
+        if line.contains("Save File") && line.contains("Ctrl+S") {
+            // The shortcut should be towards the right side
+            // Find the position of the shortcut
+            if let Some(shortcut_pos) = line.rfind("Ctrl+S") {
+                // It should be in the right half of the line
+                let line_len = line.len();
+                found_aligned_shortcut = shortcut_pos > line_len / 2;
+                if found_aligned_shortcut {
+                    break;
+                }
+            }
+        }
+    }
+
+    assert!(
+        found_aligned_shortcut,
+        "Shortcuts should be right-aligned in the command palette"
+    );
+}

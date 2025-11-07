@@ -1757,7 +1757,7 @@ impl Editor {
                         .command_registry
                         .read()
                         .unwrap()
-                        .filter(&input, self.key_context);
+                        .filter(&input, self.key_context, &self.keybindings);
                     prompt.selected_suggestion = if prompt.suggestions.is_empty() {
                         None
                     } else {
@@ -3374,7 +3374,7 @@ impl Editor {
                     .command_registry
                     .read()
                     .unwrap()
-                    .filter("", self.key_context);
+                    .filter("", self.key_context, &self.keybindings);
                 self.start_prompt_with_suggestions(
                     "Command: ".to_string(),
                     PromptType::Command,
@@ -4285,6 +4285,8 @@ impl Editor {
                     horizontal_chunks[0],
                     is_focused,
                     &files_with_unsaved_changes,
+                    &self.keybindings,
+                    self.key_context,
                 );
             }
         } else {

@@ -21,6 +21,8 @@ impl FileExplorerRenderer {
         area: Rect,
         is_focused: bool,
         files_with_unsaved_changes: &HashSet<PathBuf>,
+        keybinding_resolver: &crate::keybindings::KeybindingResolver,
+        current_context: crate::keybindings::KeyContext,
     ) {
         // Update viewport height for scrolling calculations
         // Account for borders (top + bottom = 2)
@@ -55,12 +57,21 @@ impl FileExplorerRenderer {
             })
             .collect();
 
+        // Build the title with keybinding
+        let title = if let Some(keybinding) =
+            keybinding_resolver.get_keybinding_for_action(&crate::keybindings::Action::ToggleFileExplorer, current_context)
+        {
+            format!(" File Explorer ({}) ", keybinding)
+        } else {
+            " File Explorer ".to_string()
+        };
+
         // Create the list widget
         let list = List::new(items)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" File Explorer ")
+                    .title(title)
                     .border_style(if is_focused {
                         Style::default().fg(Color::Cyan)
                     } else {

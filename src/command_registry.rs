@@ -65,7 +65,12 @@ impl CommandRegistry {
     }
 
     /// Filter commands by fuzzy matching query with context awareness
-    pub fn filter(&self, query: &str, current_context: KeyContext) -> Vec<Suggestion> {
+    pub fn filter(
+        &self,
+        query: &str,
+        current_context: KeyContext,
+        keybinding_resolver: &crate::keybindings::KeybindingResolver,
+    ) -> Vec<Suggestion> {
         let query_lower = query.to_lowercase();
         let commands = self.get_all();
 
@@ -104,10 +109,13 @@ impl CommandRegistry {
             .filter(|cmd| matches_query(cmd))
             .map(|cmd| {
                 let available = is_available(&cmd);
-                Suggestion::with_description_and_disabled(
+                let keybinding =
+                    keybinding_resolver.get_keybinding_for_action(&cmd.action, current_context);
+                Suggestion::with_all(
                     cmd.name.clone(),
-                    cmd.description,
+                    Some(cmd.description),
                     !available,
+                    keybinding,
                 )
             })
             .collect();
@@ -265,7 +273,12 @@ mod tests {
 
     #[test]
     fn test_filter_commands() {
+        use crate::config::Config;
+        use crate::keybindings::KeybindingResolver;
+
         let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
 
         registry.register(Command {
             name: "Test Save".to_string(),
@@ -274,7 +287,7 @@ mod tests {
             contexts: vec![KeyContext::Normal],
         });
 
-        let results = registry.filter("save", KeyContext::Normal);
+        let results = registry.filter("save", KeyContext::Normal, &keybindings);
         assert!(results.len() >= 2); // At least "Save File" + "Test Save"
 
         // Check that both built-in and custom commands appear
@@ -284,7 +297,12 @@ mod tests {
 
     #[test]
     fn test_context_filtering() {
+        use crate::config::Config;
+        use crate::keybindings::KeybindingResolver;
+
         let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
 
         registry.register(Command {
             name: "Normal Only".to_string(),
@@ -301,13 +319,13 @@ mod tests {
         });
 
         // In normal context, "Help Only" should be disabled
-        let results = registry.filter("", KeyContext::Normal);
+        let results = registry.filter("", KeyContext::Normal, &keybindings);
         let help_only = results.iter().find(|s| s.text == "Help Only");
         assert!(help_only.is_some());
         assert!(help_only.unwrap().disabled);
 
         // In help context, "Normal Only" should be disabled
-        let results = registry.filter("", KeyContext::Help);
+        let results = registry.filter("", KeyContext::Help, &keybindings);
         let normal_only = results.iter().find(|s| s.text == "Normal Only");
         assert!(normal_only.is_some());
         assert!(normal_only.unwrap().disabled);

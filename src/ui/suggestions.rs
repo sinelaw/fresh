@@ -59,14 +59,7 @@ impl SuggestionsRenderer {
             let actual_idx = start_idx + idx;
             let is_selected = prompt.selected_suggestion == Some(actual_idx);
 
-            // Format: "Command Name - description"
-            let text = if let Some(desc) = &suggestion.description {
-                format!("  {}  -  {}", suggestion.text, desc)
-            } else {
-                format!("  {}", suggestion.text)
-            };
-
-            let style = if suggestion.disabled {
+            let base_style = if suggestion.disabled {
                 // Greyed out disabled commands
                 if is_selected {
                     Style::default()
@@ -91,7 +84,57 @@ impl SuggestionsRenderer {
                     .bg(theme.suggestion_bg)
             };
 
-            lines.push(Line::from(Span::styled(text, style)));
+            // Build the line with keybinding aligned to the right
+            let mut spans = Vec::new();
+
+            // Format: "  Command Name  -  description"
+            let main_text = if let Some(desc) = &suggestion.description {
+                format!("  {}  -  {}", suggestion.text, desc)
+            } else {
+                format!("  {}", suggestion.text)
+            };
+
+            // Calculate padding to right-align keybinding
+            let available_width = inner_area.width as usize;
+            let keybinding_display = suggestion.keybinding.as_deref().unwrap_or("");
+            let keybinding_len = keybinding_display.len();
+
+            // Calculate space for padding (main_text + padding + keybinding + right_margin)
+            let right_margin = 2;
+            let text_and_keybinding_len = main_text.len() + keybinding_len + right_margin;
+
+            if keybinding_len > 0 && text_and_keybinding_len < available_width {
+                // Add main text
+                spans.push(Span::styled(main_text.clone(), base_style));
+
+                // Add padding to align keybinding to the right
+                let padding_len = available_width.saturating_sub(text_and_keybinding_len);
+                if padding_len > 0 {
+                    spans.push(Span::styled(" ".repeat(padding_len), base_style));
+                }
+
+                // Add keybinding with slightly dimmed style
+                let keybinding_style = if suggestion.disabled {
+                    base_style
+                } else if is_selected {
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .bg(theme.suggestion_selected_bg)
+                } else {
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .bg(theme.suggestion_bg)
+                };
+                spans.push(Span::styled(keybinding_display, keybinding_style));
+
+                // Add right margin
+                spans.push(Span::styled(" ".repeat(right_margin), base_style));
+            } else {
+                // No keybinding or not enough space, just show main text
+                spans.push(Span::styled(main_text, base_style));
+            }
+
+            lines.push(Line::from(spans));
         }
 
         // Fill remaining lines with background color
