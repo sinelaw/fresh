@@ -870,7 +870,13 @@ impl Editor {
 
             runtime.spawn(async move {
                 match FileTree::new(root_path, fs_manager).await {
-                    Ok(tree) => {
+                    Ok(mut tree) => {
+                        // Expand the root directory by default so files are visible immediately
+                        let root_id = tree.root_id();
+                        if let Err(e) = tree.expand_node(root_id).await {
+                            tracing::warn!("Failed to expand root directory: {}", e);
+                        }
+
                         let view = FileTreeView::new(tree);
                         let _ = sender.send(AsyncMessage::FileExplorerInitialized(view));
                     }
@@ -993,19 +999,29 @@ impl Editor {
         }
     }
 
-    /// Handle file explorer open file
+    /// Handle file explorer open file or toggle directory
+    /// When Enter is pressed:
+    /// - On a directory: toggle expand/collapse
+    /// - On a file: open the file and switch focus to editor
     pub fn file_explorer_open_file(&mut self) -> io::Result<()> {
-        // Clone the path and name before calling open_file to avoid borrow checker issues
-        let file_info = self
+        // Check if selected entry is a directory or file
+        let entry_type = self
             .file_explorer
             .as_ref()
             .and_then(|explorer| explorer.get_selected_entry())
-            .filter(|entry| entry.is_file())
-            .map(|entry| (entry.path.clone(), entry.name.clone()));
+            .map(|entry| (entry.is_dir(), entry.path.clone(), entry.name.clone()));
 
-        if let Some((path, name)) = file_info {
-            self.open_file(&path)?;
-            self.set_status_message(format!("Opened: {}", name));
+        if let Some((is_dir, path, name)) = entry_type {
+            if is_dir {
+                // Toggle expand/collapse for directories
+                self.file_explorer_toggle_expand();
+            } else {
+                // Open file and switch focus to editor
+                self.open_file(&path)?;
+                self.set_status_message(format!("Opened: {}", name));
+                // Switch focus to editor after opening file
+                self.focus_editor();
+            }
         }
         Ok(())
     }

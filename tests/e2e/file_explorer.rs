@@ -610,3 +610,210 @@ fn test_file_explorer_delete_smoke() {
 
     // Test passes if no panic occurs
 }
+
+/// Test Feature 1: Enter key on directory toggles expand/collapse
+#[test]
+fn test_enter_toggles_directory() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create a directory with files
+    fs::create_dir(project_root.join("testdir")).unwrap();
+    fs::write(project_root.join("testdir/file1.txt"), "content1").unwrap();
+    fs::write(project_root.join("testdir/file2.txt"), "content2").unwrap();
+
+    // Open file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Root should be selected, expand it first
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::empty())
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Navigate down to testdir
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_before_expand = harness.screen_to_string();
+
+    // Press Enter to expand directory
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::empty())
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen_after_expand = harness.screen_to_string();
+
+    // After expansion, should see more entries (the files inside testdir)
+    // The screen content should be different
+    assert_ne!(
+        screen_before_expand, screen_after_expand,
+        "Screen should change after expanding directory with Enter"
+    );
+
+    // Press Enter again to collapse
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::empty())
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen_after_collapse = harness.screen_to_string();
+
+    // After collapsing, directory tree structure should return to original state
+    // We check that testdir shows collapsed indicator (▶)
+    assert!(
+        screen_after_collapse.contains("▶ [D] testdir"),
+        "testdir should be collapsed after pressing Enter again"
+    );
+
+    // Verify the tree structure returned to collapsed state by checking
+    // that the file count is similar (status message may differ)
+    let lines_before: Vec<&str> = screen_before_expand.lines().collect();
+    let lines_after: Vec<&str> = screen_after_collapse.lines().collect();
+
+    // Count lines containing file indicators - should be same when collapsed
+    let indicator_count_before = lines_before
+        .iter()
+        .filter(|l| l.contains("[D]") || l.contains("[F]"))
+        .count();
+    let indicator_count_after = lines_after
+        .iter()
+        .filter(|l| l.contains("[D]") || l.contains("[F]"))
+        .count();
+
+    assert_eq!(
+        indicator_count_before, indicator_count_after,
+        "Number of visible entries should be the same after collapsing"
+    );
+}
+
+/// Test Feature 2: Enter key on file opens it and switches focus to editor
+#[test]
+fn test_enter_opens_file_and_switches_focus() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create a test file with distinctive content
+    let test_content = "Feature 2: Enter opens file and switches focus";
+    fs::write(project_root.join("testfile.txt"), test_content).unwrap();
+
+    // Open file explorer (should have focus)
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Expand root directory
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::empty())
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Navigate down to the file
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_before = harness.screen_to_string();
+
+    // File explorer should be visible and have focus
+    assert!(
+        screen_before.contains("File Explorer"),
+        "File explorer should be visible"
+    );
+
+    // Press Enter on the file
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::empty())
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen_after = harness.screen_to_string();
+
+    // File content should be visible in the editor
+    assert!(
+        screen_after.contains(test_content),
+        "File content should be displayed in editor after pressing Enter"
+    );
+
+    // Verify focus switched to editor by checking that arrow keys now move cursor
+    // in the editor (not file explorer). We can test this by sending a Down key
+    // and checking if editor content area changed (cursor moved)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_after_movement = harness.screen_to_string();
+
+    // After moving right, the cursor column should have changed in the status bar
+    // The screen should show cursor position changed
+    assert_ne!(
+        screen_after, screen_after_movement,
+        "Arrow keys should move cursor in editor after opening file (focus should be on editor)"
+    );
+}
+
+/// Test Feature 3: Project directory should be expanded when file explorer first opens
+#[test]
+fn test_project_directory_expanded_on_open() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create some files in the project root
+    fs::write(project_root.join("file1.txt"), "content1").unwrap();
+    fs::write(project_root.join("file2.txt"), "content2").unwrap();
+    fs::create_dir(project_root.join("subdir")).unwrap();
+
+    // Open file explorer for the first time
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // Root directory should be expanded (show ▼ not ▶)
+    assert!(
+        screen.contains("▼"),
+        "Root directory should be expanded on initial open"
+    );
+
+    // Should see files/directories under root
+    assert!(
+        screen.contains("file1.txt") || screen.contains("file2.txt") || screen.contains("subdir"),
+        "Should see files and directories under root when initially opened"
+    );
+
+    // Verify we see multiple entries (more than just the root)
+    let entry_count = screen.lines().filter(|l| l.contains("[D]") || l.contains("[F]") || l.contains("[R]")).count();
+
+    assert!(
+        entry_count > 1,
+        "Should see more than just the root directory (found {} entries)",
+        entry_count
+    );
+}
