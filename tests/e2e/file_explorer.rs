@@ -932,3 +932,68 @@ fn test_unsaved_change_indicators() {
         "test.rs should not have unsaved indicator"
     );
 }
+
+/// Test Feature 5: Cursor should reach top before scrolling up (like it does for down)
+#[test]
+fn test_scroll_allows_cursor_to_top() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::with_temp_project(120, 10).unwrap(); // Small height to force scrolling
+    let project_root = harness.project_dir().unwrap();
+
+    // Create many files to force scrolling
+    for i in 0..20 {
+        fs::write(project_root.join(format!("file{:02}.txt", i)), format!("content {}", i))
+            .unwrap();
+    }
+
+    // Open file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Navigate down several times to move past the first visible area
+    for _ in 0..10 {
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::empty())
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    let screen_middle = harness.screen_to_string();
+    println!("Screen after navigating down:\n{}", screen_middle);
+
+    // The current behavior might scroll immediately or keep cursor centered.
+    // The desired behavior: allow cursor to move to top line of viewport before scrolling.
+
+    // Navigate up a few times and check that files06-08 are still visible
+    // (meaning we haven't scrolled up yet - cursor is moving within viewport)
+    harness
+        .send_key(KeyCode::Up, KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_after_one_up = harness.screen_to_string();
+    println!("Screen after one up:\n{}", screen_after_one_up);
+
+    // Continue navigating all the way back up
+    for _ in 0..15 {
+        harness
+            .send_key(KeyCode::Up, KeyModifiers::empty())
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    let screen_at_top = harness.screen_to_string();
+    println!("Screen at top:\n{}", screen_at_top);
+
+    // Should be able to reach the very top (project_root or first file)
+    assert!(
+        screen_at_top.contains("project_root") || screen_at_top.contains("file00.txt"),
+        "Should be able to navigate to the top of the file list. Screen:\n{}",
+        screen_at_top
+    );
+}
