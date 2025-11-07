@@ -748,19 +748,6 @@ impl SplitRenderer {
             }
         }
 
-        // If cursor was not found during rendering (e.g., positioned beyond last line),
-        // position it at the bottom of the rendered content
-        if !cursor_found && lines_rendered > 0 {
-            cursor_screen_x = 0;
-            cursor_screen_y = (lines_rendered - 1) as u16;
-            tracing::debug!(
-                "Cursor not found during rendering (primary_cursor_position={}, buffer_len={}), positioning at last rendered line: row {}",
-                primary_cursor_position,
-                state.buffer.len(),
-                cursor_screen_y
-            );
-        }
-
         let paragraph = Paragraph::new(lines).block(Block::default().borders(Borders::NONE));
 
         frame.render_widget(paragraph, area);
