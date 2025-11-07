@@ -162,10 +162,6 @@ impl EditorState {
                 // Smart scroll to keep cursor visible
                 if let Some(cursor) = self.cursors.get(*cursor_id) {
                     self.viewport.ensure_visible(&mut self.buffer, cursor);
-
-                    // Apply scroll limiting to prevent empty space below the last line
-                    // This ensures the last line never scrolls above the bottom of the viewport
-                    self.viewport.apply_scroll_limit(&self.buffer);
                 }
             }
 
@@ -231,10 +227,6 @@ impl EditorState {
 
                     // Smart scroll to keep cursor visible
                     self.viewport.ensure_visible(&mut self.buffer, cursor);
-
-                    // Apply scroll limiting to prevent empty space below the last line
-                    // This ensures the last line never scrolls above the bottom of the viewport
-                    self.viewport.apply_scroll_limit(&self.buffer);
                 }
 
                 // Update primary cursor line number if this is the primary cursor
