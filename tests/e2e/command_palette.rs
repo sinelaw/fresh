@@ -718,7 +718,7 @@ fn test_command_palette_shortcuts_with_filtering() {
     // So we just check that the command appears
 }
 
-/// Test that shortcuts are right-aligned in the command palette
+/// Test that shortcuts are displayed in a column format in the command palette
 #[test]
 fn test_command_palette_shortcuts_alignment() {
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -732,28 +732,36 @@ fn test_command_palette_shortcuts_alignment() {
 
     let screen = harness.screen_to_string();
 
-    // Check that shortcuts appear towards the right side of the screen
-    // Find a line with both a command and a shortcut
+    // Check that shortcuts are displayed in a column format
+    // Find lines with commands and shortcuts
     let lines: Vec<&str> = screen.lines().collect();
-    let mut found_aligned_shortcut = false;
+    let mut found_columnar_layout = false;
 
-    for line in lines {
-        if line.contains("Save File") && line.contains("Ctrl+S") {
-            // The shortcut should be towards the right side
+    // Look for multiple commands with shortcuts to verify column alignment
+    let mut shortcut_positions = Vec::new();
+
+    for line in &lines {
+        if (line.contains("Save File") || line.contains("Quit") || line.contains("Open File"))
+            && (line.contains("Ctrl+S") || line.contains("Ctrl+Q") || line.contains("Ctrl+O"))
+        {
             // Find the position of the shortcut
-            if let Some(shortcut_pos) = line.rfind("Ctrl+S") {
-                // It should be in the right half of the line
-                let line_len = line.len();
-                found_aligned_shortcut = shortcut_pos > line_len / 2;
-                if found_aligned_shortcut {
-                    break;
-                }
+            if let Some(pos) = line.find("Ctrl+") {
+                shortcut_positions.push(pos);
             }
         }
     }
 
+    // If we have multiple shortcuts, check that they're aligned (within a few chars)
+    if shortcut_positions.len() >= 2 {
+        let first_pos = shortcut_positions[0];
+        found_columnar_layout = shortcut_positions
+            .iter()
+            .all(|&pos| (pos as i32 - first_pos as i32).abs() <= 3);
+    }
+
     assert!(
-        found_aligned_shortcut,
-        "Shortcuts should be right-aligned in the command palette"
+        found_columnar_layout,
+        "Shortcuts should be displayed in aligned columns in the command palette. Found positions: {:?}",
+        shortcut_positions
     );
 }
