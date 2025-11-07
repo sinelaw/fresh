@@ -26,6 +26,8 @@ pub struct Suggestion {
     pub value: Option<String>,
     /// Whether this suggestion is disabled (greyed out)
     pub disabled: bool,
+    /// Optional keyboard shortcut
+    pub keybinding: Option<String>,
 }
 
 impl Suggestion {
@@ -35,6 +37,7 @@ impl Suggestion {
             description: None,
             value: None,
             disabled: false,
+            keybinding: None,
         }
     }
 
@@ -44,6 +47,7 @@ impl Suggestion {
             description: Some(description),
             value: None,
             disabled: false,
+            keybinding: None,
         }
     }
 
@@ -57,6 +61,22 @@ impl Suggestion {
             description: Some(description),
             value: None,
             disabled,
+            keybinding: None,
+        }
+    }
+
+    pub fn with_all(
+        text: String,
+        description: Option<String>,
+        disabled: bool,
+        keybinding: Option<String>,
+    ) -> Self {
+        Self {
+            text,
+            description,
+            value: None,
+            disabled,
+            keybinding,
         }
     }
 
@@ -345,7 +365,11 @@ pub fn get_all_commands() -> Vec<Command> {
 }
 
 /// Filter commands by fuzzy matching the query, with context awareness
-pub fn filter_commands(query: &str, current_context: KeyContext) -> Vec<Suggestion> {
+pub fn filter_commands(
+    query: &str,
+    current_context: KeyContext,
+    keybinding_resolver: &crate::keybindings::KeybindingResolver,
+) -> Vec<Suggestion> {
     let query_lower = query.to_lowercase();
     let commands = get_all_commands();
 
@@ -384,7 +408,13 @@ pub fn filter_commands(query: &str, current_context: KeyContext) -> Vec<Suggesti
         .filter(|cmd| matches_query(cmd))
         .map(|cmd| {
             let available = is_available(&cmd);
-            Suggestion::with_description_and_disabled(cmd.name.clone(), cmd.description, !available)
+            let keybinding = keybinding_resolver.get_keybinding_for_action(&cmd.action, current_context);
+            Suggestion::with_all(
+                cmd.name.clone(),
+                Some(cmd.description),
+                !available,
+                keybinding,
+            )
         })
         .collect();
 

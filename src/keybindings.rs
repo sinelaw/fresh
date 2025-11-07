@@ -1118,6 +1118,93 @@ impl KeybindingResolver {
         }
     }
 
+    /// Get the keybinding string for an action in a specific context
+    /// Returns the first keybinding found (prioritizing custom bindings over defaults)
+    /// Returns None if no binding is found
+    pub fn get_keybinding_for_action(&self, action: &Action, context: KeyContext) -> Option<String> {
+        // Helper to format keybinding as string
+        let format_keybinding = |keycode: &KeyCode, modifiers: &KeyModifiers| -> String {
+            let mut parts = Vec::new();
+
+            if modifiers.contains(KeyModifiers::CONTROL) {
+                parts.push("Ctrl");
+            }
+            if modifiers.contains(KeyModifiers::ALT) {
+                parts.push("Alt");
+            }
+            if modifiers.contains(KeyModifiers::SHIFT) {
+                parts.push("Shift");
+            }
+
+            let key_str = match keycode {
+                KeyCode::Enter => "Enter",
+                KeyCode::Backspace => "Backspace",
+                KeyCode::Delete => "Del",
+                KeyCode::Tab => "Tab",
+                KeyCode::Esc => "Esc",
+                KeyCode::Left => "Left",
+                KeyCode::Right => "Right",
+                KeyCode::Up => "Up",
+                KeyCode::Down => "Down",
+                KeyCode::Home => "Home",
+                KeyCode::End => "End",
+                KeyCode::PageUp => "PgUp",
+                KeyCode::PageDown => "PgDn",
+                KeyCode::Char(' ') => "Space",
+                KeyCode::Char(c) => {
+                    let uppercase = c.to_uppercase().to_string();
+                    parts.push(&uppercase);
+                    return parts.join("+");
+                }
+                _ => return String::new(),
+            };
+
+            parts.push(key_str);
+            parts.join("+")
+        };
+
+        // Check custom bindings first (higher priority)
+        if let Some(context_bindings) = self.bindings.get(&context) {
+            for ((keycode, modifiers), bound_action) in context_bindings {
+                if bound_action == action {
+                    return Some(format_keybinding(keycode, modifiers));
+                }
+            }
+        }
+
+        // Check default bindings for this context
+        if let Some(context_bindings) = self.default_bindings.get(&context) {
+            for ((keycode, modifiers), bound_action) in context_bindings {
+                if bound_action == action {
+                    return Some(format_keybinding(keycode, modifiers));
+                }
+            }
+        }
+
+        // For certain contexts, also check Normal context for application-wide actions
+        if context != KeyContext::Normal && Self::is_application_wide_action(action) {
+            // Check custom normal bindings
+            if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
+                for ((keycode, modifiers), bound_action) in normal_bindings {
+                    if bound_action == action {
+                        return Some(format_keybinding(keycode, modifiers));
+                    }
+                }
+            }
+
+            // Check default normal bindings
+            if let Some(normal_bindings) = self.default_bindings.get(&KeyContext::Normal) {
+                for ((keycode, modifiers), bound_action) in normal_bindings {
+                    if bound_action == action {
+                        return Some(format_keybinding(keycode, modifiers));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     /// Reload bindings from config (for hot reload)
     pub fn reload(&mut self, config: &Config) {
         self.bindings.clear();
