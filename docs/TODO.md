@@ -2,67 +2,289 @@
 
 ## Completed Features ✅
 
-Core editing, multi-cursor, event-driven architecture, LSP integration (diagnostics, completion, go-to-def), file explorer with gitignore support, split views, syntax highlighting, command palette, configuration system, themes, position history, comprehensive testing.
+**Core Functionality**: Event-driven architecture with unlimited undo/redo, multi-cursor editing, clipboard operations (copy/cut/paste), position history navigation (Alt+Left/Right), line wrapping, large file support (1GB+), instant startup.
 
-**Plugin System (Phase 1)**: Lua 5.4 runtime, plugin manager, command registration, hook system (event-driven), callback execution, debug logging (auto-opens in background tab), basic editor API (insert, set_status, overlays).
+**UI & Layout**: Split views (horizontal/vertical), scrollbar, tab bar, command palette (Ctrl+P), help system (Ctrl+H), file explorer with lazy loading and gitignore support, status bar, line numbers, themes (dark/light/high-contrast).
 
-## Current Focus
+**LSP Integration**: Diagnostics (errors/warnings), code completion (Ctrl+Space), go-to-definition, rename refactoring (F2), multi-language support, process resource limits.
 
-### Known Issues / Tech Debt
+**File Operations**: Open/save/close, multiple buffers, file explorer (create/delete files/dirs, show/hide hidden, respect gitignore, auto-expand on focus, unsaved indicators), async I/O.
 
-#### **FIXED: Scrollbar, Keybindings, and Cursor Rendering** ✅
-**Solution**: Fixed three UI/UX issues to improve editor usability.
+**Git Integration**: Git grep (Ctrl+Shift+G), git find file (Ctrl+Shift+P).
 
-**What was fixed**:
-1. **Scrollbar fills entire height when no scrolling needed**: When buffer fits in viewport (max_scroll_line == 0), scrollbar thumb now fills entire height to clearly indicate no scrolling is possible
-2. **Removed Ctrl+H keybinding**: Removed Ctrl+H -> ShowHelp binding (Ctrl+Backspace already correctly implements delete-word-backward)
-3. **Cursor rendering at buffer end**: Fixed cursor jumping to (0,0) when hitting Enter at end of last line. Added check after rendering loop to position cursor at buffer.len() when creating new line
+**Plugin System**: Lua 5.4 runtime, plugin manager, command registration, event hooks, async process spawning, buffer query API, overlay system. Example: TODO Highlighter plugin.
 
-**Why this is correct**:
-- Visual feedback is clear and immediate for scrollability state
-- Keybinding conflict resolved, Ctrl+Backspace works as expected
-- Cursor rendering now handles all valid cursor positions including buffer.len()
-- All fixes tested with comprehensive e2e tests
+**Testing**: 400+ unit tests, 59 E2E tests, property-based tests, visual regression testing framework.
 
-**References**:
-- Commits: 14cd14f, 38f76d6, f59a55e
-- Tests: `test_scrollbar_fills_height_when_no_scrolling_needed`, `test_ctrl_backspace_deletes_word_backward`, `test_cursor_visible_after_enter_at_end_of_file`, `test_cursor_visible_when_scrolling_down_in_large_file`
+**Recent Fixes**: Scrollbar height when no scrolling needed, cursor rendering at buffer end, keybinding conflicts, file explorer scrolling and focus sync, viewport scrolling on Enter key, marker-based overlay system.
 
-#### **FIXED: Cursor Position Clamping** ✅
-**Solution**: Implemented proper cursor position clamping in movement commands.
+---
 
-**What was fixed**:
-- Added `max_cursor_position()` helper function in `src/actions.rs` that calculates the end of the last line (excluding trailing newline)
-- Updated all movement commands to clamp cursor to valid positions:
-  - `MoveRight`, `MoveDocumentEnd`, `MovePageDown`
-  - `SelectRight`, `SelectDocumentEnd`, `SelectPageDown`, `SelectAll`
-- Cursor is never positioned beyond the last valid line in the buffer
-- Removed band-aid fix from rendering code
+## Remaining Work
 
-**Why this is correct**:
-- Cursor logical position always has a direct translation to visual position
-- Appending at end of file still works correctly (cursor can be at end of last line)
-- No special case handling needed in rendering code
-- Consistent behavior across all movement commands
+### High Priority: Core Editor Features
 
-**References**:
-- Commits: Multiple commits implementing clamping
-- Test: `test_append_at_end_of_file` verifies appending still works
-- Tests: `test_page_down_when_buffer_equals_viewport_height`, `test_last_line_never_above_bottom` verify correct behavior
+#### Search & Replace
+- [ ] Basic text search (forward/backward)
+- [ ] Search with regex support
+- [ ] Replace (single occurrence)
+- [ ] Replace all
+- [ ] Search in selection
+- [ ] Case-sensitive/insensitive toggle
+- [ ] Whole word matching
+- [ ] Search highlighting
+- [ ] Incremental search (as-you-type)
+- [ ] Search history
+- [ ] Multi-file search integration (via git grep)
 
-### File Explorer Polish
+#### Auto-Indent & Smart Editing
+- [ ] Auto-indent on newline (language-aware)
+- [ ] Smart home key (toggle between line start and first non-whitespace)
+- [ ] Bracket matching (highlight matching bracket)
+- [ ] Auto-close brackets/quotes
+- [ ] Auto-pair deletion (delete both opening and closing)
+- [ ] Electric indent (auto-adjust indentation)
+- [ ] Toggle comment (language-aware, Ctrl+/)
+- [ ] Block comment support
+- [ ] Indent/dedent selection (Tab/Shift+Tab)
+
+#### Advanced Selection
+- [ ] Rectangular/block selection (Alt+drag or Ctrl+Alt+arrows)
+- [ ] Multiple rectangular selections
+- [ ] Column editing mode
+- [ ] Expand selection to scope (by AST nodes)
+
+#### Macros
+- [ ] Record macro (q + key)
+- [ ] Play macro (@ + key)
+- [ ] Named macros
+- [ ] Macro editing
+- [ ] Macro persistence
+
+### High Priority: LSP Features
+
+Complete the LSP integration to match VS Code/Neovim capabilities:
+
+- [ ] Hover documentation (show on keybinding or hover)
+- [ ] Code actions (quick fixes, refactorings)
+- [ ] Find references (show all usages)
+- [ ] Document symbols (outline/breadcrumb)
+- [ ] Workspace symbols (find symbol across project)
+- [ ] Signature help (parameter hints while typing)
+- [ ] Inlay hints (type annotations, parameter names)
+- [ ] Call hierarchy
+- [ ] Type hierarchy
+- [ ] Document formatting (format entire file)
+- [ ] Range formatting (format selection)
+- [ ] Semantic tokens (advanced syntax highlighting)
+- [ ] Code lens (inline actions)
+- [ ] Folding ranges (code folding)
+
+### High Priority: File Explorer Polish
+
 - [ ] Input dialog system for custom file/directory names
-- [ ] Copy/move operations
+- [ ] Rename with custom name (currently limited)
+- [ ] Copy/move operations (Ctrl+C, Ctrl+X, Ctrl+V in explorer)
+- [ ] Duplicate file/directory
 - [ ] File watching for auto-refresh
 - [ ] Search/filter within explorer
+- [ ] Sort options (name, date, size, type)
+- [ ] Show file permissions/metadata
+- [ ] Bulk operations (multi-select)
 
-### LSP Features
-- [ ] Hover documentation
-- [ ] Code actions
-- [ ] Find references
-- [ ] Rename refactoring
-- [ ] Signature help
-- [ ] Inlay hints
+### Medium Priority: Editor Experience
+
+#### Navigation & Jumps
+- [ ] Go to line number (Ctrl+G)
+- [ ] Go to matching bracket
+- [ ] Jump to next/previous error (F8/Shift+F8)
+- [ ] Jump to next/previous search result (F3/Shift+F3)
+- [ ] Jump to beginning/end of block
+- [ ] Bookmark system (set/clear/jump)
+- [ ] Mark ring (Emacs-style)
+
+#### Visual Improvements
+- [ ] Minimap (optional, like VS Code)
+- [ ] Indent guides
+- [ ] Current line highlighting
+- [ ] Whitespace visualization (spaces, tabs, line endings)
+- [ ] Color column (vertical ruler at 80/120 chars)
+- [ ] Rainbow brackets
+- [ ] Git gutter (show added/modified/deleted lines)
+- [ ] Smooth scrolling
+
+#### Themes & Appearance
+- [ ] More built-in themes (Solarized, Monokai, Dracula, Nord, etc.)
+- [ ] Theme customization UI
+- [ ] Font configuration (size, family)
+- [ ] Ligature support
+- [ ] Custom color overrides
+- [ ] Per-language theme adjustments
+
+#### Snippets & Templates
+- [ ] Snippet system (define snippets in config)
+- [ ] Snippet expansion (Tab trigger)
+- [ ] Tabstops and placeholders
+- [ ] Mirror/transform placeholders
+- [ ] Snippet variables ($1, $2, $TM_FILENAME, etc.)
+- [ ] Snippet file templates (new file from template)
+- [ ] Language-specific snippets
+
+#### Command Palette Improvements
+- [ ] Fuzzy matching (currently substring)
+- [ ] Command history
+- [ ] Command aliases
+- [ ] Recently used commands at top
+- [ ] Command categories/grouping
+- [ ] Show keyboard shortcuts in palette
+
+### Medium Priority: Advanced Features
+
+#### Project Management
+- [ ] Project/workspace concept
+- [ ] Project-specific configuration
+- [ ] Project switching
+- [ ] Workspace root detection improvements
+- [ ] Multiple workspace folders
+- [ ] Project templates
+
+#### Advanced Git Integration
+- [ ] Git status in file explorer
+- [ ] Git blame (show commit info for line)
+- [ ] Git diff view (side-by-side or unified)
+- [ ] Stage/unstage hunks
+- [ ] Commit UI
+- [ ] Branch switching
+- [ ] Git log viewer
+- [ ] Merge conflict resolution UI
+- [ ] Rebase interactive UI (stretch goal: Magit-style)
+
+#### Terminal Integration
+- [ ] Embedded terminal (Ctrl+`)
+- [ ] Multiple terminals
+- [ ] Split terminal
+- [ ] Send selection to terminal
+- [ ] Terminal history
+- [ ] Shell integration
+
+#### Debugger Integration
+- [ ] Debug adapter protocol (DAP) support
+- [ ] Breakpoints (toggle, conditional)
+- [ ] Debug toolbar (continue, step, etc.)
+- [ ] Variables view
+- [ ] Call stack
+- [ ] Watch expressions
+- [ ] Debug console/REPL
+
+### Medium Priority: Plugin System (Phase 3)
+
+#### Interactive UI API
+- [ ] Virtual buffers (`editor.create_virtual_buffer(name, content)`)
+- [ ] Set buffer content (`editor.set_buffer_content(buffer_id, content)`)
+- [ ] Read-only buffers (`editor.set_buffer_read_only(buffer_id, bool)`)
+- [ ] Selection lists (`editor.show_selection_list(items, callback)`)
+- [ ] Input dialogs (`editor.show_input(prompt, default, callback)`)
+- [ ] Generic popups (`editor.show_popup(options)`)
+
+#### Modal Interaction & Navigation
+- [ ] Define custom modes (`editor.define_mode(mode_name, options)`)
+- [ ] Set buffer mode (`editor.set_mode(buffer_id, mode_name)`)
+- [ ] Dynamic keybindings (`editor.bind_key(mode, key, callback)`)
+- [ ] Goto line/position (`editor.goto_line(line_num)`, `editor.goto_position(offset)`)
+- [ ] Set selection (`editor.set_selection(start, end)`)
+- [ ] Scroll control (`editor.scroll_to_line(line_num)`)
+
+#### Enhanced Hooks & Integration
+- [ ] More hooks: `on_buffer_open`, `on_selection_change`, `on_key_press`
+- [ ] State persistence: `editor.get/set_plugin_data(key, value)`
+- [ ] Plugin configuration support
+- [ ] LSP access: `editor.lsp_call(...)`
+- [ ] Search/Replace API: `editor.search(...)`
+- [ ] Undo history API: `editor.get_undo_history(...)`
+- [ ] Custom syntax definitions
+- [ ] Process cancellation/kill support
+- [ ] Async Lua execution: `editor.async(function)`
+
+#### Target Plugins (Showcase)
+- [ ] Magit-style Git interface
+- [ ] Telescope-style fuzzy finder
+- [ ] Undo tree visualizer
+- [ ] Project search & replace
+- [ ] LSP code actions menu
+- [ ] Advanced snippet system
+
+### Low Priority: Polish & UX
+
+#### User Experience
+- [ ] Welcome screen (first run, tips, keybindings)
+- [ ] Onboarding tutorial
+- [ ] Configuration UI (settings editor)
+- [ ] Keybinding customization UI
+- [ ] Better error messages
+- [ ] User-friendly error reporting
+- [ ] Crash recovery (restore unsaved files)
+- [ ] Session persistence (restore open files on restart)
+
+#### Dialogs & Prompts
+- [ ] Confirmation dialogs (delete, close unsaved, etc.)
+- [ ] Progress indicators (file loading, LSP initialization)
+- [ ] Status messages with timeout
+- [ ] Toast notifications
+- [ ] Modal dialogs
+
+#### Performance & Optimization
+- [ ] Incremental LSP sync (send only changed ranges)
+- [ ] Syntax highlighting cache
+- [ ] File explorer caching improvements
+- [ ] Lazy plugin loading
+- [ ] Startup time optimization
+- [ ] Memory usage profiling
+- [ ] Benchmark suite
+
+#### Accessibility
+- [ ] Screen reader support
+- [ ] High contrast themes
+- [ ] Keyboard-only navigation (no mouse required)
+- [ ] Configurable UI scale
+- [ ] Color-blind friendly themes
+
+### Low Priority: Advanced/Future Features
+
+#### Remote Editing
+- [ ] SSH file editing
+- [ ] SFTP support
+- [ ] Remote workspace
+- [ ] Remote LSP servers
+- [ ] Remote terminal
+
+#### Collaboration
+- [ ] Collaborative editing (CRDT-based)
+- [ ] Share session (read-only or collaborative)
+- [ ] Presence indicators (show other cursors)
+- [ ] Chat/comments
+
+#### Extensions & Marketplace
+- [ ] Plugin marketplace/registry
+- [ ] Plugin discovery UI
+- [ ] One-click plugin installation
+- [ ] Plugin auto-updates
+- [ ] Plugin ratings/reviews
+
+#### Other
+- [ ] Diff editor (compare two files side-by-side)
+- [ ] Hex editor mode
+- [ ] Binary file viewer
+- [ ] Image preview in editor
+- [ ] PDF preview
+- [ ] Markdown preview (live)
+- [ ] Org-mode support
+- [ ] Vi/Vim emulation mode
+- [ ] Emacs keybinding mode
+- [ ] Multiple cursor shapes (block, underline, etc.)
+
+---
+
+## Technical Debt & Refactoring
 
 ### Line Wrapping Refactoring
 - [ ] **Unify wrapping and no-wrapping code paths**: Treat no-wrapping as infinite-width wrapping
@@ -71,184 +293,147 @@ Core editing, multi-cursor, event-driven architecture, LSP integration (diagnost
   - Handle horizontal scrolling as post-processing on the single segment returned for infinite-width lines
 
 - [ ] **Move cursor position calculation into rendering traversal**: Eliminate duplicate line iteration
-  - In `split_rendering.rs::render_buffer_in_split()`, track cursor screen position during the existing line rendering loop (lines 344-629)
+  - In `split_rendering.rs::render_buffer_in_split()`, track cursor screen position during the existing line rendering loop
   - As each line is rendered, check if it contains the primary cursor position
   - Use the already-computed `segments` from `wrap_line()` to calculate position via `char_position_to_segment()`
   - After loop completes, use tracked position instead of calling `viewport.cursor_screen_position()`
   - Delete `viewport.rs::cursor_screen_position()` entirely
 
 - [ ] **Fix style preservation during wrapping**: Currently loses syntax highlighting/selection styles when wrapping
-  - In wrapping section (lines 586-620), preserve the original `line_spans` styling instead of using only first span's style
+  - In wrapping section, preserve the original `line_spans` styling instead of using only first span's style
   - Track character-to-span mapping to apply correct styles to each character in wrapped segments
   - Ensure selections, syntax highlighting, and overlays render correctly across wrapped segments
 
-**Benefits**: Single source of truth for wrapping (line_wrapping.rs), single line traversal (better performance), cursor positioning and rendering always agree by construction, massive code deduplication.
-
-### Editing Features
-- [ ] Search & replace with regex
-- [ ] Rectangular selection (Alt+drag)
-- [ ] Auto-indent on newline
-- [ ] Bracket matching/auto-close
-- [ ] Smart home key
-- [ ] Toggle comment (language-aware)
-
-### Test Infrastructure
-- [ ] **Fix async file loading in test harness**: Currently 6 tests are ignored due to async file loading not working properly in tests:
-  - `test_file_explorer_displays_opened_file_content` - file explorer doesn't load file content synchronously
-  - `test_git_find_file_actually_opens_file` - git find file doesn't load buffer content
-  - `test_git_grep_opens_correct_file_and_jumps_to_line` - git grep doesn't load file
-  - `test_git_grep_cursor_position_accuracy` - git grep doesn't load file
-  - `test_git_grep_shows_results` - git grep doesn't show file content
-  - The test harness needs a way to properly wait for/force async file operations to complete
-
-- [ ] **Fix BIG.txt generation timing**: 2 scrolling tests fail when run with other tests:
-  - `test_jump_to_eof_large_file` - passes individually, fails in suite
-  - `test_line_numbers_absolute_after_jump_to_beginning` - passes individually, fails in suite
-  - Issue: BIG.txt (61MB test file) generation interferes with other tests
-  - Solution: Better test isolation or pre-generated fixtures
-
-- [ ] **Support independent buffers per split**: Currently architectural limitation:
-  - `test_margin_per_buffer_in_split_view` - expects different files in different splits
-  - Current behavior: All splits display the same active buffer
-  - Need to implement per-split buffer management if this is desired functionality
+**Benefits**: Single source of truth for wrapping, single line traversal (better performance), cursor positioning and rendering always agree by construction, massive code deduplication.
 
 ### Code Organization
 - [x] Extract UI rendering (~430 lines → 6 modules)
 - [x] Extract commands & prompts (~335 lines → 2 modules)
-- [ ] Create BufferView (~500 lines)
+- [ ] Create BufferView abstraction (~500 lines)
 - [ ] Extract multi-cursor operations (~200 lines)
+- [ ] Refactor Editor into smaller components
+- [ ] Split large modules (editor.rs is ~3000 lines)
 
-### Polish
-- [ ] Improve error messages
-- [ ] Confirmation dialogs
-- [ ] Progress indicators
-- [ ] Welcome screen
-- [ ] More themes
+### Test Infrastructure
+- [ ] **Fix async file loading in test harness**: Currently 6 tests ignored due to async file loading not working properly
+  - `test_file_explorer_displays_opened_file_content`
+  - `test_git_find_file_actually_opens_file`
+  - `test_git_grep_opens_correct_file_and_jumps_to_line`
+  - `test_git_grep_cursor_position_accuracy`
+  - `test_git_grep_shows_results`
+  - Test harness needs way to wait for/force async file operations to complete
 
-## Plugin System Roadmap
+- [ ] **Fix BIG.txt generation timing**: 2 scrolling tests fail when run with other tests
+  - `test_jump_to_eof_large_file`
+  - `test_line_numbers_absolute_after_jump_to_beginning`
+  - Issue: BIG.txt (61MB test file) generation interferes with other tests
+  - Solution: Better test isolation or pre-generated fixtures
 
-The primary goal of the plugin system is to enable powerful, interactive, and asynchronous plugins similar to **Emacs' Magit** (Advanced Git Interface) and **Neovim's Telescope** (Fuzzy Finder), as identified in our design research. The roadmap is now prioritized to deliver the core APIs for these high-impact plugins first.
+- [ ] **Support independent buffers per split**: Currently architectural limitation
+  - `test_margin_per_buffer_in_split_view` expects different files in different splits
+  - Current behavior: All splits display the same active buffer
+  - Need to implement per-split buffer management if this is desired functionality
 
-### Phase 1: Core Infrastructure ✅ COMPLETE
-- [x] Core plugin infrastructure (PluginManager, HookRegistry, CommandRegistry)
-- [x] Lua 5.4 runtime integration
-- [x] Basic plugin API (set_status, insert, register_command, overlays)
-- [x] Command registration and palette integration
-- [x] Event-driven hooks and Lua callback execution
-
-### Target Plugin Capabilities
-- **Magit-style Git Interface:** Interactive git workflow (status, log, diff, commit, rebase) using virtual buffers, async processes, and modal keybindings.
-- **Telescope-style Fuzzy Finder:** A unified, high-performance fuzzy finder for files, buffers, commands, and git branches, using a flexible popup UI and async finders.
-- **Undo Tree Visualizer:** A graphical, branching undo history, requiring virtual buffers and access to the undo tree.
-
----
-
-### **Phase 2: Core APIs for Advanced Plugins**
-*Consolidates the essential features required to build initial versions of Magit and Telescope.*
-
-#### **High Priority: Buffer & Editor State API (Querying)** ✅ COMPLETE
-*Required for almost all plugin functionality.*
-- [x] `editor.get_buffer_content(buffer_id)` & `editor.get_line(buffer_id, line_num)`
-- [x] `editor.get_selection()` & `editor.get_all_cursors()` (implemented as `editor.get_primary_cursor()` & `editor.get_all_cursors()`)
-- [x] `editor.get_active_buffer_id()` & `editor.get_buffer_info(buffer_id)` & `editor.list_buffers()`
-- [x] `editor.get_viewport()`
-
-#### **High Priority: Async Task & Process API** ✅ COMPLETE
-*Essential for git operations and external tools (`fd`, `rg`).*
-- [x] Core infrastructure: `spawn_plugin_process()` function with tokio
-- [x] `AsyncMessage::PluginProcessOutput` for result delivery
-- [x] Process callback execution in PluginManager
-- [x] Lua binding for `editor.spawn(command, args, callback)`
-- [x] Working directory control via `{cwd = "/path"}` option
-- [x] Full test coverage (2 Lua tests + 4 process tests)
-- [x] Example plugin: `async_demo.lua` with 7 commands
-- [ ] Process cancellation/kill support (TODO: Phase 3)
-- [ ] `editor.async(function)` for running Lua asynchronously (TODO: Phase 3)
-
-#### **High Priority: Interactive UI API**
-*Required for interactive selection, dialogs, and custom views.*
-- **Virtual Buffers:**
-    - [ ] `editor.create_virtual_buffer(name, content)` - For `*magit-status*`.
-    - [ ] `editor.set_buffer_content(buffer_id, content)`.
-    - [ ] `editor.set_buffer_read_only(buffer_id, read_only)`.
-- **Popups:**
-    - [ ] `editor.show_selection_list(items, callback)` - For fuzzy finders.
-    - [ ] `editor.show_input(prompt, default, callback)` - For commit messages.
-    - [ ] `editor.show_popup(options)` - Generic popup for custom UIs.
-
-#### **High Priority: Modal Interaction & Navigation**
-*Needed for mode-specific behavior (Magit) and buffer manipulation.*
-- **Modes & Keybindings:**
-    - [ ] `editor.define_mode(mode_name, options)` & `editor.set_mode(buffer_id, mode_name)`.
-    - [ ] `editor.bind_key(mode, key, callback)`.
-- **Navigation & Manipulation:**
-    - [ ] `editor.goto_line(line_num)` / `editor.goto_position(byte_offset)`.
-    - [ ] `editor.set_selection(start, end)`.
-    - [ ] `editor.scroll_to_line(line_num)`.
+- [ ] Add more E2E tests for complex workflows
+- [ ] Performance regression tests
+- [ ] Memory leak detection tests
 
 ---
 
-### **Phase 3: Nice-to-Have & Future Enhancements**
-*Features to improve power, robustness, and developer experience.*
+## Comparison: Feature Parity with Major Editors
 
-#### **Medium Priority: Enhanced Hooks, State, and Integration**
-- [ ] **More Hooks:** `on_buffer_open`, `on_selection_change`, `on_key_press`.
-- [ ] **State Persistence:** `editor.get/set_plugin_data(key, value)` with persistence.
-- [ ] **Plugin Configuration:** Support for user config files.
-- [ ] **Advanced Editor Integration:**
-    - [ ] LSP access: `editor.lsp_call(...)`.
-    - [ ] Search/Replace API: `editor.search(...)`.
-    - [ ] Undo History API: `editor.get_undo_history(...)`.
-    - [ ] Custom Syntax: `editor.add_syntax_definition(...)`.
+### ✅ Features on Par with Emacs/Neovim/VS Code/Zed
+- Multi-cursor editing
+- LSP integration (diagnostics, completion, go-to-definition, rename)
+- Split views
+- File explorer
+- Syntax highlighting (tree-sitter)
+- Command palette
+- Themes
+- Large file support (better than most)
+- Plugin system (comparable to early Vim/Emacs plugins)
+- Async I/O
+- Unlimited undo/redo
 
-#### **Low Priority: Optimization & Debugging**
-- [ ] **Performance:** Incremental/stream-based buffer APIs, caching.
-- [ ] **Debugging:** Lua REPL, improved error handling, hot-reloading.
+### 🚧 Features Partially Implemented
+- Line wrapping (implemented but needs refactoring)
+- Git integration (grep/find, but missing status/blame/diff)
+- Clipboard (basic, but missing system clipboard on all platforms)
+- LSP (core features done, missing hover/actions/references/hints)
 
-#### **Future: WASM Plugin Support**
-- [ ] WASM runtime integration as an alternative to Lua.
-
-### Implemented Example Plugins ✅
-
-**1. TODO Highlighter** (`plugins/todo_highlighter.lua`) - **COMPLETE**
-   - Uses: Buffer query API, overlay API, command registration
-   - Features: Pattern matching for TODO/FIXME/HACK/NOTE/XXX/BUG in comments
-   - Color-coded highlights, multiple comment styles, toggle/refresh commands
-   - Demonstrates: Real-world useful plugin with Phase 2 APIs
-   - Status: Fully functional, tested, documented
-
-### Example Target Plugins (Future)
-
-Once Phase 3 features are complete, these advanced plugins should be possible:
-
-**1. Undo Tree Visualizer** - Buffer query, virtual buffers, custom keybindings, undo history access. Shows branching undo history graphically, navigate and jump to any state.
-
-**2. Magit (Git Interface)** - Async processes, popups, custom modes, virtual buffers. Git status, log, diff, commit, rebase, etc. Full interactive git workflow.
-
-**3. Project Search & Replace** - Async search, virtual buffers, multi-buffer operations. Ripgrep integration, preview and apply changes.
-
-**4. LSP Code Actions Menu** - LSP integration, popups, buffer modification. Custom code action UI, refactoring tools.
-
-**5. Snippet System** - Buffer modification, keybindings, state management. Tabstops and placeholders, custom snippet definitions.
-
-**6. File Tree / Explorer** - Virtual buffers, custom keybindings, async file operations. Navigate file system, file operations (create, delete, rename).
-
-### Testing & Documentation Strategy
-
-For each new API phase:
-- [ ] Unit tests for Rust implementation
-- [ ] Integration tests with actual Lua plugins
-- [ ] Example plugins demonstrating features
-- [ ] Performance benchmarks for critical paths
-- [ ] Complete API reference documentation
-- [ ] Plugin development guide
-- [ ] Best practices document
+### ❌ Major Missing Features (vs Emacs/Neovim/VS Code/Zed)
+- **Search & Replace** (critical gap)
+- **Auto-indent** (critical gap)
+- **Bracket matching/auto-close** (critical gap)
+- **Snippets** (critical gap for productivity)
+- **Debugger integration** (DAP)
+- **Terminal integration** (embedded terminal)
+- **Git UI** (beyond grep/find)
+- **Project management** (workspace concept)
+- **Hover documentation** (LSP)
+- **Code actions** (LSP)
+- **Find references** (LSP)
+- **Advanced navigation** (go to line, bookmarks)
+- **Macros**
+- **Minimap/indent guides**
+- **Remote editing** (SSH/SFTP)
+- **Collaborative editing**
 
 ---
 
-## Future Ideas
+## Milestones
 
-- Macros (record/play)
-- Git integration (status, blame, stage hunks) - *may be implemented as plugins*
-- Remote file editing (SSH, SFTP)
-- Collaborative editing
+### Milestone 1: Essential Editing (Target: MVP+)
+*Goal: Match basic productivity of other editors*
+- [x] Core editing (insert, delete, move, select)
+- [x] Multi-cursor
+- [x] Undo/redo
+- [x] Clipboard
+- [ ] **Search & replace** ← HIGHEST PRIORITY
+- [ ] **Auto-indent**
+- [ ] **Bracket matching/auto-close**
+- [ ] **Go to line**
+
+### Milestone 2: Developer Experience (Target: Competitive)
+*Goal: Be a viable daily driver for developers*
+- [x] LSP (diagnostics, completion, go-to-definition, rename)
+- [ ] LSP (hover, code actions, find references)
+- [x] File explorer
+- [ ] File explorer (rename with custom name, copy/move)
+- [x] Git (grep, find file)
+- [ ] Git (blame, status, diff)
+- [ ] Snippets
+- [ ] Toggle comment
+
+### Milestone 3: Advanced Features (Target: Best-in-Class)
+*Goal: Unique features that set us apart*
+- [x] Large file support (1GB+)
+- [x] Plugin system (Lua)
+- [ ] Plugin system (Phase 3 APIs)
+- [ ] Magit-style git interface (via plugin)
+- [ ] Telescope-style fuzzy finder (via plugin)
+- [ ] Terminal integration
+- [ ] Debugger integration
+- [ ] Advanced theming
+
+### Milestone 4: Polish & Ecosystem (Target: Production-Ready)
+*Goal: Ready for 1.0 release*
+- [ ] Welcome screen & onboarding
+- [ ] Configuration UI
+- [ ] Error handling & crash recovery
+- [ ] Session persistence
+- [ ] Plugin marketplace
+- [ ] Comprehensive documentation
+- [ ] Video tutorials
+
+---
+
+## Notes
+
+- **Current focus**: Search & replace is the #1 missing feature for daily use
+- **Plugin system**: Core infrastructure is solid, need Phase 3 APIs for advanced plugins
+- **LSP**: Basic features work well, need advanced features (hover, actions, references)
+- **File explorer**: Functional but needs polish (rename, copy/move, file watching)
+- **Testing**: Strong test coverage (400+ unit, 59 E2E), need to fix 8 ignored tests
+- **Performance**: Excellent (large file support, instant startup), continue monitoring
+- **Code quality**: Needs refactoring (line wrapping, large modules), but stable
