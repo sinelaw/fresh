@@ -215,10 +215,6 @@ impl Viewport {
             self.top_byte = iter.current_position();
         }
 
-        // Note: Don't apply scroll limiting here - we want to allow the viewport
-        // to scroll to show the cursor even if it's at/beyond the end of the buffer.
-        // Scroll limiting is only applied for explicit scroll commands (scroll_down).
-
         // Horizontal scrolling - skip if line wrapping is enabled
         // When wrapping is enabled, all columns are always visible via wrapping
         if !self.line_wrap_enabled {
@@ -238,6 +234,10 @@ impl Viewport {
             // With line wrapping enabled, reset any horizontal scroll
             self.left_column = 0;
         }
+
+        // Always apply scroll limiting to prevent empty space below the last line
+        // This ensures the last line never scrolls above the bottom of the viewport
+        self.apply_scroll_limit(buffer);
     }
 
     /// Ensure a line is visible with scroll offset applied
