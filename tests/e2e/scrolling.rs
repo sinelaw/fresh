@@ -1778,3 +1778,91 @@ fn test_enter_key_maintains_bottom_line_pinned() {
     println!("\n✓ Enter key maintains bottom line pinned throughout {} presses", num_enters);
 }
 
+/// Test that pressing Enter at the bottom of the viewport scrolls the view up
+/// to make room for the new line immediately, not after typing into the new line.
+/// Bug: When at the bottom, pressing Enter doesn't scroll until you type something.
+#[test]
+fn test_enter_at_bottom_scrolls_immediately() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let terminal_height = 24u16;
+    let terminal_width = 80u16;
+    let content_last_row = (terminal_height - 2) as usize; // Row 22 for height 24
+
+    let mut harness = EditorTestHarness::new(terminal_width, terminal_height).unwrap();
+    harness.render().unwrap();
+
+    println!("\n=== Testing Enter scrolls immediately when at bottom ===");
+
+    // Press Enter until we reach the bottom (cursor at row 22)
+    let mut enter_count = 0;
+    loop {
+        let (_, cursor_y) = harness.screen_cursor_position();
+        if cursor_y >= content_last_row as u16 {
+            break;
+        }
+        harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        enter_count += 1;
+
+        // Safety check
+        if enter_count > 30 {
+            panic!("Failed to reach bottom after 30 Enter presses");
+        }
+    }
+
+    let (_, cursor_y_at_bottom) = harness.screen_cursor_position();
+    let top_byte_at_bottom = harness.editor().active_state().viewport.top_byte;
+
+    println!("After {} enters: cursor at row {}, top_byte={}",
+             enter_count, cursor_y_at_bottom, top_byte_at_bottom);
+    assert_eq!(cursor_y_at_bottom, content_last_row as u16,
+               "Should be at bottom row before next Enter");
+
+    // Now press Enter ONE more time - this should scroll the viewport
+    println!("\nPressing Enter at bottom (should scroll immediately)...");
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    let (_, cursor_y_after_enter) = harness.screen_cursor_position();
+    let top_byte_after_enter = harness.editor().active_state().viewport.top_byte;
+
+    println!("After Enter at bottom: cursor at row {}, top_byte={}",
+             cursor_y_after_enter, top_byte_after_enter);
+
+    // The cursor should still be at the bottom row
+    assert_eq!(cursor_y_after_enter, content_last_row as u16,
+               "Cursor should remain at bottom row after Enter");
+
+    // The viewport MUST have scrolled (top_byte increased)
+    assert!(
+        top_byte_after_enter > top_byte_at_bottom,
+        "BUG REPRODUCED: Viewport did not scroll after Enter at bottom. \
+         top_byte before={}, after={}",
+        top_byte_at_bottom, top_byte_after_enter
+    );
+
+    println!("✓ Viewport scrolled by {} bytes",
+             top_byte_after_enter - top_byte_at_bottom);
+
+    // Now verify that typing a character doesn't cause additional scrolling
+    let top_byte_before_typing = harness.editor().active_state().viewport.top_byte;
+
+    println!("\nTyping 'x' into the new line...");
+    harness.send_key(KeyCode::Char('x'), KeyModifiers::NONE).unwrap();
+
+    let (_, cursor_y_after_typing) = harness.screen_cursor_position();
+    let top_byte_after_typing = harness.editor().active_state().viewport.top_byte;
+
+    println!("After typing: cursor at row {}, top_byte={}",
+             cursor_y_after_typing, top_byte_after_typing);
+
+    // Typing shouldn't cause additional scrolling
+    assert_eq!(
+        top_byte_after_typing, top_byte_before_typing,
+        "Typing shouldn't cause additional scrolling. \
+         top_byte before typing={}, after={}",
+        top_byte_before_typing, top_byte_after_typing
+    );
+
+    println!("✓ No additional scrolling when typing into new line");
+}
+
