@@ -309,6 +309,78 @@ impl FileTree {
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
+
+    /// Expand all directories along a path and return the final node ID
+    ///
+    /// This is useful for revealing a specific file in the tree, even if its
+    /// parent directories are collapsed. All parent directories will be expanded
+    /// as needed.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The full path to the target file or directory
+    ///
+    /// # Returns
+    ///
+    /// Returns the NodeId of the target if found, or None if:
+    /// - The path is not under the root directory
+    /// - The path doesn't exist
+    /// - There was an error expanding intermediate directories
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Expand to src/components/App.js
+    /// if let Some(node_id) = tree.expand_to_path(&project_root.join("src/components/App.js")).await {
+    ///     // All parent directories (src, src/components) are now expanded
+    ///     // node_id points to App.js
+    /// }
+    /// ```
+    pub async fn expand_to_path(&mut self, path: &Path) -> Option<NodeId> {
+        // Check if path is under root
+        let relative_path = path.strip_prefix(&self.root_path).ok()?;
+
+        // Start from root
+        let mut current_id = self.root_id;
+
+        // Walk through each component of the path
+        for component in relative_path.components() {
+            let component_str = component.as_os_str().to_str()?;
+
+            // Expand current directory if it's not already expanded
+            let node = self.get_node(current_id)?;
+            if node.is_dir() && !node.is_expanded() {
+                // Expand this directory
+                if let Err(e) = self.expand_node(current_id).await {
+                    tracing::warn!("Failed to expand node during path traversal: {}", e);
+                    return None;
+                }
+            }
+
+            // Find the child with the matching name
+            let node = self.get_node(current_id)?;
+            let child_id = node.children.iter()
+                .find(|&&child_id| {
+                    if let Some(child_node) = self.get_node(child_id) {
+                        child_node.entry.name == component_str
+                    } else {
+                        false
+                    }
+                })
+                .copied();
+
+            match child_id {
+                Some(id) => current_id = id,
+                None => {
+                    // Child not found - path doesn't exist
+                    tracing::warn!("Component '{}' not found in tree", component_str);
+                    return None;
+                }
+            }
+        }
+
+        Some(current_id)
+    }
 }
 
 #[cfg(test)]
@@ -565,5 +637,80 @@ mod tests {
 
         let not_found = tree.find_by_relative_path(Path::new("nonexistent"));
         assert_eq!(not_found, None);
+    }
+
+    #[tokio::test]
+    async fn test_expand_to_path() {
+        let (_temp_dir, mut tree) = create_test_tree().await;
+        let root_path = tree.root_path().to_path_buf();
+
+        // Initially tree is collapsed
+        assert_eq!(tree.node_count(), 1);
+
+        // Expand to a deeply nested file
+        let target_path = root_path.join("dir2/subdir/file3.txt");
+        let node_id = tree.expand_to_path(&target_path).await;
+
+        assert!(node_id.is_some(), "Should find the nested file");
+
+        // All parent directories should now be expanded
+        let root = tree.get_node(tree.root_id()).unwrap();
+        assert!(root.is_expanded(), "Root should be expanded");
+
+        // Find dir2
+        let dir2_node = root.children.iter()
+            .find_map(|&id| {
+                let node = tree.get_node(id)?;
+                if node.entry.name == "dir2" {
+                    Some(node)
+                } else {
+                    None
+                }
+            })
+            .expect("dir2 should exist");
+
+        assert!(dir2_node.is_expanded(), "dir2 should be expanded");
+
+        // Find subdir
+        let subdir_node = dir2_node.children.iter()
+            .find_map(|&id| {
+                let node = tree.get_node(id)?;
+                if node.entry.name == "subdir" {
+                    Some(node)
+                } else {
+                    None
+                }
+            })
+            .expect("subdir should exist");
+
+        assert!(subdir_node.is_expanded(), "subdir should be expanded");
+
+        // Verify the target file is found
+        let target_node = tree.get_node(node_id.unwrap()).unwrap();
+        assert_eq!(target_node.entry.name, "file3.txt");
+        assert!(target_node.is_file());
+    }
+
+    #[tokio::test]
+    async fn test_expand_to_path_not_under_root() {
+        let (_temp_dir, mut tree) = create_test_tree().await;
+
+        // Try to expand to a path not under root
+        let outside_path = PathBuf::from("/tmp/somefile.txt");
+        let result = tree.expand_to_path(&outside_path).await;
+
+        assert!(result.is_none(), "Should return None for paths outside root");
+    }
+
+    #[tokio::test]
+    async fn test_expand_to_path_nonexistent() {
+        let (_temp_dir, mut tree) = create_test_tree().await;
+        let root_path = tree.root_path().to_path_buf();
+
+        // Try to expand to a nonexistent file
+        let nonexistent_path = root_path.join("dir1/nonexistent.txt");
+        let result = tree.expand_to_path(&nonexistent_path).await;
+
+        assert!(result.is_none(), "Should return None for nonexistent paths");
     }
 }

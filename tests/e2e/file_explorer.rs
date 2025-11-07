@@ -941,8 +941,8 @@ fn test_scroll_allows_cursor_to_top() {
     let mut harness = EditorTestHarness::with_temp_project(120, 10).unwrap(); // Small height to force scrolling
     let project_root = harness.project_dir().unwrap();
 
-    // Create many files to force scrolling
-    for i in 0..20 {
+    // Create many files to force scrolling (need more than viewport height)
+    for i in 0..25 {
         fs::write(project_root.join(format!("file{:02}.txt", i)), format!("content {}", i))
             .unwrap();
     }
@@ -955,46 +955,96 @@ fn test_scroll_allows_cursor_to_top() {
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
-    // Navigate down several times to move past the first visible area
-    for _ in 0..10 {
+    let initial_screen = harness.screen_to_string();
+    println!("Initial screen:\n{}", initial_screen);
+
+    // Get the viewport height (number of visible rows in file explorer)
+    // Terminal height is 10, status bar is 1, main area is 9
+    // File explorer has borders (2), so content area is 7 rows
+    let viewport_height = 7;
+
+    // Navigate down to the bottom of the list
+    // This will cause the explorer to scroll down
+    for _ in 0..25 {
         harness
             .send_key(KeyCode::Down, KeyModifiers::empty())
             .unwrap();
         harness.render().unwrap();
     }
 
-    let screen_middle = harness.screen_to_string();
-    println!("Screen after navigating down:\n{}", screen_middle);
+    let screen_at_bottom = harness.screen_to_string();
+    println!("Screen at bottom (scrolled down):\n{}", screen_at_bottom);
 
-    // The current behavior might scroll immediately or keep cursor centered.
-    // The desired behavior: allow cursor to move to top line of viewport before scrolling.
+    // Now we're at the bottom and the view has scrolled down.
+    // The test: when we press Up, the cursor should move WITHIN the viewport
+    // for (viewport_height - 1) times before the view scrolls.
 
-    // Navigate up a few times and check that files06-08 are still visible
-    // (meaning we haven't scrolled up yet - cursor is moving within viewport)
+    // Track which files are visible to detect scrolling
+    let get_visible_files = |screen: &str| -> Vec<String> {
+        screen
+            .lines()
+            .filter_map(|line| {
+                // Look for lines with file names (fileXX.txt pattern)
+                if line.contains("file") && line.contains(".txt") {
+                    // Extract the file number
+                    for word in line.split_whitespace() {
+                        if word.starts_with("file") && word.ends_with(".txt") {
+                            return Some(word.to_string());
+                        }
+                    }
+                }
+                None
+            })
+            .collect()
+    };
+
+    let initial_visible = get_visible_files(&screen_at_bottom);
+    println!("Initially visible files: {:?}", initial_visible);
+
+    // Press Up multiple times (less than viewport_height times)
+    // The visible files should stay the same (no scrolling yet)
+    for i in 0..(viewport_height - 1) {
+        harness
+            .send_key(KeyCode::Up, KeyModifiers::empty())
+            .unwrap();
+        harness.render().unwrap();
+
+        let screen_after_up = harness.screen_to_string();
+        let visible_after_up = get_visible_files(&screen_after_up);
+
+        println!("\nAfter {} up presses:", i + 1);
+        println!("Visible files: {:?}", visible_after_up);
+
+        // Within the viewport, the same files should still be visible
+        // (cursor is moving, but view isn't scrolling)
+        assert_eq!(
+            initial_visible, visible_after_up,
+            "After {} up presses, viewport should not have scrolled yet (cursor should move within viewport first). Initial: {:?}, After: {:?}",
+            i + 1,
+            initial_visible,
+            visible_after_up
+        );
+    }
+
+    // Now press Up one more time - THIS should cause scrolling
+    // because the cursor should now be at the top of the viewport
     harness
         .send_key(KeyCode::Up, KeyModifiers::empty())
         .unwrap();
     harness.render().unwrap();
 
-    let screen_after_one_up = harness.screen_to_string();
-    println!("Screen after one up:\n{}", screen_after_one_up);
+    let screen_after_scroll = harness.screen_to_string();
+    let visible_after_scroll = get_visible_files(&screen_after_scroll);
 
-    // Continue navigating all the way back up
-    for _ in 0..15 {
-        harness
-            .send_key(KeyCode::Up, KeyModifiers::empty())
-            .unwrap();
-        harness.render().unwrap();
-    }
+    println!("\nAfter scrolling up:");
+    println!("Visible files: {:?}", visible_after_scroll);
 
-    let screen_at_top = harness.screen_to_string();
-    println!("Screen at top:\n{}", screen_at_top);
-
-    // Should be able to reach the very top (project_root or first file)
-    assert!(
-        screen_at_top.contains("project_root") || screen_at_top.contains("file00.txt"),
-        "Should be able to navigate to the top of the file list. Screen:\n{}",
-        screen_at_top
+    // After this press, the view SHOULD have scrolled (different files visible)
+    assert_ne!(
+        initial_visible, visible_after_scroll,
+        "After cursor reaches top of viewport, the next up should scroll the view. Initial: {:?}, After scroll: {:?}",
+        initial_visible,
+        visible_after_scroll
     );
 }
 

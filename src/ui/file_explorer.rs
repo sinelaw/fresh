@@ -16,22 +16,34 @@ pub struct FileExplorerRenderer;
 impl FileExplorerRenderer {
     /// Render the file explorer in the given frame area
     pub fn render(
-        view: &FileTreeView,
+        view: &mut FileTreeView,
         frame: &mut Frame,
         area: Rect,
         is_focused: bool,
         files_with_unsaved_changes: &HashSet<PathBuf>,
     ) {
+        // Update viewport height for scrolling calculations
+        // Account for borders (top + bottom = 2)
+        let viewport_height = area.height.saturating_sub(2) as usize;
+        view.set_viewport_height(viewport_height);
+
         let display_nodes = view.get_display_nodes();
         let scroll_offset = view.get_scroll_offset();
         let selected_index = view.get_selected_index();
 
-        // Create list items for visible nodes
-        let items: Vec<ListItem> = display_nodes
+        // Only render the visible subset of items (for manual scroll control)
+        // This prevents ratatui's List widget from auto-scrolling
+        let visible_end = (scroll_offset + viewport_height).min(display_nodes.len());
+        let visible_items = &display_nodes[scroll_offset..visible_end];
+
+        // Create list items for visible nodes only
+        let items: Vec<ListItem> = visible_items
             .iter()
             .enumerate()
-            .map(|(idx, &(node_id, indent))| {
-                let is_selected = selected_index == Some(idx);
+            .map(|(viewport_idx, &(node_id, indent))| {
+                // The actual index in the full list
+                let actual_idx = scroll_offset + viewport_idx;
+                let is_selected = selected_index == Some(actual_idx);
                 Self::render_node(
                     view,
                     node_id,
@@ -62,9 +74,13 @@ impl FileExplorerRenderer {
             });
 
         // Create list state for scrolling
+        // Since we're only passing visible items, the selection is relative to viewport
         let mut list_state = ListState::default();
         if let Some(selected) = selected_index {
-            list_state.select(Some(selected.saturating_sub(scroll_offset)));
+            if selected >= scroll_offset && selected < scroll_offset + viewport_height {
+                // Selected item is in the visible range
+                list_state.select(Some(selected - scroll_offset));
+            }
         }
 
         frame.render_stateful_widget(list, area, &mut list_state);

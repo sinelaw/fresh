@@ -84,6 +84,10 @@ pub enum AsyncMessage {
     /// File explorer node refresh completed
     FileExplorerRefreshNode(NodeId),
 
+    /// File explorer expand to path completed
+    /// Contains the updated FileTreeView with the path expanded and selected
+    FileExplorerExpandedToPath(FileTreeView),
+
     /// Plugin process completed with output
     PluginProcessOutput {
         /// Unique ID for this process (to match with callback)
