@@ -218,25 +218,31 @@ impl SplitRenderer {
                 1
             };
 
-            // Cap thumb size: minimum 1, maximum 80% of scrollbar height
-            let max_thumb_size = (height as f64 * 0.8).floor() as usize;
-            let thumb_size = thumb_size_raw.max(1).min(max_thumb_size).min(height);
-
-            // Calculate thumb position using proper linear mapping:
-            // - At line 0: thumb_start = 0
-            // - At max scroll position: thumb_start = height - thumb_size
-            //
+            // Calculate the maximum scroll position first to determine if buffer fits in viewport
             // The maximum scroll position is when the last line of the file is at
             // the bottom of the viewport, i.e., max_scroll_line = total_lines - viewport_height
             let max_scroll_line = total_lines.saturating_sub(viewport_height_lines);
 
+            // When buffer fits entirely in viewport (no scrolling possible),
+            // fill the entire scrollbar to make it obvious to the user
+            let thumb_size = if max_scroll_line == 0 {
+                height
+            } else {
+                // Cap thumb size: minimum 1, maximum 80% of scrollbar height
+                let max_thumb_size = (height as f64 * 0.8).floor() as usize;
+                thumb_size_raw.max(1).min(max_thumb_size).min(height)
+            };
+
+            // Calculate thumb position using proper linear mapping:
+            // - At line 0: thumb_start = 0
+            // - At max scroll position: thumb_start = height - thumb_size
             let thumb_start = if max_scroll_line > 0 {
                 // Linear interpolation from 0 to (height - thumb_size)
                 let scroll_ratio = top_line.min(max_scroll_line) as f64 / max_scroll_line as f64;
                 let max_thumb_start = height.saturating_sub(thumb_size);
                 (scroll_ratio * max_thumb_start as f64) as usize
             } else {
-                // File fits in viewport, thumb stays at top
+                // File fits in viewport, thumb fills entire height starting at top
                 0
             };
 
@@ -746,6 +752,16 @@ impl SplitRenderer {
             if lines_rendered >= visible_count {
                 break;
             }
+        }
+
+        // Handle cursor positioned after the last line (e.g., after pressing Enter at end of file)
+        // The loop above only iterates over existing lines, but if cursor is at the very end
+        // of the buffer after a newline, it represents a new empty line that hasn't been iterated
+        if !cursor_found && primary_cursor_position == state.buffer.len() {
+            // Cursor is at the end of the buffer - place it on the next line
+            cursor_screen_x = 0;
+            cursor_screen_y = lines_rendered as u16;
+            cursor_found = true;
         }
 
         let paragraph = Paragraph::new(lines).block(Block::default().borders(Borders::NONE));
