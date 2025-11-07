@@ -4,9 +4,9 @@ expression: "&screen_text"
 ---
  [No Name]                                                                      
 ┌ File Explorer ───────┐    1 │                                                █
-│▶ [D] project_root    │                                                       █
-│                      │                                                       █
-│                      │                                                       █
+│▼ project_root        │                                                       █
+│  ▶ src               │                                                       █
+│    README.md         │                                                       █
 │                      │                                                       █
 │                      │                                                       █
 │                      │                                                       █
