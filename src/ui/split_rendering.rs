@@ -814,12 +814,9 @@ impl SplitRenderer {
             }
 
             // Cursor is at the end of the buffer - place it on the current line
-            cursor_screen_x = if state.margins.left_config.enabled {
-                // Position cursor after the margin
-                (state.margins.left_config.width + 2) as u16 // +1 for indicator, +1 for separator
-            } else {
-                0
-            };
+            // cursor_screen_x is the column in the text content (NOT including gutter)
+            // The gutter offset is added later when setting the hardware cursor
+            cursor_screen_x = 0;
             cursor_screen_y = (lines_rendered - 1) as u16;
             cursor_found = true;
         }
