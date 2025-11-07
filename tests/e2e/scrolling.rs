@@ -1680,3 +1680,101 @@ fn test_page_down_when_buffer_equals_viewport_height() {
     );
 }
 
+/// Test that pressing Enter repeatedly in an empty buffer maintains the invariant
+/// that the last line of the buffer is always pinned to the bottom of the editor area.
+/// Bug: When approaching the bottom, the viewport suddenly scrolls incorrectly,
+/// showing only a few lines at the top of the viewport with empty space below.
+#[test]
+fn test_enter_key_maintains_bottom_line_pinned() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let terminal_height = 24u16;
+    let terminal_width = 80u16;
+
+    // Content area bounds (excluding tab bar at row 0 and status bar at last row)
+    let content_first_row = 1;
+    let content_last_row = (terminal_height - 2) as usize; // Row 22 for height 24
+
+    let mut harness = EditorTestHarness::new(terminal_width, terminal_height).unwrap();
+    harness.render().unwrap();
+
+    // Start with an empty buffer
+    let initial_content = harness.get_buffer_content();
+    assert_eq!(initial_content, "", "Buffer should start empty");
+
+    // Press Enter many times to create lines
+    // We'll press it 30 times to ensure we exceed the viewport height (22 lines)
+    let num_enters = 30;
+
+    println!("\n=== Testing Enter key {} times in empty buffer ===", num_enters);
+
+    for i in 1..=num_enters {
+        harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+        // After each Enter, check that the last line is visible at the bottom
+        let screen = harness.screen_to_string();
+        let screen_lines: Vec<&str> = screen.lines().collect();
+
+        // Count actual buffer lines (number of newlines + 1, or just count lines)
+        let buffer_content = harness.get_buffer_content();
+        let buffer_line_count = if buffer_content.is_empty() {
+            1
+        } else {
+            buffer_content.chars().filter(|&c| c == '\n').count() + 1
+        };
+
+        // Get viewport state
+        let viewport = &harness.editor().active_state().viewport;
+        let top_byte = viewport.top_byte;
+
+        // Find where the cursor is on screen
+        let (cursor_x, cursor_y) = harness.screen_cursor_position();
+
+        // The cursor should be on the empty line after the newlines
+        // For the invariant: when buffer has more lines than viewport height,
+        // the last line (empty line where cursor is) should be at the bottom of content area
+
+        // Check if there's excessive empty space below the cursor
+        let mut empty_rows_below_cursor = 0;
+        for row_idx in ((cursor_y as usize) + 1)..=content_last_row {
+            if row_idx < screen_lines.len() {
+                let line = screen_lines[row_idx].trim();
+                // Check if line is empty or just whitespace/gutter
+                if line.is_empty() || line.chars().all(|c| c.is_whitespace() || c == '│') {
+                    empty_rows_below_cursor += 1;
+                }
+            }
+        }
+
+        println!(
+            "After Enter #{}: buffer_lines={}, cursor_y={}, top_byte={}, empty_rows_below={}",
+            i, buffer_line_count, cursor_y, top_byte, empty_rows_below_cursor
+        );
+
+        // The invariant: when buffer has more lines than viewport,
+        // the last line should be pinned to the bottom (cursor at content_last_row)
+        // There should be no empty content rows below the cursor
+        if buffer_line_count > (content_last_row - content_first_row + 1) {
+            // Buffer is larger than viewport - last line should be at bottom
+            assert_eq!(
+                empty_rows_below_cursor, 0,
+                "BUG REPRODUCED at Enter #{}: When buffer has {} lines (more than viewport height), \
+                 the last line should be pinned to the bottom with no empty rows below, \
+                 but found {} empty rows below cursor at row {}. This breaks the bottom-line-pinned invariant.\n\
+                 Screen:\n{}",
+                i, buffer_line_count, empty_rows_below_cursor, cursor_y, screen
+            );
+
+            // Additionally, cursor should be at the bottom row
+            assert_eq!(
+                cursor_y, content_last_row as u16,
+                "BUG REPRODUCED at Enter #{}: Cursor should be at bottom row {} when buffer ({} lines) \
+                 exceeds viewport, but is at row {}",
+                i, content_last_row, buffer_line_count, cursor_y
+            );
+        }
+    }
+
+    println!("\n✓ Enter key maintains bottom line pinned throughout {} presses", num_enters);
+}
+
