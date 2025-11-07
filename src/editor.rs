@@ -846,6 +846,40 @@ impl Editor {
             // File explorer is already visible, just switch focus
             self.key_context = KeyContext::FileExplorer;
             self.set_status_message("File explorer focused".to_string());
+
+            // Feature 7: Auto-expand and select the currently open file
+            // Get the currently active file path
+            if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer) {
+                if let Some(file_path) = &metadata.file_path {
+                    // Clone the file path to avoid borrow checker issues
+                    let target_path = file_path.clone();
+                    let working_dir = self.working_dir.clone();
+
+                    // Check if the file is under the project root
+                    if target_path.starts_with(&working_dir) {
+                        // Take ownership of the file explorer view to expand it asynchronously
+                        if let Some(mut view) = self.file_explorer.take() {
+                            if let (Some(runtime), Some(bridge)) =
+                                (&self.tokio_runtime, &self.async_bridge)
+                            {
+                                let sender = bridge.sender();
+
+                                runtime.spawn(async move {
+                                    // Expand to the target path
+                                    let _success = view.expand_and_select_file(&target_path).await;
+
+                                    // Send the updated view back
+                                    let _ = sender
+                                        .send(AsyncMessage::FileExplorerExpandedToPath(view));
+                                });
+                            } else {
+                                // No async runtime, just put the view back
+                                self.file_explorer = Some(view);
+                            }
+                        }
+                    }
+                }
+            }
         } else {
             // Open file explorer if not visible
             self.toggle_file_explorer();
