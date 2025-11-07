@@ -785,6 +785,10 @@ pub fn action_to_events(
         | Action::RenameMoveEnd
         | Action::GitGrep
         | Action::GitFindFile
+        | Action::Search
+        | Action::FindNext
+        | Action::FindPrevious
+        | Action::Replace
         | Action::PluginAction(_)
         | Action::None => return None,
 

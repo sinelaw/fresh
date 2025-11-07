@@ -18,6 +18,7 @@ pub mod position_history_truncate_debug;
 pub mod prompt;
 pub mod rendering;
 pub mod scrolling;
+pub mod search;
 pub mod selection;
 pub mod split_view;
 pub mod test_scrollbar_keybinds_cursor;
