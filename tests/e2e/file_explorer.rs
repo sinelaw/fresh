@@ -1115,10 +1115,7 @@ fn test_tabs_above_editor_area_only() {
 }
 
 /// Test Feature 7: Auto-expand and select file on focus switch
-/// NOTE: This test is currently disabled as Feature 7 requires significant
-/// tree traversal and async expansion logic. Left as future enhancement.
 #[test]
-#[ignore]
 fn test_auto_select_file_on_focus_switch() {
     use crossterm::event::{KeyCode, KeyModifiers};
 
