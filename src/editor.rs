@@ -895,6 +895,8 @@ impl Editor {
     pub fn file_explorer_navigate_up(&mut self) {
         if let Some(explorer) = &mut self.file_explorer {
             explorer.select_prev();
+            // Update scroll using stored viewport_height (set during rendering)
+            explorer.update_scroll_for_selection();
         }
     }
 
@@ -902,6 +904,8 @@ impl Editor {
     pub fn file_explorer_navigate_down(&mut self) {
         if let Some(explorer) = &mut self.file_explorer {
             explorer.select_next();
+            // Update scroll using stored viewport_height (set during rendering)
+            explorer.update_scroll_for_selection();
         }
     }
 
@@ -1869,6 +1873,11 @@ impl Editor {
                     // Async refresh completed
                     tracing::debug!("File explorer refresh completed for node {:?}", node_id);
                     self.set_status_message("Refreshed".to_string());
+                }
+                AsyncMessage::FileExplorerExpandedToPath(view) => {
+                    // File explorer has expanded to the active file path
+                    tracing::debug!("File explorer expanded to active file path");
+                    self.file_explorer = Some(view);
                 }
                 AsyncMessage::PluginProcessOutput {
                     process_id,
@@ -4188,7 +4197,7 @@ impl Editor {
             editor_content_area = editor_vertical_chunks[1];
 
             // Render file explorer
-            if let Some(ref explorer) = self.file_explorer {
+            if let Some(ref mut explorer) = self.file_explorer {
                 let is_focused = self.key_context == KeyContext::FileExplorer;
 
                 // Build set of files with unsaved changes

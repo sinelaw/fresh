@@ -16,6 +16,8 @@ pub struct FileTreeView {
     sort_mode: SortMode,
     /// Ignore patterns for filtering
     ignore_patterns: IgnorePatterns,
+    /// Last known viewport height (for scrolling calculations)
+    pub(crate) viewport_height: usize,
 }
 
 /// Sort mode for file tree entries
@@ -39,7 +41,13 @@ impl FileTreeView {
             scroll_offset: 0,
             sort_mode: SortMode::Type,
             ignore_patterns: IgnorePatterns::new(),
+            viewport_height: 10, // Default, will be updated during rendering
         }
+    }
+
+    /// Set the viewport height (should be called during rendering)
+    pub fn set_viewport_height(&mut self, height: usize) {
+        self.viewport_height = height;
     }
 
     /// Get the underlying tree
@@ -109,6 +117,37 @@ impl FileTreeView {
             }
         } else {
             self.selected_node = Some(visible[0]);
+        }
+    }
+
+    /// Update scroll offset to ensure symmetric scrolling behavior
+    ///
+    /// This should be called after navigation to implement symmetric scrolling:
+    /// - When moving down, cursor moves to bottom of viewport before scrolling
+    /// - When moving up, cursor moves to top of viewport before scrolling
+    ///
+    /// Uses the stored viewport_height which is updated during rendering.
+    pub fn update_scroll_for_selection(&mut self) {
+        if self.viewport_height == 0 {
+            return;
+        }
+
+        if let Some(selected) = self.selected_node {
+            let visible = self.tree.get_visible_nodes();
+            if let Some(pos) = visible.iter().position(|&id| id == selected) {
+                // Only scroll if cursor goes PAST the viewport edges
+                // This implements symmetric scrolling behavior
+
+                // If selection is above the visible area, scroll up
+                if pos < self.scroll_offset {
+                    self.scroll_offset = pos;
+                }
+                // If selection is below the visible area, scroll down
+                else if pos >= self.scroll_offset + self.viewport_height {
+                    self.scroll_offset = pos - self.viewport_height + 1;
+                }
+                // Otherwise, cursor is within viewport - don't scroll
+            }
         }
     }
 
@@ -258,6 +297,32 @@ impl FileTreeView {
     /// This should be called when expanding a directory to load its .gitignore
     pub fn load_gitignore_for_dir(&mut self, dir_path: &std::path::Path) -> std::io::Result<()> {
         self.ignore_patterns.load_gitignore(dir_path)
+    }
+
+    /// Expand all parent directories and select the given file path
+    ///
+    /// This is useful for revealing a specific file in the tree when switching
+    /// focus to the file explorer. All parent directories will be expanded as needed,
+    /// and the file will be selected.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The full path to the file to reveal and select
+    ///
+    /// # Returns
+    ///
+    /// Returns true if the file was successfully expanded and selected, false otherwise.
+    /// This will return false if:
+    /// - The path is not under the root directory
+    /// - The path doesn't exist
+    /// - There was an error expanding intermediate directories
+    pub async fn expand_and_select_file(&mut self, path: &std::path::Path) -> bool {
+        if let Some(node_id) = self.tree.expand_to_path(path).await {
+            self.selected_node = Some(node_id);
+            true
+        } else {
+            false
+        }
     }
 }
 
