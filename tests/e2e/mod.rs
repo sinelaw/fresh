@@ -20,5 +20,6 @@ pub mod rendering;
 pub mod scrolling;
 pub mod selection;
 pub mod split_view;
+pub mod test_scrollbar_keybinds_cursor;
 pub mod theme;
 pub mod visual_regression;
