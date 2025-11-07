@@ -806,6 +806,11 @@ impl Editor {
         self.file_explorer_visible
     }
 
+    /// Get reference to file explorer (for testing)
+    pub fn file_explorer(&self) -> Option<&FileTreeView> {
+        self.file_explorer.as_ref()
+    }
+
     /// Toggle file explorer visibility
     pub fn toggle_file_explorer(&mut self) {
         self.file_explorer_visible = !self.file_explorer_visible;
@@ -818,6 +823,10 @@ impl Editor {
             // Switch focus to file explorer when opening
             self.key_context = KeyContext::FileExplorer;
             self.set_status_message("File explorer opened".to_string());
+
+            // Sync to current active file (fixes bug where explorer shows stale selection
+            // after being hidden while user switched tabs)
+            self.sync_file_explorer_to_active_file();
         } else {
             // Return focus to editor when closing
             self.key_context = KeyContext::Normal;
