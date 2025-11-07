@@ -4143,55 +4143,51 @@ impl Editor {
             0
         };
 
-        // Cache layout for mouse handling
-        let editor_content_area;
+        // Build main vertical layout: [main_content, suggestions?, status_bar]
+        let mut constraints = vec![Constraint::Min(0)]; // Main content area
+        if suggestion_lines > 0 {
+            constraints.push(Constraint::Length(suggestion_lines as u16 + 2));
+        }
+        constraints.push(Constraint::Length(1)); // Status bar
+
+        let main_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .split(size);
+
+        let main_content_area = main_chunks[0];
+        let suggestions_idx = if suggestion_lines > 0 { Some(1) } else { None };
+        let status_bar_idx = if suggestion_lines > 0 { 2 } else { 1 };
+
+        // Split main content area based on file explorer visibility
         let tabs_area;
+        let editor_content_area;
 
-        // Split based on whether file explorer is visible
         if self.file_explorer_visible && self.file_explorer.is_some() {
-            // When file explorer is visible:
-            // Split into content area, suggestions (if any), and status bar
-            let mut constraints = vec![
-                Constraint::Min(0), // Content area (will be split into explorer + editor)
-            ];
-
-            if suggestion_lines > 0 {
-                constraints.push(Constraint::Length(suggestion_lines as u16 + 2));
-            }
-            constraints.push(Constraint::Length(1)); // Status bar
-
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(constraints)
-                .split(size);
-
-            let content_area = chunks[0];
-
-            // Split content area horizontally: file explorer (30%) | editor area (70%)
+            // Split horizontally: [file_explorer | editor_with_tabs]
             let horizontal_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
                     Constraint::Percentage(30), // File explorer
-                    Constraint::Percentage(70), // Editor area (will have tabs + content)
+                    Constraint::Percentage(70), // Editor area
                 ])
-                .split(content_area);
+                .split(main_content_area);
 
-            // Cache file explorer area
             self.cached_layout.file_explorer_area = Some(horizontal_chunks[0]);
 
-            // Split editor area vertically: tabs (1 line) | editor content
+            // Split editor area vertically: [tabs | content]
             let editor_vertical_chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Length(1), // Tabs
-                    Constraint::Min(0),    // Editor content
+                    Constraint::Min(0),    // Content
                 ])
                 .split(horizontal_chunks[1]);
 
             tabs_area = editor_vertical_chunks[0];
             editor_content_area = editor_vertical_chunks[1];
 
-            // Render file explorer on the left
+            // Render file explorer
             if let Some(ref explorer) = self.file_explorer {
                 let is_focused = self.key_context == KeyContext::FileExplorer;
 
@@ -4216,28 +4212,22 @@ impl Editor {
                 );
             }
         } else {
-            // When file explorer is NOT visible:
-            // Traditional layout with tabs at top spanning full width
-            let mut constraints = vec![
-                Constraint::Length(1), // Tabs
-                Constraint::Min(0),    // Content
-            ];
+            // No file explorer: split main content vertically: [tabs | content]
+            self.cached_layout.file_explorer_area = None;
 
-            if suggestion_lines > 0 {
-                constraints.push(Constraint::Length(suggestion_lines as u16 + 2));
-            }
-            constraints.push(Constraint::Length(1)); // Status bar
-
-            let chunks = Layout::default()
+            let vertical_chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints(constraints)
-                .split(size);
+                .constraints([
+                    Constraint::Length(1), // Tabs
+                    Constraint::Min(0),    // Content
+                ])
+                .split(main_content_area);
 
-            tabs_area = chunks[0];
-            editor_content_area = chunks[1];
+            tabs_area = vertical_chunks[0];
+            editor_content_area = vertical_chunks[1];
         }
 
-        // Render tabs
+        // Render tabs (same for both layouts)
         TabsRenderer::render(
             frame,
             tabs_area,
@@ -4246,11 +4236,10 @@ impl Editor {
             &self.theme,
         );
 
-        // Render editor content
+        // Render editor content (same for both layouts)
         let lsp_waiting = self.pending_completion_request.is_some()
             || self.pending_goto_definition_request.is_some();
 
-        // Render editor content
         let split_areas = SplitRenderer::render_content(
             frame,
             editor_content_area,
@@ -4263,91 +4252,25 @@ impl Editor {
             self.config.editor.line_wrap,
         );
         self.cached_layout.split_areas = split_areas;
-
-        // Cache editor content area
         self.cached_layout.editor_content_area = Some(editor_content_area);
 
-        // Render suggestions and status bar
-        // Note: chunk indices differ based on whether file explorer is visible
-        if self.file_explorer_visible && self.file_explorer.is_some() {
-            // For file explorer layout: chunks are [content_area, suggestions?, status_bar]
-            // But we need to get the chunks again since we split content_area already
-            let mut constraints = vec![Constraint::Min(0)];
-            if suggestion_lines > 0 {
-                constraints.push(Constraint::Length(suggestion_lines as u16 + 2));
-            }
-            constraints.push(Constraint::Length(1));
-
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(constraints)
-                .split(size);
-
-            if suggestion_lines > 0 {
-                if let Some(prompt) = &self.prompt {
-                    SuggestionsRenderer::render(frame, chunks[1], prompt, &self.theme);
-                }
-                StatusBarRenderer::render(
-                    frame,
-                    chunks[2],
-                    self.active_state(),
-                    &self.status_message,
-                    &self.prompt,
-                    &self.lsp_status,
-                    &self.theme,
-                );
-            } else {
-                StatusBarRenderer::render(
-                    frame,
-                    chunks[1],
-                    self.active_state(),
-                    &self.status_message,
-                    &self.prompt,
-                    &self.lsp_status,
-                    &self.theme,
-                );
-            }
-        } else {
-            // For normal layout: chunks are [tabs, content, suggestions?, status_bar]
-            let mut constraints = vec![
-                Constraint::Length(1), // Tabs
-                Constraint::Min(0),    // Content
-            ];
-            if suggestion_lines > 0 {
-                constraints.push(Constraint::Length(suggestion_lines as u16 + 2));
-            }
-            constraints.push(Constraint::Length(1));
-
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(constraints)
-                .split(size);
-
-            if suggestion_lines > 0 {
-                if let Some(prompt) = &self.prompt {
-                    SuggestionsRenderer::render(frame, chunks[2], prompt, &self.theme);
-                }
-                StatusBarRenderer::render(
-                    frame,
-                    chunks[3],
-                    self.active_state(),
-                    &self.status_message,
-                    &self.prompt,
-                    &self.lsp_status,
-                    &self.theme,
-                );
-            } else {
-                StatusBarRenderer::render(
-                    frame,
-                    chunks[2],
-                    self.active_state(),
-                    &self.status_message,
-                    &self.prompt,
-                    &self.lsp_status,
-                    &self.theme,
-                );
+        // Render suggestions if present (same for both layouts)
+        if let Some(idx) = suggestions_idx {
+            if let Some(prompt) = &self.prompt {
+                SuggestionsRenderer::render(frame, main_chunks[idx], prompt, &self.theme);
             }
         }
+
+        // Render status bar (same for both layouts)
+        StatusBarRenderer::render(
+            frame,
+            main_chunks[status_bar_idx],
+            self.active_state(),
+            &self.status_message,
+            &self.prompt,
+            &self.lsp_status,
+            &self.theme,
+        );
 
         // Render popups from the active buffer state
         // Clone theme to avoid borrow checker issues with active_state_mut()
