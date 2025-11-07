@@ -2061,9 +2061,8 @@ impl Editor {
             // Update active buffer ID
             snapshot.active_buffer_id = self.active_buffer;
 
-            // Clear and update buffer info
+            // Clear and update buffer info (buffer content is in a separate cache now)
             snapshot.buffers.clear();
-            snapshot.buffer_contents.clear();
 
             for (buffer_id, state) in &self.buffers {
                 let buffer_info = BufferInfo {
@@ -2073,15 +2072,16 @@ impl Editor {
                     length: state.buffer.len(),
                 };
                 snapshot.buffers.insert(*buffer_id, buffer_info);
+            }
 
-                // OPTIMIZATION: Only cache content for the active buffer
-                // This avoids copying potentially large strings for all buffers on every update
-                // Plugins can still access other buffers if needed, but we optimize the common case
-                if *buffer_id == self.active_buffer {
-                    snapshot
-                        .buffer_contents
-                        .insert(*buffer_id, state.buffer.to_string());
-                }
+            // Update buffer content cache (separate from snapshot)
+            // OPTIMIZATION: Only cache the active buffer to avoid copying large strings
+            // This avoids the massive performance hit of copying all buffer contents on every update
+            let cache_handle = manager.buffer_content_cache();
+            let mut cache = cache_handle.write().unwrap();
+            cache.clear();
+            if let Some(active_state) = self.buffers.get(&self.active_buffer) {
+                cache.insert(self.active_buffer, active_state.buffer.to_string());
             }
 
             // Update cursor information for active buffer
