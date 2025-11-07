@@ -4,7 +4,7 @@ expression: "&screen_text"
 ---
  [No Name]                                                                      
 ┌ File Explorer ───────┐    1 │                                                █
-│▶ [D] project_root    │                                                       █
+│▶ project_root        │                                                       █
 │                      │                                                       █
 │                      │                                                       █
 │                      │                                                       █
@@ -31,4 +31,4 @@ expression: "&screen_text"
 │                      │                                                       │
 │                      │                                                       │
 └──────────────────────┘                                                       │
-[No Name] | Ln 0, Col 0 | File explorer ready
+[No Name] | Ln 0, Col 0 | Collapsed: project_root

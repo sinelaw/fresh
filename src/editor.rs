@@ -4194,7 +4194,26 @@ impl Editor {
             // Render file explorer on the left
             if let Some(ref explorer) = self.file_explorer {
                 let is_focused = self.key_context == KeyContext::FileExplorer;
-                FileExplorerRenderer::render(explorer, frame, horizontal_chunks[0], is_focused);
+
+                // Build set of files with unsaved changes
+                let mut files_with_unsaved_changes = std::collections::HashSet::new();
+                for (buffer_id, state) in &self.buffers {
+                    if state.buffer.is_modified() {
+                        if let Some(metadata) = self.buffer_metadata.get(buffer_id) {
+                            if let Some(file_path) = &metadata.file_path {
+                                files_with_unsaved_changes.insert(file_path.clone());
+                            }
+                        }
+                    }
+                }
+
+                FileExplorerRenderer::render(
+                    explorer,
+                    frame,
+                    horizontal_chunks[0],
+                    is_focused,
+                    &files_with_unsaved_changes,
+                );
             }
 
             // Render content on the right and get split areas for mouse handling

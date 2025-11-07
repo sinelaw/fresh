@@ -630,23 +630,22 @@ fn test_enter_toggles_directory() {
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
-    // Root should be selected, expand it first
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::empty())
-        .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
-
-    // Navigate down to testdir
+    // Root should already be expanded (Feature 3), navigate to testdir
     harness
         .send_key(KeyCode::Down, KeyModifiers::empty())
         .unwrap();
     harness.render().unwrap();
 
     let screen_before_expand = harness.screen_to_string();
+    println!("Before expand:\n{}", screen_before_expand);
 
-    // Press Enter to expand directory
+    // Should be on testdir now - verify it's collapsed
+    assert!(
+        screen_before_expand.contains("▶ testdir") || screen_before_expand.contains("▶  testdir"),
+        "testdir should initially be collapsed"
+    );
+
+    // Press Enter to expand testdir
     harness
         .send_key(KeyCode::Enter, KeyModifiers::empty())
         .unwrap();
@@ -655,15 +654,21 @@ fn test_enter_toggles_directory() {
     harness.render().unwrap();
 
     let screen_after_expand = harness.screen_to_string();
+    println!("After expand:\n{}", screen_after_expand);
 
-    // After expansion, should see more entries (the files inside testdir)
-    // The screen content should be different
-    assert_ne!(
-        screen_before_expand, screen_after_expand,
-        "Screen should change after expanding directory with Enter"
+    // After expansion, should see the files inside testdir (file1.txt, file2.txt)
+    assert!(
+        screen_after_expand.contains("file1.txt") || screen_after_expand.contains("file2.txt"),
+        "Should see files inside testdir after expansion"
     );
 
-    // Press Enter again to collapse
+    // Verify testdir is now expanded
+    assert!(
+        screen_after_expand.contains("▼ testdir") || screen_after_expand.contains("▼  testdir"),
+        "testdir should show expanded indicator (▼)"
+    );
+
+    // Press Enter again to collapse testdir
     harness
         .send_key(KeyCode::Enter, KeyModifiers::empty())
         .unwrap();
@@ -673,31 +678,20 @@ fn test_enter_toggles_directory() {
 
     let screen_after_collapse = harness.screen_to_string();
 
+    println!("Screen after collapse:\n{}", screen_after_collapse);
+
     // After collapsing, directory tree structure should return to original state
     // We check that testdir shows collapsed indicator (▶)
     assert!(
-        screen_after_collapse.contains("▶ [D] testdir"),
-        "testdir should be collapsed after pressing Enter again"
+        screen_after_collapse.contains("▶ testdir") || screen_after_collapse.contains("▶  testdir"),
+        "testdir should be collapsed after pressing Enter again. Screen:\n{}",
+        screen_after_collapse
     );
 
-    // Verify the tree structure returned to collapsed state by checking
-    // that the file count is similar (status message may differ)
-    let lines_before: Vec<&str> = screen_before_expand.lines().collect();
-    let lines_after: Vec<&str> = screen_after_collapse.lines().collect();
-
-    // Count lines containing file indicators - should be same when collapsed
-    let indicator_count_before = lines_before
-        .iter()
-        .filter(|l| l.contains("[D]") || l.contains("[F]"))
-        .count();
-    let indicator_count_after = lines_after
-        .iter()
-        .filter(|l| l.contains("[D]") || l.contains("[F]"))
-        .count();
-
-    assert_eq!(
-        indicator_count_before, indicator_count_after,
-        "Number of visible entries should be the same after collapsing"
+    // Verify files inside testdir are no longer visible
+    assert!(
+        !screen_after_collapse.contains("file1.txt") && !screen_after_collapse.contains("file2.txt"),
+        "Files inside testdir should not be visible when collapsed"
     );
 }
 
@@ -717,23 +711,26 @@ fn test_enter_opens_file_and_switches_focus() {
     harness.editor_mut().focus_file_explorer();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
-    harness.render().unwrap();
-
-    // Expand root directory
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::empty())
-        .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
     harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
-    // Navigate down to the file
+    // Root directory should already be expanded (Feature 3)
+    // Navigate down to the file (testfile.txt)
     harness
         .send_key(KeyCode::Down, KeyModifiers::empty())
         .unwrap();
     harness.render().unwrap();
 
     let screen_before = harness.screen_to_string();
+    println!("Before opening file:\n{}", screen_before);
+
+    // Verify we're on the test file
+    // The selected item should be visible in the file explorer
+    assert!(
+        screen_before.contains("testfile.txt"),
+        "testfile.txt should be visible in file explorer"
+    );
 
     // File explorer should be visible and have focus
     assert!(
@@ -809,11 +806,129 @@ fn test_project_directory_expanded_on_open() {
     );
 
     // Verify we see multiple entries (more than just the root)
-    let entry_count = screen.lines().filter(|l| l.contains("[D]") || l.contains("[F]") || l.contains("[R]")).count();
+    // Count lines that contain file/directory names (have indentation and text)
+    let entry_count = screen
+        .lines()
+        .filter(|l| {
+            (l.contains("file1.txt")
+                || l.contains("file2.txt")
+                || l.contains("subdir")
+                || l.contains("project_root"))
+                && (l.contains("▼") || l.contains("▶") || l.contains("  "))
+        })
+        .count();
 
     assert!(
         entry_count > 1,
         "Should see more than just the root directory (found {} entries)",
         entry_count
+    );
+}
+
+/// Test Feature 4: No [D][T] indicators, only show indicators for unsaved changes
+#[test]
+fn test_unsaved_change_indicators() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create a test file
+    fs::write(project_root.join("test.txt"), "original content").unwrap();
+    fs::write(project_root.join("test.rs"), "fn main() {}").unwrap();
+    fs::create_dir(project_root.join("mydir")).unwrap();
+
+    // Open file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen_initial = harness.screen_to_string();
+
+    // Should NOT see [D], [T], [F], [R], [P] etc. indicators anymore
+    assert!(
+        !screen_initial.contains("[D]")
+            && !screen_initial.contains("[T]")
+            && !screen_initial.contains("[F]")
+            && !screen_initial.contains("[R]")
+            && !screen_initial.contains("[P]"),
+        "Should not show file type indicators like [D], [T], [F], [R], [P] in file explorer"
+    );
+
+    // Open a file and modify it without saving
+    // Navigate past mydir and other items to test.txt
+    // Press down multiple times to get to a file (not directory)
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::empty())
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    let screen_before_open = harness.screen_to_string();
+    println!("Before opening file:\n{}", screen_before_open);
+
+    // Open the selected file
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::empty())
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen_after_open = harness.screen_to_string();
+    println!("After opening file:\n{}", screen_after_open);
+
+    // Verify we're actually in the editor with file content
+    assert!(
+        screen_after_open.contains("original content") || screen_after_open.contains("fn main"),
+        "Should have opened a file and see its content"
+    );
+
+    // Now in editor - type something to make changes
+    harness
+        .send_key(KeyCode::Char('X'), KeyModifiers::empty())
+        .unwrap();
+    harness.render().unwrap();
+
+    // Go back to file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen_with_unsaved = harness.screen_to_string();
+
+    println!("Screen with unsaved changes:\n{}", screen_with_unsaved);
+    println!("File explorer visible: {}", harness.editor().file_explorer_visible());
+
+    // Should now see an unsaved change indicator (●) next to test.txt
+    assert!(
+        screen_with_unsaved.contains("●") || screen_with_unsaved.contains("*"),
+        "Should show unsaved change indicator next to modified file. Screen:\n{}",
+        screen_with_unsaved
+    );
+
+    // test.rs should not have an indicator
+    // We can verify by checking the lines containing the filenames
+    let test_txt_line = screen_with_unsaved
+        .lines()
+        .find(|l| l.contains("test.txt"))
+        .unwrap_or("");
+    let test_rs_line = screen_with_unsaved
+        .lines()
+        .find(|l| l.contains("test.rs"))
+        .unwrap_or("");
+
+    assert!(
+        test_txt_line.contains("●") || test_txt_line.contains("*"),
+        "test.txt should have unsaved indicator"
+    );
+    assert!(
+        !test_rs_line.contains("●") && !test_rs_line.contains("*"),
+        "test.rs should not have unsaved indicator"
     );
 }

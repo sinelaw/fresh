@@ -8,11 +8,20 @@ use ratatui::{
     Frame,
 };
 
+use std::collections::HashSet;
+use std::path::PathBuf;
+
 pub struct FileExplorerRenderer;
 
 impl FileExplorerRenderer {
     /// Render the file explorer in the given frame area
-    pub fn render(view: &FileTreeView, frame: &mut Frame, area: Rect, is_focused: bool) {
+    pub fn render(
+        view: &FileTreeView,
+        frame: &mut Frame,
+        area: Rect,
+        is_focused: bool,
+        files_with_unsaved_changes: &HashSet<PathBuf>,
+    ) {
         let display_nodes = view.get_display_nodes();
         let scroll_offset = view.get_scroll_offset();
         let selected_index = view.get_selected_index();
@@ -23,7 +32,14 @@ impl FileExplorerRenderer {
             .enumerate()
             .map(|(idx, &(node_id, indent))| {
                 let is_selected = selected_index == Some(idx);
-                Self::render_node(view, node_id, indent, is_selected, is_focused)
+                Self::render_node(
+                    view,
+                    node_id,
+                    indent,
+                    is_selected,
+                    is_focused,
+                    files_with_unsaved_changes,
+                )
             })
             .collect();
 
@@ -61,6 +77,7 @@ impl FileExplorerRenderer {
         indent: usize,
         is_selected: bool,
         is_focused: bool,
+        files_with_unsaved_changes: &HashSet<PathBuf>,
     ) -> ListItem<'static> {
         let node = view.tree().get_node(node_id).expect("Node should exist");
 
@@ -72,7 +89,7 @@ impl FileExplorerRenderer {
             spans.push(Span::raw("  ".repeat(indent)));
         }
 
-        // Tree expansion indicator
+        // Tree expansion indicator (only for directories)
         if node.is_dir() {
             let indicator = if node.is_expanded() {
                 "▼ "
@@ -85,14 +102,15 @@ impl FileExplorerRenderer {
             };
             spans.push(Span::styled(indicator, Style::default().fg(Color::Yellow)));
         } else {
-            spans.push(Span::raw("  "));
+            // For files, show unsaved change indicator if applicable
+            if files_with_unsaved_changes.contains(&node.entry.path) {
+                spans.push(Span::styled("● ", Style::default().fg(Color::Yellow)));
+            } else {
+                spans.push(Span::raw("  "));
+            }
         }
 
-        // Icon
-        let icon = Self::get_icon(&node.entry.entry_type, &node.entry.name);
-        spans.push(Span::styled(icon, Self::get_icon_color(&node.entry)));
-
-        // Name
+        // Name (no file type icons anymore)
         let name_style = if is_selected && is_focused {
             Style::default().fg(Color::White)
         } else if node
@@ -129,46 +147,6 @@ impl FileExplorerRenderer {
         ListItem::new(Line::from(spans))
     }
 
-    /// Get icon for file type
-    fn get_icon(entry_type: &FsEntryType, name: &str) -> &'static str {
-        match entry_type {
-            FsEntryType::Directory => "[D] ",
-            FsEntryType::Symlink => "[L] ",
-            FsEntryType::File => {
-                // Determine icon based on file extension
-                if let Some(ext) = name.rsplit('.').next() {
-                    match ext.to_lowercase().as_str() {
-                        "rs" => "[R] ",
-                        "py" => "[P] ",
-                        "js" | "ts" | "jsx" | "tsx" => "[J] ",
-                        "html" | "htm" => "[H] ",
-                        "css" | "scss" | "sass" => "[C] ",
-                        "json" | "yaml" | "yml" | "toml" => "[*] ",
-                        "md" | "txt" => "[T] ",
-                        "jpg" | "jpeg" | "png" | "gif" | "svg" => "[I] ",
-                        "mp3" | "wav" | "ogg" => "[A] ",
-                        "mp4" | "avi" | "mkv" => "[V] ",
-                        "zip" | "tar" | "gz" | "7z" => "[Z] ",
-                        "pdf" => "[F] ",
-                        "sh" | "bash" | "zsh" => "[S] ",
-                        _ => "[F] ",
-                    }
-                } else {
-                    "[F] "
-                }
-            }
-        }
-    }
-
-    /// Get color for icon
-    fn get_icon_color(entry: &crate::fs::FsEntry) -> Style {
-        match entry.entry_type {
-            FsEntryType::Directory => Style::default().fg(Color::Blue),
-            FsEntryType::Symlink => Style::default().fg(Color::Cyan),
-            FsEntryType::File => Style::default().fg(Color::White),
-        }
-    }
-
     /// Format file size for display
     fn format_size(size: u64) -> String {
         const KB: u64 = 1024;
@@ -203,31 +181,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_get_icon() {
-        assert_eq!(
-            FileExplorerRenderer::get_icon(&FsEntryType::Directory, "test"),
-            "[D] "
-        );
-        assert_eq!(
-            FileExplorerRenderer::get_icon(&FsEntryType::Symlink, "test"),
-            "[L] "
-        );
-        assert_eq!(
-            FileExplorerRenderer::get_icon(&FsEntryType::File, "test.rs"),
-            "[R] "
-        );
-        assert_eq!(
-            FileExplorerRenderer::get_icon(&FsEntryType::File, "test.py"),
-            "[P] "
-        );
-        assert_eq!(
-            FileExplorerRenderer::get_icon(&FsEntryType::File, "test.txt"),
-            "[T] "
-        );
-        assert_eq!(
-            FileExplorerRenderer::get_icon(&FsEntryType::File, "unknown"),
-            "[F] "
-        );
-    }
 }
