@@ -18,11 +18,11 @@ expression: "&screen_text"
                                                                                █
                                                                                █
                                                                                █
-                                                                               │
-                                                                               │
-                                                                               │
-                                                                               │
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  Show Help  -  Display the help page with all keybindings                    │
+│  Show Help  Display the help page with all keybindings                       │
 └──────────────────────────────────────────────────────────────────────────────┘
 Command: help

@@ -8,6 +8,7 @@ expression: "&screen_text"
     4 │     println!("Value: {}", amount);                                     █
     5 │     result                                                             █
     6 │ }                                                                      █
+    7 │                                                                        █
                                                                                █
                                                                                █
                                                                                █
@@ -25,10 +26,9 @@ expression: "&screen_text"
                                                                                █
                                                                                █
                                                                                █
-                                                                               │
-                                                                               │
-                                                                               │
-                                                                               │
-                                                                               │
-                                                                               │
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
 [No Name] [+] | Ln 5, Col 0 | Cannot rename in unsaved buffer

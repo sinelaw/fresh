@@ -14,9 +14,9 @@ expression: "&screen_text"
                                                                                                                        █
                                                                                                                        █
                                                                                                                        █
-                                                                                                                       │
-                                                                                                                       │
-                                                                                                                       │
+                                                                                                                       █
+                                                                                                                       █
+                                                                                                                       █
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     1 │ Content of file 2                                                                                              █
                                                                                                                        █
@@ -28,7 +28,7 @@ expression: "&screen_text"
                                                                                                                        █
                                                                                                                        █
                                                                                                                        █
-                                                                                                                       │
-                                                                                                                       │
-                                                                                                                       │
+                                                                                                                       █
+                                                                                                                       █
+                                                                                                                       █
 /tmp/editor-test-visual-split-view/file2.txt | Ln 0, Col 0 | Opened /tmp/editor-test-visual-split-view/file2.txt
