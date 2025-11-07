@@ -42,6 +42,10 @@ pub struct Theme {
 
     pub split_separator_fg: Color,
 
+    // Search colors
+    pub search_match_bg: Color,
+    pub search_match_fg: Color,
+
     // Diagnostic colors
     pub diagnostic_error_fg: Color,
     pub diagnostic_error_bg: Color,
@@ -104,6 +108,10 @@ impl Theme {
             help_separator_fg: Color::DarkGray,
 
             split_separator_fg: Color::DarkGray,
+
+            // Search colors
+            search_match_bg: Color::Rgb(100, 100, 20), // Yellow-brown highlight
+            search_match_fg: Color::Rgb(255, 255, 255),
 
             // Diagnostic colors
             diagnostic_error_fg: Color::Red,
@@ -168,6 +176,10 @@ impl Theme {
 
             split_separator_fg: Color::Gray,
 
+            // Search colors
+            search_match_bg: Color::Rgb(255, 255, 150), // Light yellow highlight
+            search_match_fg: Color::Rgb(0, 0, 0),
+
             // Diagnostic colors
             diagnostic_error_fg: Color::Red,
             diagnostic_error_bg: Color::Rgb(255, 220, 220),
@@ -230,6 +242,10 @@ impl Theme {
             help_separator_fg: Color::White,
 
             split_separator_fg: Color::White,
+
+            // Search colors
+            search_match_bg: Color::Yellow,
+            search_match_fg: Color::Black,
 
             // Diagnostic colors
             diagnostic_error_fg: Color::Red,

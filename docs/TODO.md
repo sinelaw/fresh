@@ -27,14 +27,14 @@
 #### Search & Replace
 - [x] Basic text search (forward/backward with F3/Shift+F3)
 - [x] Search wrap-around at document boundaries
+- [x] Search highlighting (viewport-optimized for huge files)
+- [x] Incremental search (as-you-type highlighting in prompt)
 - [ ] Search with regex support
 - [ ] Replace (single occurrence)
 - [ ] Replace all
 - [ ] Search in selection
 - [ ] Case-sensitive/insensitive toggle
 - [ ] Whole word matching
-- [ ] Search highlighting
-- [ ] Incremental search (as-you-type)
 - [ ] Search history
 - [ ] Multi-file search integration (via git grep)
 

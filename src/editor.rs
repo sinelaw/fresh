@@ -1697,6 +1697,28 @@ impl Editor {
     /// Cancel the current prompt and return to normal mode
     pub fn cancel_prompt(&mut self) {
         self.prompt = None;
+        // Clear search highlights when cancelling search prompt
+        {
+            let state = self.active_state_mut();
+            let overlay_ids: Vec<String> = state
+                .overlays
+                .all()
+                .iter()
+                .filter_map(|o| {
+                    o.id.as_ref().and_then(|id| {
+                        if id.starts_with("search_highlight_") {
+                            Some(id.clone())
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            for id in overlay_ids {
+                state.overlays.remove_by_id(&id, &mut state.marker_list);
+            }
+        }
         self.status_message = Some("Canceled".to_string());
     }
 
@@ -1791,6 +1813,10 @@ impl Editor {
             PromptType::GitFindFile => {
                 // Trigger async git ls-files with query
                 self.request_git_ls_files(input);
+            }
+            PromptType::Search => {
+                // Update incremental search highlights as user types
+                self.update_search_highlights(&input);
             }
             _ => {}
         }
@@ -4705,8 +4731,116 @@ impl Editor {
 
     // === Search and Replace Methods ===
 
+    /// Update search highlights in visible viewport only (for incremental search)
+    /// This is called as the user types in the search prompt for real-time feedback
+    fn update_search_highlights(&mut self, query: &str) {
+        // Don't highlight empty queries
+        if query.is_empty() {
+            return;
+        }
+
+        // Get theme color before borrowing state
+        let search_bg = self.theme.search_match_bg;
+
+        let state = self.active_state_mut();
+
+        // Clear any existing search highlights
+        let overlay_ids: Vec<String> = state
+            .overlays
+            .all()
+            .iter()
+            .filter_map(|o| {
+                o.id.as_ref().and_then(|id| {
+                    if id.starts_with("search_highlight_") {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        for id in overlay_ids {
+            state.overlays.remove_by_id(&id, &mut state.marker_list);
+        }
+
+        // Get the visible viewport range
+        let viewport = &state.viewport;
+        let top_byte = viewport.top_byte;
+        let visible_height = viewport.height.saturating_sub(2); // Subtract tab bar and status bar
+
+        // Get the visible content by iterating through visible lines
+        let mut visible_start = top_byte;
+        let mut visible_end = top_byte;
+
+        {
+            let mut line_iter = state.buffer.line_iterator(top_byte);
+            for _ in 0..visible_height {
+                if let Some((line_start, line_content)) = line_iter.next() {
+                    visible_end = line_start + line_content.len();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Ensure we don't go past buffer end
+        visible_end = visible_end.min(state.buffer.len());
+
+        // Get the visible text
+        let visible_text = state.buffer.slice(visible_start..visible_end);
+
+        // Search for matches in visible area (case-insensitive)
+        let query_lower = query.to_lowercase();
+        let visible_text_lower = visible_text.to_lowercase();
+
+        let mut match_count = 0;
+        let mut start = 0;
+        while let Some(pos) = visible_text_lower[start..].find(&query_lower) {
+            let absolute_pos = visible_start + start + pos;
+
+            // Add overlay for this match
+            let overlay_id = format!("search_highlight_{}", match_count);
+            let overlay = crate::overlay::Overlay::with_id(
+                &mut state.marker_list,
+                absolute_pos..(absolute_pos + query.len()),
+                crate::overlay::OverlayFace::Background { color: search_bg },
+                overlay_id,
+            )
+            .with_priority_value(10); // Priority - above syntax highlighting
+
+            state.overlays.add(overlay);
+
+            match_count += 1;
+            start = start + pos + 1; // Move past this match
+        }
+    }
+
     /// Perform a search and update search state
     fn perform_search(&mut self, query: &str) {
+        // Clear incremental search highlights
+        {
+            let state = self.active_state_mut();
+            let overlay_ids: Vec<String> = state
+                .overlays
+                .all()
+                .iter()
+                .filter_map(|o| {
+                    o.id.as_ref().and_then(|id| {
+                        if id.starts_with("search_highlight_") {
+                            Some(id.clone())
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            for id in overlay_ids {
+                state.overlays.remove_by_id(&id, &mut state.marker_list);
+            }
+        }
+
         if query.is_empty() {
             self.search_state = None;
             self.set_status_message("Search cancelled.".to_string());
