@@ -207,42 +207,13 @@ impl OverlayManager {
 
     /// Get all overlays at a specific position, sorted by priority
     pub fn at_position(&self, position: usize, marker_list: &MarkerList) -> Vec<&Overlay> {
-        // If position is 25-29 (around TODO), log ALL overlays
-        let debug_position = position >= 25 && position <= 29;
-
-        let overlays: Vec<&Overlay> = self.overlays
+        self.overlays
             .iter()
             .filter(|o| {
                 let range = o.range(marker_list);
-                let contains = range.contains(&position);
-
-                // Debug tracing for positions around TODO
-                if debug_position || contains {
-                    tracing::debug!(
-                        "Overlay {} at position {}: range={:?}, contains={}, markers=({:?}, {:?})",
-                        o.id.as_ref().unwrap_or(&"(no id)".to_string()),
-                        position,
-                        range,
-                        contains,
-                        o.start_marker,
-                        o.end_marker
-                    );
-                }
-
-                contains
+                range.contains(&position)
             })
-            .collect();
-
-        if debug_position {
-            tracing::debug!(
-                "Position {} query: {} overlays found, total overlays={}",
-                position,
-                overlays.len(),
-                self.overlays.len()
-            );
-        }
-
-        overlays
+            .collect()
     }
 
     /// Get all overlays that overlap with a range, sorted by priority

@@ -623,6 +623,11 @@ impl KeybindingResolver {
             (KeyCode::Backspace, KeyModifiers::CONTROL),
             Action::DeleteWordBackward,
         );
+        // Ctrl+H is what terminals actually send for Ctrl+Backspace
+        bindings.insert(
+            (KeyCode::Char('h'), KeyModifiers::CONTROL),
+            Action::DeleteWordBackward,
+        );
         bindings.insert(
             (KeyCode::Delete, KeyModifiers::CONTROL),
             Action::DeleteWordForward,
