@@ -182,3 +182,115 @@ fn test_cursor_visible_when_scrolling_down_in_large_file() {
         lines_before_cursor.len()
     );
 }
+
+/// Test 5: Empty last line bug - margin should remain visible, cursor navigation should work
+/// When cursor is on an empty last line and Delete is pressed, the line number margin/gutter
+/// should remain visible, and cursor movement should work correctly
+#[test]
+fn test_empty_last_line_delete_preserves_margin() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create a buffer without trailing newline
+    let content = "line1\nline2";
+    let _fixture = harness.load_buffer_from_text(content).unwrap();
+    harness.render().unwrap();
+
+    // Move cursor to end of buffer
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Cursor should be at position 11 (end of "line2")
+    let initial_cursor = harness.cursor_position();
+    assert_eq!(initial_cursor, 11, "Cursor should be at end of line2");
+
+    // Hit Enter to create an empty last line
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Now cursor should be at position 12 (on the new empty line)
+    let cursor_on_empty_line = harness.cursor_position();
+    assert_eq!(
+        cursor_on_empty_line, 12,
+        "Cursor should be on empty last line at position 12"
+    );
+    harness.assert_buffer_content("line1\nline2\n");
+
+    // Get screen position before Delete
+    let (initial_screen_x, initial_screen_y) = harness.screen_cursor_position();
+
+    // Check that gutter/margin is visible before Delete
+    // The line number "3" should be visible somewhere in the gutter (columns 0-6)
+    // Column 0: indicator, Columns 1-4: line number (right-aligned), Column 5: separator
+    let mut found_line_num_before = false;
+    for col in 0..7 {
+        if let Some(cell) = harness.get_cell(col, initial_screen_y) {
+            if cell.contains('3') {
+                found_line_num_before = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        found_line_num_before,
+        "Line number '3' should be visible in gutter before Delete key"
+    );
+
+    // Press Delete key on the empty last line (this should do nothing since there's nothing to delete)
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Get screen position after Delete
+    let (_, screen_y_after_delete) = harness.screen_cursor_position();
+
+    // BUG: The margin/gutter line number should still be visible after Delete
+    let mut found_line_num_after = false;
+    for col in 0..7 {
+        if let Some(cell) = harness.get_cell(col, screen_y_after_delete) {
+            if cell.contains('3') {
+                found_line_num_after = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        found_line_num_after,
+        "BUG: Line number '3' disappeared after Delete on empty last line"
+    );
+
+    // Cursor should still be on the same line
+    assert_eq!(
+        screen_y_after_delete, initial_screen_y,
+        "Cursor screen Y position should not change after Delete"
+    );
+
+    // Now test cursor movement: move left (should go to end of previous line)
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let cursor_after_left = harness.cursor_position();
+    assert_eq!(
+        cursor_after_left, 11,
+        "After moving left, cursor should be at end of line2 (position 11)"
+    );
+
+    // BUG: Try to move right back - should be able to return to position 12
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let cursor_after_right = harness.cursor_position();
+    assert_eq!(
+        cursor_after_right, 12,
+        "BUG: After moving left then right, should return to position 12, got {}",
+        cursor_after_right
+    );
+}

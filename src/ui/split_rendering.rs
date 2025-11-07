@@ -756,11 +756,71 @@ impl SplitRenderer {
 
         // Handle cursor positioned after the last line (e.g., after pressing Enter at end of file)
         // The loop above only iterates over existing lines, but if cursor is at the very end
-        // of the buffer after a newline, it represents a new empty line that hasn't been iterated
+        // of the buffer after a newline, it represents a new empty line that needs to be rendered
+        // with its margin/gutter
         if !cursor_found && primary_cursor_position == state.buffer.len() {
-            // Cursor is at the end of the buffer - place it on the next line
-            cursor_screen_x = 0;
-            cursor_screen_y = lines_rendered as u16;
+            // Check if buffer ends with newline (creating an implicit empty last line)
+            let buffer_ends_with_newline = if state.buffer.len() > 0 {
+                let last_char = state.buffer.slice(state.buffer.len() - 1..state.buffer.len());
+                last_char == "\n"
+            } else {
+                false
+            };
+
+            // If buffer ends with newline and we haven't filled viewport, render the empty last line
+            if buffer_ends_with_newline && lines_rendered < visible_count {
+                let current_line_num = starting_line_num + lines_rendered;
+
+                let mut line_spans = Vec::new();
+
+                // Render left margin for the empty last line
+                if state.margins.left_config.enabled {
+                    // First column: render indicator or space
+                    if let Some((symbol, color)) =
+                        state.margins.get_diagnostic_indicator(current_line_num)
+                    {
+                        line_spans.push(Span::styled(symbol.clone(), Style::default().fg(*color)));
+                    } else {
+                        line_spans.push(Span::raw(" "));
+                    }
+
+                    // Render line number
+                    let margin_content = state.margins.render_line(
+                        current_line_num,
+                        crate::margin::MarginPosition::Left,
+                        estimated_lines,
+                    );
+                    let (rendered_text, style_opt) =
+                        margin_content.render(state.margins.left_config.width);
+
+                    let margin_style =
+                        style_opt.unwrap_or_else(|| Style::default().fg(theme.line_number_fg));
+
+                    line_spans.push(Span::styled(rendered_text, margin_style));
+
+                    // Render separator
+                    if state.margins.left_config.show_separator {
+                        let separator_style = Style::default().fg(theme.line_number_fg);
+                        line_spans.push(Span::styled(
+                            state.margins.left_config.separator.clone(),
+                            separator_style,
+                        ));
+                    }
+                }
+
+                // Add the empty line to the paragraph
+                lines.push(Line::from(line_spans));
+                lines_rendered += 1;
+            }
+
+            // Cursor is at the end of the buffer - place it on the current line
+            cursor_screen_x = if state.margins.left_config.enabled {
+                // Position cursor after the margin
+                (state.margins.left_config.width + 2) as u16 // +1 for indicator, +1 for separator
+            } else {
+                0
+            };
+            cursor_screen_y = (lines_rendered - 1) as u16;
             cursor_found = true;
         }
 

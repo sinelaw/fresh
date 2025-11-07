@@ -16,6 +16,17 @@ fn max_cursor_position(buffer: &Buffer) -> usize {
         return 0;
     }
 
+    // Check if buffer ends with newline (creating an implicit empty last line)
+    let buffer_ends_with_newline = {
+        let last_char = buffer.slice(buffer.len() - 1..buffer.len());
+        last_char == "\n"
+    };
+
+    // If buffer ends with newline, cursor can go to buffer.len() (the empty last line)
+    if buffer_ends_with_newline {
+        return buffer.len();
+    }
+
     // Find the last line by iterating from the end
     let mut iter = buffer.line_iterator(buffer.len().saturating_sub(1));
 
