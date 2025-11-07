@@ -683,12 +683,6 @@ impl KeybindingResolver {
             Action::RemoveSecondaryCursors,
         );
 
-        // Help
-        bindings.insert(
-            (KeyCode::Char('h'), KeyModifiers::CONTROL),
-            Action::ShowHelp,
-        );
-
         // Command palette (Ctrl+P)
         bindings.insert(
             (KeyCode::Char('p'), KeyModifiers::CONTROL),
