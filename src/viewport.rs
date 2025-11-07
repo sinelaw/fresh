@@ -124,15 +124,29 @@ impl Viewport {
             line_count += 1;
         }
 
+        // Check if buffer ends with newline (which creates a phantom empty line)
+        let buffer_ends_with_newline = buffer_len > 0 && {
+            let last_byte_slice = buffer.slice_bytes(buffer_len - 1..buffer_len);
+            !last_byte_slice.is_empty() && last_byte_slice[0] == b'\n'
+        };
+
+        // When buffer ends with newline, there's a phantom line we need to account for
+        // in our scroll calculations, since it needs to be visible
+        let effective_line_count = if buffer_ends_with_newline {
+            line_count + 1
+        } else {
+            line_count
+        };
+
         // If buffer has fewer lines than viewport, scroll to top
-        if line_count <= viewport_height {
+        if effective_line_count <= viewport_height {
             self.top_byte = 0;
             return;
         }
 
         // Calculate how many lines from the start we can scroll
         // We want to be able to scroll so that the last line is at the bottom
-        let scrollable_lines = line_count.saturating_sub(viewport_height);
+        let scrollable_lines = effective_line_count.saturating_sub(viewport_height);
 
         // Find the byte position after skipping scrollable_lines from the start
         // This will be the maximum top_byte that shows the last line at the bottom
@@ -150,7 +164,8 @@ impl Viewport {
         // The current position after skipping scrollable_lines is our max top_byte
         let max_byte_pos = iter.current_position();
 
-        // Clamp top_byte to not exceed max_byte_pos
+        // Clamp top_byte to prevent scrolling past the bottom, which would
+        // create empty space below the last line (violates bottom-line-pinned invariant)
         if self.top_byte > max_byte_pos {
             self.top_byte = max_byte_pos;
         }
