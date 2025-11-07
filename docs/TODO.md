@@ -10,6 +10,24 @@ Core editing, multi-cursor, event-driven architecture, LSP integration (diagnost
 
 ### Known Issues / Tech Debt
 
+#### **FIXED: Scrollbar, Keybindings, and Cursor Rendering** ✅
+**Solution**: Fixed three UI/UX issues to improve editor usability.
+
+**What was fixed**:
+1. **Scrollbar fills entire height when no scrolling needed**: When buffer fits in viewport (max_scroll_line == 0), scrollbar thumb now fills entire height to clearly indicate no scrolling is possible
+2. **Removed Ctrl+H keybinding**: Removed Ctrl+H -> ShowHelp binding (Ctrl+Backspace already correctly implements delete-word-backward)
+3. **Cursor rendering at buffer end**: Fixed cursor jumping to (0,0) when hitting Enter at end of last line. Added check after rendering loop to position cursor at buffer.len() when creating new line
+
+**Why this is correct**:
+- Visual feedback is clear and immediate for scrollability state
+- Keybinding conflict resolved, Ctrl+Backspace works as expected
+- Cursor rendering now handles all valid cursor positions including buffer.len()
+- All fixes tested with comprehensive e2e tests
+
+**References**:
+- Commits: 14cd14f, 38f76d6, f59a55e
+- Tests: `test_scrollbar_fills_height_when_no_scrolling_needed`, `test_ctrl_backspace_deletes_word_backward`, `test_cursor_visible_after_enter_at_end_of_file`, `test_cursor_visible_when_scrolling_down_in_large_file`
+
 #### **FIXED: Cursor Position Clamping** ✅
 **Solution**: Implemented proper cursor position clamping in movement commands.
 
