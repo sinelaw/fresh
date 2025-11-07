@@ -7,7 +7,9 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 /// Default configuration for ChunkTree
-const DEFAULT_CONFIG: ChunkTreeConfig = ChunkTreeConfig::new(64, 128);
+// Chunk size of 4KB provides good balance between memory usage and performance
+// For a 61MB file, this creates ~15K leaf nodes instead of 1M with 64-byte chunks
+const DEFAULT_CONFIG: ChunkTreeConfig = ChunkTreeConfig::new(4096, 128);
 
 /// Represents a line number that may be absolute (known/cached) or relative (estimated)
 /// NOTE: This enum is kept for backward compatibility but will eventually be removed
