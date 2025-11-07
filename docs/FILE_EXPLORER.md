@@ -7,15 +7,18 @@ A VS Code-style file explorer with lazy loading, gitignore support, and async I/
 **Working features:**
 - Toggle show/hide (Ctrl+B)
 - Navigate directory tree (Alt+J/K)
-- Expand/collapse directories (Alt+L/Alt+Shift+H)
-- Open files in editor (Alt+Enter)
+- Expand/collapse directories (Alt+L/Alt+Shift+H or Enter on directory)
+- Open files in editor (Alt+Enter or Enter on file, auto-switches focus to editor)
+- Project directory auto-expands on initialization
 - Refresh directory contents (Alt+R)
 - Create files/directories (Alt+N, Alt+Shift+N)
 - Delete files/directories (Alt+Shift+D)
 - Gitignore filtering (Alt+I)
 - Hidden file toggle (Alt+.)
+- Unsaved change indicators (●) for modified files
+- Symmetric scrolling behavior (cursor reaches viewport edges before scrolling)
 - 15+ keybindings
-- 15 E2E tests (all passing in parallel)
+- 19 E2E tests (all passing in parallel)
 
 **In progress:**
 - Rename (needs input dialog system)
@@ -37,9 +40,10 @@ A VS Code-style file explorer with lazy loading, gitignore support, and async I/
 
 ### UI (`src/ui/file_explorer.rs`)
 - Ratatui-based rendering
-- Icons for file types
-- Tree structure visualization
-- Color-coded entries
+- Tree structure visualization with expand/collapse indicators (▼/▶)
+- Unsaved change indicators (●) for modified files
+- Color-coded entries (directories, hidden files, selected items)
+- Focus-aware rendering
 
 ### Integration (`src/editor.rs`)
 - File explorer as special buffer type
@@ -83,7 +87,12 @@ In `config.json`:
 
 - 22 tests in `src/fs/` (filesystem layer)
 - 32 tests in `src/file_tree/` (tree model)
-- 15 E2E tests in `tests/e2e/file_explorer.rs`
+- 19 E2E tests in `tests/e2e/file_explorer.rs`
+  - Enter key behavior (directories and files)
+  - Auto-expansion on initialization
+  - Unsaved change indicators
+  - Scrolling behavior
+  - Focus switching, navigation, and more
 - All tests hermetic (isolated temp directories)
 
 ## Future Enhancements
