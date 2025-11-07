@@ -55,7 +55,27 @@ impl SuggestionsRenderer {
 
         let end_idx = (start_idx + visible_count).min(prompt.suggestions.len());
 
-        for (idx, suggestion) in prompt.suggestions[start_idx..end_idx].iter().enumerate() {
+        // Calculate column widths for visible suggestions
+        let visible_suggestions = &prompt.suggestions[start_idx..end_idx];
+
+        let max_name_width = visible_suggestions
+            .iter()
+            .map(|s| s.text.len())
+            .max()
+            .unwrap_or(0);
+
+        let max_keybinding_width = visible_suggestions
+            .iter()
+            .filter_map(|s| s.keybinding.as_ref().map(|k| k.len()))
+            .max()
+            .unwrap_or(0);
+
+        // Column layout: "  Name  |  Keybinding  |  Description"
+        let left_margin = 2;
+        let column_spacing = 2;
+        let available_width = inner_area.width as usize;
+
+        for (idx, suggestion) in visible_suggestions.iter().enumerate() {
             let actual_idx = start_idx + idx;
             let is_selected = prompt.selected_suggestion == Some(actual_idx);
 
@@ -84,36 +104,25 @@ impl SuggestionsRenderer {
                     .bg(theme.suggestion_bg)
             };
 
-            // Build the line with keybinding aligned to the right
+            // Build the line with three columns
             let mut spans = Vec::new();
 
-            // Format: "  Command Name  -  description"
-            let main_text = if let Some(desc) = &suggestion.description {
-                format!("  {}  -  {}", suggestion.text, desc)
-            } else {
-                format!("  {}", suggestion.text)
-            };
+            // Left margin
+            spans.push(Span::styled(" ".repeat(left_margin), base_style));
 
-            // Calculate padding to right-align keybinding
-            let available_width = inner_area.width as usize;
-            let keybinding_display = suggestion.keybinding.as_deref().unwrap_or("");
-            let keybinding_len = keybinding_display.len();
+            // Column 1: Command name (padded to max_name_width)
+            let name = &suggestion.text;
+            spans.push(Span::styled(name.clone(), base_style));
+            let name_padding = max_name_width.saturating_sub(name.len());
+            if name_padding > 0 {
+                spans.push(Span::styled(" ".repeat(name_padding), base_style));
+            }
 
-            // Calculate space for padding (main_text + padding + keybinding + right_margin)
-            let right_margin = 2;
-            let text_and_keybinding_len = main_text.len() + keybinding_len + right_margin;
+            // Spacing before keybinding column
+            spans.push(Span::styled(" ".repeat(column_spacing), base_style));
 
-            if keybinding_len > 0 && text_and_keybinding_len < available_width {
-                // Add main text
-                spans.push(Span::styled(main_text.clone(), base_style));
-
-                // Add padding to align keybinding to the right
-                let padding_len = available_width.saturating_sub(text_and_keybinding_len);
-                if padding_len > 0 {
-                    spans.push(Span::styled(" ".repeat(padding_len), base_style));
-                }
-
-                // Add keybinding with slightly dimmed style
+            // Column 2: Keyboard shortcut (padded to max_keybinding_width)
+            if max_keybinding_width > 0 {
                 let keybinding_style = if suggestion.disabled {
                     base_style
                 } else if is_selected {
@@ -125,13 +134,48 @@ impl SuggestionsRenderer {
                         .fg(Color::DarkGray)
                         .bg(theme.suggestion_bg)
                 };
-                spans.push(Span::styled(keybinding_display, keybinding_style));
 
-                // Add right margin
-                spans.push(Span::styled(" ".repeat(right_margin), base_style));
-            } else {
-                // No keybinding or not enough space, just show main text
-                spans.push(Span::styled(main_text, base_style));
+                if let Some(keybinding) = &suggestion.keybinding {
+                    spans.push(Span::styled(keybinding.clone(), keybinding_style));
+                    let keybinding_padding = max_keybinding_width.saturating_sub(keybinding.len());
+                    if keybinding_padding > 0 {
+                        spans.push(Span::styled(" ".repeat(keybinding_padding), base_style));
+                    }
+                } else {
+                    // No keybinding for this command, pad the column
+                    spans.push(Span::styled(" ".repeat(max_keybinding_width), base_style));
+                }
+
+                // Spacing before description column
+                spans.push(Span::styled(" ".repeat(column_spacing), base_style));
+            }
+
+            // Column 3: Description (takes remaining space)
+            if let Some(desc) = &suggestion.description {
+                // Calculate how much space we've used so far
+                let used_width = left_margin + max_name_width + column_spacing
+                    + max_keybinding_width + column_spacing;
+
+                // Only show description if we have enough space
+                if used_width < available_width {
+                    let remaining_width = available_width.saturating_sub(used_width);
+                    let desc_text = if desc.len() > remaining_width {
+                        // Truncate description if it's too long
+                        format!("{}...", &desc[..remaining_width.saturating_sub(3)])
+                    } else {
+                        desc.clone()
+                    };
+                    spans.push(Span::styled(desc_text, base_style));
+                }
+            }
+
+            // Fill remaining space with background
+            let current_width: usize = spans.iter().map(|s| s.content.len()).sum();
+            if current_width < available_width {
+                spans.push(Span::styled(
+                    " ".repeat(available_width.saturating_sub(current_width)),
+                    base_style,
+                ));
             }
 
             lines.push(Line::from(spans));
