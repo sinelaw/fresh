@@ -2,11 +2,11 @@
 source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
- [No Name]                                                                      
-┌ File Explorer ───────┐    1 │                                                █
-│▼ project_root        │                                                       █
+┌ File Explorer ───────┐ [No Name]                                              
+│▼ project_root        │    1 │                                                █
 │  ▶ src               │                                                       █
 │    README.md         │                                                       █
+│                      │                                                       █
 │                      │                                                       █
 │                      │                                                       █
 │                      │                                                       █

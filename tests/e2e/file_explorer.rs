@@ -997,3 +997,69 @@ fn test_scroll_allows_cursor_to_top() {
         screen_at_top
     );
 }
+
+/// Test Feature 6: Editor tabs should be above editor area only, not above file explorer
+#[test]
+fn test_tabs_above_editor_area_only() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create and open multiple files to have tabs
+    fs::write(project_root.join("file1.txt"), "content1").unwrap();
+    fs::write(project_root.join("file2.txt"), "content2").unwrap();
+
+    // Open first file
+    harness.editor_mut().open_file(&project_root.join("file1.txt")).unwrap();
+    harness.render().unwrap();
+
+    // Open second file
+    harness.editor_mut().open_file(&project_root.join("file2.txt")).unwrap();
+    harness.render().unwrap();
+
+    // Open file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen with file explorer and tabs:\n{}", screen);
+
+    // The tabs should be above the editor area, not spanning the full width
+    // We can verify this by checking that the file explorer border and tabs
+    // are on the same line or the tabs start after the file explorer width
+
+    let lines: Vec<&str> = screen.lines().collect();
+
+    // Find the line with File Explorer title
+    let explorer_line_idx = lines.iter().position(|l| l.contains("File Explorer"));
+
+    // Find lines with tab content (file1.txt, file2.txt)
+    let tab_line_idx = lines.iter().position(|l| l.contains("file1.txt") && l.contains("file2.txt"));
+
+    if let (Some(explorer_idx), Some(tab_idx)) = (explorer_line_idx, tab_line_idx) {
+        // Tabs and file explorer should be on the same line (line 0)
+        // The tab line should contain both the explorer border and the tabs
+        let tab_line = lines.get(tab_idx).unwrap_or(&"");
+
+        println!("Tab line index: {}, Explorer line index: {}", tab_idx, explorer_idx);
+        println!("Tab line: '{}'", tab_line);
+
+        // The critical check: tabs should be on the same line as file explorer header
+        // This means they're only above the editor area, not spanning full width
+        assert_eq!(
+            tab_idx, explorer_idx,
+            "Tabs and File Explorer should be on the same line (tabs above editor area only)"
+        );
+
+        // The line should contain both file explorer and tabs
+        assert!(
+            tab_line.contains("File Explorer") && tab_line.contains("file1.txt"),
+            "Tab line should contain both file explorer and tab content"
+        );
+    } else {
+        panic!("Could not find both file explorer and tabs in output");
+    }
+}
