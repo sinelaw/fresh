@@ -2,9 +2,11 @@
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use fresh::{config::Config, editor::Editor};
+use fresh::fs::{BackendMetrics, FsBackend, LocalFsBackend, SlowFsBackend, SlowFsConfig};
 use ratatui::{backend::TestBackend, Terminal};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tempfile::TempDir;
 
 /// Virtual editor environment for testing
@@ -18,6 +20,9 @@ pub struct EditorTestHarness {
 
     /// Optional temp directory (kept alive for the duration of the test)
     _temp_dir: Option<TempDir>,
+
+    /// Optional metrics for slow filesystem backend
+    fs_metrics: Option<Arc<tokio::sync::Mutex<BackendMetrics>>>,
 }
 
 impl EditorTestHarness {
@@ -37,6 +42,7 @@ impl EditorTestHarness {
             editor,
             terminal,
             _temp_dir: Some(temp_dir),
+            fs_metrics: None,
         })
     }
 
@@ -55,6 +61,7 @@ impl EditorTestHarness {
             editor,
             terminal,
             _temp_dir: Some(temp_dir),
+            fs_metrics: None,
         })
     }
 
@@ -82,6 +89,7 @@ impl EditorTestHarness {
             editor,
             terminal,
             _temp_dir: Some(temp_dir),
+            fs_metrics: None,
         })
     }
 
@@ -101,6 +109,7 @@ impl EditorTestHarness {
             editor,
             terminal,
             _temp_dir: None,
+            fs_metrics: None,
         })
     }
 
@@ -110,6 +119,57 @@ impl EditorTestHarness {
         let mut config = Config::default();
         config.editor.line_wrap = false;
         Self::with_config(width, height, config)
+    }
+
+    /// Create a test harness with a slow filesystem backend for performance testing
+    /// Returns the harness and provides access to filesystem metrics
+    pub fn with_slow_fs(
+        width: u16,
+        height: u16,
+        slow_config: SlowFsConfig,
+    ) -> io::Result<Self> {
+        let temp_dir = TempDir::new()?;
+        let temp_path = temp_dir.path().to_path_buf();
+
+        // Create slow filesystem backend wrapping the local backend
+        let local_backend = Arc::new(LocalFsBackend::new());
+        let slow_backend = SlowFsBackend::new(local_backend, slow_config);
+        let metrics_arc = slow_backend.metrics_arc();
+        let fs_backend: Arc<dyn FsBackend> = Arc::new(slow_backend);
+
+        let backend = TestBackend::new(width, height);
+        let terminal = Terminal::new(backend)?;
+        let config = Config::default();
+
+        // Create editor with custom filesystem backend
+        let editor = Editor::with_fs_backend_for_test(
+            config,
+            width,
+            height,
+            Some(temp_path),
+            fs_backend,
+        )?;
+
+        Ok(EditorTestHarness {
+            editor,
+            terminal,
+            _temp_dir: Some(temp_dir),
+            fs_metrics: Some(metrics_arc),
+        })
+    }
+
+    /// Get filesystem metrics (if using slow filesystem backend)
+    pub fn fs_metrics(&self) -> Option<Arc<tokio::sync::Mutex<BackendMetrics>>> {
+        self.fs_metrics.clone()
+    }
+
+    /// Get a snapshot of filesystem metrics
+    pub async fn get_fs_metrics_snapshot(&self) -> Option<BackendMetrics> {
+        if let Some(ref metrics) = self.fs_metrics {
+            Some(metrics.lock().await.clone())
+        } else {
+            None
+        }
     }
 
     /// Get the path to the temp project directory (if created with with_temp_project)

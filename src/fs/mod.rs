@@ -6,7 +6,9 @@
 pub mod backend;
 pub mod local;
 pub mod manager;
+pub mod slow;
 
 pub use backend::{FsBackend, FsEntry, FsEntryType, FsMetadata};
 pub use local::LocalFsBackend;
 pub use manager::FsManager;
+pub use slow::{BackendMetrics, SlowFsBackend, SlowFsConfig};
