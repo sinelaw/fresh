@@ -424,6 +424,9 @@ impl Editor {
                 self.active_buffer = id;
                 // Update the split manager to show this buffer
                 self.split_manager.set_active_buffer_id(id);
+
+                // Sync file explorer to the new active file
+                self.sync_file_explorer_to_active_file();
             }
             return Ok(id);
         }
@@ -541,6 +544,9 @@ impl Editor {
         self.split_manager.set_active_buffer_id(buffer_id);
         self.status_message = Some(format!("Opened {}", path.display()));
 
+        // Sync file explorer to the newly opened file
+        self.sync_file_explorer_to_active_file();
+
         Ok(buffer_id)
     }
 
@@ -571,6 +577,9 @@ impl Editor {
         self.split_manager.set_active_buffer_id(buffer_id);
 
         self.status_message = Some("New buffer".to_string());
+
+        // Sync file explorer (will be no-op for new empty buffers)
+        self.sync_file_explorer_to_active_file();
 
         buffer_id
     }
@@ -615,6 +624,9 @@ impl Editor {
             self.position_history.commit_pending_movement();
 
             self.active_buffer = id;
+
+            // Sync file explorer to the new active file
+            self.sync_file_explorer_to_active_file();
         }
     }
 
@@ -639,6 +651,9 @@ impl Editor {
                 self.active_buffer = ids[next_idx];
                 // Update the split manager to show the new buffer
                 self.split_manager.set_active_buffer_id(ids[next_idx]);
+
+                // Sync file explorer to the new active file
+                self.sync_file_explorer_to_active_file();
             }
         }
     }
@@ -664,6 +679,9 @@ impl Editor {
                 self.active_buffer = ids[prev_idx];
                 // Update the split manager to show the new buffer
                 self.split_manager.set_active_buffer_id(ids[prev_idx]);
+
+                // Sync file explorer to the new active file
+                self.sync_file_explorer_to_active_file();
             }
         }
     }
@@ -840,6 +858,52 @@ impl Editor {
         }
     }
 
+    /// Sync file explorer to show the currently active file
+    ///
+    /// This expands all parent directories and selects the active file in the tree.
+    /// Called automatically when:
+    /// - Switching buffers/tabs (if file explorer is visible)
+    /// - Switching focus to file explorer
+    fn sync_file_explorer_to_active_file(&mut self) {
+        // Only sync if file explorer is visible
+        if !self.file_explorer_visible {
+            return;
+        }
+
+        // Get the currently active file path
+        if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer) {
+            if let Some(file_path) = &metadata.file_path {
+                // Clone the file path to avoid borrow checker issues
+                let target_path = file_path.clone();
+                let working_dir = self.working_dir.clone();
+
+                // Check if the file is under the project root
+                if target_path.starts_with(&working_dir) {
+                    // Take ownership of the file explorer view to expand it asynchronously
+                    if let Some(mut view) = self.file_explorer.take() {
+                        if let (Some(runtime), Some(bridge)) =
+                            (&self.tokio_runtime, &self.async_bridge)
+                        {
+                            let sender = bridge.sender();
+
+                            runtime.spawn(async move {
+                                // Expand to the target path
+                                let _success = view.expand_and_select_file(&target_path).await;
+
+                                // Send the updated view back
+                                let _ = sender
+                                    .send(AsyncMessage::FileExplorerExpandedToPath(view));
+                            });
+                        } else {
+                            // No async runtime, just put the view back
+                            self.file_explorer = Some(view);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Focus the file explorer
     pub fn focus_file_explorer(&mut self) {
         if self.file_explorer_visible {
@@ -847,39 +911,8 @@ impl Editor {
             self.key_context = KeyContext::FileExplorer;
             self.set_status_message("File explorer focused".to_string());
 
-            // Feature 7: Auto-expand and select the currently open file
-            // Get the currently active file path
-            if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer) {
-                if let Some(file_path) = &metadata.file_path {
-                    // Clone the file path to avoid borrow checker issues
-                    let target_path = file_path.clone();
-                    let working_dir = self.working_dir.clone();
-
-                    // Check if the file is under the project root
-                    if target_path.starts_with(&working_dir) {
-                        // Take ownership of the file explorer view to expand it asynchronously
-                        if let Some(mut view) = self.file_explorer.take() {
-                            if let (Some(runtime), Some(bridge)) =
-                                (&self.tokio_runtime, &self.async_bridge)
-                            {
-                                let sender = bridge.sender();
-
-                                runtime.spawn(async move {
-                                    // Expand to the target path
-                                    let _success = view.expand_and_select_file(&target_path).await;
-
-                                    // Send the updated view back
-                                    let _ = sender
-                                        .send(AsyncMessage::FileExplorerExpandedToPath(view));
-                                });
-                            } else {
-                                // No async runtime, just put the view back
-                                self.file_explorer = Some(view);
-                            }
-                        }
-                    }
-                }
-            }
+            // Feature 7: Auto-sync to currently open file
+            self.sync_file_explorer_to_active_file();
         } else {
             // Open file explorer if not visible
             self.toggle_file_explorer();
@@ -1908,9 +1941,13 @@ impl Editor {
                     tracing::debug!("File explorer refresh completed for node {:?}", node_id);
                     self.set_status_message("Refreshed".to_string());
                 }
-                AsyncMessage::FileExplorerExpandedToPath(view) => {
+                AsyncMessage::FileExplorerExpandedToPath(mut view) => {
                     // File explorer has expanded to the active file path
                     tracing::debug!("File explorer expanded to active file path");
+
+                    // Update scroll to ensure the selected file is visible
+                    view.update_scroll_for_selection();
+
                     self.file_explorer = Some(view);
                 }
                 AsyncMessage::PluginProcessOutput {
