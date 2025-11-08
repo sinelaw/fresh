@@ -1518,6 +1518,24 @@ impl Editor {
         self.event_logs.get_mut(&self.active_buffer).unwrap()
     }
 
+    // ========================================================================
+    // Buffer-based clipboard operations
+    // ========================================================================
+    //
+    // NOTE: These operations work on Buffer selections with multi-cursor support
+    // and integrate with the event system for undo/redo. They are distinct from
+    // the simpler prompt clipboard operations (see src/prompt.rs) which work on
+    // plain strings without selections or undo history.
+    //
+    // MOTIVATION FOR SEPARATION:
+    // - Buffer operations need: multi-cursor, selections, event sourcing, undo/redo
+    // - Prompt operations need: simple string manipulation, no selection tracking
+    // - Sharing code would force prompts to use Buffer (expensive) or buffers to
+    //   lose features (selections, multi-cursor, undo)
+    //
+    // Both use the same clipboard storage (self.clipboard) ensuring copy/paste
+    // works across buffer editing and prompt input.
+
     /// Copy the current selection to clipboard
     pub fn copy_selection(&mut self) {
         let state = self.active_state();
@@ -3340,6 +3358,44 @@ impl Editor {
                         }
                     }
                 }
+            }
+            // Advanced prompt editing actions
+            Action::PromptDeleteWordForward => {
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.delete_word_forward();
+                }
+                self.update_prompt_suggestions();
+            }
+            Action::PromptDeleteWordBackward => {
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.delete_word_backward();
+                }
+                self.update_prompt_suggestions();
+            }
+            Action::PromptCopy => {
+                if let Some(prompt) = &self.prompt {
+                    self.clipboard = prompt.get_text();
+                    self.set_status_message("Copied".to_string());
+                }
+            }
+            Action::PromptCut => {
+                // Get text first
+                let text = self.prompt.as_ref().map(|p| p.get_text()).unwrap_or_default();
+                // Update clipboard before taking mutable borrow
+                self.clipboard = text;
+                // Now clear the prompt
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.clear();
+                }
+                self.set_status_message("Cut".to_string());
+                self.update_prompt_suggestions();
+            }
+            Action::PromptPaste => {
+                let text = self.clipboard.clone();
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.insert_str(&text);
+                }
+                self.update_prompt_suggestions();
             }
 
             // Popup mode actions

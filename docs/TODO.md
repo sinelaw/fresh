@@ -2,7 +2,7 @@
 
 ## Completed Features ✅
 
-**Core Functionality**: Event-driven architecture with unlimited undo/redo, multi-cursor editing, clipboard operations (copy/cut/paste), position history navigation (Alt+Left/Right), line wrapping, large file support (1GB+), instant startup.
+**Core Functionality**: Event-driven architecture with unlimited undo/redo, multi-cursor editing, clipboard operations (copy/cut/paste), position history navigation (Alt+Left/Right), line wrapping, large file support (1GB+), instant startup. Advanced prompt editing (word deletion Ctrl+Backspace/Delete, copy/paste/cut Ctrl+C/X/V in all input prompts).
 
 **UI & Layout**: Split views (horizontal/vertical), scrollbar, tab bar, command palette (Ctrl+P), help system (Ctrl+H), file explorer with lazy loading and gitignore support, status bar, line numbers, themes (dark/light/high-contrast).
 
