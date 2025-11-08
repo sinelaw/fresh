@@ -18,6 +18,13 @@
 
 **Recent Fixes**: Scrollbar height when no scrolling needed, cursor rendering at buffer end, keybinding conflicts, file explorer scrolling and focus sync, viewport scrolling on Enter key, marker-based overlay system.
 
+**Performance (Jan 2025)**: Massive improvements for huge files (61MB, 789K lines):
+- **ChunkTree optimization**: Fixed chunk size from 64 bytes to 4KB → 38x speedup (file loading: 3.2s → 83ms, reduced tree from 1M to 15K nodes)
+- **Scroll limit simplification**: O(n) → O(viewport_height), preventing problem at source rather than fixing afterward
+- **Buffer cache removal**: Eliminated `buffer.to_string()` calls (3.9s for 61MB!), added TODO for proper incremental cache
+- **render-line hook**: Plugins now inspect visible content during rendering (no duplicate iteration, scales to 1GB+ files)
+- **Test performance**: `test_line_numbers_absolute_after_jump_to_beginning` improved from 158s → 0.10s (~1,580x speedup!)
+
 ---
 
 ## Remaining Work
@@ -205,6 +212,31 @@ Complete the LSP integration to match VS Code/Neovim capabilities:
 - [ ] Custom syntax definitions
 - [ ] Process cancellation/kill support
 - [ ] Async Lua execution: `editor.async(function)`
+
+#### Overlay Lifecycle Management
+**Priority: High** (blocks TODO highlighter plugin from working correctly with text edits)
+
+**Problem**: Marker-based overlays automatically adjust positions when text changes, but stale overlays aren't automatically removed. When text is inserted/deleted before existing keywords:
+1. Old overlays persist with stale IDs (e.g., `todo_TODO_L1_O1`)
+2. Markers move these overlays to new byte positions (correct!)
+3. New overlays are created for the same keywords with new IDs (e.g., `todo_TODO_L2_O1`)
+4. Result: Stale overlay highlights wrong content, new overlay highlights correct content
+
+**Test failures**:
+- `test_todo_highlighter_updates_on_edit` - inserting line before TODO leaves old overlay at wrong position
+- `test_todo_highlighter_updates_on_delete` - deleting lines causes similar issue
+
+**Solutions** (implement at least one):
+- [ ] `editor.remove_overlays_by_prefix(buffer_id, prefix)` - Bulk remove plugin overlays by ID prefix
+- [ ] `editor.clear_all_overlays(buffer_id)` - Clear all overlays for a buffer
+- [ ] Automatic overlay cleanup based on marker validity (detect when marker points to deleted text)
+- [ ] Overlay update API: `editor.update_overlay(buffer_id, overlay_id, new_range)` to reuse existing overlay
+
+**Recommended approach**: Implement `remove_overlays_by_prefix()`. Plugins can then:
+- On insert/delete events: `editor.remove_overlays_by_prefix(buffer_id, "todo_")`
+- On next render-line: recreate overlays for visible keywords
+- Still leverages markers for viewport scrolling (no recreation needed!)
+- Only recreates when buffer content actually changes
 
 #### Target Plugins (Showcase)
 - [ ] Magit-style Git interface

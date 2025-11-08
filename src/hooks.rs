@@ -79,6 +79,17 @@ pub enum HookArgs {
 
     /// Editor is initializing
     EditorInitialized,
+
+    /// A line is being rendered (called during the rendering pass)
+    /// This hook fires once per visible line during each frame
+    /// Plugins can inspect content and add overlays without additional traversal
+    RenderLine {
+        buffer_id: BufferId,
+        line_number: usize,
+        byte_start: usize,
+        byte_end: usize,
+        content: String,
+    },
 }
 
 /// Type for hook callbacks

@@ -1,6 +1,7 @@
 //! Split pane layout and buffer rendering
 
 use crate::event::{BufferId, EventLog, SplitDirection};
+use crate::hooks::{HookArgs, HookRegistry};
 use crate::line_wrapping::{char_position_to_segment, wrap_line, WrapConfig};
 use crate::split::SplitManager;
 use crate::state::EditorState;
@@ -10,6 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 /// Renders split panes and their content
 pub struct SplitRenderer;
@@ -27,6 +29,7 @@ impl SplitRenderer {
     /// * `lsp_waiting` - Whether LSP is waiting
     /// * `large_file_threshold_bytes` - Threshold for using constant scrollbar thumb size
     /// * `line_wrap` - Whether line wrapping is enabled
+    /// * `hook_registry` - Optional hook registry for firing render-line hooks
     ///
     /// # Returns
     /// * Vec of (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end) for mouse handling
@@ -40,6 +43,7 @@ impl SplitRenderer {
         lsp_waiting: bool,
         large_file_threshold_bytes: u64,
         line_wrap: bool,
+        hook_registry: Option<&Arc<RwLock<HookRegistry>>>,
     ) -> Vec<(crate::event::SplitId, BufferId, Rect, Rect, usize, usize)> {
         let _span = tracing::trace_span!("render_content").entered();
 
@@ -83,6 +87,8 @@ impl SplitRenderer {
                     theme,
                     lsp_waiting,
                     line_wrap,
+                    buffer_id,
+                    hook_registry,
                 );
 
                 // For small files, count actual lines for accurate scrollbar
@@ -293,6 +299,8 @@ impl SplitRenderer {
         theme: &crate::theme::Theme,
         lsp_waiting: bool,
         line_wrap: bool,
+        buffer_id: BufferId,
+        hook_registry: Option<&Arc<RwLock<HookRegistry>>>,
     ) {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
 
@@ -401,6 +409,22 @@ impl SplitRenderer {
 
             let current_line_num = starting_line_num + lines_rendered;
             lines_rendered += 1;
+
+            // Trigger render-line hook for plugins (if registry is available)
+            // This allows plugins to inspect visible content without additional traversal
+            if let Some(hooks) = hook_registry {
+                let byte_end = line_start + line_content.len();
+                let hook_args = HookArgs::RenderLine {
+                    buffer_id,
+                    line_number: current_line_num,
+                    byte_start: line_start,
+                    byte_end,
+                    content: line_content.clone(),
+                };
+                if let Ok(hook_registry_guard) = hooks.read() {
+                    hook_registry_guard.run_hooks("render-line", &hook_args);
+                }
+            }
 
             // Apply horizontal scrolling - skip characters before left_column
             let left_col = state.viewport.left_column;
