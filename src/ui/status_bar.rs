@@ -63,11 +63,12 @@ impl StatusBarRenderer {
                 spans.push(Span::styled(input[..sel_start].to_string(), base_style));
             }
 
-            // Selected text (inverted colors)
+            // Selected text (blue background for visibility, cursor remains visible)
             if sel_start < sel_end {
+                // Use theme colors for selection to ensure consistency across themes
                 let selection_style = Style::default()
-                    .fg(theme.prompt_bg)
-                    .bg(theme.prompt_fg);
+                    .fg(theme.prompt_selection_fg)
+                    .bg(theme.prompt_selection_bg);
                 spans.push(Span::styled(input[sel_start..sel_end].to_string(), selection_style));
             }
 
