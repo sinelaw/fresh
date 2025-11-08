@@ -652,7 +652,7 @@ impl PluginManager {
 
         if let Some(cb) = callback {
             // Call the callback
-            cb.call::<_, ()>(())
+            cb.call::<()>(())
                 .map_err(|e| format!("Plugin callback error: {}", e))?;
             tracing::info!("Plugin action '{}' executed successfully", action_name);
             Ok(())
@@ -688,7 +688,7 @@ impl PluginManager {
                 if let Some(cb) = callback {
                     // Call the callback
                     // For now, we don't pass args to Lua (would need to convert HookArgs to Lua table)
-                    cb.call::<_, ()>(())
+                    cb.call::<()>(())
                         .map_err(|e| format!("Plugin hook callback error: {}", e))?;
                 }
             }
@@ -755,7 +755,7 @@ impl PluginManager {
 
         // Call the callback with results
         callback
-            .call::<_, ()>((stdout, stderr, exit_code))
+            .call::<()>((stdout, stderr, exit_code))
             .map_err(|e| format!("Process callback error: {}", e))?;
 
         Ok(())

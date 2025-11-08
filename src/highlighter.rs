@@ -30,7 +30,16 @@ pub struct HighlightSpan {
 #[derive(Debug)]
 pub enum Language {
     Rust,
-    // Future: JavaScript, TypeScript, Python, JSON, Markdown
+    Python,
+    JavaScript,
+    TypeScript,
+    HTML,
+    CSS,
+    C,
+    Cpp,
+    Go,
+    Json,
+    // Markdown,  // Disabled due to tree-sitter version conflict
 }
 
 impl Language {
@@ -38,6 +47,16 @@ impl Language {
     pub fn from_path(path: &std::path::Path) -> Option<Self> {
         match path.extension()?.to_str()? {
             "rs" => Some(Language::Rust),
+            "py" => Some(Language::Python),
+            "js" | "jsx" => Some(Language::JavaScript),
+            "ts" | "tsx" => Some(Language::TypeScript),
+            "html" => Some(Language::HTML),
+            "css" => Some(Language::CSS),
+            "c" | "h" => Some(Language::C),
+            "cpp" | "hpp" | "cc" | "hh" | "cxx" | "hxx" => Some(Language::Cpp),
+            "go" => Some(Language::Go),
+            "json" => Some(Language::Json),
+            // "md" => Some(Language::Markdown),  // Disabled
             _ => None,
         }
     }
@@ -72,6 +91,247 @@ impl Language {
 
                 Ok(config)
             }
+            Language::Python => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_python::LANGUAGE.into(),
+                    "python",
+                    tree_sitter_python::HIGHLIGHTS_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create Python highlight config: {e}"))?;
+
+                // Configure highlight names
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            Language::JavaScript => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_javascript::LANGUAGE.into(),
+                    "javascript",
+                    tree_sitter_javascript::HIGHLIGHT_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create JavaScript highlight config: {e}"))?;
+
+                // Configure highlight names
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            Language::TypeScript => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+                    "typescript",
+                    tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create TypeScript highlight config: {e}"))?;
+
+                // Configure highlight names
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            Language::HTML => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_html::LANGUAGE.into(),
+                    "html",
+                    tree_sitter_html::HIGHLIGHTS_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create HTML highlight config: {e}"))?;
+
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            Language::CSS => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_css::LANGUAGE.into(),
+                    "css",
+                    tree_sitter_css::HIGHLIGHTS_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create CSS highlight config: {e}"))?;
+
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            Language::C => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_c::LANGUAGE.into(),
+                    "c",
+                    tree_sitter_c::HIGHLIGHT_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create C highlight config: {e}"))?;
+
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            Language::Cpp => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_cpp::LANGUAGE.into(),
+                    "cpp",
+                    tree_sitter_cpp::HIGHLIGHT_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create C++ highlight config: {e}"))?;
+
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            Language::Go => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_go::LANGUAGE.into(),
+                    "go",
+                    tree_sitter_go::HIGHLIGHTS_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create Go highlight config: {e}"))?;
+
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            Language::Json => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_json::LANGUAGE.into(),
+                    "json",
+                    tree_sitter_json::HIGHLIGHTS_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create JSON highlight config: {e}"))?;
+
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            // Language::Markdown => {
+            //     // Disabled due to tree-sitter version conflict
+            //     Err("Markdown highlighting not available".to_string())
+            // }
         }
     }
 
@@ -79,6 +339,90 @@ impl Language {
     fn highlight_color(&self, index: usize) -> Color {
         match self {
             Language::Rust => match index {
+                0 => Color::Cyan,     // attribute
+                1 => Color::DarkGray, // comment
+                2 => Color::Magenta,  // constant
+                3 => Color::Yellow,   // function
+                4 => Color::Red,      // keyword
+                5 => Color::Magenta,  // number
+                6 => Color::White,    // operator
+                7 => Color::Cyan,     // property
+                8 => Color::Green,    // string
+                9 => Color::Blue,     // type
+                10 => Color::White,   // variable
+                _ => Color::White,    // default
+            },
+            Language::Python => match index {
+                0 => Color::Cyan,     // attribute
+                1 => Color::DarkGray, // comment
+                2 => Color::Magenta,  // constant
+                3 => Color::Yellow,   // function
+                4 => Color::Red,      // keyword
+                5 => Color::Magenta,  // number
+                6 => Color::White,    // operator
+                7 => Color::Cyan,     // property
+                8 => Color::Green,    // string
+                9 => Color::Blue,     // type
+                10 => Color::White,   // variable
+                _ => Color::White,    // default
+            },
+            Language::JavaScript | Language::TypeScript => match index {
+                0 => Color::Cyan,     // attribute
+                1 => Color::DarkGray, // comment
+                2 => Color::Magenta,  // constant
+                3 => Color::Yellow,   // function
+                4 => Color::Red,      // keyword
+                5 => Color::Magenta,  // number
+                6 => Color::White,    // operator
+                7 => Color::Cyan,     // property
+                8 => Color::Green,    // string
+                9 => Color::Blue,     // type
+                10 => Color::White,   // variable
+                _ => Color::White,    // default
+            },
+            Language::HTML | Language::CSS => match index {
+                0 => Color::Cyan,     // attribute
+                1 => Color::DarkGray, // comment
+                2 => Color::Magenta,  // constant
+                3 => Color::Yellow,   // function
+                4 => Color::Red,      // keyword
+                5 => Color::Magenta,  // number
+                6 => Color::White,    // operator
+                7 => Color::Cyan,     // property
+                8 => Color::Green,    // string
+                9 => Color::Blue,     // type
+                10 => Color::White,   // variable
+                _ => Color::White,    // default
+            },
+            Language::C | Language::Cpp => match index {
+                0 => Color::Cyan,     // attribute
+                1 => Color::DarkGray, // comment
+                2 => Color::Magenta,  // constant
+                3 => Color::Yellow,   // function
+                4 => Color::Red,      // keyword
+                5 => Color::Magenta,  // number
+                6 => Color::White,    // operator
+                7 => Color::Cyan,     // property
+                8 => Color::Green,    // string
+                9 => Color::Blue,     // type
+                10 => Color::White,   // variable
+                _ => Color::White,    // default
+            },
+            Language::Go => match index {
+                0 => Color::Cyan,     // attribute
+                1 => Color::DarkGray, // comment
+                2 => Color::Magenta,  // constant
+                3 => Color::Yellow,   // function
+                4 => Color::Red,      // keyword
+                5 => Color::Magenta,  // number
+                6 => Color::White,    // operator
+                7 => Color::Cyan,     // property
+                8 => Color::Green,    // string
+                9 => Color::Blue,     // type
+                10 => Color::White,   // variable
+                _ => Color::White,    // default
+            },
+            Language::Json => match index {
                 0 => Color::Cyan,     // attribute
                 1 => Color::DarkGray, // comment
                 2 => Color::Magenta,  // constant
@@ -269,6 +613,61 @@ mod tests {
     fn test_language_detection() {
         let path = std::path::Path::new("test.rs");
         assert!(matches!(Language::from_path(path), Some(Language::Rust)));
+
+        let path = std::path::Path::new("test.py");
+        assert!(matches!(Language::from_path(path), Some(Language::Python)));
+
+        let path = std::path::Path::new("test.js");
+        assert!(matches!(Language::from_path(path), Some(Language::JavaScript)));
+
+        let path = std::path::Path::new("test.jsx");
+        assert!(matches!(Language::from_path(path), Some(Language::JavaScript)));
+
+        let path = std::path::Path::new("test.ts");
+        assert!(matches!(Language::from_path(path), Some(Language::TypeScript)));
+
+        let path = std::path::Path::new("test.tsx");
+        assert!(matches!(Language::from_path(path), Some(Language::TypeScript)));
+
+        let path = std::path::Path::new("test.html");
+        assert!(matches!(Language::from_path(path), Some(Language::HTML)));
+
+        let path = std::path::Path::new("test.css");
+        assert!(matches!(Language::from_path(path), Some(Language::CSS)));
+
+        let path = std::path::Path::new("test.c");
+        assert!(matches!(Language::from_path(path), Some(Language::C)));
+
+        let path = std::path::Path::new("test.h");
+        assert!(matches!(Language::from_path(path), Some(Language::C)));
+
+        let path = std::path::Path::new("test.cpp");
+        assert!(matches!(Language::from_path(path), Some(Language::Cpp)));
+
+        let path = std::path::Path::new("test.hpp");
+        assert!(matches!(Language::from_path(path), Some(Language::Cpp)));
+
+        let path = std::path::Path::new("test.cc");
+        assert!(matches!(Language::from_path(path), Some(Language::Cpp)));
+
+        let path = std::path::Path::new("test.hh");
+        assert!(matches!(Language::from_path(path), Some(Language::Cpp)));
+
+        let path = std::path::Path::new("test.cxx");
+        assert!(matches!(Language::from_path(path), Some(Language::Cpp)));
+
+        let path = std::path::Path::new("test.hxx");
+        assert!(matches!(Language::from_path(path), Some(Language::Cpp)));
+
+        let path = std::path::Path::new("test.go");
+        assert!(matches!(Language::from_path(path), Some(Language::Go)));
+
+        let path = std::path::Path::new("test.json");
+        assert!(matches!(Language::from_path(path), Some(Language::Json)));
+
+        // Markdown disabled due to tree-sitter version conflict
+        // let path = std::path::Path::new("test.md");
+        // assert!(matches!(Language::from_path(path), Some(Language::Markdown)));
 
         let path = std::path::Path::new("test.txt");
         assert!(Language::from_path(path).is_none());

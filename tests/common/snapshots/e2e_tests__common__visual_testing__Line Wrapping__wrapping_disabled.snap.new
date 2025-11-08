@@ -1,0 +1,29 @@
+---
+source: tests/common/visual_testing.rs
+assertion_line: 69
+expression: "&screen_text"
+---
+ [No Name]*                                                 
+    1 │ would normally wrap but now extends beyond the view█
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           │
+                                                           │
+                                                           │
+                                                           │
+                                                           │
+[No Name] [+] | Ln 0, Col 136

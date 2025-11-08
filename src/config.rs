@@ -581,6 +581,91 @@ impl Config {
             },
         );
 
+        // pylsp (installed via pip)
+        lsp.insert(
+            "python".to_string(),
+            LspServerConfig {
+                command: "pylsp".to_string(),
+                args: vec![],
+                enabled: true,
+                process_limits: crate::process_limits::ProcessLimits::default(),
+            },
+        );
+
+        // typescript-language-server (installed via npm)
+        let ts_lsp = LspServerConfig {
+            command: "typescript-language-server".to_string(),
+            args: vec!["--stdio".to_string()],
+            enabled: true,
+            process_limits: crate::process_limits::ProcessLimits::default(),
+        };
+        lsp.insert("javascript".to_string(), ts_lsp.clone());
+        lsp.insert("typescript".to_string(), ts_lsp);
+
+        // vscode-html-languageserver-bin (installed via npm)
+        lsp.insert(
+            "html".to_string(),
+            LspServerConfig {
+                command: "vscode-html-languageserver-bin".to_string(),
+                args: vec!["--stdio".to_string()],
+                enabled: true,
+                process_limits: crate::process_limits::ProcessLimits::default(),
+            },
+        );
+
+        // vscode-css-languageserver-bin (installed via npm)
+        lsp.insert(
+            "css".to_string(),
+            LspServerConfig {
+                command: "vscode-css-languageserver-bin".to_string(),
+                args: vec!["--stdio".to_string()],
+                enabled: true,
+                process_limits: crate::process_limits::ProcessLimits::default(),
+            },
+        );
+
+        // clangd (installed via package manager)
+        lsp.insert(
+            "c".to_string(),
+            LspServerConfig {
+                command: "clangd".to_string(),
+                args: vec![],
+                enabled: true,
+                process_limits: crate::process_limits::ProcessLimits::default(),
+            },
+        );
+        lsp.insert(
+            "cpp".to_string(),
+            LspServerConfig {
+                command: "clangd".to_string(),
+                args: vec![],
+                enabled: true,
+                process_limits: crate::process_limits::ProcessLimits::default(),
+            },
+        );
+
+        // gopls (installed via go install)
+        lsp.insert(
+            "go".to_string(),
+            LspServerConfig {
+                command: "gopls".to_string(),
+                args: vec![],
+                enabled: true,
+                process_limits: crate::process_limits::ProcessLimits::default(),
+            },
+        );
+
+        // vscode-json-languageserver (installed via npm)
+        lsp.insert(
+            "json".to_string(),
+            LspServerConfig {
+                command: "vscode-json-languageserver".to_string(),
+                args: vec!["--stdio".to_string()],
+                enabled: true,
+                process_limits: crate::process_limits::ProcessLimits::default(),
+            },
+        );
+
         lsp
     }
 

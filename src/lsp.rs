@@ -4,7 +4,7 @@ use lsp_types::{
     request::{Initialize, Request, Shutdown},
     ClientCapabilities, Diagnostic, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
     InitializeParams, InitializeResult, InitializedParams, PublishDiagnosticsParams,
-    ServerCapabilities, TextDocumentContentChangeEvent, TextDocumentItem, Url,
+    ServerCapabilities, TextDocumentContentChangeEvent, TextDocumentItem, Uri,
     VersionedTextDocumentIdentifier, WorkspaceFolder,
 };
 use serde::{Deserialize, Serialize};
@@ -90,7 +90,7 @@ pub struct LspClient {
     document_versions: HashMap<PathBuf, i64>,
 
     /// Diagnostics per file
-    diagnostics: HashMap<Url, Vec<Diagnostic>>,
+    diagnostics: HashMap<Uri, Vec<Diagnostic>>,
 
     /// Whether the server has been initialized
     initialized: bool,
@@ -130,7 +130,7 @@ impl LspClient {
     }
 
     /// Initialize the language server
-    pub fn initialize(&mut self, root_uri: Option<Url>) -> Result<InitializeResult, String> {
+    pub fn initialize(&mut self, root_uri: Option<Uri>) -> Result<InitializeResult, String> {
         tracing::info!("Initializing LSP server with root_uri: {:?}", root_uri);
 
         let workspace_folders = root_uri.as_ref().map(|uri| {
@@ -138,6 +138,7 @@ impl LspClient {
                 uri: uri.clone(),
                 name: uri
                     .path()
+                    .as_str()
                     .split('/')
                     .last()
                     .unwrap_or("workspace")
@@ -168,15 +169,15 @@ impl LspClient {
     }
 
     /// Notify server of document open
-    pub fn did_open(&mut self, uri: Url, text: String, language_id: String) -> Result<(), String> {
+    pub fn did_open(&mut self, uri: Uri, text: String, language_id: String) -> Result<(), String> {
         if !self.initialized {
             return Err("LSP client not initialized".to_string());
         }
 
-        tracing::debug!("LSP: did_open for {}", uri);
+        tracing::debug!("LSP: did_open for {}", uri.as_str());
 
         let version: i64 = 1;
-        if let Ok(path) = uri.to_file_path() {
+        if let Some(path) = url::Url::parse(uri.as_str()).ok().and_then(|u| u.to_file_path().ok()) {
             self.document_versions.insert(path, version);
         }
 
@@ -195,17 +196,17 @@ impl LspClient {
     /// Notify server of document change
     pub fn did_change(
         &mut self,
-        uri: Url,
+        uri: Uri,
         content_changes: Vec<TextDocumentContentChangeEvent>,
     ) -> Result<(), String> {
         if !self.initialized {
             return Err("LSP client not initialized".to_string());
         }
 
-        tracing::debug!("LSP: did_change for {}", uri);
+        tracing::debug!("LSP: did_change for {}", uri.as_str());
 
         // Increment version
-        let version = if let Ok(path) = uri.to_file_path() {
+        let version = if let Some(path) = url::Url::parse(uri.as_str()).ok().and_then(|u| u.to_file_path().ok()) {
             let v = self.document_versions.entry(path).or_insert(0);
             *v += 1;
             *v
@@ -225,7 +226,7 @@ impl LspClient {
     }
 
     /// Get diagnostics for a file
-    pub fn diagnostics(&self, uri: &Url) -> Vec<Diagnostic> {
+    pub fn diagnostics(&self, uri: &Uri) -> Vec<Diagnostic> {
         self.diagnostics.get(uri).cloned().unwrap_or_default()
     }
 
@@ -397,7 +398,7 @@ impl LspClient {
                     tracing::debug!(
                         "Received {} diagnostics for {}",
                         params.diagnostics.len(),
-                        params.uri
+                        params.uri.as_str()
                     );
 
                     self.diagnostics.insert(params.uri, params.diagnostics);
@@ -477,12 +478,12 @@ pub struct LspManager {
     config: HashMap<String, LspServerConfig>,
 
     /// Root URI for workspace
-    root_uri: Option<Url>,
+    root_uri: Option<Uri>,
 }
 
 impl LspManager {
     /// Create a new LSP manager
-    pub fn new(root_uri: Option<Url>) -> Self {
+    pub fn new(root_uri: Option<Uri>) -> Self {
         Self {
             clients: HashMap::new(),
             config: HashMap::new(),
@@ -543,7 +544,7 @@ impl LspManager {
     }
 
     /// Get diagnostics for a file from all servers
-    pub fn diagnostics(&self, uri: &Url) -> Vec<Diagnostic> {
+    pub fn diagnostics(&self, uri: &Uri) -> Vec<Diagnostic> {
         let mut all_diagnostics = Vec::new();
         for client in self.clients.values() {
             all_diagnostics.extend(client.diagnostics(uri));

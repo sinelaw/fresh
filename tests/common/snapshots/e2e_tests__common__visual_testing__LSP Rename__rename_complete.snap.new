@@ -1,0 +1,35 @@
+---
+source: tests/common/visual_testing.rs
+assertion_line: 69
+expression: "&screen_text"
+---
+ [No Name]*                                                                     
+    2 │ fn calculate(amount: i32) -> i32 {                                     █
+    3 │     let result = amount * 2;                                           █
+    4 │     println!("Value: {}", amount);                                     █
+    5 │     result                                                             █
+    6 │ }                                                                      █
+    7 │                                                                        █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+[No Name] [+] | Ln 5, Col 0 | Cannot rename in unsaved buffer

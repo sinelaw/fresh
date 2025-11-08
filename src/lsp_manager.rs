@@ -9,7 +9,7 @@
 use crate::async_bridge::AsyncBridge;
 use crate::lsp::LspServerConfig;
 use crate::lsp_async::LspHandle;
-use lsp_types::Url;
+use lsp_types::Uri;
 use std::collections::HashMap;
 
 /// Manager for multiple language servers (async version)
@@ -21,7 +21,7 @@ pub struct LspManager {
     config: HashMap<String, LspServerConfig>,
 
     /// Root URI for workspace
-    root_uri: Option<Url>,
+    root_uri: Option<Uri>,
 
     /// Tokio runtime reference
     runtime: Option<tokio::runtime::Handle>,
@@ -32,7 +32,7 @@ pub struct LspManager {
 
 impl LspManager {
     /// Create a new LSP manager
-    pub fn new(root_uri: Option<Url>) -> Self {
+    pub fn new(root_uri: Option<Uri>) -> Self {
         Self {
             handles: HashMap::new(),
             config: HashMap::new(),
