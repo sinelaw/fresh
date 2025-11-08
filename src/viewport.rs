@@ -308,7 +308,11 @@ impl Viewport {
     pub fn ensure_column_visible(&mut self, column: usize, line_length: usize, buffer: &Buffer) {
         // Calculate visible width (accounting for line numbers gutter which is dynamic)
         let gutter_width = self.gutter_width(buffer);
-        let visible_width = (self.width as usize).saturating_sub(gutter_width);
+        // Also account for scrollbar (always present, takes 1 column)
+        let scrollbar_width = 1;
+        let visible_width = (self.width as usize)
+            .saturating_sub(gutter_width)
+            .saturating_sub(scrollbar_width);
 
         if visible_width == 0 {
             return; // Terminal too narrow

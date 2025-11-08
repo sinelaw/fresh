@@ -710,10 +710,20 @@ impl SplitRenderer {
                 // Check if primary cursor is on this line and calculate its position
                 // Use line_content.len() (original line length) not line_text.len() (scrolled length)
                 // to ensure we capture cursor even when it's past the horizontal scroll offset.
-                // Use < instead of <= to avoid capturing cursor positions that belong to the next line.
+                //
+                // For the upper bound check:
+                // - If line ends with newline, cursor AT the newline belongs to next line (use <)
+                // - If line has no newline, cursor can be at end of line (use <=)
+                let line_has_newline = line_content.ends_with('\n');
+                let line_end_exclusive = if line_has_newline {
+                    line_start + line_content.len() - 1  // Exclude the newline
+                } else {
+                    line_start + line_content.len()  // Include position at end
+                };
+
                 if !cursor_found
                     && primary_cursor_position >= line_start
-                    && primary_cursor_position < line_start + line_content.len()
+                    && primary_cursor_position <= line_end_exclusive
                 {
                     let column = primary_cursor_position.saturating_sub(line_start);
 
