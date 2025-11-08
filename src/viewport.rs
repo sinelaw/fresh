@@ -330,8 +330,9 @@ impl Viewport {
             self.left_column = column.saturating_sub(effective_offset);
         } else if column >= ideal_right {
             // Cursor is to the right of the ideal zone - scroll right
-            self.left_column =
-                column.saturating_sub(visible_width.saturating_sub(effective_offset));
+            // Place cursor at (visible_width - effective_offset - 1) to keep it in valid range [0, visible_width-1]
+            let target_position = visible_width.saturating_sub(effective_offset).saturating_sub(1);
+            self.left_column = column.saturating_sub(target_position);
         }
 
         // BUGFIX: Limit left_column to ensure content is always visible
@@ -339,13 +340,12 @@ impl Viewport {
         // This prevents the viewport from scrolling into "empty space" past the line content
         if line_length > 0 {
             // Calculate the maximum left_column that still shows some content
+            // Account for cursor potentially being one position past the line content (at position line_length)
             // If the line is shorter than visible width, left_column should be 0
-            // Otherwise, left_column should be at most (line_length - visible_width)
-            let max_left_column = line_length.saturating_sub(visible_width);
+            // Otherwise, allow scrolling enough to show position line_length at the last visible column
+            let max_left_column = line_length.saturating_sub(visible_width.saturating_sub(1));
 
-            // Also ensure that if we're limiting left_column, the cursor is still visible
-            // The cursor might be at the end of the line or even past it (at newline)
-            // In that case, we want to show the end of the line
+            // Limit left_column to max_left_column
             if self.left_column > max_left_column {
                 self.left_column = max_left_column;
             }
