@@ -4024,10 +4024,8 @@ impl Editor {
                     drag_start_top_byte.saturating_sub((-byte_offset) as usize)
                 };
 
-                // Clamp to valid range
-                let max_top_byte =
-                    Self::calculate_max_scroll_position(&state.buffer, viewport_height);
-                new_top_byte.min(max_top_byte)
+                // Clamp to valid range using byte-based max (avoid iterating entire buffer)
+                new_top_byte.min(buffer_len.saturating_sub(1))
             };
 
             // Find the line start for this byte position
@@ -4123,7 +4121,12 @@ impl Editor {
 
             // Apply scroll limiting
             // Use viewport.height (constant allocated rows) not visible_line_count (varies with content)
-            let max_top_byte = Self::calculate_max_scroll_position(&state.buffer, viewport_height);
+            // For large files, use byte-based max to avoid iterating entire buffer
+            let max_top_byte = if buffer_len <= large_file_threshold {
+                Self::calculate_max_scroll_position(&state.buffer, viewport_height)
+            } else {
+                buffer_len.saturating_sub(1)
+            };
             let limited_line_start = line_start.min(max_top_byte);
 
             // Set viewport top to this position
