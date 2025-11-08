@@ -24,4 +24,5 @@ pub mod slow_filesystem;
 pub mod split_view;
 pub mod test_scrollbar_keybinds_cursor;
 pub mod theme;
+pub mod undo_redo;
 pub mod visual_regression;

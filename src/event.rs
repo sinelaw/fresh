@@ -5,6 +5,12 @@ use std::ops::Range;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CursorId(pub usize);
 
+impl CursorId {
+    /// Sentinel value used for inverse events during undo/redo
+    /// This indicates that the event shouldn't move any cursor
+    pub const UNDO_SENTINEL: CursorId = CursorId(usize::MAX);
+}
+
 /// Unique identifier for a split pane (re-exported from split.rs)
 /// Note: This is defined in split.rs and re-exported here for events
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -269,28 +275,29 @@ pub enum MarginContentData {
 
 impl Event {
     /// Returns the inverse event for undo functionality
+    /// Uses UNDO_SENTINEL cursor_id to avoid moving the cursor during undo
     pub fn inverse(&self) -> Option<Event> {
         match self {
             Event::Insert {
                 position,
                 text,
-                cursor_id,
+                ..
             } => {
                 let range = *position..(position + text.len());
                 Some(Event::Delete {
                     range,
                     deleted_text: text.clone(),
-                    cursor_id: *cursor_id,
+                    cursor_id: CursorId::UNDO_SENTINEL,
                 })
             }
             Event::Delete {
                 range,
                 deleted_text,
-                cursor_id,
+                ..
             } => Some(Event::Insert {
                 position: range.start,
                 text: deleted_text.clone(),
-                cursor_id: *cursor_id,
+                cursor_id: CursorId::UNDO_SENTINEL,
             }),
             Event::Batch {
                 events,
@@ -329,16 +336,37 @@ impl Event {
                     anchor: *anchor,
                 })
             }
-            Event::MoveCursor {
-                cursor_id,
-                position,
-                anchor,
-            } => {
-                // We can't automatically invert MoveCursor without knowing the old position
-                // This needs to store old_position and old_anchor
+            Event::MoveCursor { .. } => {
+                // MoveCursor is not inverted - we want cursor to stay where user moved it
+                // even when undoing text changes
                 None
             }
-            // Other events are not automatically invertible
+            Event::AddOverlay {
+                overlay_id,
+                range,
+                face,
+                priority,
+                message,
+            } => Some(Event::RemoveOverlay {
+                overlay_id: overlay_id.clone(),
+            }),
+            Event::RemoveOverlay { overlay_id } => {
+                // We can't fully invert RemoveOverlay without storing the removed overlay data
+                // For now, just return None - this could be improved by storing overlay data
+                None
+            }
+            Event::Scroll { line_offset } => Some(Event::Scroll {
+                line_offset: -line_offset,
+            }),
+            Event::SetViewport { top_line } => {
+                // Can't invert without knowing old top_line
+                None
+            }
+            Event::ChangeMode { mode } => {
+                // Can't invert without knowing old mode
+                None
+            }
+            // Other events (popups, margins, splits, etc.) are not automatically invertible
             _ => None,
         }
     }
@@ -348,6 +376,34 @@ impl Event {
         match self {
             Event::Insert { .. } | Event::Delete { .. } => true,
             Event::Batch { events, .. } => events.iter().any(|e| e.modifies_buffer()),
+            _ => false,
+        }
+    }
+
+    /// Returns true if this event is a write action (modifies state in a way that should be undoable)
+    /// Returns false for readonly actions like cursor movement, scrolling, viewport changes, etc.
+    ///
+    /// Write actions include:
+    /// - Buffer modifications (Insert, Delete)
+    /// - Cursor structure changes (AddCursor, RemoveCursor)
+    /// - Batches containing write actions
+    ///
+    /// Readonly actions include:
+    /// - Cursor movement (MoveCursor)
+    /// - Scrolling and viewport changes (Scroll, SetViewport)
+    /// - UI events (overlays, popups, margins, mode changes, etc.)
+    pub fn is_write_action(&self) -> bool {
+        match self {
+            // Buffer modifications are write actions
+            Event::Insert { .. } | Event::Delete { .. } => true,
+
+            // Adding/removing cursors are write actions (structural changes)
+            Event::AddCursor { .. } | Event::RemoveCursor { .. } => true,
+
+            // Batches are write actions if they contain any write actions
+            Event::Batch { events, .. } => events.iter().any(|e| e.is_write_action()),
+
+            // All other events are readonly (movement, scrolling, UI, etc.)
             _ => false,
         }
     }
@@ -568,25 +624,61 @@ impl EventLog {
         self.current_index < self.entries.len()
     }
 
-    /// Move back one event (for undo)
-    pub fn undo(&mut self) -> Option<&Event> {
-        if self.can_undo() {
+    /// Move back through events (for undo)
+    /// Collects all events up to and including the first write action, returns their inverses
+    /// This processes readonly events (like scrolling) and stops at write events (like Insert/Delete)
+    pub fn undo(&mut self) -> Vec<Event> {
+        let mut inverse_events = Vec::new();
+        let mut found_write_action = false;
+
+        // Keep moving backward until we find a write action
+        while self.can_undo() && !found_write_action {
             self.current_index -= 1;
-            Some(&self.entries[self.current_index].event)
-        } else {
-            None
+            let event = &self.entries[self.current_index].event;
+
+            // Check if this is a write action - we'll stop after processing it
+            if event.is_write_action() {
+                found_write_action = true;
+            }
+
+            // Try to get the inverse of this event
+            if let Some(inverse) = event.inverse() {
+                inverse_events.push(inverse);
+            }
+            // If no inverse exists (like MoveCursor), we just skip it
         }
+
+        inverse_events
     }
 
-    /// Move forward one event (for redo)
-    pub fn redo(&mut self) -> Option<&Event> {
-        if self.can_redo() {
-            let event = &self.entries[self.current_index].event;
+    /// Move forward through events (for redo)
+    /// Collects the first write action plus all readonly events after it (until next write action)
+    /// This processes readonly events (like scrolling) with write events (like Insert/Delete)
+    pub fn redo(&mut self) -> Vec<Event> {
+        let mut events = Vec::new();
+        let mut found_write_action = false;
+
+        // Keep moving forward to collect write action and subsequent readonly events
+        while self.can_redo() {
+            let event = self.entries[self.current_index].event.clone();
+
+            // If we've already found a write action and this is another write action, stop
+            if found_write_action && event.is_write_action() {
+                // Don't include this event, it's the next write action
+                break;
+            }
+
             self.current_index += 1;
-            Some(event)
-        } else {
-            None
+
+            // Mark if we found a write action
+            if event.is_write_action() {
+                found_write_action = true;
+            }
+
+            events.push(event);
         }
+
+        events
     }
 
     /// Get all events from the log

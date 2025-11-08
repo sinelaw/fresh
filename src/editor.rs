@@ -3442,15 +3442,16 @@ impl Editor {
             Action::Cut => self.cut_selection(),
             Action::Paste => self.paste(),
             Action::Undo => {
-                if let Some(event) = self.active_event_log_mut().undo() {
-                    if let Some(inverse) = event.inverse() {
-                        self.apply_event_to_active_buffer(&inverse);
-                    }
+                let events = self.active_event_log_mut().undo();
+                // Apply all inverse events collected during undo
+                for event in events {
+                    self.apply_event_to_active_buffer(&event);
                 }
             }
             Action::Redo => {
-                let event_opt = self.active_event_log_mut().redo().cloned();
-                if let Some(event) = event_opt {
+                let events = self.active_event_log_mut().redo();
+                // Apply all events collected during redo
+                for event in events {
                     self.apply_event_to_active_buffer(&event);
                 }
             }
