@@ -52,6 +52,8 @@ pub enum Event {
         new_position: usize,
         old_anchor: Option<usize>,
         new_anchor: Option<usize>,
+        old_sticky_column: usize,
+        new_sticky_column: usize,
     },
 
     /// Add a new cursor
@@ -344,6 +346,8 @@ impl Event {
                 new_position,
                 old_anchor,
                 new_anchor,
+                old_sticky_column,
+                new_sticky_column,
             } => {
                 // Invert by swapping old and new positions
                 Some(Event::MoveCursor {
@@ -352,6 +356,8 @@ impl Event {
                     new_position: *old_position,
                     old_anchor: *new_anchor,
                     new_anchor: *old_anchor,
+                    old_sticky_column: *new_sticky_column,
+                    new_sticky_column: *old_sticky_column,
                 })
             }
             Event::AddOverlay {

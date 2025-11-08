@@ -736,12 +736,15 @@ impl Editor {
                 let cursor_id = state.cursors.primary_id();
                 let old_position = state.cursors.primary().position;
                 let old_anchor = state.cursors.primary().anchor;
+                let old_sticky_column = state.cursors.primary().sticky_column;
                 let event = Event::MoveCursor {
                     cursor_id,
                     old_position,
                     new_position: target_position,
                     old_anchor,
                     new_anchor: target_anchor,
+                    old_sticky_column,
+                    new_sticky_column: 0, // Reset sticky column for navigation
                 };
                 state.apply(&event);
             }
@@ -770,12 +773,15 @@ impl Editor {
                 let cursor_id = state.cursors.primary_id();
                 let old_position = state.cursors.primary().position;
                 let old_anchor = state.cursors.primary().anchor;
+                let old_sticky_column = state.cursors.primary().sticky_column;
                 let event = Event::MoveCursor {
                     cursor_id,
                     old_position,
                     new_position: target_position,
                     old_anchor,
                     new_anchor: target_anchor,
+                    old_sticky_column,
+                    new_sticky_column: 0, // Reset sticky column for navigation
                 };
                 state.apply(&event);
             }
@@ -2457,12 +2463,15 @@ impl Editor {
                 let cursor_id = state.cursors.primary_id();
                 let old_position = state.cursors.primary().position;
                 let old_anchor = state.cursors.primary().anchor;
+                let old_sticky_column = state.cursors.primary().sticky_column;
                 let event = crate::event::Event::MoveCursor {
                     cursor_id,
                     old_position,
                     new_position: position,
                     old_anchor,
                     new_anchor: None,
+                    old_sticky_column,
+                    new_sticky_column: 0, // Reset sticky column for goto definition
                 };
 
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
@@ -3679,6 +3688,8 @@ impl Editor {
                             new_position: current_pos - 1,
                             old_anchor: None, // TODO: Get actual old anchor
                             new_anchor: None,
+                            old_sticky_column: 0,
+                            new_sticky_column: 0, // Reset sticky column
                         };
                         self.apply_event_to_active_buffer(&event);
                     }
@@ -3695,6 +3706,8 @@ impl Editor {
                             new_position: current_pos + 1,
                             old_anchor: None, // TODO: Get actual old anchor
                             new_anchor: None,
+                            old_sticky_column: 0,
+                            new_sticky_column: 0, // Reset sticky column
                         };
                         self.apply_event_to_active_buffer(&event);
                     }
@@ -3709,6 +3722,8 @@ impl Editor {
                         new_position: rename_state.start_pos,
                         old_anchor: None, // TODO: Get actual old anchor
                         new_anchor: None,
+                        old_sticky_column: 0,
+                        new_sticky_column: 0, // Reset sticky column
                     };
                     self.apply_event_to_active_buffer(&event);
                 }
@@ -3722,6 +3737,8 @@ impl Editor {
                         new_position: rename_state.end_pos,
                         old_anchor: None, // TODO: Get actual old anchor
                         new_anchor: None,
+                        old_sticky_column: 0,
+                        new_sticky_column: 0, // Reset sticky column
                     };
                     self.apply_event_to_active_buffer(&event);
                 }
@@ -4434,6 +4451,8 @@ impl Editor {
                 new_position: target_position,
                 old_anchor: None, // TODO: Get actual old anchor
                 new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0, // Reset sticky column for goto line
             };
 
             // Apply the event
@@ -5329,6 +5348,8 @@ mod tests {
             new_position: 6,
             old_anchor: None, // TODO: Get actual old anchor
             new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
         });
 
         // Test move up
@@ -5427,6 +5448,8 @@ mod tests {
             new_position: 0,
             old_anchor: None, // TODO: Get actual old anchor
             new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
         });
 
         let events = editor.action_to_events(Action::DeleteForward);
@@ -5468,6 +5491,8 @@ mod tests {
             new_position: 0,
             old_anchor: None, // TODO: Get actual old anchor
             new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
         });
 
         let events = editor.action_to_events(Action::SelectRight);

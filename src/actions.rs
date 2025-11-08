@@ -141,6 +141,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: None, // No selection
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column on horizontal movement
                 });
             }
         }
@@ -155,6 +157,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column on horizontal movement
                 });
             }
         }
@@ -165,13 +169,20 @@ pub fn action_to_events(
                 // line_iterator positions us at the start of the current line
                 let mut iter = state.buffer.line_iterator(cursor.position);
                 let current_line_start = iter.current_position();
-                let col_offset = cursor.position - current_line_start;
+                let current_column = cursor.position - current_line_start;
+
+                // Use sticky_column if set, otherwise use current column
+                let goal_column = if cursor.sticky_column > 0 {
+                    cursor.sticky_column
+                } else {
+                    current_column
+                };
 
                 // Get previous line
                 if let Some((prev_line_start, prev_line_content)) = iter.prev() {
                     // Calculate length without trailing newline
                     let prev_line_len = prev_line_content.trim_end_matches('\n').len();
-                    let new_pos = prev_line_start + col_offset.min(prev_line_len);
+                    let new_pos = prev_line_start + goal_column.min(prev_line_len);
 
                     events.push(Event::MoveCursor {
                     cursor_id,
@@ -179,6 +190,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: goal_column, // Preserve the goal column
                 });
                 }
             }
@@ -188,14 +201,21 @@ pub fn action_to_events(
             for (cursor_id, cursor) in state.cursors.iter() {
                 let mut iter = state.buffer.line_iterator(cursor.position);
                 let current_line_start = iter.current_position();
-                let col_offset = cursor.position - current_line_start;
+                let current_column = cursor.position - current_line_start;
+
+                // Use sticky_column if set, otherwise use current column
+                let goal_column = if cursor.sticky_column > 0 {
+                    cursor.sticky_column
+                } else {
+                    current_column
+                };
 
                 // Skip current line, then get next line
                 iter.next();
                 if let Some((next_line_start, next_line_content)) = iter.next() {
                     // Calculate length without trailing newline
                     let next_line_len = next_line_content.trim_end_matches('\n').len();
-                    let new_pos = next_line_start + col_offset.min(next_line_len);
+                    let new_pos = next_line_start + goal_column.min(next_line_len);
 
                     events.push(Event::MoveCursor {
                     cursor_id,
@@ -203,6 +223,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: goal_column, // Preserve the goal column
                 });
                 }
             }
@@ -218,6 +240,8 @@ pub fn action_to_events(
                     new_position: line_start,
                     old_anchor: cursor.anchor,
                     new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
                 }
             }
@@ -237,6 +261,8 @@ pub fn action_to_events(
                     new_position: line_end,
                     old_anchor: cursor.anchor,
                     new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
                 }
             }
@@ -251,6 +277,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
             }
         }
@@ -264,6 +292,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
             }
         }
@@ -276,6 +306,8 @@ pub fn action_to_events(
                     new_position: 0,
                     old_anchor: cursor.anchor,
                     new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
             }
         }
@@ -289,6 +321,8 @@ pub fn action_to_events(
                     new_position: max_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
             }
         }
@@ -299,13 +333,20 @@ pub fn action_to_events(
                 let lines_to_move = state.viewport.height.saturating_sub(1);
                 let mut iter = state.buffer.line_iterator(cursor.position);
                 let current_line_start = iter.current_position();
-                let col_offset = cursor.position - current_line_start;
+                let current_column = cursor.position - current_line_start;
+
+                // Use sticky_column if set, otherwise use current column
+                let goal_column = if cursor.sticky_column > 0 {
+                    cursor.sticky_column
+                } else {
+                    current_column
+                };
 
                 let mut new_pos = cursor.position;
                 for _ in 0..lines_to_move {
                     if let Some((line_start, line_content)) = iter.prev() {
                         let line_len = line_content.trim_end_matches('\n').len();
-                        new_pos = line_start + col_offset.min(line_len);
+                        new_pos = line_start + goal_column.min(line_len);
                     } else {
                         new_pos = 0;
                         break;
@@ -318,6 +359,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: goal_column, // Preserve the goal column
                 });
             }
         }
@@ -328,7 +371,14 @@ pub fn action_to_events(
                 let lines_to_move = state.viewport.height.saturating_sub(1);
                 let mut iter = state.buffer.line_iterator(cursor.position);
                 let current_line_start = iter.current_position();
-                let col_offset = cursor.position - current_line_start;
+                let current_column = cursor.position - current_line_start;
+
+                // Use sticky_column if set, otherwise use current column
+                let goal_column = if cursor.sticky_column > 0 {
+                    cursor.sticky_column
+                } else {
+                    current_column
+                };
 
                 // Consume current line
                 iter.next();
@@ -337,7 +387,7 @@ pub fn action_to_events(
                 for _ in 0..lines_to_move {
                     if let Some((line_start, line_content)) = iter.next() {
                         let line_len = line_content.trim_end_matches('\n').len();
-                        new_pos = line_start + col_offset.min(line_len);
+                        new_pos = line_start + goal_column.min(line_len);
                     } else {
                         // Reached end of buffer - clamp to last valid position
                         new_pos = max_cursor_position(&state.buffer);
@@ -351,6 +401,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: goal_column, // Preserve the goal column
                 });
             }
         }
@@ -366,6 +418,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
             }
         }
@@ -381,6 +435,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
             }
         }
@@ -389,12 +445,19 @@ pub fn action_to_events(
             for (cursor_id, cursor) in state.cursors.iter() {
                 let mut iter = state.buffer.line_iterator(cursor.position);
                 let current_line_start = iter.current_position();
-                let col_offset = cursor.position - current_line_start;
+                let current_column = cursor.position - current_line_start;
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
+
+                // Use sticky_column if set, otherwise use current column
+                let goal_column = if cursor.sticky_column > 0 {
+                    cursor.sticky_column
+                } else {
+                    current_column
+                };
 
                 if let Some((prev_line_start, prev_line_content)) = iter.prev() {
                     let prev_line_len = prev_line_content.trim_end_matches('\n').len();
-                    let new_pos = prev_line_start + col_offset.min(prev_line_len);
+                    let new_pos = prev_line_start + goal_column.min(prev_line_len);
 
                     events.push(Event::MoveCursor {
                     cursor_id,
@@ -402,6 +465,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: goal_column, // Preserve the goal column
                 });
                 }
             }
@@ -411,14 +476,21 @@ pub fn action_to_events(
             for (cursor_id, cursor) in state.cursors.iter() {
                 let mut iter = state.buffer.line_iterator(cursor.position);
                 let current_line_start = iter.current_position();
-                let col_offset = cursor.position - current_line_start;
+                let current_column = cursor.position - current_line_start;
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
+
+                // Use sticky_column if set, otherwise use current column
+                let goal_column = if cursor.sticky_column > 0 {
+                    cursor.sticky_column
+                } else {
+                    current_column
+                };
 
                 // Skip current line, then get next line
                 iter.next();
                 if let Some((next_line_start, next_line_content)) = iter.next() {
                     let next_line_len = next_line_content.trim_end_matches('\n').len();
-                    let new_pos = next_line_start + col_offset.min(next_line_len);
+                    let new_pos = next_line_start + goal_column.min(next_line_len);
 
                     events.push(Event::MoveCursor {
                     cursor_id,
@@ -426,6 +498,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: goal_column, // Preserve the goal column
                 });
                 }
             }
@@ -443,6 +517,8 @@ pub fn action_to_events(
                     new_position: line_start,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
                 }
             }
@@ -464,6 +540,8 @@ pub fn action_to_events(
                     new_position: line_end,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
                 }
             }
@@ -479,6 +557,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
             }
         }
@@ -493,6 +573,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
             }
         }
@@ -506,6 +588,8 @@ pub fn action_to_events(
                     new_position: 0,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
             }
         }
@@ -520,6 +604,8 @@ pub fn action_to_events(
                     new_position: max_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
             }
         }
@@ -529,14 +615,21 @@ pub fn action_to_events(
                 let lines_to_move = state.viewport.height.saturating_sub(1);
                 let mut iter = state.buffer.line_iterator(cursor.position);
                 let current_line_start = iter.current_position();
-                let col_offset = cursor.position - current_line_start;
+                let current_column = cursor.position - current_line_start;
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
+
+                // Use sticky_column if set, otherwise use current column
+                let goal_column = if cursor.sticky_column > 0 {
+                    cursor.sticky_column
+                } else {
+                    current_column
+                };
 
                 let mut new_pos = cursor.position;
                 for _ in 0..lines_to_move {
                     if let Some((line_start, line_content)) = iter.prev() {
                         let line_len = line_content.trim_end_matches('\n').len();
-                        new_pos = line_start + col_offset.min(line_len);
+                        new_pos = line_start + goal_column.min(line_len);
                     } else {
                         new_pos = 0;
                         break;
@@ -549,6 +642,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: goal_column, // Preserve the goal column
                 });
             }
         }
@@ -558,8 +653,15 @@ pub fn action_to_events(
                 let lines_to_move = state.viewport.height.saturating_sub(1);
                 let mut iter = state.buffer.line_iterator(cursor.position);
                 let current_line_start = iter.current_position();
-                let col_offset = cursor.position - current_line_start;
+                let current_column = cursor.position - current_line_start;
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
+
+                // Use sticky_column if set, otherwise use current column
+                let goal_column = if cursor.sticky_column > 0 {
+                    cursor.sticky_column
+                } else {
+                    current_column
+                };
 
                 // Consume current line
                 iter.next();
@@ -568,7 +670,7 @@ pub fn action_to_events(
                 for _ in 0..lines_to_move {
                     if let Some((line_start, line_content)) = iter.next() {
                         let line_len = line_content.trim_end_matches('\n').len();
-                        new_pos = line_start + col_offset.min(line_len);
+                        new_pos = line_start + goal_column.min(line_len);
                     } else {
                         // Reached end of buffer - clamp to last valid position
                         new_pos = max_cursor_position(&state.buffer);
@@ -582,6 +684,8 @@ pub fn action_to_events(
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: goal_column, // Preserve the goal column
                 });
             }
         }
@@ -597,6 +701,8 @@ pub fn action_to_events(
                 new_position: max_pos,
                 old_anchor: primary_cursor.anchor,
                 new_anchor: Some(0),
+                old_sticky_column: primary_cursor.sticky_column,
+                new_sticky_column: 0, // Reset sticky column
             });
             // Note: RemoveSecondaryCursors is handled in handle_key, not as an event
         }
@@ -614,6 +720,8 @@ pub fn action_to_events(
                     new_position: word_end,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(word_start),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
                 }
             }
@@ -875,6 +983,8 @@ pub fn action_to_events(
                     new_position: line_end,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(line_start),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
                 }
             }
@@ -894,6 +1004,8 @@ pub fn action_to_events(
                     new_position: new_end,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(anchor),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
                 } else {
                     // No selection - select from cursor to end of current word
@@ -920,6 +1032,8 @@ pub fn action_to_events(
                     new_position: final_end,
                     old_anchor: cursor.anchor,
                     new_anchor: Some(final_start),
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: 0, // Reset sticky column
                 });
                 }
             }
@@ -956,6 +1070,8 @@ mod tests {
             new_position: 6,
             old_anchor: None,
             new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
         });
 
         assert_eq!(state.cursors.primary().position, 6);
