@@ -883,6 +883,20 @@ impl KeybindingResolver {
             (KeyCode::Tab, KeyModifiers::empty()),
             Action::PromptAcceptSuggestion,
         );
+        // Command palette toggle keybindings (for closing when already open)
+        prompt_bindings.insert(
+            (KeyCode::Char('p'), KeyModifiers::CONTROL),
+            Action::CommandPalette,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Char('/'), KeyModifiers::CONTROL),
+            Action::CommandPalette,
+        );
+        // Some terminals send Ctrl+7 for Ctrl+/ (since / is Shift+7 on many keyboards)
+        prompt_bindings.insert(
+            (KeyCode::Char('7'), KeyModifiers::CONTROL),
+            Action::CommandPalette,
+        );
         all_bindings.insert(KeyContext::Prompt, prompt_bindings);
 
         // Popup context bindings
