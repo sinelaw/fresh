@@ -10,23 +10,34 @@ This document outlines the editor's support for various programming languages, i
 
 ## Supported Languages
 
-| Language | File Extensions | `tree-sitter` Crate | Recommended LSP Server |
-| :--- | :--- | :--- | :--- |
-| **Python** | `.py` | `tree-sitter-python` | `pylsp` |
-| **JS/TS** | `.js`, `.jsx`, `.ts`, `.tsx` | `tree-sitter-javascript`, `tree-sitter-typescript` | `typescript-language-server` |
-| **HTML** | `.html` | `tree-sitter-html` | `vscode-html-languageserver-bin` |
-| **CSS** | `.css` | `tree-sitter-css` | `vscode-css-languageserver-bin` |
-| **C/C++** | `.c`, `.h`, `.cpp`, `.hpp` | `tree-sitter-c`, `tree-sitter-cpp` | `clangd` |
-| **Shell** | `.sh` | `tree-sitter-bash` | `bash-language-server` |
-| **Java** | `.java` | `tree-sitter-java` | `jdtls` |
-| **Kotlin** | `.kt`, `.kts` | `tree-sitter-kotlin` | `kotlin-language-server` |
-| **Go** | `.go` | `tree-sitter-go` | `gopls` |
-| **Swift** | `.swift` | `tree-sitter-swift` | `sourcekit-lsp` |
-| **Ruby** | `.rb` | `tree-sitter-ruby` | `solargraph` |
-| **R** | `.r` | `tree-sitter-r` | `languageserver` (R package) |
-| **XML** | `.xml` | `tree-sitter-xml` | `lemminx` |
+| Language | File Extensions | `tree-sitter` Crate | Syntax Highlighting | LSP Support |
+| :--- | :--- | :--- | :---: | :---: |
+| **Rust** | `.rs` | `tree-sitter-rust` | ✅ | ✅ |
+| **Python** | `.py` | `tree-sitter-python` | ✅ | ✅ |
+| **JavaScript** | `.js`, `.jsx` | `tree-sitter-javascript` | ✅ | ✅ |
+| **TypeScript** | `.ts`, `.tsx` | `tree-sitter-typescript` | ✅ | ✅ |
+| **HTML** | `.html` | `tree-sitter-html` | ✅ | ✅ |
+| **CSS** | `.css` | `tree-sitter-css` | ✅ | ✅ |
+| **C** | `.c`, `.h` | `tree-sitter-c` | ✅ | ✅ |
+| **C++** | `.cpp`, `.hpp`, `.cc`, `.hh`, `.cxx`, `.hxx` | `tree-sitter-cpp` | ✅ | ✅ |
+| **Go** | `.go` | `tree-sitter-go` | ✅ | ✅ |
+| **JSON** | `.json` | `tree-sitter-json` | ✅ | ❌ |
+| **Java** | `.java` | `tree-sitter-java` | ✅ | ❌ |
+| **C#** | `.cs` | `tree-sitter-c-sharp` | ⚠️ | ❌ |
+| **PHP** | `.php` | `tree-sitter-php` | ✅ | ❌ |
+| **Ruby** | `.rb` | `tree-sitter-ruby` | ✅ | ❌ |
+| **Bash** | `.sh`, `.bash` | `tree-sitter-bash` | ✅ | ❌ |
+
+**Legend:**
+- ✅ = Implemented and working
+- ⚠️ = Partial support (C# has no highlight query in crate version 0.23.1)
+- ❌ = Not yet implemented
 
 *Note: Markdown support has been temporarily removed due to `tree-sitter` dependency conflicts. It will be re-evaluated in a future iteration.*
+
+## LSP Server Status
+
+Languages marked with ❌ for LSP Support have the tree-sitter parser configured for syntax highlighting, but do not yet have LSP server configuration. LSP support for these languages will be added in a future update.
 
 ---
 
