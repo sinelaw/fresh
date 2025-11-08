@@ -5,7 +5,7 @@ use crate::prompt::Prompt;
 use crate::state::EditorState;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
@@ -47,12 +47,42 @@ impl StatusBarRenderer {
 
     /// Render the prompt/minibuffer
     fn render_prompt(frame: &mut Frame, area: Rect, prompt: &Prompt, theme: &crate::theme::Theme) {
-        // Build prompt display: message + input + cursor
-        let prompt_text = format!("{}{}", prompt.message, prompt.input);
+        let base_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
 
-        // Use theme colors for prompt
-        let prompt_line = Paragraph::new(prompt_text)
-            .style(Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg));
+        // Create spans for the prompt
+        let mut spans = vec![
+            Span::styled(prompt.message.clone(), base_style),
+        ];
+
+        // If there's a selection, split the input into parts
+        if let Some((sel_start, sel_end)) = prompt.selection_range() {
+            let input = &prompt.input;
+
+            // Text before selection
+            if sel_start > 0 {
+                spans.push(Span::styled(input[..sel_start].to_string(), base_style));
+            }
+
+            // Selected text (inverted colors)
+            if sel_start < sel_end {
+                let selection_style = Style::default()
+                    .fg(theme.prompt_bg)
+                    .bg(theme.prompt_fg)
+                    .add_modifier(Modifier::REVERSED);
+                spans.push(Span::styled(input[sel_start..sel_end].to_string(), selection_style));
+            }
+
+            // Text after selection
+            if sel_end < input.len() {
+                spans.push(Span::styled(input[sel_end..].to_string(), base_style));
+            }
+        } else {
+            // No selection, render entire input normally
+            spans.push(Span::styled(prompt.input.clone(), base_style));
+        }
+
+        let line = Line::from(spans);
+        let prompt_line = Paragraph::new(line).style(base_style);
 
         frame.render_widget(prompt_line, area);
 

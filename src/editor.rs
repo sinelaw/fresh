@@ -3268,6 +3268,21 @@ impl Editor {
                 }
                 self.update_prompt_suggestions();
             }
+            Action::PromptDelete => {
+                if let Some(prompt) = self.prompt_mut() {
+                    // If there's a selection, delete it; otherwise delete one character forward
+                    if prompt.has_selection() {
+                        prompt.delete_selection();
+                    } else if prompt.cursor_pos < prompt.input.len() {
+                        let mut char_end = prompt.cursor_pos + 1;
+                        while char_end < prompt.input.len() && !prompt.input.is_char_boundary(char_end) {
+                            char_end += 1;
+                        }
+                        prompt.input.drain(prompt.cursor_pos..char_end);
+                    }
+                }
+                self.update_prompt_suggestions();
+            }
             Action::PromptMoveLeft => {
                 if let Some(prompt) = self.prompt_mut() {
                     prompt.clear_selection();

@@ -218,6 +218,7 @@ pub enum Action {
     PromptConfirm,
     PromptCancel,
     PromptBackspace,
+    PromptDelete,
     PromptMoveLeft,
     PromptMoveRight,
     PromptMoveStart,
@@ -895,6 +896,10 @@ impl KeybindingResolver {
             Action::PromptBackspace,
         );
         prompt_bindings.insert(
+            (KeyCode::Delete, KeyModifiers::empty()),
+            Action::PromptDelete,
+        );
+        prompt_bindings.insert(
             (KeyCode::Left, KeyModifiers::empty()),
             Action::PromptMoveLeft,
         );
@@ -1220,6 +1225,7 @@ impl KeybindingResolver {
             Action::PromptConfirm => "Confirm prompt".to_string(),
             Action::PromptCancel => "Cancel prompt".to_string(),
             Action::PromptBackspace => "Prompt backspace".to_string(),
+            Action::PromptDelete => "Prompt delete".to_string(),
             Action::PromptMoveLeft => "Prompt move left".to_string(),
             Action::PromptMoveRight => "Prompt move right".to_string(),
             Action::PromptMoveStart => "Prompt move to start".to_string(),
