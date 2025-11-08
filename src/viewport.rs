@@ -318,14 +318,19 @@ impl Viewport {
                         // The actual cursor visual row is the line's start row plus which segment it's on
                         let cursor_visual_row = line_visual_row + segment_idx;
 
-                        let is_visible = cursor_line_number >= top_line_number && cursor_visual_row < visible_count;
+                        // Account for scroll_offset: cursor should maintain margin from edges
+                        // Valid range: scroll_offset <= cursor_visual_row < (visible_count - scroll_offset)
+                        let effective_offset = self.scroll_offset.min(visible_count / 2);
+                        let is_visible = cursor_line_number >= top_line_number
+                            && cursor_visual_row >= effective_offset
+                            && cursor_visual_row < (visible_count.saturating_sub(effective_offset));
 
                         tracing::debug!(
-                            "ensure_visible CACHE HIT: cursor_line={}, line_visual_row={}, segment_idx={}, cursor_visual_row={}, visible_count={}, is_visible={}",
-                            cursor_line_number, line_visual_row, segment_idx, cursor_visual_row, visible_count, is_visible
+                            "ensure_visible CACHE HIT: cursor_line={}, line_visual_row={}, segment_idx={}, cursor_visual_row={}, visible_count={}, effective_offset={}, is_visible={}",
+                            cursor_line_number, line_visual_row, segment_idx, cursor_visual_row, visible_count, effective_offset, is_visible
                         );
 
-                        // Cursor is visible if within viewport height
+                        // Cursor is visible if within viewport height with scroll offset margin
                         is_visible
                     })
                 } else {
@@ -365,13 +370,18 @@ impl Viewport {
                         // The cursor's actual visual row is visual_rows_from_top + segment_idx
                         let cursor_visual_row = visual_rows_from_top + segment_idx;
 
+                        // Account for scroll_offset: cursor should maintain margin from edges
+                        let effective_offset = self.scroll_offset.min(visible_count / 2);
+
                         tracing::debug!(
-                            "ensure_visible fallback: cursor_line={}, visual_rows_from_top={}, segment_idx={}, cursor_visual_row={}, visible_count={}",
-                            cursor_line_number, visual_rows_from_top, segment_idx, cursor_visual_row, visible_count
+                            "ensure_visible fallback: cursor_line={}, visual_rows_from_top={}, segment_idx={}, cursor_visual_row={}, visible_count={}, effective_offset={}",
+                            cursor_line_number, visual_rows_from_top, segment_idx, cursor_visual_row, visible_count, effective_offset
                         );
 
-                        // Check if cursor's actual position is visible
-                        return cursor_line_number >= top_line_number && cursor_visual_row < visible_count;
+                        // Check if cursor's actual position is visible with scroll offset margin
+                        return cursor_line_number >= top_line_number
+                            && cursor_visual_row >= effective_offset
+                            && cursor_visual_row < (visible_count.saturating_sub(effective_offset));
                     }
 
                     visual_rows_from_top += segments.len();
@@ -391,7 +401,10 @@ impl Viewport {
         } else {
             // Without wrapping, use logical line numbers (original behavior)
             let lines_from_top = cursor_line_number.saturating_sub(top_line_number);
-            cursor_line_number >= top_line_number && lines_from_top < visible_count
+            let effective_offset = self.scroll_offset.min(visible_count / 2);
+            cursor_line_number >= top_line_number
+                && lines_from_top >= effective_offset
+                && lines_from_top < (visible_count.saturating_sub(effective_offset))
         };
 
         // If cursor is not visible, scroll to make it visible
