@@ -162,49 +162,81 @@ impl StatusBarRenderer {
         // Use Ctrl+/ or ⌘+/ depending on platform
         let help_shortcut = format_keybinding(&KeyCode::Char('/'), &KeyModifiers::CONTROL);
         let help_indicator = format!("Help: {}", help_shortcut);
+        let padded_help = format!(" {} ", help_indicator);
 
-        // Calculate available width
+        // Calculate available width - always reserve space for help indicator
         let available_width = area.width as usize;
-        let left_len = left_status.len();
-        let right_len = help_indicator.len() + 2; // +2 for padding spaces
+        let help_width = padded_help.len();
 
-        // Build the status bar with left and right content
-        let mut spans = vec![
-            Span::styled(
+        // Only show help indicator if there's enough space (at least 15 chars for minimal display)
+        let mut spans = if available_width >= 15 {
+            // Reserve space for help indicator
+            let left_max_width = if available_width > help_width + 1 {
+                available_width - help_width - 1 // -1 for at least one space separator
+            } else {
+                1 // Minimal space
+            };
+
+            let mut spans = vec![];
+
+            // Truncate left status if it's too long
+            let displayed_left = if left_status.len() > left_max_width {
+                let truncate_at = left_max_width.saturating_sub(3); // -3 for "..."
+                if truncate_at > 0 {
+                    format!("{}...", &left_status[..truncate_at])
+                } else {
+                    String::from("...")
+                }
+            } else {
+                left_status.clone()
+            };
+
+            spans.push(Span::styled(
+                displayed_left.clone(),
+                Style::default()
+                    .fg(theme.status_bar_fg)
+                    .bg(theme.status_bar_bg),
+            ));
+
+            let displayed_left_len = displayed_left.len();
+
+            // Add spacing to push help indicator to the right
+            if displayed_left_len + help_width < available_width {
+                let padding_len = available_width - displayed_left_len - help_width;
+                spans.push(Span::styled(
+                    " ".repeat(padding_len),
+                    Style::default()
+                        .fg(theme.status_bar_fg)
+                        .bg(theme.status_bar_bg),
+                ));
+            } else if displayed_left_len < available_width {
+                // Add minimal space
+                spans.push(Span::styled(
+                    " ",
+                    Style::default()
+                        .fg(theme.status_bar_fg)
+                        .bg(theme.status_bar_bg),
+                ));
+            }
+
+            // Add help indicator with distinct styling and padding
+            spans.push(Span::styled(
+                padded_help,
+                Style::default()
+                    .fg(theme.help_indicator_fg)
+                    .bg(theme.help_indicator_bg),
+            ));
+
+            spans
+        } else {
+            // Terminal too narrow, just show left status without help indicator
+            vec![Span::styled(
                 left_status.clone(),
                 Style::default()
                     .fg(theme.status_bar_fg)
                     .bg(theme.status_bar_bg),
-            ),
-        ];
-
-        // Add spacing to push help indicator to the right
-        if left_len + right_len + 1 < available_width {
-            let padding_len = available_width - left_len - right_len;
-            spans.push(Span::styled(
-                " ".repeat(padding_len),
-                Style::default()
-                    .fg(theme.status_bar_fg)
-                    .bg(theme.status_bar_bg),
-            ));
-        } else {
-            // Not enough space, just add a single space
-            spans.push(Span::styled(
-                " ",
-                Style::default()
-                    .fg(theme.status_bar_fg)
-                    .bg(theme.status_bar_bg),
-            ));
-        }
-
-        // Add help indicator with distinct styling and padding
-        let padded_help = format!(" {} ", help_indicator);
-        spans.push(Span::styled(
-            padded_help,
-            Style::default()
-                .fg(theme.help_indicator_fg)
-                .bg(theme.help_indicator_bg),
-        ));
+            )]
+        };
 
         let status_line = Paragraph::new(Line::from(spans));
 
