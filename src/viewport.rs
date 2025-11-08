@@ -208,8 +208,8 @@ impl Viewport {
 
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {
-            // Position cursor at scroll_offset lines from top
-            let target_line_from_top = self.scroll_offset;
+            // Position cursor at center of viewport when jumping
+            let target_line_from_top = self.visible_line_count() / 2;
 
             // Move backwards from cursor to find the new top_byte
             let mut iter = buffer.line_iterator(cursor_line_start);
@@ -605,5 +605,52 @@ mod tests {
         // Verify cursor is within visible area
         let lines_from_top = cursor_line.saturating_sub(new_top_line);
         assert!(lines_from_top < vp.visible_line_count(), "Cursor should be within visible area");
+
+        // Verify cursor is centered (or close to center)
+        let expected_center = vp.visible_line_count() / 2;
+        assert!(
+            lines_from_top >= expected_center - 1 && lines_from_top <= expected_center + 1,
+            "Cursor should be centered in viewport, expected around {}, got {}",
+            expected_center,
+            lines_from_top
+        );
+    }
+
+    #[test]
+    fn test_ensure_visible_cursor_below_viewport_centers() {
+        // Create buffer with many lines
+        let mut buffer = Buffer::from_str("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20");
+        let mut vp = Viewport::new(80, 10); // 10 lines visible
+
+        // Start at top (line 1 visible)
+        assert_eq!(vp.top_byte, 0);
+
+        // Move cursor to line 15 (below viewport)
+        let mut iter = buffer.line_iterator(0);
+        let mut line_15_byte = 0;
+        for i in 0..15 {
+            if let Some((line_start, _)) = iter.next() {
+                if i == 14 {
+                    line_15_byte = line_start;
+                    break;
+                }
+            }
+        }
+        let cursor = Cursor::new(line_15_byte);
+
+        vp.ensure_visible(&mut buffer, &cursor);
+
+        // Verify cursor is centered
+        let new_top_line = buffer.get_line_number(vp.top_byte);
+        let cursor_line = buffer.get_line_number(line_15_byte);
+        let lines_from_top = cursor_line.saturating_sub(new_top_line);
+
+        let expected_center = vp.visible_line_count() / 2;
+        assert!(
+            lines_from_top >= expected_center - 1 && lines_from_top <= expected_center + 1,
+            "Cursor should be centered in viewport when jumping down, expected around {}, got {}",
+            expected_center,
+            lines_from_top
+        );
     }
 }
