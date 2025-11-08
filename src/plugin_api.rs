@@ -7,7 +7,6 @@ use crate::command_registry::CommandRegistry;
 use crate::commands::Command;
 use crate::event::BufferId;
 use crate::hooks::{HookCallback, HookRegistry};
-use crate::keybindings::Action;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -144,10 +143,6 @@ pub struct PluginApi {
 
     /// Snapshot of editor state (read-only for plugins)
     state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
-
-    /// On-demand buffer content cache (populated lazily, not on every frame)
-    /// Separate from snapshot to avoid copying all buffer contents on every update
-    buffer_content_cache: Arc<RwLock<HashMap<BufferId, String>>>,
 }
 
 impl PluginApi {
@@ -157,14 +152,12 @@ impl PluginApi {
         commands: Arc<RwLock<CommandRegistry>>,
         command_sender: std::sync::mpsc::Sender<PluginCommand>,
         state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
-        buffer_content_cache: Arc<RwLock<HashMap<BufferId, String>>>,
     ) -> Self {
         Self {
             hooks,
             commands,
             command_sender,
             state_snapshot,
-            buffer_content_cache,
         }
     }
 
@@ -263,33 +256,6 @@ impl PluginApi {
         snapshot.buffers.get(&buffer_id).cloned()
     }
 
-    /// Get the content of a specific buffer
-    /// Note: Content is cached on-demand, not pre-populated on every frame.
-    /// The editor updates this cache when buffer content is modified.
-    pub fn get_buffer_content(&self, buffer_id: BufferId) -> Option<String> {
-        let cache = self.buffer_content_cache.read().unwrap();
-        cache.get(&buffer_id).cloned()
-    }
-
-    /// Get a specific line from a buffer (1-indexed line number)
-    pub fn get_line(&self, buffer_id: BufferId, line_num: usize) -> Option<String> {
-        let cache = self.buffer_content_cache.read().unwrap();
-        let content = cache.get(&buffer_id)?;
-
-        // Line numbers are 1-indexed for the API
-        if line_num == 0 {
-            return None;
-        }
-
-        content.lines().nth(line_num - 1).map(|s| s.to_string())
-    }
-
-    /// Get the buffer content cache for editor updates
-    /// This allows the editor to populate the cache when buffers change
-    pub fn buffer_content_cache(&self) -> Arc<RwLock<HashMap<BufferId, String>>> {
-        Arc::clone(&self.buffer_content_cache)
-    }
-
     /// Get all buffer IDs
     pub fn list_buffers(&self) -> Vec<BufferInfo> {
         let snapshot = self.state_snapshot.read().unwrap();
@@ -327,7 +293,6 @@ impl Clone for PluginApi {
             commands: Arc::clone(&self.commands),
             command_sender: self.command_sender.clone(),
             state_snapshot: Arc::clone(&self.state_snapshot),
-            buffer_content_cache: Arc::clone(&self.buffer_content_cache),
         }
     }
 }
@@ -342,9 +307,8 @@ mod tests {
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let (tx, _rx) = std::sync::mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
 
-        let api = PluginApi::new(hooks, commands, tx, state_snapshot, buffer_content_cache);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         // Should not panic
         let _clone = api.clone();
@@ -356,9 +320,8 @@ mod tests {
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let (tx, _rx) = std::sync::mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
 
-        let api = PluginApi::new(hooks.clone(), commands, tx, state_snapshot, buffer_content_cache);
+        let api = PluginApi::new(hooks.clone(), commands, tx, state_snapshot);
 
         api.register_hook("test-hook", Box::new(|_| true));
 
@@ -367,37 +330,13 @@ mod tests {
     }
 
     #[test]
-    fn test_register_command() {
-        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
-        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
-
-        let api = PluginApi::new(hooks, commands.clone(), tx, state_snapshot, buffer_content_cache);
-
-        let command = Command {
-            name: "Test Command".to_string(),
-            description: "A test".to_string(),
-            action: Action::None,
-            contexts: vec![],
-        };
-
-        api.register_command(command);
-
-        let cmd_registry = commands.read().unwrap();
-        assert_eq!(cmd_registry.plugin_command_count(), 1);
-    }
-
-    #[test]
     fn test_send_command() {
         let hooks = Arc::new(RwLock::new(HookRegistry::new()));
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let (tx, rx) = std::sync::mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
 
-        let api = PluginApi::new(hooks, commands, tx, state_snapshot, buffer_content_cache);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         let result = api.insert_text(BufferId(1), 0, "test".to_string());
         assert!(result.is_ok());
@@ -426,9 +365,8 @@ mod tests {
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let (tx, rx) = std::sync::mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
 
-        let api = PluginApi::new(hooks, commands, tx, state_snapshot, buffer_content_cache);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         let result = api.add_overlay(
             BufferId(1),
@@ -464,9 +402,8 @@ mod tests {
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let (tx, rx) = std::sync::mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
 
-        let api = PluginApi::new(hooks, commands, tx, state_snapshot, buffer_content_cache);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         let result = api.set_status("Test status".to_string());
         assert!(result.is_ok());
@@ -493,8 +430,7 @@ mod tests {
             snapshot.active_buffer_id = BufferId(5);
         }
 
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
-        let api = PluginApi::new(hooks, commands, tx, state_snapshot, buffer_content_cache);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         let active_id = api.get_active_buffer_id();
         assert_eq!(active_id.0, 5);
@@ -519,8 +455,7 @@ mod tests {
             snapshot.buffers.insert(BufferId(1), buffer_info);
         }
 
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
-        let api = PluginApi::new(hooks, commands, tx, state_snapshot, buffer_content_cache);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         let info = api.get_buffer_info(BufferId(1));
         assert!(info.is_some());
@@ -536,62 +471,6 @@ mod tests {
         // Non-existent buffer
         let no_info = api.get_buffer_info(BufferId(999));
         assert!(no_info.is_none());
-    }
-
-    #[test]
-    fn test_get_buffer_content() {
-        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
-        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
-
-        // Add buffer content to cache
-        {
-            let mut cache = buffer_content_cache.write().unwrap();
-            cache.insert(BufferId(1), "Hello, World!\nLine 2\nLine 3".to_string());
-        }
-
-        let api = PluginApi::new(hooks, commands, tx, state_snapshot, buffer_content_cache);
-
-        let content = api.get_buffer_content(BufferId(1));
-        assert!(content.is_some());
-        assert_eq!(content.unwrap(), "Hello, World!\nLine 2\nLine 3");
-
-        // Non-existent buffer
-        let no_content = api.get_buffer_content(BufferId(999));
-        assert!(no_content.is_none());
-    }
-
-    #[test]
-    fn test_get_line() {
-        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
-        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
-
-        // Add buffer content to cache
-        {
-            let mut cache = buffer_content_cache.write().unwrap();
-            cache.insert(BufferId(1), "Line 1\nLine 2\nLine 3".to_string());
-        }
-
-        let api = PluginApi::new(hooks, commands, tx, state_snapshot, buffer_content_cache);
-
-        // Test 1-indexed line access
-        assert_eq!(api.get_line(BufferId(1), 1).unwrap(), "Line 1");
-        assert_eq!(api.get_line(BufferId(1), 2).unwrap(), "Line 2");
-        assert_eq!(api.get_line(BufferId(1), 3).unwrap(), "Line 3");
-
-        // Line 0 should return None (0 is invalid)
-        assert!(api.get_line(BufferId(1), 0).is_none());
-
-        // Out of range line
-        assert!(api.get_line(BufferId(1), 10).is_none());
-
-        // Non-existent buffer
-        assert!(api.get_line(BufferId(999), 1).is_none());
     }
 
     #[test]
@@ -633,8 +512,7 @@ mod tests {
             );
         }
 
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
-        let api = PluginApi::new(hooks, commands, tx, state_snapshot, buffer_content_cache);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         let buffers = api.list_buffers();
         assert_eq!(buffers.len(), 3);
@@ -661,8 +539,7 @@ mod tests {
             });
         }
 
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
-        let api = PluginApi::new(hooks, commands, tx, state_snapshot, buffer_content_cache);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         let cursor = api.get_primary_cursor();
         assert!(cursor.is_some());
@@ -697,8 +574,7 @@ mod tests {
             ];
         }
 
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
-        let api = PluginApi::new(hooks, commands, tx, state_snapshot, buffer_content_cache);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         let cursors = api.get_all_cursors();
         assert_eq!(cursors.len(), 3);
@@ -728,8 +604,7 @@ mod tests {
             });
         }
 
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
-        let api = PluginApi::new(hooks, commands, tx, state_snapshot, buffer_content_cache);
+        let api = PluginApi::new(hooks, commands, tx, state_snapshot);
 
         let viewport = api.get_viewport();
         assert!(viewport.is_some());

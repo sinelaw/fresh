@@ -86,16 +86,12 @@ impl PluginManager {
         // Create editor state snapshot for query API
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
 
-        // Create buffer content cache (populated on-demand, not on every frame)
-        let buffer_content_cache = Arc::new(RwLock::new(HashMap::new()));
-
         // Create plugin API
         let plugin_api = PluginApi::new(
             Arc::clone(&hooks),
             Arc::clone(&commands),
             command_sender,
             Arc::clone(&state_snapshot),
-            Arc::clone(&buffer_content_cache),
         );
 
         // Set up Lua globals and bindings
@@ -320,24 +316,6 @@ impl PluginManager {
             Ok(buffer_id.0)
         })?;
         editor.set("get_active_buffer_id", get_active_buffer_id)?;
-
-        // Clone API for next closure
-        let api_clone = api.clone();
-
-        // editor.get_buffer_content(buffer_id) - Get the full content of a buffer
-        let get_buffer_content = lua.create_function(move |_, buffer_id: usize| {
-            Ok(api_clone.get_buffer_content(BufferId(buffer_id)))
-        })?;
-        editor.set("get_buffer_content", get_buffer_content)?;
-
-        // Clone API for next closure
-        let api_clone = api.clone();
-
-        // editor.get_line(buffer_id, line_num) - Get a specific line from a buffer (1-indexed)
-        let get_line = lua.create_function(move |_, (buffer_id, line_num): (usize, usize)| {
-            Ok(api_clone.get_line(BufferId(buffer_id), line_num))
-        })?;
-        editor.set("get_line", get_line)?;
 
         // Clone API for next closure
         let api_clone = api.clone();
@@ -797,10 +775,6 @@ impl PluginManager {
         self.plugin_api.state_snapshot_handle()
     }
 
-    /// Get access to the buffer content cache for updating (used by Editor)
-    pub fn buffer_content_cache(&self) -> Arc<RwLock<HashMap<BufferId, String>>> {
-        self.plugin_api.buffer_content_cache()
-    }
 }
 
 #[cfg(test)]
@@ -1071,45 +1045,6 @@ mod tests {
         let result = manager.eval("return editor.get_active_buffer_id()");
         assert!(result.is_ok());
         assert!(result.unwrap().contains("42"));
-    }
-
-    #[test]
-    fn test_get_buffer_content_from_lua() {
-        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
-        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
-        let manager = PluginManager::new(hooks, commands).unwrap();
-
-        // Set up buffer content cache
-        {
-            let cache_handle = manager.buffer_content_cache();
-            let mut cache = cache_handle.write().unwrap();
-            cache.insert(BufferId(1), "Test content".to_string());
-        }
-
-        let result = manager.eval("return editor.get_buffer_content(1)");
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.contains("Test content"), "Output: {}", output);
-    }
-
-    #[test]
-    fn test_get_line_from_lua() {
-        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
-        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
-        let manager = PluginManager::new(hooks, commands).unwrap();
-
-        // Set up buffer content cache
-        {
-            let cache_handle = manager.buffer_content_cache();
-            let mut cache = cache_handle.write().unwrap();
-            cache.insert(BufferId(1), "Line 1\nLine 2\nLine 3".to_string());
-        }
-
-        // Test getting line 2 (1-indexed)
-        let result = manager.eval("return editor.get_line(1, 2)");
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.contains("Line 2"), "Output: {}", output);
     }
 
     #[test]

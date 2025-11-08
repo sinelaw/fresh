@@ -2036,17 +2036,23 @@ impl Editor {
             }
         }
 
-        // Update plugin state snapshot before processing commands
-        self.update_plugin_state_snapshot();
-
-        // Process plugin commands
+        // Process plugin commands and update snapshot only if commands were processed
+        let mut processed_any_commands = false;
         if let Some(ref mut manager) = self.plugin_manager {
             let commands = manager.process_commands();
-            for command in commands {
-                if let Err(e) = self.handle_plugin_command(command) {
-                    tracing::error!("Error handling plugin command: {}", e);
+            if !commands.is_empty() {
+                processed_any_commands = true;
+                for command in commands {
+                    if let Err(e) = self.handle_plugin_command(command) {
+                        tracing::error!("Error handling plugin command: {}", e);
+                    }
                 }
             }
+        }
+
+        // Only update snapshot if commands were processed (which may have modified buffers)
+        if processed_any_commands {
+            self.update_plugin_state_snapshot();
         }
     }
 
@@ -2074,15 +2080,19 @@ impl Editor {
                 snapshot.buffers.insert(*buffer_id, buffer_info);
             }
 
-            // Update buffer content cache (separate from snapshot)
-            // OPTIMIZATION: Only cache the active buffer to avoid copying large strings
-            // This avoids the massive performance hit of copying all buffer contents on every update
-            let cache_handle = manager.buffer_content_cache();
-            let mut cache = cache_handle.write().unwrap();
-            cache.clear();
-            if let Some(active_state) = self.buffers.get(&self.active_buffer) {
-                cache.insert(self.active_buffer, active_state.buffer.to_string());
-            }
+            // TODO: Buffer content cache was removed due to fundamental performance issues.
+            //
+            // The previous implementation called buffer.to_string() on every update, which:
+            // - Copies the entire buffer (expensive for large files - 61MB took 3.9 seconds!)
+            // - Happened multiple times per keystroke (once per event, once in process_async_messages)
+            //
+            // If we ever need a buffer cache for plugins, it MUST update incrementally:
+            // - Listen to Insert/Delete/Batch events and apply them to the cached string
+            // - Avoid calling buffer.to_string() except on initial cache population
+            // - This way, text insertion propagates as events to both the buffer AND the cache
+            //
+            // For now, plugins can call get_buffer_content() which will fetch on-demand.
+            // This is acceptable since plugins typically don't need full buffer content often.
 
             // Update cursor information for active buffer
             if let Some(active_state) = self.buffers.get(&self.active_buffer) {
@@ -3041,6 +3051,8 @@ impl Editor {
 
         use std::path::Path;
 
+        let _t_total = std::time::Instant::now();
+
         tracing::debug!(
             "Editor.handle_key: code={:?}, modifiers={:?}",
             code,
@@ -3728,6 +3740,7 @@ impl Editor {
                 // Convert action to events and apply them
                 // Get description before moving action
                 let action_description = format!("{:?}", action);
+
                 if let Some(events) = self.action_to_events(action) {
                     // Wrap multiple events (multi-cursor) in a Batch for atomic undo
                     if events.len() > 1 {
