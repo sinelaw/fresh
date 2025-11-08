@@ -3253,7 +3253,10 @@ impl Editor {
             }
             Action::PromptBackspace => {
                 if let Some(prompt) = self.prompt_mut() {
-                    if prompt.cursor_pos > 0 {
+                    // If there's a selection, delete it; otherwise delete one character backward
+                    if prompt.has_selection() {
+                        prompt.delete_selection();
+                    } else if prompt.cursor_pos > 0 {
                         let byte_pos = prompt.cursor_pos;
                         let mut char_start = byte_pos - 1;
                         while char_start > 0 && !prompt.input.is_char_boundary(char_start) {
@@ -3267,6 +3270,7 @@ impl Editor {
             }
             Action::PromptMoveLeft => {
                 if let Some(prompt) = self.prompt_mut() {
+                    prompt.clear_selection();
                     if prompt.cursor_pos > 0 {
                         let mut new_pos = prompt.cursor_pos - 1;
                         while new_pos > 0 && !prompt.input.is_char_boundary(new_pos) {
@@ -3278,6 +3282,7 @@ impl Editor {
             }
             Action::PromptMoveRight => {
                 if let Some(prompt) = self.prompt_mut() {
+                    prompt.clear_selection();
                     if prompt.cursor_pos < prompt.input.len() {
                         let mut new_pos = prompt.cursor_pos + 1;
                         while new_pos < prompt.input.len()
@@ -3291,11 +3296,13 @@ impl Editor {
             }
             Action::PromptMoveStart => {
                 if let Some(prompt) = self.prompt_mut() {
+                    prompt.clear_selection();
                     prompt.cursor_pos = 0;
                 }
             }
             Action::PromptMoveEnd => {
                 if let Some(prompt) = self.prompt_mut() {
+                    prompt.clear_selection();
                     prompt.cursor_pos = prompt.input.len();
                 }
             }
@@ -3374,18 +3381,35 @@ impl Editor {
             }
             Action::PromptCopy => {
                 if let Some(prompt) = &self.prompt {
-                    self.clipboard = prompt.get_text();
+                    // If there's a selection, copy selected text; otherwise copy entire input
+                    self.clipboard = if let Some(selected) = prompt.selected_text() {
+                        selected
+                    } else {
+                        prompt.get_text()
+                    };
                     self.set_status_message("Copied".to_string());
                 }
             }
             Action::PromptCut => {
-                // Get text first
-                let text = self.prompt.as_ref().map(|p| p.get_text()).unwrap_or_default();
+                // Get text first (selected or entire input)
+                let text = if let Some(prompt) = &self.prompt {
+                    if let Some(selected) = prompt.selected_text() {
+                        selected
+                    } else {
+                        prompt.get_text()
+                    }
+                } else {
+                    String::new()
+                };
                 // Update clipboard before taking mutable borrow
                 self.clipboard = text;
-                // Now clear the prompt
+                // Now cut the text (delete selection or clear entire input)
                 if let Some(prompt) = self.prompt_mut() {
-                    prompt.clear();
+                    if prompt.has_selection() {
+                        prompt.delete_selection();
+                    } else {
+                        prompt.clear();
+                    }
                 }
                 self.set_status_message("Cut".to_string());
                 self.update_prompt_suggestions();
@@ -3396,6 +3420,43 @@ impl Editor {
                     prompt.insert_str(&text);
                 }
                 self.update_prompt_suggestions();
+            }
+            // Prompt selection actions
+            Action::PromptMoveLeftSelecting => {
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.move_left_selecting();
+                }
+            }
+            Action::PromptMoveRightSelecting => {
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.move_right_selecting();
+                }
+            }
+            Action::PromptMoveHomeSelecting => {
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.move_home_selecting();
+                }
+            }
+            Action::PromptMoveEndSelecting => {
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.move_end_selecting();
+                }
+            }
+            Action::PromptSelectWordLeft => {
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.move_word_left_selecting();
+                }
+            }
+            Action::PromptSelectWordRight => {
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.move_word_right_selecting();
+                }
+            }
+            Action::PromptSelectAll => {
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.selection_anchor = Some(0);
+                    prompt.cursor_pos = prompt.input.len();
+                }
             }
 
             // Popup mode actions
@@ -3801,8 +3862,9 @@ impl Editor {
                 // Handle character insertion in prompt mode
                 } else if self.is_prompting() {
                     if let Some(prompt) = self.prompt_mut() {
-                        prompt.input.insert(prompt.cursor_pos, c);
-                        prompt.cursor_pos += c.len_utf8();
+                        // Use insert_str to properly handle selection deletion
+                        let s = c.to_string();
+                        prompt.insert_str(&s);
                     }
                     self.update_prompt_suggestions();
                 } else {

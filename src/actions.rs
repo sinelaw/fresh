@@ -811,6 +811,13 @@ pub fn action_to_events(
         | Action::PromptCopy
         | Action::PromptCut
         | Action::PromptPaste
+        | Action::PromptMoveLeftSelecting
+        | Action::PromptMoveRightSelecting
+        | Action::PromptMoveHomeSelecting
+        | Action::PromptMoveEndSelecting
+        | Action::PromptSelectWordLeft
+        | Action::PromptSelectWordRight
+        | Action::PromptSelectAll
         | Action::PopupSelectNext
         | Action::PopupSelectPrev
         | Action::PopupPageUp

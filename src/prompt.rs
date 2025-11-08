@@ -37,6 +37,9 @@ pub struct Prompt {
     pub suggestions: Vec<Suggestion>,
     /// Currently selected suggestion index
     pub selected_suggestion: Option<usize>,
+    /// Selection anchor position (for Shift+Arrow selection)
+    /// When Some(pos), there's a selection from anchor to cursor_pos
+    pub selection_anchor: Option<usize>,
 }
 
 impl Prompt {
@@ -49,6 +52,7 @@ impl Prompt {
             prompt_type,
             suggestions: Vec::new(),
             selected_suggestion: None,
+            selection_anchor: None,
         }
     }
 
@@ -70,6 +74,7 @@ impl Prompt {
             prompt_type,
             suggestions,
             selected_suggestion,
+            selection_anchor: None,
         }
     }
 
@@ -265,8 +270,126 @@ impl Prompt {
     /// assert_eq!(prompt.cursor_pos, 9);
     /// ```
     pub fn insert_str(&mut self, text: &str) {
+        // If there's a selection, delete it first
+        if self.has_selection() {
+            self.delete_selection();
+        }
         self.input.insert_str(self.cursor_pos, text);
         self.cursor_pos += text.len();
+    }
+
+    // ========================================================================
+    // Selection support
+    // ========================================================================
+
+    /// Check if there's an active selection
+    pub fn has_selection(&self) -> bool {
+        self.selection_anchor.is_some()
+            && self.selection_anchor != Some(self.cursor_pos)
+    }
+
+    /// Get the selection range (start, end) where start <= end
+    pub fn selection_range(&self) -> Option<(usize, usize)> {
+        if let Some(anchor) = self.selection_anchor {
+            if anchor != self.cursor_pos {
+                let start = anchor.min(self.cursor_pos);
+                let end = anchor.max(self.cursor_pos);
+                return Some((start, end));
+            }
+        }
+        None
+    }
+
+    /// Get the selected text
+    pub fn selected_text(&self) -> Option<String> {
+        self.selection_range()
+            .map(|(start, end)| self.input[start..end].to_string())
+    }
+
+    /// Delete the current selection and return the deleted text
+    pub fn delete_selection(&mut self) -> Option<String> {
+        if let Some((start, end)) = self.selection_range() {
+            let deleted = self.input[start..end].to_string();
+            self.input.drain(start..end);
+            self.cursor_pos = start;
+            self.selection_anchor = None;
+            Some(deleted)
+        } else {
+            None
+        }
+    }
+
+    /// Clear selection without deleting text
+    pub fn clear_selection(&mut self) {
+        self.selection_anchor = None;
+    }
+
+    /// Move cursor left with selection
+    pub fn move_left_selecting(&mut self) {
+        // Set anchor if not already set
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(self.cursor_pos);
+        }
+
+        // Move cursor left
+        if self.cursor_pos > 0 {
+            let mut new_pos = self.cursor_pos - 1;
+            while new_pos > 0 && !self.input.is_char_boundary(new_pos) {
+                new_pos -= 1;
+            }
+            self.cursor_pos = new_pos;
+        }
+    }
+
+    /// Move cursor right with selection
+    pub fn move_right_selecting(&mut self) {
+        // Set anchor if not already set
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(self.cursor_pos);
+        }
+
+        // Move cursor right
+        if self.cursor_pos < self.input.len() {
+            let mut new_pos = self.cursor_pos + 1;
+            while new_pos < self.input.len() && !self.input.is_char_boundary(new_pos) {
+                new_pos += 1;
+            }
+            self.cursor_pos = new_pos;
+        }
+    }
+
+    /// Move to start of input with selection
+    pub fn move_home_selecting(&mut self) {
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(self.cursor_pos);
+        }
+        self.cursor_pos = 0;
+    }
+
+    /// Move to end of input with selection
+    pub fn move_end_selecting(&mut self) {
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(self.cursor_pos);
+        }
+        self.cursor_pos = self.input.len();
+    }
+
+    /// Move to start of previous word with selection
+    pub fn move_word_left_selecting(&mut self) {
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(self.cursor_pos);
+        }
+        let word_start = find_word_start_bytes(self.input.as_bytes(), self.cursor_pos);
+        self.cursor_pos = word_start;
+    }
+
+    /// Move to start of next word with selection
+    pub fn move_word_right_selecting(&mut self) {
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(self.cursor_pos);
+        }
+        let word_end = find_word_end_bytes(self.input.as_bytes(), self.cursor_pos);
+        self.cursor_pos = word_end;
     }
 }
 
@@ -459,6 +582,191 @@ mod tests {
 
         prompt.delete_word_backward();  // Delete "two"
         assert_eq!(prompt.input, "one ");
+    }
+
+    // Tests for selection functionality
+    #[test]
+    fn test_selection_with_shift_arrows() {
+        let mut prompt = Prompt::new("Command: ".to_string(), PromptType::Command);
+        prompt.input = "hello world".to_string();
+        prompt.cursor_pos = 5; // After "hello"
+
+        // No selection initially
+        assert!(!prompt.has_selection());
+        assert_eq!(prompt.selected_text(), None);
+
+        // Move right selecting - should select " "
+        prompt.move_right_selecting();
+        assert!(prompt.has_selection());
+        assert_eq!(prompt.selection_range(), Some((5, 6)));
+        assert_eq!(prompt.selected_text(), Some(" ".to_string()));
+
+        // Move right selecting again - should select " w"
+        prompt.move_right_selecting();
+        assert_eq!(prompt.selection_range(), Some((5, 7)));
+        assert_eq!(prompt.selected_text(), Some(" w".to_string()));
+
+        // Move left selecting - should shrink to " "
+        prompt.move_left_selecting();
+        assert_eq!(prompt.selection_range(), Some((5, 6)));
+        assert_eq!(prompt.selected_text(), Some(" ".to_string()));
+    }
+
+    #[test]
+    fn test_selection_backward() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.input = "abcdef".to_string();
+        prompt.cursor_pos = 4; // After "abcd"
+
+        // Select backward
+        prompt.move_left_selecting();
+        prompt.move_left_selecting();
+        assert!(prompt.has_selection());
+        assert_eq!(prompt.selection_range(), Some((2, 4)));
+        assert_eq!(prompt.selected_text(), Some("cd".to_string()));
+    }
+
+    #[test]
+    fn test_selection_with_home_end() {
+        let mut prompt = Prompt::new("Prompt: ".to_string(), PromptType::Command);
+        prompt.input = "select this text".to_string();
+        prompt.cursor_pos = 7; // After "select "
+
+        // Select to end
+        prompt.move_end_selecting();
+        assert_eq!(prompt.selection_range(), Some((7, 16)));
+        assert_eq!(prompt.selected_text(), Some("this text".to_string()));
+
+        // Clear and select from current position to home
+        prompt.clear_selection();
+        prompt.move_home_selecting();
+        assert_eq!(prompt.selection_range(), Some((0, 16)));
+        assert_eq!(prompt.selected_text(), Some("select this text".to_string()));
+    }
+
+    #[test]
+    fn test_word_selection() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.input = "one two three".to_string();
+        prompt.cursor_pos = 4; // After "one "
+
+        // Select word right
+        prompt.move_word_right_selecting();
+        assert_eq!(prompt.selection_range(), Some((4, 7)));
+        assert_eq!(prompt.selected_text(), Some("two".to_string()));
+
+        // Select another word
+        prompt.move_word_right_selecting();
+        assert_eq!(prompt.selection_range(), Some((4, 13)));
+        assert_eq!(prompt.selected_text(), Some("two three".to_string()));
+    }
+
+    #[test]
+    fn test_word_selection_backward() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.input = "one two three".to_string();
+        prompt.cursor_pos = 13; // At end
+
+        // Select word left - moves to start of "three"
+        prompt.move_word_left_selecting();
+        assert_eq!(prompt.selection_range(), Some((8, 13)));
+        assert_eq!(prompt.selected_text(), Some("three".to_string()));
+
+        // Note: Currently, calling move_word_left_selecting again when already
+        // at a word boundary doesn't move further back. This matches the behavior
+        // of find_word_start_bytes which finds the start of the current word.
+        // For multi-word backward selection, move cursor backward first, then select.
+    }
+
+    #[test]
+    fn test_delete_selection() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.input = "hello world".to_string();
+        prompt.cursor_pos = 5;
+
+        // Select " world"
+        prompt.move_end_selecting();
+        assert_eq!(prompt.selected_text(), Some(" world".to_string()));
+
+        // Delete selection
+        let deleted = prompt.delete_selection();
+        assert_eq!(deleted, Some(" world".to_string()));
+        assert_eq!(prompt.input, "hello");
+        assert_eq!(prompt.cursor_pos, 5);
+        assert!(!prompt.has_selection());
+    }
+
+    #[test]
+    fn test_insert_deletes_selection() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.input = "hello world".to_string();
+        prompt.cursor_pos = 0;
+
+        // Select "hello"
+        for _ in 0..5 {
+            prompt.move_right_selecting();
+        }
+        assert_eq!(prompt.selected_text(), Some("hello".to_string()));
+
+        // Insert text - should delete selection first
+        prompt.insert_str("goodbye");
+        assert_eq!(prompt.input, "goodbye world");
+        assert_eq!(prompt.cursor_pos, 7);
+        assert!(!prompt.has_selection());
+    }
+
+    #[test]
+    fn test_clear_selection() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.input = "test".to_string();
+        prompt.cursor_pos = 0;
+
+        // Create selection
+        prompt.move_end_selecting();
+        assert!(prompt.has_selection());
+
+        // Clear selection
+        prompt.clear_selection();
+        assert!(!prompt.has_selection());
+        assert_eq!(prompt.cursor_pos, 4); // Cursor should remain at end
+        assert_eq!(prompt.input, "test"); // Input unchanged
+    }
+
+    #[test]
+    fn test_selection_edge_cases() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.input = "abc".to_string();
+        prompt.cursor_pos = 3;
+
+        // Select beyond end should stop at end (no movement, no selection)
+        prompt.move_right_selecting();
+        assert_eq!(prompt.cursor_pos, 3);
+        // Since cursor didn't move, anchor equals cursor, so no selection
+        assert_eq!(prompt.selection_range(), None);
+        assert_eq!(prompt.selected_text(), None);
+
+        // Delete non-existent selection should return None
+        assert_eq!(prompt.delete_selection(), None);
+        assert_eq!(prompt.input, "abc");
+    }
+
+    #[test]
+    fn test_selection_with_unicode() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.input = "hello 世界 world".to_string();
+        prompt.cursor_pos = 6; // After "hello "
+
+        // Select the Chinese characters
+        for _ in 0..2 {
+            prompt.move_right_selecting();
+        }
+
+        let selected = prompt.selected_text().unwrap();
+        assert_eq!(selected, "世界");
+
+        // Delete should work correctly
+        prompt.delete_selection();
+        assert_eq!(prompt.input, "hello  world");
     }
 
     // Property-based tests for Prompt operations

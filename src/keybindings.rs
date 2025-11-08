@@ -233,6 +233,14 @@ pub enum Action {
     PromptCopy,
     PromptCut,
     PromptPaste,
+    // Prompt selection actions
+    PromptMoveLeftSelecting,
+    PromptMoveRightSelecting,
+    PromptMoveHomeSelecting,
+    PromptMoveEndSelecting,
+    PromptSelectWordLeft,
+    PromptSelectWordRight,
+    PromptSelectAll,
 
     // Popup mode actions
     PopupSelectNext,
@@ -946,6 +954,35 @@ impl KeybindingResolver {
             (KeyCode::Char('v'), KeyModifiers::CONTROL),
             Action::PromptPaste,
         );
+        // Selection operations
+        prompt_bindings.insert(
+            (KeyCode::Left, KeyModifiers::SHIFT),
+            Action::PromptMoveLeftSelecting,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Right, KeyModifiers::SHIFT),
+            Action::PromptMoveRightSelecting,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Home, KeyModifiers::SHIFT),
+            Action::PromptMoveHomeSelecting,
+        );
+        prompt_bindings.insert(
+            (KeyCode::End, KeyModifiers::SHIFT),
+            Action::PromptMoveEndSelecting,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Left, KeyModifiers::SHIFT | KeyModifiers::CONTROL),
+            Action::PromptSelectWordLeft,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Right, KeyModifiers::SHIFT | KeyModifiers::CONTROL),
+            Action::PromptSelectWordRight,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Char('a'), KeyModifiers::CONTROL),
+            Action::PromptSelectAll,
+        );
         all_bindings.insert(KeyContext::Prompt, prompt_bindings);
 
         // Popup context bindings
@@ -1197,6 +1234,13 @@ impl KeybindingResolver {
             Action::PromptCopy => "Prompt copy".to_string(),
             Action::PromptCut => "Prompt cut".to_string(),
             Action::PromptPaste => "Prompt paste".to_string(),
+            Action::PromptMoveLeftSelecting => "Prompt move left selecting".to_string(),
+            Action::PromptMoveRightSelecting => "Prompt move right selecting".to_string(),
+            Action::PromptMoveHomeSelecting => "Prompt move to start selecting".to_string(),
+            Action::PromptMoveEndSelecting => "Prompt move to end selecting".to_string(),
+            Action::PromptSelectWordLeft => "Prompt select word left".to_string(),
+            Action::PromptSelectWordRight => "Prompt select word right".to_string(),
+            Action::PromptSelectAll => "Prompt select all".to_string(),
             Action::PopupSelectNext => "Popup select next".to_string(),
             Action::PopupSelectPrev => "Popup select previous".to_string(),
             Action::PopupPageUp => "Popup page up".to_string(),
