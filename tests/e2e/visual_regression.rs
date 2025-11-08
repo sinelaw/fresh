@@ -1055,3 +1055,115 @@ fn visual_line_wrapping() {
         )
         .unwrap();
 }
+
+/// Test syntax highlighting for multiple languages
+#[test]
+fn visual_multi_language_highlighting() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 30).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    let mut flow = VisualFlow::new(
+        "Multi-Language Highlighting",
+        "Syntax Highlighting",
+        "Syntax highlighting working across multiple programming languages",
+    );
+
+    // Create test files for each language
+    let test_files = [
+        ("hello.java", include_str!("../fixtures/syntax_highlighting/hello.java")),
+        ("hello.php", include_str!("../fixtures/syntax_highlighting/hello.php")),
+        ("hello.rb", include_str!("../fixtures/syntax_highlighting/hello.rb")),
+        ("hello.sh", include_str!("../fixtures/syntax_highlighting/hello.sh")),
+    ];
+
+    for (filename, content) in &test_files {
+        fs::write(project_dir.join(filename), content).unwrap();
+    }
+
+    // Test Java highlighting
+    harness.open_file(project_dir.join("hello.java")).unwrap();
+    harness.render().unwrap();
+
+    // Verify multiple colors are present (indicating highlighting is working)
+    let buffer = harness.terminal_buffer();
+    let unique_colors = count_unique_colors(buffer);
+    assert!(
+        unique_colors >= 3,
+        "Java highlighting should use at least 3 different colors, found {}",
+        unique_colors
+    );
+
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "java_highlighting",
+            "Java code with syntax highlighting",
+        )
+        .unwrap();
+
+    // Test PHP highlighting
+    harness.open_file(project_dir.join("hello.php")).unwrap();
+    harness.render().unwrap();
+    let unique_colors = count_unique_colors(harness.terminal_buffer());
+    assert!(
+        unique_colors >= 3,
+        "PHP highlighting should use at least 3 different colors, found {}",
+        unique_colors
+    );
+
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "php_highlighting",
+            "PHP code with syntax highlighting",
+        )
+        .unwrap();
+
+    // Test Ruby highlighting
+    harness.open_file(project_dir.join("hello.rb")).unwrap();
+    harness.render().unwrap();
+    let unique_colors = count_unique_colors(harness.terminal_buffer());
+    assert!(
+        unique_colors >= 3,
+        "Ruby highlighting should use at least 3 different colors, found {}",
+        unique_colors
+    );
+
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "ruby_highlighting",
+            "Ruby code with syntax highlighting",
+        )
+        .unwrap();
+
+    // Test Bash highlighting
+    harness.open_file(project_dir.join("hello.sh")).unwrap();
+    harness.render().unwrap();
+    let unique_colors = count_unique_colors(harness.terminal_buffer());
+    assert!(
+        unique_colors >= 3,
+        "Bash highlighting should use at least 3 different colors, found {}",
+        unique_colors
+    );
+
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "bash_highlighting",
+            "Bash code with syntax highlighting",
+        )
+        .unwrap();
+}
+
+/// Helper to count unique foreground colors in a buffer (for verifying syntax highlighting)
+fn count_unique_colors(buffer: &ratatui::buffer::Buffer) -> usize {
+    use std::collections::HashSet;
+    let mut colors = HashSet::new();
+
+    for cell in buffer.content() {
+        colors.insert(cell.fg);
+    }
+
+    colors.len()
+}

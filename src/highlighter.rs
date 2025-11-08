@@ -39,6 +39,11 @@ pub enum Language {
     Cpp,
     Go,
     Json,
+    Java,
+    CSharp,
+    Php,
+    Ruby,
+    Bash,
     // Markdown,  // Disabled due to tree-sitter version conflict
 }
 
@@ -56,6 +61,11 @@ impl Language {
             "cpp" | "hpp" | "cc" | "hh" | "cxx" | "hxx" => Some(Language::Cpp),
             "go" => Some(Language::Go),
             "json" => Some(Language::Json),
+            "java" => Some(Language::Java),
+            "cs" => Some(Language::CSharp),
+            "php" => Some(Language::Php),
+            "rb" => Some(Language::Ruby),
+            "sh" | "bash" => Some(Language::Bash),
             // "md" => Some(Language::Markdown),  // Disabled
             _ => None,
         }
@@ -328,6 +338,138 @@ impl Language {
 
                 Ok(config)
             }
+            Language::Java => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_java::LANGUAGE.into(),
+                    "java",
+                    tree_sitter_java::HIGHLIGHTS_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create Java highlight config: {e}"))?;
+
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            Language::CSharp => {
+                // Note: tree-sitter-c-sharp doesn't export HIGHLIGHTS_QUERY
+                // Using empty query for now - basic parsing still works
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_c_sharp::LANGUAGE.into(),
+                    "c_sharp",
+                    "", // No HIGHLIGHTS_QUERY exported in 0.23.1
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create C# highlight config: {e}"))?;
+
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            Language::Php => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_php::LANGUAGE_PHP.into(),
+                    "php",
+                    tree_sitter_php::HIGHLIGHTS_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create PHP highlight config: {e}"))?;
+
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            Language::Ruby => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_ruby::LANGUAGE.into(),
+                    "ruby",
+                    tree_sitter_ruby::HIGHLIGHTS_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create Ruby highlight config: {e}"))?;
+
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
+            Language::Bash => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_bash::LANGUAGE.into(),
+                    "bash",
+                    tree_sitter_bash::HIGHLIGHT_QUERY, // Note: singular, not plural
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create Bash highlight config: {e}"))?;
+
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
+            }
             // Language::Markdown => {
             //     // Disabled due to tree-sitter version conflict
             //     Err("Markdown highlighting not available".to_string())
@@ -423,6 +565,34 @@ impl Language {
                 _ => Color::White,    // default
             },
             Language::Json => match index {
+                0 => Color::Cyan,     // attribute
+                1 => Color::DarkGray, // comment
+                2 => Color::Magenta,  // constant
+                3 => Color::Yellow,   // function
+                4 => Color::Red,      // keyword
+                5 => Color::Magenta,  // number
+                6 => Color::White,    // operator
+                7 => Color::Cyan,     // property
+                8 => Color::Green,    // string
+                9 => Color::Blue,     // type
+                10 => Color::White,   // variable
+                _ => Color::White,    // default
+            },
+            Language::Java | Language::CSharp => match index {
+                0 => Color::Cyan,     // attribute
+                1 => Color::DarkGray, // comment
+                2 => Color::Magenta,  // constant
+                3 => Color::Yellow,   // function
+                4 => Color::Red,      // keyword
+                5 => Color::Magenta,  // number
+                6 => Color::White,    // operator
+                7 => Color::Cyan,     // property
+                8 => Color::Green,    // string
+                9 => Color::Blue,     // type
+                10 => Color::White,   // variable
+                _ => Color::White,    // default
+            },
+            Language::Php | Language::Ruby | Language::Bash => match index {
                 0 => Color::Cyan,     // attribute
                 1 => Color::DarkGray, // comment
                 2 => Color::Magenta,  // constant
@@ -664,6 +834,24 @@ mod tests {
 
         let path = std::path::Path::new("test.json");
         assert!(matches!(Language::from_path(path), Some(Language::Json)));
+
+        let path = std::path::Path::new("test.java");
+        assert!(matches!(Language::from_path(path), Some(Language::Java)));
+
+        let path = std::path::Path::new("test.cs");
+        assert!(matches!(Language::from_path(path), Some(Language::CSharp)));
+
+        let path = std::path::Path::new("test.php");
+        assert!(matches!(Language::from_path(path), Some(Language::Php)));
+
+        let path = std::path::Path::new("test.rb");
+        assert!(matches!(Language::from_path(path), Some(Language::Ruby)));
+
+        let path = std::path::Path::new("test.sh");
+        assert!(matches!(Language::from_path(path), Some(Language::Bash)));
+
+        let path = std::path::Path::new("test.bash");
+        assert!(matches!(Language::from_path(path), Some(Language::Bash)));
 
         // Markdown disabled due to tree-sitter version conflict
         // let path = std::path::Path::new("test.md");
