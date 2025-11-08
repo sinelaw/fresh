@@ -3456,6 +3456,14 @@ impl Editor {
             }
             Action::ShowHelp => self.help_renderer.toggle(),
             Action::CommandPalette => {
+                // Toggle command palette: close if already open, otherwise open it
+                if let Some(prompt) = &self.prompt {
+                    if prompt.prompt_type == PromptType::Command {
+                        self.cancel_prompt();
+                        return Ok(());
+                    }
+                }
+
                 // Use the current context for filtering commands
                 let suggestions = self
                     .command_registry

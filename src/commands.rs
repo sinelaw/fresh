@@ -342,12 +342,8 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::ToggleLineWrap,
             contexts: vec![KeyContext::Normal],
         },
-        Command {
-            name: "Command Palette".to_string(),
-            description: "Open the command palette".to_string(),
-            action: Action::CommandPalette,
-            contexts: vec![KeyContext::Normal, KeyContext::FileExplorer],
-        },
+        // Note: Command Palette is intentionally not in the command list
+        // to avoid confusion when it's already open (use Ctrl+P or Ctrl+/ to toggle)
         // Git operations
         Command {
             name: "Git: Grep".to_string(),
