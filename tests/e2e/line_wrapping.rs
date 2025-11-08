@@ -735,11 +735,77 @@ fn test_cursor_stays_visible_when_moving_down() {
     }
 }
 
+/// Test cursor never disappears when pressing down in a real file
+/// This test specifically reproduces the issue where cursor goes off-screen
+#[test]
+fn test_cursor_never_disappears_pressing_down() {
+    use std::path::PathBuf;
+
+    // Use src/main.rs as a real-world test file
+    let file_path = PathBuf::from("src/main.rs");
+    if !file_path.exists() {
+        eprintln!("Skipping test: src/main.rs not found");
+        return;
+    }
+
+    // Terminal: 80 cols x 17 rows = 1 tab bar + 15 content lines + 1 status bar
+    // Content area is rows 1-15 (0-indexed from terminal top)
+    let mut harness = EditorTestHarness::new(80, 17).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Enable line wrapping
+    harness.editor_mut().active_state_mut().viewport.line_wrap_enabled = true;
+
+    // Set scroll offset to 3 (the default)
+    harness.editor_mut().active_state_mut().viewport.set_scroll_offset(3);
+
+    harness.render().unwrap();
+
+    // With 15 content rows and scroll_offset=3, cursor should stay within:
+    // - Minimum row: 1 + 3 = 4 (terminal coords)
+    // - Maximum row: 1 + 15 - 3 - 1 = 12 (terminal coords)
+    const MIN_CURSOR_ROW: u16 = 1;  // At least in content area
+    const MAX_CURSOR_ROW: u16 = 15; // At most in content area
+
+    // Press down 30 times and check cursor stays visible
+    for i in 0..30 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        let cursor_pos = harness.screen_cursor_position();
+        let screen = harness.screen_to_string();
+
+        eprintln!("After {} down presses: cursor at ({}, {})", i + 1, cursor_pos.0, cursor_pos.1);
+
+        // Check cursor Y is within content area bounds
+        assert!(
+            cursor_pos.1 >= MIN_CURSOR_ROW && cursor_pos.1 <= MAX_CURSOR_ROW,
+            "BUG: After {} down presses, cursor Y={} is outside content area [{}, {}]\n\
+            Cursor position: {:?}\nScreen:\n{}",
+            i + 1,
+            cursor_pos.1,
+            MIN_CURSOR_ROW,
+            MAX_CURSOR_ROW,
+            cursor_pos,
+            screen
+        );
+
+        // Additionally check cursor isn't at (0,0) which indicates off-screen rendering
+        if cursor_pos.0 == 0 && cursor_pos.1 == 0 {
+            panic!(
+                "BUG: After {} down presses, cursor rendered at (0,0)\n\
+                This typically means cursor is off-screen\nScreen:\n{}",
+                i + 1, screen
+            );
+        }
+    }
+}
+
 /// Test cursor visibility with wrapped lines
 #[test]
 fn test_cursor_visibility_with_wrapped_lines() {
     use tempfile::TempDir;
-    
+
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.txt");
 

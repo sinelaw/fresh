@@ -328,8 +328,10 @@ impl Viewport {
         let visual_rows_before_cursor_line = target_visual_row.saturating_sub(segment_idx);
 
         // Now count backwards from cursor line start, accumulating visual rows
+        // We need to be precise: find the line where accumulated rows >= target
         let mut iter = buffer.line_iterator(cursor_line_start);
         let mut visual_rows_counted = 0;
+        let mut last_valid_position = cursor_line_start;
 
         while visual_rows_counted < visual_rows_before_cursor_line {
             if iter.prev().is_none() {
@@ -341,11 +343,19 @@ impl Viewport {
             if let Some((_start, line_content)) = temp_iter.next() {
                 let line_text = line_content.trim_end_matches('\n');
                 let segments = wrap_line(line_text, &config);
-                visual_rows_counted += segments.len();
+                let next_count = visual_rows_counted + segments.len();
+
+                // If adding this line would overshoot, stop at last valid position
+                if next_count > visual_rows_before_cursor_line {
+                    break;
+                }
+
+                visual_rows_counted = next_count;
+                last_valid_position = line_start;
             }
         }
 
-        self.set_top_byte_with_limit(buffer, iter.current_position());
+        self.set_top_byte_with_limit(buffer, last_valid_position);
     }
 
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)
