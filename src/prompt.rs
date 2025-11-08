@@ -503,6 +503,34 @@ mod tests {
     }
 
     #[test]
+    fn test_delete_forward_basic() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.input = "hello".to_string();
+        prompt.cursor_pos = 1; // After 'h'
+
+        // Simulate delete key (remove 'e')
+        prompt.input.drain(prompt.cursor_pos..prompt.cursor_pos + 1);
+
+        assert_eq!(prompt.input, "hllo");
+        assert_eq!(prompt.cursor_pos, 1);
+    }
+
+    #[test]
+    fn test_delete_at_end() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.input = "hello".to_string();
+        prompt.cursor_pos = 5; // At end
+
+        // Delete at end should do nothing
+        if prompt.cursor_pos < prompt.input.len() {
+            prompt.input.drain(prompt.cursor_pos..prompt.cursor_pos + 1);
+        }
+
+        assert_eq!(prompt.input, "hello");
+        assert_eq!(prompt.cursor_pos, 5);
+    }
+
+    #[test]
     fn test_insert_str_at_start() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
         prompt.input = "world".to_string();

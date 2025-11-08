@@ -797,6 +797,7 @@ pub fn action_to_events(
         | Action::PromptConfirm
         | Action::PromptCancel
         | Action::PromptBackspace
+        | Action::PromptDelete
         | Action::PromptMoveLeft
         | Action::PromptMoveRight
         | Action::PromptMoveStart
