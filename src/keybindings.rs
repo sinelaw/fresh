@@ -227,6 +227,12 @@ pub enum Action {
     PromptPageUp,
     PromptPageDown,
     PromptAcceptSuggestion,
+    // Advanced prompt editing (word operations, clipboard)
+    PromptDeleteWordForward,
+    PromptDeleteWordBackward,
+    PromptCopy,
+    PromptCut,
+    PromptPaste,
 
     // Popup mode actions
     PopupSelectNext,
@@ -390,6 +396,11 @@ impl Action {
             "prompt_page_up" => Some(Action::PromptPageUp),
             "prompt_page_down" => Some(Action::PromptPageDown),
             "prompt_accept_suggestion" => Some(Action::PromptAcceptSuggestion),
+            "prompt_delete_word_forward" => Some(Action::PromptDeleteWordForward),
+            "prompt_delete_word_backward" => Some(Action::PromptDeleteWordBackward),
+            "prompt_copy" => Some(Action::PromptCopy),
+            "prompt_cut" => Some(Action::PromptCut),
+            "prompt_paste" => Some(Action::PromptPaste),
 
             "popup_select_next" => Some(Action::PopupSelectNext),
             "popup_select_prev" => Some(Action::PopupSelectPrev),
@@ -908,6 +919,28 @@ impl KeybindingResolver {
             (KeyCode::Tab, KeyModifiers::empty()),
             Action::PromptAcceptSuggestion,
         );
+        // Word deletion operations
+        prompt_bindings.insert(
+            (KeyCode::Backspace, KeyModifiers::CONTROL),
+            Action::PromptDeleteWordBackward,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Delete, KeyModifiers::CONTROL),
+            Action::PromptDeleteWordForward,
+        );
+        // Clipboard operations
+        prompt_bindings.insert(
+            (KeyCode::Char('c'), KeyModifiers::CONTROL),
+            Action::PromptCopy,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Char('x'), KeyModifiers::CONTROL),
+            Action::PromptCut,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Char('v'), KeyModifiers::CONTROL),
+            Action::PromptPaste,
+        );
         all_bindings.insert(KeyContext::Prompt, prompt_bindings);
 
         // Popup context bindings
@@ -1154,6 +1187,11 @@ impl KeybindingResolver {
             Action::PromptPageUp => "Prompt page up".to_string(),
             Action::PromptPageDown => "Prompt page down".to_string(),
             Action::PromptAcceptSuggestion => "Prompt accept suggestion".to_string(),
+            Action::PromptDeleteWordForward => "Prompt delete word forward".to_string(),
+            Action::PromptDeleteWordBackward => "Prompt delete word backward".to_string(),
+            Action::PromptCopy => "Prompt copy".to_string(),
+            Action::PromptCut => "Prompt cut".to_string(),
+            Action::PromptPaste => "Prompt paste".to_string(),
             Action::PopupSelectNext => "Popup select next".to_string(),
             Action::PopupSelectPrev => "Popup select previous".to_string(),
             Action::PopupPageUp => "Popup page up".to_string(),
