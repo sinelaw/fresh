@@ -134,21 +134,21 @@ fn test_state_eventlog_undo_redo() {
 
     assert_eq!(state.buffer.to_string(), "abc");
 
-    // Undo all - log.undo() returns the event at that position, we need to compute its inverse
+    // Undo all - log.undo() returns inverse events ready to apply
     while log.can_undo() {
-        if let Some(event) = log.undo() {
-            if let Some(inverse) = event.inverse() {
-                state.apply(&inverse);
-            }
+        let events = log.undo();
+        for event in events {
+            state.apply(&event);
         }
     }
 
     assert_eq!(state.buffer.to_string(), "");
 
-    // Redo all - log.redo() returns the original event to replay
+    // Redo all - log.redo() returns the original events to replay
     while log.can_redo() {
-        if let Some(event) = log.redo() {
-            state.apply(event);
+        let events = log.redo();
+        for event in events {
+            state.apply(&event);
         }
     }
 
@@ -181,10 +181,9 @@ fn test_undo_redo_cursor_positions() {
 
     // Undo twice (remove 'o' and 'l')
     for _ in 0..2 {
-        if let Some(event) = log.undo() {
-            if let Some(inverse) = event.inverse() {
-                state.apply(&inverse);
-            }
+        let events = log.undo();
+        for event in events {
+            state.apply(&event);
         }
     }
 
@@ -193,8 +192,9 @@ fn test_undo_redo_cursor_positions() {
 
     // Redo twice
     for _ in 0..2 {
-        if let Some(event) = log.redo() {
-            state.apply(event);
+        let events = log.redo();
+        for event in events {
+            state.apply(&event);
         }
     }
 
@@ -465,29 +465,28 @@ fn test_overlay_undo_redo() {
     // Verify overlay exists
     assert_eq!(state.overlays.at_position(2, &state.marker_list).len(), 1);
 
-    // Undo the overlay addition
-    log.undo();
-    let mut new_state = EditorState::new(80, 24);
-    for i in 0..log.current_index() {
-        if let Some(entry) = log.entries().get(i) {
-            new_state.apply(&entry.event);
-        }
+    // Undo - this should process AddOverlay (remove it) and undo the Insert
+    let undo_events = log.undo();
+    for event in &undo_events {
+        state.apply(event);
     }
 
-    // Overlay should be gone
-    assert_eq!(new_state.overlays.at_position(2, &new_state.marker_list).len(), 0);
+    // After undo: buffer should be empty, and overlay should be removed
+    assert_eq!(state.buffer.len(), 0);
+    assert_eq!(state.overlays.at_position(2, &state.marker_list).len(), 0);
+    assert!(!undo_events.is_empty(), "Should have returned events to undo");
 
-    // Redo
-    log.redo();
-    let mut final_state = EditorState::new(80, 24);
-    for i in 0..log.current_index() {
-        if let Some(entry) = log.entries().get(i) {
-            final_state.apply(&entry.event);
-        }
+    // Redo - should redo the Insert and re-add the overlay
+    let redo_events = log.redo();
+    for event in &redo_events {
+        state.apply(event);
     }
 
-    // Overlay should be back
-    assert_eq!(final_state.overlays.at_position(2, &final_state.marker_list).len(), 1);
+    // After redo: buffer is back and overlay should be back
+    assert_eq!(state.buffer.to_string(), "hello");
+    // Note: AddOverlay was redone, so overlay should be back
+    assert_eq!(state.overlays.at_position(2, &state.marker_list).len(), 1);
+    assert!(!redo_events.is_empty(), "Should have returned events to redo");
 }
 
 /// Test LSP diagnostic to overlay conversion
