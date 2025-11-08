@@ -3,6 +3,16 @@ use crate::cursor::Cursor;
 use crate::line_wrapping::{char_position_to_segment, wrap_line, WrapConfig};
 use std::collections::HashMap;
 
+/// Visibility status of the cursor relative to the viewport
+#[derive(Debug, PartialEq)]
+enum CursorVisibility {
+    Visible,
+    AboveViewport,
+    BelowViewport,
+    InViewportAboveMargin { visual_row: usize },
+    InViewportBelowMargin { visual_row: usize },
+}
+
 /// Cache of visual line positions for wrapped lines
 ///
 /// ## Architecture Decision: Visual Line Map
@@ -275,6 +285,69 @@ impl Viewport {
         self.set_top_byte_with_limit(buffer, iter.current_position());
     }
 
+    /// Scroll viewport to position cursor at a specific visual row
+    /// Used for minimal scrolling when cursor is just outside margins
+    fn scroll_to_visual_row(
+        &mut self,
+        buffer: &Buffer,
+        cursor_line_start: usize,
+        cursor_position: usize,
+        target_visual_row: usize,
+    ) {
+        if !self.line_wrap_enabled {
+            // Without wrapping, visual rows == logical lines, so just count backwards
+            let mut iter = buffer.line_iterator(cursor_line_start);
+            for _ in 0..target_visual_row {
+                if iter.prev().is_none() {
+                    break;
+                }
+            }
+            self.set_top_byte_with_limit(buffer, iter.current_position());
+            return;
+        }
+
+        // With line wrapping, need to count visual rows (wrapped segments)
+        let gutter_width = self.gutter_width(buffer);
+        let config = WrapConfig::new(self.width as usize, gutter_width, true);
+
+        // First, determine which segment the cursor is on within its line
+        let cursor_column = cursor_position.saturating_sub(cursor_line_start);
+        let mut line_iter = buffer.line_iterator(cursor_line_start);
+        let segment_idx = if let Some((_start, line_content)) = line_iter.next() {
+            let line_text = line_content.trim_end_matches('\n');
+            let segments = wrap_line(line_text, &config);
+            let (seg_idx, _) = char_position_to_segment(cursor_column, &segments);
+            seg_idx
+        } else {
+            0
+        };
+
+        // We want: cursor at visual row target_visual_row
+        // cursor_visual_row = (visual rows from top to cursor line start) + segment_idx
+        // So: visual rows from top to cursor line start = target_visual_row - segment_idx
+        let visual_rows_before_cursor_line = target_visual_row.saturating_sub(segment_idx);
+
+        // Now count backwards from cursor line start, accumulating visual rows
+        let mut iter = buffer.line_iterator(cursor_line_start);
+        let mut visual_rows_counted = 0;
+
+        while visual_rows_counted < visual_rows_before_cursor_line {
+            if iter.prev().is_none() {
+                break; // Hit start of buffer
+            }
+
+            let line_start = iter.current_position();
+            let mut temp_iter = buffer.line_iterator(line_start);
+            if let Some((_start, line_content)) = temp_iter.next() {
+                let line_text = line_content.trim_end_matches('\n');
+                let segments = wrap_line(line_text, &config);
+                visual_rows_counted += segments.len();
+            }
+        }
+
+        self.set_top_byte_with_limit(buffer, iter.current_position());
+    }
+
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)
     /// This now uses ONLY the LineCache - no manual line counting
     pub fn ensure_visible(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
@@ -288,10 +361,11 @@ impl Viewport {
 
         // Check if cursor line is visible
         let visible_count = self.visible_line_count();
+        let effective_offset = self.scroll_offset.min(visible_count / 2);
 
         // When line wrapping is enabled, we need to count visual rows (wrapped segments)
         // instead of logical lines, since one logical line can occupy multiple visual rows
-        let cursor_is_visible = if self.line_wrap_enabled {
+        let cursor_visibility = if self.line_wrap_enabled {
             // Try to use cached visual line map first (O(1) lookup vs O(n) iteration)
             // This cache is built during rendering and eliminates duplicate wrapping work
             let cache_result = if let Some(ref map) = self.visual_line_map {
@@ -318,20 +392,23 @@ impl Viewport {
                         // The actual cursor visual row is the line's start row plus which segment it's on
                         let cursor_visual_row = line_visual_row + segment_idx;
 
-                        // Account for scroll_offset: cursor should maintain margin from edges
-                        // Valid range: scroll_offset <= cursor_visual_row < (visible_count - scroll_offset)
-                        let effective_offset = self.scroll_offset.min(visible_count / 2);
-                        let is_visible = cursor_line_number >= top_line_number
-                            && cursor_visual_row >= effective_offset
-                            && cursor_visual_row < (visible_count.saturating_sub(effective_offset));
-
                         tracing::debug!(
-                            "ensure_visible CACHE HIT: cursor_line={}, line_visual_row={}, segment_idx={}, cursor_visual_row={}, visible_count={}, effective_offset={}, is_visible={}",
-                            cursor_line_number, line_visual_row, segment_idx, cursor_visual_row, visible_count, effective_offset, is_visible
+                            "ensure_visible CACHE HIT: cursor_line={}, line_visual_row={}, segment_idx={}, cursor_visual_row={}, visible_count={}, effective_offset={}",
+                            cursor_line_number, line_visual_row, segment_idx, cursor_visual_row, visible_count, effective_offset
                         );
 
-                        // Cursor is visible if within viewport height with scroll offset margin
-                        is_visible
+                        // Determine cursor visibility status
+                        if cursor_line_number < top_line_number {
+                            CursorVisibility::AboveViewport
+                        } else if cursor_visual_row < effective_offset {
+                            CursorVisibility::InViewportAboveMargin { visual_row: cursor_visual_row }
+                        } else if cursor_visual_row >= visible_count {
+                            CursorVisibility::BelowViewport
+                        } else if cursor_visual_row >= (visible_count.saturating_sub(effective_offset)) {
+                            CursorVisibility::InViewportBelowMargin { visual_row: cursor_visual_row }
+                        } else {
+                            CursorVisibility::Visible
+                        }
                     })
                 } else {
                     tracing::debug!("ensure_visible: cache INVALID (width={} vs {}, top_byte={} vs {})",
@@ -370,18 +447,23 @@ impl Viewport {
                         // The cursor's actual visual row is visual_rows_from_top + segment_idx
                         let cursor_visual_row = visual_rows_from_top + segment_idx;
 
-                        // Account for scroll_offset: cursor should maintain margin from edges
-                        let effective_offset = self.scroll_offset.min(visible_count / 2);
-
                         tracing::debug!(
                             "ensure_visible fallback: cursor_line={}, visual_rows_from_top={}, segment_idx={}, cursor_visual_row={}, visible_count={}, effective_offset={}",
                             cursor_line_number, visual_rows_from_top, segment_idx, cursor_visual_row, visible_count, effective_offset
                         );
 
-                        // Check if cursor's actual position is visible with scroll offset margin
-                        return cursor_line_number >= top_line_number
-                            && cursor_visual_row >= effective_offset
-                            && cursor_visual_row < (visible_count.saturating_sub(effective_offset));
+                        // Determine cursor visibility status
+                        return if cursor_line_number < top_line_number {
+                            CursorVisibility::AboveViewport
+                        } else if cursor_visual_row < effective_offset {
+                            CursorVisibility::InViewportAboveMargin { visual_row: cursor_visual_row }
+                        } else if cursor_visual_row >= visible_count {
+                            CursorVisibility::BelowViewport
+                        } else if cursor_visual_row >= (visible_count.saturating_sub(effective_offset)) {
+                            CursorVisibility::InViewportBelowMargin { visual_row: cursor_visual_row }
+                        } else {
+                            CursorVisibility::Visible
+                        };
                     }
 
                     visual_rows_from_top += segments.len();
@@ -395,48 +477,77 @@ impl Viewport {
                     cursor_line_number, top_line_number, visual_rows_from_top
                 );
 
-                // If we didn't find the cursor line in the iteration, it must be off-screen below
-                false
+                // If we didn't find the cursor line in the iteration, it must be off-screen
+                if cursor_line_number < top_line_number {
+                    CursorVisibility::AboveViewport
+                } else {
+                    CursorVisibility::BelowViewport
+                }
             })
         } else {
             // Without wrapping, use logical line numbers (original behavior)
             let lines_from_top = cursor_line_number.saturating_sub(top_line_number);
-            let effective_offset = self.scroll_offset.min(visible_count / 2);
-            cursor_line_number >= top_line_number
-                && lines_from_top >= effective_offset
-                && lines_from_top < (visible_count.saturating_sub(effective_offset))
+
+            if cursor_line_number < top_line_number {
+                CursorVisibility::AboveViewport
+            } else if lines_from_top < effective_offset {
+                CursorVisibility::InViewportAboveMargin { visual_row: lines_from_top }
+            } else if lines_from_top >= visible_count {
+                CursorVisibility::BelowViewport
+            } else if lines_from_top >= (visible_count.saturating_sub(effective_offset)) {
+                CursorVisibility::InViewportBelowMargin { visual_row: lines_from_top }
+            } else {
+                CursorVisibility::Visible
+            }
         };
 
-        // If cursor is not visible, scroll to make it visible
-        if !cursor_is_visible {
-            tracing::debug!(
-                "ensure_visible: cursor NOT VISIBLE, will scroll. cursor_line={}, top_line={}, old_top_byte={}",
-                cursor_line_number, top_line_number, self.top_byte
-            );
-
-            // Position cursor at center of viewport when jumping
-            let target_line_from_top = self.visible_line_count() / 2;
-
-            // Move backwards from cursor to find the new top_byte
-            let mut iter = buffer.line_iterator(cursor_line_start);
-
-            for _ in 0..target_line_from_top {
-                if iter.prev().is_none() {
-                    break; // Hit beginning of buffer
-                }
+        // Handle scrolling based on cursor visibility status
+        match cursor_visibility {
+            CursorVisibility::Visible => {
+                tracing::debug!("ensure_visible: cursor IS VISIBLE, no scroll needed");
             }
 
-            let new_top_byte = iter.current_position();
-            self.set_top_byte_with_limit(buffer, new_top_byte);
+            CursorVisibility::InViewportBelowMargin { visual_row } => {
+                // Cursor is in viewport but below the bottom margin
+                // Scroll down minimally to put cursor at bottom margin
+                tracing::debug!(
+                    "ensure_visible: cursor BELOW MARGIN at visual_row={}, scrolling minimally",
+                    visual_row
+                );
 
-            tracing::debug!(
-                "ensure_visible: SCROLLED from old_top_byte={} to requested={}, actual_top_byte={}",
-                self.top_byte, new_top_byte, self.top_byte
-            );
-        } else {
-            tracing::debug!(
-                "ensure_visible: cursor IS VISIBLE, no scroll needed"
-            );
+                let target_visual_row = visible_count.saturating_sub(effective_offset + 1);
+                self.scroll_to_visual_row(buffer, cursor_line_start, cursor.position, target_visual_row);
+            }
+
+            CursorVisibility::InViewportAboveMargin { visual_row } => {
+                // Cursor is in viewport but above the top margin
+                // Scroll up minimally to put cursor at top margin
+                tracing::debug!(
+                    "ensure_visible: cursor ABOVE MARGIN at visual_row={}, scrolling minimally",
+                    visual_row
+                );
+
+                self.scroll_to_visual_row(buffer, cursor_line_start, cursor.position, effective_offset);
+            }
+
+            CursorVisibility::AboveViewport | CursorVisibility::BelowViewport => {
+                // Cursor is completely out of viewport - center it
+                tracing::debug!(
+                    "ensure_visible: cursor OUT OF VIEWPORT ({}), centering",
+                    if matches!(cursor_visibility, CursorVisibility::AboveViewport) { "above" } else { "below" }
+                );
+
+                let target_line_from_top = self.visible_line_count() / 2;
+                let mut iter = buffer.line_iterator(cursor_line_start);
+
+                for _ in 0..target_line_from_top {
+                    if iter.prev().is_none() {
+                        break;
+                    }
+                }
+
+                self.set_top_byte_with_limit(buffer, iter.current_position());
+            }
         }
 
         // Horizontal scrolling - skip if line wrapping is enabled
