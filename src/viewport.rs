@@ -297,9 +297,29 @@ impl Viewport {
             let cache_result = if let Some(ref map) = self.visual_line_map {
                 if map.is_valid(self.width, self.top_byte) {
                     // FAST PATH: Use cached visual row position
-                    map.get(cursor_line_start).map(|visual_row| {
+                    map.get(cursor_line_start).map(|line_visual_row| {
+                        // Get the cursor's column within the line
+                        let cursor_column = cursor.position.saturating_sub(cursor_line_start);
+
+                        // Wrap the line to find which segment the cursor is on
+                        let gutter_width = self.gutter_width(buffer);
+                        let config = WrapConfig::new(self.width as usize, gutter_width, true);
+
+                        let mut line_iter = buffer.line_iterator(cursor_line_start);
+                        let line_text = if let Some((_start, content)) = line_iter.next() {
+                            content.trim_end_matches('\n').to_string()
+                        } else {
+                            String::new()
+                        };
+
+                        let segments = wrap_line(&line_text, &config);
+                        let (segment_idx, _col_in_segment) = char_position_to_segment(cursor_column, &segments);
+
+                        // The actual cursor visual row is the line's start row plus which segment it's on
+                        let cursor_visual_row = line_visual_row + segment_idx;
+
                         // Cursor is visible if within viewport height
-                        cursor_line_number >= top_line_number && visual_row < visible_count
+                        cursor_line_number >= top_line_number && cursor_visual_row < visible_count
                     })
                 } else {
                     None // Cache invalid (viewport scrolled or resized)
@@ -323,8 +343,18 @@ impl Viewport {
 
                 while let Some((line_start, line_content)) = iter.next() {
                     if line_start >= cursor_line_start {
-                        // We've reached the cursor line - don't count it yet
-                        break;
+                        // We've reached the cursor line
+                        // Calculate which segment the cursor is on within this line
+                        let cursor_column = cursor.position.saturating_sub(cursor_line_start);
+                        let line_text = line_content.trim_end_matches('\n');
+                        let segments = wrap_line(line_text, &config);
+                        let (segment_idx, _col_in_segment) = char_position_to_segment(cursor_column, &segments);
+
+                        // The cursor's actual visual row is visual_rows_from_top + segment_idx
+                        let cursor_visual_row = visual_rows_from_top + segment_idx;
+
+                        // Check if cursor's actual position is visible
+                        return cursor_line_number >= top_line_number && cursor_visual_row < visible_count;
                     }
 
                     // Count how many visual rows this line occupies
@@ -338,8 +368,8 @@ impl Viewport {
                     }
                 }
 
-                // Cursor is visible if it's not above viewport and visual rows fit within viewport
-                cursor_line_number >= top_line_number && visual_rows_from_top < visible_count
+                // If we didn't find the cursor line in the iteration, it must be off-screen below
+                false
             })
         } else {
             // Without wrapping, use logical line numbers (original behavior)
