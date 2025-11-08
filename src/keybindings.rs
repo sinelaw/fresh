@@ -2,6 +2,62 @@ use crate::config::Config;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
 
+/// Format a keybinding as a user-friendly string
+/// On macOS, this will show ⌘ instead of Ctrl for better UX
+pub fn format_keybinding(keycode: &KeyCode, modifiers: &KeyModifiers) -> String {
+    let mut result = String::new();
+
+    // On macOS, show ⌘ (Cmd) symbol instead of Ctrl for the Control modifier
+    // This provides a more native experience for Mac users
+    #[cfg(target_os = "macos")]
+    let ctrl_label = "⌘";
+    #[cfg(not(target_os = "macos"))]
+    let ctrl_label = "Ctrl";
+
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        result.push_str(ctrl_label);
+        result.push('+');
+    }
+    if modifiers.contains(KeyModifiers::ALT) {
+        #[cfg(target_os = "macos")]
+        let alt_label = "⌥";
+        #[cfg(not(target_os = "macos"))]
+        let alt_label = "Alt";
+        result.push_str(alt_label);
+        result.push('+');
+    }
+    if modifiers.contains(KeyModifiers::SHIFT) {
+        #[cfg(target_os = "macos")]
+        let shift_label = "⇧";
+        #[cfg(not(target_os = "macos"))]
+        let shift_label = "Shift";
+        result.push_str(shift_label);
+        result.push('+');
+    }
+
+    match keycode {
+        KeyCode::Enter => result.push_str("Enter"),
+        KeyCode::Backspace => result.push_str("Backspace"),
+        KeyCode::Delete => result.push_str("Del"),
+        KeyCode::Tab => result.push_str("Tab"),
+        KeyCode::Esc => result.push_str("Esc"),
+        KeyCode::Left => result.push_str("←"),
+        KeyCode::Right => result.push_str("→"),
+        KeyCode::Up => result.push_str("↑"),
+        KeyCode::Down => result.push_str("↓"),
+        KeyCode::Home => result.push_str("Home"),
+        KeyCode::End => result.push_str("End"),
+        KeyCode::PageUp => result.push_str("PgUp"),
+        KeyCode::PageDown => result.push_str("PgDn"),
+        KeyCode::Char(' ') => result.push_str("Space"),
+        KeyCode::Char(c) => result.push_str(&c.to_uppercase().to_string()),
+        KeyCode::F(n) => result.push_str(&format!("F{}", n)),
+        _ => return String::new(),
+    }
+
+    result
+}
+
 /// Context in which a keybinding is active
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyContext {
@@ -987,38 +1043,7 @@ impl KeybindingResolver {
 
     /// Format a key combination as a readable string
     fn format_key(key_code: KeyCode, modifiers: KeyModifiers) -> String {
-        let mut parts = Vec::new();
-
-        if modifiers.contains(KeyModifiers::CONTROL) {
-            parts.push("Ctrl");
-        }
-        if modifiers.contains(KeyModifiers::ALT) {
-            parts.push("Alt");
-        }
-        if modifiers.contains(KeyModifiers::SHIFT) {
-            parts.push("Shift");
-        }
-
-        let key_name = match key_code {
-            KeyCode::Char(c) => c.to_uppercase().to_string(),
-            KeyCode::Enter => "Enter".to_string(),
-            KeyCode::Tab => "Tab".to_string(),
-            KeyCode::Backspace => "Backspace".to_string(),
-            KeyCode::Delete => "Delete".to_string(),
-            KeyCode::Left => "Left".to_string(),
-            KeyCode::Right => "Right".to_string(),
-            KeyCode::Up => "Up".to_string(),
-            KeyCode::Down => "Down".to_string(),
-            KeyCode::Home => "Home".to_string(),
-            KeyCode::End => "End".to_string(),
-            KeyCode::PageUp => "PageUp".to_string(),
-            KeyCode::PageDown => "PageDown".to_string(),
-            KeyCode::Esc => "Esc".to_string(),
-            _ => format!("{key_code:?}"),
-        };
-
-        parts.push(&key_name);
-        parts.join("+")
+        format_keybinding(&key_code, &modifiers)
     }
 
     /// Format an action as a readable description
@@ -1157,47 +1182,6 @@ impl KeybindingResolver {
     /// Returns the first keybinding found (prioritizing custom bindings over defaults)
     /// Returns None if no binding is found
     pub fn get_keybinding_for_action(&self, action: &Action, context: KeyContext) -> Option<String> {
-        // Helper to format keybinding as string
-        let format_keybinding = |keycode: &KeyCode, modifiers: &KeyModifiers| -> String {
-            let mut parts = Vec::new();
-
-            if modifiers.contains(KeyModifiers::CONTROL) {
-                parts.push("Ctrl");
-            }
-            if modifiers.contains(KeyModifiers::ALT) {
-                parts.push("Alt");
-            }
-            if modifiers.contains(KeyModifiers::SHIFT) {
-                parts.push("Shift");
-            }
-
-            let key_str = match keycode {
-                KeyCode::Enter => "Enter",
-                KeyCode::Backspace => "Backspace",
-                KeyCode::Delete => "Del",
-                KeyCode::Tab => "Tab",
-                KeyCode::Esc => "Esc",
-                KeyCode::Left => "Left",
-                KeyCode::Right => "Right",
-                KeyCode::Up => "Up",
-                KeyCode::Down => "Down",
-                KeyCode::Home => "Home",
-                KeyCode::End => "End",
-                KeyCode::PageUp => "PgUp",
-                KeyCode::PageDown => "PgDn",
-                KeyCode::Char(' ') => "Space",
-                KeyCode::Char(c) => {
-                    let uppercase = c.to_uppercase().to_string();
-                    parts.push(&uppercase);
-                    return parts.join("+");
-                }
-                _ => return String::new(),
-            };
-
-            parts.push(key_str);
-            parts.join("+")
-        };
-
         // Check custom bindings first (higher priority)
         if let Some(context_bindings) = self.bindings.get(&context) {
             for ((keycode, modifiers), bound_action) in context_bindings {
