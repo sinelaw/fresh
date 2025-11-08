@@ -318,13 +318,23 @@ impl Viewport {
                         // The actual cursor visual row is the line's start row plus which segment it's on
                         let cursor_visual_row = line_visual_row + segment_idx;
 
+                        let is_visible = cursor_line_number >= top_line_number && cursor_visual_row < visible_count;
+
+                        tracing::debug!(
+                            "ensure_visible CACHE HIT: cursor_line={}, line_visual_row={}, segment_idx={}, cursor_visual_row={}, visible_count={}, is_visible={}",
+                            cursor_line_number, line_visual_row, segment_idx, cursor_visual_row, visible_count, is_visible
+                        );
+
                         // Cursor is visible if within viewport height
-                        cursor_line_number >= top_line_number && cursor_visual_row < visible_count
+                        is_visible
                     })
                 } else {
+                    tracing::debug!("ensure_visible: cache INVALID (width={} vs {}, top_byte={} vs {})",
+                        map.width, self.width, map.top_byte, self.top_byte);
                     None // Cache invalid (viewport scrolled or resized)
                 }
             } else {
+                tracing::debug!("ensure_visible: NO CACHE");
                 None // No cache yet
             };
 

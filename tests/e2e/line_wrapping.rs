@@ -859,3 +859,71 @@ fn test_cursor_visibility_with_cache_invalidation() {
         );
     }
 }
+
+/// Test with actual README.md file to reproduce the exact bug scenario
+#[test]
+fn test_cursor_visibility_with_readme() {
+    let readme_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/README_test.md");
+    
+    assert!(readme_path.exists(), "README_test.md should exist in tests/fixtures/");
+
+    // Terminal: 80 cols x 17 rows = 1 tab bar + 15 content lines + 1 status bar
+    // This exactly matches the user's reported scenario
+    let mut harness = EditorTestHarness::new(80, 17).unwrap();
+    harness.open_file(&readme_path).unwrap();
+
+    // Enable line wrapping
+    harness.editor_mut().active_state_mut().viewport.line_wrap_enabled = true;
+
+    harness.render().unwrap();
+
+    // Start at line 1
+    assert_eq!(harness.cursor_position(), 0);
+
+    // Move down 19 times to reach line 20
+    // After the first 14 moves (to line 15), viewport shows lines 1-15
+    // After 15th-18th moves (to lines 16-19), viewport should scroll
+    // The critical bug happens on the 19th move (line 19 -> 20)
+    for i in 1..=19 {
+        println!("\n=== Pressing Down (move {} from line {} to line {}) ===", i, i, i + 1);
+        
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        let cursor_pos = harness.screen_cursor_position();
+        let viewport_top = harness.editor().active_state().viewport.top_byte;
+
+        println!("Cursor position: {:?}", cursor_pos);
+        println!("Viewport top_byte: {}", viewport_top);
+
+        // Check if cursor is at (0,0) when it shouldn't be
+        let is_at_origin = cursor_pos.0 == 0 && cursor_pos.1 == 0;
+        
+        // Get the first line of the screen to see what's actually displayed
+        let first_line = screen.lines().next().unwrap_or("");
+        println!("First line of screen: {:?}", first_line);
+
+        // For the README, line 1 starts with "# Fresh"
+        let line_1_visible = first_line.contains("# Fresh") || first_line.contains("Fresh");
+
+        if is_at_origin && !line_1_visible {
+            // BUG REPRODUCED!
+            panic!(
+                "\n\n*** BUG REPRODUCED ***\n\
+                After {} down keypresses (should be on line {}):\n\
+                - Cursor rendered at origin (0,0)\n\
+                - But line 1 (# Fresh) is NOT visible\n\
+                - This means cursor is off-screen!\n\
+                \n\
+                First line of screen: {:?}\n\
+                \n\
+                Full screen:\n{}\n",
+                i, i + 1, first_line, screen
+            );
+        }
+    }
+
+    println!("\nTest completed without reproducing the bug.");
+}
