@@ -202,7 +202,9 @@ impl Viewport {
         let lines_from_top = cursor_line_number.saturating_sub(top_line_number);
 
         // Only scroll if cursor moves beyond the visible area (not within scroll_offset zone)
-        let cursor_is_visible = lines_from_top < visible_count;
+        // Must also check cursor is not above viewport (saturating_sub would make it appear at line 0)
+        let cursor_is_visible = cursor_line_number >= top_line_number
+            && lines_from_top < visible_count;
 
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {
@@ -560,5 +562,48 @@ mod tests {
         // x is column (horizontal), y is row (vertical)
         assert_eq!(x, 0); // Column 0 (start of line)
         assert_eq!(y, 1); // Row 1 (second line, since top_line is 0)
+    }
+
+    #[test]
+    fn test_ensure_visible_cursor_above_viewport() {
+        // Create buffer with many lines
+        let mut buffer = Buffer::from_str("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20");
+        let mut vp = Viewport::new(80, 10); // 10 lines visible
+
+        // Scroll down to show lines 10-19 (top_byte at line 10)
+        // scroll_to uses 1-based line numbers, so line 10 = argument 10
+        vp.scroll_to(&buffer, 10);
+        let old_top_byte = vp.top_byte;
+
+        // Verify we scrolled to around line 10
+        let top_line = buffer.get_line_number(vp.top_byte);
+        assert!(top_line >= 9, "Should have scrolled down to at least line 10");
+
+        // Now move cursor to line 5 (above the viewport)
+        let mut iter = buffer.line_iterator(0);
+        let mut line_5_byte = 0;
+        for i in 0..5 {
+            if let Some((line_start, _)) = iter.next() {
+                if i == 4 {
+                    line_5_byte = line_start;
+                    break;
+                }
+            }
+        }
+        let cursor = Cursor::new(line_5_byte);
+
+        // Before fix, this should fail because ensure_visible doesn't detect cursor is above viewport
+        vp.ensure_visible(&mut buffer, &cursor);
+
+        // Verify that viewport scrolled up to make cursor visible
+        // The viewport should now be positioned so cursor (line 5) is visible
+        let new_top_line = buffer.get_line_number(vp.top_byte);
+        let cursor_line = buffer.get_line_number(line_5_byte);
+        assert!(cursor_line >= new_top_line, "Cursor line should be at or below top of viewport");
+        assert!(new_top_line < top_line, "Viewport should have scrolled up from line {}", top_line);
+
+        // Verify cursor is within visible area
+        let lines_from_top = cursor_line.saturating_sub(new_top_line);
+        assert!(lines_from_top < vp.visible_line_count(), "Cursor should be within visible area");
     }
 }
