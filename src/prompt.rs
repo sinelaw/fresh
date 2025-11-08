@@ -379,8 +379,19 @@ impl Prompt {
         if self.selection_anchor.is_none() {
             self.selection_anchor = Some(self.cursor_pos);
         }
-        let word_start = find_word_start_bytes(self.input.as_bytes(), self.cursor_pos);
-        self.cursor_pos = word_start;
+
+        let bytes = self.input.as_bytes();
+        let mut new_pos = find_word_start_bytes(bytes, self.cursor_pos);
+
+        // If we didn't move (already at word start), move back one more word
+        if new_pos == self.cursor_pos && new_pos > 0 {
+            // Move back one character first
+            new_pos = new_pos.saturating_sub(1);
+            // Then find the word start from there
+            new_pos = find_word_start_bytes(bytes, new_pos);
+        }
+
+        self.cursor_pos = new_pos;
     }
 
     /// Move to start of next word with selection
@@ -388,6 +399,31 @@ impl Prompt {
         if self.selection_anchor.is_none() {
             self.selection_anchor = Some(self.cursor_pos);
         }
+
+        let bytes = self.input.as_bytes();
+        let mut new_pos = find_word_end_bytes(bytes, self.cursor_pos);
+
+        // If we didn't move (already at word end), move forward one more word
+        if new_pos == self.cursor_pos && new_pos < bytes.len() {
+            // Move forward one character first
+            new_pos = (new_pos + 1).min(bytes.len());
+            // Then find the word end from there
+            new_pos = find_word_end_bytes(bytes, new_pos);
+        }
+
+        self.cursor_pos = new_pos;
+    }
+
+    /// Move to start of previous word (without selection)
+    pub fn move_word_left(&mut self) {
+        self.clear_selection();
+        let word_start = find_word_start_bytes(self.input.as_bytes(), self.cursor_pos);
+        self.cursor_pos = word_start;
+    }
+
+    /// Move to start of next word (without selection)
+    pub fn move_word_right(&mut self) {
+        self.clear_selection();
         let word_end = find_word_end_bytes(self.input.as_bytes(), self.cursor_pos);
         self.cursor_pos = word_end;
     }
@@ -795,6 +831,29 @@ mod tests {
         // Delete should work correctly
         prompt.delete_selection();
         assert_eq!(prompt.input, "hello  world");
+    }
+
+    // BUG REPRODUCTION TESTS
+
+    /// Test that Ctrl+Shift+Left continues past first word boundary (was bug #2)
+    #[test]
+    fn test_word_selection_continues_across_words() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.input = "one two three".to_string();
+        prompt.cursor_pos = 13; // At end
+
+        // First Ctrl+Shift+Left - selects "three"
+        prompt.move_word_left_selecting();
+        assert_eq!(prompt.selection_range(), Some((8, 13)));
+        assert_eq!(prompt.selected_text(), Some("three".to_string()));
+
+        // Second Ctrl+Shift+Left - should extend to "two three"
+        // Now correctly moves back one more word when already at word boundary
+        prompt.move_word_left_selecting();
+
+        // Selection should extend to include "two three"
+        assert_eq!(prompt.selection_range(), Some((4, 13)));
+        assert_eq!(prompt.selected_text(), Some("two three".to_string()));
     }
 
     // Property-based tests for Prompt operations

@@ -807,6 +807,8 @@ pub fn action_to_events(
         | Action::PromptPageUp
         | Action::PromptPageDown
         | Action::PromptAcceptSuggestion
+        | Action::PromptMoveWordLeft
+        | Action::PromptMoveWordRight
         | Action::PromptDeleteWordForward
         | Action::PromptDeleteWordBackward
         | Action::PromptCopy
