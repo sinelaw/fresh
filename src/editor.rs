@@ -3381,6 +3381,16 @@ impl Editor {
                     }
                 }
             }
+            Action::PromptMoveWordLeft => {
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.move_word_left();
+                }
+            }
+            Action::PromptMoveWordRight => {
+                if let Some(prompt) = self.prompt_mut() {
+                    prompt.move_word_right();
+                }
+            }
             // Advanced prompt editing actions
             Action::PromptDeleteWordForward => {
                 if let Some(prompt) = self.prompt_mut() {

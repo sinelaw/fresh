@@ -67,8 +67,7 @@ impl StatusBarRenderer {
             if sel_start < sel_end {
                 let selection_style = Style::default()
                     .fg(theme.prompt_bg)
-                    .bg(theme.prompt_fg)
-                    .add_modifier(Modifier::REVERSED);
+                    .bg(theme.prompt_fg);
                 spans.push(Span::styled(input[sel_start..sel_end].to_string(), selection_style));
             }
 

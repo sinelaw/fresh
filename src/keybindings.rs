@@ -228,6 +228,8 @@ pub enum Action {
     PromptPageUp,
     PromptPageDown,
     PromptAcceptSuggestion,
+    PromptMoveWordLeft,
+    PromptMoveWordRight,
     // Advanced prompt editing (word operations, clipboard)
     PromptDeleteWordForward,
     PromptDeleteWordBackward,
@@ -932,6 +934,15 @@ impl KeybindingResolver {
             (KeyCode::Tab, KeyModifiers::empty()),
             Action::PromptAcceptSuggestion,
         );
+        // Word movement operations
+        prompt_bindings.insert(
+            (KeyCode::Left, KeyModifiers::CONTROL),
+            Action::PromptMoveWordLeft,
+        );
+        prompt_bindings.insert(
+            (KeyCode::Right, KeyModifiers::CONTROL),
+            Action::PromptMoveWordRight,
+        );
         // Word deletion operations
         prompt_bindings.insert(
             (KeyCode::Backspace, KeyModifiers::CONTROL),
@@ -1235,6 +1246,8 @@ impl KeybindingResolver {
             Action::PromptPageUp => "Prompt page up".to_string(),
             Action::PromptPageDown => "Prompt page down".to_string(),
             Action::PromptAcceptSuggestion => "Prompt accept suggestion".to_string(),
+            Action::PromptMoveWordLeft => "Prompt move word left".to_string(),
+            Action::PromptMoveWordRight => "Prompt move word right".to_string(),
             Action::PromptDeleteWordForward => "Prompt delete word forward".to_string(),
             Action::PromptDeleteWordBackward => "Prompt delete word backward".to_string(),
             Action::PromptCopy => "Prompt copy".to_string(),
