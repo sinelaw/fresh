@@ -216,39 +216,6 @@ fn test_command_palette_paste() {
     // harness.assert_screen_contains("Command: test content");
 }
 
-/// Test word deletion in git grep prompt
-#[test]
-fn test_git_grep_delete_word_backward() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
-
-    // Trigger git grep
-    harness
-        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Should show git grep prompt
-    harness.assert_screen_contains("Git grep:");
-
-    // Type some text
-    harness.type_text("function test").unwrap();
-    harness.render().unwrap();
-
-    // Try to delete word with Ctrl+Backspace
-    harness
-        .send_key(KeyCode::Backspace, KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    // EXPECTED: The word "test" should be deleted
-    let screen = harness.screen_to_string();
-    println!("Screen after Ctrl+Backspace in git grep:\n{screen}");
-
-    // Uncomment when implementing:
-    // harness.assert_screen_contains("Git grep: function ");
-    // harness.assert_screen_not_contains("test");
-}
-
 /// Test word deletion in open file prompt
 #[test]
 fn test_open_file_delete_word_backward() {
@@ -457,4 +424,289 @@ fn test_word_deletion_at_boundaries() {
     println!("Screen after word deletion with spaces:\n{screen}");
 
     // Document the expected behavior based on implementation choice
+}
+
+/// Test selection with Shift+Arrow keys in command palette
+#[test]
+fn test_command_palette_selection_with_arrows() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Type some text
+    harness.type_text("hello world").unwrap();
+    harness.render().unwrap();
+
+    // Move cursor to middle (after "hello")
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    // Select forward with Shift+Right (should select " world")
+    for _ in 0..6 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen after Shift+Right selection:\n{screen}");
+
+    // Should still see "hello world" in the prompt
+    harness.assert_screen_contains("Command: hello world");
+}
+
+/// Test copy and paste with selection
+#[test]
+fn test_selection_copy_paste_workflow() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Type some text
+    harness.type_text("copy this text").unwrap();
+    harness.render().unwrap();
+
+    // Select "this" using Shift+Home to select from end to start
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+    // Move to start of "this" (position 5)
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    // Select "this" (4 characters)
+    for _ in 0..4 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+
+    // Copy the selection
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Cancel this prompt
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+
+    // Open a new prompt
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Paste the copied text
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen after paste:\n{screen}");
+
+    // Should see "this" in the new prompt
+    harness.assert_screen_contains("Command: this");
+}
+
+/// Test cut with selection
+#[test]
+fn test_selection_cut_workflow() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Type some text
+    harness.type_text("cut this part").unwrap();
+    harness.render().unwrap();
+
+    // Select "this " (5 characters starting at position 4)
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..4 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+
+    // Cut the selection
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen after cut:\n{screen}");
+
+    // Should see "cut part" (without "this ")
+    harness.assert_screen_contains("Command: cut part");
+
+    // Cancel and open new prompt to paste
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Paste the cut text
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen after paste cut text:\n{screen}");
+
+    // Should see "this " in the new prompt
+    harness.assert_screen_contains("Command: this ");
+}
+
+/// Test Ctrl+A to select all in prompt
+#[test]
+fn test_select_all_in_prompt() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Type some text
+    harness.type_text("select all text").unwrap();
+    harness.render().unwrap();
+
+    // Move cursor to middle
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..7 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    // Select all with Ctrl+A
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Copy the selection
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Clear the prompt by typing new text (which should replace selection)
+    harness.type_text("replaced").unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen after replacing selection:\n{screen}");
+
+    // Should see only "replaced"
+    harness.assert_screen_contains("Command: replaced");
+}
+
+/// Test typing deletes selection
+#[test]
+fn test_typing_deletes_selection() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Type some text
+    harness.type_text("replace me").unwrap();
+    harness.render().unwrap();
+
+    // Select "replace" (7 characters)
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..7 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+
+    // Type new text - should replace selection
+    harness.type_text("fixed").unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen after typing over selection:\n{screen}");
+
+    // Should see "fixed me" (replaced "replace" with "fixed")
+    harness.assert_screen_contains("Command: fixed me");
+}
+
+/// Test selection in different prompt types
+#[test]
+fn test_selection_in_different_prompts() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Test in git grep prompt
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.type_text("search term").unwrap();
+    harness.render().unwrap();
+
+    // Select and copy
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Cancel
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+
+    // Test in open file prompt
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Paste what we copied
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen after pasting in open file prompt:\n{screen}");
+
+    // Should see "search term" in the find file prompt
+    harness.assert_screen_contains("search term");
 }
