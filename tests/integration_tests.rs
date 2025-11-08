@@ -280,8 +280,10 @@ fn test_viewport_resize_maintains_cursor() {
 
     state.apply(&Event::MoveCursor {
         cursor_id: state.cursors.primary_id(),
-        position: 12, // Middle of line 2
-        anchor: None,
+        old_position: 0,
+        new_position: 12, // Middle of line 2
+        old_anchor: None,
+        new_anchor: None,
     });
 
     // Resize to smaller height

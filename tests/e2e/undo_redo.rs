@@ -6,7 +6,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 /// This test demonstrates the expected behavior:
 /// 1. Type some text
 /// 2. Move cursor with arrow keys (readonly actions)
-/// 3. Undo once should skip the movement and undo the last typed character
+/// 3. Undo once should undo the cursor movements AND the last typed character
 #[test]
 fn test_undo_skips_readonly_movement_actions() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
@@ -15,6 +15,9 @@ fn test_undo_skips_readonly_movement_actions() {
     harness.type_text("hello").unwrap();
     harness.assert_buffer_content("hello");
 
+    // Cursor should be at end (position 5)
+    assert_eq!(harness.editor().active_state().cursors.primary().position, 5);
+
     // Move cursor left twice with arrow keys (readonly movements)
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
@@ -22,15 +25,20 @@ fn test_undo_skips_readonly_movement_actions() {
     // Now cursor should be between "hel" and "lo" (position 3)
     assert_eq!(harness.editor().active_state().cursors.primary().position, 3);
 
-    // Undo once - should skip the two movement actions and undo the last typed character 'o'
+    // Undo once - should undo the two cursor movements AND the last typed character 'o'
     harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
     harness.render().unwrap();
 
     // Buffer should now be "hell" (last typed character removed)
     harness.assert_buffer_content("hell");
 
-    // Cursor should still be at position 3 (movements were skipped)
-    assert_eq!(harness.editor().active_state().cursors.primary().position, 3);
+    // Cursor should be restored to where it was BEFORE the movements (position 4, end of "hell")
+    // This is the key difference: cursor movements should be undone too!
+    assert_eq!(
+        harness.editor().active_state().cursors.primary().position,
+        4,
+        "Cursor should be restored to position before movements"
+    );
 }
 
 /// Test that multiple undo steps skip over all readonly actions

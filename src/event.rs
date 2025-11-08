@@ -48,8 +48,10 @@ pub enum Event {
     /// Move a cursor to a new position
     MoveCursor {
         cursor_id: CursorId,
-        position: usize,
-        anchor: Option<usize>,
+        old_position: usize,
+        new_position: usize,
+        old_anchor: Option<usize>,
+        new_anchor: Option<usize>,
     },
 
     /// Add a new cursor
@@ -336,10 +338,21 @@ impl Event {
                     anchor: *anchor,
                 })
             }
-            Event::MoveCursor { .. } => {
-                // MoveCursor is not inverted - we want cursor to stay where user moved it
-                // even when undoing text changes
-                None
+            Event::MoveCursor {
+                cursor_id,
+                old_position,
+                new_position,
+                old_anchor,
+                new_anchor,
+            } => {
+                // Invert by swapping old and new positions
+                Some(Event::MoveCursor {
+                    cursor_id: *cursor_id,
+                    old_position: *new_position,
+                    new_position: *old_position,
+                    old_anchor: *new_anchor,
+                    new_anchor: *old_anchor,
+                })
             }
             Event::AddOverlay {
                 overlay_id,

@@ -734,10 +734,14 @@ impl Editor {
                 // Move cursor to the saved position
                 let state = self.active_state_mut();
                 let cursor_id = state.cursors.primary_id();
+                let old_position = state.cursors.primary().position;
+                let old_anchor = state.cursors.primary().anchor;
                 let event = Event::MoveCursor {
                     cursor_id,
-                    position: target_position,
-                    anchor: target_anchor,
+                    old_position,
+                    new_position: target_position,
+                    old_anchor,
+                    new_anchor: target_anchor,
                 };
                 state.apply(&event);
             }
@@ -764,10 +768,14 @@ impl Editor {
                 // Move cursor to the saved position
                 let state = self.active_state_mut();
                 let cursor_id = state.cursors.primary_id();
+                let old_position = state.cursors.primary().position;
+                let old_anchor = state.cursors.primary().anchor;
                 let event = Event::MoveCursor {
                     cursor_id,
-                    position: target_position,
-                    anchor: target_anchor,
+                    old_position,
+                    new_position: target_position,
+                    old_anchor,
+                    new_anchor: target_anchor,
                 };
                 state.apply(&event);
             }
@@ -2422,10 +2430,14 @@ impl Editor {
 
                 // Move cursor
                 let cursor_id = state.cursors.primary_id();
+                let old_position = state.cursors.primary().position;
+                let old_anchor = state.cursors.primary().anchor;
                 let event = crate::event::Event::MoveCursor {
                     cursor_id,
-                    position,
-                    anchor: None,
+                    old_position,
+                    new_position: position,
+                    old_anchor,
+                    new_anchor: None,
                 };
 
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
@@ -3506,8 +3518,10 @@ impl Editor {
                     if current_pos > rename_state.start_pos {
                         let event = Event::MoveCursor {
                             cursor_id: self.active_state().cursors.primary_id(),
-                            position: current_pos - 1,
-                            anchor: None,
+                            old_position: 0, // TODO: Get actual old position
+                            new_position: current_pos - 1,
+                            old_anchor: None, // TODO: Get actual old anchor
+                            new_anchor: None,
                         };
                         self.apply_event_to_active_buffer(&event);
                     }
@@ -3520,8 +3534,10 @@ impl Editor {
                     if current_pos < rename_state.end_pos {
                         let event = Event::MoveCursor {
                             cursor_id: self.active_state().cursors.primary_id(),
-                            position: current_pos + 1,
-                            anchor: None,
+                            old_position: 0, // TODO: Get actual old position
+                            new_position: current_pos + 1,
+                            old_anchor: None, // TODO: Get actual old anchor
+                            new_anchor: None,
                         };
                         self.apply_event_to_active_buffer(&event);
                     }
@@ -3532,8 +3548,10 @@ impl Editor {
                 if let Some(rename_state) = &self.rename_state {
                     let event = Event::MoveCursor {
                         cursor_id: self.active_state().cursors.primary_id(),
-                        position: rename_state.start_pos,
-                        anchor: None,
+                        old_position: 0, // TODO: Get actual old position
+                        new_position: rename_state.start_pos,
+                        old_anchor: None, // TODO: Get actual old anchor
+                        new_anchor: None,
                     };
                     self.apply_event_to_active_buffer(&event);
                 }
@@ -3543,8 +3561,10 @@ impl Editor {
                 if let Some(rename_state) = &self.rename_state {
                     let event = Event::MoveCursor {
                         cursor_id: self.active_state().cursors.primary_id(),
-                        position: rename_state.end_pos,
-                        anchor: None,
+                        old_position: 0, // TODO: Get actual old position
+                        new_position: rename_state.end_pos,
+                        old_anchor: None, // TODO: Get actual old anchor
+                        new_anchor: None,
                     };
                     self.apply_event_to_active_buffer(&event);
                 }
@@ -3758,13 +3778,13 @@ impl Editor {
                             // Track cursor movements in position history (but not during navigation)
                             if !self.in_navigation {
                                 if let Event::MoveCursor {
-                                    position, anchor, ..
+                                    new_position, new_anchor, ..
                                 } = event
                                 {
                                     self.position_history.record_movement(
                                         self.active_buffer,
-                                        *position,
-                                        *anchor,
+                                        *new_position,
+                                        *new_anchor,
                                     );
                                 }
                             }
@@ -3779,13 +3799,13 @@ impl Editor {
                             // Track cursor movements in position history (but not during navigation)
                             if !self.in_navigation {
                                 if let Event::MoveCursor {
-                                    position, anchor, ..
+                                    new_position, new_anchor, ..
                                 } = event
                                 {
                                     self.position_history.record_movement(
                                         self.active_buffer,
-                                        position,
-                                        anchor,
+                                        new_position,
+                                        new_anchor,
                                     );
                                 }
                             }
@@ -4249,8 +4269,10 @@ impl Editor {
             let primary_cursor_id = state.cursors.primary_id();
             let event = Event::MoveCursor {
                 cursor_id: primary_cursor_id,
-                position: target_position,
-                anchor: None,
+                old_position: 0, // TODO: Get actual old position
+                new_position: target_position,
+                old_anchor: None, // TODO: Get actual old anchor
+                new_anchor: None,
             };
 
             // Apply the event
@@ -5142,8 +5164,10 @@ mod tests {
         // Move cursor to start of line 2
         state.apply(&Event::MoveCursor {
             cursor_id: state.cursors.primary_id(),
-            position: 6, // Start of "line2"
-            anchor: None,
+            old_position: 0, // TODO: Get actual old position
+            new_position: 6,
+            old_anchor: None, // TODO: Get actual old anchor
+            new_anchor: None,
         });
 
         // Test move up
@@ -5153,8 +5177,8 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         match &events[0] {
-            Event::MoveCursor { position, .. } => {
-                assert_eq!(*position, 0); // Should be at start of line 1
+            Event::MoveCursor { new_position, .. } => {
+                assert_eq!(*new_position, 0); // Should be at start of line 1
             }
             _ => panic!("Expected MoveCursor event"),
         }
@@ -5238,8 +5262,10 @@ mod tests {
         // Move cursor to position 0
         state.apply(&Event::MoveCursor {
             cursor_id: state.cursors.primary_id(),
-            position: 0,
-            anchor: None,
+            old_position: 0, // TODO: Get actual old position
+            new_position: 0,
+            old_anchor: None, // TODO: Get actual old anchor
+            new_anchor: None,
         });
 
         let events = editor.action_to_events(Action::DeleteForward);
@@ -5277,8 +5303,10 @@ mod tests {
         // Move cursor to position 0
         state.apply(&Event::MoveCursor {
             cursor_id: state.cursors.primary_id(),
-            position: 0,
-            anchor: None,
+            old_position: 0, // TODO: Get actual old position
+            new_position: 0,
+            old_anchor: None, // TODO: Get actual old anchor
+            new_anchor: None,
         });
 
         let events = editor.action_to_events(Action::SelectRight);
@@ -5346,8 +5374,8 @@ mod tests {
         assert!(events.is_some());
         let events = events.unwrap();
         match &events[0] {
-            Event::MoveCursor { position, .. } => {
-                assert_eq!(*position, 0);
+            Event::MoveCursor { new_position, .. } => {
+                assert_eq!(*new_position, 0);
             }
             _ => panic!("Expected MoveCursor event"),
         }
@@ -5357,8 +5385,8 @@ mod tests {
         assert!(events.is_some());
         let events = events.unwrap();
         match &events[0] {
-            Event::MoveCursor { position, .. } => {
-                assert_eq!(*position, 17); // End of buffer
+            Event::MoveCursor { new_position, .. } => {
+                assert_eq!(*new_position, 17); // End of buffer
             }
             _ => panic!("Expected MoveCursor event"),
         }
