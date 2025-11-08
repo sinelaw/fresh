@@ -166,7 +166,7 @@ impl StatusBarRenderer {
         // Calculate available width
         let available_width = area.width as usize;
         let left_len = left_status.len();
-        let right_len = help_indicator.len();
+        let right_len = help_indicator.len() + 2; // +2 for padding spaces
 
         // Build the status bar with left and right content
         let mut spans = vec![
@@ -197,9 +197,10 @@ impl StatusBarRenderer {
             ));
         }
 
-        // Add help indicator with distinct styling
+        // Add help indicator with distinct styling and padding
+        let padded_help = format!(" {} ", help_indicator);
         spans.push(Span::styled(
-            help_indicator,
+            padded_help,
             Style::default()
                 .fg(theme.help_indicator_fg)
                 .bg(theme.help_indicator_bg),

@@ -764,6 +764,11 @@ impl KeybindingResolver {
             (KeyCode::Char('/'), KeyModifiers::CONTROL),
             Action::CommandPalette,
         );
+        // Terminals often send Ctrl+_ (underscore) for Ctrl+/
+        bindings.insert(
+            (KeyCode::Char('_'), KeyModifiers::CONTROL),
+            Action::CommandPalette,
+        );
 
         // Search and replace (Ctrl+F for search, Ctrl+R for replace, F3/Shift+F3 for next/prev)
         bindings.insert(
@@ -940,6 +945,11 @@ impl KeybindingResolver {
         );
         explorer_bindings.insert(
             (KeyCode::Char('/'), KeyModifiers::CONTROL),
+            Action::CommandPalette,
+        );
+        // Terminals often send Ctrl+_ (underscore) for Ctrl+/
+        explorer_bindings.insert(
+            (KeyCode::Char('_'), KeyModifiers::CONTROL),
             Action::CommandPalette,
         );
         all_bindings.insert(KeyContext::FileExplorer, explorer_bindings);
