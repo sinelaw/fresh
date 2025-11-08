@@ -1,5 +1,6 @@
 ---
 source: tests/common/visual_testing.rs
+assertion_line: 69
 expression: "&screen_text"
 ---
  [No Name]                                                                      
@@ -25,4 +26,4 @@ expression: "&screen_text"
                                                                                █
                                                                                █
                                                                                █
-[No Name] | Ln 0, Col 0
+[No Name] | Ln 0, Col 0                                            Help: Ctrl+/
