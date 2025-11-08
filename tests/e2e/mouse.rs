@@ -1,5 +1,6 @@
 // End-to-end tests for mouse interactions and scrollbar functionality
 
+use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
@@ -454,6 +455,77 @@ fn test_scrollbar_drag_to_top() {
     assert!(
         new_pos < scrolled_pos - 10,
         "Dragging up should scroll up (was {scrolled_pos}, now {new_pos})"
+    );
+}
+
+/// Test scrollbar drag on large file (> 1MB)
+/// This test ensures that dragging the scrollbar on large files doesn't hang
+/// by iterating through the entire buffer to count lines.
+///
+/// Bug: Previously, calculate_max_scroll_position() would iterate through all lines
+/// in the buffer even for large files, causing a complete hang on multi-GB files.
+#[test]
+fn test_scrollbar_drag_on_large_file() {
+    use std::time::Instant;
+
+    // Get shared large file (61MB)
+    let big_txt_path = TestFixture::big_txt_for_test("scrollbar_drag_large_file").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    println!("\n=== Opening 61MB file for scrollbar drag test ===");
+    harness.open_file(&big_txt_path).unwrap();
+    harness.render().unwrap();
+
+    // Verify we're at the top
+    let initial_top_line = harness.top_line_number();
+    println!("Initial top line: {}", initial_top_line);
+
+    // Drag scrollbar from near top to middle - this should be instant, not hang
+    // Terminal is 80x24, scrollbar is at column 79
+    // Drag from row 2 to row 12 (middle of content area)
+    println!("\n=== Dragging scrollbar on 61MB file ===");
+    let start = Instant::now();
+    harness.mouse_drag(79, 2, 79, 12).unwrap();
+    let drag_time = start.elapsed();
+
+    harness.render().unwrap();
+
+    println!("✓ Scrollbar drag completed in: {:?}", drag_time);
+
+    // Should have scrolled down
+    let new_top_line = harness.top_line_number();
+    println!("New top line after drag: {}", new_top_line);
+
+    assert!(
+        new_top_line > initial_top_line,
+        "Dragging scrollbar should scroll content down (was line {}, now line {})",
+        initial_top_line,
+        new_top_line
+    );
+
+    // The drag should have completed quickly (not hung)
+    // We don't assert on time because CI can be slow, but log it for visibility
+    println!("✓ Scrollbar drag on large file works without hang");
+
+    // Test dragging back up
+    println!("\n=== Dragging scrollbar back up ===");
+    let start = Instant::now();
+    harness.mouse_drag(79, 12, 79, 4).unwrap();
+    let drag_back_time = start.elapsed();
+
+    harness.render().unwrap();
+
+    println!("✓ Scrollbar drag back completed in: {:?}", drag_back_time);
+
+    let final_top_line = harness.top_line_number();
+    println!("Final top line: {}", final_top_line);
+
+    assert!(
+        final_top_line < new_top_line,
+        "Dragging scrollbar up should scroll content up (was line {}, now line {})",
+        new_top_line,
+        final_top_line
     );
 }
 
