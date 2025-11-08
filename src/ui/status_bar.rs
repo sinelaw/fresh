@@ -1,9 +1,12 @@
 //! Status bar and prompt/minibuffer rendering
 
+use crate::keybindings::format_keybinding;
 use crate::prompt::Prompt;
 use crate::state::EditorState;
+use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::Style;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
@@ -149,17 +152,60 @@ impl StatusBarRenderer {
             String::new()
         };
 
-        let status = if let Some(msg) = status_message {
+        let left_status = if let Some(msg) = status_message {
             format!("{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{cursor_count_indicator}{lsp_indicator} | {msg}")
         } else {
             format!("{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{cursor_count_indicator}{lsp_indicator}")
         };
 
-        let status_line = Paragraph::new(status).style(
+        // Build help indicator for right side
+        // Use Ctrl+/ or ⌘+/ depending on platform
+        let help_shortcut = format_keybinding(&KeyCode::Char('/'), &KeyModifiers::CONTROL);
+        let help_indicator = format!("Help: {}", help_shortcut);
+
+        // Calculate available width
+        let available_width = area.width as usize;
+        let left_len = left_status.len();
+        let right_len = help_indicator.len();
+
+        // Build the status bar with left and right content
+        let mut spans = vec![
+            Span::styled(
+                left_status.clone(),
+                Style::default()
+                    .fg(theme.status_bar_fg)
+                    .bg(theme.status_bar_bg),
+            ),
+        ];
+
+        // Add spacing to push help indicator to the right
+        if left_len + right_len + 1 < available_width {
+            let padding_len = available_width - left_len - right_len;
+            spans.push(Span::styled(
+                " ".repeat(padding_len),
+                Style::default()
+                    .fg(theme.status_bar_fg)
+                    .bg(theme.status_bar_bg),
+            ));
+        } else {
+            // Not enough space, just add a single space
+            spans.push(Span::styled(
+                " ",
+                Style::default()
+                    .fg(theme.status_bar_fg)
+                    .bg(theme.status_bar_bg),
+            ));
+        }
+
+        // Add help indicator with distinct styling
+        spans.push(Span::styled(
+            help_indicator,
             Style::default()
-                .fg(theme.status_bar_fg)
-                .bg(theme.status_bar_bg),
-        );
+                .fg(theme.help_indicator_fg)
+                .bg(theme.help_indicator_bg),
+        ));
+
+        let status_line = Paragraph::new(Line::from(spans));
 
         frame.render_widget(status_line, area);
     }

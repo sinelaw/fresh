@@ -40,6 +40,9 @@ pub struct Theme {
     pub help_key_fg: Color,
     pub help_separator_fg: Color,
 
+    pub help_indicator_fg: Color,
+    pub help_indicator_bg: Color,
+
     pub split_separator_fg: Color,
 
     // Search colors
@@ -106,6 +109,9 @@ impl Theme {
             help_fg: Color::White,
             help_key_fg: Color::Cyan,
             help_separator_fg: Color::DarkGray,
+
+            help_indicator_fg: Color::Red,
+            help_indicator_bg: Color::Black,
 
             split_separator_fg: Color::DarkGray,
 
@@ -174,6 +180,9 @@ impl Theme {
             help_key_fg: Color::Blue,
             help_separator_fg: Color::Gray,
 
+            help_indicator_fg: Color::Red,
+            help_indicator_bg: Color::White,
+
             split_separator_fg: Color::Gray,
 
             // Search colors
@@ -240,6 +249,9 @@ impl Theme {
             help_fg: Color::White,
             help_key_fg: Color::Yellow,
             help_separator_fg: Color::White,
+
+            help_indicator_fg: Color::Red,
+            help_indicator_bg: Color::Black,
 
             split_separator_fg: Color::White,
 
