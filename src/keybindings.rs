@@ -699,9 +699,13 @@ impl KeybindingResolver {
             Action::RemoveSecondaryCursors,
         );
 
-        // Command palette (Ctrl+P)
+        // Command palette (Ctrl+P, Ctrl+/)
         bindings.insert(
             (KeyCode::Char('p'), KeyModifiers::CONTROL),
+            Action::CommandPalette,
+        );
+        bindings.insert(
+            (KeyCode::Char('/'), KeyModifiers::CONTROL),
             Action::CommandPalette,
         );
 
@@ -873,9 +877,13 @@ impl KeybindingResolver {
             (KeyCode::Char('b'), KeyModifiers::CONTROL),
             Action::FocusEditor,
         );
-        // Command palette also available in file explorer
+        // Command palette also available in file explorer (Ctrl+P, Ctrl+/)
         explorer_bindings.insert(
             (KeyCode::Char('p'), KeyModifiers::CONTROL),
+            Action::CommandPalette,
+        );
+        explorer_bindings.insert(
+            (KeyCode::Char('/'), KeyModifiers::CONTROL),
             Action::CommandPalette,
         );
         all_bindings.insert(KeyContext::FileExplorer, explorer_bindings);
