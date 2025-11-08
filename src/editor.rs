@@ -887,6 +887,13 @@ impl Editor {
         }
     }
 
+    /// Show the file explorer (does not toggle - ensures it's visible)
+    pub fn show_file_explorer(&mut self) {
+        if !self.file_explorer_visible {
+            self.toggle_file_explorer();
+        }
+    }
+
     /// Set the active buffer and trigger all necessary side effects
     ///
     /// This is the centralized method for switching buffers. It:

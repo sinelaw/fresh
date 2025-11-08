@@ -85,8 +85,22 @@ fn main() -> io::Result<()> {
     let size = terminal.size()?;
     tracing::info!("Terminal size: {}x{}", size.width, size.height);
 
-    // Create editor with actual terminal size
-    let mut editor = Editor::new(config, size.width, size.height)?;
+    // Determine if the provided path is a directory or file
+    let (working_dir, file_to_open, show_file_explorer) = if let Some(path) = &args.file {
+        if path.is_dir() {
+            // Path is a directory: use as working dir, don't open any file, show file explorer
+            (Some(path.clone()), None, true)
+        } else {
+            // Path is a file: use current dir as working dir, open the file, don't auto-show explorer
+            (None, Some(path.clone()), false)
+        }
+    } else {
+        // No path provided: use current dir, no file, don't auto-show explorer
+        (None, None, false)
+    };
+
+    // Create editor with actual terminal size and working directory
+    let mut editor = Editor::with_working_dir(config, size.width, size.height, working_dir)?;
 
     // Enable event log streaming if requested
     if let Some(log_path) = &args.event_log {
@@ -95,8 +109,13 @@ fn main() -> io::Result<()> {
     }
 
     // Open file if provided
-    if let Some(path) = &args.file {
+    if let Some(path) = &file_to_open {
         editor.open_file(path)?;
+    }
+
+    // Show file explorer if directory was provided
+    if show_file_explorer {
+        editor.show_file_explorer();
     }
 
     // Run the editor
