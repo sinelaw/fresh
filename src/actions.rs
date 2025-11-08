@@ -937,8 +937,10 @@ mod tests {
         // Move cursor to position 6 (beginning of "World")
         state.apply(&Event::MoveCursor {
             cursor_id: CursorId(0),
-            position: 6,
-            anchor: None,
+            old_position: 0,
+            new_position: 6,
+            old_anchor: None,
+            new_anchor: None,
         });
 
         assert_eq!(state.cursors.primary().position, 6);

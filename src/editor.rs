@@ -5149,11 +5149,11 @@ mod tests {
 
         match &events[0] {
             Event::MoveCursor {
-                position, anchor, ..
+                new_position, new_anchor, ..
             } => {
                 // Cursor was at 5 (end of "hello"), stays at 5 (can't move beyond end)
-                assert_eq!(*position, 5);
-                assert_eq!(*anchor, None); // No selection
+                assert_eq!(*new_position, 5);
+                assert_eq!(*new_anchor, None); // No selection
             }
             _ => panic!("Expected MoveCursor event"),
         }
@@ -5328,10 +5328,10 @@ mod tests {
 
         match &events[0] {
             Event::MoveCursor {
-                position, anchor, ..
+                new_position, new_anchor, ..
             } => {
-                assert_eq!(*position, 1); // Moved to position 1
-                assert_eq!(*anchor, Some(0)); // Anchor at start
+                assert_eq!(*new_position, 1); // Moved to position 1
+                assert_eq!(*new_anchor, Some(0)); // Anchor at start
             }
             _ => panic!("Expected MoveCursor event"),
         }
@@ -5358,10 +5358,10 @@ mod tests {
 
         match &events[0] {
             Event::MoveCursor {
-                position, anchor, ..
+                new_position, new_anchor, ..
             } => {
-                assert_eq!(*position, 11); // At end of buffer
-                assert_eq!(*anchor, Some(0)); // Anchor at start
+                assert_eq!(*new_position, 11); // At end of buffer
+                assert_eq!(*new_anchor, Some(0)); // Anchor at start
             }
             _ => panic!("Expected MoveCursor event"),
         }
