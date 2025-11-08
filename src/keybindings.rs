@@ -764,9 +764,9 @@ impl KeybindingResolver {
             (KeyCode::Char('/'), KeyModifiers::CONTROL),
             Action::CommandPalette,
         );
-        // Terminals often send Ctrl+_ (underscore) for Ctrl+/
+        // Some terminals send Ctrl+7 for Ctrl+/ (since / is Shift+7 on many keyboards)
         bindings.insert(
-            (KeyCode::Char('_'), KeyModifiers::CONTROL),
+            (KeyCode::Char('7'), KeyModifiers::CONTROL),
             Action::CommandPalette,
         );
 
@@ -947,9 +947,9 @@ impl KeybindingResolver {
             (KeyCode::Char('/'), KeyModifiers::CONTROL),
             Action::CommandPalette,
         );
-        // Terminals often send Ctrl+_ (underscore) for Ctrl+/
+        // Some terminals send Ctrl+7 for Ctrl+/ (since / is Shift+7 on many keyboards)
         explorer_bindings.insert(
-            (KeyCode::Char('_'), KeyModifiers::CONTROL),
+            (KeyCode::Char('7'), KeyModifiers::CONTROL),
             Action::CommandPalette,
         );
         all_bindings.insert(KeyContext::FileExplorer, explorer_bindings);
