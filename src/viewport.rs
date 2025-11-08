@@ -396,6 +396,11 @@ impl Viewport {
 
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {
+            tracing::debug!(
+                "ensure_visible: cursor NOT VISIBLE, will scroll. cursor_line={}, top_line={}, old_top_byte={}",
+                cursor_line_number, top_line_number, self.top_byte
+            );
+
             // Position cursor at center of viewport when jumping
             let target_line_from_top = self.visible_line_count() / 2;
 
@@ -408,7 +413,17 @@ impl Viewport {
                 }
             }
 
-            self.set_top_byte_with_limit(buffer, iter.current_position());
+            let new_top_byte = iter.current_position();
+            self.set_top_byte_with_limit(buffer, new_top_byte);
+
+            tracing::debug!(
+                "ensure_visible: SCROLLED from old_top_byte={} to requested={}, actual_top_byte={}",
+                self.top_byte, new_top_byte, self.top_byte
+            );
+        } else {
+            tracing::debug!(
+                "ensure_visible: cursor IS VISIBLE, no scroll needed"
+            );
         }
 
         // Horizontal scrolling - skip if line wrapping is enabled
