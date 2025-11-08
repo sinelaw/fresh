@@ -199,12 +199,41 @@ impl Viewport {
 
         // Check if cursor line is visible
         let visible_count = self.visible_line_count();
-        let lines_from_top = cursor_line_number.saturating_sub(top_line_number);
 
-        // Only scroll if cursor moves beyond the visible area (not within scroll_offset zone)
-        // Must also check cursor is not above viewport (saturating_sub would make it appear at line 0)
-        let cursor_is_visible = cursor_line_number >= top_line_number
-            && lines_from_top < visible_count;
+        // When line wrapping is enabled, we need to count visual rows (wrapped segments)
+        // instead of logical lines, since one logical line can occupy multiple visual rows
+        let cursor_is_visible = if self.line_wrap_enabled {
+            // Count visual rows from top_byte to cursor_line_start
+            let gutter_width = self.gutter_width(buffer);
+            let config = WrapConfig::new(self.width as usize, gutter_width, true);
+
+            let mut visual_rows_from_top = 0;
+            let mut iter = buffer.line_iterator(self.top_byte);
+
+            while let Some((line_start, line_content)) = iter.next() {
+                if line_start >= cursor_line_start {
+                    // We've reached the cursor line - don't count it yet
+                    break;
+                }
+
+                // Count how many visual rows this line occupies
+                let line_text = line_content.trim_end_matches('\n');
+                let segments = wrap_line(line_text, &config);
+                visual_rows_from_top += segments.len();
+
+                // Early exit if we've already exceeded the visible area
+                if visual_rows_from_top >= visible_count {
+                    break;
+                }
+            }
+
+            // Cursor is visible if it's not above viewport and visual rows fit within viewport
+            cursor_line_number >= top_line_number && visual_rows_from_top < visible_count
+        } else {
+            // Without wrapping, use logical line numbers (original behavior)
+            let lines_from_top = cursor_line_number.saturating_sub(top_line_number);
+            cursor_line_number >= top_line_number && lines_from_top < visible_count
+        };
 
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {
