@@ -954,7 +954,9 @@ impl SplitRenderer {
         let mut current_style = None;
 
         for (i, &ch) in segment_chars.iter().enumerate() {
-            let original_pos = segment_start_offset + scroll_offset + i;
+            // segment_start_offset is relative to the line_text (which already accounts for scrolling),
+            // so don't add scroll_offset again - it would double-count the horizontal scrolling
+            let original_pos = segment_start_offset + i;
 
             let style_for_char = if original_pos < char_styles.len() {
                 char_styles[original_pos].1
