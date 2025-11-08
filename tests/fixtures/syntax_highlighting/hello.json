@@ -1,0 +1,6 @@
+{
+  "greeting": "Hello, World!",
+  "languages": ["Rust", "Python", "JavaScript"],
+  "count": 42,
+  "enabled": true
+}

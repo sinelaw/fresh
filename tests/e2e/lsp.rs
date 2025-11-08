@@ -1160,7 +1160,7 @@ fn test_rust_analyzer_rename_content_modified() -> std::io::Result<()> {
 fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
     use lsp_types::{
         DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Position, Range,
-        TextDocumentEdit, TextEdit, Url, WorkspaceEdit,
+        TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
     };
 
     let mut harness = EditorTestHarness::new(80, 30)?;
@@ -1175,7 +1175,7 @@ fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
     harness.render()?;
 
     // Create a WorkspaceEdit with documentChanges (like rust-analyzer sends)
-    let uri = Url::from_file_path(&test_file).unwrap();
+    let uri = url::Url::from_file_path(&test_file).unwrap().as_str().parse::<Uri>().unwrap();
     let text_edit_1 = TextEdit {
         range: Range {
             start: Position {
