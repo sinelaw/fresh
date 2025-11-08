@@ -390,6 +390,17 @@ impl SplitRenderer {
         let mut cursor_screen_y = 0u16;
         let mut cursor_found = false;
 
+        // Initialize visual line map for wrapped lines (see VisualLineMap docs in viewport.rs)
+        // This cache eliminates duplicate wrapping work in ensure_visible() calls
+        let mut visual_line_map = if line_wrap {
+            Some(crate::viewport::VisualLineMap::new(
+                state.viewport.top_byte,
+                state.viewport.width,
+            ))
+        } else {
+            None
+        };
+
         // For empty buffers, render at least one line with the margin
         let is_empty_buffer = state.buffer.is_empty();
 
@@ -707,6 +718,12 @@ impl SplitRenderer {
                 // Wrap the line using the clean transformation
                 let segments = wrap_line(&line_text, &config);
 
+                // Record this line's visual row position in the cache (for ensure_visible())
+                // lines_rendered was incremented earlier, so the current visual row is (lines_rendered - 1)
+                if let Some(ref mut map) = visual_line_map {
+                    map.insert(line_start, lines_rendered - 1);
+                }
+
                 // Check if primary cursor is on this line and calculate its position
                 if !cursor_found
                     && primary_cursor_position >= line_start
@@ -885,6 +902,10 @@ impl SplitRenderer {
                 event_log.log_render_state(cursor_pos, screen_x, screen_y, buffer_len);
             }
         }
+
+        // Save the visual line map to the viewport (for use by ensure_visible())
+        // This cache eliminates duplicate line wrapping work between rendering and cursor visibility checks
+        state.viewport.visual_line_map = visual_line_map;
     }
 
     /// Apply styles from original line_spans to a wrapped segment
