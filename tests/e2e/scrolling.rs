@@ -1778,6 +1778,173 @@ fn test_enter_key_maintains_bottom_line_pinned() {
     println!("\n✓ Enter key maintains bottom line pinned throughout {} presses", num_enters);
 }
 
+/// Test cursor visibility and horizontal scrolling when moving to end of long line
+/// Bug report: When line wrapping is disabled and moving right along a long line,
+/// the cursor disappears visually 12 characters before the actual end of the line
+/// (appears at coordinate 0,0), while logically it's still in the right place.
+/// Also, the last 12 characters are rendered in a different color, and horizontal
+/// scrolling doesn't adjust properly.
+#[test]
+fn test_cursor_visibility_at_line_end_no_wrap() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::Config;
+
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    let gutter_width = 8; // Approximate gutter width for line numbers
+    let visible_width = 80 - gutter_width; // ~72 characters visible
+
+    // Create a long line that extends well beyond visible width
+    // We'll create a line that's 100 characters long
+    let line_length = 100;
+    let long_line = "a".repeat(line_length);
+
+    harness.type_text(&long_line).unwrap();
+    harness.render().unwrap();
+
+    println!("\n=== Testing cursor visibility at end of long line (no wrap) ===");
+    println!("Line length: {} chars", line_length);
+    println!("Terminal width: 80, Visible width: ~{}", visible_width);
+
+    // Move to the beginning of the line
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(harness.cursor_position(), 0, "Should be at position 0");
+
+    let initial_screen_pos = harness.screen_cursor_position();
+    println!("Initial screen cursor at Home: ({}, {})", initial_screen_pos.0, initial_screen_pos.1);
+
+    // Track issues as we move right character by character
+    let mut issues = Vec::new();
+
+    // Move right towards the end of the line, checking each position
+    // Focus especially on the last 20 characters
+    for i in 0..line_length {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        let buffer_pos = harness.cursor_position();
+        let screen_pos = harness.screen_cursor_position();
+        let left_col = harness.editor().active_state().viewport.left_column;
+
+        // Expected behavior:
+        // 1. Buffer position should match i+1
+        if buffer_pos != i + 1 {
+            issues.push(format!(
+                "At step {}: buffer position {} != expected {}",
+                i + 1, buffer_pos, i + 1
+            ));
+        }
+
+        // 2. Screen cursor should NEVER be at (0, 0) unless that's the actual position
+        if screen_pos == (0, 0) && buffer_pos > 0 {
+            issues.push(format!(
+                "At step {}: CURSOR AT (0,0) - buffer pos {} but screen shows (0,0)",
+                i + 1, buffer_pos
+            ));
+        }
+
+        // 3. When buffer position exceeds visible width, horizontal scrolling should occur
+        // The cursor should be kept visible, so left_column should increase
+        if buffer_pos > visible_width && left_col == 0 {
+            issues.push(format!(
+                "At step {}: NO HORIZONTAL SCROLL - buffer pos {} exceeds visible width {} but left_column=0",
+                i + 1, buffer_pos, visible_width
+            ));
+        }
+
+        // 4. Screen cursor X should be within terminal bounds (0 to 79)
+        if screen_pos.0 >= 80 {
+            issues.push(format!(
+                "At step {}: CURSOR OUT OF BOUNDS - screen x={} (>= 80)",
+                i + 1, screen_pos.0
+            ));
+        }
+
+        // 5. When near the end (last 20 chars), pay special attention
+        if i >= line_length - 20 {
+            println!(
+                "Step {}: buffer_pos={}, screen_pos=({}, {}), left_col={}",
+                i + 1, buffer_pos, screen_pos.0, screen_pos.1, left_col
+            );
+
+            // The cursor should be visible - calculate expected screen X
+            // Expected screen X = gutter_width + (buffer_pos - left_col)
+            let expected_screen_x = gutter_width as u16 + (buffer_pos - left_col) as u16;
+
+            // Allow some tolerance for gutter width calculation
+            let tolerance = 3;
+            if screen_pos.0 < expected_screen_x.saturating_sub(tolerance)
+                || screen_pos.0 > expected_screen_x + tolerance {
+                issues.push(format!(
+                    "At step {} (near end): screen x={} doesn't match expected ~{} (buffer_pos={}, left_col={})",
+                    i + 1, screen_pos.0, expected_screen_x, buffer_pos, left_col
+                ));
+            }
+        }
+    }
+
+    println!("\n=== Test Results ===");
+    if issues.is_empty() {
+        println!("✓ No issues found - cursor remained visible and horizontal scrolling worked correctly");
+    } else {
+        println!("✗ Found {} issues:", issues.len());
+        for issue in &issues {
+            println!("  - {}", issue);
+        }
+    }
+
+    // Final checks at the end of the line
+    let final_buffer_pos = harness.cursor_position();
+    let final_screen_pos = harness.screen_cursor_position();
+    let final_left_col = harness.editor().active_state().viewport.left_column;
+
+    println!("\nFinal position:");
+    println!("  Buffer position: {}", final_buffer_pos);
+    println!("  Screen position: ({}, {})", final_screen_pos.0, final_screen_pos.1);
+    println!("  Horizontal scroll (left_column): {}", final_left_col);
+
+    // Assert the major issues
+    assert!(
+        !issues.iter().any(|issue| issue.contains("CURSOR AT (0,0)")),
+        "BUG REPRODUCED: Cursor appeared at (0,0) when it shouldn't:\n{}",
+        issues.iter()
+            .filter(|issue| issue.contains("CURSOR AT (0,0)"))
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    assert!(
+        !issues.iter().any(|issue| issue.contains("NO HORIZONTAL SCROLL")),
+        "BUG REPRODUCED: Horizontal scrolling didn't occur when needed:\n{}",
+        issues.iter()
+            .filter(|issue| issue.contains("NO HORIZONTAL SCROLL"))
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    assert_eq!(
+        final_buffer_pos, line_length,
+        "Final buffer position should be at end of line ({})",
+        line_length
+    );
+
+    assert_ne!(
+        final_screen_pos, (0, 0),
+        "Final screen cursor should not be at (0, 0)"
+    );
+
+    assert!(
+        final_left_col > 0,
+        "Horizontal scrolling should have occurred (left_column should be > 0)"
+    );
+}
+
 /// Test that pressing Enter at the bottom of the viewport scrolls the view up
 /// to make room for the new line immediately, not after typing into the new line.
 /// Bug: When at the bottom, pressing Enter doesn't scroll until you type something.
