@@ -342,31 +342,38 @@ impl Viewport {
                 let mut iter = buffer.line_iterator(self.top_byte);
 
                 while let Some((line_start, line_content)) = iter.next() {
+                    // Count how many visual rows this line occupies
+                    let line_text = line_content.trim_end_matches('\n');
+                    let segments = wrap_line(line_text, &config);
+
                     if line_start >= cursor_line_start {
                         // We've reached the cursor line
                         // Calculate which segment the cursor is on within this line
                         let cursor_column = cursor.position.saturating_sub(cursor_line_start);
-                        let line_text = line_content.trim_end_matches('\n');
-                        let segments = wrap_line(line_text, &config);
                         let (segment_idx, _col_in_segment) = char_position_to_segment(cursor_column, &segments);
 
                         // The cursor's actual visual row is visual_rows_from_top + segment_idx
                         let cursor_visual_row = visual_rows_from_top + segment_idx;
 
+                        tracing::debug!(
+                            "ensure_visible fallback: cursor_line={}, visual_rows_from_top={}, segment_idx={}, cursor_visual_row={}, visible_count={}",
+                            cursor_line_number, visual_rows_from_top, segment_idx, cursor_visual_row, visible_count
+                        );
+
                         // Check if cursor's actual position is visible
                         return cursor_line_number >= top_line_number && cursor_visual_row < visible_count;
                     }
 
-                    // Count how many visual rows this line occupies
-                    let line_text = line_content.trim_end_matches('\n');
-                    let segments = wrap_line(line_text, &config);
                     visual_rows_from_top += segments.len();
 
-                    // Early exit if we've already exceeded the visible area
-                    if visual_rows_from_top >= visible_count {
-                        break;
-                    }
+                    // Don't early exit - we need to check the next line to see if it's the cursor line
+                    // Early exit would prevent us from detecting when cursor is on the line right after viewport
                 }
+
+                tracing::debug!(
+                    "ensure_visible fallback: cursor not found, cursor_line={}, top_line={}, visual_rows_from_top={}",
+                    cursor_line_number, top_line_number, visual_rows_from_top
+                );
 
                 // If we didn't find the cursor line in the iteration, it must be off-screen below
                 false
