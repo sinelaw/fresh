@@ -1,7 +1,7 @@
 //! Prompt/minibuffer system for user input
 
 use crate::commands::Suggestion;
-use crate::word_navigation::{find_word_end_bytes, find_word_start_bytes};
+use crate::word_navigation::{find_word_end_bytes, find_word_start_bytes, is_word_char};
 
 /// Type of prompt - determines what action to take when user confirms
 #[derive(Debug, Clone, PartialEq)]
@@ -375,39 +375,46 @@ impl Prompt {
     }
 
     /// Move to start of previous word with selection
+    /// Mimics Buffer's find_word_start_left behavior
     pub fn move_word_left_selecting(&mut self) {
         if self.selection_anchor.is_none() {
             self.selection_anchor = Some(self.cursor_pos);
         }
 
         let bytes = self.input.as_bytes();
-        let mut new_pos = find_word_start_bytes(bytes, self.cursor_pos);
+        if self.cursor_pos == 0 {
+            return;
+        }
 
-        // If we didn't move (already at word start), move back one more word
-        if new_pos == self.cursor_pos && new_pos > 0 {
-            // Move back one character first
+        let mut new_pos = self.cursor_pos.saturating_sub(1);
+
+        // Skip non-word characters (spaces) backwards
+        while new_pos > 0 && !is_word_char(bytes[new_pos]) {
             new_pos = new_pos.saturating_sub(1);
-            // Then find the word start from there
-            new_pos = find_word_start_bytes(bytes, new_pos);
+        }
+
+        // Find start of word
+        while new_pos > 0 && is_word_char(bytes[new_pos.saturating_sub(1)]) {
+            new_pos = new_pos.saturating_sub(1);
         }
 
         self.cursor_pos = new_pos;
     }
 
-    /// Move to start of next word with selection
+    /// Move to end of next word with selection
+    /// For selection, we want to select whole words, so move to word END, not word START
     pub fn move_word_right_selecting(&mut self) {
         if self.selection_anchor.is_none() {
             self.selection_anchor = Some(self.cursor_pos);
         }
 
+        // Use find_word_end_bytes which moves to the END of words
         let bytes = self.input.as_bytes();
         let mut new_pos = find_word_end_bytes(bytes, self.cursor_pos);
 
-        // If we didn't move (already at word end), move forward one more word
+        // If we didn't move (already at word end), move forward to next word end
         if new_pos == self.cursor_pos && new_pos < bytes.len() {
-            // Move forward one character first
             new_pos = (new_pos + 1).min(bytes.len());
-            // Then find the word end from there
             new_pos = find_word_end_bytes(bytes, new_pos);
         }
 
@@ -415,17 +422,53 @@ impl Prompt {
     }
 
     /// Move to start of previous word (without selection)
+    /// Mimics Buffer's find_word_start_left behavior
     pub fn move_word_left(&mut self) {
         self.clear_selection();
-        let word_start = find_word_start_bytes(self.input.as_bytes(), self.cursor_pos);
-        self.cursor_pos = word_start;
+
+        let bytes = self.input.as_bytes();
+        if self.cursor_pos == 0 {
+            return;
+        }
+
+        let mut new_pos = self.cursor_pos.saturating_sub(1);
+
+        // Skip non-word characters (spaces) backwards
+        while new_pos > 0 && !is_word_char(bytes[new_pos]) {
+            new_pos = new_pos.saturating_sub(1);
+        }
+
+        // Find start of word
+        while new_pos > 0 && is_word_char(bytes[new_pos.saturating_sub(1)]) {
+            new_pos = new_pos.saturating_sub(1);
+        }
+
+        self.cursor_pos = new_pos;
     }
 
     /// Move to start of next word (without selection)
+    /// Mimics Buffer's find_word_start_right behavior
     pub fn move_word_right(&mut self) {
         self.clear_selection();
-        let word_end = find_word_end_bytes(self.input.as_bytes(), self.cursor_pos);
-        self.cursor_pos = word_end;
+
+        let bytes = self.input.as_bytes();
+        if self.cursor_pos >= bytes.len() {
+            return;
+        }
+
+        let mut new_pos = self.cursor_pos;
+
+        // Skip current word
+        while new_pos < bytes.len() && is_word_char(bytes[new_pos]) {
+            new_pos += 1;
+        }
+
+        // Skip non-word characters (spaces)
+        while new_pos < bytes.len() && !is_word_char(bytes[new_pos]) {
+            new_pos += 1;
+        }
+
+        self.cursor_pos = new_pos;
     }
 }
 
