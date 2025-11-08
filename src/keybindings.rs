@@ -61,6 +61,8 @@ pub fn format_keybinding(keycode: &KeyCode, modifiers: &KeyModifiers) -> String 
 /// Context in which a keybinding is active
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyContext {
+    /// Global bindings that work in all contexts (checked first with highest priority)
+    Global,
     /// Normal editing mode
     Normal,
     /// Help screen is visible
@@ -87,6 +89,7 @@ impl KeyContext {
     /// Parse context from a "when" string
     pub fn from_when_clause(when: &str) -> Option<Self> {
         match when.trim() {
+            "global" => Some(KeyContext::Global),
             "help" => Some(KeyContext::Help),
             "prompt" => Some(KeyContext::Prompt),
             "popup" => Some(KeyContext::Popup),
@@ -99,6 +102,7 @@ impl KeyContext {
     /// Convert context to "when" clause string
     pub fn to_when_clause(self) -> &'static str {
         match self {
+            KeyContext::Global => "global",
             KeyContext::Normal => "normal",
             KeyContext::Help => "help",
             KeyContext::Prompt => "prompt",
@@ -499,7 +503,22 @@ impl KeybindingResolver {
             context
         );
 
-        // Try context-specific custom bindings first (highest priority)
+        // Check Global bindings first (highest priority - work in all contexts)
+        if let Some(global_bindings) = self.bindings.get(&KeyContext::Global) {
+            if let Some(action) = global_bindings.get(&(event.code, event.modifiers)) {
+                tracing::debug!("  -> Found in custom global bindings: {:?}", action);
+                return action.clone();
+            }
+        }
+
+        if let Some(global_bindings) = self.default_bindings.get(&KeyContext::Global) {
+            if let Some(action) = global_bindings.get(&(event.code, event.modifiers)) {
+                tracing::debug!("  -> Found in default global bindings: {:?}", action);
+                return action.clone();
+            }
+        }
+
+        // Try context-specific custom bindings
         if let Some(context_bindings) = self.bindings.get(&context) {
             if let Some(action) = context_bindings.get(&(event.code, event.modifiers)) {
                 tracing::debug!(
@@ -606,6 +625,27 @@ impl KeybindingResolver {
     /// Create default keybindings organized by context
     fn create_default_bindings() -> HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>> {
         let mut all_bindings = HashMap::new();
+
+        // Global context bindings (work in all contexts, checked first with highest priority)
+        let mut global_bindings = HashMap::new();
+
+        // Command palette (Ctrl+P, Ctrl+/)
+        // These bindings work everywhere and provide a consistent way to access commands
+        global_bindings.insert(
+            (KeyCode::Char('p'), KeyModifiers::CONTROL),
+            Action::CommandPalette,
+        );
+        global_bindings.insert(
+            (KeyCode::Char('/'), KeyModifiers::CONTROL),
+            Action::CommandPalette,
+        );
+        // Some terminals send Ctrl+7 for Ctrl+/ (since / is Shift+7 on many keyboards)
+        global_bindings.insert(
+            (KeyCode::Char('7'), KeyModifiers::CONTROL),
+            Action::CommandPalette,
+        );
+
+        all_bindings.insert(KeyContext::Global, global_bindings);
 
         // Normal context bindings
         let mut bindings = HashMap::new();
@@ -755,21 +795,6 @@ impl KeybindingResolver {
             Action::RemoveSecondaryCursors,
         );
 
-        // Command palette (Ctrl+P, Ctrl+/)
-        bindings.insert(
-            (KeyCode::Char('p'), KeyModifiers::CONTROL),
-            Action::CommandPalette,
-        );
-        bindings.insert(
-            (KeyCode::Char('/'), KeyModifiers::CONTROL),
-            Action::CommandPalette,
-        );
-        // Some terminals send Ctrl+7 for Ctrl+/ (since / is Shift+7 on many keyboards)
-        bindings.insert(
-            (KeyCode::Char('7'), KeyModifiers::CONTROL),
-            Action::CommandPalette,
-        );
-
         // Search and replace (Ctrl+F for search, Ctrl+R for replace, F3/Shift+F3 for next/prev)
         bindings.insert(
             (KeyCode::Char('f'), KeyModifiers::CONTROL),
@@ -883,20 +908,6 @@ impl KeybindingResolver {
             (KeyCode::Tab, KeyModifiers::empty()),
             Action::PromptAcceptSuggestion,
         );
-        // Command palette toggle keybindings (for closing when already open)
-        prompt_bindings.insert(
-            (KeyCode::Char('p'), KeyModifiers::CONTROL),
-            Action::CommandPalette,
-        );
-        prompt_bindings.insert(
-            (KeyCode::Char('/'), KeyModifiers::CONTROL),
-            Action::CommandPalette,
-        );
-        // Some terminals send Ctrl+7 for Ctrl+/ (since / is Shift+7 on many keyboards)
-        prompt_bindings.insert(
-            (KeyCode::Char('7'), KeyModifiers::CONTROL),
-            Action::CommandPalette,
-        );
         all_bindings.insert(KeyContext::Prompt, prompt_bindings);
 
         // Popup context bindings
@@ -951,20 +962,6 @@ impl KeybindingResolver {
         explorer_bindings.insert(
             (KeyCode::Char('b'), KeyModifiers::CONTROL),
             Action::FocusEditor,
-        );
-        // Command palette also available in file explorer (Ctrl+P, Ctrl+/)
-        explorer_bindings.insert(
-            (KeyCode::Char('p'), KeyModifiers::CONTROL),
-            Action::CommandPalette,
-        );
-        explorer_bindings.insert(
-            (KeyCode::Char('/'), KeyModifiers::CONTROL),
-            Action::CommandPalette,
-        );
-        // Some terminals send Ctrl+7 for Ctrl+/ (since / is Shift+7 on many keyboards)
-        explorer_bindings.insert(
-            (KeyCode::Char('7'), KeyModifiers::CONTROL),
-            Action::CommandPalette,
         );
         all_bindings.insert(KeyContext::FileExplorer, explorer_bindings);
 
