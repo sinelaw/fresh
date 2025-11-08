@@ -23,21 +23,24 @@ fn test_command_palette_delete_word_backward() {
     harness.assert_screen_contains("Command: open file");
 
     // Try to delete the word "file" using Ctrl+Backspace
+    println!("About to send Ctrl+Backspace...");
     harness
         .send_key(KeyCode::Backspace, KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
-    // EXPECTED: The word "file" should be deleted, leaving "open "
-    // ACTUAL: Currently Ctrl+Backspace is not bound in prompt mode,
-    // so nothing happens or it might trigger an unrelated action
     let screen = harness.screen_to_string();
     println!("Screen after Ctrl+Backspace:\n{screen}");
 
-    // This assertion will likely FAIL until the feature is implemented
-    // Uncomment when implementing:
-    // harness.assert_screen_contains("Command: open ");
-    // harness.assert_screen_not_contains("file");
+    // Debug: Check what's in the prompt
+    let lines: Vec<&str> = screen.lines().collect();
+    let prompt_line = lines.iter().rev().nth(0);  // Last line should be the prompt
+    println!("Prompt line: {:?}", prompt_line);
+
+    // The word "file" should be deleted, leaving "open "
+    // After "open file" + Ctrl+Backspace, we expect "open " (with trailing space)
+    assert!(screen.contains("Command: open "),
+        "Expected 'Command: open ' but screen was:\n{}", screen);
 
     // For now, just document the current behavior
     // The test passes but documents the missing feature
