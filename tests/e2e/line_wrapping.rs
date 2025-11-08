@@ -664,3 +664,198 @@ fn test_wrapped_line_cursor_no_empty_space() {
         );
     }
 }
+
+/// Test that cursor stays visible when moving down with line wrapping enabled
+/// Reproduces bug where cursor disappears when moving from last visible line
+/// to first off-screen line.
+#[test]
+fn test_cursor_stays_visible_when_moving_down() {
+    use tempfile::TempDir;
+    
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Create a file with 30 short lines (none will wrap)
+    let mut content = String::new();
+    for i in 1..=30 {
+        content.push_str(&format!("Line {}\n", i));
+    }
+    std::fs::write(&file_path, &content).unwrap();
+
+    // Terminal: 80 cols x 17 rows = 1 tab bar + 15 content lines + 1 status bar
+    let mut harness = EditorTestHarness::new(80, 17).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Enable line wrapping
+    harness.editor_mut().active_state_mut().viewport.line_wrap_enabled = true;
+
+    harness.render().unwrap();
+
+    // Start at line 1 (cursor position 0)
+    assert_eq!(harness.cursor_position(), 0);
+
+    // Test invariant: After N down keypresses from start, cursor should be on line N+1
+    // and that line should be visible on screen
+
+    for i in 1..=25 {
+        // Press down
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        let cursor_pos = harness.screen_cursor_position();
+
+        // Get the expected line text
+        let expected_line = format!("Line {}", i + 1);
+
+        // The cursor should be on this line, and it should be visible
+        assert!(
+            screen.contains(&expected_line),
+            "After {} down keypresses, '{}' should be visible on screen.\nCursor position: {:?}\nScreen:\n{}",
+            i,
+            expected_line,
+            cursor_pos,
+            screen
+        );
+
+        // Check that cursor is not stuck at (0,0) when line 1 isn't visible
+        // (This indicates the cursor is off-screen and being rendered at origin)
+        let is_at_top_left = cursor_pos.0 == 0 && cursor_pos.1 == 0;
+        let line_1_visible = screen.contains("Line 1");
+
+        if is_at_top_left && !line_1_visible {
+            panic!(
+                "BUG REPRODUCED! After {} down keypresses:\n\
+                - Cursor at (0,0) but Line 1 is not visible\n\
+                - This means cursor is off-screen, expected to be on '{}'\n\
+                - Screen:\n{}",
+                i, expected_line, screen
+            );
+        }
+    }
+}
+
+/// Test cursor visibility with wrapped lines
+#[test]
+fn test_cursor_visibility_with_wrapped_lines() {
+    use tempfile::TempDir;
+    
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Create a file with mix of short and long lines
+    let mut content = String::new();
+    for i in 1..=30 {
+        if i % 5 == 0 {
+            // Every 5th line is very long and will wrap
+            content.push_str(&format!(
+                "Line {} - This is a very long line that will definitely wrap when line wrapping is enabled because it contains many words and will span multiple visual rows\n",
+                i
+            ));
+        } else {
+            content.push_str(&format!("Line {}\n", i));
+        }
+    }
+    std::fs::write(&file_path, &content).unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 17).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Enable line wrapping
+    harness.editor_mut().active_state_mut().viewport.line_wrap_enabled = true;
+
+    harness.render().unwrap();
+
+    // Move down multiple times, cursor should stay visible
+    for i in 1..=25 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        let cursor_pos = harness.screen_cursor_position();
+
+        // Check that cursor isn't stuck at origin when line 1 isn't visible
+        let is_at_top_left = cursor_pos.0 == 0 && cursor_pos.1 == 0;
+        let line_1_visible = screen.contains("Line 1");
+
+        if is_at_top_left && !line_1_visible {
+            panic!(
+                "BUG! After {} down keypresses with wrapped lines:\n\
+                - Cursor at (0,0) but Line 1 is not visible\n\
+                - Screen:\n{}",
+                i, screen
+            );
+        }
+    }
+}
+
+/// Test that specifically targets the cache behavior
+#[test]
+fn test_cursor_visibility_with_cache_invalidation() {
+    use tempfile::TempDir;
+    
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Create a file with exactly 20 short lines
+    let mut content = String::new();
+    for i in 1..=20 {
+        content.push_str(&format!("Line {}\n", i));
+    }
+    std::fs::write(&file_path, &content).unwrap();
+
+    // Terminal: 80 cols x 17 rows = 1 tab bar + 15 content lines + 1 status bar
+    let mut harness = EditorTestHarness::new(80, 17).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Enable line wrapping
+    harness.editor_mut().active_state_mut().viewport.line_wrap_enabled = true;
+
+    // Render to build initial cache
+    harness.render().unwrap();
+
+    // Move to line 15 (the last visible line)
+    for _ in 0..14 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(screen.contains("Line 15"), "Should be showing Line 15");
+    
+    // Now press Down to go to line 16
+    // This is the critical moment: line 16 should trigger scrolling
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    
+    // Do NOT render yet - check the viewport state
+    let viewport_top_before_render = harness.editor().active_state().viewport.top_byte;
+    
+    // Now render
+    harness.render().unwrap();
+    
+    let screen_after = harness.screen_to_string();
+    let cursor_pos_after = harness.screen_cursor_position();
+    
+    // Line 16 must be visible
+    assert!(
+        screen_after.contains("Line 16"),
+        "After moving to line 16, it should be visible.\nCursor: {:?}\nViewport top_byte: {}\nScreen:\n{}",
+        cursor_pos_after,
+        viewport_top_before_render,
+        screen_after
+    );
+    
+    // Cursor should not be at (0,0) unless line 1 is visible
+    let is_at_origin = cursor_pos_after.0 == 0 && cursor_pos_after.1 == 0;
+    let line_1_visible = screen_after.contains("Line 1");
+    
+    if is_at_origin && !line_1_visible {
+        panic!(
+            "BUG! Cursor at origin (0,0) but Line 1 not visible.\n\
+            Expected to see Line 16.\n\
+            Cursor: {:?}\n\
+            Screen:\n{}",
+            cursor_pos_after, screen_after
+        );
+    }
+}
