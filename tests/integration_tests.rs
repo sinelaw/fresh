@@ -663,3 +663,393 @@ fn test_diagnostic_overlay_visual_rendering() {
         "Expected 'x' character at position"
     );
 }
+
+/// Comprehensive tests for Event::inverse()
+mod event_inverse_tests {
+    use fresh::event::{CursorId, Event, OverlayFace, UnderlineStyle};
+
+    #[test]
+    fn test_insert_inverse() {
+        let event = Event::Insert {
+            position: 10,
+            text: "hello".to_string(),
+            cursor_id: CursorId(0),
+        };
+
+        let inverse = event.inverse().expect("Insert should have inverse");
+
+        match inverse {
+            Event::Delete {
+                range,
+                deleted_text,
+                cursor_id,
+            } => {
+                assert_eq!(range, 10..15);
+                assert_eq!(deleted_text, "hello");
+                assert_eq!(cursor_id, CursorId::UNDO_SENTINEL);
+            }
+            _ => panic!("Insert inverse should be Delete"),
+        }
+    }
+
+    #[test]
+    fn test_delete_inverse() {
+        let event = Event::Delete {
+            range: 5..10,
+            deleted_text: "world".to_string(),
+            cursor_id: CursorId(1),
+        };
+
+        let inverse = event.inverse().expect("Delete should have inverse");
+
+        match inverse {
+            Event::Insert {
+                position,
+                text,
+                cursor_id,
+            } => {
+                assert_eq!(position, 5);
+                assert_eq!(text, "world");
+                assert_eq!(cursor_id, CursorId::UNDO_SENTINEL);
+            }
+            _ => panic!("Delete inverse should be Insert"),
+        }
+    }
+
+    #[test]
+    fn test_add_cursor_inverse() {
+        let event = Event::AddCursor {
+            cursor_id: CursorId(2),
+            position: 42,
+            anchor: Some(10),
+        };
+
+        let inverse = event.inverse().expect("AddCursor should have inverse");
+
+        match inverse {
+            Event::RemoveCursor {
+                cursor_id,
+                position,
+                anchor,
+            } => {
+                assert_eq!(cursor_id, CursorId(2));
+                assert_eq!(position, 42);
+                assert_eq!(anchor, Some(10));
+            }
+            _ => panic!("AddCursor inverse should be RemoveCursor"),
+        }
+    }
+
+    #[test]
+    fn test_remove_cursor_inverse() {
+        let event = Event::RemoveCursor {
+            cursor_id: CursorId(3),
+            position: 100,
+            anchor: None,
+        };
+
+        let inverse = event.inverse().expect("RemoveCursor should have inverse");
+
+        match inverse {
+            Event::AddCursor {
+                cursor_id,
+                position,
+                anchor,
+            } => {
+                assert_eq!(cursor_id, CursorId(3));
+                assert_eq!(position, 100);
+                assert_eq!(anchor, None);
+            }
+            _ => panic!("RemoveCursor inverse should be AddCursor"),
+        }
+    }
+
+    #[test]
+    fn test_move_cursor_inverse() {
+        let event = Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 10,
+            new_position: 20,
+            old_anchor: None,
+            new_anchor: Some(15),
+        };
+
+        let inverse = event.inverse().expect("MoveCursor should have inverse");
+
+        match inverse {
+            Event::MoveCursor {
+                cursor_id,
+                old_position,
+                new_position,
+                old_anchor,
+                new_anchor,
+            } => {
+                assert_eq!(cursor_id, CursorId(0));
+                assert_eq!(old_position, 20); // Swapped
+                assert_eq!(new_position, 10); // Swapped
+                assert_eq!(old_anchor, Some(15)); // Swapped
+                assert_eq!(new_anchor, None); // Swapped
+            }
+            _ => panic!("MoveCursor inverse should be MoveCursor"),
+        }
+    }
+
+    #[test]
+    fn test_add_overlay_inverse() {
+        let event = Event::AddOverlay {
+            overlay_id: "test-overlay".to_string(),
+            range: 0..10,
+            face: OverlayFace::Underline {
+                color: (255, 0, 0),
+                style: UnderlineStyle::Wavy,
+            },
+            priority: 100,
+            message: Some("error".to_string()),
+        };
+
+        let inverse = event.inverse().expect("AddOverlay should have inverse");
+
+        match inverse {
+            Event::RemoveOverlay { overlay_id } => {
+                assert_eq!(overlay_id, "test-overlay");
+            }
+            _ => panic!("AddOverlay inverse should be RemoveOverlay"),
+        }
+    }
+
+    #[test]
+    fn test_remove_overlay_no_inverse() {
+        let event = Event::RemoveOverlay {
+            overlay_id: "test".to_string(),
+        };
+
+        // RemoveOverlay doesn't have inverse because we don't store the overlay data
+        assert!(event.inverse().is_none());
+    }
+
+    #[test]
+    fn test_scroll_inverse() {
+        let event = Event::Scroll { line_offset: 5 };
+
+        let inverse = event.inverse().expect("Scroll should have inverse");
+
+        match inverse {
+            Event::Scroll { line_offset } => {
+                assert_eq!(line_offset, -5); // Negated
+            }
+            _ => panic!("Scroll inverse should be Scroll with negated offset"),
+        }
+    }
+
+    #[test]
+    fn test_set_viewport_no_inverse() {
+        let event = Event::SetViewport { top_line: 10 };
+
+        // SetViewport doesn't have inverse because we don't store the old top_line
+        assert!(event.inverse().is_none());
+    }
+
+    #[test]
+    fn test_change_mode_no_inverse() {
+        let event = Event::ChangeMode {
+            mode: "insert".to_string(),
+        };
+
+        // ChangeMode doesn't have inverse because we don't store the old mode
+        assert!(event.inverse().is_none());
+    }
+
+    #[test]
+    fn test_batch_inverse() {
+        let batch = Event::Batch {
+            events: vec![
+                Event::Insert {
+                    position: 0,
+                    text: "a".to_string(),
+                    cursor_id: CursorId(0),
+                },
+                Event::Insert {
+                    position: 1,
+                    text: "b".to_string(),
+                    cursor_id: CursorId(0),
+                },
+                Event::Insert {
+                    position: 2,
+                    text: "c".to_string(),
+                    cursor_id: CursorId(0),
+                },
+            ],
+            description: "Insert abc".to_string(),
+        };
+
+        let inverse = batch.inverse().expect("Batch should have inverse");
+
+        match inverse {
+            Event::Batch { events, description } => {
+                assert_eq!(events.len(), 3);
+                assert_eq!(description, "Undo: Insert abc");
+
+                // Events should be reversed
+                // Original: [Insert(0,'a'), Insert(1,'b'), Insert(2,'c')]
+                // Inverse: [Delete(2..3,'c'), Delete(1..2,'b'), Delete(0..1,'a')]
+
+                // Check first event (was last insert)
+                match &events[0] {
+                    Event::Delete {
+                        range, deleted_text, ..
+                    } => {
+                        assert_eq!(*range, 2..3);
+                        assert_eq!(deleted_text, "c");
+                    }
+                    _ => panic!("Expected Delete"),
+                }
+
+                // Check last event (was first insert)
+                match &events[2] {
+                    Event::Delete {
+                        range, deleted_text, ..
+                    } => {
+                        assert_eq!(*range, 0..1);
+                        assert_eq!(deleted_text, "a");
+                    }
+                    _ => panic!("Expected Delete"),
+                }
+            }
+            _ => panic!("Batch inverse should be Batch"),
+        }
+    }
+
+    #[test]
+    fn test_batch_with_non_invertible_events() {
+        let batch = Event::Batch {
+            events: vec![
+                Event::Insert {
+                    position: 0,
+                    text: "a".to_string(),
+                    cursor_id: CursorId(0),
+                },
+                Event::SetViewport { top_line: 10 }, // Not invertible
+            ],
+            description: "Mixed batch".to_string(),
+        };
+
+        // Batch with non-invertible events returns None
+        assert!(batch.inverse().is_none());
+    }
+
+    #[test]
+    fn test_nested_batch_inverse() {
+        let inner_batch = Event::Batch {
+            events: vec![
+                Event::Insert {
+                    position: 0,
+                    text: "x".to_string(),
+                    cursor_id: CursorId(0),
+                },
+                Event::Insert {
+                    position: 1,
+                    text: "y".to_string(),
+                    cursor_id: CursorId(0),
+                },
+            ],
+            description: "Inner".to_string(),
+        };
+
+        let outer_batch = Event::Batch {
+            events: vec![
+                Event::Insert {
+                    position: 0,
+                    text: "a".to_string(),
+                    cursor_id: CursorId(0),
+                },
+                inner_batch,
+                Event::Insert {
+                    position: 3,
+                    text: "z".to_string(),
+                    cursor_id: CursorId(0),
+                },
+            ],
+            description: "Outer".to_string(),
+        };
+
+        let inverse = outer_batch.inverse().expect("Nested batch should have inverse");
+
+        match inverse {
+            Event::Batch { events, description } => {
+                assert_eq!(events.len(), 3);
+                assert_eq!(description, "Undo: Outer");
+
+                // Check that the inner batch is also inverted
+                match &events[1] {
+                    Event::Batch {
+                        events: inner_events,
+                        description: inner_desc,
+                    } => {
+                        assert_eq!(inner_events.len(), 2);
+                        assert_eq!(inner_desc, "Undo: Inner");
+                    }
+                    _ => panic!("Expected nested Batch"),
+                }
+            }
+            _ => panic!("Outer batch inverse should be Batch"),
+        }
+    }
+
+    #[test]
+    fn test_double_inverse_equals_original() {
+        let original = Event::Insert {
+            position: 5,
+            text: "test".to_string(),
+            cursor_id: CursorId(0),
+        };
+
+        let inverse = original.inverse().expect("Should have inverse");
+        let double_inverse = inverse.inverse().expect("Should have double inverse");
+
+        // Double inverse should be equivalent to original (with UNDO_SENTINEL cursor_id)
+        match double_inverse {
+            Event::Insert {
+                position,
+                text,
+                cursor_id,
+            } => {
+                assert_eq!(position, 5);
+                assert_eq!(text, "test");
+                assert_eq!(cursor_id, CursorId::UNDO_SENTINEL);
+            }
+            _ => panic!("Double inverse should be Insert"),
+        }
+    }
+
+    #[test]
+    fn test_move_cursor_double_inverse() {
+        let original = Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 10,
+            new_position: 20,
+            old_anchor: None,
+            new_anchor: Some(15),
+        };
+
+        let inverse = original.inverse().expect("Should have inverse");
+        let double_inverse = inverse.inverse().expect("Should have double inverse");
+
+        // Double inverse should equal original
+        match double_inverse {
+            Event::MoveCursor {
+                cursor_id,
+                old_position,
+                new_position,
+                old_anchor,
+                new_anchor,
+            } => {
+                assert_eq!(cursor_id, CursorId(0));
+                assert_eq!(old_position, 10);
+                assert_eq!(new_position, 20);
+                assert_eq!(old_anchor, None);
+                assert_eq!(new_anchor, Some(15));
+            }
+            _ => panic!("Double inverse should be MoveCursor"),
+        }
+    }
+}
