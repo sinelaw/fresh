@@ -24,9 +24,3 @@
 
 *Long code line wrapped with syntax intact*
 
-## Step 4: wrapping_disabled
-
-![wrapping_disabled](../screenshots/Line_Wrapping_04_wrapping_disabled.svg)
-
-*Line wrapping disabled - line extends beyond view*
-

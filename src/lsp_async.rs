@@ -22,7 +22,7 @@ use lsp_types::{
     ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
     DidSaveTextDocumentParams, InitializeParams, InitializeResult, InitializedParams,
     PublishDiagnosticsParams, ServerCapabilities, TextDocumentContentChangeEvent,
-    TextDocumentIdentifier, TextDocumentItem, Url, VersionedTextDocumentIdentifier,
+    TextDocumentIdentifier, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
     WorkspaceFolder,
 };
 use serde::{Deserialize, Serialize};
@@ -85,30 +85,30 @@ pub struct JsonRpcError {
 enum LspCommand {
     /// Initialize the server
     Initialize {
-        root_uri: Option<Url>,
+        root_uri: Option<Uri>,
         response: oneshot::Sender<Result<InitializeResult, String>>,
     },
 
     /// Notify document opened
     DidOpen {
-        uri: Url,
+        uri: Uri,
         text: String,
         language_id: String,
     },
 
     /// Notify document changed
     DidChange {
-        uri: Url,
+        uri: Uri,
         content_changes: Vec<TextDocumentContentChangeEvent>,
     },
 
     /// Notify document saved
-    DidSave { uri: Url, text: Option<String> },
+    DidSave { uri: Uri, text: Option<String> },
 
     /// Request completion at position
     Completion {
         request_id: u64,
-        uri: Url,
+        uri: Uri,
         line: u32,
         character: u32,
     },
@@ -116,7 +116,7 @@ enum LspCommand {
     /// Request go-to-definition
     GotoDefinition {
         request_id: u64,
-        uri: Url,
+        uri: Uri,
         line: u32,
         character: u32,
     },
@@ -124,7 +124,7 @@ enum LspCommand {
     /// Request rename
     Rename {
         request_id: u64,
-        uri: Url,
+        uri: Uri,
         line: u32,
         character: u32,
         new_name: String,
@@ -234,7 +234,7 @@ impl LspState {
     /// Handle initialize command
     async fn handle_initialize_sequential(
         &mut self,
-        root_uri: Option<Url>,
+        root_uri: Option<Uri>,
         pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
     ) -> Result<InitializeResult, String> {
         tracing::info!(
@@ -247,6 +247,7 @@ impl LspState {
                 uri: uri.clone(),
                 name: uri
                     .path()
+                    .as_str()
                     .split('/')
                     .last()
                     .unwrap_or("workspace")
@@ -287,12 +288,12 @@ impl LspState {
     /// Handle did_open command
     async fn handle_did_open_sequential(
         &mut self,
-        uri: Url,
+        uri: Uri,
         text: String,
         language_id: String,
         _pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
     ) -> Result<(), String> {
-        tracing::debug!("LSP: did_open for {}", uri);
+        tracing::debug!("LSP: did_open for {}", uri.as_str());
 
         let params = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
@@ -303,7 +304,7 @@ impl LspState {
             },
         };
 
-        self.document_versions.insert(PathBuf::from(uri.path()), 0);
+        self.document_versions.insert(PathBuf::from(uri.path().as_str()), 0);
 
         self.send_notification::<DidOpenTextDocument>(params).await
     }
@@ -311,13 +312,13 @@ impl LspState {
     /// Handle did_change command
     async fn handle_did_change_sequential(
         &mut self,
-        uri: Url,
+        uri: Uri,
         content_changes: Vec<TextDocumentContentChangeEvent>,
         _pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
     ) -> Result<(), String> {
-        tracing::debug!("LSP: did_change for {}", uri);
+        tracing::debug!("LSP: did_change for {}", uri.as_str());
 
-        let path = PathBuf::from(uri.path());
+        let path = PathBuf::from(uri.path().as_str());
         let version = self.document_versions.entry(path).or_insert(0);
         *version += 1;
 
@@ -334,8 +335,8 @@ impl LspState {
     }
 
     /// Handle did_save command
-    async fn handle_did_save(&mut self, uri: Url, text: Option<String>) -> Result<(), String> {
-        tracing::debug!("LSP: did_save for {}", uri);
+    async fn handle_did_save(&mut self, uri: Uri, text: Option<String>) -> Result<(), String> {
+        tracing::debug!("LSP: did_save for {}", uri.as_str());
 
         let params = DidSaveTextDocumentParams {
             text_document: TextDocumentIdentifier { uri },
@@ -349,7 +350,7 @@ impl LspState {
     async fn handle_completion(
         &mut self,
         request_id: u64,
-        uri: Url,
+        uri: Uri,
         line: u32,
         character: u32,
         pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
@@ -359,7 +360,7 @@ impl LspState {
             TextDocumentPositionParams, WorkDoneProgressParams,
         };
 
-        tracing::debug!("LSP: completion request at {}:{}:{}", uri, line, character);
+        tracing::debug!("LSP: completion request at {}:{}:{}", uri.as_str(), line, character);
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -412,7 +413,7 @@ impl LspState {
     async fn handle_goto_definition(
         &mut self,
         request_id: u64,
-        uri: Url,
+        uri: Uri,
         line: u32,
         character: u32,
         pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
@@ -424,7 +425,7 @@ impl LspState {
 
         tracing::debug!(
             "LSP: go-to-definition request at {}:{}:{}",
-            uri,
+            uri.as_str(),
             line,
             character
         );
@@ -491,7 +492,7 @@ impl LspState {
     async fn handle_rename(
         &mut self,
         request_id: u64,
-        uri: Url,
+        uri: Uri,
         line: u32,
         character: u32,
         new_name: String,
@@ -504,7 +505,7 @@ impl LspState {
 
         tracing::debug!(
             "LSP: rename request at {}:{}:{} to '{}'",
-            uri,
+            uri.as_str(),
             line,
             character,
             new_name
@@ -749,7 +750,7 @@ impl LspTask {
                                                 text,
                                                 language_id,
                                             } => {
-                                                tracing::info!("Replaying DidOpen for {}", uri);
+                                                tracing::info!("Replaying DidOpen for {}", uri.as_str());
                                                 let _ = state
                                                     .handle_did_open_sequential(
                                                         uri,
@@ -763,7 +764,7 @@ impl LspTask {
                                                 uri,
                                                 content_changes,
                                             } => {
-                                                tracing::info!("Replaying DidChange for {}", uri);
+                                                tracing::info!("Replaying DidChange for {}", uri.as_str());
                                                 let _ = state
                                                     .handle_did_change_sequential(
                                                         uri,
@@ -773,7 +774,7 @@ impl LspTask {
                                                     .await;
                                             }
                                             LspCommand::DidSave { uri, text } => {
-                                                tracing::info!("Replaying DidSave for {}", uri);
+                                                tracing::info!("Replaying DidSave for {}", uri.as_str());
                                                 let _ = state.handle_did_save(uri, text).await;
                                             }
                                             _ => {}
@@ -788,14 +789,14 @@ impl LspTask {
                             language_id,
                         } => {
                             if state.initialized {
-                                tracing::info!("Processing DidOpen for {}", uri);
+                                tracing::info!("Processing DidOpen for {}", uri.as_str());
                                 let _ = state
                                     .handle_did_open_sequential(uri, text, language_id, &pending)
                                     .await;
                             } else {
                                 tracing::debug!(
                                     "Queueing DidOpen for {} until initialization completes",
-                                    uri
+                                    uri.as_str()
                                 );
                                 pending_commands.push(LspCommand::DidOpen {
                                     uri,
@@ -809,14 +810,14 @@ impl LspTask {
                             content_changes,
                         } => {
                             if state.initialized {
-                                tracing::debug!("Processing DidChange for {}", uri);
+                                tracing::debug!("Processing DidChange for {}", uri.as_str());
                                 let _ = state
                                     .handle_did_change_sequential(uri, content_changes, &pending)
                                     .await;
                             } else {
                                 tracing::debug!(
                                     "Queueing DidChange for {} until initialization completes",
-                                    uri
+                                    uri.as_str()
                                 );
                                 pending_commands.push(LspCommand::DidChange {
                                     uri,
@@ -826,12 +827,12 @@ impl LspTask {
                         }
                         LspCommand::DidSave { uri, text } => {
                             if state.initialized {
-                                tracing::info!("Processing DidSave for {}", uri);
+                                tracing::info!("Processing DidSave for {}", uri.as_str());
                                 let _ = state.handle_did_save(uri, text).await;
                             } else {
                                 tracing::debug!(
                                     "Queueing DidSave for {} until initialization completes",
-                                    uri
+                                    uri.as_str()
                                 );
                                 pending_commands.push(LspCommand::DidSave { uri, text });
                             }
@@ -843,7 +844,7 @@ impl LspTask {
                             character,
                         } => {
                             if state.initialized {
-                                tracing::info!("Processing Completion request for {}", uri);
+                                tracing::info!("Processing Completion request for {}", uri.as_str());
                                 let _ = state
                                     .handle_completion(request_id, uri, line, character, &pending)
                                     .await;
@@ -862,7 +863,7 @@ impl LspTask {
                             character,
                         } => {
                             if state.initialized {
-                                tracing::info!("Processing GotoDefinition request for {}", uri);
+                                tracing::info!("Processing GotoDefinition request for {}", uri.as_str());
                                 let _ = state
                                     .handle_goto_definition(
                                         request_id, uri, line, character, &pending,
@@ -884,7 +885,7 @@ impl LspTask {
                             new_name,
                         } => {
                             if state.initialized {
-                                tracing::info!("Processing Rename request for {}", uri);
+                                tracing::info!("Processing Rename request for {}", uri.as_str());
                                 let _ = state
                                     .handle_rename(
                                         request_id, uri, line, character, new_name, &pending,
@@ -918,7 +919,7 @@ impl LspTask {
     /// Sequential version of handle_initialize that uses shared pending map
     async fn handle_initialize_sequential(
         &mut self,
-        root_uri: Option<Url>,
+        root_uri: Option<Uri>,
         pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
     ) -> Result<InitializeResult, String> {
         tracing::info!(
@@ -931,6 +932,7 @@ impl LspTask {
                 uri: uri.clone(),
                 name: uri
                     .path()
+                    .as_str()
                     .split('/')
                     .last()
                     .unwrap_or("workspace")
@@ -971,12 +973,12 @@ impl LspTask {
     /// Sequential version of handle_did_open
     async fn handle_did_open_sequential(
         &mut self,
-        uri: Url,
+        uri: Uri,
         text: String,
         language_id: String,
         _pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
     ) -> Result<(), String> {
-        tracing::debug!("LSP: did_open for {}", uri);
+        tracing::debug!("LSP: did_open for {}", uri.as_str());
 
         let params = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
@@ -987,7 +989,7 @@ impl LspTask {
             },
         };
 
-        self.document_versions.insert(PathBuf::from(uri.path()), 0);
+        self.document_versions.insert(PathBuf::from(uri.path().as_str()), 0);
 
         self.send_notification::<DidOpenTextDocument>(params).await
     }
@@ -995,13 +997,13 @@ impl LspTask {
     /// Sequential version of handle_did_change
     async fn handle_did_change_sequential(
         &mut self,
-        uri: Url,
+        uri: Uri,
         content_changes: Vec<TextDocumentContentChangeEvent>,
         _pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
     ) -> Result<(), String> {
-        tracing::debug!("LSP: did_change for {}", uri);
+        tracing::debug!("LSP: did_change for {}", uri.as_str());
 
-        let path = PathBuf::from(uri.path());
+        let path = PathBuf::from(uri.path().as_str());
         let version = self.document_versions.entry(path).or_insert(0);
         *version += 1;
 
@@ -1228,7 +1230,7 @@ impl LspTask {
                     tracing::debug!(
                         "Received {} diagnostics for {}",
                         params.diagnostics.len(),
-                        params.uri
+                        params.uri.as_str()
                     );
 
                     // Send to main loop
@@ -1374,7 +1376,7 @@ async fn handle_notification_dispatch(
                 tracing::debug!(
                     "Received {} diagnostics for {}",
                     params.diagnostics.len(),
-                    params.uri
+                    params.uri.as_str()
                 );
 
                 // Send to main loop
@@ -1480,7 +1482,7 @@ impl LspHandle {
     /// This sends the initialize request asynchronously. The server will be ready
     /// when `is_initialized()` returns true. Other methods that require initialization
     /// will fail gracefully until then.
-    pub fn initialize(&self, root_uri: Option<Url>) -> Result<(), String> {
+    pub fn initialize(&self, root_uri: Option<Uri>) -> Result<(), String> {
         let initialized = self.initialized.clone();
 
         // Create a channel for the response, but don't wait for it
@@ -1522,7 +1524,7 @@ impl LspHandle {
     }
 
     /// Notify document opened
-    pub fn did_open(&self, uri: Url, text: String, language_id: String) -> Result<(), String> {
+    pub fn did_open(&self, uri: Uri, text: String, language_id: String) -> Result<(), String> {
         // Send command to LspTask which will queue it if not initialized yet
         self.command_tx
             .try_send(LspCommand::DidOpen {
@@ -1536,7 +1538,7 @@ impl LspHandle {
     /// Notify document changed
     pub fn did_change(
         &self,
-        uri: Url,
+        uri: Uri,
         content_changes: Vec<TextDocumentContentChangeEvent>,
     ) -> Result<(), String> {
         // Send command to LspTask which will queue it if not initialized yet
@@ -1549,7 +1551,7 @@ impl LspHandle {
     }
 
     /// Send didSave notification
-    pub fn did_save(&self, uri: Url, text: Option<String>) -> Result<(), String> {
+    pub fn did_save(&self, uri: Uri, text: Option<String>) -> Result<(), String> {
         self.command_tx
             .try_send(LspCommand::DidSave { uri, text })
             .map_err(|_| "Failed to send did_save command".to_string())
@@ -1559,7 +1561,7 @@ impl LspHandle {
     pub fn completion(
         &self,
         request_id: u64,
-        uri: Url,
+        uri: Uri,
         line: u32,
         character: u32,
     ) -> Result<(), String> {
@@ -1577,7 +1579,7 @@ impl LspHandle {
     pub fn goto_definition(
         &self,
         request_id: u64,
-        uri: Url,
+        uri: Uri,
         line: u32,
         character: u32,
     ) -> Result<(), String> {
@@ -1595,7 +1597,7 @@ impl LspHandle {
     pub fn rename(
         &self,
         request_id: u64,
-        uri: Url,
+        uri: Uri,
         line: u32,
         character: u32,
         new_name: String,

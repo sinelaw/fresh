@@ -29,6 +29,51 @@
         "max_cpu_percent": 90,
         "enabled": true
       }
+    },
+    "python": {
+      "command": "pylsp",
+      "args": [],
+      "enabled": true
+    },
+    "javascript": {
+      "command": "typescript-language-server",
+      "args": ["--stdio"],
+      "enabled": true
+    },
+    "typescript": {
+      "command": "typescript-language-server",
+      "args": ["--stdio"],
+      "enabled": true
+    },
+    "html": {
+      "command": "vscode-html-languageserver-bin",
+      "args": ["--stdio"],
+      "enabled": true
+    },
+    "css": {
+      "command": "vscode-css-languageserver-bin",
+      "args": ["--stdio"],
+      "enabled": true
+    },
+    "c": {
+      "command": "clangd",
+      "args": [],
+      "enabled": true
+    },
+    "cpp": {
+      "command": "clangd",
+      "args": [],
+      "enabled": true
+    },
+    "go": {
+      "command": "gopls",
+      "args": [],
+      "enabled": true
+    },
+    "json": {
+      "command": "vscode-json-languageserver",
+      "args": ["--stdio"],
+      "enabled": true
     }
   },
   "_comment_lsp": "Process limits: max_memory_mb defaults to 50% of system memory if null, max_cpu_percent defaults to 90% of total CPU. Only enabled on Linux by default."

@@ -23,7 +23,7 @@ use crate::ui::{
     FileExplorerRenderer, HelpRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer,
     TabsRenderer,
 };
-use lsp_types::{TextDocumentContentChangeEvent, Url};
+use lsp_types::{TextDocumentContentChangeEvent, Uri};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     Frame,
@@ -74,7 +74,7 @@ pub struct BufferMetadata {
     pub file_path: Option<PathBuf>,
 
     /// File URI for LSP (computed once from absolute path)
-    pub file_uri: Option<lsp_types::Url>,
+    pub file_uri: Option<lsp_types::Uri>,
 
     /// Whether LSP is enabled for this buffer
     pub lsp_enabled: bool,
@@ -106,7 +106,9 @@ impl BufferMetadata {
                 .unwrap_or_else(|| path.clone())
         };
 
-        let file_uri = lsp_types::Url::from_file_path(&absolute_path).ok();
+        let file_uri = url::Url::from_file_path(&absolute_path)
+            .ok()
+            .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok());
 
         Self {
             file_path: Some(path),
@@ -121,6 +123,15 @@ impl BufferMetadata {
         self.lsp_enabled = false;
         self.lsp_disabled_reason = Some(reason);
     }
+}
+
+/// Helper function to convert lsp_types::Uri to PathBuf
+fn uri_to_path(uri: &lsp_types::Uri) -> Result<PathBuf, String> {
+    // Convert to url::Url for path conversion
+    url::Url::parse(uri.as_str())
+        .map_err(|e| format!("Failed to parse URI: {}", e))?
+        .to_file_path()
+        .map_err(|_| "URI is not a file path".to_string())
 }
 
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
@@ -334,7 +345,9 @@ impl Editor {
         event_logs.insert(buffer_id, EventLog::new());
 
         // Initialize LSP manager with current working directory as root
-        let root_uri = Url::from_file_path(&working_dir).ok();
+        let root_uri = url::Url::from_file_path(&working_dir)
+            .ok()
+            .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok());
 
         // Create Tokio runtime for async I/O (LSP, file watching, git, etc.)
         let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
@@ -510,7 +523,7 @@ impl Editor {
 
                 // Use the URI from metadata (already computed in with_file)
                 if let Some(uri) = &metadata.file_uri {
-                    tracing::debug!("Using URI from metadata: {}", uri);
+                    tracing::debug!("Using URI from metadata: {}", uri.as_str());
                     // Get file size to decide whether to send full content
                     let file_size = std::fs::metadata(path).ok().map(|m| m.len()).unwrap_or(0);
                     let large_file_threshold = self.config.editor.large_file_threshold_bytes;
@@ -537,7 +550,7 @@ impl Editor {
                             language
                         );
                         if let Some(client) = lsp.get_or_spawn(&language) {
-                            tracing::info!("Sending didOpen to LSP for: {}", uri);
+                            tracing::info!("Sending didOpen to LSP for: {}", uri.as_str());
                             if let Err(e) = client.did_open(uri.clone(), text, language) {
                                 tracing::warn!("Failed to send didOpen to LSP: {}", e);
                             } else {
@@ -1911,7 +1924,7 @@ impl Editor {
                     );
 
                     // Find the buffer for this URI by comparing URIs directly
-                    if let Ok(diagnostic_url) = Url::parse(&uri) {
+                    if let Ok(diagnostic_url) = uri.parse::<lsp_types::Uri>() {
                         // Find buffer ID by matching URI
                         if let Some((buffer_id, _)) = self
                             .buffer_metadata
@@ -2447,7 +2460,7 @@ impl Editor {
         let location = &locations[0];
 
         // Convert URI to file path
-        if let Ok(path) = location.uri.to_file_path() {
+        if let Ok(path) = uri_to_path(&location.uri) {
             // Open the file
             let buffer_id = self.open_file(&path)?;
 
@@ -2546,7 +2559,7 @@ impl Editor {
                             line as u32,
                             character as u32,
                         );
-                        tracing::info!("Requested completion at {}:{}:{}", uri, line, character);
+                        tracing::info!("Requested completion at {}:{}:{}", uri.as_str(), line, character);
                     }
                 }
             }
@@ -2590,7 +2603,7 @@ impl Editor {
                         );
                         tracing::info!(
                             "Requested go-to-definition at {}:{}:{}",
-                            uri,
+                            uri.as_str(),
                             line,
                             character
                         );
@@ -2629,7 +2642,7 @@ impl Editor {
                 // Handle changes (map of URI -> Vec<TextEdit>)
                 if let Some(changes) = workspace_edit.changes {
                     for (uri, edits) in changes {
-                        if let Ok(path) = uri.to_file_path() {
+                        if let Ok(path) = uri_to_path(&uri) {
                             // Open the file if not already open
                             let buffer_id = self.open_file(&path)?;
 
@@ -2754,7 +2767,7 @@ impl Editor {
                     for text_doc_edit in text_edits {
                         let uri = text_doc_edit.text_document.uri;
 
-                        if let Ok(path) = uri.to_file_path() {
+                        if let Ok(path) = uri_to_path(&uri) {
                             // Open the file if not already open
                             let buffer_id = self.open_file(&path)?;
 
@@ -3051,7 +3064,7 @@ impl Editor {
                             );
                             tracing::info!(
                                 "Requested rename at {}:{}:{} to '{}'",
-                                uri,
+                                uri.as_str(),
                                 line,
                                 character,
                                 rename_state.current_text
@@ -4868,7 +4881,7 @@ impl Editor {
         let full_text = self.active_state().buffer.to_string();
         tracing::debug!(
             "notify_lsp_change: sending didChange to {} (text length: {} bytes)",
-            uri,
+            uri.as_str(),
             full_text.len()
         );
 
@@ -4947,7 +4960,7 @@ impl Editor {
         let full_text = self.active_state().buffer.to_string();
         tracing::debug!(
             "notify_lsp_save: sending didSave to {} (text length: {} bytes)",
-            uri,
+            uri.as_str(),
             full_text.len()
         );
 
