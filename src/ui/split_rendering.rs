@@ -708,22 +708,33 @@ impl SplitRenderer {
                 let segments = wrap_line(&line_text, &config);
 
                 // Check if primary cursor is on this line and calculate its position
+                // Use line_content.len() (original line length) not line_text.len() (scrolled length)
+                // to ensure we capture cursor even when it's past the horizontal scroll offset.
+                // Use < instead of <= to avoid capturing cursor positions that belong to the next line.
                 if !cursor_found
                     && primary_cursor_position >= line_start
-                    && primary_cursor_position <= line_start + line_text.len()
+                    && primary_cursor_position < line_start + line_content.len()
                 {
                     let column = primary_cursor_position.saturating_sub(line_start);
-                    let (segment_idx, col_in_segment) = char_position_to_segment(column, &segments);
+
+                    // For no-wrap mode with horizontal scrolling:
+                    // segments were created from line_text (already scrolled), so we need to
+                    // adjust column to be relative to the scrolled portion before calling
+                    // char_position_to_segment, and NOT subtract left_col again afterward
+                    let (segment_idx, col_in_segment) = if !line_wrap {
+                        // Adjust column to be relative to scrolled text
+                        let scrolled_column = column.saturating_sub(left_col);
+                        char_position_to_segment(scrolled_column, &segments)
+                    } else {
+                        // For wrapped mode, column is already correct
+                        char_position_to_segment(column, &segments)
+                    };
 
                     // Cursor screen position relative to this line's rendered segments
-                    // For no-wrap mode with horizontal scrolling, adjust for left_column
                     // Note: cursor_screen_x is the column in the text content, NOT including
                     // the line number gutter (which gets added later at hardware cursor setting)
-                    cursor_screen_x = if !line_wrap {
-                        col_in_segment.saturating_sub(left_col) as u16
-                    } else {
-                        col_in_segment as u16
-                    };
+                    cursor_screen_x = col_in_segment as u16;
+
                     // lines_rendered is 1-indexed (incremented before processing), but cursor position needs to be 0-indexed
                     cursor_screen_y = (lines_rendered - 1 + segment_idx) as u16;
                     cursor_found = true;
