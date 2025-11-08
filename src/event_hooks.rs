@@ -58,14 +58,15 @@ impl EventHooks for Event {
             }),
             Event::MoveCursor {
                 cursor_id,
-                position,
+                old_position,
+                new_position,
                 ..
             } => {
                 Some(HookArgs::CursorMoved {
                     buffer_id,
                     cursor_id: *cursor_id,
-                    old_position: 0, // TODO: Track old position
-                    new_position: *position,
+                    old_position: *old_position,
+                    new_position: *new_position,
                 })
             }
             _ => None,

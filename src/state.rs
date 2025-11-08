@@ -218,12 +218,13 @@ impl EditorState {
 
             Event::MoveCursor {
                 cursor_id,
-                position,
-                anchor,
+                new_position,
+                new_anchor,
+                ..
             } => {
                 if let Some(cursor) = self.cursors.get_mut(*cursor_id) {
-                    cursor.position = *position;
-                    cursor.anchor = *anchor;
+                    cursor.position = *new_position;
+                    cursor.anchor = *new_anchor;
 
                     // Smart scroll to keep cursor visible
                     self.viewport.ensure_visible(&mut self.buffer, cursor);
@@ -619,8 +620,10 @@ mod tests {
 
         state.apply(&Event::MoveCursor {
             cursor_id,
-            position: 2,
-            anchor: None,
+            old_position: 5,
+            new_position: 2,
+            old_anchor: None,
+            new_anchor: None,
         });
 
         assert_eq!(state.cursors.primary().position, 2);
