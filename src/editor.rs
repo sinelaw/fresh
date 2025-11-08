@@ -4445,6 +4445,7 @@ impl Editor {
             lsp_waiting,
             self.config.editor.large_file_threshold_bytes,
             self.config.editor.line_wrap,
+            Some(&self.hook_registry),
         );
         self.cached_layout.split_areas = split_areas;
         self.cached_layout.editor_content_area = Some(editor_content_area);
