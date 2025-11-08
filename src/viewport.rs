@@ -201,8 +201,8 @@ impl Viewport {
         let visible_count = self.visible_line_count();
         let lines_from_top = cursor_line_number.saturating_sub(top_line_number);
 
-        let cursor_is_visible = lines_from_top >= self.scroll_offset
-            && lines_from_top < visible_count.saturating_sub(self.scroll_offset);
+        // Only scroll if cursor moves beyond the visible area (not within scroll_offset zone)
+        let cursor_is_visible = lines_from_top < visible_count;
 
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {

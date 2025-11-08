@@ -220,11 +220,13 @@ impl EditorState {
                 cursor_id,
                 new_position,
                 new_anchor,
+                new_sticky_column,
                 ..
             } => {
                 if let Some(cursor) = self.cursors.get_mut(*cursor_id) {
                     cursor.position = *new_position;
                     cursor.anchor = *new_anchor;
+                    cursor.sticky_column = *new_sticky_column;
 
                     // Smart scroll to keep cursor visible
                     self.viewport.ensure_visible(&mut self.buffer, cursor);
@@ -624,6 +626,8 @@ mod tests {
             new_position: 2,
             old_anchor: None,
             new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
         });
 
         assert_eq!(state.cursors.primary().position, 2);
