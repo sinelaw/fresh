@@ -439,14 +439,6 @@
   <text x="991" y="536" fill="#000000" class="terminal" style="">x</text>
   <rect x="999" y="522" width="9" height="18" fill="#ffffff"/>
   <text x="1000" y="536" fill="#000000" class="terminal" style="">t</text>
-  <rect x="1008" y="522" width="9" height="18" fill="#ffffff"/>
-  <rect x="1017" y="522" width="9" height="18" fill="#ffffff"/>
-  <rect x="1026" y="522" width="9" height="18" fill="#ffffff"/>
-  <rect x="1035" y="522" width="9" height="18" fill="#ffffff"/>
-  <rect x="1044" y="522" width="9" height="18" fill="#ffffff"/>
-  <rect x="1053" y="522" width="9" height="18" fill="#ffffff"/>
-  <rect x="1062" y="522" width="9" height="18" fill="#ffffff"/>
-  <rect x="1071" y="522" width="9" height="18" fill="#ffffff"/>
   <!-- Cursor indicator -->
   <rect x="72" y="288" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
 </svg>
