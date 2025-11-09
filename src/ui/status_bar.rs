@@ -190,22 +190,17 @@ impl StatusBarRenderer {
 
         // Build help indicator for right side
         // Use Ctrl+/ or ⌘+/ depending on platform
-        // Only show help indicator if there's no status message (status messages take priority)
-        let show_help_indicator = status_message.is_none();
+        // Always show help indicator on the right side
         let help_shortcut = format_keybinding(&KeyCode::Char('/'), &KeyModifiers::CONTROL);
         let help_indicator = format!("Help: {}", help_shortcut);
         let padded_help = format!(" {} ", help_indicator);
 
-        // Calculate available width - always reserve space for help indicator if showing it
+        // Calculate available width - always reserve space for help indicator
         let available_width = area.width as usize;
-        let help_width = if show_help_indicator {
-            padded_help.len()
-        } else {
-            0
-        };
+        let help_width = padded_help.len();
 
         // Only show help indicator if there's enough space (at least 15 chars for minimal display)
-        let spans = if available_width >= 15 && show_help_indicator {
+        let spans = if available_width >= 15 {
             // Reserve space for help indicator
             let left_max_width = if available_width > help_width + 1 {
                 available_width - help_width - 1 // -1 for at least one space separator
