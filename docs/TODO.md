@@ -762,47 +762,131 @@ impl ChunkTree {
 
 The problems identified above aren't hypothetical - they're the **exact problems** that Piece Tables (VS Code) and Ropes (Xi Editor, Kakoune) were invented to solve.
 
-**Current Architecture = Rope Implementation:**
+**Current Architecture - Layered Design:**
 
-The codebase already uses a **Rope** (ChunkTree in src/chunk_tree.rs):
+The codebase uses a **Rope** with multiple layers for different responsibilities:
 
+#### Layer 1: ChunkTree (src/chunk_tree.rs) - The Rope
 ```rust
-// ChunkTree structure (simplified):
+// Persistent tree structure
 enum Node {
     Leaf(data: &[u8]),           // Actual bytes (up to 4KB)
-    Gap(size: usize),            // Empty space (efficient)
-    Internal(children: Vec<Arc<Node>>)  // Tree structure
+    Gap(size: usize),            // Efficient empty space
+    Internal(children: Vec<Arc<Node>>)  // Tree with Arc-sharing
 }
 ```
+
+**Responsibility:** Persistent immutable data structure for text storage
+- Insert/delete = O(log n) tree operations creating new nodes
+- Old versions stay valid via Arc-sharing (structural sharing)
+- No copying of unchanged subtrees
+
+#### Layer 2: VirtualBuffer (src/virtual_buffer.rs) - Caching + Iterator Support
+```rust
+struct VirtualBuffer {
+    persistence: Box<dyn PersistenceLayer>,  // Usually ChunkTreePersistence
+    cache: Cache,                            // 16MB LRU cache
+    edit_log: Vec<Edit>,                     // For iterator position adjustment
+    edit_version: AtomicU64,                 // Version counter
+}
+```
+
+**Responsibility:** Performance optimizations on top of persistence layer
+- 16MB cache for frequently accessed regions
+- Edit log tracks changes so **active iterators** can adjust their positions
+- Version tracking for iterator lifecycle management
+- **NOT for undo/redo** (that's EventLog in event.rs)
+
+#### Layer 3: Buffer (src/buffer.rs) - High-Level Text Operations
+```rust
+pub struct Buffer {
+    virtual_buffer: VirtualBuffer,
+    line_cache: LineCache,      // Byte offset → line number mapping
+    file_path: Option<PathBuf>,
+    modified: bool,
+}
+```
+
+**Responsibility:** Text editor semantics
+- Line-based operations (line iterator, line cache)
+- File I/O (load, save)
+- High-level operations (find, slice, character boundaries)
+- Modified state tracking
+
+#### Layer 4: EditorState (src/state.rs) - Undo/Redo + UI State
+```rust
+pub struct EditorState {
+    buffer: Buffer,
+    cursors: Cursors,
+    viewport: Viewport,
+    // ... UI state
+}
+
+// Separate from VirtualBuffer!
+pub struct EventLog {
+    entries: Vec<LogEntry>,     // Full event history with data
+    current_index: usize,        // For undo/redo
+    snapshots: Vec<Snapshot>,   // Periodic checkpoints
+}
+```
+
+**Responsibility:** Application-level state and undo/redo
+- EventLog stores full editing history (with text content)
+- Undo/redo via event replay from snapshots
+- Cursors, viewport, overlays, markers
+
+#### Layer 5: Rendering - Iterator-Based Display
+```rust
+// Rendering walks the buffer using iterators
+let mut iter = buffer.line_iterator(viewport.top_byte);
+for (byte_offset, line_content) in iter.take(viewport_height) {
+    render_line(line_content, syntax_highlighting);
+}
+```
+
+**Responsibility:** Display visible content only
+- Uses iterators from Buffer/VirtualBuffer
+- O(viewport) not O(file_size)
+- Iterators read from ChunkTree snapshot (efficient chunk traversal)
 
 **How it works (same principle as Piece Table):**
 
 ```
 Initial: Load 1GB file
-  ChunkTree: [Leaf(file_data, 0..1GB)]  // Minimal structure
+  ChunkTree: [Leaf(file_data, 0..1GB)]
+  VirtualBuffer: empty cache, empty edit_log
+  Buffer: empty line_cache
 
 User types "Hello" at beginning:
-  ChunkTree: [Leaf("Hello"), Leaf(file_data, 0..1GB)]  // O(log n) operation
-  (Old chunks shared via Arc, no copying!)
+  ChunkTree: [Leaf("Hello"), Leaf(file_data, 0..1GB)]  // O(log n) insert
+  VirtualBuffer: edit_log += [Insert(0, 5)]            // Track for iterators
+  Buffer: line_cache invalidated from byte 0
+  EventLog: append Insert event (for undo)
 
-User replaces "Chapter 1" with "Introduction" at offset 1000:
+User replaces "Chapter 1" → "Introduction" at 1000:
   ChunkTree: [Leaf("Hello"), Leaf(file_data, 0..1000),
               Leaf("Introduction"), Leaf(file_data, 1009..1GB)]
-  (Only created 2 new leaf nodes, rest are Arc-shared!)
+  VirtualBuffer: edit_log += [Delete(1000, 9), Insert(1000, 12)]
+  Buffer: line_cache invalidated from byte 1000
+  EventLog: append Delete + Insert events (for undo)
 ```
 
-**Why this solves all the problems:**
+**Why this layered approach solves all the problems:**
 
-1. ✅ **No Coordinate Mapping Problem:** All positions are in the virtual file (the ChunkTree IS the current state)
-2. ✅ **No JIT Replay:** Rendering just walks the tree - O(viewport) iteration over actual chunks
-3. ✅ **Global Features Work:** Search/lint/minimap iterate the ChunkTree (the actual content)
-4. ✅ **No Concurrency Hell:** Persistent structure with Arc-sharing means old versions stay valid
-5. ✅ **Instant Edits:** Insert/delete = O(log n) tree operations, not file copies
-6. ✅ **Undo is Free:** Store previous tree roots (Arc-shared subtrees = minimal memory)
+1. ✅ **No Coordinate Mapping Problem:** ChunkTree IS the current virtual state (not computed on-demand)
+2. ✅ **No JIT Replay:** Rendering iterates ChunkTree directly - O(viewport) chunk traversal
+3. ✅ **Global Features Work:** Search/lint iterate the actual ChunkTree content (not event log)
+4. ✅ **No Concurrency Hell:** Persistent ChunkTree with Arc-sharing = old versions stay valid
+5. ✅ **Instant Edits:** O(log n) ChunkTree operations, not file copies
+6. ✅ **Undo is Free:** EventLog stores history, ChunkTree versions are Arc-shared
+
+**Two separate "logs" with different purposes:**
+- **VirtualBuffer.edit_log:** Lightweight position tracking (offset, length only) for **iterator adjustment**
+- **EventLog:** Complete history (with text content) for **undo/redo**
 
 **The lazy-edit proposal would replace this proven solution with a worse one:**
-- Rope/Piece Table: Virtual state IS the primary data structure ✅
-- Lazy-edit WAL: Virtual state computed on-demand from log ❌
+- Current: ChunkTree (Rope) IS the virtual state, edits immediately applied ✅
+- Proposed: WAL with deferred application, virtual state computed on-demand ❌
 
 ### Recommendation: **DO NOT IMPLEMENT LAZY EDITS**
 
