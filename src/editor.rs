@@ -1750,6 +1750,11 @@ impl Editor {
 
     /// Resize all buffers to match new terminal size
     pub fn resize(&mut self, width: u16, height: u16) {
+        // Update terminal dimensions for future buffer creation
+        self.terminal_width = width;
+        self.terminal_height = height;
+
+        // Resize all existing buffers
         for state in self.buffers.values_mut() {
             state.resize(width, height);
         }
