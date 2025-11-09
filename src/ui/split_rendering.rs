@@ -866,7 +866,11 @@ impl SplitRenderer {
             cursor_found = true;
         }
 
-        let paragraph = Paragraph::new(lines).block(Block::default().borders(Borders::NONE));
+        // Set base style to ensure the entire area is cleared with the proper background color
+        // This prevents rendering artifacts when switching buffers or when content is shorter than the area
+        let paragraph = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::NONE))
+            .style(Style::default().bg(theme.editor_bg).fg(theme.editor_fg));
 
         frame.render_widget(paragraph, area);
 
