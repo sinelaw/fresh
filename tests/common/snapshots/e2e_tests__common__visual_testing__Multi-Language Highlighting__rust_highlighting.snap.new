@@ -1,0 +1,35 @@
+---
+source: tests/common/visual_testing.rs
+assertion_line: 69
+expression: "&screen_text"
+---
+ hello.rs                                                                       
+    1 │ fn greet(name: &str) -> String {                                       █
+    2 │     format!("Hello, {}!", name)                                        █
+    3 │ }                                                                      █
+    4 │                                                                        █
+    5 │ fn main() {                                                            █
+    6 │     let message = greet("World");                                      █
+    7 │     println!("{}", message);                                           █
+    8 │ }                                                                      █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+/tmp/.tmpxbEg1Z/project_root/hello.rs | Ln 0, Col 0 | Opened /tmp/.tmpxbEg1Z/pro

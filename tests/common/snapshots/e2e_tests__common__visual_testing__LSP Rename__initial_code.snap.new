@@ -1,0 +1,35 @@
+---
+source: tests/common/visual_testing.rs
+assertion_line: 69
+expression: "&screen_text"
+---
+ [No Name]*                                                                     
+    1 │ fn calculate(value: i32) -> i32 {                                      █
+    2 │     let result = value * 2;                                            █
+    3 │     println!("Value: {}", value);                                      █
+    4 │     result                                                             █
+    5 │ }                                                                      █
+    6 │                                                                        █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+[No Name] [+] | Ln 5, Col 0                                        Help: Ctrl+/

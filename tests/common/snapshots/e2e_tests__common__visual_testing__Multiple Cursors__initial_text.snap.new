@@ -1,0 +1,29 @@
+---
+source: tests/common/visual_testing.rs
+assertion_line: 69
+expression: "&screen_text"
+---
+ [No Name]*                                                                     
+    1 │ hello                                                                  █
+    2 │ hello                                                                  █
+    3 │ hello                                                                  █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+[No Name] [+] | Ln 2, Col 5                                        Help: Ctrl+/
