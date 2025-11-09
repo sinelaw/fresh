@@ -134,7 +134,8 @@ pub fn action_to_events(
         // Basic movement - move each cursor
         Action::MoveLeft => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let new_pos = cursor.position.saturating_sub(1);
+                // Use prev_char_boundary to ensure we land on a valid UTF-8 character boundary
+                let new_pos = state.buffer.prev_char_boundary(cursor.position);
                 events.push(Event::MoveCursor {
                     cursor_id,
                     old_position: cursor.position,
@@ -150,7 +151,8 @@ pub fn action_to_events(
         Action::MoveRight => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
-                let new_pos = (cursor.position + 1).min(max_pos);
+                // Use next_char_boundary to ensure we land on a valid UTF-8 character boundary
+                let new_pos = state.buffer.next_char_boundary(cursor.position).min(max_pos);
                 events.push(Event::MoveCursor {
                     cursor_id,
                     old_position: cursor.position,
@@ -410,7 +412,8 @@ pub fn action_to_events(
         // Selection movement - same as regular movement but keeps anchor
         Action::SelectLeft => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let new_pos = cursor.position.saturating_sub(1);
+                // Use prev_char_boundary to ensure we land on a valid UTF-8 character boundary
+                let new_pos = state.buffer.prev_char_boundary(cursor.position);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 events.push(Event::MoveCursor {
                     cursor_id,
@@ -427,7 +430,8 @@ pub fn action_to_events(
         Action::SelectRight => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
-                let new_pos = (cursor.position + 1).min(max_pos);
+                // Use next_char_boundary to ensure we land on a valid UTF-8 character boundary
+                let new_pos = state.buffer.next_char_boundary(cursor.position).min(max_pos);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 events.push(Event::MoveCursor {
                     cursor_id,

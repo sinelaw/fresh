@@ -3700,10 +3700,13 @@ impl Editor {
                 if let Some(rename_state) = &self.rename_state {
                     let current_pos = self.active_state().cursors.primary().position;
                     if current_pos > rename_state.start_pos {
+                        // Use prev_char_boundary to ensure we land on a valid UTF-8 character boundary
+                        let new_pos = self.active_state().buffer.prev_char_boundary(current_pos)
+                            .max(rename_state.start_pos);
                         let event = Event::MoveCursor {
                             cursor_id: self.active_state().cursors.primary_id(),
                             old_position: 0, // TODO: Get actual old position
-                            new_position: current_pos - 1,
+                            new_position: new_pos,
                             old_anchor: None, // TODO: Get actual old anchor
                             new_anchor: None,
                             old_sticky_column: 0,
@@ -3718,10 +3721,13 @@ impl Editor {
                 if let Some(rename_state) = &self.rename_state {
                     let current_pos = self.active_state().cursors.primary().position;
                     if current_pos < rename_state.end_pos {
+                        // Use next_char_boundary to ensure we land on a valid UTF-8 character boundary
+                        let new_pos = self.active_state().buffer.next_char_boundary(current_pos)
+                            .min(rename_state.end_pos);
                         let event = Event::MoveCursor {
                             cursor_id: self.active_state().cursors.primary_id(),
                             old_position: 0, // TODO: Get actual old position
-                            new_position: current_pos + 1,
+                            new_position: new_pos,
                             old_anchor: None, // TODO: Get actual old anchor
                             new_anchor: None,
                             old_sticky_column: 0,
@@ -4453,8 +4459,17 @@ impl Editor {
             // Get the content of the target line
             if let Some((pos, line_content)) = line_iter.next() {
                 line_start = pos;
-                // Calculate byte offset within the line (accounting for multi-byte chars)
-                let byte_offset = actual_col.min(line_content.len());
+                // Calculate byte offset within the line by iterating through characters
+                // to properly handle multi-byte UTF-8 characters
+                let mut byte_offset = 0;
+                let mut col_count = 0;
+                for ch in line_content.chars() {
+                    if col_count >= actual_col {
+                        break;
+                    }
+                    byte_offset += ch.len_utf8();
+                    col_count += 1;
+                }
                 target_position = line_start + byte_offset;
             } else {
                 // If we're past the last line, use the line start

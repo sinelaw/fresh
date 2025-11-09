@@ -27,4 +27,5 @@ pub mod terminal_resize;
 pub mod test_scrollbar_keybinds_cursor;
 pub mod theme;
 pub mod undo_redo;
+pub mod unicode_cursor;
 pub mod visual_regression;
