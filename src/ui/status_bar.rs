@@ -274,7 +274,11 @@ impl StatusBarRenderer {
             )]
         };
 
-        let status_line = Paragraph::new(Line::from(spans));
+        // Set base style to ensure the entire status bar area has proper background
+        let status_line = Paragraph::new(Line::from(spans))
+            .style(Style::default()
+                .fg(theme.status_bar_fg)
+                .bg(theme.status_bar_bg));
 
         frame.render_widget(status_line, area);
     }
