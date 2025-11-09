@@ -884,6 +884,63 @@ User replaces "Chapter 1" → "Introduction" at 1000:
 - **VirtualBuffer.edit_log:** Lightweight position tracking (offset, length only) for **iterator adjustment**
 - **EventLog:** Complete history (with text content) for **undo/redo**
 
+**Potential Optimization: ChunkTree Root-Based Undo**
+
+There's currently a **redundancy** between event-based undo and the ChunkTree's persistent structure:
+
+**Current implementation** (src/event.rs:476-482):
+```rust
+pub struct Snapshot {
+    pub log_index: usize,
+    pub buffer_state: (),  // Placeholder! Intended for ChunkTree root
+    pub cursor_positions: Vec<(CursorId, usize, Option<usize>)>,
+}
+```
+
+**How undo/redo currently works:**
+- EventLog stores all events with full text content
+- Undo: Generate inverse events and replay them (e.g., Insert → Delete)
+- Snapshots every 100 events (to avoid replaying from beginning)
+- **Snapshot.buffer_state is currently unused** (just `()`)
+
+**Alternative approach using ChunkTree roots:**
+```rust
+pub struct Snapshot {
+    pub log_index: usize,
+    pub buffer_state: Arc<ChunkTree>,  // Store root pointer
+    pub cursor_positions: Vec<(CursorId, usize, Option<usize>)>,
+}
+```
+
+**Undo via ChunkTree roots:**
+- ChunkTree is already persistent (Arc-shared nodes)
+- Every edit creates a new root, old root stays valid
+- Undo = restore previous root pointer (O(1))
+- No event replay needed!
+
+**Trade-offs:**
+
+| Approach | Memory | Undo Speed | Implementation |
+|----------|--------|------------|----------------|
+| Event replay (current) | O(events × text_size) | O(events_to_replay) | Complex inverse logic |
+| ChunkTree roots | O(modified_chunks) via Arc | **O(1)** | Simple pointer swap |
+
+**Why event replay might still be preferred:**
+1. **Cross-buffer operations:** Events can include viewport, cursor, overlay changes
+2. **Granular undo:** Can undo by "write action" groups, not just buffer edits
+3. **Event stream debugging:** Events can be logged to disk for debugging
+4. **Already implemented and working**
+
+**Hybrid approach (best of both):**
+```rust
+pub struct Snapshot {
+    pub buffer_state: Arc<ChunkTree>,     // Fast buffer restore
+    pub events_since_snapshot: Vec<Event>, // For non-buffer state
+}
+```
+
+This would give O(1) buffer undo while keeping event replay for UI state (cursors, viewport, etc.).
+
 **The lazy-edit proposal would replace this proven solution with a worse one:**
 - Current: ChunkTree (Rope) IS the virtual state, edits immediately applied ✅
 - Proposed: WAL with deferred application, virtual state computed on-demand ❌
