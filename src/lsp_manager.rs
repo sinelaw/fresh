@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn test_lsp_manager_new() {
-        let root_uri = Url::parse("file:///test").ok();
+        let root_uri: Option<Uri> = "file:///test".parse().ok();
         let manager = LspManager::new(root_uri.clone());
 
         // Manager should start with no handles

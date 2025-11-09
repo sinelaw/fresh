@@ -584,6 +584,19 @@ impl EditorTestHarness {
         assert!(!self.has_selection(), "Expected no selection but found one");
     }
 
+    /// Resize the terminal to new dimensions
+    /// This simulates terminal resize events and updates both the virtual terminal
+    /// backend and the editor's viewport
+    pub fn resize(&mut self, width: u16, height: u16) -> io::Result<()> {
+        // Resize the virtual terminal backend
+        self.terminal.backend_mut().resize(width, height);
+        // Resize the editor's viewports
+        self.editor.resize(width, height);
+        // Re-render to reflect the new size
+        self.render()?;
+        Ok(())
+    }
+
     /// Process pending async messages and render
     /// Useful for testing async features like git grep, file explorer, etc.
     pub fn process_async_and_render(&mut self) -> io::Result<()> {

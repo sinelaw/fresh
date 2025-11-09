@@ -1817,7 +1817,7 @@ mod tests {
 
         // did_open now succeeds and queues the command for when server is initialized
         let result = handle.did_open(
-            Url::parse("file:///test.rs").unwrap(),
+            "file:///test.rs".parse().unwrap(),
             "fn main() {}".to_string(),
             "rust".to_string(),
         );
@@ -1843,7 +1843,7 @@ mod tests {
 
         // did_change now succeeds and queues the command for when server is initialized
         let result = handle.did_change(
-            Url::parse("file:///test.rs").unwrap(),
+            "file:///test.rs".parse().unwrap(),
             vec![TextDocumentContentChangeEvent {
                 range: None,
                 range_length: None,

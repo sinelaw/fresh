@@ -23,6 +23,7 @@ pub mod search;
 pub mod selection;
 pub mod slow_filesystem;
 pub mod split_view;
+pub mod terminal_resize;
 pub mod test_scrollbar_keybinds_cursor;
 pub mod theme;
 pub mod undo_redo;
