@@ -758,6 +758,52 @@ impl ChunkTree {
 - **Effort:** 3-5 days
 - **Risk:** Low
 
+### The Industry-Standard Solution: Rope/Piece Table (Already Implemented!)
+
+The problems identified above aren't hypothetical - they're the **exact problems** that Piece Tables (VS Code) and Ropes (Xi Editor, Kakoune) were invented to solve.
+
+**Current Architecture = Rope Implementation:**
+
+The codebase already uses a **Rope** (ChunkTree in src/chunk_tree.rs):
+
+```rust
+// ChunkTree structure (simplified):
+enum Node {
+    Leaf(data: &[u8]),           // Actual bytes (up to 4KB)
+    Gap(size: usize),            // Empty space (efficient)
+    Internal(children: Vec<Arc<Node>>)  // Tree structure
+}
+```
+
+**How it works (same principle as Piece Table):**
+
+```
+Initial: Load 1GB file
+  ChunkTree: [Leaf(file_data, 0..1GB)]  // Minimal structure
+
+User types "Hello" at beginning:
+  ChunkTree: [Leaf("Hello"), Leaf(file_data, 0..1GB)]  // O(log n) operation
+  (Old chunks shared via Arc, no copying!)
+
+User replaces "Chapter 1" with "Introduction" at offset 1000:
+  ChunkTree: [Leaf("Hello"), Leaf(file_data, 0..1000),
+              Leaf("Introduction"), Leaf(file_data, 1009..1GB)]
+  (Only created 2 new leaf nodes, rest are Arc-shared!)
+```
+
+**Why this solves all the problems:**
+
+1. ✅ **No Coordinate Mapping Problem:** All positions are in the virtual file (the ChunkTree IS the current state)
+2. ✅ **No JIT Replay:** Rendering just walks the tree - O(viewport) iteration over actual chunks
+3. ✅ **Global Features Work:** Search/lint/minimap iterate the ChunkTree (the actual content)
+4. ✅ **No Concurrency Hell:** Persistent structure with Arc-sharing means old versions stay valid
+5. ✅ **Instant Edits:** Insert/delete = O(log n) tree operations, not file copies
+6. ✅ **Undo is Free:** Store previous tree roots (Arc-shared subtrees = minimal memory)
+
+**The lazy-edit proposal would replace this proven solution with a worse one:**
+- Rope/Piece Table: Virtual state IS the primary data structure ✅
+- Lazy-edit WAL: Virtual state computed on-demand from log ❌
+
 ### Recommendation: **DO NOT IMPLEMENT LAZY EDITS**
 
 The complexity cost far exceeds any benefit.
@@ -767,11 +813,13 @@ The complexity cost far exceeds any benefit.
 - WAL approach sounds robust
 
 **Why it fails:**
+- **The codebase already uses the industry-standard solution (Rope)**
+- Lazy-edit would be a regression from proven Rope architecture to problematic WAL architecture
 - Optimizes wrong metric (completion time vs continuation time)
-- Current architecture already achieves right metric via:
-  - O(log n) edits via ChunkTree
-  - O(viewport) rendering via lazy highlighting
-  - O(1) undo/redo via persistent structures
+- Current ChunkTree already achieves instant edits via:
+  - O(log n) edits via persistent tree structure
+  - O(viewport) rendering via chunked iteration
+  - O(1) undo/redo via structural sharing (Arc<Node>)
 - Missing pieces (streaming search, progress feedback) solvable without architectural overhaul
 
 ### Recommended Implementation Path
