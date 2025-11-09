@@ -470,3 +470,537 @@ Complete the LSP integration to match VS Code/Neovim capabilities:
 - **Testing**: Strong test coverage (400+ unit, 59 E2E), need to fix 8 ignored tests
 - **Performance**: Excellent (large file support, instant startup), continue monitoring
 - **Code quality**: Needs refactoring (line wrapping, large modules), but stable
+
+---
+
+## Architectural Analysis: Lazy-Edit Approach for Large Files
+
+**Date:** 2025-11-09
+**Status:** Analysis Complete - **NOT RECOMMENDED**
+**Context:** Proposal to use Write-Ahead Log (WAL) with lazy application of edits for instant editing on huge files
+
+### Proposal Summary
+
+Store edits in an event log and only apply them when sections are brought into view (viewport-based lazy materialization). Include persistence via WAL alongside the actual file, with background application and atomic rename for undo/redo.
+
+### Critical Problems Identified
+
+#### 1. Position Tracking Cascade Failure 🔴
+
+**Current Architecture Relies On:**
+- Dozens of position-dependent structures: cursors, selections, markers, overlays, search matches, syntax ranges, line cache
+- `VirtualBuffer` with automatic position adjustment via edit log
+- O(log n) position queries via ChunkTree
+
+**Lazy-Edit Problem:**
+```
+File: "Hello World\nFoo Bar"
+Replace "o" → "XXX" (3 occurrences)
+
+Visible region: "HellXXX WXXXrld\n..." (applied)
+Hidden region: "FXXXXXXBar" (pending)
+
+Cursor at position 20 means:
+- 20 if unapplied region not visited
+- 26 if applied (6 extra chars)
+
+Every position needs: (base_pos, pending_offset, applied_regions_bitmap)
+Position queries become: O(log n) → O(n × regions)
+```
+
+**Current `adjust_for_edit()` assumes immediate application:**
+```rust
+// src/cursor.rs:86-99
+if edit_pos <= self.position {
+    self.position = (self.position as isize + delta).max(0) as usize;
+}
+```
+With lazy edits: requires complex region-tracking state machine.
+
+#### 2. Multi-Cursor Consistency Nightmare 🔴
+
+With cursors at positions: 100, 5000, 10000, 50000
+- Viewport applies edits only in 0-5000 range
+- Cursor at 10000 points to logical position but unknown physical position
+- When user types at cursor 10000, must materialize ALL pending edits up to that point
+- Or maintain shadow positions with pending_edits_hash for every cursor
+
+#### 3. Line Cache Invalidation Chaos 🔴
+
+**Current system** (src/line_cache.rs:62-110): Iterates from nearest cached point to build line numbers.
+
+**With lazy edits:**
+```
+1GB file, 10M lines, 1000 scattered edits
+User jumps to line 7500
+
+Current: O(distance from nearest cache entry)
+Lazy: Must apply all pending edits between cache and target first
+      OR maintain logical vs physical line number mappings
+      "Line 7500" becomes ambiguous: before or after edits?
+```
+
+**Invalidation** is currently simple:
+```rust
+// src/line_cache.rs:150+
+pub fn invalidate_from(&mut self, byte_offset: usize) {
+    self.entries.retain(|&offset, _| offset < byte_offset);
+}
+```
+With lazy edits: need per-region tracking of which edits are applied.
+
+#### 4. Syntax Highlighting Corruption 🔴
+
+Tree-sitter parsers are context-sensitive. A change at position 100 affects syntax at position 100,000:
+```rust
+// Position 0-100
+fn process() {
+    let x = "unclosed string
+
+// Position 10,000
+    println!("code");  // Actually inside the string!
+}
+```
+
+**Current:** Simple invalidation on edit, re-parse viewport. Works because edits are immediately applied.
+
+**Lazy edits:** Viewport shows incorrect syntax until all edits materialized, or must re-parse on every viewport change.
+
+#### 5. Memory Overhead Explosion 🟡
+
+**Current ChunkTree:**
+```
+1GB file = ~250,000 chunks (4KB each)
+1000 edits = 1000 new chunk versions
+Memory: ~1GB (original) + ~4MB (modified chunks via Arc sharing)
+```
+
+**Lazy edit approach:**
+```
+Event log: 1M edits × ~100 bytes avg = 100MB
+Applied regions bitmap: 1 bit per 4KB = 31KB
+Region version map: 250K entries × 8 bytes = 2MB
+Position translation cache: Variable, potentially huge
+
+Total overhead: ~100-200MB
+Worse than current persistent ChunkTree!
+```
+
+#### 6. Cascading Materialization 🟡
+
+Operations requiring sequential iteration force full materialization:
+- **Save file:** Must apply ALL edits
+- **Search:** Must search actual text, not event log
+- **Jump to line N:** Must count newlines through all edits
+- **LSP position conversion:** Must know actual text
+- **Calculate file size:** Must account for all edits
+
+**Result:**
+```
+User saves file:
+  Original ChunkTree: 1GB
+  Event log: 100MB
+  Materialized ChunkTree: 1.2GB
+  Peak memory: 2.3GB for a 1GB file!
+```
+
+**Current system:** Direct edits with Arc-sharing. Peak memory: ~1.05GB.
+
+#### 7. WAL Complexity and Crash Inconsistency 🔴
+
+**Proposed WAL:**
+```
+File: document.txt (1GB)
+WAL: document.txt.wal (event log)
+Background thread applies edits to real file
+
+Crash scenarios:
+1. Crash during background write:
+   - WAL has events
+   - File partially updated
+   - Which events applied? Unknown!
+
+2. WAL + File desync:
+   - 1000 edits in WAL
+   - Background applied 500
+   - Crash
+   - On restart: Which 500 were applied?
+```
+
+**Required for correctness:**
+```rust
+struct WalEntry {
+    sequence_number: u64,
+    event: Event,
+    applied_to_file: bool,  // Requires fsync after each!
+    checksum: u64,
+}
+```
+
+**Current approach:** Events in memory, file writes are atomic, no partial-state on disk.
+
+#### 8. File Watching Conflicts 🔴
+
+```
+Lazy system with WAL:
+  User loads 1GB file
+  User makes 1000 edits (in WAL, not yet applied)
+  External tool modifies file (e.g., git checkout)
+
+Now:
+  WAL positions relative to old file content
+  File content changed underneath
+  All position-based edits in WAL now INVALID
+  Must detect, invalidate WAL, reload = LOST WORK!
+```
+
+**Current system:** Detect external change, ask user: Reload or Keep. Simple binary choice.
+
+### Performance Impact on Actual Bottlenecks
+
+**Current bottlenecks identified:**
+
+1. **Search** (src/buffer.rs:227): `let text = self.to_string();` materializes entire file
+2. **Save** (src/buffer.rs:135): Reads entire buffer to save
+3. **Load** (src/buffer.rs:106): One-time cost, already fast
+
+**Lazy-edits would NOT help** because these operations require full materialization anyway!
+
+### Better Alternatives
+
+#### Alternative 1: Streaming Search ✅ (Low Effort, High Benefit)
+
+**Current problem:**
+```rust
+pub fn find_next(&self, pattern: &str, start_pos: usize) -> Option<usize> {
+    let text = self.to_string();  // Materializes entire 1GB file!
+    // ...
+}
+```
+
+**Solution:** Use existing ChunkTree iterators:
+```rust
+pub fn find_next_streaming(&self, pattern: &str, start_pos: usize) -> Option<usize> {
+    let mut iter = self.persistence.byte_iterator(start_pos);
+    let mut buffer = Vec::with_capacity(pattern.len() * 2);
+
+    // Process 4KB chunks at a time
+    while let Some(chunk) = iter.next_chunk() {
+        buffer.extend_from_slice(chunk);
+        if let Some(offset) = search_in_buffer(&buffer, pattern) {
+            return Some(current_pos + offset);
+        }
+        // Keep overlap for cross-chunk matches
+        if buffer.len() >= pattern.len() {
+            buffer.drain(0..buffer.len() - pattern.len() + 1);
+        }
+    }
+    None
+}
+```
+
+**Benefits:**
+- Works on 1GB files without materializing entire content
+- Memory: O(chunk_size) = 8KB
+- Time: Same O(n) but no memory spike
+- **Effort:** 1-2 days
+- **Risk:** Low
+
+#### Alternative 2: Async Operations with Progress ✅ (Medium Effort, High Benefit)
+
+**Wrong metric:** "Time to complete operation"
+**Right metric:** "Time until user can continue editing"
+
+```rust
+pub async fn replace_all_progressive(
+    pattern: &str,
+    replacement: &str,
+    progress_callback: impl Fn(usize, usize)
+) -> Result<()> {
+    let chunk_size = 1024 * 1024; // 1MB chunks
+
+    for offset in (0..total_size).step_by(chunk_size) {
+        let edits = find_and_replace_in_range(offset, offset + chunk_size);
+        apply_edits(edits);
+
+        progress_callback(processed, total);
+
+        // Yield to UI thread every 100ms
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+```
+
+**Benefits:**
+- UI stays responsive
+- Progress bar shows completion
+- User can cancel operation
+- No complex position tracking
+- All edits eventually applied correctly
+- **Effort:** 3-5 days
+- **Risk:** Low-Medium
+
+#### Alternative 3: Optimized Bulk Operations ✅ (Medium Effort, Medium Benefit)
+
+```rust
+impl ChunkTree {
+    pub fn bulk_replace(&self, positions: &[(usize, usize, &str)]) -> Self {
+        // Optimized batch insert/delete
+        // Create minimal new chunks
+        // Maximum Arc sharing
+    }
+}
+```
+
+**Benefits:**
+- Faster multi-cursor operations
+- Maintains existing architecture
+- **Effort:** 3-5 days
+- **Risk:** Low
+
+### The Industry-Standard Solution: Rope/Piece Table (Already Implemented!)
+
+The problems identified above aren't hypothetical - they're the **exact problems** that Piece Tables (VS Code) and Ropes (Xi Editor, Kakoune) were invented to solve.
+
+**Current Architecture - Layered Design:**
+
+The codebase uses a **Rope** with multiple layers for different responsibilities:
+
+#### Layer 1: ChunkTree (src/chunk_tree.rs) - The Rope
+```rust
+// Persistent tree structure
+enum Node {
+    Leaf(data: &[u8]),           // Actual bytes (up to 4KB)
+    Gap(size: usize),            // Efficient empty space
+    Internal(children: Vec<Arc<Node>>)  // Tree with Arc-sharing
+}
+```
+
+**Responsibility:** Persistent immutable data structure for text storage
+- Insert/delete = O(log n) tree operations creating new nodes
+- Old versions stay valid via Arc-sharing (structural sharing)
+- No copying of unchanged subtrees
+
+#### Layer 2: VirtualBuffer (src/virtual_buffer.rs) - Caching + Iterator Support
+```rust
+struct VirtualBuffer {
+    persistence: Box<dyn PersistenceLayer>,  // Usually ChunkTreePersistence
+    cache: Cache,                            // 16MB LRU cache
+    edit_log: Vec<Edit>,                     // For iterator position adjustment
+    edit_version: AtomicU64,                 // Version counter
+}
+```
+
+**Responsibility:** Performance optimizations on top of persistence layer
+- 16MB cache for frequently accessed regions
+- Edit log tracks changes so **active iterators** can adjust their positions
+- Version tracking for iterator lifecycle management
+- **NOT for undo/redo** (that's EventLog in event.rs)
+
+#### Layer 3: Buffer (src/buffer.rs) - High-Level Text Operations
+```rust
+pub struct Buffer {
+    virtual_buffer: VirtualBuffer,
+    line_cache: LineCache,      // Byte offset → line number mapping
+    file_path: Option<PathBuf>,
+    modified: bool,
+}
+```
+
+**Responsibility:** Text editor semantics
+- Line-based operations (line iterator, line cache)
+- File I/O (load, save)
+- High-level operations (find, slice, character boundaries)
+- Modified state tracking
+
+#### Layer 4: EditorState (src/state.rs) - Undo/Redo + UI State
+```rust
+pub struct EditorState {
+    buffer: Buffer,
+    cursors: Cursors,
+    viewport: Viewport,
+    // ... UI state
+}
+
+// Separate from VirtualBuffer!
+pub struct EventLog {
+    entries: Vec<LogEntry>,     // Full event history with data
+    current_index: usize,        // For undo/redo
+    snapshots: Vec<Snapshot>,   // Periodic checkpoints
+}
+```
+
+**Responsibility:** Application-level state and undo/redo
+- EventLog stores full editing history (with text content)
+- Undo/redo via event replay from snapshots
+- Cursors, viewport, overlays, markers
+
+#### Layer 5: Rendering - Iterator-Based Display
+```rust
+// Rendering walks the buffer using iterators
+let mut iter = buffer.line_iterator(viewport.top_byte);
+for (byte_offset, line_content) in iter.take(viewport_height) {
+    render_line(line_content, syntax_highlighting);
+}
+```
+
+**Responsibility:** Display visible content only
+- Uses iterators from Buffer/VirtualBuffer
+- O(viewport) not O(file_size)
+- Iterators read from ChunkTree snapshot (efficient chunk traversal)
+
+**How it works (same principle as Piece Table):**
+
+```
+Initial: Load 1GB file
+  ChunkTree: [Leaf(file_data, 0..1GB)]
+  VirtualBuffer: empty cache, empty edit_log
+  Buffer: empty line_cache
+
+User types "Hello" at beginning:
+  ChunkTree: [Leaf("Hello"), Leaf(file_data, 0..1GB)]  // O(log n) insert
+  VirtualBuffer: edit_log += [Insert(0, 5)]            // Track for iterators
+  Buffer: line_cache invalidated from byte 0
+  EventLog: append Insert event (for undo)
+
+User replaces "Chapter 1" → "Introduction" at 1000:
+  ChunkTree: [Leaf("Hello"), Leaf(file_data, 0..1000),
+              Leaf("Introduction"), Leaf(file_data, 1009..1GB)]
+  VirtualBuffer: edit_log += [Delete(1000, 9), Insert(1000, 12)]
+  Buffer: line_cache invalidated from byte 1000
+  EventLog: append Delete + Insert events (for undo)
+```
+
+**Why this layered approach solves all the problems:**
+
+1. ✅ **No Coordinate Mapping Problem:** ChunkTree IS the current virtual state (not computed on-demand)
+2. ✅ **No JIT Replay:** Rendering iterates ChunkTree directly - O(viewport) chunk traversal
+3. ✅ **Global Features Work:** Search/lint iterate the actual ChunkTree content (not event log)
+4. ✅ **No Concurrency Hell:** Persistent ChunkTree with Arc-sharing = old versions stay valid
+5. ✅ **Instant Edits:** O(log n) ChunkTree operations, not file copies
+6. ✅ **Undo is Free:** EventLog stores history, ChunkTree versions are Arc-shared
+
+**Two separate "logs" with different purposes:**
+- **VirtualBuffer.edit_log:** Lightweight position tracking (offset, length only) for **iterator adjustment**
+- **EventLog:** Complete history (with text content) for **undo/redo**
+
+**Potential Optimization: ChunkTree Root-Based Undo**
+
+There's currently a **redundancy** between event-based undo and the ChunkTree's persistent structure:
+
+**Current implementation** (src/event.rs:476-482):
+```rust
+pub struct Snapshot {
+    pub log_index: usize,
+    pub buffer_state: (),  // Placeholder! Intended for ChunkTree root
+    pub cursor_positions: Vec<(CursorId, usize, Option<usize>)>,
+}
+```
+
+**How undo/redo currently works:**
+- EventLog stores all events with full text content
+- Undo: Generate inverse events and replay them (e.g., Insert → Delete)
+- Snapshots every 100 events (to avoid replaying from beginning)
+- **Snapshot.buffer_state is currently unused** (just `()`)
+
+**Alternative approach using ChunkTree roots:**
+```rust
+pub struct Snapshot {
+    pub log_index: usize,
+    pub buffer_state: Arc<ChunkTree>,  // Store root pointer
+    pub cursor_positions: Vec<(CursorId, usize, Option<usize>)>,
+}
+```
+
+**Undo via ChunkTree roots:**
+- ChunkTree is already persistent (Arc-shared nodes)
+- Every edit creates a new root, old root stays valid
+- Undo = restore previous root pointer (O(1))
+- No event replay needed!
+
+**Trade-offs:**
+
+| Approach | Memory | Undo Speed | Implementation |
+|----------|--------|------------|----------------|
+| Event replay (current) | O(events × text_size) | O(events_to_replay) | Complex inverse logic |
+| ChunkTree roots | O(modified_chunks) via Arc | **O(1)** | Simple pointer swap |
+
+**Why event replay might still be preferred:**
+1. **Cross-buffer operations:** Events can include viewport, cursor, overlay changes
+2. **Granular undo:** Can undo by "write action" groups, not just buffer edits
+3. **Event stream debugging:** Events can be logged to disk for debugging
+4. **Already implemented and working**
+
+**Hybrid approach (best of both):**
+```rust
+pub struct Snapshot {
+    pub buffer_state: Arc<ChunkTree>,     // Fast buffer restore
+    pub events_since_snapshot: Vec<Event>, // For non-buffer state
+}
+```
+
+This would give O(1) buffer undo while keeping event replay for UI state (cursors, viewport, etc.).
+
+**The lazy-edit proposal would replace this proven solution with a worse one:**
+- Current: ChunkTree (Rope) IS the virtual state, edits immediately applied ✅
+- Proposed: WAL with deferred application, virtual state computed on-demand ❌
+
+### Recommendation: **DO NOT IMPLEMENT LAZY EDITS**
+
+The complexity cost far exceeds any benefit.
+
+**Why the idea is appealing:**
+- Instant feedback on huge operations sounds great
+- WAL approach sounds robust
+
+**Why it fails:**
+- **The codebase already uses the industry-standard solution (Rope)**
+- Lazy-edit would be a regression from proven Rope architecture to problematic WAL architecture
+- Optimizes wrong metric (completion time vs continuation time)
+- Current ChunkTree already achieves instant edits via:
+  - O(log n) edits via persistent tree structure
+  - O(viewport) rendering via chunked iteration
+  - O(1) undo/redo via structural sharing (Arc<Node>)
+- Missing pieces (streaming search, progress feedback) solvable without architectural overhaul
+
+### Recommended Implementation Path
+
+**Phase 1: Fix Immediate Bottlenecks** (1-2 weeks)
+1. ✅ Streaming search/replace - Use existing ChunkTree iterators
+   - Replace `to_string()` materialization in `find_next()`
+   - Effort: 1-2 days
+   - Benefit: GB file searching without OOM
+
+2. ✅ Async bulk operations - Add progress bars and cancellation
+   - Implement for save, load, replace-all
+   - Effort: 3-5 days
+   - Benefit: Responsive UI during long operations
+
+3. ✅ Optimized bulk edits - Batch operations in ChunkTree
+   - Special-case multi-cursor bulk operations
+   - Effort: 3-5 days
+   - Benefit: Faster replace-all
+
+**Phase 2: Polish** (1 week)
+- Progress indicators
+- Cancellable operations
+- Better error messages during long operations
+
+**Total effort:** 2-3 weeks
+**Complexity:** Low-Medium (builds on existing architecture)
+**Benefit:** GB file editing with responsive UI
+**Risk:** Low (incremental improvements, easily testable)
+
+### Conclusion
+
+The current architecture is **well-designed** for large files. The perceived performance problem is limited to specific operations (`to_string()` materialization) that can be fixed with targeted improvements, not architectural overhaul.
+
+**Fundamental insight:** The lazy-edit approach solves a problem the architecture doesn't have, while introducing dozens of new problems that don't currently exist.
+
+**Files referenced:**
+- `src/buffer.rs` - Buffer operations, search, save/load
+- `src/cursor.rs` - Position adjustment logic
+- `src/line_cache.rs` - Line number caching and invalidation
+- `src/chunk_tree.rs` - Persistent data structure for large files
+- `src/virtual_buffer.rs` - Edit log and position tracking
+- `src/highlighter.rs` - Viewport-only syntax highlighting
