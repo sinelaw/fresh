@@ -205,7 +205,7 @@ impl StatusBarRenderer {
         };
 
         // Only show help indicator if there's enough space (at least 15 chars for minimal display)
-        let mut spans = if available_width >= 15 && show_help_indicator {
+        let spans = if available_width >= 15 && show_help_indicator {
             // Reserve space for help indicator
             let left_max_width = if available_width > help_width + 1 {
                 available_width - help_width - 1 // -1 for at least one space separator
@@ -257,28 +257,68 @@ impl StatusBarRenderer {
 
             // Add help indicator with distinct styling and padding
             spans.push(Span::styled(
-                padded_help,
+                padded_help.clone(),
                 Style::default()
                     .fg(theme.help_indicator_fg)
                     .bg(theme.help_indicator_bg),
             ));
 
+            // Calculate total width covered by spans
+            let total_width = displayed_left_len +
+                if displayed_left_len + help_width < available_width {
+                    available_width - displayed_left_len - help_width
+                } else if displayed_left_len < available_width {
+                    1
+                } else {
+                    0
+                } + help_width;
+
+            // Add final padding to fill exactly to area width if needed
+            if total_width < available_width {
+                spans.push(Span::styled(
+                    " ".repeat(available_width - total_width),
+                    Style::default()
+                        .fg(theme.status_bar_fg)
+                        .bg(theme.status_bar_bg),
+                ));
+            }
+
             spans
         } else {
-            // Terminal too narrow, just show left status without help indicator
-            vec![Span::styled(
-                left_status.clone(),
+            // Terminal too narrow or no help indicator - fill entire width with left status
+            let mut spans = vec![];
+            let displayed_left = if left_status.len() > available_width {
+                let truncate_at = available_width.saturating_sub(3);
+                if truncate_at > 0 {
+                    format!("{}...", &left_status[..truncate_at])
+                } else {
+                    left_status.chars().take(available_width).collect()
+                }
+            } else {
+                left_status.clone()
+            };
+
+            spans.push(Span::styled(
+                displayed_left.clone(),
                 Style::default()
                     .fg(theme.status_bar_fg)
                     .bg(theme.status_bar_bg),
-            )]
+            ));
+
+            // Fill remaining width
+            if displayed_left.len() < available_width {
+                spans.push(Span::styled(
+                    " ".repeat(available_width - displayed_left.len()),
+                    Style::default()
+                        .fg(theme.status_bar_fg)
+                        .bg(theme.status_bar_bg),
+                ));
+            }
+
+            spans
         };
 
-        // Set base style to ensure the entire status bar area has proper background
-        let status_line = Paragraph::new(Line::from(spans))
-            .style(Style::default()
-                .fg(theme.status_bar_fg)
-                .bg(theme.status_bar_bg));
+        let status_line = Paragraph::new(Line::from(spans));
 
         frame.render_widget(status_line, area);
     }

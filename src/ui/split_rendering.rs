@@ -8,7 +8,7 @@ use crate::state::EditorState;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -866,11 +866,10 @@ impl SplitRenderer {
             cursor_found = true;
         }
 
-        // Set base style to ensure the entire area is cleared with the proper background color
-        // This prevents rendering artifacts when switching buffers or when content is shorter than the area
-        let paragraph = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::NONE))
-            .style(Style::default().bg(theme.editor_bg).fg(theme.editor_fg));
+        // Clear the area first to prevent rendering artifacts when switching buffers
+        frame.render_widget(Clear, area);
+
+        let paragraph = Paragraph::new(lines).block(Block::default().borders(Borders::NONE));
 
         frame.render_widget(paragraph, area);
 
