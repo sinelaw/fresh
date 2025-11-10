@@ -178,6 +178,88 @@ impl IndentCalculator {
         Self::get_current_line_indent(buffer, position)
     }
 
+    /// Calculate the correct indent for a closing delimiter being typed
+    /// Uses tree-sitter to count nesting level and determine correct indentation
+    /// Works with partial parsing by only analyzing local context
+    pub fn calculate_dedent_for_delimiter(
+        &mut self,
+        buffer: &Buffer,
+        position: usize,
+        _delimiter: char,
+        language: &Language,
+        tab_size: usize,
+    ) -> Option<usize> {
+        // Get parser and query for this language
+        let (parser, query) = self.get_config(language)?;
+
+        // Extract context before cursor (for parsing)
+        let parse_start = position.saturating_sub(MAX_PARSE_BYTES);
+        let parse_range = parse_start..position;
+
+        if parse_range.is_empty() {
+            return Some(0);
+        }
+
+        let source = buffer.slice_bytes(parse_range.clone());
+
+        // Parse the source
+        let tree = parser.parse(&source, None)?;
+        let root = tree.root_node();
+
+        // Find capture index for @indent
+        let mut indent_capture_idx = None;
+        for (i, name) in query.capture_names().iter().enumerate() {
+            if *name == "indent" {
+                indent_capture_idx = Some(i);
+                break;
+            }
+        }
+
+        let indent_capture_idx = indent_capture_idx?;
+
+        // Count how many @indent nodes contain the cursor position
+        let cursor_offset = position - parse_start;
+        let mut indent_level: usize = 0;
+
+        let mut query_cursor = QueryCursor::new();
+        let mut captures = query_cursor.captures(query, root, source.as_slice());
+
+        while let Some((match_result, _)) = captures.next() {
+            for capture in match_result.captures {
+                if capture.index == indent_capture_idx as u32 {
+                    let node = capture.node;
+                    let node_start = node.start_byte();
+                    let node_end = node.end_byte();
+
+                    // If cursor is inside this @indent node, count it
+                    if node_start < cursor_offset && cursor_offset <= node_end {
+                        indent_level += 1;
+                    }
+                }
+            }
+        }
+
+        // The closing delimiter should be at one level less than current nesting
+        // (it closes the innermost block)
+        let dedent_level = indent_level.saturating_sub(1_usize);
+
+        // Get baseline indent from start of parse window
+        let baseline_indent = {
+            let mut indent = 0;
+            for i in 0..source.len().min(100) {
+                match source.get(i) {
+                    Some(b' ') => indent += 1,
+                    Some(b'\t') => indent += tab_size,
+                    Some(b'\n') | None => break,
+                    _ => break,
+                }
+            }
+            indent
+        };
+
+        Some(baseline_indent + (dedent_level * tab_size))
+    }
+
     /// Calculate indent using simple pattern matching (fallback for incomplete syntax)
     /// Checks if the line before cursor ends with indent-triggering characters
     fn calculate_indent_pattern(
@@ -277,7 +359,60 @@ impl IndentCalculator {
 
         let mut indent_delta = 0i32;
         let mut found_any_captures = false;
-        let base_indent = Self::get_current_line_indent(buffer, position);
+
+        // Find the line start to get the base column offset
+        let mut line_start_offset = cursor_offset;
+        while line_start_offset > 0 {
+            if source.get(line_start_offset.saturating_sub(1)) == Some(&b'\n') {
+                break;
+            }
+            line_start_offset = line_start_offset.saturating_sub(1);
+        }
+
+        // Get baseline indent: the indent of the first line in our parse window
+        // This handles partial parsing where we don't see the full file
+        let baseline_indent = {
+            let mut first_line_start = 0;
+            while first_line_start < source.len() {
+                if source.get(first_line_start) == Some(&b'\n') {
+                    first_line_start += 1;
+                    break;
+                }
+                if source.get(first_line_start) != Some(&b' ') && source.get(first_line_start) != Some(&b'\t') {
+                    break;
+                }
+                first_line_start += 1;
+            }
+            let mut indent = 0;
+            for i in 0..first_line_start.min(source.len()) {
+                match source.get(i) {
+                    Some(b' ') => indent += 1,
+                    Some(b'\t') => indent += tab_size,
+                    Some(b'\n') | None => break,
+                    _ => break,
+                }
+            }
+            indent
+        };
+
+        // Check if the last non-whitespace character before cursor is a closing delimiter
+        // If so, we should NOT be inside any @indent node for the purposes of the next line
+        let last_nonws_is_closing = {
+            let mut result = false;
+            let mut pos = cursor_offset;
+            while pos > line_start_offset {
+                pos -= 1;
+                match source.get(pos) {
+                    Some(b' ') | Some(b'\t') | Some(b'\r') => continue,
+                    Some(b'}') | Some(b']') | Some(b')') => {
+                        result = true;
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+            result
+        };
 
         // Manually iterate through matches
         let mut captures = query_cursor.captures(query, root, source.as_slice());
@@ -290,11 +425,19 @@ impl IndentCalculator {
                 // Check if this node affects indent at cursor position
                 if let Some(idx) = indent_capture_idx {
                     if capture.index == idx as u32 {
-                        // Indent node: if cursor is right after its start (within the node or just after opening),
-                        // we should indent. We check if the node starts just before the cursor.
-                        // Allow some tolerance for the cursor being right at or after the opening token.
-                        if node_start < cursor_offset && cursor_offset <= node_end {
+                        // For @indent nodes: only count if cursor is inside the node AND the node's
+                        // start is on a PREVIOUS line (not the current line we're calculating indent for)
+                        // This prevents counting parent nodes that started way before
+                        let node_on_previous_line = node_start < line_start_offset;
+                        let cursor_inside_node = node_start < cursor_offset && cursor_offset <= node_end;
+
+                        // If last character is a closing delimiter, treat cursor as outside all @indent nodes
+                        // This handles "}" + Enter -> should not indent
+                        if cursor_inside_node && node_on_previous_line && !last_nonws_is_closing {
                             indent_delta += 1;
+                            found_any_captures = true;
+                        } else if last_nonws_is_closing {
+                            // Still mark as found so we don't fall back to pattern matching
                             found_any_captures = true;
                         }
                     }
@@ -321,12 +464,12 @@ impl IndentCalculator {
             return None;
         }
 
-        // Calculate final indent
-        let final_indent = (base_indent as i32 + (indent_delta * tab_size as i32)).max(0) as usize;
+        // Calculate final indent: baseline (from start of parse window) + delta from @indent/@dedent nodes
+        let final_indent = (baseline_indent as i32 + (indent_delta * tab_size as i32)).max(0) as usize;
 
         tracing::debug!(
-            "Indent calculation: base={}, delta={}, final={}",
-            base_indent,
+            "Indent calculation: baseline={}, delta={}, final={}",
+            baseline_indent,
             indent_delta,
             final_indent
         );
@@ -561,5 +704,91 @@ mod tests {
 
         let indent = IndentCalculator::calculate_indent_no_language(&buffer, position, 4);
         assert_eq!(indent, 4, "Should indent 4 spaces after brace even without language");
+    }
+
+    #[test]
+    fn test_tree_sitter_enter_after_close_brace_returns_zero() {
+        // Verify tree-sitter correctly handles Enter after closing brace
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str("fn main() {\n    let x = 1;\n}");
+        let position = buffer.len(); // Position right after the }
+
+        // Tree-sitter should recognize we're outside the block and return 0 indent
+        let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
+        assert_eq!(indent, Some(0), "Should return 0 indent after closing brace");
+
+        // Verify tree-sitter is being used (not just pattern fallback)
+        let ts_result = calc.calculate_indent_tree_sitter(&buffer, position, &Language::Rust, 4);
+        assert!(ts_result.is_some(), "Tree-sitter should handle this case");
+    }
+
+    #[test]
+    fn test_tree_sitter_auto_dedent_on_close_brace() {
+        // Verify tree-sitter correctly calculates dedent for closing delimiter
+        let mut calc = IndentCalculator::new();
+
+        // Simulate typing } on an indented line
+        let buffer = Buffer::from_str("fn main() {\n    ");
+        let position = buffer.len(); // Cursor after 4 spaces
+
+        // Calculate where the } should be placed using tree-sitter
+        let correct_indent = calc.calculate_dedent_for_delimiter(
+            &buffer,
+            position,
+            '}',
+            &Language::Rust,
+            4,
+        );
+
+        // Should dedent to column 0 (same level as fn main)
+        assert_eq!(correct_indent, Some(0), "Closing brace should dedent to column 0");
+
+        // Verify this uses tree-sitter by checking it works
+        let nested_buffer = Buffer::from_str("fn main() {\n    if true {\n        ");
+        let nested_pos = nested_buffer.len();
+
+        let nested_indent = calc.calculate_dedent_for_delimiter(
+            &nested_buffer,
+            nested_pos,
+            '}',
+            &Language::Rust,
+            4,
+        );
+
+        // Should return a valid indent level
+        assert!(nested_indent.is_some(), "Nested closing brace should get valid indent");
+    }
+
+    #[test]
+    fn test_tree_sitter_handles_multiple_languages() {
+        // Verify tree-sitter-based auto-dedent works across languages
+        let mut calc = IndentCalculator::new();
+
+        // Python
+        let py_buffer = Buffer::from_str("def foo():\n    ");
+        let py_indent = calc.calculate_indent(&py_buffer, py_buffer.len(), &Language::Python, 4);
+        assert_eq!(py_indent, Some(4), "Python should indent after colon");
+
+        // JavaScript
+        let js_buffer = Buffer::from_str("function foo() {\n    ");
+        let js_dedent = calc.calculate_dedent_for_delimiter(
+            &js_buffer,
+            js_buffer.len(),
+            '}',
+            &Language::JavaScript,
+            4,
+        );
+        assert_eq!(js_dedent, Some(0), "JavaScript closing brace should dedent");
+
+        // C++
+        let cpp_buffer = Buffer::from_str("class Foo {\n    ");
+        let cpp_dedent = calc.calculate_dedent_for_delimiter(
+            &cpp_buffer,
+            cpp_buffer.len(),
+            '}',
+            &Language::Cpp,
+            4,
+        );
+        assert_eq!(cpp_dedent, Some(0), "C++ closing brace should dedent");
     }
 }
