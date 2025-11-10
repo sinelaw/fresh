@@ -3864,36 +3864,14 @@ impl Editor {
                 self.start_prompt("Search: ".to_string(), PromptType::Search);
             }
             Action::Replace => {
-                // Start replace prompt - first get the search query, then replacement
-                if let Some(ref search_state) = self.search_state {
-                    // If there's an active search, use it
-                    let search_query = search_state.query.clone();
-                    self.start_prompt(
-                        format!("Replace '{}' with: ", search_query),
-                        PromptType::Replace {
-                            search: search_query,
-                        },
-                    );
-                } else {
-                    // No active search, prompt for search query first (with incremental highlighting)
-                    self.start_prompt("Replace: ".to_string(), PromptType::ReplaceSearch);
-                }
+                // Always prompt for search query first (with incremental highlighting)
+                // TODO: Implement search history - pre-fill with previous search and allow up/down arrows
+                self.start_prompt("Replace: ".to_string(), PromptType::ReplaceSearch);
             }
             Action::QueryReplace => {
-                // Start interactive replace (query-replace) - similar to Replace but enters interactive mode
-                if let Some(ref search_state) = self.search_state {
-                    // If there's an active search, use it
-                    let search_query = search_state.query.clone();
-                    self.start_prompt(
-                        format!("Query replace '{}' with: ", search_query),
-                        PromptType::QueryReplace {
-                            search: search_query,
-                        },
-                    );
-                } else {
-                    // No active search, prompt for search query first
-                    self.start_prompt("Query replace: ".to_string(), PromptType::QueryReplaceSearch);
-                }
+                // Always prompt for search query first (with incremental highlighting)
+                // TODO: Implement search history - pre-fill with previous search and allow up/down arrows
+                self.start_prompt("Query replace: ".to_string(), PromptType::QueryReplaceSearch);
             }
             Action::FindNext => {
                 self.find_next();
