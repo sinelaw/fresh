@@ -94,33 +94,47 @@ pub fn action_to_events(
             cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
 
             for (cursor_id, cursor) in cursor_vec {
-                if let Some(range) = cursor.selection_range() {
+                // When there's a selection, the cursor will be at the start of the range after deletion
+                let indent_position = if let Some(range) = cursor.selection_range() {
+                    let start = range.start; // Extract start before moving range
                     events.push(Event::Delete {
                         range: range.clone(),
                         deleted_text: state.buffer.slice(range),
                         cursor_id,
                     });
-                }
+                    start // Use start of selection for indent calculation
+                } else {
+                    cursor.position // No selection, use cursor position
+                };
 
                 // Calculate indent for new line
                 let mut text = "\n".to_string();
 
                 if auto_indent {
                     if let Some(highlighter) = &state.highlighter {
+                        // Use tree-sitter-based indent when we have a highlighter
                         let language = highlighter.language();
                         if let Some(indent_spaces) = state.indent_calculator.borrow_mut().calculate_indent(
                             &state.buffer,
-                            cursor.position,
+                            indent_position,
                             language,
                             tab_size,
                         ) {
                             text.push_str(&" ".repeat(indent_spaces));
                         }
+                    } else {
+                        // Fallback for files without syntax highlighting (e.g., .txt)
+                        let indent_spaces = crate::indent::IndentCalculator::calculate_indent_no_language(
+                            &state.buffer,
+                            indent_position,
+                            tab_size,
+                        );
+                        text.push_str(&" ".repeat(indent_spaces));
                     }
                 }
 
                 events.push(Event::Insert {
-                    position: cursor.position,
+                    position: indent_position,
                     text,
                     cursor_id,
                 });
