@@ -1849,6 +1849,15 @@ impl Editor {
         prompt_type: PromptType,
         suggestions: Vec<Suggestion>,
     ) {
+        // Clear search highlights when starting a new search prompt
+        // This ensures old highlights from previous searches don't persist
+        match prompt_type {
+            PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {
+                self.clear_search_highlights();
+            }
+            _ => {}
+        }
+
         self.prompt = Some(Prompt::with_suggestions(message, prompt_type, suggestions));
     }
 
