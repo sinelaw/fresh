@@ -1379,6 +1379,275 @@ mod tests {
                 prop_assert_eq!(result, Some(position_bytes),
                     "Should find pattern in large buffer at position {}", position_bytes);
             }
+
+            // ============================================================================
+            // Property-based tests for replace
+            // ============================================================================
+
+            /// Property: replace_all matches naive replace for simple patterns
+            #[test]
+            fn prop_replace_all_matches_naive(
+                prefix in "[a-z]{0,50}",
+                pattern in "[a-z]{3,10}",
+                suffix in "[a-z]{0,50}",
+                replacement in "[A-Z]{3,10}",
+            ) {
+                let content = format!("{}{}{}", prefix, pattern, suffix);
+                let mut buffer = Buffer::from_str(&content);
+
+                // Naive replace using standard library
+                let naive_result = content.replace(&pattern, &replacement);
+
+                // Buffer replace_all
+                let count = buffer.replace_all(&pattern, &replacement);
+                let buffer_result = buffer.to_string();
+
+                prop_assert_eq!(buffer_result, naive_result,
+                    "replace_all should match naive replace");
+
+                // Count should match number of occurrences
+                let expected_count = content.matches(&pattern).count();
+                prop_assert_eq!(count, expected_count,
+                    "Should report correct replacement count");
+            }
+
+            /// Property: replace_all finds all occurrences
+            #[test]
+            fn prop_replace_all_finds_all_occurrences(
+                pattern in "[a-z]{3,8}",
+                separator in "[0-9]{2,5}",
+                repetitions in 2usize..10,
+                replacement in "[A-Z]{2,6}",
+            ) {
+                // Create content with multiple occurrences
+                let parts: Vec<String> = (0..repetitions)
+                    .map(|_| pattern.clone())
+                    .collect();
+                let content = parts.join(&separator);
+                let mut buffer = Buffer::from_str(&content);
+
+                let count = buffer.replace_all(&pattern, &replacement);
+                let result = buffer.to_string();
+
+                // Should have replaced all occurrences
+                prop_assert!(!result.contains(&pattern),
+                    "All occurrences of '{}' should be replaced", pattern);
+
+                prop_assert_eq!(count, repetitions,
+                    "Should replace all {} occurrences", repetitions);
+
+                // Count replacement in result
+                let replacement_count = result.matches(&replacement).count();
+                prop_assert_eq!(replacement_count, repetitions,
+                    "Result should contain {} instances of replacement", repetitions);
+            }
+
+            /// Property: replace_all handles size changes correctly
+            #[test]
+            fn prop_replace_all_size_changes(
+                pattern in "[a-z]{2,5}",
+                replacement_size_diff in -3isize..6,
+                occurrences in 1usize..8,
+            ) {
+                // Create replacement string with different size
+                let replacement_len = (pattern.len() as isize + replacement_size_diff).max(0) as usize;
+                let replacement = "X".repeat(replacement_len);
+
+                // Create content with known occurrences
+                let content = vec![pattern.clone(); occurrences].join(" ");
+                let mut buffer = Buffer::from_str(&content);
+
+                let original_len = content.len();
+                let count = buffer.replace_all(&pattern, &replacement);
+                let result_len = buffer.len();
+
+                // Check count
+                prop_assert_eq!(count, occurrences,
+                    "Should replace all {} occurrences", occurrences);
+
+                // Check size calculation - actual size change per replacement
+                let actual_size_diff = replacement.len() as isize - pattern.len() as isize;
+                let expected_len = (original_len as isize
+                    + (occurrences as isize * actual_size_diff)).max(0) as usize;
+                prop_assert_eq!(result_len, expected_len,
+                    "Buffer length should change correctly");
+            }
+
+            /// Property: replace_range preserves surrounding content
+            #[test]
+            fn prop_replace_range_preserves_surroundings(
+                prefix in "[a-z]{10,50}",
+                middle in "[a-z]{5,20}",
+                suffix in "[a-z]{10,50}",
+                replacement in "[A-Z]{5,25}",
+            ) {
+                let content = format!("{}{}{}", prefix, middle, suffix);
+                let mut buffer = Buffer::from_str(&content);
+
+                let start = prefix.len();
+                let end = start + middle.len();
+
+                let success = buffer.replace_range(start..end, &replacement);
+                prop_assert!(success, "replace_range should succeed");
+
+                let result = buffer.to_string();
+                let expected = format!("{}{}{}", prefix, replacement, suffix);
+
+                prop_assert_eq!(result, expected,
+                    "Should replace only the middle section");
+            }
+
+            /// Property: replace_next finds and replaces first occurrence
+            #[test]
+            fn prop_replace_next_finds_first(
+                prefix in "[a-z]{0,30}",
+                pattern in "[a-z]{4,10}",
+                middle in "[0-9]{5,15}",
+                suffix in "[a-z]{0,30}",
+                replacement in "[A-Z]{3,8}",
+            ) {
+                // Ensure pattern appears at least once
+                let content = format!("{}{}{}{}", prefix, pattern, middle, suffix);
+                let mut buffer = Buffer::from_str(&content);
+
+                let result = buffer.replace_next(&pattern, &replacement, 0);
+
+                if content.contains(&pattern) {
+                    prop_assert!(result.is_some(), "Should find pattern");
+
+                    let pos = result.unwrap();
+                    let buffer_content = buffer.to_string();
+
+                    // Should contain replacement
+                    prop_assert!(buffer_content.contains(&replacement),
+                        "Result should contain replacement");
+
+                    // First occurrence should be replaced
+                    let expected_pos = content.find(&pattern).unwrap();
+                    prop_assert_eq!(pos, expected_pos,
+                        "Should replace at first occurrence position");
+                }
+            }
+
+            /// Property: replace_all with overlapping patterns
+            #[test]
+            fn prop_replace_all_overlapping_patterns(
+                repetitions in 3usize..10,
+                replacement in "[A-Z]{1,3}",
+            ) {
+                // Create overlapping pattern like "aaa" with base char 'a'
+                let base_char = 'a';
+                let pattern = base_char.to_string().repeat(2);
+                let content = base_char.to_string().repeat(repetitions);
+                let mut buffer = Buffer::from_str(&content);
+
+                let count = buffer.replace_all(&pattern, &replacement);
+                let result = buffer.to_string();
+
+                // With overlapping patterns, should match standard library behavior
+                let naive_result = content.replace(&pattern, &replacement);
+                prop_assert_eq!(result, naive_result,
+                    "Should handle overlapping patterns like standard library");
+
+                // Standard library does non-overlapping replacement
+                let expected_count = repetitions / 2;
+                prop_assert_eq!(count, expected_count,
+                    "Should replace {} non-overlapping occurrences", expected_count);
+            }
+
+            /// Property: replace_all empty pattern should not modify buffer
+            #[test]
+            fn prop_replace_all_empty_pattern_noop(
+                content in "[a-zA-Z0-9 ]{10,100}",
+                replacement in "[A-Z]{5,15}",
+            ) {
+                let mut buffer = Buffer::from_str(&content);
+                let original = buffer.to_string();
+
+                let count = buffer.replace_all("", &replacement);
+                let result = buffer.to_string();
+
+                prop_assert_eq!(count, 0, "Should not replace anything");
+                prop_assert_eq!(result, original, "Buffer should be unchanged");
+            }
+
+            /// Property: replace_all with pattern not found should not modify buffer
+            #[test]
+            fn prop_replace_all_pattern_not_found_noop(
+                content in "[a-z]{20,100}",
+                replacement in "[A-Z]{5,15}",
+            ) {
+                // Use a pattern that definitely won't be in lowercase content
+                let pattern = "XXXYYY";
+                let mut buffer = Buffer::from_str(&content);
+                let original = buffer.to_string();
+
+                let count = buffer.replace_all(pattern, &replacement);
+                let result = buffer.to_string();
+
+                prop_assert_eq!(count, 0, "Should not replace anything");
+                prop_assert_eq!(result, original, "Buffer should be unchanged");
+            }
+
+            /// Property: Multiple replace_next calls replace all occurrences
+            #[test]
+            fn prop_replace_next_multiple_replaces_all(
+                pattern in "[a-z]{3,6}",
+                separator in "[0-9]{3,8}",
+                occurrences in 2usize..6,
+                replacement in "[A-Z]{3,6}",
+            ) {
+                // Create content with known number of occurrences
+                let parts: Vec<String> = (0..occurrences)
+                    .map(|_| pattern.clone())
+                    .collect();
+                let content = parts.join(&separator);
+                let mut buffer = Buffer::from_str(&content);
+
+                let mut replaced_count = 0;
+                let mut search_pos = 0;
+
+                // Keep replacing until no more matches
+                while let Some(_pos) = buffer.replace_next(&pattern, &replacement, search_pos) {
+                    replaced_count += 1;
+                    search_pos = 0; // Start from beginning each time
+
+                    // Safety: limit iterations
+                    if replaced_count > occurrences * 2 {
+                        break;
+                    }
+                }
+
+                prop_assert_eq!(replaced_count, occurrences,
+                    "Should replace all {} occurrences with multiple calls", occurrences);
+
+                let result = buffer.to_string();
+                prop_assert!(!result.contains(&pattern),
+                    "All occurrences should be replaced");
+            }
+
+            /// Property: replace_all with large buffer works correctly
+            #[test]
+            fn prop_replace_all_large_buffer(
+                pattern in "[a-z]{4,8}",
+                lines in 100usize..500,
+                replacement in "[A-Z]{3,7}",
+            ) {
+                // Create larger buffer with pattern on every line
+                let content = (0..lines)
+                    .map(|_| format!("prefix {} suffix\n", pattern))
+                    .collect::<String>();
+                let mut buffer = Buffer::from_str(&content);
+
+                let count = buffer.replace_all(&pattern, &replacement);
+
+                prop_assert_eq!(count, lines,
+                    "Should replace pattern on all {} lines", lines);
+
+                let result = buffer.to_string();
+                prop_assert!(!result.contains(&pattern),
+                    "Large buffer should have all patterns replaced");
+            }
         }
     }
 
