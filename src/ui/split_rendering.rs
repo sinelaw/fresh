@@ -307,7 +307,7 @@ impl SplitRenderer {
         // Debug: Log overlay count for diagnostics
         let overlay_count = state.overlays.all().len();
         if overlay_count > 0 {
-            tracing::debug!("render_content: {} overlays present", overlay_count);
+            tracing::trace!("render_content: {} overlays present", overlay_count);
         }
 
         // Update margin width based on buffer size
