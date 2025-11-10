@@ -247,6 +247,32 @@ impl Buffer {
         None
     }
 
+    /// Find the next occurrence of a pattern within an optional range
+    /// If range is None, searches the entire buffer with wrap-around (same as find_next)
+    /// If range is Some, searches only within that range without wrap-around
+    /// Returns the byte offset of the match, or None if not found
+    pub fn find_next_in_range(&self, pattern: &str, start_pos: usize, range: Option<Range<usize>>) -> Option<usize> {
+        if pattern.is_empty() {
+            return None;
+        }
+
+        if let Some(search_range) = range {
+            // Search within range only, no wrap-around
+            let pattern_bytes = pattern.as_bytes();
+            let search_start = start_pos.max(search_range.start);
+            let search_end = search_range.end.min(self.len());
+
+            if search_start < search_end {
+                self.find_pattern_streaming(search_start, search_end, pattern_bytes)
+            } else {
+                None
+            }
+        } else {
+            // No range specified, use normal find_next with wrap-around
+            self.find_next(pattern, start_pos)
+        }
+    }
+
     /// Streaming pattern search from start to end position using overlapping chunks
     /// Uses the VSCode-style buffered iteration approach with standard string search
     fn find_pattern_streaming(&self, start: usize, end: usize, pattern: &[u8]) -> Option<usize> {
@@ -302,6 +328,27 @@ impl Buffer {
         }
 
         None
+    }
+
+    /// Find the next occurrence of a regex pattern within an optional range
+    /// If range is None, searches the entire buffer with wrap-around (same as find_next_regex)
+    /// If range is Some, searches only within that range without wrap-around
+    /// Returns the byte offset of the match, or None if not found
+    pub fn find_next_regex_in_range(&self, regex: &Regex, start_pos: usize, range: Option<Range<usize>>) -> Option<usize> {
+        if let Some(search_range) = range {
+            // Search within range only, no wrap-around
+            let search_start = start_pos.max(search_range.start);
+            let search_end = search_range.end.min(self.len());
+
+            if search_start < search_end {
+                self.find_regex_streaming(search_start, search_end, regex)
+            } else {
+                None
+            }
+        } else {
+            // No range specified, use normal find_next_regex with wrap-around
+            self.find_next_regex(regex, start_pos)
+        }
     }
 
     /// Streaming regex search from start to end position using overlapping chunks
