@@ -334,13 +334,15 @@ impl IndentCalculator {
     }
 
     /// Calculate dedent using pattern matching (fallback for incomplete syntax)
-    /// Finds the previous non-empty line and checks if it ends with an opening brace
+    /// Finds the matching opening delimiter by tracking nesting depth
     fn calculate_dedent_pattern(
         buffer: &Buffer,
         position: usize,
         tab_size: usize,
     ) -> Option<usize> {
-        // Find previous non-empty line
+        // Track nesting depth to skip over already-matched pairs
+        // When we see a closing delimiter, we need to skip its matching opening delimiter
+        let mut depth = 0;
         let mut search_pos = position;
 
         while search_pos > 0 {
@@ -360,7 +362,7 @@ impl IndentCalculator {
                 .rev()
                 .find(|&&b| b != b' ' && b != b'\t' && b != b'\r' && b != b'\n');
 
-            if last_non_ws.is_some() {
+            if let Some(&last_char) = last_non_ws {
                 // Found a non-empty line - calculate its indent
                 let mut line_indent = 0;
                 let mut pos = line_start;
@@ -375,18 +377,30 @@ impl IndentCalculator {
                     pos += 1;
                 }
 
-                // Check if this line ends with an opening brace
-                if let Some(&last_char) = last_non_ws {
-                    if last_char == b'{' || last_char == b'[' || last_char == b'(' {
-                        // Found a line with opening delimiter - dedent to this line's level
-                        tracing::debug!("Pattern dedent: found line ending with opening delimiter '{}', dedenting to {}",
-                            last_char as char, line_indent);
-                        return Some(line_indent);
+                // Check what character this line ends with
+                match last_char {
+                    // Closing delimiters increase depth (we need to skip their matching opening delimiter)
+                    b'}' | b']' | b')' => {
+                        depth += 1;
+                        tracing::debug!("Pattern dedent: found closing delimiter '{}', depth now {}", last_char as char, depth);
+                    }
+                    // Opening delimiters
+                    b'{' | b'[' | b'(' => {
+                        if depth > 0 {
+                            // This opening delimiter is matched by a closing one we already saw
+                            depth -= 1;
+                            tracing::debug!("Pattern dedent: found opening delimiter '{}' but it's matched (depth {}), continuing", last_char as char, depth);
+                        } else {
+                            // This is the matching opening delimiter for the closing delimiter we're typing!
+                            tracing::debug!("Pattern dedent: found unmatched opening delimiter '{}', dedenting to {}", last_char as char, line_indent);
+                            return Some(line_indent);
+                        }
+                    }
+                    // Other characters - just continue searching
+                    _ => {
+                        tracing::debug!("Pattern dedent: line ends with '{}', continuing search", last_char as char);
                     }
                 }
-
-                // Line doesn't end with opening brace - keep searching backwards
-                // (don't return the indent of a content line, we need to find the matching opening delimiter)
             }
 
             // Move to previous line
@@ -396,7 +410,7 @@ impl IndentCalculator {
             search_pos = line_start.saturating_sub(1);
         }
 
-        // No previous non-empty line found
+        // No matching opening delimiter found - dedent to column 0
         Some(0)
     }
 

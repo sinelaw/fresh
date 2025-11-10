@@ -548,6 +548,59 @@ fn test_auto_dedent_with_content_before() {
     }
 }
 
+/// Test auto-dedent with nested blocks where inner block is already closed
+/// This tests that the pattern fallback correctly skips over matched pairs
+#[test]
+fn test_auto_dedent_nested_with_closed_inner() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Type: if (1) {
+    harness.type_text("if (1) {").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Type content: hi there
+    harness.type_text("hi there").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Type nested: if (2) {
+    harness.type_text("if (2) {").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Type nested content: hi there again!
+    harness.type_text("hi there again!").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Type closing brace for inner block
+    harness.type_text("}").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Type more content: hi
+    harness.type_text("hi").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Now type closing brace for outer block - should dedent to column 0
+    harness.type_text("}").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content();
+
+    // The last line should have the closing brace at column 0
+    let lines: Vec<&str> = content.lines().collect();
+    let last_line = lines.last().expect("Should have at least one line");
+    let leading_spaces = last_line.chars().take_while(|&c| c == ' ').count();
+
+    assert_eq!(
+        leading_spaces, 0,
+        "Outer closing brace should be at column 0 (not at inner block's indent of 4), but found {} spaces. Content:\n{}",
+        leading_spaces, content
+    );
+}
+
 /// Test that pressing Enter after an empty line inside function body maintains indent
 /// This should use tree-sitter to detect we're still inside the function block
 #[test]
