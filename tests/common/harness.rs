@@ -439,6 +439,22 @@ impl EditorTestHarness {
         self.editor.active_state().cursors.count()
     }
 
+    /// Count the number of search highlight overlays in the current buffer
+    pub fn count_search_highlights(&self) -> usize {
+        self.editor
+            .active_state()
+            .overlays
+            .all()
+            .iter()
+            .filter(|o| {
+                o.id
+                    .as_ref()
+                    .map(|id| id.starts_with("search_highlight_"))
+                    .unwrap_or(false)
+            })
+            .count()
+    }
+
     /// Get the screen cursor position (x, y) from the terminal
     pub fn screen_cursor_position(&mut self) -> (u16, u16) {
         let pos = self.terminal.get_cursor_position().unwrap_or_default();

@@ -337,19 +337,20 @@ fn test_interactive_replace_wrap_stops_at_start() {
     harness.assert_screen_contains("Replaced 1 occurr");
 }
 
-/// Test that search highlights persist when scrolling or jumping
+/// Test that search highlights update when scrolling to show new matches
 #[test]
-fn test_search_highlights_persist_on_scroll_and_jump() {
+fn test_search_highlights_update_on_scroll() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.txt");
 
-    // Create a file with many lines and multiple occurrences of "test"
+    // Create a file where "MATCH" appears on every 3rd line
+    // This ensures there are always matches visible regardless of scroll position
     let mut content = String::new();
-    for i in 0..50 {
-        if i % 5 == 0 {
-            content.push_str(&format!("Line {} with test keyword\n", i));
+    for i in 0..60 {
+        if i % 3 == 0 {
+            content.push_str(&format!("Line {} has MATCH keyword\n", i));
         } else {
-            content.push_str(&format!("Line {} without match\n", i));
+            content.push_str(&format!("Line {} no keyword here\n", i));
         }
     }
     std::fs::write(&file_path, &content).unwrap();
@@ -365,86 +366,74 @@ fn test_search_highlights_persist_on_scroll_and_jump() {
     harness.render().unwrap();
 
     // Type search query
-    harness.type_text("test").unwrap();
+    harness.type_text("MATCH").unwrap();
     harness.render().unwrap();
 
-    // Confirm search
+    // Confirm search - this highlights visible matches
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
-    // Verify we're at the first match
-    // "Line 0 with " = 12 characters, so "test" starts at position 12
-    let cursor_pos = harness.cursor_position();
-    assert_eq!(cursor_pos, 12, "Should be at first match");
-
-    // Verify search highlights are visible
-    let screen = harness.screen_to_string();
+    // Should have highlights for visible matches
+    let highlights_initial = harness.count_search_highlights();
     assert!(
-        screen.contains("test"),
-        "Screen should contain search term"
+        highlights_initial > 0,
+        "Should have search highlights after search"
     );
 
-    // Scroll down with PageDown
-    harness
-        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
+    // Get position of first highlight
+    let state = harness.editor().active_state();
+    let first_highlight_pos = state
+        .overlays
+        .all()
+        .iter()
+        .find(|o| o.id.as_ref().map(|id| id.starts_with("search_highlight_")).unwrap_or(false))
+        .and_then(|o| state.marker_list.get_position(o.start_marker))
+        .expect("Should have at least one highlight");
 
-    // Cursor should have moved down
-    let cursor_after_scroll = harness.cursor_position();
-    assert!(
-        cursor_after_scroll > cursor_pos,
-        "Cursor should have moved down after PageDown"
-    );
-
-    // Search highlights should still be visible in the viewport
-    // (This is the key test - highlights should persist through scrolling)
-    let screen_after_scroll = harness.screen_to_string();
-    assert!(
-        screen_after_scroll.contains("test"),
-        "Search highlights should still be visible after scrolling"
-    );
-
-    // Scroll to middle of file with multiple PageDowns
-    for _ in 0..3 {
+    // Scroll down significantly
+    for _ in 0..5 {
         harness
             .send_key(KeyCode::PageDown, KeyModifiers::NONE)
             .unwrap();
         harness.render().unwrap();
     }
 
-    // After multiple scrolls, search highlights should STILL be visible
-    let screen_after_multi_scroll = harness.screen_to_string();
+    // After scrolling with the fix:
+    // - Should still have highlights (for newly visible matches)
+    // - Highlights should be at DIFFERENT positions (not the old ones)
+    let highlights_after_scroll = harness.count_search_highlights();
     assert!(
-        screen_after_multi_scroll.contains("test"),
-        "Search highlights should persist after multiple scroll operations"
+        highlights_after_scroll > 0,
+        "Should still have search highlights after scrolling (for newly visible matches)"
     );
 
-    // Scroll back up
-    for _ in 0..2 {
-        harness
-            .send_key(KeyCode::PageUp, KeyModifiers::NONE)
-            .unwrap();
-        harness.render().unwrap();
-    }
+    // Get position of highlight after scrolling
+    let state = harness.editor().active_state();
+    let scrolled_highlight_pos = state
+        .overlays
+        .all()
+        .iter()
+        .find(|o| o.id.as_ref().map(|id| id.starts_with("search_highlight_")).unwrap_or(false))
+        .and_then(|o| state.marker_list.get_position(o.start_marker))
+        .expect("Should have at least one highlight after scrolling");
 
-    // Highlights should still be there
-    let screen_after_scroll_up = harness.screen_to_string();
+    // The highlight position should have changed (we're highlighting different matches now)
     assert!(
-        screen_after_scroll_up.contains("test"),
-        "Search highlights should persist after scrolling up and down"
+        scrolled_highlight_pos != first_highlight_pos,
+        "Highlight should be at a different position after scrolling (old: {}, new: {})",
+        first_highlight_pos,
+        scrolled_highlight_pos
     );
 
-    // Now make an edit - this SHOULD clear highlights and search state
-    harness.type_text("x").unwrap();
-    harness.render().unwrap();
-
-    // After an edit, the 'x' should appear in the file
-    let content_after_edit = harness.get_buffer_content();
+    // Verify the highlight is actually in the visible viewport
+    let viewport_top = state.viewport.top_byte;
+    let viewport_end = viewport_top + 1000; // Approximate visible range
     assert!(
-        content_after_edit.contains("x"),
-        "Edit should have been applied to the buffer"
+        scrolled_highlight_pos >= viewport_top && scrolled_highlight_pos < viewport_end,
+        "Highlight at {} should be in visible viewport (top: {})",
+        scrolled_highlight_pos,
+        viewport_top
     );
 }
