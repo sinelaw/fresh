@@ -347,7 +347,7 @@ impl IntervalTree {
         if pos <= start {
             // CASE 1: Edit is at or before this node's start.
             // This node and everything to its right must be shifted.
-            
+
             // 1. Shift the current node's start position directly, clamping at `pos` if needed.
             if delta < 0 {
                 node.marker.interval.start = (start as i64 + delta).max(pos as i64) as u64;
@@ -355,14 +355,22 @@ impl IntervalTree {
                 node.marker.interval.start = (start as i64 + delta) as u64;
             }
 
-            // 2. Lazily apply the delta to the entire right subtree.
-            if let Some(ref right) = node.right {
-                right.borrow_mut().lazy_delta += delta;
+            // 2. Handle the right subtree.
+            // For insertions (delta > 0): can use lazy propagation since all nodes shift uniformly
+            // For deletions (delta < 0): must recurse to provide position-aware clamping
+            if delta < 0 {
+                // Deletion: recurse immediately so nodes can clamp to `pos`
+                Self::adjust_recursive(&mut node.right, pos, delta);
+            } else {
+                // Insertion: lazy propagation is safe and efficient
+                if let Some(ref right) = node.right {
+                    right.borrow_mut().lazy_delta += delta;
+                }
             }
-            
+
             // 3. Recurse left, as it may contain markers spanning the edit pos.
             Self::adjust_recursive(&mut node.left, pos, delta);
-            
+
         } else { // pos > start
             // CASE 2: This node's start is BEFORE the edit.
             // Its start is unaffected. We only need to check the right subtree
@@ -652,5 +660,56 @@ mod tests {
         // New start becomes max(0, 10-15) = 0.
         // New end becomes max(new_start, 20-15) = max(0, 5) = 5.
         assert_eq!(get_pos(&tree, id1), (0, 5), "Engulfing deletion at pos 0.");
+    }
+
+    #[test]
+    fn test_deletion_preserves_marker_ordering() {
+        // This test reproduces the bug found in prop_marker_ordering_preserved
+        // where lazy delta propagation causes ordering violations.
+        let mut tree = IntervalTree::new();
+
+        // Create markers in order: [0, 10, 20, 30, 40] (spacing=10)
+        let id0 = insert_marker(&mut tree, 0, 0);
+        let id1 = insert_marker(&mut tree, 10, 10);
+        let id2 = insert_marker(&mut tree, 20, 20);
+        let id3 = insert_marker(&mut tree, 30, 30);
+        let id4 = insert_marker(&mut tree, 40, 40);
+
+        // Verify initial state
+        assert_eq!(get_pos(&tree, id0), (0, 0));
+        assert_eq!(get_pos(&tree, id1), (10, 10));
+        assert_eq!(get_pos(&tree, id2), (20, 20));
+        assert_eq!(get_pos(&tree, id3), (30, 30));
+        assert_eq!(get_pos(&tree, id4), (40, 40));
+
+        // Delete 16 bytes starting at position 5
+        // This deletes range [5, 21)
+        // Expected positions after: [0, 5, 5, 14, 24]
+        tree.adjust_for_edit(5, -16);
+
+        // Get all positions
+        let positions = vec![
+            get_pos(&tree, id0).0,
+            get_pos(&tree, id1).0,
+            get_pos(&tree, id2).0,
+            get_pos(&tree, id3).0,
+            get_pos(&tree, id4).0,
+        ];
+
+        // Verify ordering is preserved (no inversions)
+        for i in 0..positions.len()-1 {
+            assert!(
+                positions[i] <= positions[i+1],
+                "Ordering violated at index {}: {:?}[{}]={} > {:?}[{}]={}",
+                i, positions, i, positions[i], positions, i+1, positions[i+1]
+            );
+        }
+
+        // Verify specific expected positions
+        assert_eq!(get_pos(&tree, id0), (0, 0), "Marker at 0 should stay at 0");
+        assert_eq!(get_pos(&tree, id1), (5, 5), "Marker at 10 should clamp to 5");
+        assert_eq!(get_pos(&tree, id2), (5, 5), "Marker at 20 should clamp to 5");
+        assert_eq!(get_pos(&tree, id3), (14, 14), "Marker at 30 should shift to 14");
+        assert_eq!(get_pos(&tree, id4), (24, 24), "Marker at 40 should shift to 24");
     }
 }
