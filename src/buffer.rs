@@ -219,26 +219,95 @@ impl Buffer {
 
     /// Find the next occurrence of a pattern starting from a given position
     /// Returns the byte offset of the match, or None if not found
+    /// Uses streaming iteration to avoid materializing the entire buffer
     pub fn find_next(&self, pattern: &str, start_pos: usize) -> Option<usize> {
         if pattern.is_empty() {
             return None;
         }
 
-        let text = self.to_string();
-        let bytes = text.as_bytes();
         let pattern_bytes = pattern.as_bytes();
+        let buffer_len = self.len();
 
         // Search from start_pos to end
-        if start_pos < bytes.len() {
-            if let Some(offset) = Self::find_pattern(&bytes[start_pos..], pattern_bytes) {
-                return Some(start_pos + offset);
+        if start_pos < buffer_len {
+            if let Some(offset) = self.find_pattern_streaming(start_pos, buffer_len, pattern_bytes) {
+                return Some(offset);
             }
         }
 
         // Wrap around: search from beginning to start_pos
         if start_pos > 0 {
-            if let Some(offset) = Self::find_pattern(&bytes[..start_pos], pattern_bytes) {
+            if let Some(offset) = self.find_pattern_streaming(0, start_pos, pattern_bytes) {
                 return Some(offset);
+            }
+        }
+
+        None
+    }
+
+    /// Streaming pattern search from start to end position
+    /// Uses a sliding window buffer to search without materializing the entire file
+    fn find_pattern_streaming(&self, start: usize, end: usize, pattern: &[u8]) -> Option<usize> {
+        if pattern.is_empty() || start >= end {
+            return None;
+        }
+
+        const CHUNK_SIZE: usize = 4096;
+        let mut iter = self.virtual_buffer.iter_at(start);
+        let mut buffer = Vec::with_capacity(pattern.len() + CHUNK_SIZE);
+        let mut buffer_start_pos = start; // Track where the buffer starts in the file
+        let mut current_read_pos = start; // Track where we've read up to
+
+        // Fill initial buffer
+        while buffer.len() < CHUNK_SIZE && current_read_pos < end {
+            if let Some(byte) = iter.next() {
+                buffer.push(byte);
+                current_read_pos += 1;
+            } else {
+                break;
+            }
+        }
+
+        // Search through the buffer using sliding window
+        loop {
+            // Search within current buffer
+            if let Some(offset) = Self::find_pattern(&buffer, pattern) {
+                let match_pos = buffer_start_pos + offset;
+                if match_pos + pattern.len() <= end {
+                    return Some(match_pos);
+                }
+            }
+
+            // If we've searched all bytes, we're done
+            if current_read_pos >= end {
+                break;
+            }
+
+            // Keep overlap for cross-chunk matches
+            // We need to keep (pattern.len() - 1) bytes to catch patterns spanning chunks
+            if buffer.len() >= pattern.len() {
+                let keep_from = buffer.len() - (pattern.len() - 1);
+                buffer.drain(0..keep_from);
+                buffer_start_pos += keep_from; // Update buffer start position
+            }
+
+            // Fill buffer with next chunk
+            let chunk_start_len = buffer.len();
+            for _ in 0..CHUNK_SIZE {
+                if current_read_pos >= end {
+                    break;
+                }
+                if let Some(byte) = iter.next() {
+                    buffer.push(byte);
+                    current_read_pos += 1;
+                } else {
+                    break;
+                }
+            }
+
+            // If we didn't add any new bytes, we're done
+            if buffer.len() == chunk_start_len {
+                break;
             }
         }
 
