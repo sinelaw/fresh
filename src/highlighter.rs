@@ -44,6 +44,7 @@ pub enum Language {
     Php,
     Ruby,
     Bash,
+    Lua,
     // Markdown,  // Disabled due to tree-sitter version conflict
 }
 
@@ -66,6 +67,7 @@ impl Language {
             "php" => Some(Language::Php),
             "rb" => Some(Language::Ruby),
             "sh" | "bash" => Some(Language::Bash),
+            "lua" => Some(Language::Lua),
             // "md" => Some(Language::Markdown),  // Disabled
             _ => None,
         }
@@ -469,6 +471,32 @@ impl Language {
                 ]);
 
                 Ok(config)
+            }
+            Language::Lua => {
+                let mut config = HighlightConfiguration::new(
+                    tree_sitter_lua::LANGUAGE.into(),
+                    "lua",
+                    tree_sitter_lua::HIGHLIGHTS_QUERY,
+                    "", // injections query
+                    "", // locals query
+                )
+                .map_err(|e| format!("Failed to create Lua highlight config: {e}"))?;
+
+                config.configure(&[
+                    "attribute",
+                    "comment",
+                    "constant",
+                    "function",
+                    "keyword",
+                    "number",
+                    "operator",
+                    "property",
+                    "string",
+                    "type",
+                    "variable",
+                ]);
+
+                Ok(config)
             } // Language::Markdown => {
               //     // Disabled due to tree-sitter version conflict
               //     Err("Markdown highlighting not available".to_string())
@@ -591,7 +619,7 @@ impl Language {
                 10 => Color::White,   // variable
                 _ => Color::White,    // default
             },
-            Language::Php | Language::Ruby | Language::Bash => match index {
+            Language::Php | Language::Ruby | Language::Bash | Language::Lua => match index {
                 0 => Color::Cyan,     // attribute
                 1 => Color::DarkGray, // comment
                 2 => Color::Magenta,  // constant
@@ -863,6 +891,9 @@ mod tests {
 
         let path = std::path::Path::new("test.bash");
         assert!(matches!(Language::from_path(path), Some(Language::Bash)));
+
+        let path = std::path::Path::new("test.lua");
+        assert!(matches!(Language::from_path(path), Some(Language::Lua)));
 
         // Markdown disabled due to tree-sitter version conflict
         // let path = std::path::Path::new("test.md");
