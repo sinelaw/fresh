@@ -706,13 +706,19 @@ fn test_git_find_file_actually_opens_file() {
     // Type to find lib.rs
     harness.type_text("lib.rs").unwrap();
 
-    // Wait for results
+    // Wait for results - check that suggestions are populated
     let found = harness
         .wait_for_async(
             |h| {
+                // Check if the prompt has suggestions by checking if a file path appears
+                // in the screen content (not just the prompt input line)
+                // We look for "src/" which only appears in file results, not in the prompt
                 let s = h.screen_to_string();
-                // Look for file list or at least src/ directory
-                s.contains("src/lib.rs") || s.contains("lib.rs")
+                let lines: Vec<&str> = s.lines().collect();
+
+                // The last line is the prompt "Find file: lib.rs"
+                // Check if any line EXCEPT the last one contains "src/"
+                lines.iter().take(lines.len().saturating_sub(1)).any(|line| line.contains("src/"))
             },
             2000,
         )

@@ -74,16 +74,19 @@ pub fn find_word_start_bytes(bytes: &[u8], pos: usize) -> usize {
 ///
 /// # Returns
 /// Position of the word end (always >= pos)
+/// If at a non-word character, returns current position (already at word boundary)
 pub fn find_word_end_bytes(bytes: &[u8], pos: usize) -> usize {
     let pos = pos.min(bytes.len());
-    let mut new_pos = pos;
 
-    // Skip to start of next word if we're at non-word character
-    while new_pos < bytes.len() && !is_word_char(bytes[new_pos]) {
-        new_pos += 1;
+    // If we're at a non-word character, we're already at a word boundary
+    // Return current position instead of skipping to next word
+    if pos < bytes.len() && !is_word_char(bytes[pos]) {
+        return pos;
     }
 
-    // Find end of word
+    let mut new_pos = pos;
+
+    // Find end of current word
     while new_pos < bytes.len() && is_word_char(bytes[new_pos]) {
         new_pos += 1;
     }

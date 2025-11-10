@@ -149,6 +149,10 @@ impl Buffer {
         }
         let _ = self.virtual_buffer.insert(pos, text.as_bytes());
         self.modified = true;
+
+        // Update line cache with insertion
+        let newlines = text.matches('\n').count();
+        self.handle_line_cache_insertion(pos, text.len(), newlines);
     }
 
     /// Delete a range of bytes
@@ -156,8 +160,16 @@ impl Buffer {
         if range.is_empty() {
             return;
         }
-        let _ = self.virtual_buffer.delete(range);
+
+        // Get the text being deleted to count newlines
+        let deleted_text = self.slice(range.clone());
+        let newlines = deleted_text.matches('\n').count();
+
+        let _ = self.virtual_buffer.delete(range.clone());
         self.modified = true;
+
+        // Update line cache with deletion
+        self.handle_line_cache_deletion(range.start, range.len(), newlines);
     }
 
     /// Get a slice of the buffer as a string
