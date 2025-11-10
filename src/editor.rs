@@ -76,6 +76,10 @@ struct InteractiveReplaceState {
     replacement: String,
     /// Current match position (byte offset of the match we're at)
     current_match_pos: usize,
+    /// Starting position (to detect when we've wrapped around full circle)
+    start_pos: usize,
+    /// Whether we've wrapped around to the beginning
+    has_wrapped: bool,
     /// Number of replacements made so far
     replacements_made: usize,
 }
@@ -5454,6 +5458,8 @@ impl Editor {
             search: search.to_string(),
             replacement: replacement.to_string(),
             current_match_pos: first_match_pos,
+            start_pos: first_match_pos,
+            has_wrapped: false,
             replacements_made: 0,
         });
 
@@ -5481,8 +5487,11 @@ impl Editor {
 
                 // Find next match lazily (after the replacement)
                 let search_pos = ir_state.current_match_pos + ir_state.replacement.len();
-                if let Some(next_match) = self.find_next_match_for_replace(&ir_state, search_pos) {
+                if let Some((next_match, wrapped)) = self.find_next_match_for_replace(&ir_state, search_pos) {
                     ir_state.current_match_pos = next_match;
+                    if wrapped {
+                        ir_state.has_wrapped = true;
+                    }
                     self.interactive_replace_state = Some(ir_state.clone());
                     self.move_to_current_match(&ir_state);
                 } else {
@@ -5492,8 +5501,11 @@ impl Editor {
             'n' | 'N' => {
                 // Skip current match and find next
                 let search_pos = ir_state.current_match_pos + ir_state.search.len();
-                if let Some(next_match) = self.find_next_match_for_replace(&ir_state, search_pos) {
+                if let Some((next_match, wrapped)) = self.find_next_match_for_replace(&ir_state, search_pos) {
                     ir_state.current_match_pos = next_match;
+                    if wrapped {
+                        ir_state.has_wrapped = true;
+                    }
                     self.interactive_replace_state = Some(ir_state.clone());
                     self.move_to_current_match(&ir_state);
                 } else {
@@ -5528,10 +5540,31 @@ impl Editor {
         Ok(())
     }
 
-    /// Find the next match for interactive replace (lazy search)
-    fn find_next_match_for_replace(&self, ir_state: &InteractiveReplaceState, start_pos: usize) -> Option<usize> {
+    /// Find the next match for interactive replace (lazy search with wrap-around)
+    fn find_next_match_for_replace(&self, ir_state: &InteractiveReplaceState, start_pos: usize) -> Option<(usize, bool)> {
         let state = self.active_state();
-        state.buffer.find_next(&ir_state.search, start_pos)
+
+        // Try to find next match from current position
+        if let Some(match_pos) = state.buffer.find_next(&ir_state.search, start_pos) {
+            // If we've already wrapped and this match is at or past the starting position, stop
+            if ir_state.has_wrapped && match_pos >= ir_state.start_pos {
+                return None;
+            }
+            return Some((match_pos, ir_state.has_wrapped));
+        }
+
+        // No match found from current position - wrap around if we haven't already
+        if !ir_state.has_wrapped {
+            // Try searching from the beginning
+            if let Some(match_pos) = state.buffer.find_next(&ir_state.search, 0) {
+                // Check if this match is before our starting position
+                if match_pos < ir_state.start_pos {
+                    return Some((match_pos, true)); // Found a match after wrapping
+                }
+            }
+        }
+
+        None // No more matches
     }
 
     /// Replace the current match in interactive replace mode
@@ -5579,7 +5612,12 @@ impl Editor {
         state.cursors.primary_mut().anchor = None;
         state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
 
-        self.set_status_message("Replace this occurrence? (y/n/!/q)".to_string());
+        let msg = if ir_state.has_wrapped {
+            "Replace this occurrence? (y/n/!/q) [Wrapped]".to_string()
+        } else {
+            "Replace this occurrence? (y/n/!/q)".to_string()
+        };
+        self.set_status_message(msg);
     }
 
     /// Finish interactive replace and show summary
