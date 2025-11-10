@@ -1511,10 +1511,28 @@ impl Editor {
         // 1. Apply the event to the buffer
         self.active_state_mut().apply(event);
 
-        // 2. Trigger plugin hooks for this event
+        // 2. Clear search highlights on edit (Insert/Delete events)
+        // This preserves highlights while navigating but clears them when modifying text
+        match event {
+            Event::Insert { .. } | Event::Delete { .. } => {
+                self.clear_search_highlights();
+            }
+            Event::Batch { events, .. } => {
+                // Check if batch contains any Insert/Delete events
+                let has_edits = events.iter().any(|e| {
+                    matches!(e, Event::Insert { .. } | Event::Delete { .. })
+                });
+                if has_edits {
+                    self.clear_search_highlights();
+                }
+            }
+            _ => {}
+        }
+
+        // 3. Trigger plugin hooks for this event
         self.trigger_plugin_hooks_for_event(event);
 
-        // 3. Notify LSP of the change
+        // 4. Notify LSP of the change
         self.notify_lsp_change(event);
     }
 
@@ -1799,29 +1817,23 @@ impl Editor {
 
     /// Cancel the current prompt and return to normal mode
     pub fn cancel_prompt(&mut self) {
-        self.prompt = None;
-        // Clear search highlights when cancelling search prompt
-        {
-            let state = self.active_state_mut();
-            let overlay_ids: Vec<String> = state
-                .overlays
-                .all()
-                .iter()
-                .filter_map(|o| {
-                    o.id.as_ref().and_then(|id| {
-                        if id.starts_with("search_highlight_") {
-                            Some(id.clone())
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .collect();
+        // Only clear search highlights if we're canceling a search/replace prompt
+        let should_clear_search = if let Some(ref prompt) = self.prompt {
+            matches!(
+                prompt.prompt_type,
+                PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch
+            )
+        } else {
+            false
+        };
 
-            for id in overlay_ids {
-                state.overlays.remove_by_id(&id, &mut state.marker_list);
-            }
+        self.prompt = None;
+
+        // Clear search highlights when cancelling search prompt
+        if should_clear_search {
+            self.clear_search_highlights();
         }
+
         self.status_message = Some("Canceled".to_string());
     }
 
@@ -5093,6 +5105,32 @@ impl Editor {
 
     // === Search and Replace Methods ===
 
+    /// Clear all search highlights from the active buffer
+    fn clear_search_highlights(&mut self) {
+        let state = self.active_state_mut();
+        let overlay_ids: Vec<String> = state
+            .overlays
+            .all()
+            .iter()
+            .filter_map(|o| {
+                o.id.as_ref().and_then(|id| {
+                    if id.starts_with("search_highlight_") || id.starts_with("search_match_") {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        for id in overlay_ids {
+            state.overlays.remove_by_id(&id, &mut state.marker_list);
+        }
+
+        // Also clear search state
+        self.search_state = None;
+    }
+
     /// Update search highlights in visible viewport only (for incremental search)
     /// This is called as the user types in the search prompt for real-time feedback
     fn update_search_highlights(&mut self, query: &str) {
@@ -5180,28 +5218,11 @@ impl Editor {
 
     /// Perform a search and update search state
     fn perform_search(&mut self, query: &str) {
-        // Clear incremental search highlights
-        {
-            let state = self.active_state_mut();
-            let overlay_ids: Vec<String> = state
-                .overlays
-                .all()
-                .iter()
-                .filter_map(|o| {
-                    o.id.as_ref().and_then(|id| {
-                        if id.starts_with("search_highlight_") {
-                            Some(id.clone())
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .collect();
-
-            for id in overlay_ids {
-                state.overlays.remove_by_id(&id, &mut state.marker_list);
-            }
-        }
+        // Don't clear search highlights here - keep them from incremental search
+        // They will be cleared when:
+        // 1. User cancels search (Escape)
+        // 2. User makes an edit to the buffer
+        // 3. User starts a new search (update_search_highlights clears old ones)
 
         if query.is_empty() {
             self.search_state = None;
