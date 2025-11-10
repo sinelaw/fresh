@@ -275,6 +275,110 @@
 
 ---
 
+## Performance Optimization: Marker System (In Progress - Nov 2025)
+
+### Problem: O(n²) Marker Creation Blocks UI
+
+**Current Issue:**
+When LSP diagnostics arrive (e.g., 128 diagnostics = 256 markers), the editor becomes extremely slow:
+- Each marker creation does O(n) linear search through Vec<MarkerEntry>
+- With 128 diagnostics: ~102,400 entry comparisons
+- Observed: ~400ms blocking the main thread
+- Result: **UI freezes when typing with syntax errors**
+
+**Root Cause:**
+```rust
+// src/marker.rs - Current Vec-based implementation
+pub struct MarkerList {
+    entries: Vec<MarkerEntry>,  // Linear search on every create()
+    marker_index: HashMap<MarkerId, usize>,
+}
+
+// Each diagnostic creates 2 markers (start/end)
+// lsp_diagnostics.rs:113
+let overlay = Overlay::with_id(&mut state.marker_list, range, face, overlay_id);
+  // Calls marker_list.create() twice - O(n) each time
+```
+
+### Solution: Interval Tree (Similar to VSCode)
+
+**Architecture Insight:**
+- Text buffer already uses ChunkTree (rope) - O(log n) text operations ✅
+- Markers stored separately in Vec - O(n) operations ❌
+- VSCode model: Text in B-Tree, markers in separate Interval Tree
+
+**Implementation Plan:**
+
+Replace `MarkerList` with `MarkerTree` - an augmented tree structure:
+
+```rust
+enum MarkerTreeNode {
+    Leaf {
+        markers: Vec<(usize, MarkerId, bool)>,  // position, id, affinity
+    },
+    Internal {
+        children: Vec<Arc<MarkerTreeNode>>,
+        max_position: usize,      // for range queries
+        offset_delta: isize,      // lazy bulk adjustment from text edits
+    }
+}
+```
+
+**Key Features:**
+1. **O(log n) marker creation** - Binary search + tree insertion
+2. **O(log n) position lookup** - Tree walk to marker
+3. **O(log n) bulk adjustment** - Add offset_delta to subtree (like VSCode)
+4. **O(log n + k) range query** - Find markers in viewport
+5. **Lazy position updates** - Text edits update deltas, not individual markers
+
+**VSCode-Style Bulk Edit Optimization:**
+```rust
+// When text is inserted at position 500:
+// Instead of updating 256 individual markers after position 500
+// Just add +1000 to the offset_delta of the subtree containing them
+// Positions recalculated lazily when queried
+```
+
+**Implementation Steps:**
+
+**Phase 1: Build MarkerTree Structure** (Now)
+- [ ] Create `marker_tree.rs` module similar to `chunk_tree.rs`
+- [ ] Implement tree nodes with Arc-sharing
+- [ ] Add `create()` - O(log n) insertion
+- [ ] Add `get_position()` - O(log n) lookup with offset_delta
+- [ ] Add `delete()` - O(log n) removal
+- [ ] Unit tests for basic operations
+
+**Phase 2: Lazy Bulk Adjustments**
+- [ ] Add `offset_delta` field to Internal nodes
+- [ ] Implement `adjust_for_insert()` - O(log n) with lazy propagation
+- [ ] Implement `adjust_for_delete()` - O(log n) with lazy propagation
+- [ ] Handle delta propagation on tree traversal
+- [ ] Unit tests for bulk operations
+
+**Phase 3: Integration**
+- [ ] Replace `MarkerList` with `MarkerTree` in `state.rs`
+- [ ] Update all call sites (overlay.rs, lsp_diagnostics.rs)
+- [ ] Add migration path for existing code
+- [ ] Integration tests
+
+**Phase 4: Validation**
+- [ ] Benchmark marker creation with 128+ diagnostics
+- [ ] Verify UI stays responsive during diagnostic updates
+- [ ] Add e2e test for marker performance
+- [ ] Performance regression tests
+
+**Expected Results:**
+- Marker creation: O(n²) → O(n log n)
+- 128 diagnostics: ~400ms → ~8ms (50x speedup)
+- UI remains responsive with syntax errors
+- Text edits with many markers: O(n) → O(log n)
+
+**Similar to ChunkTree:**
+Both use persistent tree structures with Arc-sharing for efficient immutable operations. ChunkTree handles text, MarkerTree handles position-anchored metadata.
+
+---
+
 ## Technical Debt & Refactoring
 
 ### Line Wrapping Refactoring
