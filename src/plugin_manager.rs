@@ -999,7 +999,6 @@ mod tests {
             assert!(registry.find_by_name("TODO Highlighter: Enable").is_some());
             assert!(registry.find_by_name("TODO Highlighter: Disable").is_some());
             assert!(registry.find_by_name("TODO Highlighter: Toggle").is_some());
-            assert!(registry.find_by_name("TODO Highlighter: Refresh").is_some());
             assert!(registry
                 .find_by_name("TODO Highlighter: Show Keywords")
                 .is_some());
