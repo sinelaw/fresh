@@ -27,6 +27,7 @@ This document outlines the editor's support for various programming languages, i
 | **PHP** | `.php` | `tree-sitter-php` | ✅ | ❌ |
 | **Ruby** | `.rb` | `tree-sitter-ruby` | ✅ | ❌ |
 | **Bash** | `.sh`, `.bash` | `tree-sitter-bash` | ✅ | ❌ |
+| **Lua** | `.lua` | `tree-sitter-lua` | ✅ | ❌ |
 
 **Legend:**
 - ✅ = Implemented and working

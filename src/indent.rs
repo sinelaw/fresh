@@ -135,6 +135,11 @@ impl IndentCalculator {
                 tree_sitter_php::LANGUAGE_PHP.into(),
                 include_str!("../queries/php/indents.scm"),
             ),
+            Language::Lua => (
+                "lua",
+                tree_sitter_lua::LANGUAGE.into(),
+                include_str!("../queries/lua/indents.scm"),
+            ),
             Language::CSharp => {
                 // C# doesn't have a highlight query, skip indent support for now
                 tracing::warn!("Auto-indent not supported for C#");

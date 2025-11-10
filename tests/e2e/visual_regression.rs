@@ -1155,6 +1155,11 @@ fn visual_multi_language_highlighting() {
             "hello.sh",
             include_str!("../fixtures/syntax_highlighting/hello.sh"),
         ),
+        (
+            "Lua",
+            "hello.lua",
+            include_str!("../fixtures/syntax_highlighting/hello.lua"),
+        ),
     ];
 
     // Create all test files
