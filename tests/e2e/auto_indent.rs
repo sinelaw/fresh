@@ -496,6 +496,58 @@ fn test_auto_dedent_nested_blocks() {
     }
 }
 
+/// Test auto-dedent when there's content between opening brace and closing brace
+/// This is the scenario: if (true) { <Enter> hi <Enter> } <-- should dedent
+#[test]
+fn test_auto_dedent_with_content_before() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Type: if (true) {
+    harness.type_text("if (true) {").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should have 4 spaces of indent
+    let content = harness.get_buffer_content();
+    assert!(content.contains("{\n    "), "Should have indent after opening brace");
+
+    // Type some content: hi
+    harness.type_text("hi").unwrap();
+
+    // Press Enter again
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should still have 4 spaces on new line
+    let content = harness.get_buffer_content();
+    assert!(content.contains("    hi\n    "), "Should have 4 spaces on new line after content");
+
+    // Now type closing brace - it should auto-dedent to column 0
+    harness.type_text("}").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content();
+
+    // Count spaces before the closing brace
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.len() >= 3 {
+        let third_line = lines[2];
+        let leading_spaces = third_line.chars().take_while(|&c| c == ' ').count();
+        assert_eq!(
+            leading_spaces, 0,
+            "Closing brace should be at column 0 (dedented), but found {} spaces. Content: {:?}",
+            leading_spaces, content
+        );
+    } else {
+        panic!("Expected at least 3 lines, got {}", lines.len());
+    }
+}
+
 /// Test that pressing Enter after an empty line inside function body maintains indent
 /// This should use tree-sitter to detect we're still inside the function block
 #[test]

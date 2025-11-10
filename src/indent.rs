@@ -378,15 +378,15 @@ impl IndentCalculator {
                 // Check if this line ends with an opening brace
                 if let Some(&last_char) = last_non_ws {
                     if last_char == b'{' || last_char == b'[' || last_char == b'(' {
-                        // Dedent to this line's level
-                        tracing::debug!("Pattern dedent: previous line ends with opening delimiter, dedenting to {}", line_indent);
+                        // Found a line with opening delimiter - dedent to this line's level
+                        tracing::debug!("Pattern dedent: found line ending with opening delimiter '{}', dedenting to {}",
+                            last_char as char, line_indent);
                         return Some(line_indent);
                     }
                 }
 
-                // Line doesn't end with opening brace - use its indent
-                tracing::debug!("Pattern dedent: using previous line indent {}", line_indent);
-                return Some(line_indent);
+                // Line doesn't end with opening brace - keep searching backwards
+                // (don't return the indent of a content line, we need to find the matching opening delimiter)
             }
 
             // Move to previous line
