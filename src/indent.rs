@@ -261,7 +261,7 @@ impl IndentCalculator {
     }
 
     /// Calculate indent using simple pattern matching (fallback for incomplete syntax)
-    /// Checks if the line before cursor ends with indent-triggering characters
+    /// Uses hybrid heuristic: finds previous non-empty line as reference, then applies pattern-based deltas
     fn calculate_indent_pattern(
         buffer: &Buffer,
         position: usize,
@@ -270,8 +270,6 @@ impl IndentCalculator {
         if position == 0 {
             return None;
         }
-
-        let base_indent = Self::get_current_line_indent(buffer, position);
 
         // Find start of the line we're currently on (before pressing Enter)
         let mut line_start = position;
@@ -285,25 +283,104 @@ impl IndentCalculator {
         // Get the content of the current line (the one we're leaving)
         let line_bytes = buffer.slice_bytes(line_start..position);
 
-        // Find the last non-whitespace character
+        // Find the last non-whitespace character on current line
         let last_non_whitespace = line_bytes
             .iter()
             .rev()
             .find(|&&b| b != b' ' && b != b'\t' && b != b'\r');
 
+        // Check if current line is empty (only whitespace)
+        let current_line_is_empty = last_non_whitespace.is_none();
+
+        // Hybrid heuristic: find previous non-empty line for reference
+        let reference_indent = if !current_line_is_empty {
+            // Current line has content - use its indent as reference
+            Self::get_current_line_indent(buffer, position)
+        } else {
+            // Current line is empty - find previous non-empty line and check for indent triggers
+            let mut search_pos = if line_start > 0 {
+                line_start - 1  // Position of \n before current line
+            } else {
+                0
+            };
+
+            let mut found_reference_indent = 0;
+            while search_pos > 0 {
+                // Find start of line
+                let mut ref_line_start = search_pos;
+                while ref_line_start > 0 {
+                    if Self::byte_at(buffer, ref_line_start.saturating_sub(1)) == Some(b'\n') {
+                        break;
+                    }
+                    ref_line_start = ref_line_start.saturating_sub(1);
+                }
+
+                // Check if this line has non-whitespace content
+                let ref_line_bytes = buffer.slice_bytes(ref_line_start..search_pos+1);
+                let ref_last_non_ws = ref_line_bytes
+                    .iter()
+                    .rev()
+                    .find(|&&b| b != b' ' && b != b'\t' && b != b'\r' && b != b'\n');
+
+                if ref_last_non_ws.is_some() {
+                    // Found a non-empty reference line - calculate its indent
+                    let mut line_indent = 0;
+                    let mut pos = ref_line_start;
+                    while pos <= search_pos {
+                        let byte_opt = Self::byte_at(buffer, pos);
+                        match byte_opt {
+                            Some(b' ') => line_indent += 1,
+                            Some(b'\t') => line_indent += tab_size,
+                            Some(b'\n') => break,
+                            Some(_) => break, // Hit non-whitespace, done counting indent
+                            None => break,
+                        }
+                        pos += 1;
+                    }
+
+                    found_reference_indent = line_indent;
+
+                    // Check if reference line ends with indent trigger
+                    if let Some(&last_char) = ref_last_non_ws {
+                        match last_char {
+                            b'{' | b'[' | b'(' => {
+                                tracing::debug!("Pattern match: reference line ends with '{}'", last_char as char);
+                                return Some(found_reference_indent + tab_size);
+                            }
+                            b':' => {
+                                tracing::debug!("Pattern match: reference line ends with colon");
+                                return Some(found_reference_indent + tab_size);
+                            }
+                            _ => {}
+                        }
+                    }
+                    break;
+                }
+
+                // Move to previous line
+                if ref_line_start == 0 {
+                    break;
+                }
+                search_pos = ref_line_start.saturating_sub(1);
+            }
+
+            // Return the reference indent we found (or 0 if no non-empty line was found)
+            found_reference_indent
+        };
+
+        // If current line ends with indent trigger, add to reference
         if let Some(&last_char) = last_non_whitespace {
             tracing::debug!("Pattern match: last char = '{}'", last_char as char);
-            // Check for common indent triggers
             match last_char {
                 b'{' | b'[' | b'(' => {
                     // Opening braces/brackets/parens: increase indent
                     tracing::debug!("Pattern match: found opening brace/bracket at end of line");
-                    return Some(base_indent + tab_size);
+                    return Some(reference_indent + tab_size);
                 }
                 b':' => {
                     // Colon (for Python, YAML, etc.): increase indent
                     tracing::debug!("Pattern match: found colon at end of line");
-                    return Some(base_indent + tab_size);
+                    return Some(reference_indent + tab_size);
                 }
                 _ => {
                     tracing::debug!("Pattern match: no indent trigger found");
@@ -311,7 +388,8 @@ impl IndentCalculator {
             }
         }
 
-        None
+        // Current line is empty and has no indent trigger - use reference indent
+        Some(reference_indent)
     }
 
     /// Calculate indent using tree-sitter queries
@@ -369,30 +447,66 @@ impl IndentCalculator {
             line_start_offset = line_start_offset.saturating_sub(1);
         }
 
-        // Get baseline indent: the indent of the first line in our parse window
-        // This handles partial parsing where we don't see the full file
-        let baseline_indent = {
-            let mut first_line_start = 0;
-            while first_line_start < source.len() {
-                if source.get(first_line_start) == Some(&b'\n') {
-                    first_line_start += 1;
+        // Find the previous non-empty line in the buffer to use as reference
+        // This is the "hybrid heuristic" approach: calculate indent delta relative to actual code
+        let (reference_line_indent, reference_line_offset) = {
+            let mut search_pos = position;
+            let mut reference_indent = 0;
+            let mut reference_offset = cursor_offset;
+
+            // Scan backwards through the buffer to find a non-empty line
+            while search_pos > 0 {
+                // Find start of current line
+                let mut line_start = search_pos;
+                while line_start > 0 {
+                    if Self::byte_at(buffer, line_start.saturating_sub(1)) == Some(b'\n') {
+                        break;
+                    }
+                    line_start = line_start.saturating_sub(1);
+                }
+
+                // Check if this line has non-whitespace content
+                let mut has_content = false;
+                let mut line_indent = 0;
+                let mut content_pos = line_start;
+                let mut pos = line_start;
+                while pos < search_pos {
+                    match Self::byte_at(buffer, pos) {
+                        Some(b' ') => line_indent += 1,
+                        Some(b'\t') => line_indent += tab_size,
+                        Some(b'\n') => break,
+                        Some(_) => {
+                            has_content = true;
+                            content_pos = pos; // Remember where we found content
+                            break;
+                        }
+                        None => break,
+                    }
+                    pos += 1;
+                }
+
+                if has_content {
+                    // Found a non-empty line, use it as reference
+                    reference_indent = line_indent;
+                    // Use position of first non-whitespace character as reference
+                    // This ensures we're measuring from inside the content, not at line boundaries
+                    if content_pos >= parse_start {
+                        reference_offset = content_pos - parse_start;
+                    } else {
+                        // Reference line is before parse window - use start of parse window
+                        reference_offset = 0;
+                    }
                     break;
                 }
-                if source.get(first_line_start) != Some(&b' ') && source.get(first_line_start) != Some(&b'\t') {
+
+                // Move to previous line
+                if line_start == 0 {
                     break;
                 }
-                first_line_start += 1;
+                search_pos = line_start.saturating_sub(1);
             }
-            let mut indent = 0;
-            for i in 0..first_line_start.min(source.len()) {
-                match source.get(i) {
-                    Some(b' ') => indent += 1,
-                    Some(b'\t') => indent += tab_size,
-                    Some(b'\n') | None => break,
-                    _ => break,
-                }
-            }
-            indent
+
+            (reference_indent, reference_offset)
         };
 
         // Check if the last non-whitespace character before cursor is a closing delimiter
@@ -414,7 +528,12 @@ impl IndentCalculator {
             result
         };
 
-        // Manually iterate through matches
+        // Calculate indent delta using hybrid heuristic:
+        // Count @indent nodes at reference line and at cursor, then compute the difference
+        let mut reference_indent_count: i32 = 0;
+        let mut cursor_indent_count: i32 = 0;
+
+        // Manually iterate through matches to count indent/dedent captures
         let mut captures = query_cursor.captures(query, root, source.as_slice());
         while let Some((match_result, _)) = captures.next() {
             for capture in match_result.captures {
@@ -422,32 +541,33 @@ impl IndentCalculator {
                 let node_start = node.start_byte();
                 let node_end = node.end_byte();
 
-                // Check if this node affects indent at cursor position
+                // Count @indent nodes at reference position
                 if let Some(idx) = indent_capture_idx {
                     if capture.index == idx as u32 {
-                        // For @indent nodes: only count if cursor is inside the node AND the node's
-                        // start is on a PREVIOUS line (not the current line we're calculating indent for)
-                        // This prevents counting parent nodes that started way before
+                        // Reference line: count if reference position is inside this node
+                        if node_start < reference_line_offset && reference_line_offset <= node_end {
+                            reference_indent_count += 1;
+                        }
+
+                        // Cursor position: count if cursor is inside this node
+                        // Also check: node must start on a previous line (not current line)
                         let node_on_previous_line = node_start < line_start_offset;
                         let cursor_inside_node = node_start < cursor_offset && cursor_offset <= node_end;
 
-                        // If last character is a closing delimiter, treat cursor as outside all @indent nodes
-                        // This handles "}" + Enter -> should not indent
                         if cursor_inside_node && node_on_previous_line && !last_nonws_is_closing {
-                            indent_delta += 1;
+                            cursor_indent_count += 1;
                             found_any_captures = true;
-                        } else if last_nonws_is_closing {
-                            // Still mark as found so we don't fall back to pattern matching
+                        } else if last_nonws_is_closing && cursor_inside_node {
+                            // Mark as found but don't count (closing delimiter line)
                             found_any_captures = true;
                         }
                     }
                 }
 
+                // Handle @dedent at cursor position
                 if let Some(idx) = dedent_capture_idx {
                     if capture.index == idx as u32 {
                         // Dedent node: only apply if cursor is right at the start of this dedent marker
-                        // (e.g., right after typing `}` on a new line)
-                        // Don't dedent just because cursor is somewhere after a `)` or `}`
                         // Also ignore zero-width nodes (error recovery nodes)
                         if cursor_offset == node_start && node_end > node_start {
                             indent_delta -= 1;
@@ -458,18 +578,21 @@ impl IndentCalculator {
             }
         }
 
+        // Calculate delta: how many more @indent levels are we at cursor vs reference
+        indent_delta += cursor_indent_count - reference_indent_count;
+
         // If no captures were found, return None to trigger pattern-based fallback
         if !found_any_captures {
             tracing::debug!("No tree-sitter captures found, falling back to pattern matching");
             return None;
         }
 
-        // Calculate final indent: baseline (from start of parse window) + delta from @indent/@dedent nodes
-        let final_indent = (baseline_indent as i32 + (indent_delta * tab_size as i32)).max(0) as usize;
+        // Calculate final indent: reference line indent + delta
+        let final_indent = (reference_line_indent as i32 + (indent_delta * tab_size as i32)).max(0) as usize;
 
         tracing::debug!(
-            "Indent calculation: baseline={}, delta={}, final={}",
-            baseline_indent,
+            "Indent calculation: reference={}, delta={}, final={}",
+            reference_line_indent,
             indent_delta,
             final_indent
         );
@@ -790,5 +913,42 @@ mod tests {
             4,
         );
         assert_eq!(cpp_dedent, Some(0), "C++ closing brace should dedent");
+    }
+
+    #[test]
+    fn test_indent_after_empty_line_uses_reference() {
+        // Test the hybrid heuristic: indent after empty line should use previous non-empty line as reference
+        let mut calc = IndentCalculator::new();
+
+        // Buffer with closing brace to test if tree-sitter works with complete syntax
+        let buffer = Buffer::from_str("fn main() {\n    let x = 1;\n}");
+        let position = 27; // Position after second \n, before the }
+
+        let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
+        eprintln!("TEST: With closing brace, indent = {:?}", indent);
+        assert_eq!(
+            indent,
+            Some(4),
+            "After empty line in function body, should indent to 4 spaces (reference line has 4, we're in same block)"
+        );
+    }
+
+    #[test]
+    fn test_indent_after_empty_line_incomplete_syntax() {
+        // Test with incomplete syntax (no closing brace) - this is the real-world case
+        let mut calc = IndentCalculator::new();
+
+        let buffer = Buffer::from_str("fn main() {\n    let x = 1;\n");
+        let position = buffer.len(); // After the second \n, start of empty line
+
+        let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
+        eprintln!("TEST: Without closing brace, indent = {:?}", indent);
+        // With incomplete syntax, tree-sitter returns ERROR nodes
+        // We should fall back to pattern matching or reference line heuristic
+        assert_eq!(
+            indent,
+            Some(4),
+            "After empty line in function body (incomplete syntax), should indent to 4 spaces using reference line"
+        );
     }
 }
