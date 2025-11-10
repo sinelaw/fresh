@@ -161,6 +161,23 @@ impl IndentCalculator {
         Some(Self::get_current_line_indent(buffer, position))
     }
 
+    /// Calculate indent without language/tree-sitter support
+    /// Uses pattern matching and current line copying as fallback
+    /// This is used for files without syntax highlighting (e.g., .txt files)
+    pub fn calculate_indent_no_language(
+        buffer: &Buffer,
+        position: usize,
+        tab_size: usize,
+    ) -> usize {
+        // Pattern-based indent (for incomplete syntax)
+        if let Some(indent) = Self::calculate_indent_pattern(buffer, position, tab_size) {
+            return indent;
+        }
+
+        // Final fallback: copy current line's indent
+        Self::get_current_line_indent(buffer, position)
+    }
+
     /// Calculate indent using simple pattern matching (fallback for incomplete syntax)
     /// Checks if the line before cursor ends with indent-triggering characters
     fn calculate_indent_pattern(
@@ -269,7 +286,6 @@ impl IndentCalculator {
                 let node = capture.node;
                 let node_start = node.start_byte();
                 let node_end = node.end_byte();
-                let node_text = String::from_utf8_lossy(&source[node_start.min(source.len())..node_end.min(source.len())]);
 
                 // Check if this node affects indent at cursor position
                 if let Some(idx) = indent_capture_idx {
@@ -289,7 +305,8 @@ impl IndentCalculator {
                         // Dedent node: only apply if cursor is right at the start of this dedent marker
                         // (e.g., right after typing `}` on a new line)
                         // Don't dedent just because cursor is somewhere after a `)` or `}`
-                        if cursor_offset == node_start {
+                        // Also ignore zero-width nodes (error recovery nodes)
+                        if cursor_offset == node_start && node_end > node_start {
                             indent_delta -= 1;
                             found_any_captures = true;
                         }
@@ -513,5 +530,36 @@ mod tests {
         let indent = calc.calculate_indent(&buffer, position, &Language::CSharp, 4);
         // Should fall back to previous line indent (4 spaces)
         assert_eq!(indent, Some(4));
+    }
+
+    #[test]
+    fn test_typescript_interface_indent() {
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str("interface User {");
+        let position = buffer.len(); // Position after the {
+
+        let indent = calc.calculate_indent(&buffer, position, &Language::TypeScript, 4);
+        assert!(indent.is_some(), "TypeScript interface should get indent");
+        assert_eq!(indent.unwrap(), 4, "Should indent 4 spaces after opening brace");
+    }
+
+    #[test]
+    fn test_no_language_fallback_copies_indent() {
+        // Test that files without language support (like .txt) copy current line indent
+        let buffer = Buffer::from_str("    indented text");
+        let position = buffer.len();
+
+        let indent = IndentCalculator::calculate_indent_no_language(&buffer, position, 4);
+        assert_eq!(indent, 4, "Should copy 4-space indent from current line");
+    }
+
+    #[test]
+    fn test_no_language_fallback_with_brace() {
+        // Test that pattern matching works for files without language support
+        let buffer = Buffer::from_str("some text {");
+        let position = buffer.len();
+
+        let indent = IndentCalculator::calculate_indent_no_language(&buffer, position, 4);
+        assert_eq!(indent, 4, "Should indent 4 spaces after brace even without language");
     }
 }
