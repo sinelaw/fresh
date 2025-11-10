@@ -1929,7 +1929,7 @@ impl Editor {
                 // Trigger async git ls-files with query
                 self.request_git_ls_files(input);
             }
-            PromptType::Search | PromptType::ReplaceSearch => {
+            PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {
                 // Update incremental search highlights as user types
                 self.update_search_highlights(&input);
             }
