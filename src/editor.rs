@@ -5564,75 +5564,55 @@ impl Editor {
                 }
             }
             '!' => {
-                // Replace all remaining matches (current + all after it)
+                // Replace all remaining matches with SINGLE confirmation
+                // Undo behavior: ONE undo step undoes ALL remaining replacements
+                // Uses streaming search (doesn't materialize file), but collects positions for batch
+
                 // First replace the current match
                 self.replace_current_match(&ir_state)?;
                 ir_state.replacements_made += 1;
 
-                // Find all remaining matches after the current replacement
+                // Find all remaining matches using streaming search
+                // Collecting positions (Vec<usize>) is low memory cost even for huge files
                 let search_pos = ir_state.current_match_pos + ir_state.replacement.len();
                 let remaining_matches = {
-                    let state = self.active_state();
-                    let buffer_len = state.buffer.len();
                     let mut matches = Vec::new();
                     let mut current_pos = search_pos;
+                    let mut temp_state = ir_state.clone();
 
-                    // Find matches from current position to end
-                    while current_pos < buffer_len {
-                        if let Some(offset) = state.buffer.find_next_in_range(&ir_state.search, current_pos, Some(current_pos..buffer_len)) {
-                            // If we've wrapped, stop before reaching the original start position
-                            if ir_state.has_wrapped && offset >= ir_state.start_pos {
-                                break;
+                    // Find matches lazily one at a time, collect positions
+                    loop {
+                        if let Some((next_match, wrapped)) = self.find_next_match_for_replace(&temp_state, current_pos) {
+                            matches.push(next_match);
+                            current_pos = next_match + temp_state.search.len();
+                            if wrapped {
+                                temp_state.has_wrapped = true;
                             }
-                            matches.push(offset);
-                            current_pos = offset + ir_state.search.len();
                         } else {
                             break;
                         }
                     }
-
-                    // If we haven't wrapped yet, wrap to beginning
-                    if !ir_state.has_wrapped && !matches.is_empty() {
-                        current_pos = 0;
-                        while current_pos < ir_state.start_pos {
-                            if let Some(offset) = state.buffer.find_next_in_range(&ir_state.search, current_pos, Some(current_pos..ir_state.start_pos)) {
-                                if offset < ir_state.start_pos {
-                                    matches.push(offset);
-                                    current_pos = offset + ir_state.search.len();
-                                } else {
-                                    break;
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-
                     matches
                 };
 
                 let remaining_count = remaining_matches.len();
 
                 if remaining_count > 0 {
-                    // Create events for all remaining replacements (in reverse order)
+                    // Create events for all remaining replacements (reverse order preserves positions)
                     let cursor_id = self.active_state().cursors.primary_id();
                     let mut events = Vec::new();
 
                     for match_pos in remaining_matches.into_iter().rev() {
                         let end = match_pos + ir_state.search.len();
                         let range = match_pos..end;
-
-                        // Get the text being deleted
                         let deleted_text = self.active_state().buffer.slice(range.clone());
 
-                        // Add Delete event
                         events.push(Event::Delete {
                             range: range.clone(),
                             deleted_text,
                             cursor_id,
                         });
 
-                        // Add Insert event
                         events.push(Event::Insert {
                             position: match_pos,
                             text: ir_state.replacement.clone(),
@@ -5640,13 +5620,12 @@ impl Editor {
                         });
                     }
 
-                    // Wrap all remaining replacements in a single Batch for atomic undo
+                    // Single Batch = single undo step for all remaining replacements
                     let batch = Event::Batch {
                         events,
                         description: format!("Query replace remaining '{}' with '{}'", ir_state.search, ir_state.replacement),
                     };
 
-                    // Apply through event log
                     self.active_event_log_mut().append(batch.clone());
                     self.apply_event_to_active_buffer(&batch);
 
