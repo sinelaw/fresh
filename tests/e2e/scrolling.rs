@@ -664,32 +664,36 @@ fn test_vertical_scroll_offset() {
     let initial_top_byte = harness.editor().active_state().viewport.top_byte;
     assert!(initial_top_byte > 0, "Should be scrolled down");
 
-    // Move up by many lines to trigger viewport scroll
-    // With 40 lines and 22 visible, viewport is at line 18
-    // Move up 20 lines (from 39 to 19) to trigger scroll offset
+    // Move up by many lines - with new viewport behavior, viewport only scrolls
+    // when cursor leaves the visible area (not proactively with scroll_offset)
+    // Move up 20 lines (from 39 to 19), cursor should still be visible
     for _ in 0..20 {
         harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     }
 
-    // The viewport should have scrolled up to keep cursor visible
-    // with the scroll offset (default 3 lines)
+    // With new behavior: viewport doesn't scroll unless cursor leaves visible area
+    // The cursor moved from line 39 to line 19, which is still in the visible range
+    // (viewport shows lines 18-39, cursor at 19 is visible)
     let new_top_byte = harness.editor().active_state().viewport.top_byte;
 
-    // We moved up 20 lines, so viewport should have adjusted (top_byte should decrease)
-    assert!(
-        new_top_byte < initial_top_byte,
-        "Viewport should have scrolled up: was {initial_top_byte}, now {new_top_byte}"
+    // Viewport should not have changed since cursor stayed within visible area
+    assert_eq!(
+        new_top_byte, initial_top_byte,
+        "Viewport should not scroll when cursor stays in visible area: was {initial_top_byte}, now {new_top_byte}"
     );
 
-    // Cursor should still be visible with some margin
-    let screen_pos = harness.screen_cursor_position();
-    let scroll_offset = harness.editor().active_state().viewport.scroll_offset;
+    // Now move up enough to actually leave the viewport (move to top line)
+    // This should trigger scrolling
+    for _ in 0..19 {
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    }
 
+    let final_top_byte = harness.editor().active_state().viewport.top_byte;
+
+    // Now viewport should have scrolled to keep cursor visible
     assert!(
-        screen_pos.1 >= scroll_offset as u16,
-        "Cursor should have at least {} lines of scroll offset above, screen Y = {}",
-        scroll_offset,
-        screen_pos.1
+        final_top_byte < initial_top_byte,
+        "Viewport should scroll when cursor leaves visible area: was {initial_top_byte}, now {final_top_byte}"
     );
 }
 
