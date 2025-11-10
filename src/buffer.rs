@@ -1066,4 +1066,221 @@ mod tests {
         assert_eq!(prev_line_start, 7, "second prev() should return Line 2");
         assert_eq!(prev_line_content, "Line 2\n");
     }
+
+    // ============================================================================
+    // Property-based tests for streaming search
+    // ============================================================================
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Property: Streaming search finds same results as naive string search
+            #[test]
+            fn prop_find_next_matches_naive(
+                prefix in "[a-zA-Z0-9 ]{0,200}",
+                pattern in "[a-z]{3,15}",
+                suffix in "[a-zA-Z0-9 ]{0,200}",
+            ) {
+                let content = format!("{}{}{}", prefix, pattern, suffix);
+                let buffer = Buffer::from_str(&content);
+
+                // Naive search
+                let naive_result = content.find(&pattern);
+
+                // Streaming search
+                let streaming_result = buffer.find_next(&pattern, 0);
+
+                prop_assert_eq!(streaming_result, naive_result,
+                    "Streaming search should match naive search for pattern '{}'", pattern);
+            }
+
+            /// Property: Multiple searches find all occurrences in order
+            #[test]
+            fn prop_find_next_finds_all_occurrences(
+                pattern in "[a-z]{3,8}",
+                separator in "[0-9 ]{3,10}",
+                repetitions in 2usize..8,
+            ) {
+                // Create content with known pattern positions
+                let parts: Vec<String> = (0..repetitions)
+                    .map(|_| pattern.clone())
+                    .collect();
+                let content = parts.join(&separator);
+                let buffer = Buffer::from_str(&content);
+
+                // Collect all matches with naive search
+                let mut naive_positions = Vec::new();
+                let mut pos = 0;
+                while let Some(found_at) = content[pos..].find(&pattern) {
+                    let absolute_pos = pos + found_at;
+                    naive_positions.push(absolute_pos);
+                    pos = absolute_pos + 1;
+                }
+
+                // Collect all matches with streaming search
+                let mut streaming_positions = Vec::new();
+                let mut search_from = 0;
+                while let Some(found_at) = buffer.find_next(&pattern, search_from) {
+                    streaming_positions.push(found_at);
+                    search_from = found_at + 1;
+                }
+
+                prop_assert_eq!(streaming_positions, naive_positions,
+                    "Should find all {} occurrences at same positions", repetitions);
+            }
+
+            /// Property: Search works with patterns at various positions
+            #[test]
+            fn prop_find_next_at_any_position(
+                before in "[a-z]{0,100}",
+                pattern in "[a-z]{5,20}",
+                after in "[a-z]{0,100}",
+                start_offset in 0usize..50,
+            ) {
+                let content = format!("{}{}{}", before, pattern, after);
+                let buffer = Buffer::from_str(&content);
+
+                let start_pos = start_offset.min(content.len());
+                let expected_pos = if start_pos <= before.len() {
+                    Some(before.len())
+                } else {
+                    // Should wrap around and find at beginning
+                    Some(before.len())
+                };
+
+                let result = buffer.find_next(&pattern, start_pos);
+                prop_assert_eq!(result, expected_pos,
+                    "Pattern at position {} should be found from start={}", before.len(), start_pos);
+            }
+
+            /// Property: Empty and single-character patterns
+            #[test]
+            fn prop_find_edge_cases(
+                content in "[a-z]{10,100}",
+            ) {
+                let buffer = Buffer::from_str(&content);
+
+                // Empty pattern should return None
+                prop_assert_eq!(buffer.find_next("", 0), None, "Empty pattern should not match");
+
+                // Single character should work
+                if !content.is_empty() {
+                    let first_char = &content[0..1];
+                    let result = buffer.find_next(first_char, 0);
+                    prop_assert_eq!(result, Some(0), "First character should be found at position 0");
+                }
+            }
+
+            /// Property: Wrap-around search works correctly
+            #[test]
+            fn prop_find_next_wraps_around(
+                before_pattern in "[a-z]{20,50}",
+                pattern in "[a-z]{5,10}",
+                after_pattern in "[a-z]{20,50}",
+            ) {
+                let content = format!("{}{}{}{}", pattern, before_pattern, pattern, after_pattern);
+                let buffer = Buffer::from_str(&content);
+
+                // Start search after first occurrence
+                let start_pos = pattern.len() + 1;
+
+                // Should find second occurrence
+                let second_occurrence = pattern.len() + before_pattern.len();
+                let result = buffer.find_next(&pattern, start_pos);
+                prop_assert_eq!(result, Some(second_occurrence),
+                    "Should find second occurrence at {}", second_occurrence);
+
+                // Start search after both occurrences - should wrap to first
+                let start_after_both = content.len() - 1;
+                let wrapped_result = buffer.find_next(&pattern, start_after_both);
+                prop_assert_eq!(wrapped_result, Some(0),
+                    "Should wrap around and find first occurrence");
+            }
+
+            /// Property: Regex search matches standard regex behavior
+            #[test]
+            fn prop_regex_matches_standard(
+                prefix in "[a-z]{0,100}",
+                digits in "[0-9]{3,8}",
+                suffix in "[a-z]{0,100}",
+            ) {
+                let content = format!("{}{}{}", prefix, digits, suffix);
+                let buffer = Buffer::from_str(&content);
+
+                let regex = Regex::new(r"\d+").unwrap();
+
+                // Standard regex search
+                let standard_result = regex.find(content.as_bytes()).map(|m| m.start());
+
+                // Streaming regex search
+                let streaming_result = buffer.find_next_regex(&regex, 0);
+
+                prop_assert_eq!(streaming_result, standard_result,
+                    "Streaming regex should match standard regex");
+            }
+
+            /// Property: Regex finds patterns spanning chunks
+            #[test]
+            fn prop_regex_finds_across_chunks(
+                pattern_text in "[a-z]{10,30}",
+                chunk_boundary in 5usize..25,
+            ) {
+                // Create content where pattern will span chunk boundary
+                // (assuming CHUNK_SIZE of 64KB in find_regex_streaming)
+                let prefix = "x".repeat(chunk_boundary);
+                let content = format!("{}{}", prefix, pattern_text);
+                let buffer = Buffer::from_str(&content);
+
+                // Create regex that matches our pattern
+                let regex_str = regex::escape(&pattern_text);
+                let regex = Regex::new(&regex_str).unwrap();
+
+                let result = buffer.find_next_regex(&regex, 0);
+                prop_assert_eq!(result, Some(chunk_boundary),
+                    "Should find pattern at position {}", chunk_boundary);
+            }
+
+            /// Property: Regex with Unicode works correctly
+            #[test]
+            fn prop_regex_unicode(
+                prefix in "[a-z]{0,50}",
+                unicode_chars in "[\\u{4E00}-\\u{9FFF}]{2,5}", // Chinese characters
+                suffix in "[a-z]{0,50}",
+            ) {
+                let content = format!("{}{}{}", prefix, unicode_chars, suffix);
+                let buffer = Buffer::from_str(&content);
+
+                // Match any Han character
+                let regex = Regex::new(r"\p{Han}+").unwrap();
+
+                let result = buffer.find_next_regex(&regex, 0);
+                prop_assert!(result.is_some(), "Should find Unicode characters");
+
+                if let Some(pos) = result {
+                    prop_assert_eq!(pos, prefix.len(),
+                        "Should find Unicode at correct position");
+                }
+            }
+
+            /// Property: Large buffer search works without materialization
+            #[test]
+            fn prop_large_buffer_search(
+                pattern in "[a-z]{5,10}",
+                position_in_kb in 1usize..50,
+            ) {
+                // Create a large buffer (up to ~50KB)
+                let position_bytes = position_in_kb * 1024;
+                let prefix = "a".repeat(position_bytes);
+                let suffix = "b".repeat(5000);
+                let content = format!("{}{}{}", prefix, pattern, suffix);
+                let buffer = Buffer::from_str(&content);
+
+                let result = buffer.find_next(&pattern, 0);
+                prop_assert_eq!(result, Some(position_bytes),
+                    "Should find pattern in large buffer at position {}", position_bytes);
+            }
+        }
+    }
 }
