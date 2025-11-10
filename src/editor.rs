@@ -93,6 +93,9 @@ pub struct BufferMetadata {
     /// File URI for LSP (computed once from absolute path)
     pub file_uri: Option<lsp_types::Uri>,
 
+    /// Display name for the buffer (project-relative path or filename)
+    pub display_name: String,
+
     /// Whether LSP is enabled for this buffer
     pub lsp_enabled: bool,
 
@@ -106,30 +109,36 @@ impl BufferMetadata {
         Self {
             file_path: None,
             file_uri: None,
+            display_name: "[No Name]".to_string(),
             lsp_enabled: true,
             lsp_disabled_reason: None,
         }
     }
 
     /// Create metadata for a file-backed buffer
-    pub fn with_file(path: PathBuf) -> Self {
-        // Convert to absolute path and compute URI once
-        let absolute_path = if path.is_absolute() {
-            path.clone()
-        } else {
-            std::env::current_dir()
-                .ok()
-                .and_then(|cwd| cwd.join(&path).canonicalize().ok())
-                .unwrap_or_else(|| path.clone())
-        };
-
-        let file_uri = url::Url::from_file_path(&absolute_path)
+    ///
+    /// # Arguments
+    /// * `path` - The canonical absolute path to the file
+    /// * `working_dir` - The canonical working directory for computing relative display name
+    pub fn with_file(path: PathBuf, working_dir: &std::path::Path) -> Self {
+        // Compute URI from the absolute path
+        let file_uri = url::Url::from_file_path(&path)
             .ok()
             .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok());
+
+        // Compute display name (project-relative if possible, otherwise just filename)
+        let display_name = path
+            .strip_prefix(working_dir)
+            .ok()
+            .and_then(|rel_path| rel_path.to_str())
+            .or_else(|| path.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "[Unknown]".to_string());
 
         Self {
             file_path: Some(path),
             file_uri,
+            display_name,
             lsp_enabled: true,
             lsp_disabled_reason: None,
         }
@@ -345,6 +354,12 @@ impl Editor {
         let working_dir = working_dir
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
+        // Canonicalize working_dir to resolve symlinks and normalize path components
+        // This ensures consistent path comparisons throughout the editor
+        let working_dir = working_dir
+            .canonicalize()
+            .unwrap_or_else(|_| working_dir);
+
         // Load theme from config
         let theme = crate::theme::Theme::from_name(&config.theme);
 
@@ -363,6 +378,10 @@ impl Editor {
         );
         buffers.insert(buffer_id, state);
         event_logs.insert(buffer_id, EventLog::new());
+
+        // Create metadata for the initial empty buffer
+        let mut buffer_metadata = HashMap::new();
+        buffer_metadata.insert(buffer_id, BufferMetadata::new());
 
         // Initialize LSP manager with current working directory as root
         let root_uri = url::Url::from_file_path(&working_dir)
@@ -445,7 +464,7 @@ impl Editor {
             terminal_width: width,
             terminal_height: height,
             lsp: Some(lsp),
-            buffer_metadata: HashMap::new(),
+            buffer_metadata,
             tokio_runtime,
             async_bridge: Some(async_bridge),
             split_manager,
@@ -489,6 +508,11 @@ impl Editor {
 
     /// Open a file and return its buffer ID
     pub fn open_file(&mut self, path: &Path) -> io::Result<BufferId> {
+        // Canonicalize the path to resolve symlinks and normalize path components
+        // This ensures consistent path representation throughout the editor
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let path = canonical_path.as_path();
+
         // Check if file is already open
         let already_open = self
             .buffers
@@ -529,7 +553,7 @@ impl Editor {
         self.event_logs.insert(buffer_id, EventLog::new());
 
         // Create metadata for this buffer
-        let mut metadata = BufferMetadata::with_file(path.to_path_buf());
+        let mut metadata = BufferMetadata::with_file(path.to_path_buf(), &self.working_dir);
 
         // Schedule LSP notification asynchronously to avoid blocking
         // This is especially important for large files
@@ -4778,6 +4802,11 @@ impl Editor {
         }
 
         // Render status bar (same for both layouts)
+        let display_name = self
+            .buffer_metadata
+            .get(&self.active_buffer)
+            .map(|m| m.display_name.as_str())
+            .unwrap_or("[No Name]");
         StatusBarRenderer::render(
             frame,
             main_chunks[status_bar_idx],
@@ -4786,6 +4815,7 @@ impl Editor {
             &self.prompt,
             &self.lsp_status,
             &self.theme,
+            display_name,
         );
 
         // Render popups from the active buffer state

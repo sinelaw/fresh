@@ -26,6 +26,7 @@ impl StatusBarRenderer {
     /// * `prompt` - Optional active prompt
     /// * `lsp_status` - LSP status indicator
     /// * `theme` - The active theme for colors
+    /// * `display_name` - The display name for the file (project-relative path)
     pub fn render(
         frame: &mut Frame,
         area: Rect,
@@ -34,6 +35,7 @@ impl StatusBarRenderer {
         prompt: &Option<Prompt>,
         lsp_status: &str,
         theme: &crate::theme::Theme,
+        display_name: &str,
     ) {
         // If we're in prompt mode, render the prompt instead of the status bar
         if let Some(prompt) = prompt {
@@ -42,7 +44,7 @@ impl StatusBarRenderer {
         }
 
         // Normal status bar rendering
-        Self::render_status(frame, area, state, status_message, lsp_status, theme);
+        Self::render_status(frame, area, state, status_message, lsp_status, theme, display_name);
     }
 
     /// Render the prompt/minibuffer
@@ -103,14 +105,10 @@ impl StatusBarRenderer {
         status_message: &Option<String>,
         lsp_status: &str,
         theme: &crate::theme::Theme,
+        display_name: &str,
     ) {
-        // Collect all data we need from state
-        let filename = state
-            .buffer
-            .file_path()
-            .and_then(|p| p.to_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "[No Name]".to_string());
+        // Use the pre-computed display name from buffer metadata
+        let filename = display_name;
 
         let modified = if state.buffer.is_modified() {
             " [+]"
