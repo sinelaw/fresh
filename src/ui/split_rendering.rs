@@ -3,6 +3,7 @@
 use crate::event::{BufferId, EventLog, SplitDirection};
 use crate::hooks::{HookArgs, HookRegistry};
 use crate::line_wrapping::{char_position_to_segment, wrap_line, WrapConfig};
+use crate::plugin_manager::PluginManager;
 use crate::split::SplitManager;
 use crate::state::EditorState;
 use ratatui::layout::Rect;
@@ -30,6 +31,7 @@ impl SplitRenderer {
     /// * `large_file_threshold_bytes` - Threshold for using constant scrollbar thumb size
     /// * `line_wrap` - Whether line wrapping is enabled
     /// * `hook_registry` - Optional hook registry for firing render-line hooks
+    /// * `plugin_manager` - Optional plugin manager for firing Lua plugin hooks
     ///
     /// # Returns
     /// * Vec of (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end) for mouse handling
@@ -44,6 +46,7 @@ impl SplitRenderer {
         large_file_threshold_bytes: u64,
         line_wrap: bool,
         hook_registry: Option<&Arc<RwLock<HookRegistry>>>,
+        plugin_manager: Option<&PluginManager>,
     ) -> Vec<(crate::event::SplitId, BufferId, Rect, Rect, usize, usize)> {
         let _span = tracing::trace_span!("render_content").entered();
 
@@ -89,6 +92,7 @@ impl SplitRenderer {
                     line_wrap,
                     buffer_id,
                     hook_registry,
+                    plugin_manager,
                 );
 
                 // For small files, count actual lines for accurate scrollbar
@@ -301,6 +305,7 @@ impl SplitRenderer {
         line_wrap: bool,
         buffer_id: BufferId,
         hook_registry: Option<&Arc<RwLock<HookRegistry>>>,
+        plugin_manager: Option<&PluginManager>,
     ) {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
 
@@ -421,8 +426,15 @@ impl SplitRenderer {
                     byte_end,
                     content: line_content.clone(),
                 };
+                // Call Rust hooks first
                 if let Ok(hook_registry_guard) = hooks.read() {
                     hook_registry_guard.run_hooks("render-line", &hook_args);
+                }
+                // Also call Lua plugin hooks
+                if let Some(pm) = plugin_manager {
+                    if let Err(e) = pm.run_hook("render-line", &hook_args) {
+                        tracing::debug!("Plugin render-line hook error: {}", e);
+                    }
                 }
             }
 

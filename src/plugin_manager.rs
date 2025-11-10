@@ -682,7 +682,7 @@ impl PluginManager {
 
     /// Run plugin hooks for a given event
     /// This allows Lua plugins to respond to editor events
-    pub fn run_hook(&self, hook_name: &str, _args: &HookArgs) -> Result<(), String> {
+    pub fn run_hook(&self, hook_name: &str, args: &HookArgs) -> Result<(), String> {
         // Get the hooks table
         let hooks_table: mlua::Table = self
             .lua
@@ -694,6 +694,11 @@ impl PluginManager {
         let hook_array: Option<mlua::Table> = hooks_table.get(hook_name).ok();
 
         if let Some(array) = hook_array {
+            // Convert HookArgs to Lua table
+            let args_table = self
+                .hook_args_to_lua(args)
+                .map_err(|e| format!("Failed to convert hook args: {}", e))?;
+
             // Call each callback
             let len = array
                 .len()
@@ -702,15 +707,117 @@ impl PluginManager {
             for i in 1..=len {
                 let callback: Option<mlua::Function> = array.get(i).ok();
                 if let Some(cb) = callback {
-                    // Call the callback
-                    // For now, we don't pass args to Lua (would need to convert HookArgs to Lua table)
-                    cb.call::<()>(())
+                    // Call the callback with args
+                    cb.call::<mlua::Table>(args_table.clone())
                         .map_err(|e| format!("Plugin hook callback error: {}", e))?;
                 }
             }
         }
 
         Ok(())
+    }
+
+    /// Convert HookArgs to a Lua table
+    fn hook_args_to_lua(&self, args: &HookArgs) -> Result<mlua::Table, mlua::Error> {
+        let table = self.lua.create_table()?;
+
+        match args {
+            HookArgs::RenderLine {
+                buffer_id,
+                line_number,
+                byte_start,
+                byte_end,
+                content,
+            } => {
+                table.set("buffer_id", buffer_id.0)?;
+                table.set("line_number", *line_number)?;
+                table.set("byte_start", *byte_start)?;
+                table.set("byte_end", *byte_end)?;
+                table.set("content", content.as_str())?;
+            }
+            HookArgs::BufferActivated { buffer_id } => {
+                table.set("buffer_id", buffer_id.0)?;
+            }
+            HookArgs::BufferDeactivated { buffer_id } => {
+                table.set("buffer_id", buffer_id.0)?;
+            }
+            HookArgs::BufferClosed { buffer_id } => {
+                table.set("buffer_id", buffer_id.0)?;
+            }
+            HookArgs::CursorMoved {
+                buffer_id,
+                cursor_id,
+                old_position,
+                new_position,
+            } => {
+                table.set("buffer_id", buffer_id.0)?;
+                table.set("cursor_id", cursor_id.0)?;
+                table.set("old_position", *old_position)?;
+                table.set("new_position", *new_position)?;
+            }
+            HookArgs::BeforeInsert {
+                buffer_id,
+                position,
+                text,
+            } => {
+                table.set("buffer_id", buffer_id.0)?;
+                table.set("position", *position)?;
+                table.set("text", text.as_str())?;
+            }
+            HookArgs::AfterInsert {
+                buffer_id,
+                position,
+                text,
+            } => {
+                table.set("buffer_id", buffer_id.0)?;
+                table.set("position", *position)?;
+                table.set("text", text.as_str())?;
+            }
+            HookArgs::BeforeDelete { buffer_id, range } => {
+                table.set("buffer_id", buffer_id.0)?;
+                table.set("start", range.start)?;
+                table.set("end", range.end)?;
+            }
+            HookArgs::AfterDelete {
+                buffer_id,
+                range,
+                deleted_text,
+            } => {
+                table.set("buffer_id", buffer_id.0)?;
+                table.set("start", range.start)?;
+                table.set("end", range.end)?;
+                table.set("deleted_text", deleted_text.as_str())?;
+            }
+            HookArgs::BeforeFileOpen { path } => {
+                table.set("path", path.to_string_lossy().as_ref())?;
+            }
+            HookArgs::AfterFileOpen { path, buffer_id } => {
+                table.set("path", path.to_string_lossy().as_ref())?;
+                table.set("buffer_id", buffer_id.0)?;
+            }
+            HookArgs::BeforeFileSave { path, buffer_id } => {
+                table.set("path", path.to_string_lossy().as_ref())?;
+                table.set("buffer_id", buffer_id.0)?;
+            }
+            HookArgs::AfterFileSave { path, buffer_id } => {
+                table.set("path", path.to_string_lossy().as_ref())?;
+                table.set("buffer_id", buffer_id.0)?;
+            }
+            HookArgs::PreCommand { action } => {
+                table.set("action", format!("{:?}", action))?;
+            }
+            HookArgs::PostCommand { action } => {
+                table.set("action", format!("{:?}", action))?;
+            }
+            HookArgs::Idle { milliseconds } => {
+                table.set("milliseconds", *milliseconds)?;
+            }
+            HookArgs::EditorInitialized => {
+                // No args for EditorInitialized
+            }
+        }
+
+        Ok(table)
     }
 
     /// Spawn an async process for a plugin
