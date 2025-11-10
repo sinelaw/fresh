@@ -596,6 +596,8 @@ fn test_movement_through_multiple_empty_lines() {
 
     // Test movement from middle of a line across empty lines
     // Go to Line 3, position in middle
+    // Reset to column 0 first to clear any preferred column from previous movements
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness
