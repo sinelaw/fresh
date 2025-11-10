@@ -1,9 +1,11 @@
--- TODO Highlighter Plugin - Robust Implementation
+-- TODO Highlighter Plugin - Performance-Optimized Implementation
 -- Highlights keywords like TODO, FIXME, HACK, NOTE, XXX, and BUG in comments
 --
--- This plugin uses the render-line hook for efficient highlighting that scales
--- to huge files. It only scans visible lines and uses the new bulk overlay
--- removal APIs for proper lifecycle management.
+-- PERFORMANCE OPTIMIZATION:
+-- - Scans each buffer ONCE, not every frame
+-- - Re-scans only when buffer text changes (insert/delete events)
+-- - Uses bulk overlay removal APIs for cleanup
+-- - Scales to GB+ files via efficient render-line hook
 
 local M = {}
 
@@ -32,9 +34,13 @@ M.config = {
     }
 }
 
--- Track which buffers have been processed this frame
--- We'll clear overlays once per buffer per frame
-M.processed_buffers = {}
+-- Track which buffers have been fully scanned
+-- Key: buffer_id, Value: true if scanned
+M.scanned_buffers = {}
+
+-- Track when we're in the middle of scanning a buffer
+-- Prevents marking as complete prematurely
+M.scanning_buffer = nil
 
 -- Prefix for all overlay IDs created by this plugin
 M.OVERLAY_PREFIX = "todo_hl_"
@@ -43,38 +49,76 @@ M.OVERLAY_PREFIX = "todo_hl_"
 function M.init()
     debug("TODO Highlighter: Initializing plugin")
 
-    -- Register render-line hook
+    -- Register render-line hook for scanning
     editor.on("render-line", function(args)
-        return M.on_render_line(args)
+        if not M.config.enabled then
+            return true
+        end
+
+        local buffer_id = args.buffer_id
+        local line_number = args.line_number
+        local byte_start = args.byte_start
+        local content = args.content
+
+        -- Skip if already scanned this buffer
+        if M.scanned_buffers[buffer_id] then
+            return true
+        end
+
+        -- On first line, clear old overlays and start scanning
+        if line_number == 1 then
+            M.clear_buffer_overlays(buffer_id)
+            M.scanning_buffer = buffer_id
+        end
+
+        -- Scan this line for keywords
+        M.scan_line_for_keywords(buffer_id, line_number, byte_start, content)
+
+        return true
+    end)
+
+    -- Separate hook to detect end of rendering (marks buffer as scanned)
+    local last_line_number = 0
+    editor.on("render-line", function(args)
+        if not M.config.enabled then
+            return true
+        end
+
+        -- If line number decreased, we started a new frame
+        if args.line_number < last_line_number and M.scanning_buffer then
+            -- Mark previous buffer as fully scanned
+            M.scanned_buffers[M.scanning_buffer] = true
+            debug(string.format("Buffer %d fully scanned", M.scanning_buffer))
+            M.scanning_buffer = nil
+        end
+
+        last_line_number = args.line_number
+        return true
+    end)
+
+    -- Register hooks to detect buffer changes (triggers re-scan)
+    editor.on("after-insert", function(args)
+        if M.config.enabled and args.buffer_id then
+            -- Text was inserted - mark buffer for re-scan
+            M.scanned_buffers[args.buffer_id] = nil
+            debug(string.format("Buffer %d marked for re-scan (insert)", args.buffer_id))
+        end
+        return true
+    end)
+
+    editor.on("after-delete", function(args)
+        if M.config.enabled and args.buffer_id then
+            -- Text was deleted - mark buffer for re-scan
+            M.scanned_buffers[args.buffer_id] = nil
+            debug(string.format("Buffer %d marked for re-scan (delete)", args.buffer_id))
+        end
+        return true
     end)
 
     -- Register commands
     M.register_commands()
 
     debug("TODO Highlighter: Plugin initialized")
-end
-
--- Handle render-line hook
-function M.on_render_line(args)
-    if not M.config.enabled then
-        return true
-    end
-
-    local buffer_id = args.buffer_id
-    local line_number = args.line_number
-    local byte_start = args.byte_start
-    local content = args.content
-
-    -- On first line of each buffer per frame, clear old overlays
-    if line_number == 1 and not M.processed_buffers[buffer_id] then
-        M.clear_buffer_overlays(buffer_id)
-        M.processed_buffers[buffer_id] = true
-    end
-
-    -- Scan line for keywords
-    M.scan_line_for_keywords(buffer_id, line_number, byte_start, content)
-
-    return true
 end
 
 -- Clear all overlays for this buffer
@@ -112,8 +156,6 @@ function M.is_comment_line(line)
 
     -- Check if line starts with any comment pattern
     for _, pattern in ipairs(M.config.comment_patterns) do
-        -- Escape special chars for plain find
-        local plain_pattern = pattern:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
         if trimmed:find("^" .. pattern) then
             return true
         end
@@ -223,12 +265,23 @@ function M.register_commands()
             M.clear_active_buffer()
         end
     })
+
+    editor.register_command({
+        name = "TODO Highlighter: Rescan",
+        description = "Force re-scan of active buffer",
+        action = "todo_highlight_rescan",
+        contexts = {"normal"},
+        callback = function()
+            M.rescan_active_buffer()
+        end
+    })
 end
 
 -- Enable highlighting
 function M.enable()
     M.config.enabled = true
-    M.processed_buffers = {} -- Reset tracking
+    M.scanned_buffers = {} -- Reset tracking - will trigger re-scan
+    M.scanning_buffer = nil
     editor.set_status("TODO Highlighter: Enabled")
     debug("TODO Highlighter: Enabled")
 end
@@ -236,7 +289,8 @@ end
 -- Disable highlighting
 function M.disable()
     M.config.enabled = false
-    M.processed_buffers = {} -- Reset tracking
+    M.scanned_buffers = {} -- Reset tracking
+    M.scanning_buffer = nil
 
     -- Clear all highlights from active buffer
     M.clear_active_buffer()
@@ -270,8 +324,20 @@ function M.clear_active_buffer()
     local buffer_id = editor.get_active_buffer_id()
     if buffer_id then
         M.clear_buffer_overlays(buffer_id)
+        M.scanned_buffers[buffer_id] = nil
         editor.set_status("TODO Highlighter: Cleared highlights from buffer")
         debug(string.format("TODO Highlighter: Cleared overlays from buffer %d", buffer_id))
+    end
+end
+
+-- Force re-scan of active buffer
+function M.rescan_active_buffer()
+    local buffer_id = editor.get_active_buffer_id()
+    if buffer_id then
+        M.scanned_buffers[buffer_id] = nil
+        M.scanning_buffer = nil
+        editor.set_status("TODO Highlighter: Buffer marked for re-scan")
+        debug(string.format("TODO Highlighter: Buffer %d marked for re-scan", buffer_id))
     end
 end
 

@@ -708,8 +708,12 @@ impl PluginManager {
                 let callback: Option<mlua::Function> = array.get(i).ok();
                 if let Some(cb) = callback {
                     // Call the callback with args
-                    cb.call::<mlua::Table>(args_table.clone())
+                    // The return value can be anything (boolean, table, nil, etc.)
+                    let _result: mlua::Value = cb
+                        .call(args_table.clone())
                         .map_err(|e| format!("Plugin hook callback error: {}", e))?;
+                    // We ignore the return value for now
+                    // Future: could use it to cancel operations (if false is returned)
                 }
             }
         }
