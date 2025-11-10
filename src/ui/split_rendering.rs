@@ -863,7 +863,6 @@ impl SplitRenderer {
             // The gutter offset is added later when setting the hardware cursor
             cursor_screen_x = 0;
             cursor_screen_y = (lines_rendered - 1) as u16;
-            cursor_found = true;
         }
 
         // Clear the area first to prevent rendering artifacts when switching buffers
@@ -925,7 +924,7 @@ impl SplitRenderer {
         segment_text: &str,
         line_spans: &[Span<'static>],
         segment_start_offset: usize,
-        scroll_offset: usize,
+        _scroll_offset: usize,
     ) -> Vec<Span<'static>> {
         if line_spans.is_empty() {
             return vec![Span::raw(segment_text.to_string())];
@@ -940,7 +939,6 @@ impl SplitRenderer {
 
         // Build a map of character position -> style
         let mut char_styles: Vec<(char, Style)> = Vec::new();
-        let mut char_pos = 0;
 
         for span in line_spans {
             let span_text = span.content.as_ref();
@@ -948,7 +946,6 @@ impl SplitRenderer {
 
             for ch in span_text.chars() {
                 char_styles.push((ch, style));
-                char_pos += 1;
             }
         }
 

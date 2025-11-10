@@ -373,7 +373,7 @@ impl MarginManager {
         &self,
         line: usize,
         position: MarginPosition,
-        buffer_total_lines: usize,
+        _buffer_total_lines: usize,
     ) -> MarginContent {
         let annotations = match position {
             MarginPosition::Left => &self.left_annotations,

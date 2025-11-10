@@ -362,14 +362,14 @@ impl Event {
             }
             Event::AddOverlay {
                 overlay_id,
-                range,
-                face,
-                priority,
-                message,
+                range: _,
+                face: _,
+                priority: _,
+                message: _,
             } => Some(Event::RemoveOverlay {
                 overlay_id: overlay_id.clone(),
             }),
-            Event::RemoveOverlay { overlay_id } => {
+            Event::RemoveOverlay { overlay_id: _ } => {
                 // We can't fully invert RemoveOverlay without storing the removed overlay data
                 // For now, just return None - this could be improved by storing overlay data
                 None
@@ -377,11 +377,11 @@ impl Event {
             Event::Scroll { line_offset } => Some(Event::Scroll {
                 line_offset: -line_offset,
             }),
-            Event::SetViewport { top_line } => {
+            Event::SetViewport { top_line: _ } => {
                 // Can't invert without knowing old top_line
                 None
             }
-            Event::ChangeMode { mode } => {
+            Event::ChangeMode { mode: _ } => {
                 // Can't invert without knowing old mode
                 None
             }

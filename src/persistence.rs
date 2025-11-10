@@ -105,14 +105,14 @@ impl PersistenceLayer for ChunkTreePersistence {
 /// Wraps any PersistenceLayer implementation and adds configurable delays
 /// to simulate slow storage operations. Useful for testing editor responsiveness
 /// with slow disks, network storage, etc.
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(test)]
 pub struct SlowPersistenceLayer<T: PersistenceLayer> {
     inner: T,
     config: SlowPersistenceConfig,
     metrics: PersistenceMetrics,
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct SlowPersistenceConfig {
     /// Delay for read operations (per byte read)
@@ -129,7 +129,7 @@ pub struct SlowPersistenceConfig {
     pub delete_delay_fixed: std::time::Duration,
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(test)]
 impl SlowPersistenceConfig {
     /// Create a config with uniform fixed delay for all operations
     pub fn uniform(delay: std::time::Duration) -> Self {
@@ -173,14 +173,14 @@ impl SlowPersistenceConfig {
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(test)]
 impl Default for SlowPersistenceConfig {
     fn default() -> Self {
         Self::none()
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(test)]
 #[derive(Debug, Clone, Default)]
 pub struct PersistenceMetrics {
     /// Number of read calls
@@ -199,7 +199,7 @@ pub struct PersistenceMetrics {
     pub total_delay_time: std::time::Duration,
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(test)]
 impl PersistenceMetrics {
     pub fn new() -> Self {
         Self::default()
@@ -214,7 +214,7 @@ impl PersistenceMetrics {
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(test)]
 impl<T: PersistenceLayer> SlowPersistenceLayer<T> {
     /// Create a new slow persistence layer
     pub fn new(inner: T, config: SlowPersistenceConfig) -> Self {
@@ -263,7 +263,7 @@ impl<T: PersistenceLayer> SlowPersistenceLayer<T> {
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(test)]
 impl<T: PersistenceLayer> PersistenceLayer for SlowPersistenceLayer<T> {
     fn read(&self, offset: usize, len: usize) -> io::Result<Vec<u8>> {
         // Note: We can't add delay in a non-mut method, so we track but don't sleep

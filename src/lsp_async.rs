@@ -257,7 +257,6 @@ impl LspState {
 
         let params = InitializeParams {
             process_id: Some(std::process::id()),
-            root_uri: root_uri.clone(),
             capabilities: ClientCapabilities::default(),
             workspace_folders,
             ..Default::default()
@@ -613,6 +612,7 @@ struct LspTask {
     language: String,
 }
 
+#[allow(dead_code)]
 impl LspTask {
     /// Create a new LSP task
     async fn spawn(
@@ -942,7 +942,6 @@ impl LspTask {
 
         let params = InitializeParams {
             process_id: Some(std::process::id()),
-            root_uri: root_uri.clone(),
             capabilities: ClientCapabilities::default(),
             workspace_folders,
             ..Default::default()
@@ -1418,9 +1417,6 @@ pub struct LspHandle {
     /// Channel for sending commands to the task
     command_tx: mpsc::Sender<LspCommand>,
 
-    /// Language ID
-    language: String,
-
     /// Whether initialized
     initialized: Arc<Mutex<bool>>,
 
@@ -1444,7 +1440,6 @@ impl LspHandle {
         let command = command.to_string();
         let args = args.to_vec();
         let initialized = Arc::new(Mutex::new(false));
-        let initialized_clone = initialized.clone();
 
         runtime.spawn(async move {
             match LspTask::spawn(
@@ -1471,7 +1466,6 @@ impl LspHandle {
 
         Ok(Self {
             command_tx,
-            language,
             initialized,
             runtime: runtime.clone(),
         })

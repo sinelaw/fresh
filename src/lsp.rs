@@ -60,12 +60,6 @@ pub struct JsonRpcError {
     pub data: Option<Value>,
 }
 
-/// Pending request waiting for a response
-#[derive(Debug)]
-struct PendingRequest {
-    method: String,
-}
-
 /// LSP client for communicating with a language server
 pub struct LspClient {
     /// Process handle for the language server
@@ -80,8 +74,8 @@ pub struct LspClient {
     /// Next request ID
     next_id: i64,
 
-    /// Pending requests waiting for response
-    pending: HashMap<i64, PendingRequest>,
+    /// Pending requests waiting for response (request ID tracking)
+    pending: HashMap<i64, ()>,
 
     /// Server capabilities after initialization
     capabilities: Option<ServerCapabilities>,
@@ -148,7 +142,6 @@ impl LspClient {
 
         let params = InitializeParams {
             process_id: Some(std::process::id()),
-            root_uri: root_uri.clone(),
             capabilities: ClientCapabilities::default(),
             workspace_folders,
             ..Default::default()
@@ -266,12 +259,7 @@ impl LspClient {
             params: params.map(|p| serde_json::to_value(p).expect("Failed to serialize params")),
         };
 
-        self.pending.insert(
-            id,
-            PendingRequest {
-                method: method.to_string(),
-            },
-        );
+        self.pending.insert(id, ());
 
         self.write_message(&request)?;
 

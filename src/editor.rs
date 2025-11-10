@@ -23,7 +23,7 @@ use crate::ui::{
     FileExplorerRenderer, HelpRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer,
     TabsRenderer,
 };
-use lsp_types::{TextDocumentContentChangeEvent, Uri};
+use lsp_types::TextDocumentContentChangeEvent;
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     Frame,
@@ -61,8 +61,6 @@ struct SearchState {
     matches: Vec<usize>,
     /// Index of the currently selected match
     current_match_index: Option<usize>,
-    /// Case sensitive search
-    case_sensitive: bool,
     /// Whether search wraps around at document boundaries
     wrap_search: bool,
 }
@@ -4444,10 +4442,10 @@ impl Editor {
 
             // Find the byte position for this line and column
             let mut line_iter = state.buffer.line_iterator(state.viewport.top_byte);
-            let mut target_position = state.viewport.top_byte;
 
             // Navigate to the clicked line
             let mut line_start = state.viewport.top_byte;
+            let target_position;
             for _ in 0..content_row {
                 if let Some((pos, _content)) = line_iter.next() {
                     line_start = pos;
@@ -5050,7 +5048,7 @@ impl Editor {
         let visible_height = viewport.height.saturating_sub(2); // Subtract tab bar and status bar
 
         // Get the visible content by iterating through visible lines
-        let mut visible_start = top_byte;
+        let visible_start = top_byte;
         let mut visible_end = top_byte;
 
         {
@@ -5174,7 +5172,6 @@ impl Editor {
             query: query.to_string(),
             matches,
             current_match_index: Some(current_match_index),
-            case_sensitive: false,
             wrap_search: true,
         });
 

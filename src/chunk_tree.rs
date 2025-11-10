@@ -650,26 +650,26 @@ impl<'a> ChunkTree<'a> {
     }
 
     /// Returns an iterator over chunks in the tree
-    pub fn iter(&self) -> ChunkTreeIterator {
+    pub fn iter(&self) -> ChunkTreeIterator<'_> {
         self.root.iter()
     }
 
     /// Create a byte-level iterator over a range
     /// This is much more efficient than calling get(i) repeatedly
     /// The iterator can be reversed with .rev() to iterate backwards
-    pub fn bytes_range(&self, start: usize, end: usize) -> ByteRangeIterator {
+    pub fn bytes_range(&self, start: usize, end: usize) -> ByteRangeIterator<'_> {
         ByteRangeIterator::new(self, start, end)
     }
 
     /// Create a byte-level iterator starting from a given byte offset to EOF
-    pub fn bytes_from(&self, start_offset: usize) -> ByteRangeIterator {
+    pub fn bytes_from(&self, start_offset: usize) -> ByteRangeIterator<'_> {
         ByteRangeIterator::new(self, start_offset, self.len())
     }
 
     /// Create a bidirectional byte iterator positioned at a specific offset
     /// Can navigate both forward (via next()) and backward (via next_back()) from this position
     /// This is efficient (O(log n)) as it only collects chunks as needed during iteration
-    pub fn bytes_at(&self, position: usize) -> ByteIterator {
+    pub fn bytes_at(&self, position: usize) -> ByteIterator<'_> {
         ByteIterator::at_position(self, position)
     }
 }
@@ -899,49 +899,6 @@ impl<'a> ByteRangeIterator<'a> {
             chunks,
             front_chunk_idx: 0,
             front_offset: 0,
-            back_chunk_idx,
-            back_offset,
-        }
-    }
-
-    /// Create an iterator positioned at a specific byte offset
-    /// This collects all chunks in the file and positions the iterator at the given offset
-    fn at_position(tree: &'a ChunkTree<'a>, position: usize) -> Self {
-        let position = position.min(tree.len());
-
-        // Collect all chunks in the entire file
-        let mut chunks = Vec::new();
-        Self::collect_chunks_in_range(&tree.root, 0, tree.len(), 0, &mut chunks);
-
-        // Find which chunk contains the position and set up front/back cursors there
-        let mut front_chunk_idx = 0;
-        let mut front_offset = 0;
-
-        for (idx, (chunk_start, chunk_data)) in chunks.iter().enumerate() {
-            let chunk_end = chunk_start + chunk_data.len();
-            if position >= *chunk_start && position < chunk_end {
-                front_chunk_idx = idx;
-                front_offset = position - chunk_start;
-                break;
-            }
-            if position <= *chunk_start {
-                front_chunk_idx = idx;
-                front_offset = 0;
-                break;
-            }
-        }
-
-        // Back cursor starts at the end
-        let back_chunk_idx = chunks.len().saturating_sub(1);
-        let back_offset = chunks
-            .get(back_chunk_idx)
-            .map(|(_, data)| data.len())
-            .unwrap_or(0);
-
-        Self {
-            chunks,
-            front_chunk_idx,
-            front_offset,
             back_chunk_idx,
             back_offset,
         }

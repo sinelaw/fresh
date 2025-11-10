@@ -36,9 +36,6 @@ pub struct PluginManager {
     /// Loaded plugins
     plugins: HashMap<String, PluginInfo>,
 
-    /// Hook registry (shared with editor)
-    hooks: Arc<RwLock<HookRegistry>>,
-
     /// Command registry (shared with editor)
     commands: Arc<RwLock<CommandRegistry>>,
 
@@ -48,20 +45,8 @@ pub struct PluginManager {
     /// Command receiver (to get commands from plugins)
     command_receiver: std::sync::mpsc::Receiver<PluginCommand>,
 
-    /// Action callbacks (action_name -> Lua registry key)
-    action_callbacks: HashMap<String, mlua::RegistryKey>,
-
-    /// Hook callbacks (hook_name -> Vec<Lua registry key>)
-    hook_callbacks: HashMap<String, Vec<mlua::RegistryKey>>,
-
-    /// Next callback ID for spawn processes
-    next_callback_id: u64,
-
     /// Async bridge sender (for spawning processes)
     async_sender: Option<std::sync::mpsc::Sender<crate::async_bridge::AsyncMessage>>,
-
-    /// Debug log file path
-    debug_log_path: PathBuf,
 }
 
 impl PluginManager {
@@ -113,15 +98,10 @@ impl PluginManager {
         Ok(Self {
             lua,
             plugins: HashMap::new(),
-            hooks,
             commands,
             plugin_api,
             command_receiver,
-            action_callbacks: HashMap::new(),
-            hook_callbacks: HashMap::new(),
-            next_callback_id: 1,
             async_sender: None,
-            debug_log_path,
         })
     }
 
@@ -559,7 +539,7 @@ impl PluginManager {
 
     /// Unload a plugin
     pub fn unload_plugin(&mut self, name: &str) -> Result<(), String> {
-        if let Some(plugin) = self.plugins.remove(name) {
+        if let Some(_plugin) = self.plugins.remove(name) {
             tracing::info!("Unloading plugin: {}", name);
 
             // Remove plugin's commands (assuming they're prefixed with plugin name)

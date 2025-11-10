@@ -86,10 +86,8 @@ impl ProcessLimits {
 
     #[cfg(target_os = "linux")]
     fn apply_linux_limits(&self, cmd: &mut tokio::process::Command) -> io::Result<()> {
-        use std::os::unix::process::CommandExt;
-
         let max_memory_bytes = self.max_memory_mb.map(|mb| mb * 1024 * 1024);
-        let max_cpu_percent = self.max_cpu_percent;
+        let _max_cpu_percent = self.max_cpu_percent;
 
         // Find a user-delegated cgroup path if available
         let cgroup_path = find_user_cgroup();
