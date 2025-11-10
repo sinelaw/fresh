@@ -3223,6 +3223,22 @@ impl Editor {
                             // Perform replace of search term with input
                             self.perform_replace(&search, &input);
                         }
+                        PromptType::QueryReplaceSearch => {
+                            // User entered search query for query-replace, now prompt for replacement text
+                            // First perform the search to highlight matches
+                            self.perform_search(&input);
+                            // Then open the replacement prompt
+                            self.start_prompt(
+                                format!("Query replace '{}' with: ", input),
+                                PromptType::QueryReplace {
+                                    search: input.clone(),
+                                },
+                            );
+                        }
+                        PromptType::QueryReplace { search } => {
+                            // Start interactive replace mode
+                            self.start_interactive_replace(&search, &input);
+                        }
                         PromptType::Command => {
                             let commands = self.command_registry.read().unwrap().get_all();
 
@@ -3849,6 +3865,22 @@ impl Editor {
                     self.start_prompt("Replace: ".to_string(), PromptType::ReplaceSearch);
                 }
             }
+            Action::QueryReplace => {
+                // Start interactive replace (query-replace) - similar to Replace but enters interactive mode
+                if let Some(ref search_state) = self.search_state {
+                    // If there's an active search, use it
+                    let search_query = search_state.query.clone();
+                    self.start_prompt(
+                        format!("Query replace '{}' with: ", search_query),
+                        PromptType::QueryReplace {
+                            search: search_query,
+                        },
+                    );
+                } else {
+                    // No active search, prompt for search query first
+                    self.start_prompt("Query replace: ".to_string(), PromptType::QueryReplaceSearch);
+                }
+            }
             Action::FindNext => {
                 self.find_next();
             }
@@ -3958,8 +3990,11 @@ impl Editor {
                 }
             }
             Action::InsertChar(c) => {
+                // Handle character insertion in interactive replace mode
+                if self.interactive_replace_state.is_some() {
+                    return self.handle_interactive_replace_key(c);
                 // Handle character insertion in rename mode
-                if let Some(rename_state) = &mut self.rename_state {
+                } else if let Some(rename_state) = &mut self.rename_state {
                     // Just update the current_text, don't modify the buffer
                     rename_state.current_text.push(c);
                     let new_text = rename_state.current_text.clone();
@@ -5397,6 +5432,224 @@ impl Editor {
         } else {
             self.set_status_message(format!("No occurrences of '{}' found.", search));
         }
+    }
+
+    /// Start interactive replace mode (query-replace)
+    fn start_interactive_replace(&mut self, search: &str, replacement: &str) {
+        if search.is_empty() {
+            self.set_status_message("Query replace: empty search query.".to_string());
+            return;
+        }
+
+        // Find all matches using the search state if available
+        let matches = if let Some(ref search_state) = self.search_state {
+            search_state.matches.clone()
+        } else {
+            // No search state - need to find all matches
+            let state = self.active_state();
+            let buffer_len = state.buffer.len();
+            let mut matches = Vec::new();
+            let mut pos = 0;
+
+            while pos < buffer_len {
+                if let Some(offset) = state.buffer.find_next(search, pos) {
+                    matches.push(offset);
+                    pos = offset + search.len();
+                } else {
+                    break;
+                }
+            }
+            matches
+        };
+
+        if matches.is_empty() {
+            self.set_status_message(format!("No occurrences of '{}' found.", search));
+            return;
+        }
+
+        // Initialize interactive replace state
+        self.interactive_replace_state = Some(InteractiveReplaceState {
+            search: search.to_string(),
+            replacement: replacement.to_string(),
+            matches: matches.clone(),
+            current_index: 0,
+            replacements_made: 0,
+        });
+
+        // Move cursor to first match and show prompt
+        let first_match = matches[0];
+        let state = self.active_state_mut();
+        state.cursors.primary_mut().position = first_match;
+        state.cursors.primary_mut().anchor = None;
+        state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
+
+        self.set_status_message(format!(
+            "Replace this occurrence? (y/n/!/q) [1/{}]",
+            matches.len()
+        ));
+    }
+
+    /// Handle interactive replace key press (y/n/!/q)
+    fn handle_interactive_replace_key(&mut self, c: char) -> std::io::Result<()> {
+        let state = self.interactive_replace_state.clone();
+        let Some(mut ir_state) = state else {
+            return Ok(());
+        };
+
+        match c {
+            'y' | 'Y' => {
+                // Replace current match
+                let size_delta = self.replace_current_match(&ir_state)?;
+                ir_state.replacements_made += 1;
+
+                // Adjust positions of subsequent matches
+                self.adjust_match_positions(&mut ir_state, size_delta);
+                ir_state.current_index += 1;
+
+                // Move to next match or finish
+                if ir_state.current_index < ir_state.matches.len() {
+                    self.interactive_replace_state = Some(ir_state.clone());
+                    self.move_to_current_match(&ir_state);
+                } else {
+                    self.finish_interactive_replace(ir_state.replacements_made);
+                }
+            }
+            'n' | 'N' => {
+                // Skip current match
+                ir_state.current_index += 1;
+
+                // Move to next match or finish
+                if ir_state.current_index < ir_state.matches.len() {
+                    self.interactive_replace_state = Some(ir_state.clone());
+                    self.move_to_current_match(&ir_state);
+                } else {
+                    self.finish_interactive_replace(ir_state.replacements_made);
+                }
+            }
+            '!' => {
+                // Replace all remaining matches
+                for _ in ir_state.current_index..ir_state.matches.len() {
+                    let size_delta = self.replace_current_match(&ir_state)?;
+                    ir_state.replacements_made += 1;
+                    self.adjust_match_positions(&mut ir_state, size_delta);
+                    ir_state.current_index += 1;
+                }
+                self.finish_interactive_replace(ir_state.replacements_made);
+            }
+            'q' | 'Q' | '\x1b' => {
+                // Escape - quit interactive replace
+                self.finish_interactive_replace(ir_state.replacements_made);
+            }
+            _ => {
+                // Unknown key - show help
+                self.set_status_message(format!(
+                    "Replace this occurrence? (y=yes, n=no, !=all, q=quit) [{}/{}]",
+                    ir_state.current_index + 1,
+                    ir_state.matches.len()
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Replace the current match in interactive replace mode
+    /// Returns the size delta (can be negative if replacement is shorter than search)
+    fn replace_current_match(&mut self, ir_state: &InteractiveReplaceState) -> std::io::Result<isize> {
+        let match_pos = ir_state.matches[ir_state.current_index];
+        let search_len = ir_state.search.len();
+        let range = match_pos..(match_pos + search_len);
+
+        // Get the deleted text for the event
+        let deleted_text = self.active_state().buffer.slice(range.clone());
+
+        // Create Delete and Insert events
+        let cursor_id = self.active_state().cursors.primary_id();
+        let events = vec![
+            Event::Delete {
+                range: range.clone(),
+                deleted_text,
+                cursor_id,
+            },
+            Event::Insert {
+                position: match_pos,
+                text: ir_state.replacement.clone(),
+                cursor_id,
+            },
+        ];
+
+        // Wrap in batch for atomic undo
+        let batch = Event::Batch {
+            events: events.clone(),
+            description: format!("Query replace '{}' with '{}'", ir_state.search, ir_state.replacement),
+        };
+
+        // Apply the batch through the event log
+        self.active_event_log_mut().append(batch.clone());
+        self.apply_event_to_active_buffer(&batch);
+
+        // Calculate size delta for position adjustment
+        let size_delta = ir_state.replacement.len() as isize - search_len as isize;
+        Ok(size_delta)
+    }
+
+    /// Adjust match positions after a replacement
+    fn adjust_match_positions(&mut self, ir_state: &mut InteractiveReplaceState, size_delta: isize) {
+        // Adjust all subsequent match positions
+        for i in (ir_state.current_index + 1)..ir_state.matches.len() {
+            if size_delta > 0 {
+                ir_state.matches[i] += size_delta as usize;
+            } else if size_delta < 0 {
+                ir_state.matches[i] = ir_state.matches[i].saturating_sub((-size_delta) as usize);
+            }
+        }
+    }
+
+    /// Move cursor to the current match in interactive replace
+    fn move_to_current_match(&mut self, ir_state: &InteractiveReplaceState) {
+        let match_pos = ir_state.matches[ir_state.current_index];
+        let state = self.active_state_mut();
+        state.cursors.primary_mut().position = match_pos;
+        state.cursors.primary_mut().anchor = None;
+        state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
+
+        self.set_status_message(format!(
+            "Replace this occurrence? (y/n/!/q) [{}/{}]",
+            ir_state.current_index + 1,
+            ir_state.matches.len()
+        ));
+    }
+
+    /// Finish interactive replace and show summary
+    fn finish_interactive_replace(&mut self, replacements_made: usize) {
+        self.interactive_replace_state = None;
+
+        // Clear search highlights
+        let state = self.active_state_mut();
+        let overlay_ids: Vec<String> = state
+            .overlays
+            .all()
+            .iter()
+            .filter_map(|o| {
+                o.id.as_ref().and_then(|id| {
+                    if id.starts_with("search_highlight_") || id.starts_with("search_match_") {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        for id in overlay_ids {
+            state.overlays.remove_by_id(&id, &mut state.marker_list);
+        }
+
+        self.set_status_message(format!(
+            "Replaced {} occurrence{}",
+            replacements_made,
+            if replacements_made == 1 { "" } else { "s" }
+        ));
     }
 }
 

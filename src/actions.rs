@@ -975,6 +975,7 @@ pub fn action_to_events(
         | Action::FindNext
         | Action::FindPrevious
         | Action::Replace
+        | Action::QueryReplace
         | Action::PluginAction(_)
         | Action::None => return None,
 

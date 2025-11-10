@@ -16,6 +16,10 @@ pub enum PromptType {
     ReplaceSearch,
     /// Replace text in buffer
     Replace { search: String },
+    /// Search for text in buffer (for query-replace - will prompt for replacement after)
+    QueryReplaceSearch,
+    /// Query replace text in buffer interactively (y/n/!/q)
+    QueryReplace { search: String },
     /// Execute a command by name (M-x)
     Command,
     /// Git grep - search through git-tracked files
