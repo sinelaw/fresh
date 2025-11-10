@@ -1253,6 +1253,115 @@ fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Test that editor remains responsive while LSP is completely stuck
+///
+/// This test verifies that the UI doesn't block when the LSP server is unresponsive.
+/// It uses a fake LSP server that never responds to any requests (except initialize),
+/// simulating a completely stuck language server. The test verifies that typing
+/// continues to work immediately without any delays.
+#[test]
+fn test_lsp_diagnostics_non_blocking() -> std::io::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+
+    // Create a completely blocking fake LSP server that never responds
+    let _fake_server = FakeLspServer::spawn_blocking()?;
+
+    // Create temporary directory and test file
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n    // original code\n}\n")?;
+
+    // Configure editor to use the blocking fake LSP server
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::lsp::LspServerConfig {
+            command: FakeLspServer::blocking_script_path()
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            process_limits: fresh::process_limits::ProcessLimits::default(),
+        },
+    );
+
+    // Create harness with config and working directory
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    // Open the file (triggers LSP initialization and textDocument/didOpen)
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Position cursor on line 2 where we'll type
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Save the file - this will trigger textDocument/didSave
+    // The fake LSP server will NEVER respond to this
+    harness.send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)?;
+    harness.render()?;
+
+    // CRITICAL TEST: Immediately type characters - the LSP is stuck but typing should work!
+    // No sleeps, no waits - just type and verify it works
+    harness.type_text("\n    let x = 42;")?;
+    harness.render()?;
+
+    // Verify the characters were actually inserted immediately
+    let buffer_content = harness.get_buffer_content();
+    assert!(
+        buffer_content.contains("let x = 42;"),
+        "Editor should process typed characters immediately despite stuck LSP! Got:\n{buffer_content}"
+    );
+
+    // Continue typing more characters to ensure editor remains responsive
+    harness.type_text("\n    println!(\"{{x}}\");")?;
+    harness.render()?;
+
+    let buffer_content = harness.get_buffer_content();
+    assert!(
+        buffer_content.contains("println!"),
+        "Editor should continue processing input despite stuck LSP! Got:\n{buffer_content}"
+    );
+
+    // Verify the screen shows the typed content (proves rendering works)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("let x = 42"),
+        "Screen should display newly typed content despite stuck LSP"
+    );
+    assert!(
+        screen.contains("println!"),
+        "Screen should display all typed content despite stuck LSP"
+    );
+
+    // Try more operations - navigation, more typing
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.type_text(" // comment")?;
+    harness.render()?;
+
+    let final_buffer = harness.get_buffer_content();
+    assert!(
+        final_buffer.contains("// comment"),
+        "Editor should handle navigation and typing despite stuck LSP! Got:\n{final_buffer}"
+    );
+
+    println!("\n✅ SUCCESS: Editor remained fully responsive with completely stuck LSP!");
+    println!("   - All typed characters inserted immediately");
+    println!("   - Navigation worked normally");
+    println!("   - Screen rendering updated correctly");
+    println!("   - No UI freeze despite LSP never responding");
+
+    Ok(())
+}
+
 /// Test the EXACT scenario from the bug report:
 /// Open a Rust file, position cursor on a variable, press F2, type ONE character, press Enter
 /// This should reproduce the ContentModified error with rust-analyzer
