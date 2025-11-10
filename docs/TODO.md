@@ -45,10 +45,11 @@
 - Git find file (Ctrl+Shift+P)
 
 ### Plugin System
-- Lua 5.4 runtime, plugin manager
-- Command registration, event hooks
-- Async process spawning, buffer query API, overlay system
-- Example: TODO Highlighter plugin
+- Lua 5.4 runtime, plugin manager, plugin lifecycle management
+- Command registration, dynamic event hooks (16+ hook types)
+- Async process spawning, buffer query API (metadata only - streaming via hooks)
+- Overlay system with bulk management (clear all, remove by prefix)
+- Example: Robust TODO Highlighter plugin (optimized for GB+ files)
 
 ### Testing & Performance
 - 400+ unit tests, 59 E2E tests
@@ -232,14 +233,20 @@
 - [ ] LSP access / Search API / Undo history API
 - [ ] Process cancellation support
 
-#### Overlay Lifecycle Management ⚠️
-**Priority: High** - Blocks TODO highlighter plugin from working correctly with text edits
+#### Overlay Lifecycle Management ✅
+**Status: COMPLETE** (Nov 2025)
 
-**Problem**: Stale overlays aren't automatically removed when text changes. Old overlays persist with stale IDs while new ones are created.
+**Completed:**
+- ✅ Implemented `editor.remove_overlays_by_prefix(buffer_id, prefix)` for bulk removal
+- ✅ Implemented `editor.clear_all_overlays(buffer_id)` for clearing all overlays
+- ✅ Updated TODO highlighter plugin to use robust overlay management
+- ✅ Added `OverlayManager::remove_by_prefix()` method for efficient prefix-based removal
+- ✅ Proper marker cleanup when overlays are removed
 
-**Solution**:
-- [ ] Implement `editor.remove_overlays_by_prefix(buffer_id, prefix)` for bulk removal
-- [ ] Or `editor.clear_all_overlays(buffer_id)`
+**Note on Buffer Content API:**
+- Intentionally excluded `get_buffer_content()` API to prevent materializing huge buffers into memory
+- Plugins should use the `render-line` hook for efficient line-by-line content access
+- This design scales to GB+ files without performance degradation
 
 #### Target Showcase Plugins
 - [ ] Magit-style Git interface

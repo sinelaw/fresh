@@ -128,6 +128,15 @@ pub enum PluginCommand {
         cwd: Option<String>,
         callback_id: u64, // ID to look up callback in _spawn_callbacks Lua table
     },
+
+    /// Remove all overlays from a buffer
+    ClearAllOverlays { buffer_id: BufferId },
+
+    /// Remove overlays whose ID starts with the given prefix
+    RemoveOverlaysByPrefix {
+        buffer_id: BufferId,
+        prefix: String,
+    },
 }
 
 /// Plugin API context - provides safe access to editor functionality

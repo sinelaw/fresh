@@ -62,43 +62,24 @@ editor.register_command({
     end
 })
 
-editor.register_command({
-    name = "Query Demo: Show Line Count",
-    description = "Display the number of lines in the current buffer",
-    action = "show_line_count",
-    contexts = {"normal"},
-    callback = function()
-        local buffer_id = editor.get_active_buffer_id()
-        local content = editor.get_buffer_content(buffer_id)
-
-        if content then
-            local lines = 1
-            for _ in content:gmatch("\n") do
-                lines = lines + 1
-            end
-            editor.set_status(string.format("Buffer has %d lines", lines))
-        else
-            editor.set_status("No buffer content available")
-        end
-    end
-})
-
-editor.register_command({
-    name = "Query Demo: Show Current Line",
-    description = "Display the content of line 1",
-    action = "show_first_line",
-    contexts = {"normal"},
-    callback = function()
-        local buffer_id = editor.get_active_buffer_id()
-        local line = editor.get_line(buffer_id, 1)
-
-        if line then
-            editor.set_status(string.format("First line: %s", line))
-        else
-            editor.set_status("Could not get first line")
-        end
-    end
-})
+-- NOTE: get_buffer_content() and get_line() are intentionally NOT provided
+-- because they would materialize large portions of the buffer into memory,
+-- defeating the editor's streaming architecture for huge files (GB+).
+--
+-- Instead, use the render-line hook to access line content efficiently:
+--
+-- editor.on("render-line", function(args)
+--     local line_content = args.content
+--     local line_number = args.line_number
+--     -- Process visible lines here
+-- end)
+--
+-- For file-level operations, use external tools via editor.spawn():
+--
+-- editor.spawn("wc", {"-l", filepath}, function(stdout, stderr, exit_code)
+--     local line_count = tonumber(stdout:match("%d+"))
+--     editor.set_status(string.format("File has %d lines", line_count))
+-- end)
 
 editor.register_command({
     name = "Query Demo: List All Buffers",

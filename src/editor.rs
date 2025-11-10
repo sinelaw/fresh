@@ -2400,6 +2400,28 @@ impl Editor {
                     }
                 }
             }
+            PluginCommand::ClearAllOverlays { buffer_id } => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    // Use the OverlayManager's clear method
+                    state.overlays.clear(&mut state.marker_list);
+
+                    // Note: We don't add this to the event log because:
+                    // 1. Clearing overlays doesn't affect undo/redo (overlays are ephemeral)
+                    // 2. This is a plugin-initiated action, not a user edit
+                }
+            }
+            PluginCommand::RemoveOverlaysByPrefix { buffer_id, prefix } => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    // Use the OverlayManager's remove_by_prefix method
+                    state
+                        .overlays
+                        .remove_by_prefix(&prefix, &mut state.marker_list);
+
+                    // Note: We don't add this to the event log because:
+                    // 1. Clearing overlays doesn't affect undo/redo (overlays are ephemeral)
+                    // 2. This is a plugin-initiated action, not a user edit
+                }
+            }
         }
         Ok(())
     }
