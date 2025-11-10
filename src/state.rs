@@ -5,12 +5,14 @@ use crate::event::{
     PopupPositionData,
 };
 use crate::highlighter::{Highlighter, Language};
+use crate::indent::IndentCalculator;
 use crate::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPosition};
 use crate::marker::MarkerList;
 use crate::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::popup::{Popup, PopupContent, PopupListItem, PopupManager, PopupPosition};
 use crate::viewport::Viewport;
 use ratatui::style::{Color, Style};
+use std::cell::RefCell;
 
 /// The complete editor state - everything needed to represent the current editing session
 pub struct EditorState {
@@ -25,6 +27,9 @@ pub struct EditorState {
 
     /// Syntax highlighter (optional - only created if language is detected)
     pub highlighter: Option<Highlighter>,
+
+    /// Auto-indent calculator for smart indentation (RefCell for interior mutability)
+    pub indent_calculator: RefCell<IndentCalculator>,
 
     /// Overlays for visual decorations (underlines, highlights, etc.)
     pub overlays: OverlayManager,
@@ -62,6 +67,7 @@ impl EditorState {
             cursors: Cursors::new(),
             viewport: Viewport::new(width, content_height),
             highlighter: None, // No file path, so no syntax highlighting
+            indent_calculator: RefCell::new(IndentCalculator::new()),
             overlays: OverlayManager::new(),
             marker_list: MarkerList::new(),
             popups: PopupManager::new(),
@@ -102,6 +108,7 @@ impl EditorState {
             cursors: Cursors::new(),
             viewport: Viewport::new(width, content_height),
             highlighter,
+            indent_calculator: RefCell::new(IndentCalculator::new()),
             overlays: OverlayManager::new(),
             marker_list,
             popups: PopupManager::new(),
