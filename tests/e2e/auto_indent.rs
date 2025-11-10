@@ -445,3 +445,70 @@ fn test_auto_dedent_on_close_brace() {
         );
     }
 }
+
+/// Test that pressing Enter after an empty line inside function body maintains indent
+/// This should use tree-sitter to detect we're still inside the function block
+#[test]
+fn test_indent_after_empty_line_in_function_body() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Type a function with some content
+    harness.type_text("fn main() {").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Should auto-indent to 4 spaces
+    harness.type_text("let x = 1;").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Now we're on an empty line with 4 spaces indent
+    // Delete all the spaces to simulate an empty line with NO indent
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    }
+
+    // Now we're on an empty line with NO spaces (inside function body)
+    // Press Enter - should recognize we're inside function body and indent to 4 spaces
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content();
+
+    // Verify structure: function, content line, empty line (NO spaces), new line (should have 4 spaces)
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Line 0: fn main() {
+    assert!(lines[0].contains("fn main()"), "Line 0 should be function declaration");
+
+    // Line 1: let x = 1; (with 4 space indent)
+    assert!(lines[1].trim().starts_with("let x"), "Line 1 should have let statement");
+    let line1_indent = lines[1].chars().take_while(|&c| c == ' ').count();
+    assert_eq!(line1_indent, 4, "Line 1 should have 4 spaces");
+
+    // Line 2: empty line (was cleared to 0 spaces)
+    assert_eq!(lines[2], "", "Line 2 should be empty (0 spaces)");
+
+    // Line 3: the new line we just created by pressing Enter
+    // This is the KEY TEST: tree-sitter should recognize we're inside the function block
+    // (between the opening { and the eventual closing })
+    // and should indent to 4 spaces, NOT 0 spaces
+    //
+    // The pattern fallback would return 0 (copying from empty line)
+    // But tree-sitter should count the @indent nodes and see we're nested 1 level deep
+
+    assert!(
+        lines.len() >= 4,
+        "Should have at least 4 lines after Enter. Content: {:?}",
+        content
+    );
+
+    let line3_indent = lines[3].chars().take_while(|&c| c == ' ').count();
+    assert_eq!(
+        line3_indent, 4,
+        "After empty line in function body, tree-sitter should detect we're inside the block and indent to 4 spaces, got {} spaces. This verifies tree-sitter is being used, not just pattern fallback. Content: {:?}",
+        line3_indent, content
+    );
+}
