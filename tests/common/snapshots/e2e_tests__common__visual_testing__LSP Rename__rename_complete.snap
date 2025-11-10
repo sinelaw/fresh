@@ -31,4 +31,4 @@ expression: "&screen_text"
                                                                                █
                                                                                █
                                                                                █
-[No Name] [+] | Ln 5, Col 0 | Cannot rename in unsaved buffer
+[No Name] [+] | Ln 5, Col 0 | Cannot rename in unsaved buffer      Help: Ctrl+/

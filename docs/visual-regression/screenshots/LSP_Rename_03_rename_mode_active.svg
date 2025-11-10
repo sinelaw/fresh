@@ -259,35 +259,23 @@
   <text x="541" y="536" fill="#000000" class="terminal" style="">,</text>
   <rect x="549" y="522" width="9" height="18" fill="#ffffff"/>
   <rect x="558" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="559" y="536" fill="#000000" class="terminal" style="">E</text>
+  <text x="559" y="536" fill="#000000" class="terminal" style="">.</text>
   <rect x="567" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="568" y="536" fill="#000000" class="terminal" style="">s</text>
+  <text x="568" y="536" fill="#000000" class="terminal" style="">.</text>
   <rect x="576" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="577" y="536" fill="#000000" class="terminal" style="">c</text>
+  <text x="577" y="536" fill="#000000" class="terminal" style="">.</text>
   <rect x="585" y="522" width="9" height="18" fill="#ffffff"/>
-  <rect x="594" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="595" y="536" fill="#000000" class="terminal" style="">t</text>
-  <rect x="603" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="604" y="536" fill="#000000" class="terminal" style="">o</text>
-  <rect x="612" y="522" width="9" height="18" fill="#ffffff"/>
-  <rect x="621" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="622" y="536" fill="#000000" class="terminal" style="">c</text>
-  <rect x="630" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="631" y="536" fill="#000000" class="terminal" style="">a</text>
-  <rect x="639" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="640" y="536" fill="#000000" class="terminal" style="">n</text>
-  <rect x="648" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="649" y="536" fill="#000000" class="terminal" style="">c</text>
-  <rect x="657" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="658" y="536" fill="#000000" class="terminal" style="">e</text>
-  <rect x="666" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="667" y="536" fill="#000000" class="terminal" style="">l</text>
-  <rect x="675" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="676" y="536" fill="#000000" class="terminal" style="">)</text>
-  <rect x="684" y="522" width="9" height="18" fill="#ffffff"/>
-  <rect x="693" y="522" width="9" height="18" fill="#ffffff"/>
-  <rect x="702" y="522" width="9" height="18" fill="#ffffff"/>
-  <rect x="711" y="522" width="9" height="18" fill="#ffffff"/>
+  <text x="604" y="536" fill="#ff5555" class="terminal" style="">H</text>
+  <text x="613" y="536" fill="#ff5555" class="terminal" style="">e</text>
+  <text x="622" y="536" fill="#ff5555" class="terminal" style="">l</text>
+  <text x="631" y="536" fill="#ff5555" class="terminal" style="">p</text>
+  <text x="640" y="536" fill="#ff5555" class="terminal" style="">:</text>
+  <text x="658" y="536" fill="#ff5555" class="terminal" style="">C</text>
+  <text x="667" y="536" fill="#ff5555" class="terminal" style="">t</text>
+  <text x="676" y="536" fill="#ff5555" class="terminal" style="">r</text>
+  <text x="685" y="536" fill="#ff5555" class="terminal" style="">l</text>
+  <text x="694" y="536" fill="#ff5555" class="terminal" style="">+</text>
+  <text x="703" y="536" fill="#ff5555" class="terminal" style="">/</text>
   <!-- Cursor indicator -->
   <rect x="198" y="18" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
 </svg>

@@ -420,25 +420,23 @@
   <rect x="909" y="522" width="9" height="18" fill="#ffffff"/>
   <text x="910" y="536" fill="#000000" class="terminal" style="">w</text>
   <rect x="918" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="919" y="536" fill="#000000" class="terminal" style="">/</text>
+  <text x="919" y="536" fill="#000000" class="terminal" style="">.</text>
   <rect x="927" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="928" y="536" fill="#000000" class="terminal" style="">f</text>
+  <text x="928" y="536" fill="#000000" class="terminal" style="">.</text>
   <rect x="936" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="937" y="536" fill="#000000" class="terminal" style="">i</text>
+  <text x="937" y="536" fill="#000000" class="terminal" style="">.</text>
   <rect x="945" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="946" y="536" fill="#000000" class="terminal" style="">l</text>
-  <rect x="954" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="955" y="536" fill="#000000" class="terminal" style="">e</text>
-  <rect x="963" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="964" y="536" fill="#000000" class="terminal" style="">2</text>
-  <rect x="972" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="973" y="536" fill="#000000" class="terminal" style="">.</text>
-  <rect x="981" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="982" y="536" fill="#000000" class="terminal" style="">t</text>
-  <rect x="990" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="991" y="536" fill="#000000" class="terminal" style="">x</text>
-  <rect x="999" y="522" width="9" height="18" fill="#ffffff"/>
-  <text x="1000" y="536" fill="#000000" class="terminal" style="">t</text>
+  <text x="964" y="536" fill="#ff5555" class="terminal" style="">H</text>
+  <text x="973" y="536" fill="#ff5555" class="terminal" style="">e</text>
+  <text x="982" y="536" fill="#ff5555" class="terminal" style="">l</text>
+  <text x="991" y="536" fill="#ff5555" class="terminal" style="">p</text>
+  <text x="1000" y="536" fill="#ff5555" class="terminal" style="">:</text>
+  <text x="1018" y="536" fill="#ff5555" class="terminal" style="">C</text>
+  <text x="1027" y="536" fill="#ff5555" class="terminal" style="">t</text>
+  <text x="1036" y="536" fill="#ff5555" class="terminal" style="">r</text>
+  <text x="1045" y="536" fill="#ff5555" class="terminal" style="">l</text>
+  <text x="1054" y="536" fill="#ff5555" class="terminal" style="">+</text>
+  <text x="1063" y="536" fill="#ff5555" class="terminal" style="">/</text>
   <!-- Cursor indicator -->
   <rect x="72" y="288" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
 </svg>
