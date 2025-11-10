@@ -97,12 +97,14 @@
 **TODO:**
 - [ ] Case-sensitive/insensitive toggle
 - [ ] Whole word matching
-- [ ] **Search history** - Store recent search/replace terms and allow navigation:
-  - Pre-fill search prompts with most recent term
-  - Up/Down arrow keys to cycle through history
-  - Edit historical terms before using
-  - Persist history across sessions
-  - Separate histories for search vs. replace
+- [x] **Search history** (Nov 2025) - Store recent search/replace terms and allow navigation:
+  - ✅ Up/Down arrow keys to cycle through history
+  - ✅ Edit historical terms before using
+  - ✅ Separate histories for search vs. replace (100 items each)
+  - ✅ Skips empty and consecutive duplicate entries
+  - ✅ Bash/readline-like navigation (preserves current input)
+  - ✅ Incremental search highlights update during navigation
+  - [ ] Persist history across sessions (future enhancement)
 - [ ] Multi-file search/replace (integrate with git grep)
 - [ ] Progress bar for replace_all on huge files
 

@@ -129,6 +129,28 @@ impl Prompt {
         self.cursor_pos = self.input.len();
     }
 
+    /// Set the input text and cursor position
+    ///
+    /// Used for history navigation - replaces the entire input with a new value
+    /// and moves cursor to the end.
+    ///
+    /// # Example
+    /// ```
+    /// # use fresh::prompt::{Prompt, PromptType};
+    /// let mut prompt = Prompt::new("Search: ".to_string(), PromptType::Search);
+    /// prompt.input = "current".to_string();
+    /// prompt.cursor_pos = 7;
+    ///
+    /// prompt.set_input("from history".to_string());
+    /// assert_eq!(prompt.input, "from history");
+    /// assert_eq!(prompt.cursor_pos, 12); // At end
+    /// ```
+    pub fn set_input(&mut self, text: String) {
+        self.cursor_pos = text.len();
+        self.input = text;
+        self.clear_selection();
+    }
+
     /// Select next suggestion
     pub fn select_next_suggestion(&mut self) {
         if !self.suggestions.is_empty() {

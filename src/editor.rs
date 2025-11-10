@@ -273,6 +273,12 @@ pub struct Editor {
 
     /// Plugin manager
     plugin_manager: Option<PluginManager>,
+
+    /// Search history (for search and find operations)
+    search_history: crate::input_history::InputHistory,
+
+    /// Replace history (for replace operations)
+    replace_history: crate::input_history::InputHistory,
 }
 
 /// Mouse state tracking
@@ -487,6 +493,8 @@ impl Editor {
             hook_registry,
             command_registry,
             plugin_manager,
+            search_history: crate::input_history::InputHistory::new(),
+            replace_history: crate::input_history::InputHistory::new(),
         })
     }
 
@@ -1846,23 +1854,23 @@ impl Editor {
 
     /// Cancel the current prompt and return to normal mode
     pub fn cancel_prompt(&mut self) {
-        // Only clear search highlights if we're canceling a search/replace prompt
-        let should_clear_search = if let Some(ref prompt) = self.prompt {
-            matches!(
-                prompt.prompt_type,
-                PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch
-            )
-        } else {
-            false
-        };
-
-        self.prompt = None;
-
-        // Clear search highlights when cancelling search prompt
-        if should_clear_search {
-            self.clear_search_highlights();
+        // Determine prompt type and reset appropriate history navigation
+        if let Some(ref prompt) = self.prompt {
+            match prompt.prompt_type {
+                PromptType::Search
+                | PromptType::ReplaceSearch
+                | PromptType::QueryReplaceSearch => {
+                    self.search_history.reset_navigation();
+                    self.clear_search_highlights();
+                }
+                PromptType::Replace { .. } | PromptType::QueryReplace { .. } => {
+                    self.replace_history.reset_navigation();
+                }
+                _ => {}
+            }
         }
 
+        self.prompt = None;
         self.status_message = Some("Canceled".to_string());
     }
 
@@ -1898,6 +1906,23 @@ impl Editor {
             } else {
                 prompt.input.clone()
             };
+
+            // Add to appropriate history based on prompt type
+            match prompt.prompt_type {
+                PromptType::Search
+                | PromptType::ReplaceSearch
+                | PromptType::QueryReplaceSearch => {
+                    self.search_history.push(final_input.clone());
+                    // Reset navigation state
+                    self.search_history.reset_navigation();
+                }
+                PromptType::Replace { .. } | PromptType::QueryReplace { .. } => {
+                    self.replace_history.push(final_input.clone());
+                    // Reset navigation state
+                    self.replace_history.reset_navigation();
+                }
+                _ => {}
+            }
 
             Some((final_input, prompt.prompt_type))
         } else {
@@ -3447,6 +3472,7 @@ impl Editor {
             Action::PromptSelectPrev => {
                 if let Some(prompt) = self.prompt_mut() {
                     if !prompt.suggestions.is_empty() {
+                        // Suggestions exist: navigate suggestions
                         if let Some(selected) = prompt.selected_suggestion {
                             // Don't wrap around - stay at 0 if already at the beginning
                             prompt.selected_suggestion = if selected == 0 {
@@ -3455,17 +3481,83 @@ impl Editor {
                                 Some(selected - 1)
                             };
                         }
+                    } else {
+                        // No suggestions: navigate history (Up arrow)
+                        let prompt_type = prompt.prompt_type.clone();
+                        let current_input = prompt.input.clone();
+
+                        // Get the appropriate history based on prompt type
+                        let history_item = match prompt_type {
+                            PromptType::Search
+                            | PromptType::ReplaceSearch
+                            | PromptType::QueryReplaceSearch => {
+                                self.search_history.navigate_prev(&current_input)
+                            }
+                            PromptType::Replace { .. } | PromptType::QueryReplace { .. } => {
+                                self.replace_history.navigate_prev(&current_input)
+                            }
+                            _ => None,
+                        };
+
+                        // Update prompt input if history item exists
+                        if let Some(history_text) = history_item {
+                            if let Some(prompt) = self.prompt_mut() {
+                                prompt.set_input(history_text.clone());
+
+                                // For search prompts, update highlights incrementally
+                                if matches!(
+                                    prompt_type,
+                                    PromptType::Search
+                                        | PromptType::ReplaceSearch
+                                        | PromptType::QueryReplaceSearch
+                                ) {
+                                    self.update_search_highlights(&history_text);
+                                }
+                            }
+                        }
                     }
                 }
             }
             Action::PromptSelectNext => {
                 if let Some(prompt) = self.prompt_mut() {
                     if !prompt.suggestions.is_empty() {
+                        // Suggestions exist: navigate suggestions
                         if let Some(selected) = prompt.selected_suggestion {
                             // Don't wrap around - stay at the end if already at the last item
                             let new_pos = selected + 1;
                             prompt.selected_suggestion =
                                 Some(new_pos.min(prompt.suggestions.len() - 1));
+                        }
+                    } else {
+                        // No suggestions: navigate history (Down arrow)
+                        let prompt_type = prompt.prompt_type.clone();
+
+                        // Get the appropriate history based on prompt type
+                        let history_item = match prompt_type {
+                            PromptType::Search
+                            | PromptType::ReplaceSearch
+                            | PromptType::QueryReplaceSearch => self.search_history.navigate_next(),
+                            PromptType::Replace { .. } | PromptType::QueryReplace { .. } => {
+                                self.replace_history.navigate_next()
+                            }
+                            _ => None,
+                        };
+
+                        // Update prompt input if history item exists
+                        if let Some(history_text) = history_item {
+                            if let Some(prompt) = self.prompt_mut() {
+                                prompt.set_input(history_text.clone());
+
+                                // For search prompts, update highlights incrementally
+                                if matches!(
+                                    prompt_type,
+                                    PromptType::Search
+                                        | PromptType::ReplaceSearch
+                                        | PromptType::QueryReplaceSearch
+                                ) {
+                                    self.update_search_highlights(&history_text);
+                                }
+                            }
                         }
                     }
                 }
