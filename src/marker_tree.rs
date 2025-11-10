@@ -416,13 +416,17 @@ impl IntervalTree {
         if bf > 1 {
             let left_rc = node.borrow().left.as_ref().unwrap().clone();
             if Node::balance_factor(&left_rc) < 0 {
-                node.borrow_mut().left = Self::rotate_left(node.borrow_mut().left.take().unwrap());
+                // Fix RefCell borrow issue: extract left child before rotating
+                let left_child = node.borrow_mut().left.take().unwrap();
+                node.borrow_mut().left = Self::rotate_left(left_child);
             }
             Self::rotate_right(node)
         } else if bf < -1 {
             let right_rc = node.borrow().right.as_ref().unwrap().clone();
             if Node::balance_factor(&right_rc) > 0 {
-                node.borrow_mut().right = Self::rotate_right(node.borrow_mut().right.take().unwrap());
+                // Fix RefCell borrow issue: extract right child before rotating
+                let right_child = node.borrow_mut().right.take().unwrap();
+                node.borrow_mut().right = Self::rotate_right(right_child);
             }
             Self::rotate_left(node)
         } else {
