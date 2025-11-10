@@ -446,6 +446,56 @@ fn test_auto_dedent_on_close_brace() {
     }
 }
 
+/// Test that typing a closing brace in a nested block dedents to the correct level
+/// (not all the way to column 0, but to the parent block's indent level)
+#[test]
+fn test_auto_dedent_nested_blocks() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Type nested if statements
+    harness.type_text("fn main() {").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.type_text("if true {").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.type_text("if false {").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content();
+    println!("Content before typing closing brace:\n{}", content);
+
+    // We should be at 12 spaces (3 levels deep: fn, if, if)
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.len() >= 4 {
+        let line3_indent = lines[3].chars().take_while(|&c| c == ' ').count();
+        assert_eq!(line3_indent, 12, "Should have 12 spaces after nested if blocks");
+    }
+
+    // Now type a closing brace - it should dedent to 8 spaces (parent if level)
+    // not to 0 spaces!
+    harness.type_text("}").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content();
+    println!("Content after typing closing brace:\n{}", content);
+
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.len() >= 4 {
+        let line3 = lines[3];
+        let leading_spaces = line3.chars().take_while(|&c| c == ' ').count();
+        assert_eq!(
+            leading_spaces, 8,
+            "Closing brace should dedent to 8 spaces (parent if level), but found {} spaces. Content: {:?}",
+            leading_spaces, content
+        );
+    }
+}
+
 /// Test that pressing Enter after an empty line inside function body maintains indent
 /// This should use tree-sitter to detect we're still inside the function block
 #[test]
