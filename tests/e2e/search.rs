@@ -791,3 +791,64 @@ fn test_history_updates_incremental_highlights() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 }
+
+/// Test that incremental highlighting works on second search (bug reproduction)
+#[test]
+fn test_incremental_highlighting_on_second_search() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "hello world\nfoo bar\ntest content").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // First search: "hello"
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("hello").unwrap();
+    harness.render().unwrap();
+
+    // Verify incremental highlighting appears for "hello"
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("hello world"),
+        "Should show 'hello' in content"
+    );
+    assert!(screen.contains("Search: hello"), "Should show search prompt");
+
+    // Confirm first search
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Second search: "foo"
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type "foo" incrementally
+    harness.type_text("f").unwrap();
+    harness.render().unwrap();
+
+    // Verify incremental highlighting appears for "f" (not "hello")
+    let screen = harness.screen_to_string();
+    assert!(screen.contains("Search: f"), "Should show 'f' in search prompt");
+
+    // Type rest of "foo"
+    harness.type_text("oo").unwrap();
+    harness.render().unwrap();
+
+    // Verify incremental highlighting appears for "foo"
+    let screen = harness.screen_to_string();
+    assert!(screen.contains("foo bar"), "Should show 'foo' in content");
+    assert!(screen.contains("Search: foo"), "Should show 'foo' in prompt");
+
+    // Cancel
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+}
