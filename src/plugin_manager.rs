@@ -470,6 +470,44 @@ impl PluginManager {
         })?;
         editor.set("spawn", spawn)?;
 
+        // Clone API for clear overlays functions
+        let api_clone = api.clone();
+
+        // editor.clear_all_overlays(buffer_id) - Remove all overlays from a buffer
+        let clear_all_overlays = lua.create_function(move |_, buffer_id: usize| {
+            api_clone
+                .send_command(PluginCommand::ClearAllOverlays {
+                    buffer_id: BufferId(buffer_id),
+                })
+                .map_err(|e| mlua::Error::RuntimeError(e))
+        })?;
+        editor.set("clear_all_overlays", clear_all_overlays)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.remove_overlays_by_prefix(buffer_id, prefix) - Remove overlays by ID prefix
+        let remove_overlays_by_prefix =
+            lua.create_function(move |_, (buffer_id, prefix): (usize, String)| {
+                api_clone
+                    .send_command(PluginCommand::RemoveOverlaysByPrefix {
+                        buffer_id: BufferId(buffer_id),
+                        prefix,
+                    })
+                    .map_err(|e| mlua::Error::RuntimeError(e))
+            })?;
+        editor.set("remove_overlays_by_prefix", remove_overlays_by_prefix)?;
+
+        // NOTE: We intentionally do NOT provide a get_buffer_content() API
+        // because it would materialize the entire buffer into memory, which
+        // defeats the editor's streaming architecture for huge files (GB+).
+        //
+        // Instead, plugins should use:
+        // 1. The render-line hook to access visible line content efficiently
+        // 2. Buffer metadata via get_buffer_info() for file path, length, etc.
+        //
+        // The example plugin buffer_query_demo.lua should be updated to reflect this.
+
         // Set the editor table as a global
         globals.set("editor", editor)?;
 

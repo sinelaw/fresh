@@ -1,8 +1,8 @@
 # Plugin System Implementation Status
 
-**Date:** 2025-11-06
-**Status:** Phase 1 Complete ✅
-**Branch:** `claude/emacs-plugin-system-analysis-011CUqebLMydz4rG6Wp8MgE3`
+**Date:** 2025-11-10 (Updated)
+**Status:** Phase 1 Complete ✅ + Phase 2 Overlay Management ✅
+**Branch:** N/A (integrated into main)
 
 ---
 
@@ -249,29 +249,44 @@ for cmd in plugin_commands {
 
 ---
 
-## What's NOT Yet Implemented
+## Recent Updates (Nov 2025)
 
-### Integration with Editor (Next Step)
-- [ ] Add PluginManager to Editor struct
-- [ ] Process plugin commands in main loop
-- [ ] Add hook invocation points (on save, on insert, etc.)
-- [ ] Plugin config in `config.json`
+### Overlay Lifecycle Management ✅
+**Added:**
+- `editor.clear_all_overlays(buffer_id)` - Remove all overlays from a buffer
+- `editor.remove_overlays_by_prefix(buffer_id, prefix)` - Bulk removal by ID prefix
+- `OverlayManager::remove_by_prefix()` - Efficient prefix-based removal with marker cleanup
+- Proper integration into plugin command processing
 
-### Buffer Query API
-Plugins currently can't:
-- Get buffer content
-- Query cursor position
-- List open buffers
+### TODO Highlighter Plugin Rewritten ✅
+- Fully robust implementation using new overlay management APIs
+- Scales to GB+ files using render-line hook
+- Proper cleanup of stale overlays
+- Configurable keywords and colors
+- No longer creates orphaned overlays when text changes
 
-**Needed:**
-```rust
-editor.get_buffer_content(buffer_id, range)
-editor.get_cursor_position(buffer_id)
-editor.get_all_buffers()
-```
+### Buffer Query API - Architectural Decision ✅
+**Decision:** Intentionally NOT implementing `get_buffer_content()` API
+
+**Rationale:**
+- Would materialize entire buffer into memory (defeats streaming architecture)
+- Kills performance on huge files (GB+)
+- Violates design principle of chunked/streaming operations
+
+**Instead:**
+- Plugins use `render-line` hook for efficient line-by-line content access
+- Buffer metadata available via `get_buffer_info()` (path, length, modified status)
+- External tools via `editor.spawn()` for file-level operations (e.g., `wc -l`)
+
+### Integration Status ✅
+- [x] PluginManager integrated into Editor struct
+- [x] Plugin commands processed in main loop
+- [x] Hook invocation points (save, insert, render, etc.)
+- [ ] Plugin config in `config.json` (not yet needed)
 
 ### Advanced Features
-- [ ] Async task spawning (for git, external commands)
+- [x] Async task spawning (for git, external commands) - via `editor.spawn()`
+- [x] Overlay lifecycle management (clear all, remove by prefix)
 - [ ] Popup API (custom dialogs, menus)
 - [ ] Custom keybinding registration
 - [ ] WASM plugin support

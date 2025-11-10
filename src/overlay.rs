@@ -235,6 +235,37 @@ impl OverlayManager {
             .find(|o| o.id.as_deref() == Some(id))
     }
 
+    /// Remove all overlays whose ID starts with the given prefix
+    pub fn remove_by_prefix(&mut self, prefix: &str, marker_list: &mut MarkerList) {
+        // Collect markers to delete
+        let markers_to_delete: Vec<_> = self
+            .overlays
+            .iter()
+            .filter(|o| {
+                if let Some(id) = &o.id {
+                    id.starts_with(prefix)
+                } else {
+                    false
+                }
+            })
+            .flat_map(|o| vec![o.start_marker, o.end_marker])
+            .collect();
+
+        // Remove overlays
+        self.overlays.retain(|o| {
+            if let Some(id) = &o.id {
+                !id.starts_with(prefix)
+            } else {
+                true
+            }
+        });
+
+        // Delete markers
+        for marker_id in markers_to_delete {
+            marker_list.delete(marker_id);
+        }
+    }
+
     /// Get total number of overlays
     pub fn len(&self) -> usize {
         self.overlays.len()

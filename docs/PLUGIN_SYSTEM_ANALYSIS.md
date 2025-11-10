@@ -425,47 +425,34 @@ impl HookRegistry {
 }
 ```
 
-### Gap 4: Dynamic Command Registration (HIGH PRIORITY)
+### Gap 4: Dynamic Command Registration ✅ (IMPLEMENTED)
 
-**Current Problem:**
-```rust
-// src/commands.rs - returns hardcoded Vec
-pub fn get_all_commands() -> Vec<Command> {
-    vec![
-        Command { name: "Open File", action: Action::Open, ... },
-        Command { name: "Save", action: Action::Save, ... },
-        // ... hardcoded list
-    ]
-}
-```
+**Status:** Fully implemented in Phase 1
 
-**Desired API:**
+**Implementation:**
 ```rust
+// src/command_registry.rs
 pub struct CommandRegistry {
     commands: Vec<Command>,
 }
 
 impl CommandRegistry {
-    pub fn register(&mut self, command: Command) {
-        self.commands.push(command);
-    }
-
-    pub fn unregister(&mut self, name: &str) {
-        self.commands.retain(|c| c.name != name);
-    }
-
-    pub fn get_all(&self) -> &[Command] {
-        &self.commands
-    }
+    pub fn register(&mut self, command: Command);
+    pub fn unregister(&mut self, name: &str);
+    pub fn unregister_by_prefix(&mut self, prefix: &str);  // For plugin cleanup
+    pub fn get_all(&self) -> &[Command];
 }
 
-// In plugin:
-ctx.register_command(Command {
-    name: "Magit Status",
-    description: "Open Magit status buffer",
-    action: Action::Custom("magit-status".into()),
-    contexts: vec![KeyContext::Custom("magit".into())],
-});
+// In Lua plugins:
+editor.register_command({
+    name = "My Command",
+    description = "Does something",
+    action = "my_action",
+    contexts = {"normal"},
+    callback = function()
+        -- Custom Lua code
+    end
+})
 ```
 
 ### Gap 5: Custom Action Handling (MEDIUM PRIORITY)
@@ -499,21 +486,30 @@ pub struct ActionRegistry {
 }
 ```
 
-### Gap 6: Buffer Query API (MEDIUM PRIORITY)
+### Gap 6: Buffer Query API ✅ (IMPLEMENTED - Nov 2025)
 
-**What's Missing:**
+**Status:** Implemented with architectural constraints
+
+**Available APIs:**
 ```rust
-// Currently no way to query buffer state
-impl Editor {
-    pub fn get_buffer_content(&self, id: BufferId, range: Range<usize>) -> Option<String>;
-    pub fn get_buffer_length(&self, id: BufferId) -> Option<usize>;
-    pub fn get_cursor_position(&self, id: BufferId) -> Option<usize>;
-    pub fn get_all_cursors(&self, id: BufferId) -> Vec<(usize, Option<usize>)>;
-    pub fn get_buffer_file_path(&self, id: BufferId) -> Option<&Path>;
-    pub fn get_buffer_language(&self, id: BufferId) -> Option<&str>;
-    pub fn get_overlays_in_range(&self, id: BufferId, range: Range<usize>) -> Vec<&Overlay>;
-}
+// Query metadata (implemented)
+editor.get_buffer_info(buffer_id) -> BufferInfo  // path, modified, length
+editor.get_active_buffer_id() -> BufferId
+editor.list_buffers() -> Vec<BufferInfo>
+editor.get_primary_cursor() -> CursorInfo
+editor.get_all_cursors() -> Vec<CursorInfo>
+editor.get_viewport() -> ViewportInfo
+
+// Access content via hooks (recommended approach)
+editor.on("render-line", function(args)
+    // args: buffer_id, line_number, byte_start, byte_end, content
+end)
 ```
+
+**Intentionally NOT Implemented:**
+- `get_buffer_content()` - Would materialize entire buffer, killing performance on GB+ files
+- Plugins should use `render-line` hook for line-by-line access instead
+- For file-level operations, use `editor.spawn()` with external tools
 
 ### Gap 7: Plugin Configuration (LOW PRIORITY)
 
