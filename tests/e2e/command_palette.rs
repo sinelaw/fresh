@@ -654,9 +654,11 @@ fn test_command_palette_pagedown_no_wraparound() {
     // - Git: Find File (opens "Find file:" prompt)
     // - Git: Grep (opens "Git Grep:" prompt)
     // - Or we get an error message about command not being available (for File Explorer commands)
+    // - Or a truncated error message (indicated by "Command '..." and ending with "is...")
     let is_expected_result = screen.contains("Git Grep:")
         || screen.contains("Find file:")
-        || screen.contains("not available in");
+        || screen.contains("not available in")
+        || (screen.contains("Command '") && screen.contains("is..."));
     assert!(
         is_expected_result,
         "Expected to execute a command near the end of the list, but got: {}",
