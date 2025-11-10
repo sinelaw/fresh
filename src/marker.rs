@@ -492,15 +492,26 @@ mod tests {
                     }
                 }
 
-                // Get positions of all markers
+                // Get positions of all markers AND their intervals for debugging
                 let positions: Vec<_> = markers
                     .iter()
                     .filter_map(|&m| list.get_position(m))
                     .collect();
 
+                // Debug: Get full intervals (start, end) from tree
+                let intervals: Vec<_> = markers
+                    .iter()
+                    .filter_map(|&m| list.tree.get_position(m.0))
+                    .collect();
+
                 // Should still be in order (no inversions)
                 for window in positions.windows(2) {
-                    assert!(window[0] <= window[1], "Marker ordering violated: {:?}", positions);
+                    if window[0] > window[1] {
+                        eprintln!("Ordering violation detected!");
+                        eprintln!("  Positions: {:?}", positions);
+                        eprintln!("  Full intervals: {:?}", intervals);
+                        panic!("Marker ordering violated: {:?}", positions);
+                    }
                 }
             }
         }
