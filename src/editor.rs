@@ -5392,54 +5392,99 @@ impl Editor {
             return;
         }
 
-        // Perform the replacement and collect overlay IDs to remove
-        let (count, overlay_ids) = {
-            let state = self.active_state_mut();
+        // Find all matches first (before making any modifications)
+        let matches = {
+            let state = self.active_state();
+            let buffer_len = state.buffer.len();
+            let mut matches = Vec::new();
+            let mut current_pos = 0;
 
-            // Perform the replacement
-            let count = state.buffer.replace_all(search, replacement);
-
-            // Collect overlay IDs that need to be removed
-            let overlay_ids: Vec<String> = state
-                .overlays
-                .all()
-                .iter()
-                .filter_map(|o| {
-                    o.id.as_ref().and_then(|id| {
-                        if id.starts_with("search_highlight_") || id.starts_with("search_match_") {
-                            Some(id.clone())
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .collect();
-
-            (count, overlay_ids)
+            while current_pos < buffer_len {
+                if let Some(offset) = state.buffer.find_next_in_range(search, current_pos, Some(current_pos..buffer_len)) {
+                    matches.push(offset);
+                    current_pos = offset + search.len();
+                } else {
+                    break;
+                }
+            }
+            matches
         };
 
-        // Now we can safely modify self.search_state without a borrow conflict
-        if count > 0 {
-            // Clear search state since positions are now invalid
-            self.search_state = None;
+        let count = matches.len();
 
-            // Clear any search highlight overlays
-            let state = self.active_state_mut();
-            for id in overlay_ids {
-                state.overlays.remove_by_id(&id, &mut state.marker_list);
-            }
-
-            // Set status message
-            self.set_status_message(format!(
-                "Replaced {} occurrence{} of '{}' with '{}'",
-                count,
-                if count == 1 { "" } else { "s" },
-                search,
-                replacement
-            ));
-        } else {
+        if count == 0 {
             self.set_status_message(format!("No occurrences of '{}' found.", search));
+            return;
         }
+
+        // Create events for all replacements (in reverse order to preserve positions)
+        let cursor_id = self.active_state().cursors.primary_id();
+        let mut events = Vec::new();
+
+        for match_pos in matches.into_iter().rev() {
+            let end = match_pos + search.len();
+            let range = match_pos..end;
+
+            // Get the text being deleted
+            let deleted_text = self.active_state().buffer.slice(range.clone());
+
+            // Add Delete event
+            events.push(Event::Delete {
+                range: range.clone(),
+                deleted_text,
+                cursor_id,
+            });
+
+            // Add Insert event
+            events.push(Event::Insert {
+                position: match_pos,
+                text: replacement.to_string(),
+                cursor_id,
+            });
+        }
+
+        // Wrap all replacement events in a single Batch for atomic undo
+        let batch = Event::Batch {
+            events,
+            description: format!("Replace all '{}' with '{}'", search, replacement),
+        };
+
+        // Apply through event log for proper undo support
+        self.active_event_log_mut().append(batch.clone());
+        self.apply_event_to_active_buffer(&batch);
+
+        // Clear search state since positions are now invalid
+        self.search_state = None;
+
+        // Clear any search highlight overlays
+        let state = self.active_state_mut();
+        let overlay_ids: Vec<String> = state
+            .overlays
+            .all()
+            .iter()
+            .filter_map(|o| {
+                o.id.as_ref().and_then(|id| {
+                    if id.starts_with("search_highlight_") || id.starts_with("search_match_") {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        for id in overlay_ids {
+            state.overlays.remove_by_id(&id, &mut state.marker_list);
+        }
+
+        // Set status message
+        self.set_status_message(format!(
+            "Replaced {} occurrence{} of '{}' with '{}'",
+            count,
+            if count == 1 { "" } else { "s" },
+            search,
+            replacement
+        ));
     }
 
     /// Start interactive replace mode (query-replace)
@@ -5519,15 +5564,94 @@ impl Editor {
                 }
             }
             '!' => {
-                // Replace all remaining matches using the efficient replace_all method
+                // Replace all remaining matches (current + all after it)
                 // First replace the current match
                 self.replace_current_match(&ir_state)?;
                 ir_state.replacements_made += 1;
 
-                // Then use replace_all for all remaining matches from current position
-                let state = self.active_state_mut();
-                let count = state.buffer.replace_all(&ir_state.search, &ir_state.replacement);
-                ir_state.replacements_made += count;
+                // Find all remaining matches after the current replacement
+                let search_pos = ir_state.current_match_pos + ir_state.replacement.len();
+                let remaining_matches = {
+                    let state = self.active_state();
+                    let buffer_len = state.buffer.len();
+                    let mut matches = Vec::new();
+                    let mut current_pos = search_pos;
+
+                    // Find matches from current position to end
+                    while current_pos < buffer_len {
+                        if let Some(offset) = state.buffer.find_next_in_range(&ir_state.search, current_pos, Some(current_pos..buffer_len)) {
+                            // If we've wrapped, stop before reaching the original start position
+                            if ir_state.has_wrapped && offset >= ir_state.start_pos {
+                                break;
+                            }
+                            matches.push(offset);
+                            current_pos = offset + ir_state.search.len();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // If we haven't wrapped yet, wrap to beginning
+                    if !ir_state.has_wrapped && !matches.is_empty() {
+                        current_pos = 0;
+                        while current_pos < ir_state.start_pos {
+                            if let Some(offset) = state.buffer.find_next_in_range(&ir_state.search, current_pos, Some(current_pos..ir_state.start_pos)) {
+                                if offset < ir_state.start_pos {
+                                    matches.push(offset);
+                                    current_pos = offset + ir_state.search.len();
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+
+                    matches
+                };
+
+                let remaining_count = remaining_matches.len();
+
+                if remaining_count > 0 {
+                    // Create events for all remaining replacements (in reverse order)
+                    let cursor_id = self.active_state().cursors.primary_id();
+                    let mut events = Vec::new();
+
+                    for match_pos in remaining_matches.into_iter().rev() {
+                        let end = match_pos + ir_state.search.len();
+                        let range = match_pos..end;
+
+                        // Get the text being deleted
+                        let deleted_text = self.active_state().buffer.slice(range.clone());
+
+                        // Add Delete event
+                        events.push(Event::Delete {
+                            range: range.clone(),
+                            deleted_text,
+                            cursor_id,
+                        });
+
+                        // Add Insert event
+                        events.push(Event::Insert {
+                            position: match_pos,
+                            text: ir_state.replacement.clone(),
+                            cursor_id,
+                        });
+                    }
+
+                    // Wrap all remaining replacements in a single Batch for atomic undo
+                    let batch = Event::Batch {
+                        events,
+                        description: format!("Query replace remaining '{}' with '{}'", ir_state.search, ir_state.replacement),
+                    };
+
+                    // Apply through event log
+                    self.active_event_log_mut().append(batch.clone());
+                    self.apply_event_to_active_buffer(&batch);
+
+                    ir_state.replacements_made += remaining_count;
+                }
 
                 self.finish_interactive_replace(ir_state.replacements_made);
             }
