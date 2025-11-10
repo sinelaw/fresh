@@ -1894,7 +1894,7 @@ impl Editor {
                 // Trigger async git ls-files with query
                 self.request_git_ls_files(input);
             }
-            PromptType::Search => {
+            PromptType::Search | PromptType::ReplaceSearch => {
                 // Update incremental search highlights as user types
                 self.update_search_highlights(&input);
             }
@@ -3186,6 +3186,18 @@ impl Editor {
                             // Perform search with the given query
                             self.perform_search(&input);
                         }
+                        PromptType::ReplaceSearch => {
+                            // User entered search query for replace, now prompt for replacement text
+                            // First perform the search to highlight matches
+                            self.perform_search(&input);
+                            // Then open the replacement prompt
+                            self.start_prompt(
+                                format!("Replace '{}' with: ", input),
+                                PromptType::Replace {
+                                    search: input.clone(),
+                                },
+                            );
+                        }
                         PromptType::Replace { search } => {
                             // Perform replace of search term with input
                             self.perform_replace(&search, &input);
@@ -3812,11 +3824,8 @@ impl Editor {
                         },
                     );
                 } else {
-                    // No active search, start a new search first
-                    self.start_prompt("Search: ".to_string(), PromptType::Search);
-                    self.set_status_message(
-                        "No active search. Enter search query first.".to_string(),
-                    );
+                    // No active search, prompt for search query first (with incremental highlighting)
+                    self.start_prompt("Replace: ".to_string(), PromptType::ReplaceSearch);
                 }
             }
             Action::FindNext => {
@@ -5278,9 +5287,62 @@ impl Editor {
         }
     }
 
-    /// Perform a replace operation (stub for now)
-    fn perform_replace(&mut self, _search: &str, _replacement: &str) {
-        self.set_status_message("Replace not yet implemented.".to_string());
+    /// Perform a replace-all operation
+    /// Replaces all occurrences of the search query with the replacement text
+    fn perform_replace(&mut self, search: &str, replacement: &str) {
+        if search.is_empty() {
+            self.set_status_message("Replace: empty search query.".to_string());
+            return;
+        }
+
+        // Perform the replacement and collect overlay IDs to remove
+        let (count, overlay_ids) = {
+            let state = self.active_state_mut();
+
+            // Perform the replacement
+            let count = state.buffer.replace_all(search, replacement);
+
+            // Collect overlay IDs that need to be removed
+            let overlay_ids: Vec<String> = state
+                .overlays
+                .all()
+                .iter()
+                .filter_map(|o| {
+                    o.id.as_ref().and_then(|id| {
+                        if id.starts_with("search_highlight_") || id.starts_with("search_match_") {
+                            Some(id.clone())
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            (count, overlay_ids)
+        };
+
+        // Now we can safely modify self.search_state without a borrow conflict
+        if count > 0 {
+            // Clear search state since positions are now invalid
+            self.search_state = None;
+
+            // Clear any search highlight overlays
+            let state = self.active_state_mut();
+            for id in overlay_ids {
+                state.overlays.remove_by_id(&id, &mut state.marker_list);
+            }
+
+            // Set status message
+            self.set_status_message(format!(
+                "Replaced {} occurrence{} of '{}' with '{}'",
+                count,
+                if count == 1 { "" } else { "s" },
+                search,
+                replacement
+            ));
+        } else {
+            self.set_status_message(format!("No occurrences of '{}' found.", search));
+        }
     }
 }
 

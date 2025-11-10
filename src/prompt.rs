@@ -12,6 +12,8 @@ pub enum PromptType {
     SaveFileAs,
     /// Search for text in buffer
     Search,
+    /// Search for text in buffer (for replace operation - will prompt for replacement after)
+    ReplaceSearch,
     /// Replace text in buffer
     Replace { search: String },
     /// Execute a command by name (M-x)
