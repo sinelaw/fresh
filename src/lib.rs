@@ -30,6 +30,7 @@ pub mod lsp_diagnostics;
 pub mod lsp_manager;
 pub mod margin;
 pub mod marker;
+pub mod marker_tree;
 pub mod multi_cursor;
 pub mod overlay;
 pub mod persistence;
