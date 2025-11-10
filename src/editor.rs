@@ -5260,8 +5260,9 @@ impl Editor {
     /// Update search highlights in visible viewport only (for incremental search)
     /// This is called as the user types in the search prompt for real-time feedback
     fn update_search_highlights(&mut self, query: &str) {
-        // Don't highlight empty queries
+        // If query is empty, clear highlights and return
         if query.is_empty() {
+            self.clear_search_highlights();
             return;
         }
 

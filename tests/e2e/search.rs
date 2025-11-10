@@ -852,3 +852,133 @@ fn test_incremental_highlighting_on_second_search() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 }
+
+/// Test that highlights disappear when search query becomes empty
+#[test]
+fn test_highlights_clear_when_query_becomes_empty() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "hello world\nfoo bar\ntest content").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Open search and type "hello"
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("hello").unwrap();
+    harness.render().unwrap();
+
+    // Verify highlights exist
+    let highlight_count_before = harness.count_search_highlights();
+    assert!(
+        highlight_count_before > 0,
+        "Should have highlights for 'hello'"
+    );
+
+    // Delete all characters one by one
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    // Verify highlights are cleared
+    let highlight_count_after = harness.count_search_highlights();
+    assert_eq!(
+        highlight_count_after, 0,
+        "Should have no highlights when query is empty"
+    );
+
+    // Cancel
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+}
+
+/// Test that highlights clear when navigating to empty input via history
+#[test]
+fn test_highlights_clear_on_history_to_empty() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "hello world\nfoo bar").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Add "hello" to history
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("hello").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Open search again and start typing something new
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("foo").unwrap();
+    harness.render().unwrap();
+
+    // Verify we have highlights for "foo"
+    let highlight_count_foo = harness.count_search_highlights();
+    assert!(highlight_count_foo > 0, "Should have highlights for 'foo'");
+
+    // Navigate up to history (shows "hello")
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should have highlights for "hello"
+    let highlight_count_hello = harness.count_search_highlights();
+    assert!(
+        highlight_count_hello > 0,
+        "Should have highlights for 'hello'"
+    );
+
+    // Navigate down past the end (returns to "foo")
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should have highlights for "foo" again
+    let highlight_count_foo_again = harness.count_search_highlights();
+    assert!(
+        highlight_count_foo_again > 0,
+        "Should have highlights for 'foo' again"
+    );
+
+    // Now delete all characters to make it empty
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+    }
+
+    // Navigate up to "hello" in history
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Navigate down to empty input
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Highlights should be cleared for empty input
+    let highlight_count_empty = harness.count_search_highlights();
+    assert_eq!(
+        highlight_count_empty, 0,
+        "Should have no highlights when navigating to empty input"
+    );
+
+    // Cancel
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+}
