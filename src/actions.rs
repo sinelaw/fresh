@@ -814,8 +814,11 @@ pub fn action_to_events(
         Action::SelectWord => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 // Find word boundaries at current position
+                // First find the start of the word we're in/adjacent to
                 let word_start = find_word_start(&state.buffer, cursor.position);
-                let word_end = find_word_end(&state.buffer, cursor.position);
+                // Then find the end of that word (from the start, not from cursor)
+                // This ensures we select the current word, not the next one
+                let word_end = find_word_end(&state.buffer, word_start);
 
                 if word_start < word_end {
                     events.push(Event::MoveCursor {
