@@ -157,8 +157,8 @@ impl IndentCalculator {
             return Some(indent);
         }
 
-        // Final fallback: copy previous line's indent
-        Some(Self::get_previous_line_indent(buffer, position))
+        // Final fallback: copy current line's indent (maintain indentation)
+        Some(Self::get_current_line_indent(buffer, position))
     }
 
     /// Calculate indent using simple pattern matching (fallback for incomplete syntax)
@@ -172,7 +172,7 @@ impl IndentCalculator {
             return None;
         }
 
-        let base_indent = Self::get_previous_line_indent(buffer, position);
+        let base_indent = Self::get_current_line_indent(buffer, position);
 
         // Find start of the line we're currently on (before pressing Enter)
         let mut line_start = position;
@@ -260,7 +260,7 @@ impl IndentCalculator {
 
         let mut indent_delta = 0i32;
         let mut found_any_captures = false;
-        let base_indent = Self::get_previous_line_indent(buffer, position);
+        let base_indent = Self::get_current_line_indent(buffer, position);
 
         // Manually iterate through matches
         let mut captures = query_cursor.captures(query, root, source.as_slice());
@@ -325,7 +325,34 @@ impl IndentCalculator {
         buffer.slice_bytes(pos..pos + 1).first().copied()
     }
 
-    /// Get the indent of the previous line (fallback strategy)
+    /// Get the indent of the current line (the line cursor is on)
+    fn get_current_line_indent(buffer: &Buffer, position: usize) -> usize {
+        // Find start of current line
+        let mut line_start = position;
+        while line_start > 0 {
+            if Self::byte_at(buffer, line_start.saturating_sub(1)) == Some(b'\n') {
+                break;
+            }
+            line_start = line_start.saturating_sub(1);
+        }
+
+        // Count leading whitespace on current line
+        let mut indent = 0;
+        let mut pos = line_start;
+        while pos < position {
+            match Self::byte_at(buffer, pos) {
+                Some(b' ') => indent += 1,
+                Some(b'\t') => indent += 4, // Assuming tab = 4 spaces
+                Some(_) => break, // Hit non-whitespace
+                None => break,
+            }
+            pos += 1;
+        }
+
+        indent
+    }
+
+    /// Get the indent of the previous line (line before cursor's line)
     fn get_previous_line_indent(buffer: &Buffer, position: usize) -> usize {
         // Find start of current line
         let mut line_start = position;
@@ -378,10 +405,15 @@ mod tests {
     use crate::buffer::Buffer;
 
     #[test]
-    fn test_previous_line_indent() {
+    fn test_current_and_previous_line_indent() {
         let buffer = Buffer::from_str("fn main() {\n    let x = 1;");
-        let indent = IndentCalculator::get_previous_line_indent(&buffer, buffer.len());
-        assert_eq!(indent, 4); // Previous line has 4 spaces
+
+        // At end of buffer (end of line 2)
+        let current_indent = IndentCalculator::get_current_line_indent(&buffer, buffer.len());
+        assert_eq!(current_indent, 4, "Current line (line 2) has 4 spaces");
+
+        let prev_indent = IndentCalculator::get_previous_line_indent(&buffer, buffer.len());
+        assert_eq!(prev_indent, 0, "Previous line (line 1) has 0 spaces");
     }
 
     #[test]
@@ -428,6 +460,47 @@ mod tests {
         assert!(indent.is_some());
         // Should suggest indenting
         assert!(indent.unwrap() >= 4);
+    }
+
+    #[test]
+    fn test_tree_sitter_used_for_complete_block() {
+        // Test that tree-sitter is used when we have a complete block with context
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str("fn main() {\n    let x = 1;\n}");
+        // Position after the closing }
+        let position = buffer.len();
+
+        // Tree-sitter should recognize this is a complete block
+        // Pattern matching would see '}' and not indent, but tree-sitter context should work
+        let ts_result = calc.calculate_indent_tree_sitter(&buffer, position, &Language::Rust, 4);
+
+        // Tree-sitter should return Some (even if it's 0 indent)
+        assert!(ts_result.is_some(), "Tree-sitter should handle complete blocks");
+    }
+
+    #[test]
+    fn test_nested_indent_maintained() {
+        // Test that we maintain nested indentation correctly
+        let mut calc = IndentCalculator::new();
+
+        // Create nested structure - position at end of line with just whitespace
+        let buffer = Buffer::from_str("fn main() {\n    if true {\n        ");
+        let position = buffer.len();
+
+        // This should be 8 spaces (maintaining nested indent from current line)
+        let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
+        assert_eq!(indent, Some(8), "Should maintain nested indent level (got {:?})", indent);
+    }
+
+    #[test]
+    fn test_pattern_fallback_for_incomplete_syntax() {
+        // Verify pattern matching kicks in when tree-sitter can't help
+        let buffer = Buffer::from_str("fn main() {");
+        let position = buffer.len();
+
+        // Pattern matching should detect the '{'
+        let pattern_result = IndentCalculator::calculate_indent_pattern(&buffer, position, 4);
+        assert_eq!(pattern_result, Some(4), "Pattern matching should detect opening brace");
     }
 
     #[test]
