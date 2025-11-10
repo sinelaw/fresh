@@ -334,6 +334,104 @@ impl Buffer {
         None
     }
 
+    /// Replace a specific range of bytes with new text
+    /// Returns true if the replacement was successful
+    pub fn replace_range(&mut self, range: Range<usize>, replacement: &str) -> bool {
+        if range.start > self.len() || range.end > self.len() || range.start > range.end {
+            return false;
+        }
+
+        // Delete the old text and insert the new text
+        if !range.is_empty() {
+            self.delete(range.clone());
+        }
+        if !replacement.is_empty() {
+            self.insert(range.start, replacement);
+        }
+
+        true
+    }
+
+    /// Find the next occurrence of a pattern and replace it
+    /// Returns the position of the replacement, or None if pattern not found
+    pub fn replace_next(&mut self, pattern: &str, replacement: &str, start_pos: usize) -> Option<usize> {
+        if let Some(pos) = self.find_next(pattern, start_pos) {
+            let end = pos + pattern.len();
+            self.replace_range(pos..end, replacement);
+            Some(pos)
+        } else {
+            None
+        }
+    }
+
+    /// Replace all occurrences of a pattern with replacement text
+    /// Returns the number of replacements made
+    pub fn replace_all(&mut self, pattern: &str, replacement: &str) -> usize {
+        if pattern.is_empty() {
+            return 0;
+        }
+
+        let pattern_bytes = pattern.as_bytes();
+        let buffer_len = self.len();
+        let mut replacements = 0;
+        let mut current_pos = 0;
+
+        // Find all matches first (before making any modifications)
+        let mut matches = Vec::new();
+        while current_pos < buffer_len {
+            if let Some(offset) = self.find_pattern_streaming(current_pos, buffer_len, pattern_bytes) {
+                matches.push(offset);
+                current_pos = offset + pattern.len();
+            } else {
+                break;
+            }
+        }
+
+        // Apply replacements in reverse order to preserve positions
+        for match_pos in matches.into_iter().rev() {
+            let end = match_pos + pattern.len();
+            self.replace_range(match_pos..end, replacement);
+            replacements += 1;
+        }
+
+        replacements
+    }
+
+    /// Replace all occurrences of a regex pattern with replacement text
+    /// This uses the standard (non-bytes) Regex to support capture groups in replacement string
+    /// For searching, it converts buffer content to string which may be less efficient for huge files
+    /// Returns the number of replacements made
+    ///
+    /// # Arguments
+    /// * `regex` - A standard regex::Regex (NOT regex::bytes::Regex)
+    /// * `replacement` - Replacement string, can include capture groups like $1, $2, etc.
+    ///                   Use ${1} syntax when followed by non-whitespace: e.g., "${1}_${2}"
+    pub fn replace_all_regex(&mut self, regex: &regex::Regex, replacement: &str) -> usize {
+        // For replace with capture groups, we need to materialize the buffer
+        // This is less efficient but necessary for proper capture group expansion
+        let content = self.to_string();
+        let mut replacements = 0;
+        let mut matches = Vec::new();
+
+        // Find all matches with their captures
+        for captures in regex.captures_iter(&content) {
+            if let Some(full_match) = captures.get(0) {
+                // Expand the replacement string with capture groups
+                let mut expanded = String::new();
+                captures.expand(replacement, &mut expanded);
+                matches.push((full_match.start(), full_match.end(), expanded));
+                replacements += 1;
+            }
+        }
+
+        // Apply replacements in reverse order to preserve positions
+        for (start, end, replacement_text) in matches.into_iter().rev() {
+            self.replace_range(start..end, &replacement_text);
+        }
+
+        replacements
+    }
+
     /// Helper: Find pattern in haystack using naive string search
     fn find_pattern(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         if needle.is_empty() || haystack.len() < needle.len() {
@@ -1282,5 +1380,155 @@ mod tests {
                     "Should find pattern in large buffer at position {}", position_bytes);
             }
         }
+    }
+
+    // ============================================================================
+    // Replace tests
+    // ============================================================================
+
+    #[test]
+    fn test_replace_range() {
+        let mut buffer = Buffer::from_str("hello world");
+        assert!(buffer.replace_range(6..11, "rust"));
+        assert_eq!(buffer.to_string(), "hello rust");
+        assert!(buffer.is_modified());
+    }
+
+    #[test]
+    fn test_replace_range_empty() {
+        let mut buffer = Buffer::from_str("hello world");
+        assert!(buffer.replace_range(5..5, " beautiful"));
+        assert_eq!(buffer.to_string(), "hello beautiful world");
+    }
+
+    #[test]
+    fn test_replace_range_with_empty() {
+        let mut buffer = Buffer::from_str("hello world");
+        assert!(buffer.replace_range(5..11, ""));
+        assert_eq!(buffer.to_string(), "hello");
+    }
+
+    #[test]
+    fn test_replace_range_invalid() {
+        let mut buffer = Buffer::from_str("hello");
+        assert!(!buffer.replace_range(0..100, "text")); // End out of bounds
+        assert!(!buffer.replace_range(10..15, "text")); // Start out of bounds
+        assert!(!buffer.replace_range(5..3, "text"));   // Start > end
+    }
+
+    #[test]
+    fn test_replace_next() {
+        let mut buffer = Buffer::from_str("hello world hello");
+        assert_eq!(buffer.replace_next("hello", "hi", 0), Some(0));
+        assert_eq!(buffer.to_string(), "hi world hello");
+
+        assert_eq!(buffer.replace_next("hello", "hi", 0), Some(9));
+        assert_eq!(buffer.to_string(), "hi world hi");
+    }
+
+    #[test]
+    fn test_replace_next_not_found() {
+        let mut buffer = Buffer::from_str("hello world");
+        assert_eq!(buffer.replace_next("xyz", "abc", 0), None);
+        assert_eq!(buffer.to_string(), "hello world");
+    }
+
+    #[test]
+    fn test_replace_all_simple() {
+        let mut buffer = Buffer::from_str("hello world hello");
+        let count = buffer.replace_all("hello", "hi");
+        assert_eq!(count, 2);
+        assert_eq!(buffer.to_string(), "hi world hi");
+    }
+
+    #[test]
+    fn test_replace_all_overlapping() {
+        let mut buffer = Buffer::from_str("aaaa");
+        let count = buffer.replace_all("aa", "b");
+        assert_eq!(count, 2);
+        assert_eq!(buffer.to_string(), "bb");
+    }
+
+    #[test]
+    fn test_replace_all_empty_pattern() {
+        let mut buffer = Buffer::from_str("hello");
+        let count = buffer.replace_all("", "x");
+        assert_eq!(count, 0);
+        assert_eq!(buffer.to_string(), "hello");
+    }
+
+    #[test]
+    fn test_replace_all_no_matches() {
+        let mut buffer = Buffer::from_str("hello world");
+        let count = buffer.replace_all("xyz", "abc");
+        assert_eq!(count, 0);
+        assert_eq!(buffer.to_string(), "hello world");
+    }
+
+    #[test]
+    fn test_replace_all_size_change() {
+        let mut buffer = Buffer::from_str("a b c d e");
+        let count = buffer.replace_all(" ", "---");
+        assert_eq!(count, 4);
+        assert_eq!(buffer.to_string(), "a---b---c---d---e");
+    }
+
+    #[test]
+    fn test_replace_all_multiline() {
+        let mut buffer = Buffer::from_str("line1\nline2\nline3");
+        let count = buffer.replace_all("line", "LINE");
+        assert_eq!(count, 3);
+        assert_eq!(buffer.to_string(), "LINE1\nLINE2\nLINE3");
+    }
+
+    #[test]
+    fn test_replace_all_regex_simple() {
+        use regex::Regex;
+        let mut buffer = Buffer::from_str("hello world hello");
+        let regex = Regex::new(r"hello").unwrap();
+        let count = buffer.replace_all_regex(&regex, "hi");
+        assert_eq!(count, 2);
+        assert_eq!(buffer.to_string(), "hi world hi");
+    }
+
+    #[test]
+    fn test_replace_all_regex_with_captures() {
+        use regex::Regex;
+        let mut buffer = Buffer::from_str("foo123 bar456 baz789");
+        let regex = Regex::new(r"([a-z]+)(\d+)").unwrap();
+        // Note: Use ${1} syntax when capture group is followed by non-whitespace
+        let count = buffer.replace_all_regex(&regex, "${1}_${2}");
+        assert_eq!(count, 3);
+        assert_eq!(buffer.to_string(), "foo_123 bar_456 baz_789");
+    }
+
+    #[test]
+    fn test_replace_all_regex_word_boundaries() {
+        use regex::Regex;
+        let mut buffer = Buffer::from_str("the theory is theoretical");
+        let regex = Regex::new(r"\bthe\b").unwrap();
+        let count = buffer.replace_all_regex(&regex, "a");
+        assert_eq!(count, 1); // Only "the" at the beginning
+        assert_eq!(buffer.to_string(), "a theory is theoretical");
+    }
+
+    #[test]
+    fn test_replace_all_regex_no_matches() {
+        use regex::Regex;
+        let mut buffer = Buffer::from_str("hello world");
+        let regex = Regex::new(r"\d+").unwrap();
+        let count = buffer.replace_all_regex(&regex, "NUM");
+        assert_eq!(count, 0);
+        assert_eq!(buffer.to_string(), "hello world");
+    }
+
+    #[test]
+    fn test_replace_all_large_file() {
+        // Test with a larger buffer to ensure streaming works
+        let content = "test\n".repeat(1000); // 5000 bytes
+        let mut buffer = Buffer::from_str(&content);
+        let count = buffer.replace_all("test", "TEST");
+        assert_eq!(count, 1000);
+        assert_eq!(buffer.to_string(), "TEST\n".repeat(1000));
     }
 }
