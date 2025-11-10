@@ -1288,16 +1288,21 @@ mod tests {
                 let buffer = Buffer::from_str(&content);
 
                 let start_pos = start_offset.min(content.len());
-                let expected_pos = if start_pos <= before.len() {
-                    Some(before.len())
+
+                // find_next does wrap-around search, so we need to match that behavior
+                let expected_pos = if let Some(offset) = content[start_pos..].find(&pattern) {
+                    // Found from start_pos to end
+                    Some(start_pos + offset)
+                } else if start_pos > 0 {
+                    // Wrap around: search from beginning to start_pos
+                    content[..start_pos].find(&pattern)
                 } else {
-                    // Should wrap around and find at beginning
-                    Some(before.len())
+                    None
                 };
 
                 let result = buffer.find_next(&pattern, start_pos);
                 prop_assert_eq!(result, expected_pos,
-                    "Pattern at position {} should be found from start={}", before.len(), start_pos);
+                    "Streaming search should match naive wrap-around search from start={}", start_pos);
             }
 
             /// Property: Empty and single-character patterns
