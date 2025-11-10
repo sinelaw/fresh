@@ -344,6 +344,37 @@ pub fn get_all_commands() -> Vec<Command> {
         },
         // Note: Command Palette is intentionally not in the command list
         // to avoid confusion when it's already open (use Ctrl+P or Ctrl+/ to toggle)
+        // Search and replace
+        Command {
+            name: "Search".to_string(),
+            description: "Search for text in the current buffer".to_string(),
+            action: Action::Search,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Find Next".to_string(),
+            description: "Jump to the next search match".to_string(),
+            action: Action::FindNext,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Find Previous".to_string(),
+            description: "Jump to the previous search match".to_string(),
+            action: Action::FindPrevious,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Replace".to_string(),
+            description: "Replace text in the current buffer".to_string(),
+            action: Action::Replace,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Query Replace".to_string(),
+            description: "Interactive replace with y/n/!/q prompts for each match".to_string(),
+            action: Action::QueryReplace,
+            contexts: vec![KeyContext::Normal],
+        },
         // Git operations
         Command {
             name: "Git: Grep".to_string(),
