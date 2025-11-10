@@ -1,7 +1,9 @@
 use crate::chunk_tree::{ChunkTree, ChunkTreeConfig};
+use crate::chunked_search::OverlappingChunks;
 use crate::line_cache::{LineCache, LineInfo};
 use crate::persistence::ChunkTreePersistence;
 use crate::virtual_buffer::VirtualBuffer;
+use regex::bytes::Regex;
 use std::io::{self, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -245,69 +247,87 @@ impl Buffer {
         None
     }
 
-    /// Streaming pattern search from start to end position
-    /// Uses a sliding window buffer to search without materializing the entire file
+    /// Streaming pattern search from start to end position using overlapping chunks
+    /// Uses the VSCode-style buffered iteration approach with standard string search
     fn find_pattern_streaming(&self, start: usize, end: usize, pattern: &[u8]) -> Option<usize> {
         if pattern.is_empty() || start >= end {
             return None;
         }
 
         const CHUNK_SIZE: usize = 4096;
-        let mut iter = self.virtual_buffer.iter_at(start);
-        let mut buffer = Vec::with_capacity(pattern.len() + CHUNK_SIZE);
-        let mut buffer_start_pos = start; // Track where the buffer starts in the file
-        let mut current_read_pos = start; // Track where we've read up to
+        let overlap = pattern.len().saturating_sub(1);
+        let iter = self.virtual_buffer.iter_at(start);
+        let chunks = OverlappingChunks::new(iter, start, end, CHUNK_SIZE, overlap);
 
-        // Fill initial buffer
-        while buffer.len() < CHUNK_SIZE && current_read_pos < end {
-            if let Some(byte) = iter.next() {
-                buffer.push(byte);
-                current_read_pos += 1;
-            } else {
-                break;
+        for chunk in chunks {
+            // Search the entire buffer to find patterns spanning boundaries
+            if let Some(offset) = Self::find_pattern(&chunk.buffer, pattern) {
+                let match_end = offset + pattern.len();
+                // Only accept matches that END in or after the valid zone
+                // This ensures patterns spanning chunk boundaries are found exactly once
+                if match_end > chunk.valid_start {
+                    let match_pos = chunk.absolute_pos + offset;
+                    if match_pos + pattern.len() <= end {
+                        return Some(match_pos);
+                    }
+                }
             }
         }
 
-        // Search through the buffer using sliding window
-        loop {
-            // Search within current buffer
-            if let Some(offset) = Self::find_pattern(&buffer, pattern) {
-                let match_pos = buffer_start_pos + offset;
-                if match_pos + pattern.len() <= end {
-                    return Some(match_pos);
+        None
+    }
+
+    /// Find the next occurrence of a regex pattern starting from a given position
+    /// Returns the byte offset of the match, or None if not found
+    /// Uses streaming iteration with overlapping chunks to support patterns spanning boundaries
+    ///
+    /// # Note
+    /// The regex engine will only find patterns that fit within the chunk + overlap size.
+    /// Default overlap is 4KB, so patterns longer than this may not be found across boundaries.
+    pub fn find_next_regex(&self, regex: &Regex, start_pos: usize) -> Option<usize> {
+        let buffer_len = self.len();
+
+        // Search from start_pos to end
+        if start_pos < buffer_len {
+            if let Some(offset) = self.find_regex_streaming(start_pos, buffer_len, regex) {
+                return Some(offset);
+            }
+        }
+
+        // Wrap around: search from beginning to start_pos
+        if start_pos > 0 {
+            if let Some(offset) = self.find_regex_streaming(0, start_pos, regex) {
+                return Some(offset);
+            }
+        }
+
+        None
+    }
+
+    /// Streaming regex search from start to end position using overlapping chunks
+    fn find_regex_streaming(&self, start: usize, end: usize, regex: &Regex) -> Option<usize> {
+        if start >= end {
+            return None;
+        }
+
+        const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks for regex
+        const OVERLAP: usize = 4096; // 4KB overlap to catch patterns spanning boundaries
+
+        let iter = self.virtual_buffer.iter_at(start);
+        let chunks = OverlappingChunks::new(iter, start, end, CHUNK_SIZE, OVERLAP);
+
+        for chunk in chunks {
+            // Search for all matches in this chunk
+            for mat in regex.find_iter(&chunk.buffer) {
+                let match_end = mat.start() + mat.len();
+                // Only report matches that END in or after the valid zone
+                // This ensures patterns spanning chunk boundaries are found exactly once
+                if match_end > chunk.valid_start {
+                    let match_pos = chunk.absolute_pos + mat.start();
+                    if match_pos + mat.len() <= end {
+                        return Some(match_pos);
+                    }
                 }
-            }
-
-            // If we've searched all bytes, we're done
-            if current_read_pos >= end {
-                break;
-            }
-
-            // Keep overlap for cross-chunk matches
-            // We need to keep (pattern.len() - 1) bytes to catch patterns spanning chunks
-            if buffer.len() >= pattern.len() {
-                let keep_from = buffer.len() - (pattern.len() - 1);
-                buffer.drain(0..keep_from);
-                buffer_start_pos += keep_from; // Update buffer start position
-            }
-
-            // Fill buffer with next chunk
-            let chunk_start_len = buffer.len();
-            for _ in 0..CHUNK_SIZE {
-                if current_read_pos >= end {
-                    break;
-                }
-                if let Some(byte) = iter.next() {
-                    buffer.push(byte);
-                    current_read_pos += 1;
-                } else {
-                    break;
-                }
-            }
-
-            // If we didn't add any new bytes, we're done
-            if buffer.len() == chunk_start_len {
-                break;
             }
         }
 
@@ -950,6 +970,51 @@ mod tests {
             text, "log_line",
             "Edit 3: .len() call should be 'log_line' at line 3, chars 17-25"
         );
+    }
+
+    #[test]
+    fn test_buffer_find_next_regex() {
+        let buffer = Buffer::from_str("hello world hello");
+
+        // Simple literal pattern
+        let regex = Regex::new("hello").unwrap();
+        assert_eq!(buffer.find_next_regex(&regex, 0), Some(0));
+        assert_eq!(buffer.find_next_regex(&regex, 1), Some(12));
+        assert_eq!(buffer.find_next_regex(&regex, 13), Some(0)); // Wraps around
+
+        // Pattern with \s+
+        let regex = Regex::new(r"hello\s+world").unwrap();
+        assert_eq!(buffer.find_next_regex(&regex, 0), Some(0));
+
+        // No match
+        let regex = Regex::new("xyz").unwrap();
+        assert_eq!(buffer.find_next_regex(&regex, 0), None);
+    }
+
+    #[test]
+    fn test_buffer_find_regex_across_chunks() {
+        // Create a buffer larger than chunk size to test cross-chunk matching
+        let content = "x".repeat(5000) + "hello world" + &"y".repeat(5000);
+        let buffer = Buffer::from_str(&content);
+
+        let regex = Regex::new(r"hello\s+world").unwrap();
+        let match_pos = buffer.find_next_regex(&regex, 0);
+        assert!(match_pos.is_some());
+        assert_eq!(match_pos.unwrap(), 5000);
+    }
+
+    #[test]
+    fn test_buffer_find_regex_unicode() {
+        let buffer = Buffer::from_str("hello 世界 world");
+
+        // Unicode character class
+        let regex = Regex::new(r"\p{Han}+").unwrap();
+        let match_pos = buffer.find_next_regex(&regex, 0);
+        assert!(match_pos.is_some());
+
+        // The position should be after "hello "
+        let pos = match_pos.unwrap();
+        assert_eq!(&buffer.slice(pos..pos + 6), "世界");
     }
 
     #[test]

@@ -5,6 +5,7 @@ pub mod async_bridge;
 pub mod buffer;
 pub mod cache;
 pub mod chunk_tree;
+pub mod chunked_search;
 pub mod command_registry;
 pub mod commands;
 pub mod config;
