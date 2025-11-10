@@ -27,9 +27,7 @@ fn test_cursor_sync_with_non_ascii_box_drawing_chars() {
     );
 
     // Move cursor to the beginning of the line
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // Cursor should now be at position 0
     let buffer_pos_after_home = harness.cursor_position();
@@ -64,9 +62,7 @@ fn test_cursor_sync_with_non_ascii_box_drawing_chars() {
 
     // Now test: type a character and verify it appears at the visual cursor position
     // Move to somewhere in the middle of the line
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // Move right 20 characters
     for _ in 0..20 {
@@ -110,9 +106,7 @@ fn test_cursor_sync_with_emoji() {
     harness.type_text(text).unwrap();
 
     // Move to beginning
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // The text has these characters:
     // H e l l o   😀   W o r l d   🌍

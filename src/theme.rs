@@ -99,7 +99,7 @@ impl Theme {
             prompt_fg: Color::Black,
             prompt_bg: Color::Yellow,
             prompt_selection_fg: Color::White,
-            prompt_selection_bg: Color::Rgb(58, 79, 120),  // Blue selection
+            prompt_selection_bg: Color::Rgb(58, 79, 120), // Blue selection
 
             popup_border_fg: Color::Gray,
             popup_bg: Color::Rgb(30, 30, 30),
@@ -171,7 +171,7 @@ impl Theme {
             prompt_fg: Color::Black,
             prompt_bg: Color::Yellow,
             prompt_selection_fg: Color::Black,
-            prompt_selection_bg: Color::Rgb(173, 214, 255),  // Light blue selection
+            prompt_selection_bg: Color::Rgb(173, 214, 255), // Light blue selection
 
             popup_border_fg: Color::DarkGray,
             popup_bg: Color::Rgb(255, 255, 255),
@@ -243,7 +243,7 @@ impl Theme {
             prompt_fg: Color::Black,
             prompt_bg: Color::Cyan,
             prompt_selection_fg: Color::White,
-            prompt_selection_bg: Color::Rgb(0, 100, 200),  // Blue selection
+            prompt_selection_bg: Color::Rgb(0, 100, 200), // Blue selection
 
             popup_border_fg: Color::Yellow,
             popup_bg: Color::Black,

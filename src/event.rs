@@ -282,11 +282,7 @@ impl Event {
     /// Uses UNDO_SENTINEL cursor_id to avoid moving the cursor during undo
     pub fn inverse(&self) -> Option<Event> {
         match self {
-            Event::Insert {
-                position,
-                text,
-                ..
-            } => {
+            Event::Insert { position, text, .. } => {
                 let range = *position..(position + text.len());
                 Some(Event::Delete {
                     range,

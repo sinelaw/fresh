@@ -478,7 +478,10 @@ fn test_overlay_undo_redo() {
     // After undo: buffer should be empty, and overlay should be removed
     assert_eq!(state.buffer.len(), 0);
     assert_eq!(state.overlays.at_position(2, &state.marker_list).len(), 0);
-    assert!(!undo_events.is_empty(), "Should have returned events to undo");
+    assert!(
+        !undo_events.is_empty(),
+        "Should have returned events to undo"
+    );
 
     // Redo - should redo the Insert and re-add the overlay
     let redo_events = log.redo();
@@ -490,7 +493,10 @@ fn test_overlay_undo_redo() {
     assert_eq!(state.buffer.to_string(), "hello");
     // Note: AddOverlay was redone, so overlay should be back
     assert_eq!(state.overlays.at_position(2, &state.marker_list).len(), 1);
-    assert!(!redo_events.is_empty(), "Should have returned events to redo");
+    assert!(
+        !redo_events.is_empty(),
+        "Should have returned events to redo"
+    );
 }
 
 /// Test LSP diagnostic to overlay conversion
@@ -893,7 +899,10 @@ mod event_inverse_tests {
         let inverse = batch.inverse().expect("Batch should have inverse");
 
         match inverse {
-            Event::Batch { events, description } => {
+            Event::Batch {
+                events,
+                description,
+            } => {
                 assert_eq!(events.len(), 3);
                 assert_eq!(description, "Undo: Insert abc");
 
@@ -904,7 +913,9 @@ mod event_inverse_tests {
                 // Check first event (was last insert)
                 match &events[0] {
                     Event::Delete {
-                        range, deleted_text, ..
+                        range,
+                        deleted_text,
+                        ..
                     } => {
                         assert_eq!(*range, 2..3);
                         assert_eq!(deleted_text, "c");
@@ -915,7 +926,9 @@ mod event_inverse_tests {
                 // Check last event (was first insert)
                 match &events[2] {
                     Event::Delete {
-                        range, deleted_text, ..
+                        range,
+                        deleted_text,
+                        ..
                     } => {
                         assert_eq!(*range, 0..1);
                         assert_eq!(deleted_text, "a");
@@ -980,10 +993,15 @@ mod event_inverse_tests {
             description: "Outer".to_string(),
         };
 
-        let inverse = outer_batch.inverse().expect("Nested batch should have inverse");
+        let inverse = outer_batch
+            .inverse()
+            .expect("Nested batch should have inverse");
 
         match inverse {
-            Event::Batch { events, description } => {
+            Event::Batch {
+                events,
+                description,
+            } => {
                 assert_eq!(events.len(), 3);
                 assert_eq!(description, "Undo: Outer");
 

@@ -965,8 +965,7 @@ impl Editor {
                                 let _success = view.expand_and_select_file(&target_path).await;
 
                                 // Send the updated view back
-                                let _ = sender
-                                    .send(AsyncMessage::FileExplorerExpandedToPath(view));
+                                let _ = sender.send(AsyncMessage::FileExplorerExpandedToPath(view));
                             });
                         } else {
                             // No async runtime, just put the view back
@@ -1875,11 +1874,11 @@ impl Editor {
             PromptType::Command => {
                 if let Some(prompt) = &mut self.prompt {
                     // Use the underlying context (not Prompt context) for filtering
-                    prompt.suggestions = self
-                        .command_registry
-                        .read()
-                        .unwrap()
-                        .filter(&input, self.key_context, &self.keybindings);
+                    prompt.suggestions = self.command_registry.read().unwrap().filter(
+                        &input,
+                        self.key_context,
+                        &self.keybindings,
+                    );
                     prompt.selected_suggestion = if prompt.suggestions.is_empty() {
                         None
                     } else {
@@ -2562,7 +2561,12 @@ impl Editor {
                             line as u32,
                             character as u32,
                         );
-                        tracing::info!("Requested completion at {}:{}:{}", uri.as_str(), line, character);
+                        tracing::info!(
+                            "Requested completion at {}:{}:{}",
+                            uri.as_str(),
+                            line,
+                            character
+                        );
                     }
                 }
             }
@@ -3300,7 +3304,9 @@ impl Editor {
                         prompt.delete_selection();
                     } else if prompt.cursor_pos < prompt.input.len() {
                         let mut char_end = prompt.cursor_pos + 1;
-                        while char_end < prompt.input.len() && !prompt.input.is_char_boundary(char_end) {
+                        while char_end < prompt.input.len()
+                            && !prompt.input.is_char_boundary(char_end)
+                        {
                             char_end += 1;
                         }
                         prompt.input.drain(prompt.cursor_pos..char_end);
@@ -3366,7 +3372,8 @@ impl Editor {
                         if let Some(selected) = prompt.selected_suggestion {
                             // Don't wrap around - stay at the end if already at the last item
                             let new_pos = selected + 1;
-                            prompt.selected_suggestion = Some(new_pos.min(prompt.suggestions.len() - 1));
+                            prompt.selected_suggestion =
+                                Some(new_pos.min(prompt.suggestions.len() - 1));
                         }
                     }
                 }
@@ -3652,11 +3659,11 @@ impl Editor {
                 }
 
                 // Use the current context for filtering commands
-                let suggestions = self
-                    .command_registry
-                    .read()
-                    .unwrap()
-                    .filter("", self.key_context, &self.keybindings);
+                let suggestions = self.command_registry.read().unwrap().filter(
+                    "",
+                    self.key_context,
+                    &self.keybindings,
+                );
                 self.start_prompt_with_suggestions(
                     "Command: ".to_string(),
                     PromptType::Command,
@@ -3699,7 +3706,10 @@ impl Editor {
                     let current_pos = self.active_state().cursors.primary().position;
                     if current_pos > rename_state.start_pos {
                         // Use prev_char_boundary to ensure we land on a valid UTF-8 character boundary
-                        let new_pos = self.active_state().buffer.prev_char_boundary(current_pos)
+                        let new_pos = self
+                            .active_state()
+                            .buffer
+                            .prev_char_boundary(current_pos)
                             .max(rename_state.start_pos);
                         let event = Event::MoveCursor {
                             cursor_id: self.active_state().cursors.primary_id(),
@@ -3720,7 +3730,10 @@ impl Editor {
                     let current_pos = self.active_state().cursors.primary().position;
                     if current_pos < rename_state.end_pos {
                         // Use next_char_boundary to ensure we land on a valid UTF-8 character boundary
-                        let new_pos = self.active_state().buffer.next_char_boundary(current_pos)
+                        let new_pos = self
+                            .active_state()
+                            .buffer
+                            .next_char_boundary(current_pos)
                             .min(rename_state.end_pos);
                         let event = Event::MoveCursor {
                             cursor_id: self.active_state().cursors.primary_id(),
@@ -3975,7 +3988,9 @@ impl Editor {
                             // Track cursor movements in position history (but not during navigation)
                             if !self.in_navigation {
                                 if let Event::MoveCursor {
-                                    new_position, new_anchor, ..
+                                    new_position,
+                                    new_anchor,
+                                    ..
                                 } = event
                                 {
                                     self.position_history.record_movement(
@@ -3996,7 +4011,9 @@ impl Editor {
                             // Track cursor movements in position history (but not during navigation)
                             if !self.in_navigation {
                                 if let Event::MoveCursor {
-                                    new_position, new_anchor, ..
+                                    new_position,
+                                    new_anchor,
+                                    ..
                                 } = event
                                 {
                                     self.position_history.record_movement(
@@ -5164,7 +5181,9 @@ impl Editor {
             let state = self.active_state_mut();
             state.cursors.primary_mut().position = match_pos;
             state.cursors.primary_mut().anchor = None;
-            state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
+            state
+                .viewport
+                .ensure_visible(&mut state.buffer, state.cursors.primary());
         }
 
         // Update search state
@@ -5212,14 +5231,12 @@ impl Editor {
                 let state = self.active_state_mut();
                 state.cursors.primary_mut().position = match_pos;
                 state.cursors.primary_mut().anchor = None;
-                state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
+                state
+                    .viewport
+                    .ensure_visible(&mut state.buffer, state.cursors.primary());
             }
 
-            self.set_status_message(format!(
-                "Match {} of {}",
-                next_index + 1,
-                matches_len
-            ));
+            self.set_status_message(format!("Match {} of {}", next_index + 1, matches_len));
         } else {
             self.set_status_message("No active search. Press Ctrl+F to search.".to_string());
         }
@@ -5250,14 +5267,12 @@ impl Editor {
                 let state = self.active_state_mut();
                 state.cursors.primary_mut().position = match_pos;
                 state.cursors.primary_mut().anchor = None;
-                state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
+                state
+                    .viewport
+                    .ensure_visible(&mut state.buffer, state.cursors.primary());
             }
 
-            self.set_status_message(format!(
-                "Match {} of {}",
-                prev_index + 1,
-                matches_len
-            ));
+            self.set_status_message(format!("Match {} of {}", prev_index + 1, matches_len));
         } else {
             self.set_status_message("No active search. Press Ctrl+F to search.".to_string());
         }
@@ -5348,7 +5363,9 @@ mod tests {
 
         match &events[0] {
             Event::MoveCursor {
-                new_position, new_anchor, ..
+                new_position,
+                new_anchor,
+                ..
             } => {
                 // Cursor was at 5 (end of "hello"), stays at 5 (can't move beyond end)
                 assert_eq!(*new_position, 5);
@@ -5533,7 +5550,9 @@ mod tests {
 
         match &events[0] {
             Event::MoveCursor {
-                new_position, new_anchor, ..
+                new_position,
+                new_anchor,
+                ..
             } => {
                 assert_eq!(*new_position, 1); // Moved to position 1
                 assert_eq!(*new_anchor, Some(0)); // Anchor at start
@@ -5563,7 +5582,9 @@ mod tests {
 
         match &events[0] {
             Event::MoveCursor {
-                new_position, new_anchor, ..
+                new_position,
+                new_anchor,
+                ..
             } => {
                 assert_eq!(*new_position, 11); // At end of buffer
                 assert_eq!(*new_anchor, Some(0)); // Anchor at start

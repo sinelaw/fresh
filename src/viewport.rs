@@ -203,8 +203,8 @@ impl Viewport {
 
         // Only scroll if cursor moves beyond the visible area (not within scroll_offset zone)
         // Must also check cursor is not above viewport (saturating_sub would make it appear at line 0)
-        let cursor_is_visible = cursor_line_number >= top_line_number
-            && lines_from_top < visible_count;
+        let cursor_is_visible =
+            cursor_line_number >= top_line_number && lines_from_top < visible_count;
 
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {
@@ -331,7 +331,9 @@ impl Viewport {
         } else if column >= ideal_right {
             // Cursor is to the right of the ideal zone - scroll right
             // Place cursor at (visible_width - effective_offset - 1) to keep it in valid range [0, visible_width-1]
-            let target_position = visible_width.saturating_sub(effective_offset).saturating_sub(1);
+            let target_position = visible_width
+                .saturating_sub(effective_offset)
+                .saturating_sub(1);
             self.left_column = column.saturating_sub(target_position);
         }
 
@@ -581,7 +583,10 @@ mod tests {
 
         // Verify we scrolled to around line 10
         let top_line = buffer.get_line_number(vp.top_byte);
-        assert!(top_line >= 9, "Should have scrolled down to at least line 10");
+        assert!(
+            top_line >= 9,
+            "Should have scrolled down to at least line 10"
+        );
 
         // Now move cursor to line 5 (above the viewport)
         let mut iter = buffer.line_iterator(0);
@@ -603,12 +608,22 @@ mod tests {
         // The viewport should now be positioned so cursor (line 5) is visible
         let new_top_line = buffer.get_line_number(vp.top_byte);
         let cursor_line = buffer.get_line_number(line_5_byte);
-        assert!(cursor_line >= new_top_line, "Cursor line should be at or below top of viewport");
-        assert!(new_top_line < top_line, "Viewport should have scrolled up from line {}", top_line);
+        assert!(
+            cursor_line >= new_top_line,
+            "Cursor line should be at or below top of viewport"
+        );
+        assert!(
+            new_top_line < top_line,
+            "Viewport should have scrolled up from line {}",
+            top_line
+        );
 
         // Verify cursor is within visible area
         let lines_from_top = cursor_line.saturating_sub(new_top_line);
-        assert!(lines_from_top < vp.visible_line_count(), "Cursor should be within visible area");
+        assert!(
+            lines_from_top < vp.visible_line_count(),
+            "Cursor should be within visible area"
+        );
 
         // Verify cursor is centered (or close to center)
         let expected_center = vp.visible_line_count() / 2;

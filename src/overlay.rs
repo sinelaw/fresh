@@ -185,8 +185,7 @@ impl OverlayManager {
             .collect();
 
         // Remove overlays
-        self.overlays
-            .retain(|o| !o.overlaps(range, marker_list));
+        self.overlays.retain(|o| !o.overlaps(range, marker_list));
 
         // Delete markers
         for marker_id in markers_to_delete {
@@ -370,9 +369,11 @@ mod tests {
         let mut marker_list = MarkerList::new();
         marker_list.set_buffer_size(100);
 
-        let overlay = Overlay::new(&mut marker_list, 5..10, OverlayFace::Background {
-            color: Color::Red,
-        });
+        let overlay = Overlay::new(
+            &mut marker_list,
+            5..10,
+            OverlayFace::Background { color: Color::Red },
+        );
 
         assert_eq!(marker_list.get_position(overlay.start_marker), Some(5));
         assert_eq!(marker_list.get_position(overlay.end_marker), Some(10));
@@ -384,9 +385,11 @@ mod tests {
         let mut marker_list = MarkerList::new();
         marker_list.set_buffer_size(100);
 
-        let overlay = Overlay::new(&mut marker_list, 10..20, OverlayFace::Background {
-            color: Color::Red,
-        });
+        let overlay = Overlay::new(
+            &mut marker_list,
+            10..20,
+            OverlayFace::Background { color: Color::Red },
+        );
 
         // Insert before overlay
         marker_list.adjust_for_insert(5, 10);
@@ -400,9 +403,11 @@ mod tests {
         let mut marker_list = MarkerList::new();
         marker_list.set_buffer_size(100);
 
-        let overlay = Overlay::new(&mut marker_list, 20..30, OverlayFace::Background {
-            color: Color::Red,
-        });
+        let overlay = Overlay::new(
+            &mut marker_list,
+            20..30,
+            OverlayFace::Background { color: Color::Red },
+        );
 
         // Delete before overlay
         marker_list.adjust_for_delete(5, 10);
@@ -471,9 +476,11 @@ mod tests {
         let mut marker_list = MarkerList::new();
         marker_list.set_buffer_size(100);
 
-        let overlay = Overlay::new(&mut marker_list, 10..20, OverlayFace::Background {
-            color: Color::Red,
-        });
+        let overlay = Overlay::new(
+            &mut marker_list,
+            10..20,
+            OverlayFace::Background { color: Color::Red },
+        );
 
         assert!(!overlay.contains(9, &marker_list));
         assert!(overlay.contains(10, &marker_list));

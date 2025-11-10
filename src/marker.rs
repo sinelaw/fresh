@@ -25,7 +25,6 @@
 /// Storage: [Gap(0), Marker(m1), Gap(16), Marker(m2), Gap(5)]
 ///          Only this gap size changed! ^^^
 /// ```
-
 use std::collections::HashMap;
 
 /// Unique identifier for a marker
@@ -135,10 +134,8 @@ impl MarkerList {
 
                         // Replace this gap with [gap_before, marker, gap_after]
                         self.entries[idx] = MarkerEntry::Gap(gap_before);
-                        self.entries.insert(
-                            idx + 1,
-                            MarkerEntry::Marker { id, left_affinity },
-                        );
+                        self.entries
+                            .insert(idx + 1, MarkerEntry::Marker { id, left_affinity });
                         self.entries.insert(idx + 2, MarkerEntry::Gap(gap_after));
 
                         insert_idx = idx + 1;
@@ -240,7 +237,8 @@ impl MarkerList {
                     } else if position == gap_end {
                         // At gap boundary - check if next entry is a marker
                         if idx + 1 < self.entries.len() {
-                            if let MarkerEntry::Marker { left_affinity, .. } = self.entries[idx + 1] {
+                            if let MarkerEntry::Marker { left_affinity, .. } = self.entries[idx + 1]
+                            {
                                 // There's a marker at this position
                                 if left_affinity {
                                     // Left affinity: insertion goes after marker
@@ -269,7 +267,12 @@ impl MarkerList {
         // Second pass: update the target gap
         if let Some(idx) = target_idx {
             if let MarkerEntry::Gap(ref mut size) = self.entries[idx] {
-                tracing::debug!("Adjusting gap at idx={} from {} to {}", idx, *size, *size + length);
+                tracing::debug!(
+                    "Adjusting gap at idx={} from {} to {}",
+                    idx,
+                    *size,
+                    *size + length
+                );
                 *size += length;
             }
         } else {
@@ -475,7 +478,11 @@ impl MarkerList {
         // Marker index is accurate
         for (&id, &idx) in &self.marker_index {
             if idx >= self.entries.len() {
-                return Err(format!("Marker index out of bounds: {} >= {}", idx, self.entries.len()));
+                return Err(format!(
+                    "Marker index out of bounds: {} >= {}",
+                    idx,
+                    self.entries.len()
+                ));
             }
             match &self.entries[idx] {
                 MarkerEntry::Marker { id: entry_id, .. } if *entry_id == id => {}
@@ -696,7 +703,7 @@ mod tests {
         // Delete at 12, length 8 (delete range [12, 20))
         // This removes part of the gap between m1 and m2, but not m2 itself
         list.adjust_for_delete(12, 8);
-        assert_eq!(list.get_position(m1), Some(10));  // Before deletion
+        assert_eq!(list.get_position(m1), Some(10)); // Before deletion
         assert_eq!(list.get_position(m2), Some(17)); // 25 - 8 = 17
         assert_eq!(list.get_position(m3), Some(27)); // 35 - 8 = 27
 

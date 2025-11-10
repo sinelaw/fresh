@@ -1,8 +1,8 @@
 // EditorTestHarness - Virtual terminal environment for E2E testing
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use fresh::{config::Config, editor::Editor};
 use fresh::fs::{BackendMetrics, FsBackend, LocalFsBackend, SlowFsBackend, SlowFsConfig};
+use fresh::{config::Config, editor::Editor};
 use ratatui::{backend::TestBackend, Terminal};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -123,11 +123,7 @@ impl EditorTestHarness {
 
     /// Create a test harness with a slow filesystem backend for performance testing
     /// Returns the harness and provides access to filesystem metrics
-    pub fn with_slow_fs(
-        width: u16,
-        height: u16,
-        slow_config: SlowFsConfig,
-    ) -> io::Result<Self> {
+    pub fn with_slow_fs(width: u16, height: u16, slow_config: SlowFsConfig) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
 
@@ -142,13 +138,8 @@ impl EditorTestHarness {
         let config = Config::default();
 
         // Create editor with custom filesystem backend
-        let editor = Editor::with_fs_backend_for_test(
-            config,
-            width,
-            height,
-            Some(temp_path),
-            fs_backend,
-        )?;
+        let editor =
+            Editor::with_fs_backend_for_test(config, width, height, Some(temp_path), fs_backend)?;
 
         Ok(EditorTestHarness {
             editor,

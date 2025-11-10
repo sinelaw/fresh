@@ -359,7 +359,9 @@ impl FileTree {
 
             // Find the child with the matching name
             let node = self.get_node(current_id)?;
-            let child_id = node.children.iter()
+            let child_id = node
+                .children
+                .iter()
                 .find(|&&child_id| {
                     if let Some(child_node) = self.get_node(child_id) {
                         child_node.entry.name == component_str
@@ -658,7 +660,9 @@ mod tests {
         assert!(root.is_expanded(), "Root should be expanded");
 
         // Find dir2
-        let dir2_node = root.children.iter()
+        let dir2_node = root
+            .children
+            .iter()
             .find_map(|&id| {
                 let node = tree.get_node(id)?;
                 if node.entry.name == "dir2" {
@@ -672,7 +676,9 @@ mod tests {
         assert!(dir2_node.is_expanded(), "dir2 should be expanded");
 
         // Find subdir
-        let subdir_node = dir2_node.children.iter()
+        let subdir_node = dir2_node
+            .children
+            .iter()
             .find_map(|&id| {
                 let node = tree.get_node(id)?;
                 if node.entry.name == "subdir" {
@@ -699,7 +705,10 @@ mod tests {
         let outside_path = PathBuf::from("/tmp/somefile.txt");
         let result = tree.expand_to_path(&outside_path).await;
 
-        assert!(result.is_none(), "Should return None for paths outside root");
+        assert!(
+            result.is_none(),
+            "Should return None for paths outside root"
+        );
     }
 
     #[tokio::test]

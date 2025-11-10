@@ -152,7 +152,10 @@ pub fn action_to_events(
             for (cursor_id, cursor) in state.cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
                 // Use next_char_boundary to ensure we land on a valid UTF-8 character boundary
-                let new_pos = state.buffer.next_char_boundary(cursor.position).min(max_pos);
+                let new_pos = state
+                    .buffer
+                    .next_char_boundary(cursor.position)
+                    .min(max_pos);
                 events.push(Event::MoveCursor {
                     cursor_id,
                     old_position: cursor.position,
@@ -187,14 +190,14 @@ pub fn action_to_events(
                     let new_pos = prev_line_start + goal_column.min(prev_line_len);
 
                     events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
-                    new_anchor: None,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: goal_column, // Preserve the goal column
-                });
+                        cursor_id,
+                        old_position: cursor.position,
+                        new_position: new_pos,
+                        old_anchor: cursor.anchor,
+                        new_anchor: None,
+                        old_sticky_column: cursor.sticky_column,
+                        new_sticky_column: goal_column, // Preserve the goal column
+                    });
                 }
             }
         }
@@ -220,14 +223,14 @@ pub fn action_to_events(
                     let new_pos = next_line_start + goal_column.min(next_line_len);
 
                     events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
-                    new_anchor: None,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: goal_column, // Preserve the goal column
-                });
+                        cursor_id,
+                        old_position: cursor.position,
+                        new_position: new_pos,
+                        old_anchor: cursor.anchor,
+                        new_anchor: None,
+                        old_sticky_column: cursor.sticky_column,
+                        new_sticky_column: goal_column, // Preserve the goal column
+                    });
                 }
             }
         }
@@ -237,14 +240,14 @@ pub fn action_to_events(
                 let mut iter = state.buffer.line_iterator(cursor.position);
                 if let Some((line_start, _)) = iter.next() {
                     events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: cursor.position,
-                    new_position: line_start,
-                    old_anchor: cursor.anchor,
-                    new_anchor: None,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                        cursor_id,
+                        old_position: cursor.position,
+                        new_position: line_start,
+                        old_anchor: cursor.anchor,
+                        new_anchor: None,
+                        old_sticky_column: cursor.sticky_column,
+                        new_sticky_column: 0, // Reset sticky column
+                    });
                 }
             }
         }
@@ -258,14 +261,14 @@ pub fn action_to_events(
                     let line_end = line_start + line_len;
 
                     events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: cursor.position,
-                    new_position: line_end,
-                    old_anchor: cursor.anchor,
-                    new_anchor: None,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                        cursor_id,
+                        old_position: cursor.position,
+                        new_position: line_end,
+                        old_anchor: cursor.anchor,
+                        new_anchor: None,
+                        old_sticky_column: cursor.sticky_column,
+                        new_sticky_column: 0, // Reset sticky column
+                    });
                 }
             }
         }
@@ -431,7 +434,10 @@ pub fn action_to_events(
             for (cursor_id, cursor) in state.cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
                 // Use next_char_boundary to ensure we land on a valid UTF-8 character boundary
-                let new_pos = state.buffer.next_char_boundary(cursor.position).min(max_pos);
+                let new_pos = state
+                    .buffer
+                    .next_char_boundary(cursor.position)
+                    .min(max_pos);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
                 events.push(Event::MoveCursor {
                     cursor_id,
@@ -464,14 +470,14 @@ pub fn action_to_events(
                     let new_pos = prev_line_start + goal_column.min(prev_line_len);
 
                     events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: goal_column, // Preserve the goal column
-                });
+                        cursor_id,
+                        old_position: cursor.position,
+                        new_position: new_pos,
+                        old_anchor: cursor.anchor,
+                        new_anchor: Some(anchor),
+                        old_sticky_column: cursor.sticky_column,
+                        new_sticky_column: goal_column, // Preserve the goal column
+                    });
                 }
             }
         }
@@ -497,14 +503,14 @@ pub fn action_to_events(
                     let new_pos = next_line_start + goal_column.min(next_line_len);
 
                     events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: goal_column, // Preserve the goal column
-                });
+                        cursor_id,
+                        old_position: cursor.position,
+                        new_position: new_pos,
+                        old_anchor: cursor.anchor,
+                        new_anchor: Some(anchor),
+                        old_sticky_column: cursor.sticky_column,
+                        new_sticky_column: goal_column, // Preserve the goal column
+                    });
                 }
             }
         }
@@ -516,14 +522,14 @@ pub fn action_to_events(
 
                 if let Some((line_start, _)) = iter.next() {
                     events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: cursor.position,
-                    new_position: line_start,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                        cursor_id,
+                        old_position: cursor.position,
+                        new_position: line_start,
+                        old_anchor: cursor.anchor,
+                        new_anchor: Some(anchor),
+                        old_sticky_column: cursor.sticky_column,
+                        new_sticky_column: 0, // Reset sticky column
+                    });
                 }
             }
         }
@@ -539,14 +545,14 @@ pub fn action_to_events(
                     let line_end = line_start + line_len;
 
                     events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: cursor.position,
-                    new_position: line_end,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                        cursor_id,
+                        old_position: cursor.position,
+                        new_position: line_end,
+                        old_anchor: cursor.anchor,
+                        new_anchor: Some(anchor),
+                        old_sticky_column: cursor.sticky_column,
+                        new_sticky_column: 0, // Reset sticky column
+                    });
                 }
             }
         }
@@ -719,14 +725,14 @@ pub fn action_to_events(
 
                 if word_start < word_end {
                     events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: cursor.position,
-                    new_position: word_end,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(word_start),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                        cursor_id,
+                        old_position: cursor.position,
+                        new_position: word_end,
+                        old_anchor: cursor.anchor,
+                        new_anchor: Some(word_start),
+                        old_sticky_column: cursor.sticky_column,
+                        new_sticky_column: 0, // Reset sticky column
+                    });
                 }
             }
         }
@@ -982,14 +988,14 @@ pub fn action_to_events(
                     let line_end = line_start + line_content.len();
 
                     events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: cursor.position,
-                    new_position: line_end,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(line_start),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                        cursor_id,
+                        old_position: cursor.position,
+                        new_position: line_end,
+                        old_anchor: cursor.anchor,
+                        new_anchor: Some(line_start),
+                        old_sticky_column: cursor.sticky_column,
+                        new_sticky_column: 0, // Reset sticky column
+                    });
                 }
             }
         }
@@ -1003,14 +1009,14 @@ pub fn action_to_events(
                     let next_word_start = find_word_start_right(&state.buffer, cursor.position);
                     let new_end = find_word_end(&state.buffer, next_word_start);
                     events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_end,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                        cursor_id,
+                        old_position: cursor.position,
+                        new_position: new_end,
+                        old_anchor: cursor.anchor,
+                        new_anchor: Some(anchor),
+                        old_sticky_column: cursor.sticky_column,
+                        new_sticky_column: 0, // Reset sticky column
+                    });
                 } else {
                     // No selection - select from cursor to end of current word
                     let word_start = find_word_start(&state.buffer, cursor.position);
@@ -1031,14 +1037,14 @@ pub fn action_to_events(
                         };
 
                     events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: cursor.position,
-                    new_position: final_end,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(final_start),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                        cursor_id,
+                        old_position: cursor.position,
+                        new_position: final_end,
+                        old_anchor: cursor.anchor,
+                        new_anchor: Some(final_start),
+                        old_sticky_column: cursor.sticky_column,
+                        new_sticky_column: 0, // Reset sticky column
+                    });
                 }
             }
         }

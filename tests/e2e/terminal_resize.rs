@@ -49,7 +49,10 @@ fn test_viewport_uses_full_area_after_startup_resize() {
         .copied()
         .collect();
 
-    println!("\nContent lines with ' │ ' separator: {}", content_lines.len());
+    println!(
+        "\nContent lines with ' │ ' separator: {}",
+        content_lines.len()
+    );
     for (i, line) in content_lines.iter().enumerate() {
         println!("Content line {:2}: {:?}", i, line);
     }
@@ -102,7 +105,10 @@ fn test_viewport_updates_after_resize_with_open_file() {
         .filter(|line| line.contains(" │ "))
         .collect();
 
-    println!("Visible content lines before resize (15 rows): {}", content_lines_before.len());
+    println!(
+        "Visible content lines before resize (15 rows): {}",
+        content_lines_before.len()
+    );
 
     // Resize to larger terminal
     harness.resize(80, 30).unwrap();
@@ -114,7 +120,10 @@ fn test_viewport_updates_after_resize_with_open_file() {
         .filter(|line| line.contains(" │ "))
         .collect();
 
-    println!("Visible content lines after resize (30 rows): {}", content_lines_after.len());
+    println!(
+        "Visible content lines after resize (30 rows): {}",
+        content_lines_after.len()
+    );
 
     // After resize, we should see more lines
     assert!(

@@ -716,9 +716,9 @@ impl SplitRenderer {
                 // - If line has no newline, cursor can be at end of line (use <=)
                 let line_has_newline = line_content.ends_with('\n');
                 let line_end_exclusive = if line_has_newline {
-                    line_start + line_content.len() - 1  // Exclude the newline
+                    line_start + line_content.len() - 1 // Exclude the newline
                 } else {
-                    line_start + line_content.len()  // Include position at end
+                    line_start + line_content.len() // Include position at end
                 };
 
                 if !cursor_found
@@ -806,7 +806,9 @@ impl SplitRenderer {
         if !cursor_found && primary_cursor_position == state.buffer.len() {
             // Check if buffer ends with newline (creating an implicit empty last line)
             let buffer_ends_with_newline = if state.buffer.len() > 0 {
-                let last_char = state.buffer.slice(state.buffer.len() - 1..state.buffer.len());
+                let last_char = state
+                    .buffer
+                    .slice(state.buffer.len() - 1..state.buffer.len());
                 last_char == "\n"
             } else {
                 false

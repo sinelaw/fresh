@@ -449,8 +449,8 @@ impl Language {
                     tree_sitter_bash::LANGUAGE.into(),
                     "bash",
                     tree_sitter_bash::HIGHLIGHT_QUERY, // Note: singular, not plural
-                    "", // injections query
-                    "", // locals query
+                    "",                                // injections query
+                    "",                                // locals query
                 )
                 .map_err(|e| format!("Failed to create Bash highlight config: {e}"))?;
 
@@ -469,11 +469,10 @@ impl Language {
                 ]);
 
                 Ok(config)
-            }
-            // Language::Markdown => {
-            //     // Disabled due to tree-sitter version conflict
-            //     Err("Markdown highlighting not available".to_string())
-            // }
+            } // Language::Markdown => {
+              //     // Disabled due to tree-sitter version conflict
+              //     Err("Markdown highlighting not available".to_string())
+              // }
         }
     }
 
@@ -788,16 +787,28 @@ mod tests {
         assert!(matches!(Language::from_path(path), Some(Language::Python)));
 
         let path = std::path::Path::new("test.js");
-        assert!(matches!(Language::from_path(path), Some(Language::JavaScript)));
+        assert!(matches!(
+            Language::from_path(path),
+            Some(Language::JavaScript)
+        ));
 
         let path = std::path::Path::new("test.jsx");
-        assert!(matches!(Language::from_path(path), Some(Language::JavaScript)));
+        assert!(matches!(
+            Language::from_path(path),
+            Some(Language::JavaScript)
+        ));
 
         let path = std::path::Path::new("test.ts");
-        assert!(matches!(Language::from_path(path), Some(Language::TypeScript)));
+        assert!(matches!(
+            Language::from_path(path),
+            Some(Language::TypeScript)
+        ));
 
         let path = std::path::Path::new("test.tsx");
-        assert!(matches!(Language::from_path(path), Some(Language::TypeScript)));
+        assert!(matches!(
+            Language::from_path(path),
+            Some(Language::TypeScript)
+        ));
 
         let path = std::path::Path::new("test.html");
         assert!(matches!(Language::from_path(path), Some(Language::HTML)));

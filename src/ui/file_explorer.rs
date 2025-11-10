@@ -57,9 +57,10 @@ impl FileExplorerRenderer {
             .collect();
 
         // Build the title with keybinding
-        let title = if let Some(keybinding) =
-            keybinding_resolver.get_keybinding_for_action(&crate::keybindings::Action::ToggleFileExplorer, current_context)
-        {
+        let title = if let Some(keybinding) = keybinding_resolver.get_keybinding_for_action(
+            &crate::keybindings::Action::ToggleFileExplorer,
+            current_context,
+        ) {
             format!(" File Explorer ({}) ", keybinding)
         } else {
             " File Explorer ".to_string()
@@ -206,5 +207,4 @@ mod tests {
             "1.00 GB"
         );
     }
-
 }

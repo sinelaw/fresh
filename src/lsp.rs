@@ -170,7 +170,10 @@ impl LspClient {
         tracing::debug!("LSP: did_open for {}", uri.as_str());
 
         let version: i64 = 1;
-        if let Some(path) = url::Url::parse(uri.as_str()).ok().and_then(|u| u.to_file_path().ok()) {
+        if let Some(path) = url::Url::parse(uri.as_str())
+            .ok()
+            .and_then(|u| u.to_file_path().ok())
+        {
             self.document_versions.insert(path, version);
         }
 
@@ -199,7 +202,10 @@ impl LspClient {
         tracing::debug!("LSP: did_change for {}", uri.as_str());
 
         // Increment version
-        let version = if let Some(path) = url::Url::parse(uri.as_str()).ok().and_then(|u| u.to_file_path().ok()) {
+        let version = if let Some(path) = url::Url::parse(uri.as_str())
+            .ok()
+            .and_then(|u| u.to_file_path().ok())
+        {
             let v = self.document_versions.entry(path).or_insert(0);
             *v += 1;
             *v

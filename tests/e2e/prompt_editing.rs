@@ -34,13 +34,16 @@ fn test_command_palette_delete_word_backward() {
 
     // Debug: Check what's in the prompt
     let lines: Vec<&str> = screen.lines().collect();
-    let prompt_line = lines.iter().rev().nth(0);  // Last line should be the prompt
+    let prompt_line = lines.iter().rev().nth(0); // Last line should be the prompt
     println!("Prompt line: {:?}", prompt_line);
 
     // The word "file" should be deleted, leaving "open "
     // After "open file" + Ctrl+Backspace, we expect "open " (with trailing space)
-    assert!(screen.contains("Command: open "),
-        "Expected 'Command: open ' but screen was:\n{}", screen);
+    assert!(
+        screen.contains("Command: open "),
+        "Expected 'Command: open ' but screen was:\n{}",
+        screen
+    );
 
     // For now, just document the current behavior
     // The test passes but documents the missing feature
@@ -62,9 +65,7 @@ fn test_command_palette_delete_word_forward() {
 
     // Move cursor to start of "file"
     // First, move to start of line
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     // Then move right past "save "
     for _ in 0..5 {
         harness
@@ -340,9 +341,7 @@ fn test_command_palette_copy_paste_workflow() {
 
     // Clear the input (using Ctrl+X would cut, or manually delete)
     // Move to start and select all, then delete
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..13 {
         harness
             .send_key(KeyCode::Delete, KeyModifiers::NONE)
@@ -441,9 +440,7 @@ fn test_command_palette_selection_with_arrows() {
     harness.render().unwrap();
 
     // Move cursor to middle (after "hello")
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..5 {
         harness
             .send_key(KeyCode::Right, KeyModifiers::NONE)
@@ -480,9 +477,7 @@ fn test_selection_copy_paste_workflow() {
     harness.render().unwrap();
 
     // Select "this" using Shift+Home to select from end to start
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     // Move to start of "this" (position 5)
     for _ in 0..5 {
         harness
@@ -538,9 +533,7 @@ fn test_selection_cut_workflow() {
     harness.render().unwrap();
 
     // Select "this " (5 characters starting at position 4)
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..4 {
         harness
             .send_key(KeyCode::Right, KeyModifiers::NONE)
@@ -598,9 +591,7 @@ fn test_select_all_in_prompt() {
     harness.render().unwrap();
 
     // Move cursor to middle
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..7 {
         harness
             .send_key(KeyCode::Right, KeyModifiers::NONE)
@@ -644,9 +635,7 @@ fn test_typing_deletes_selection() {
     harness.render().unwrap();
 
     // Select "replace" (7 characters)
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     for _ in 0..7 {
         harness
             .send_key(KeyCode::Right, KeyModifiers::SHIFT)
@@ -679,12 +668,8 @@ fn test_selection_in_different_prompts() {
     harness.render().unwrap();
 
     // Select and copy
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::End, KeyModifiers::SHIFT)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
     harness
         .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
         .unwrap();
@@ -729,9 +714,7 @@ fn test_bug_selection_not_visible() {
     harness.render().unwrap();
 
     // Move to start
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // Select "hello" with Shift+Right (5 times)
     for _ in 0..5 {
@@ -836,4 +819,3 @@ fn test_bug_word_movement_doesnt_work() {
     // Currently this is what we see (cursor didn't move):
     harness.assert_screen_contains("Command: one two ");
 }
-

@@ -50,9 +50,7 @@ impl StatusBarRenderer {
         let base_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
 
         // Create spans for the prompt
-        let mut spans = vec![
-            Span::styled(prompt.message.clone(), base_style),
-        ];
+        let mut spans = vec![Span::styled(prompt.message.clone(), base_style)];
 
         // If there's a selection, split the input into parts
         if let Some((sel_start, sel_end)) = prompt.selection_range() {
@@ -69,7 +67,10 @@ impl StatusBarRenderer {
                 let selection_style = Style::default()
                     .fg(theme.prompt_selection_fg)
                     .bg(theme.prompt_selection_bg);
-                spans.push(Span::styled(input[sel_start..sel_end].to_string(), selection_style));
+                spans.push(Span::styled(
+                    input[sel_start..sel_end].to_string(),
+                    selection_style,
+                ));
             }
 
             // Text after selection
@@ -259,14 +260,15 @@ impl StatusBarRenderer {
             ));
 
             // Calculate total width covered by spans
-            let total_width = displayed_left_len +
-                if displayed_left_len + help_width < available_width {
+            let total_width = displayed_left_len
+                + if displayed_left_len + help_width < available_width {
                     available_width - displayed_left_len - help_width
                 } else if displayed_left_len < available_width {
                     1
                 } else {
                     0
-                } + help_width;
+                }
+                + help_width;
 
             // Add final padding to fill exactly to area width if needed
             if total_width < available_width {

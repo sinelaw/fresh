@@ -16,17 +16,25 @@ fn test_undo_skips_readonly_movement_actions() {
     harness.assert_buffer_content("hello");
 
     // Cursor should be at end (position 5)
-    assert_eq!(harness.editor().active_state().cursors.primary().position, 5);
+    assert_eq!(
+        harness.editor().active_state().cursors.primary().position,
+        5
+    );
 
     // Move cursor left twice with arrow keys (readonly movements)
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
 
     // Now cursor should be between "hel" and "lo" (position 3)
-    assert_eq!(harness.editor().active_state().cursors.primary().position, 3);
+    assert_eq!(
+        harness.editor().active_state().cursors.primary().position,
+        3
+    );
 
     // Undo once - should undo the two cursor movements AND the last typed character 'o'
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Buffer should now be "hell" (last typed character removed)
@@ -52,20 +60,28 @@ fn test_multiple_undo_skips_all_readonly_actions() {
 
     // Do various readonly movements
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
 
     // Undo once - should skip all movements and undo 'c'
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_buffer_content("ab");
 
     // Undo again - should undo 'b'
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_buffer_content("a");
 
     // Undo again - should undo 'a'
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_buffer_content("");
 }
 
@@ -82,11 +98,15 @@ fn test_redo_skips_readonly_movement_actions() {
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
 
     // Undo - should undo 'z'
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_buffer_content("xy");
 
     // Redo - should skip the movement and redo 'z'
-    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('y'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_buffer_content("xyz");
 }
 
@@ -110,10 +130,14 @@ fn test_undo_redo_with_mixed_actions() {
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
 
     // Undo should skip movements and undo 'x'
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_buffer_content("ab");
 
     // Undo again should skip the Home movement and undo 'b'
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.assert_buffer_content("a");
 }

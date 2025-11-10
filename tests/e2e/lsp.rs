@@ -1175,7 +1175,11 @@ fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
     harness.render()?;
 
     // Create a WorkspaceEdit with documentChanges (like rust-analyzer sends)
-    let uri = url::Url::from_file_path(&test_file).unwrap().as_str().parse::<Uri>().unwrap();
+    let uri = url::Url::from_file_path(&test_file)
+        .unwrap()
+        .as_str()
+        .parse::<Uri>()
+        .unwrap();
     let text_edit_1 = TextEdit {
         range: Range {
             start: Position {

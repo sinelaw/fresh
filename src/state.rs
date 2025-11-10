@@ -322,7 +322,8 @@ impl EditorState {
 
             Event::RemoveOverlay { overlay_id } => {
                 tracing::debug!("RemoveOverlay: id={}", overlay_id);
-                self.overlays.remove_by_id(overlay_id, &mut self.marker_list);
+                self.overlays
+                    .remove_by_id(overlay_id, &mut self.marker_list);
             }
 
             Event::RemoveOverlaysInRange { range } => {

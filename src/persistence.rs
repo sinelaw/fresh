@@ -246,7 +246,12 @@ impl<T: PersistenceLayer> SlowPersistenceLayer<T> {
     }
 
     /// Add delay based on operation size
-    fn add_delay(&mut self, fixed: std::time::Duration, per_byte: std::time::Duration, size: usize) {
+    fn add_delay(
+        &mut self,
+        fixed: std::time::Duration,
+        per_byte: std::time::Duration,
+        size: usize,
+    ) {
         let total_delay = fixed + per_byte * size as u32;
         if !total_delay.is_zero() {
             // Note: In real async context, this would be tokio::time::sleep

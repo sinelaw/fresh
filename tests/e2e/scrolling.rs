@@ -316,18 +316,28 @@ fn test_cursor_wrap_on_long_line_navigation() {
     // followed by a second line
     let long_line = "a".repeat(100);
     harness.type_text(&long_line).unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.type_text("second line").unwrap();
 
     // Move to start of document
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
 
     // Navigate character-by-character to the end of the first line
     // This simulates a user holding down the right arrow key
     for i in 0..100 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
-        assert_eq!(harness.cursor_position(), i + 1, "Cursor should advance byte by byte");
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+        assert_eq!(
+            harness.cursor_position(),
+            i + 1,
+            "Cursor should advance byte by byte"
+        );
     }
     harness.render().unwrap();
 
@@ -335,18 +345,32 @@ fn test_cursor_wrap_on_long_line_navigation() {
     // Let's check what's at this position
     let buffer_content = harness.get_buffer_content();
     println!("Buffer length: {}", buffer_content.len());
-    println!("Character at position 99 (last 'a'): {:?}", buffer_content.chars().nth(99));
-    println!("Character at position 100 (should be newline): {:?}", buffer_content.chars().nth(100));
-    println!("Character at position 101 (first char of second line): {:?}", buffer_content.chars().nth(101));
+    println!(
+        "Character at position 99 (last 'a'): {:?}",
+        buffer_content.chars().nth(99)
+    );
+    println!(
+        "Character at position 100 (should be newline): {:?}",
+        buffer_content.chars().nth(100)
+    );
+    println!(
+        "Character at position 101 (first char of second line): {:?}",
+        buffer_content.chars().nth(101)
+    );
 
     assert_eq!(harness.cursor_position(), 100, "Should be at position 100");
 
     let screen_pos_at_end = harness.screen_cursor_position();
-    println!("Screen position at end of long line: ({}, {})", screen_pos_at_end.0, screen_pos_at_end.1);
+    println!(
+        "Screen position at end of long line: ({}, {})",
+        screen_pos_at_end.0, screen_pos_at_end.1
+    );
 
     // Now press right one more time - this should take us to the next line
     // User expectation: cursor wraps to start of next line
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     let pos_after_wrap = harness.cursor_position();
@@ -357,8 +381,15 @@ fn test_cursor_wrap_on_long_line_navigation() {
 
     // Verify cursor is visually on the second line
     let screen_pos_on_second_line = harness.screen_cursor_position();
-    println!("Screen position on second line: ({}, {})", screen_pos_on_second_line.0, screen_pos_on_second_line.1);
-    assert_eq!(screen_pos_on_second_line.1, screen_pos_at_end.1 + 1, "Cursor should move down one line visually");
+    println!(
+        "Screen position on second line: ({}, {})",
+        screen_pos_on_second_line.0, screen_pos_on_second_line.1
+    );
+    assert_eq!(
+        screen_pos_on_second_line.1,
+        screen_pos_at_end.1 + 1,
+        "Cursor should move down one line visually"
+    );
 
     // Now test the reverse: press left to wrap back to the previous line
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
@@ -368,12 +399,21 @@ fn test_cursor_wrap_on_long_line_navigation() {
     println!("Cursor position after left wrap: {}", pos_after_left_wrap);
 
     // Should be back at position 100 (end of first line)
-    assert_eq!(pos_after_left_wrap, 100, "Cursor should wrap back to end of previous line");
+    assert_eq!(
+        pos_after_left_wrap, 100,
+        "Cursor should wrap back to end of previous line"
+    );
 
     // Verify cursor is visually back on the first line
     let screen_pos_back = harness.screen_cursor_position();
-    println!("Screen position back on first line: ({}, {})", screen_pos_back.0, screen_pos_back.1);
-    assert_eq!(screen_pos_back.1, screen_pos_at_end.1, "Cursor should be back on first line visually");
+    println!(
+        "Screen position back on first line: ({}, {})",
+        screen_pos_back.0, screen_pos_back.1
+    );
+    assert_eq!(
+        screen_pos_back.1, screen_pos_at_end.1,
+        "Cursor should be back on first line visually"
+    );
 }
 
 /// Test to reproduce cursor disappearing when navigating beyond long line end
@@ -391,14 +431,20 @@ fn test_cursor_disappears_beyond_long_line_end() {
     // This forces significant horizontal scrolling
     let long_line = "a".repeat(200);
     harness.type_text(&long_line).unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.type_text("second line").unwrap();
 
     // Navigate to position 188 character-by-character (near end of 200-char line)
     // Then continue pressing right to go through the end and onto next line
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     for _ in 0..188 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
     harness.render().unwrap();
 
@@ -415,7 +461,9 @@ fn test_cursor_disappears_beyond_long_line_end() {
     let mut reappear = None;
 
     for i in 1..=25 {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
         harness.render().unwrap();
 
         let buffer_pos = harness.cursor_position();
@@ -456,11 +504,14 @@ fn test_cursor_disappears_beyond_long_line_end() {
             // Cursor is visible if it's within the content region
             // The cursor can be at content_end (one position past last char) for "end of line" position
             // If content_end == gutter_end, there's no visible content, so cursor can't be visible
-            let is_visible = cursor_x >= gutter_end && cursor_x <= content_end && content_end > gutter_end;
+            let is_visible =
+                cursor_x >= gutter_end && cursor_x <= content_end && content_end > gutter_end;
 
             let char_at_cursor = chars.get(cursor_x).copied();
-            let info = format!("gutter_end={}, content_end={}, cursor_x={}, char={:?}",
-                             gutter_end, content_end, cursor_x, char_at_cursor);
+            let info = format!(
+                "gutter_end={}, content_end={}, cursor_x={}, char={:?}",
+                gutter_end, content_end, cursor_x, char_at_cursor
+            );
             (is_visible, info)
         } else {
             (false, "BEYOND_SCREEN".to_string())
@@ -489,10 +540,15 @@ fn test_cursor_disappears_beyond_long_line_end() {
                 let line = lines[screen_pos.1 as usize];
                 println!("  Screen line {}: {:?}", screen_pos.1, line);
                 // Also show line length
-                let visible_line: String = line.chars()
+                let visible_line: String = line
+                    .chars()
                     .filter(|c| !c.is_control() && *c != '\u{1b}')
                     .collect();
-                println!("    (visible length: {} chars, cursor X: {})", visible_line.len(), screen_pos.0);
+                println!(
+                    "    (visible length: {} chars, cursor X: {})",
+                    visible_line.len(),
+                    screen_pos.0
+                );
             }
         }
     }
@@ -507,10 +563,15 @@ fn test_cursor_disappears_beyond_long_line_end() {
     if let (Some(first), Some(reapp)) = (first_disappear, reappear) {
         println!("Cursor was invisible for {} keypresses", reapp - first);
     }
-    println!("Total keypresses where cursor was invisible: {}", disappeared_count);
+    println!(
+        "Total keypresses where cursor was invisible: {}",
+        disappeared_count
+    );
 
     // Assert if cursor disappeared
-    assert_eq!(disappeared_count, 0,
+    assert_eq!(
+        disappeared_count,
+        0,
         "BUG REPRODUCED: Cursor disappeared for {} keypresses (from {} to {})",
         disappeared_count,
         first_disappear.unwrap_or(0),
@@ -1480,7 +1541,6 @@ fn test_last_line_never_above_bottom() {
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
-
     // Jump to end of file
     harness
         .send_key(KeyCode::End, KeyModifiers::CONTROL)
@@ -1547,7 +1607,9 @@ fn test_last_line_never_above_bottom() {
 
     // Try to scroll down further with PageDown - should not move viewport
     let top_byte_before = harness.editor().active_state().viewport.top_byte;
-    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     let top_byte_after = harness.editor().active_state().viewport.top_byte;
 
@@ -1616,7 +1678,9 @@ fn test_last_line_never_above_bottom() {
     // Verify the last line is visible somewhere in the content area
     let mut found_last_small_line = false;
     for row_idx in content_first_row..=content_last_row {
-        if row_idx < small_screen_lines.len() && small_screen_lines[row_idx].contains("Small Line 10") {
+        if row_idx < small_screen_lines.len()
+            && small_screen_lines[row_idx].contains("Small Line 10")
+        {
             found_last_small_line = true;
 
             // Since buffer is smaller than viewport, last line should NOT be at bottom
@@ -1624,7 +1688,8 @@ fn test_last_line_never_above_bottom() {
                 row_idx < content_last_row,
                 "When buffer is smaller than viewport, last line should not be at bottom. \
                  Found at row {} but content area ends at row {}",
-                row_idx, content_last_row
+                row_idx,
+                content_last_row
             );
             break;
         }
@@ -1664,8 +1729,12 @@ fn test_page_down_when_buffer_equals_viewport_height() {
     harness.render().unwrap();
 
     // Press PageDown twice from the top
-    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
 
     // Verify cursor is detected at the bottom row
     let all_cursors = harness.find_all_cursors();
@@ -1706,10 +1775,15 @@ fn test_enter_key_maintains_bottom_line_pinned() {
     // We'll press it 30 times to ensure we exceed the viewport height (22 lines)
     let num_enters = 30;
 
-    println!("\n=== Testing Enter key {} times in empty buffer ===", num_enters);
+    println!(
+        "\n=== Testing Enter key {} times in empty buffer ===",
+        num_enters
+    );
 
     for i in 1..=num_enters {
-        harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
 
         // After each Enter, check that the last line is visible at the bottom
         let screen = harness.screen_to_string();
@@ -1775,7 +1849,10 @@ fn test_enter_key_maintains_bottom_line_pinned() {
         }
     }
 
-    println!("\n✓ Enter key maintains bottom line pinned throughout {} presses", num_enters);
+    println!(
+        "\n✓ Enter key maintains bottom line pinned throughout {} presses",
+        num_enters
+    );
 }
 
 /// Test cursor visibility and horizontal scrolling when moving to end of long line
@@ -1815,7 +1892,10 @@ fn test_cursor_visibility_at_line_end_no_wrap() {
     assert_eq!(harness.cursor_position(), 0, "Should be at position 0");
 
     let initial_screen_pos = harness.screen_cursor_position();
-    println!("Initial screen cursor at Home: ({}, {})", initial_screen_pos.0, initial_screen_pos.1);
+    println!(
+        "Initial screen cursor at Home: ({}, {})",
+        initial_screen_pos.0, initial_screen_pos.1
+    );
 
     // Track issues as we move right character by character
     let mut issues = Vec::new();
@@ -1823,7 +1903,9 @@ fn test_cursor_visibility_at_line_end_no_wrap() {
     // Move right towards the end of the line, checking each position
     // Focus especially on the last 20 characters
     for i in 0..line_length {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
         harness.render().unwrap();
 
         let buffer_pos = harness.cursor_position();
@@ -1835,7 +1917,9 @@ fn test_cursor_visibility_at_line_end_no_wrap() {
         if buffer_pos != i + 1 {
             issues.push(format!(
                 "At step {}: buffer position {} != expected {}",
-                i + 1, buffer_pos, i + 1
+                i + 1,
+                buffer_pos,
+                i + 1
             ));
         }
 
@@ -1843,7 +1927,8 @@ fn test_cursor_visibility_at_line_end_no_wrap() {
         if screen_pos == (0, 0) && buffer_pos > 0 {
             issues.push(format!(
                 "At step {}: CURSOR AT (0,0) - buffer pos {} but screen shows (0,0)",
-                i + 1, buffer_pos
+                i + 1,
+                buffer_pos
             ));
         }
 
@@ -1861,7 +1946,8 @@ fn test_cursor_visibility_at_line_end_no_wrap() {
         if screen_pos.0 > 80 {
             issues.push(format!(
                 "At step {}: CURSOR OUT OF BOUNDS - screen x={} (> 80)",
-                i + 1, screen_pos.0
+                i + 1,
+                screen_pos.0
             ));
         }
 
@@ -1869,7 +1955,11 @@ fn test_cursor_visibility_at_line_end_no_wrap() {
         if i >= line_length - 20 {
             println!(
                 "Step {}: buffer_pos={}, screen_pos=({}, {}), left_col={}",
-                i + 1, buffer_pos, screen_pos.0, screen_pos.1, left_col
+                i + 1,
+                buffer_pos,
+                screen_pos.0,
+                screen_pos.1,
+                left_col
             );
 
             // The cursor should be visible - calculate expected screen X
@@ -1879,7 +1969,8 @@ fn test_cursor_visibility_at_line_end_no_wrap() {
             // Allow some tolerance for gutter width calculation
             let tolerance = 3;
             if screen_pos.0 < expected_screen_x.saturating_sub(tolerance)
-                || screen_pos.0 > expected_screen_x + tolerance {
+                || screen_pos.0 > expected_screen_x + tolerance
+            {
                 issues.push(format!(
                     "At step {} (near end): screen x={} doesn't match expected ~{} (buffer_pos={}, left_col={})",
                     i + 1, screen_pos.0, expected_screen_x, buffer_pos, left_col
@@ -1890,7 +1981,9 @@ fn test_cursor_visibility_at_line_end_no_wrap() {
 
     println!("\n=== Test Results ===");
     if issues.is_empty() {
-        println!("✓ No issues found - cursor remained visible and horizontal scrolling worked correctly");
+        println!(
+            "✓ No issues found - cursor remained visible and horizontal scrolling worked correctly"
+        );
     } else {
         println!("✗ Found {} issues:", issues.len());
         for issue in &issues {
@@ -1905,14 +1998,18 @@ fn test_cursor_visibility_at_line_end_no_wrap() {
 
     println!("\nFinal position:");
     println!("  Buffer position: {}", final_buffer_pos);
-    println!("  Screen position: ({}, {})", final_screen_pos.0, final_screen_pos.1);
+    println!(
+        "  Screen position: ({}, {})",
+        final_screen_pos.0, final_screen_pos.1
+    );
     println!("  Horizontal scroll (left_column): {}", final_left_col);
 
     // Assert the major issues
     assert!(
         !issues.iter().any(|issue| issue.contains("CURSOR AT (0,0)")),
         "BUG REPRODUCED: Cursor appeared at (0,0) when it shouldn't:\n{}",
-        issues.iter()
+        issues
+            .iter()
             .filter(|issue| issue.contains("CURSOR AT (0,0)"))
             .map(|s| s.as_str())
             .collect::<Vec<_>>()
@@ -1920,9 +2017,12 @@ fn test_cursor_visibility_at_line_end_no_wrap() {
     );
 
     assert!(
-        !issues.iter().any(|issue| issue.contains("NO HORIZONTAL SCROLL")),
+        !issues
+            .iter()
+            .any(|issue| issue.contains("NO HORIZONTAL SCROLL")),
         "BUG REPRODUCED: Horizontal scrolling didn't occur when needed:\n{}",
-        issues.iter()
+        issues
+            .iter()
             .filter(|issue| issue.contains("NO HORIZONTAL SCROLL"))
             .map(|s| s.as_str())
             .collect::<Vec<_>>()
@@ -1936,7 +2036,8 @@ fn test_cursor_visibility_at_line_end_no_wrap() {
     );
 
     assert_ne!(
-        final_screen_pos, (0, 0),
+        final_screen_pos,
+        (0, 0),
         "Final screen cursor should not be at (0, 0)"
     );
 
@@ -1969,7 +2070,9 @@ fn test_enter_at_bottom_scrolls_immediately() {
         if cursor_y >= content_last_row as u16 {
             break;
         }
-        harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
         enter_count += 1;
 
         // Safety check
@@ -1981,47 +2084,64 @@ fn test_enter_at_bottom_scrolls_immediately() {
     let (_, cursor_y_at_bottom) = harness.screen_cursor_position();
     let top_byte_at_bottom = harness.editor().active_state().viewport.top_byte;
 
-    println!("After {} enters: cursor at row {}, top_byte={}",
-             enter_count, cursor_y_at_bottom, top_byte_at_bottom);
-    assert_eq!(cursor_y_at_bottom, content_last_row as u16,
-               "Should be at bottom row before next Enter");
+    println!(
+        "After {} enters: cursor at row {}, top_byte={}",
+        enter_count, cursor_y_at_bottom, top_byte_at_bottom
+    );
+    assert_eq!(
+        cursor_y_at_bottom, content_last_row as u16,
+        "Should be at bottom row before next Enter"
+    );
 
     // Now press Enter ONE more time - this should scroll the viewport
     println!("\nPressing Enter at bottom (should scroll immediately)...");
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
 
     let (_, cursor_y_after_enter) = harness.screen_cursor_position();
     let top_byte_after_enter = harness.editor().active_state().viewport.top_byte;
 
-    println!("After Enter at bottom: cursor at row {}, top_byte={}",
-             cursor_y_after_enter, top_byte_after_enter);
+    println!(
+        "After Enter at bottom: cursor at row {}, top_byte={}",
+        cursor_y_after_enter, top_byte_after_enter
+    );
 
     // The cursor should still be at the bottom row
-    assert_eq!(cursor_y_after_enter, content_last_row as u16,
-               "Cursor should remain at bottom row after Enter");
+    assert_eq!(
+        cursor_y_after_enter, content_last_row as u16,
+        "Cursor should remain at bottom row after Enter"
+    );
 
     // The viewport MUST have scrolled (top_byte increased)
     assert!(
         top_byte_after_enter > top_byte_at_bottom,
         "BUG REPRODUCED: Viewport did not scroll after Enter at bottom. \
          top_byte before={}, after={}",
-        top_byte_at_bottom, top_byte_after_enter
+        top_byte_at_bottom,
+        top_byte_after_enter
     );
 
-    println!("✓ Viewport scrolled by {} bytes",
-             top_byte_after_enter - top_byte_at_bottom);
+    println!(
+        "✓ Viewport scrolled by {} bytes",
+        top_byte_after_enter - top_byte_at_bottom
+    );
 
     // Now verify that typing a character doesn't cause additional scrolling
     let top_byte_before_typing = harness.editor().active_state().viewport.top_byte;
 
     println!("\nTyping 'x' into the new line...");
-    harness.send_key(KeyCode::Char('x'), KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::NONE)
+        .unwrap();
 
     let (_, cursor_y_after_typing) = harness.screen_cursor_position();
     let top_byte_after_typing = harness.editor().active_state().viewport.top_byte;
 
-    println!("After typing: cursor at row {}, top_byte={}",
-             cursor_y_after_typing, top_byte_after_typing);
+    println!(
+        "After typing: cursor at row {}, top_byte={}",
+        cursor_y_after_typing, top_byte_after_typing
+    );
 
     // Typing shouldn't cause additional scrolling
     assert_eq!(
@@ -2033,4 +2153,3 @@ fn test_enter_at_bottom_scrolls_immediately() {
 
     println!("✓ No additional scrolling when typing into new line");
 }
-
