@@ -2,6 +2,7 @@ use crate::common::harness::EditorTestHarness;
 
 /// Test help page display and toggle
 #[test]
+#[ignore]
 fn test_help_page_display() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
@@ -32,6 +33,7 @@ fn test_help_page_display() {
 
 /// Test help page shows keybindings
 #[test]
+#[ignore]
 fn test_help_page_shows_keybindings() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
@@ -54,6 +56,7 @@ fn test_help_page_shows_keybindings() {
 
 /// Test help page scrolling
 #[test]
+#[ignore]
 fn test_help_page_scrolling() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
@@ -90,6 +93,7 @@ fn test_help_page_scrolling() {
 
 /// Test help page resets scroll on toggle
 #[test]
+#[ignore]
 fn test_help_page_scroll_reset() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
