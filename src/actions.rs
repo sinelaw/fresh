@@ -47,6 +47,7 @@ fn max_cursor_position(buffer: &Buffer) -> usize {
 /// * `state` - The current editor state
 /// * `action` - The action to convert
 /// * `tab_size` - Number of spaces per tab
+/// * `auto_indent` - Whether auto-indent is enabled
 ///
 /// # Returns
 /// * `Some(Vec<Event>)` - Events to apply for this action
@@ -55,6 +56,7 @@ pub fn action_to_events(
     state: &EditorState,
     action: Action,
     tab_size: usize,
+    auto_indent: bool,
 ) -> Option<Vec<Event>> {
     let mut events = Vec::new();
 
@@ -100,9 +102,26 @@ pub fn action_to_events(
                     });
                 }
 
+                // Calculate indent for new line
+                let mut text = "\n".to_string();
+
+                if auto_indent {
+                    if let Some(highlighter) = &state.highlighter {
+                        let language = highlighter.language();
+                        if let Some(indent_spaces) = state.indent_calculator.borrow_mut().calculate_indent(
+                            &state.buffer,
+                            cursor.position,
+                            language,
+                            tab_size,
+                        ) {
+                            text.push_str(&" ".repeat(indent_spaces));
+                        }
+                    }
+                }
+
                 events.push(Event::Insert {
                     position: cursor.position,
-                    text: "\n".to_string(),
+                    text,
                     cursor_id,
                 });
             }

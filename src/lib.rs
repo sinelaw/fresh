@@ -19,6 +19,7 @@ pub mod fs;
 pub mod git;
 pub mod highlighter;
 pub mod hooks;
+pub mod indent;
 pub mod keybindings;
 pub mod line_cache;
 pub mod line_wrapping;

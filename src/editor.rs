@@ -5090,7 +5090,12 @@ impl Editor {
     /// Convert an action into a list of events to apply to the active buffer
     /// Returns None for actions that don't generate events (like Quit)
     pub fn action_to_events(&self, action: Action) -> Option<Vec<Event>> {
-        convert_action_to_events(self.active_state(), action, self.config.editor.tab_size)
+        convert_action_to_events(
+            self.active_state(),
+            action,
+            self.config.editor.tab_size,
+            self.config.editor.auto_indent,
+        )
     }
 
     // === Search and Replace Methods ===
