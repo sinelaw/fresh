@@ -601,6 +601,45 @@ fn test_auto_dedent_nested_with_closed_inner() {
     );
 }
 
+/// Test dedent with complete syntax to see if tree-sitter is used
+#[test]
+fn test_dedent_with_complete_syntax() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+
+    // Start with COMPLETE syntax (closing brace already present)
+    std::fs::write(&file_path, "if (true) {\n    hi\n}\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor to end of "hi" line
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+
+    // Press Enter to create new line
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Type closing brace - should dedent to 0 (using tree-sitter since syntax is complete)
+    harness.type_text("}").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content();
+
+    // The closing brace on the new line should be at column 0
+    let lines: Vec<&str> = content.lines().collect();
+    // Find the line with our new closing brace (should be line 3)
+    if lines.len() >= 4 {
+        let line3 = lines[2]; // The new line we created
+        let leading_spaces = line3.chars().take_while(|&c| c == ' ').count();
+        assert_eq!(
+            leading_spaces, 0,
+            "With complete syntax, closing brace should dedent to 0 using tree-sitter. Got {} spaces. Content:\n{}",
+            leading_spaces, content
+        );
+    }
+}
+
 /// Test that pressing Enter after an empty line inside function body maintains indent
 /// This should use tree-sitter to detect we're still inside the function block
 #[test]

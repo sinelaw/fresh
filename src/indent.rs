@@ -1,12 +1,43 @@
-//! Auto-indentation using tree-sitter queries
+//! Auto-indentation using a hybrid tree-sitter + pattern matching approach
 //!
-//! # Design
-//! - **Tree-sitter query-based**: Uses `indents.scm` query files for each language
-//! - **Local context parsing**: Only parses ~1000 bytes before cursor for performance
-//! - **Fallback to previous line**: If parsing fails, copies previous line's indent
+//! # Architecture Overview
 //!
-//! # Query Captures
-//! - `@indent`: Increase indent after this node (e.g., opening `{`)
+//! This module implements a pragmatic hybrid approach for auto-indentation:
+//!
+//! ## 1. Tree-sitter Path (Language-Aware)
+//! - Uses language-specific `indents.scm` query files
+//! - Analyzes AST structure to determine proper indentation
+//! - **Limitation**: Only works when syntax is complete (no ERROR nodes)
+//! - **Reality**: During typing, syntax is almost always incomplete at cursor position
+//!
+//! ## 2. Pattern Matching Path (Language-Agnostic Fallback)
+//! - Searches backwards through buffer looking for delimiters
+//! - Tracks nesting depth to skip over already-matched pairs
+//! - Works reliably with incomplete syntax (the common case during typing)
+//! - Supports any C-style language (braces, brackets, parentheses)
+//!
+//! ## Why This Hybrid Approach?
+//!
+//! When you type `}` to close a block, the buffer looks like:
+//! ```text
+//! if (true) {
+//!     hi
+//!     <cursor>
+//! ```
+//!
+//! Tree-sitter sees incomplete syntax (missing closing brace) and produces ERROR nodes
+//! with no usable structure. The pattern matching fallback handles this gracefully by:
+//! 1. Scanning backwards line by line
+//! 2. Tracking depth when seeing closing delimiters (skip their matching open)
+//! 3. Finding the unmatched opening delimiter to dedent to its level
+//!
+//! ## Performance
+//! - Parses up to 2000 bytes before cursor (balances accuracy vs speed)
+//! - Pattern matching is O(n) where n = lines scanned (typically < 100)
+//! - Tree-sitter queries cached per-language
+//!
+//! # Query Captures (when tree-sitter is used)
+//! - `@indent`: Increase indent after this node (e.g., `block`)
 //! - `@dedent`: Decrease indent for this node (e.g., closing `}`)
 
 use crate::buffer::Buffer;
@@ -179,8 +210,35 @@ impl IndentCalculator {
     }
 
     /// Calculate the correct indent for a closing delimiter being typed
-    /// Uses tree-sitter hybrid heuristic: counts @indent nodes relative to a reference line
-    /// Works with partial parsing by finding a previous non-empty line as reference
+    ///
+    /// # Strategy: Tree-sitter with Pattern Fallback
+    ///
+    /// This function attempts to use tree-sitter first, but falls back to pattern matching
+    /// when the syntax is incomplete (which is the common case during typing).
+    ///
+    /// ## Tree-sitter Path
+    /// 1. Parse buffer content before cursor (up to 2000 bytes)
+    /// 2. Count @indent nodes at cursor position vs reference line
+    /// 3. Calculate dedent based on nesting level difference
+    /// 4. **Problem**: Fails when syntax is incomplete (e.g., missing closing brace)
+    ///
+    /// ## Pattern Matching Fallback (see calculate_dedent_pattern)
+    /// 1. Scan backwards line by line
+    /// 2. Track nesting depth (closing delimiters increment, opening decrement)
+    /// 3. Find first unmatched opening delimiter
+    /// 4. Dedent to its indentation level
+    ///
+    /// # Example
+    /// ```text
+    /// if (1) {
+    ///     if (2) {
+    ///         hi
+    ///     }      // inner closing at depth 1
+    ///     more
+    ///     <cursor typing }>  // should dedent to column 0, not 4
+    /// ```
+    ///
+    /// Pattern matching correctly skips the matched inner block and finds the outer `if (1) {`.
     pub fn calculate_dedent_for_delimiter(
         &mut self,
         buffer: &Buffer,
@@ -307,22 +365,23 @@ impl IndentCalculator {
             }
         }
 
-        // If tree-sitter didn't find any @indent nodes (due to incomplete syntax),
-        // fall back to pattern-based heuristic
+        // Tree-sitter fallback: incomplete syntax produces ERROR nodes with no structure
+        // This is the common case when typing (e.g., "if (true) {\n    hi\n    " is incomplete)
+        // Pattern matching handles this gracefully by tracking delimiter nesting
         if cursor_indent_count == 0 && reference_indent_count == 0 {
-            tracing::debug!("No @indent nodes found for dedent, using pattern fallback");
+            tracing::debug!("No @indent nodes found (incomplete syntax), using pattern fallback");
             return Self::calculate_dedent_pattern(buffer, position, tab_size);
         }
 
+        // Tree-sitter path: Calculate relative indent based on @indent node counts
         // The closing delimiter should be at one level less than current nesting
-        // Delta: how many more @indent levels are we at cursor vs reference, minus 1 for the closing brace
+        // Formula: reference_indent + (cursor_depth - reference_depth - 1) * tab_size
+        // The -1 accounts for the closing delimiter dedenting one level
         let indent_delta = cursor_indent_count - reference_indent_count - 1;
-
-        // Calculate final indent: reference line indent + delta
         let final_indent = (reference_line_indent as i32 + (indent_delta * tab_size as i32)).max(0) as usize;
 
         tracing::debug!(
-            "Dedent calculation: reference={}, cursor_count={}, reference_count={}, delta={}, final={}",
+            "Tree-sitter dedent: reference_indent={}, cursor_depth={}, reference_depth={}, delta={}, final_indent={}",
             reference_line_indent,
             cursor_indent_count,
             reference_indent_count,
@@ -334,14 +393,47 @@ impl IndentCalculator {
     }
 
     /// Calculate dedent using pattern matching (fallback for incomplete syntax)
-    /// Finds the matching opening delimiter by tracking nesting depth
+    ///
+    /// This is the **primary dedent algorithm** used during typing, since tree-sitter
+    /// cannot handle incomplete syntax.
+    ///
+    /// # Algorithm: Nesting Depth Tracking
+    ///
+    /// Scans backwards line by line, tracking nesting depth to skip over already-matched
+    /// delimiter pairs. This ensures we find the **matching** opening delimiter, not just
+    /// any opening delimiter.
+    ///
+    /// ## Depth Counter Logic
+    /// - **Closing delimiter** (`}`, `]`, `)`) → increment depth
+    ///   - Reason: We need to skip its matching opening delimiter
+    /// - **Opening delimiter** (`{`, `[`, `(`) → check depth:
+    ///   - If depth > 0: decrement and continue (this open is matched)
+    ///   - If depth == 0: **found it!** This is the unmatched opening we're looking for
+    ///
+    /// ## Example Walkthrough
+    /// ```text
+    /// if (1) {           // ← target: we want to find this
+    ///     if (2) {
+    ///         hi
+    ///     }              // matched pair
+    ///     more
+    ///     <cursor>       // typing } here
+    /// ```
+    ///
+    /// Search backwards:
+    /// 1. Line "    more" → not a delimiter, continue
+    /// 2. Line "    }" → closing delimiter, depth = 1 (skip next opening)
+    /// 3. Line "        hi" → not a delimiter, continue
+    /// 4. Line "    if (2) {" → opening delimiter, but depth = 1, so decrement to 0, continue
+    /// 5. Line "if (1) {" → opening delimiter, depth = 0, **match found!** Return indent = 0
+    ///
+    /// # Language Agnostic
+    /// Works for any language using C-style delimiters: { } [ ] ( )
     fn calculate_dedent_pattern(
         buffer: &Buffer,
         position: usize,
         tab_size: usize,
     ) -> Option<usize> {
-        // Track nesting depth to skip over already-matched pairs
-        // When we see a closing delimiter, we need to skip its matching opening delimiter
         let mut depth = 0;
         let mut search_pos = position;
 
@@ -363,7 +455,7 @@ impl IndentCalculator {
                 .find(|&&b| b != b' ' && b != b'\t' && b != b'\r' && b != b'\n');
 
             if let Some(&last_char) = last_non_ws {
-                // Found a non-empty line - calculate its indent
+                // Calculate this line's indentation (count leading spaces/tabs)
                 let mut line_indent = 0;
                 let mut pos = line_start;
                 while pos < search_pos {
@@ -377,28 +469,30 @@ impl IndentCalculator {
                     pos += 1;
                 }
 
-                // Check what character this line ends with
+                // Apply nesting depth tracking based on last character
                 match last_char {
-                    // Closing delimiters increase depth (we need to skip their matching opening delimiter)
+                    // Closing delimiter: increment depth to skip its matching opening
                     b'}' | b']' | b')' => {
                         depth += 1;
-                        tracing::debug!("Pattern dedent: found closing delimiter '{}', depth now {}", last_char as char, depth);
+                        tracing::debug!("Pattern dedent: found closing '{}', depth now {}", last_char as char, depth);
                     }
-                    // Opening delimiters
+
+                    // Opening delimiter: check if it's matched or unmatched
                     b'{' | b'[' | b'(' => {
                         if depth > 0 {
-                            // This opening delimiter is matched by a closing one we already saw
+                            // Already matched by a closing delimiter we saw earlier
                             depth -= 1;
-                            tracing::debug!("Pattern dedent: found opening delimiter '{}' but it's matched (depth {}), continuing", last_char as char, depth);
+                            tracing::debug!("Pattern dedent: skipping matched '{}' (depth {}→{})", last_char as char, depth + 1, depth);
                         } else {
-                            // This is the matching opening delimiter for the closing delimiter we're typing!
-                            tracing::debug!("Pattern dedent: found unmatched opening delimiter '{}', dedenting to {}", last_char as char, line_indent);
+                            // Unmatched! This is the opening delimiter we're closing
+                            tracing::debug!("Pattern dedent: found unmatched '{}' at indent {}", last_char as char, line_indent);
                             return Some(line_indent);
                         }
                     }
-                    // Other characters - just continue searching
+
+                    // Content line: continue searching
                     _ => {
-                        tracing::debug!("Pattern dedent: line ends with '{}', continuing search", last_char as char);
+                        tracing::debug!("Pattern dedent: line ends with '{}', continuing", last_char as char);
                     }
                 }
             }
