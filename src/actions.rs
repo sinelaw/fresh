@@ -1106,7 +1106,7 @@ mod tests {
         assert_eq!(state.cursors.primary().position, 6);
 
         // Press Backspace - should delete the newline at position 5
-        let events = action_to_events(&state, Action::DeleteBackward, 4).unwrap();
+        let events = action_to_events(&state, Action::DeleteBackward, 4, false).unwrap();
         println!("Generated events: {:?}", events);
 
         for event in events {

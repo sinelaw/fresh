@@ -213,8 +213,10 @@ impl IndentCalculator {
                 // Check if this node affects indent at cursor position
                 if let Some(idx) = indent_capture_idx {
                     if capture.index == idx as u32 {
-                        // Indent node: if cursor is after its start, increase indent
-                        if cursor_offset >= node_start && cursor_offset < node_end {
+                        // Indent node: if cursor is right after its start (within the node or just after opening),
+                        // we should indent. We check if the node starts just before the cursor.
+                        // Allow some tolerance for the cursor being right at or after the opening token.
+                        if node_start < cursor_offset && cursor_offset <= node_end {
                             indent_delta += 1;
                         }
                     }
@@ -222,7 +224,7 @@ impl IndentCalculator {
 
                 if let Some(idx) = dedent_capture_idx {
                     if capture.index == idx as u32 {
-                        // Dedent node: if cursor is at/after its position, decrease indent
+                        // Dedent node: if cursor is at/after a dedent marker (like }), decrease indent
                         if cursor_offset >= node_start {
                             indent_delta -= 1;
                         }
@@ -312,15 +314,24 @@ mod tests {
     }
 
     #[test]
-    fn test_rust_indent_after_brace() {
+    fn test_rust_indent_after_brace_debug() {
         let mut calc = IndentCalculator::new();
         let buffer = Buffer::from_str("fn main() {");
         let position = buffer.len(); // After the {
 
+        // This should trigger tree-sitter parsing
         let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
-        assert!(indent.is_some());
-        // Should suggest indenting (4 spaces or more)
-        assert!(indent.unwrap() >= 4);
+
+        println!("Test buffer: {:?}", buffer.to_string());
+        println!("Position: {}", position);
+        println!("Result indent: {:?}", indent);
+
+        assert!(indent.is_some(), "Should return Some indent");
+        let indent_val = indent.unwrap();
+        println!("Indent value: {}", indent_val);
+
+        // Should suggest indenting (4 spaces)
+        assert_eq!(indent_val, 4, "Should indent by 4 spaces after opening brace");
     }
 
     #[test]
