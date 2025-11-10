@@ -237,15 +237,15 @@ fn test_cursor_position_with_large_line_numbers() {
     // The gutter width is based on estimated lines (~912,500)
     // Format: [indicator (1)] + [6 digits] + [" │ " (3 chars)] = 10 chars total
     println!("\nExpected gutter width: 10 (1 + 6 + 3 for 6-digit estimated line numbers)");
-    println!("Actual gutter_width: {{gutter_width}}");
+    println!("Actual gutter_width: {gutter_width}");
 
     assert_eq!(
         gutter_width, 10,
-        "Gutter width {{gutter_width}} doesn't match expected 10"
+        "Gutter width {gutter_width} doesn't match expected 10"
     );
 
     // The cursor should be positioned AFTER the gutter (at position gutter_width)
-    println!("Expected: cursor x = {{gutter_width}} (at gutter width)");
+    println!("Expected: cursor x = {gutter_width} (at gutter width)");
     println!("Actual: cursor x = {}", screen_pos.0);
 
     assert_eq!(
@@ -284,7 +284,7 @@ fn test_line_numbers_rendered_correctly() {
         // Create a file with the specified number of lines
         let mut content = String::new();
         for i in 1..=line_count {
-            content.push_str("Line {i}\n");
+            content.push_str(&format!("Line {i}\n"));
         }
         std::fs::write(&file_path, &content).unwrap();
 
@@ -304,7 +304,7 @@ fn test_line_numbers_rendered_correctly() {
 
         println!("Full screen dump:");
         for (i, line) in lines.iter().enumerate() {
-            println!("Row {{i:2}}: {{line:?}}");
+            println!("Row {i:2}: {line:?}");
         }
 
         // Check that we can see the last line number
@@ -317,14 +317,14 @@ fn test_line_numbers_rendered_correctly() {
             .collect();
 
         if let Some(last_line) = content_lines.last() {
-            println!("\nLast content line: {{last_line:?}}");
+            println!("\nLast content line: {last_line:?}");
 
             // Extract the line number
             let line_num_part = last_line.split("│").next().unwrap_or("").trim();
-            println!("Line number extracted: {{line_num_part:?}}");
+            println!("Line number extracted: {line_num_part:?}");
 
             let line_num: usize = line_num_part.parse().unwrap_or(0);
-            println!("Parsed line number: {{line_num}}");
+            println!("Parsed line number: {line_num}");
 
             // For files with more than 20 lines, we should see a line number
             // close to the total line count (within visible range)
@@ -332,16 +332,16 @@ fn test_line_numbers_rendered_correctly() {
 
             assert!(
                 line_num >= expected_min && line_num <= line_count,
-                "{{description}}: Expected to see line numbers between {{expected_min}} and {{line_count}}, but got line {{line_num}}"
+                "{description}: Expected to see line numbers between {expected_min} and {line_count}, but got line {line_num}"
             );
 
             // Verify the last visible line matches the expected line number
             assert_eq!(
                 line_num, line_count,
-                "{{description}}: Expected last visible line to be {{line_count}}, but got {{line_num}}"
+                "{description}: Expected last visible line to be {line_count}, but got {line_num}"
             );
         } else {
-            panic!("{{description}}: No content lines found on screen!");
+            panic!("{description}: No content lines found on screen!");
         }
     }
 }
@@ -373,7 +373,7 @@ fn test_page_down_line_numbers() {
     harness.assert_screen_contains("x1");
     let initial_cursor = harness.cursor_position();
     println!(
-        "Initial state: line {{initial_line}}, cursor at {{initial_cursor}}, screen contains x1"
+        "Initial state: line {initial_line}, cursor at {initial_cursor}, screen contains x1"
     );
     println!("Initial screen:\n{}", harness.screen_to_string());
 
@@ -386,7 +386,7 @@ fn test_page_down_line_numbers() {
     let cursor_after_first = harness.cursor_position();
 
     println!(
-        "\nAfter first PageDown: line {{after_first_pagedown}}, cursor at {{cursor_after_first}}"
+        "\nAfter first PageDown: line {after_first_pagedown}, cursor at {cursor_after_first}"
     );
     println!(
         "Screen after first PageDown:\n{}",
@@ -395,7 +395,7 @@ fn test_page_down_line_numbers() {
 
     assert!(
         after_first_pagedown > 0,
-        "After first PageDown, should have scrolled down from line 0, but got line {{after_first_pagedown}}"
+        "After first PageDown, should have scrolled down from line 0, but got line {after_first_pagedown}"
     );
 
     // Verify content has changed - we should see a line number greater than what was initially visible
@@ -407,7 +407,7 @@ fn test_page_down_line_numbers() {
         "Should see content after scrolling"
     );
     println!(
-        "After first PageDown: screen contains lines starting from line {{after_first_pagedown}}"
+        "After first PageDown: screen contains lines starting from line {after_first_pagedown}"
     );
 
     // Press page down again to ensure scroll is triggered
@@ -419,7 +419,7 @@ fn test_page_down_line_numbers() {
     let cursor_after_second = harness.cursor_position();
 
     println!(
-        "\nAfter second PageDown: line {{after_second_pagedown}}, cursor at {{cursor_after_second}}"
+        "\nAfter second PageDown: line {after_second_pagedown}, cursor at {cursor_after_second}"
     );
     println!(
         "Screen after second PageDown:\n{}",
@@ -428,7 +428,7 @@ fn test_page_down_line_numbers() {
 
     assert!(
         after_second_pagedown > after_first_pagedown,
-        "After second PageDown, should have scrolled down more (from {{after_first_pagedown}} to {{after_second_pagedown}})"
+        "After second PageDown, should have scrolled down more (from {after_first_pagedown} to {after_second_pagedown})"
     );
 
     // Verify we can see content from later in the file
@@ -438,7 +438,7 @@ fn test_page_down_line_numbers() {
         "Should see content after second page down"
     );
     println!(
-        "After second PageDown: screen contains lines starting from line {{after_second_pagedown}}"
+        "After second PageDown: screen contains lines starting from line {after_second_pagedown}"
     );
 
     // Verify we no longer see the initial content
@@ -473,7 +473,7 @@ fn test_page_down_line_numbers() {
             // Verify content changed - we should see earlier content
             let expected_content = format!("x{}", current_line + 1);
             harness.assert_screen_contains(&expected_content);
-            println!("Screen now shows {{expected_content}}");
+            println!("Screen now shows {expected_content}");
             break;
         }
     }
@@ -481,6 +481,6 @@ fn test_page_down_line_numbers() {
     let final_line = harness.top_line_number();
     assert!(
         final_line < after_second_pagedown,
-        "After moving up, viewport should have scrolled up from line {{after_second_pagedown}} to {{final_line}}"
+        "After moving up, viewport should have scrolled up from line {after_second_pagedown} to {final_line}"
     );
 }
