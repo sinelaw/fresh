@@ -69,19 +69,79 @@ pub fn action_to_events(
             let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
             cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
 
+            // Check if this is a closing delimiter that should trigger auto-dedent
+            let is_closing_delimiter = matches!(ch, '}' | ')' | ']');
+
             for (cursor_id, cursor) in cursor_vec {
-                // If there's a selection, delete it first
-                if let Some(range) = cursor.selection_range() {
+                let insert_position = if let Some(range) = cursor.selection_range() {
+                    let start = range.start;
                     events.push(Event::Delete {
                         range: range.clone(),
                         deleted_text: state.buffer.slice(range),
                         cursor_id,
                     });
+                    start
+                } else {
+                    cursor.position
+                };
+
+                // Auto-dedent logic for closing delimiters
+                if is_closing_delimiter && auto_indent {
+                    // Find the start of the current line
+                    let mut line_start = insert_position;
+                    while line_start > 0 {
+                        let prev = line_start - 1;
+                        if state.buffer.slice_bytes(prev..prev+1).first() == Some(&b'\n') {
+                            break;
+                        }
+                        line_start = prev;
+                    }
+
+                    // Check if line only contains spaces before cursor
+                    let line_before_cursor = state.buffer.slice_bytes(line_start..insert_position);
+                    let only_spaces = line_before_cursor.iter().all(|&b| b == b' ' || b == b'\t');
+
+                    if only_spaces && insert_position > line_start {
+                        // Calculate correct indent for the closing delimiter using tree-sitter
+                        // This temporarily inserts the delimiter and uses @dedent captures to find correct position
+                        let correct_indent = if let Some(highlighter) = &state.highlighter {
+                            let language = highlighter.language();
+                            state.indent_calculator.borrow_mut().calculate_dedent_for_delimiter(
+                                &state.buffer,
+                                insert_position,
+                                ch,
+                                language,
+                                tab_size,
+                            ).unwrap_or(0)
+                        } else {
+                            0
+                        };
+
+                        // Delete the incorrect spacing
+                        let spaces_to_delete = insert_position - line_start;
+                        if spaces_to_delete > 0 {
+                            events.push(Event::Delete {
+                                range: line_start..insert_position,
+                                deleted_text: state.buffer.slice(line_start..insert_position),
+                                cursor_id,
+                            });
+                        }
+
+                        // Insert correct spacing + the closing delimiter
+                        let mut text = " ".repeat(correct_indent);
+                        text.push(ch);
+                        events.push(Event::Insert {
+                            position: line_start,
+                            text,
+                            cursor_id,
+                        });
+                        continue;
+                    }
                 }
 
-                // Insert the character
+                // Normal character insertion
                 events.push(Event::Insert {
-                    position: cursor.position,
+                    position: insert_position,
                     text: ch.to_string(),
                     cursor_id,
                 });

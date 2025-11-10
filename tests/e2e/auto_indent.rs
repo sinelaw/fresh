@@ -357,3 +357,91 @@ fn test_indent_with_selection_deletes_first() {
         content
     );
 }
+
+/// Test that pressing Enter after a closing brace doesn't indent
+#[test]
+fn test_no_indent_after_close_brace() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Type a complete struct
+    harness.type_text("struct Foo {").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Auto-indent should give us 4 spaces
+    harness.type_text("x: i32,").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Should maintain 4 spaces, now type closing brace
+    harness.type_text("}").unwrap();
+
+    // Now cursor is after the closing brace
+    // Pressing Enter should NOT indent (should be 0 spaces)
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content();
+
+    // Check that the content is correct
+    assert!(content.contains("struct Foo {"), "Should have struct declaration");
+    assert!(content.contains("x: i32"), "Should have field");
+    assert!(content.contains("}"), "Should have closing brace");
+
+    // Check that after the closing brace, there's a newline with NO spaces before it
+    // The pattern should be "}\n" at the end, not "}\n    "
+    assert!(content.ends_with("}\n") || content.ends_with("}\n\n"),
+            "After closing brace should have newline with no indent, got: {:?}", content);
+
+    // Verify the line with closing brace has proper indent (0 spaces to match struct level)
+    // Auto-dedent should have moved it to column 0
+    let lines: Vec<&str> = content.lines().collect();
+    assert!(lines.len() >= 3, "Should have at least 3 lines");
+    let close_brace_line = lines.iter().find(|l| l.trim() == "}").expect("Should have closing brace line");
+    let leading_spaces = close_brace_line.chars().take_while(|&c| c == ' ').count();
+    assert_eq!(leading_spaces, 0, "Closing brace should be at column 0 (auto-dedented)");
+}
+
+/// Test that typing a closing brace auto-dedents to the correct position
+#[test]
+fn test_auto_dedent_on_close_brace() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Type opening brace and press Enter to get indent
+    harness.type_text("fn main() {").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should have 4 spaces of indent
+    let content = harness.get_buffer_content();
+    assert!(content.contains("{\n    "), "Should have indent after opening brace");
+
+    // Now type a closing brace - it should auto-dedent to column 0
+    harness.type_text("}").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content();
+    assert!(
+        content.contains("{\n}") || content.contains("{\n    }"),
+        "Closing brace should dedent to column 0, got: {:?}",
+        content
+    );
+
+    // Count spaces before the closing brace
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.len() >= 2 {
+        let second_line = lines[1];
+        let leading_spaces = second_line.chars().take_while(|&c| c == ' ').count();
+        assert_eq!(
+            leading_spaces, 0,
+            "Closing brace should be at column 0, but found {} spaces",
+            leading_spaces
+        );
+    }
+}
