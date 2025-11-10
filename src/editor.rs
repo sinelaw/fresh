@@ -63,6 +63,23 @@ struct SearchState {
     current_match_index: Option<usize>,
     /// Whether search wraps around at document boundaries
     wrap_search: bool,
+    /// Optional search range (for search in selection)
+    search_range: Option<Range<usize>>,
+}
+
+/// State for interactive replace (query-replace)
+#[derive(Debug, Clone)]
+struct InteractiveReplaceState {
+    /// The search pattern
+    search: String,
+    /// The replacement text
+    replacement: String,
+    /// All match positions (byte offsets)
+    matches: Vec<usize>,
+    /// Current match index we're prompting about
+    current_index: usize,
+    /// Number of replacements made so far
+    replacements_made: usize,
 }
 
 /// Metadata associated with a buffer
@@ -224,6 +241,9 @@ pub struct Editor {
 
     /// Search state (if search is active)
     search_state: Option<SearchState>,
+
+    /// Interactive replace state (if interactive replace is active)
+    interactive_replace_state: Option<InteractiveReplaceState>,
 
     /// LSP status indicator for status bar
     lsp_status: String,
@@ -439,6 +459,7 @@ impl Editor {
             pending_goto_definition_request: None,
             rename_state: None,
             search_state: None,
+            interactive_replace_state: None,
             lsp_status: String::new(),
             mouse_state: MouseState::default(),
             cached_layout: CachedLayout::default(),
@@ -5151,6 +5172,12 @@ impl Editor {
             return;
         }
 
+        // Check if there's a selection for search-in-selection
+        let search_range = {
+            let state = self.active_state();
+            state.cursors.primary().selection_range()
+        };
+
         let buffer_content = {
             let state = self.active_state();
             state.buffer.to_string()
@@ -5161,16 +5188,34 @@ impl Editor {
         let mut matches = Vec::new();
 
         let buffer_lower = buffer_content.to_lowercase();
-        let mut start = 0;
-        while let Some(pos) = buffer_lower[start..].find(&query_lower) {
-            let absolute_pos = start + pos;
-            matches.push(absolute_pos);
-            start = absolute_pos + 1;
+
+        // Determine search boundaries
+        let (search_start, search_end) = if let Some(ref range) = search_range {
+            (range.start, range.end)
+        } else {
+            (0, buffer_content.len())
+        };
+
+        // Find all matches within the search range
+        let mut start = search_start;
+        while start < search_end {
+            if let Some(pos) = buffer_lower[start..search_end].find(&query_lower) {
+                let absolute_pos = start + pos;
+                matches.push(absolute_pos);
+                start = absolute_pos + 1;
+            } else {
+                break;
+            }
         }
 
         if matches.is_empty() {
             self.search_state = None;
-            self.set_status_message(format!("No matches found for '{}'", query));
+            let msg = if search_range.is_some() {
+                format!("No matches found for '{}' in selection", query)
+            } else {
+                format!("No matches found for '{}'", query)
+            };
+            self.set_status_message(msg);
             return;
         }
 
@@ -5195,24 +5240,33 @@ impl Editor {
                 .ensure_visible(&mut state.buffer, state.cursors.primary());
         }
 
+        let num_matches = matches.len();
+
         // Update search state
         self.search_state = Some(SearchState {
             query: query.to_string(),
             matches,
             current_match_index: Some(current_match_index),
-            wrap_search: true,
+            wrap_search: search_range.is_none(), // Only wrap if not searching in selection
+            search_range,
         });
 
-        self.set_status_message(format!(
-            "Found {} match{} for '{}'",
-            self.search_state.as_ref().unwrap().matches.len(),
-            if self.search_state.as_ref().unwrap().matches.len() == 1 {
-                ""
-            } else {
-                "es"
-            },
-            query
-        ));
+        let msg = if self.search_state.as_ref().unwrap().search_range.is_some() {
+            format!(
+                "Found {} match{} for '{}' in selection",
+                num_matches,
+                if num_matches == 1 { "" } else { "es" },
+                query
+            )
+        } else {
+            format!(
+                "Found {} match{} for '{}'",
+                num_matches,
+                if num_matches == 1 { "" } else { "es" },
+                query
+            )
+        };
+        self.set_status_message(msg);
     }
 
     /// Find the next match
