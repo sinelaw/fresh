@@ -4654,6 +4654,13 @@ impl Editor {
             return;
         }
 
+        // Refresh search highlights for the current viewport if we have an active search
+        // This ensures highlights update when scrolling to show matches in the new viewport
+        if let Some(ref search_state) = self.search_state {
+            let query = search_state.query.clone();
+            self.update_search_highlights(&query);
+        }
+
         // Check if we need space for suggestions popup
         let suggestion_lines = if let Some(prompt) = &self.prompt {
             if !prompt.suggestions.is_empty() {
