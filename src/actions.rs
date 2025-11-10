@@ -106,13 +106,14 @@ pub fn action_to_events(
                         // This temporarily inserts the delimiter and uses @dedent captures to find correct position
                         let correct_indent = if let Some(highlighter) = &state.highlighter {
                             let language = highlighter.language();
-                            state.indent_calculator.borrow_mut().calculate_dedent_for_delimiter(
+                            let result = state.indent_calculator.borrow_mut().calculate_dedent_for_delimiter(
                                 &state.buffer,
                                 insert_position,
                                 ch,
                                 language,
                                 tab_size,
-                            ).unwrap_or(0)
+                            ).unwrap_or(0);
+                            result
                         } else {
                             0
                         };
