@@ -806,7 +806,7 @@ fn test_load_big_file_e2e() {
     println!("\n=== E2E Test: Loading BIG.txt through full editor ===");
 
     // Generate BIG.txt if it doesn't exist
-    let big_txt_path = TestFixture::big_txt().unwrap();
+    let big_txt_path = TestFixture::big_txt_for_test("jump_to_line_scroll_middle").unwrap();
 
     let start = Instant::now();
     let mut harness = EditorTestHarness::new(80, 24).unwrap();

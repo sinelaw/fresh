@@ -329,43 +329,6 @@ impl EditorTestHarness {
         Ok(())
     }
 
-    /// Simulate pressing the mouse button down (without releasing)
-    pub fn mouse_down(&mut self, col: u16, row: u16) -> io::Result<()> {
-        let mouse_event = MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: col,
-            row,
-            modifiers: KeyModifiers::empty(),
-        };
-        self.send_mouse(mouse_event)?;
-        Ok(())
-    }
-
-    /// Simulate releasing the mouse button
-    pub fn mouse_up(&mut self, col: u16, row: u16) -> io::Result<()> {
-        let mouse_event = MouseEvent {
-            kind: MouseEventKind::Up(MouseButton::Left),
-            column: col,
-            row,
-            modifiers: KeyModifiers::empty(),
-        };
-        self.send_mouse(mouse_event)?;
-        self.render()?;
-        Ok(())
-    }
-
-    /// Simulate mouse movement (hover) without clicking
-    pub fn mouse_move(&mut self, col: u16, row: u16) -> io::Result<()> {
-        let mouse_event = MouseEvent {
-            kind: MouseEventKind::Moved,
-            column: col,
-            row,
-            modifiers: KeyModifiers::empty(),
-        };
-        self.send_mouse(mouse_event)?;
-        Ok(())
-    }
-
     /// Apply an event directly to the active buffer
     pub fn apply_event(&mut self, event: fresh::event::Event) -> io::Result<()> {
         self.editor.apply_event_to_active_buffer(&event);
@@ -453,13 +416,6 @@ impl EditorTestHarness {
             actual, expected,
             "Buffer content mismatch\nExpected: {expected:?}\nActual: {actual:?}"
         );
-    }
-
-    /// Save the active buffer
-    pub fn save(&mut self) -> io::Result<()> {
-        self.editor.save()?;
-        self.render()?;
-        Ok(())
     }
 
     /// Access the editor directly (for advanced testing)
@@ -567,16 +523,6 @@ impl EditorTestHarness {
         } else {
             String::new()
         }
-    }
-
-    /// Assert that a selection exists and contains the expected text
-    pub fn assert_selection_text(&self, expected: &str) {
-        assert!(self.has_selection(), "Expected a selection but none exists");
-        let selected = self.get_selected_text();
-        assert_eq!(
-            selected, expected,
-            "Selection mismatch\nExpected: {expected:?}\nActual: {selected:?}"
-        );
     }
 
     /// Assert that no selection exists

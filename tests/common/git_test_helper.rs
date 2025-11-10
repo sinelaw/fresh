@@ -72,12 +72,6 @@ impl GitTestRepo {
         file_path
     }
 
-    /// Create a directory
-    pub fn create_dir(&self, relative_path: &str) {
-        let dir_path = self.path.join(relative_path);
-        fs::create_dir_all(dir_path).expect("Failed to create directory");
-    }
-
     /// Add files to git staging area
     pub fn git_add(&self, paths: &[&str]) {
         for path in paths {
@@ -126,13 +120,6 @@ impl GitTestRepo {
                 String::from_utf8_lossy(&output.stderr)
             );
         }
-    }
-
-    /// Create a file and commit it in one step
-    pub fn create_and_commit(&self, relative_path: &str, content: &str, message: &str) {
-        self.create_file(relative_path, content);
-        self.git_add(&[relative_path]);
-        self.git_commit(message);
     }
 
     /// Set up a typical project structure for testing

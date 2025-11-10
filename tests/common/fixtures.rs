@@ -38,52 +38,6 @@ impl TestFixture {
         fs::read_to_string(&self.path)
     }
 
-    /// Create a large file with repeated content (for performance testing)
-    pub fn large(filename: &str, size_mb: usize) -> std::io::Result<Self> {
-        let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join(filename);
-
-        let mut file = fs::File::create(&path)?;
-        let line = "x".repeat(80) + "\n";
-        let lines_per_mb = 1024 * 1024 / line.len();
-
-        for _ in 0..(size_mb * lines_per_mb) {
-            file.write_all(line.as_bytes())?;
-        }
-        file.flush()?;
-
-        Ok(TestFixture {
-            _temp_dir: temp_dir,
-            path,
-        })
-    }
-
-    /// Get or create BIG.txt in tests/ directory (61MB, persistent across test runs)
-    /// This file is gitignored and generated on first use
-    ///
-    /// **DEPRECATED**: Use `big_txt_for_test()` instead to avoid test interference.
-    /// This method is kept for backwards compatibility but should not be used in new tests.
-    pub fn big_txt() -> std::io::Result<PathBuf> {
-        let path = PathBuf::from("tests/BIG.txt");
-
-        // Only generate if it doesn't exist
-        if !path.exists() {
-            eprintln!("Generating tests/BIG.txt (61MB, one-time)...");
-            let mut file = fs::File::create(&path)?;
-            let line = "x".repeat(80) + "\n";
-            let lines_per_mb = 1024 * 1024 / line.len();
-            let size_mb = 61;
-
-            for _ in 0..(size_mb * lines_per_mb) {
-                file.write_all(line.as_bytes())?;
-            }
-            file.flush()?;
-            eprintln!("Generated tests/BIG.txt successfully");
-        }
-
-        Ok(path)
-    }
-
     /// Get or create a shared large file (61MB) for all tests.
     /// Uses locking to ensure only one test creates the file, even when tests run in parallel.
     /// All concurrent tests share the same file, which is much more efficient than creating
