@@ -1,5 +1,4 @@
 use crate::file_tree::{FileTreeView, NodeId};
-use crate::fs::FsEntryType;
 use ratatui::{
     layout::Rect,
     style::{Color, Style},

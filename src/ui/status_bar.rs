@@ -5,7 +5,7 @@ use crate::prompt::Prompt;
 use crate::state::EditorState;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;

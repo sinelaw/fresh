@@ -196,7 +196,7 @@ impl Popup {
 
     /// Move selection up (for list popups)
     pub fn select_prev(&mut self) {
-        if let PopupContent::List { items, selected } = &mut self.content {
+        if let PopupContent::List { items: _, selected } = &mut self.content {
             if *selected > 0 {
                 *selected -= 1;
                 // Adjust scroll if needed
@@ -220,7 +220,7 @@ impl Popup {
 
     /// Scroll up by one page
     pub fn page_up(&mut self) {
-        if let PopupContent::List { items, selected } = &mut self.content {
+        if let PopupContent::List { items: _, selected } = &mut self.content {
             let page_size = self.max_height as usize;
             *selected = selected.saturating_sub(page_size);
             self.scroll_offset = *selected;

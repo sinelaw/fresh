@@ -22,7 +22,7 @@ impl EventHooks for Event {
             Event::Insert {
                 position,
                 text,
-                cursor_id,
+                cursor_id: _,
             } => Some(HookArgs::BeforeInsert {
                 buffer_id,
                 position: *position,
@@ -41,7 +41,7 @@ impl EventHooks for Event {
             Event::Insert {
                 position,
                 text,
-                cursor_id,
+                cursor_id: _,
             } => Some(HookArgs::AfterInsert {
                 buffer_id,
                 position: *position,
