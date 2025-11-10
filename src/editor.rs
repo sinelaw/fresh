@@ -5469,7 +5469,7 @@ impl Editor {
         state.cursors.primary_mut().anchor = None;
         state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
 
-        self.set_status_message("Replace this occurrence? (y/n/!/q)".to_string());
+        self.set_status_message("Replace? (y/n/!/q)".to_string());
     }
 
     /// Handle interactive replace key press (y/n/!/q)
@@ -5544,27 +5544,32 @@ impl Editor {
     fn find_next_match_for_replace(&self, ir_state: &InteractiveReplaceState, start_pos: usize) -> Option<(usize, bool)> {
         let state = self.active_state();
 
-        // Try to find next match from current position
-        if let Some(match_pos) = state.buffer.find_next(&ir_state.search, start_pos) {
-            // If we've already wrapped and this match is at or past the starting position, stop
-            if ir_state.has_wrapped && match_pos >= ir_state.start_pos {
-                return None;
+        if ir_state.has_wrapped {
+            // We've already wrapped - only search from start_pos up to (but not including) the original start position
+            // Use find_next_in_range to avoid wrapping again
+            let search_range = Some(start_pos..ir_state.start_pos);
+            if let Some(match_pos) = state.buffer.find_next_in_range(&ir_state.search, start_pos, search_range) {
+                return Some((match_pos, true));
             }
-            return Some((match_pos, ir_state.has_wrapped));
-        }
-
-        // No match found from current position - wrap around if we haven't already
-        if !ir_state.has_wrapped {
-            // Try searching from the beginning
-            if let Some(match_pos) = state.buffer.find_next(&ir_state.search, 0) {
-                // Check if this match is before our starting position
-                if match_pos < ir_state.start_pos {
-                    return Some((match_pos, true)); // Found a match after wrapping
-                }
+            None // No more matches before original start position
+        } else {
+            // Haven't wrapped yet - search normally from start_pos
+            // First try from start_pos to end of buffer
+            let buffer_len = state.buffer.len();
+            let search_range = Some(start_pos..buffer_len);
+            if let Some(match_pos) = state.buffer.find_next_in_range(&ir_state.search, start_pos, search_range) {
+                return Some((match_pos, false));
             }
-        }
 
-        None // No more matches
+            // No match from start_pos to end - wrap to beginning
+            // Search from 0 to start_pos (original position)
+            let wrap_range = Some(0..ir_state.start_pos);
+            if let Some(match_pos) = state.buffer.find_next_in_range(&ir_state.search, 0, wrap_range) {
+                return Some((match_pos, true)); // Found match after wrapping
+            }
+
+            None // No matches found anywhere
+        }
     }
 
     /// Replace the current match in interactive replace mode
@@ -5613,9 +5618,9 @@ impl Editor {
         state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
 
         let msg = if ir_state.has_wrapped {
-            "Replace this occurrence? (y/n/!/q) [Wrapped]".to_string()
+            "[Wrapped] Replace? (y/n/!/q)".to_string()
         } else {
-            "Replace this occurrence? (y/n/!/q)".to_string()
+            "Replace? (y/n/!/q)".to_string()
         };
         self.set_status_message(msg);
     }
