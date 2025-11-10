@@ -292,6 +292,7 @@ pub enum Action {
     FindNext,
     FindPrevious,
     Replace,
+    QueryReplace,  // Interactive replace (y/n/!/q for each match)
 
     // Plugin custom actions
     PluginAction(String),
@@ -454,6 +455,7 @@ impl Action {
             "find_next" => Some(Action::FindNext),
             "find_previous" => Some(Action::FindPrevious),
             "replace" => Some(Action::Replace),
+            "query_replace" => Some(Action::QueryReplace),
 
             _ => None,
         }
@@ -817,9 +819,10 @@ impl KeybindingResolver {
             Action::RemoveSecondaryCursors,
         );
 
-        // Search and replace (Ctrl+F for search, Ctrl+R for replace, F3/Shift+F3 for next/prev)
+        // Search and replace (Ctrl+F for search, Ctrl+R for replace, Ctrl+Alt+R for query-replace, F3/Shift+F3 for next/prev)
         bindings.insert((KeyCode::Char('f'), KeyModifiers::CONTROL), Action::Search);
         bindings.insert((KeyCode::Char('r'), KeyModifiers::CONTROL), Action::Replace);
+        bindings.insert((KeyCode::Char('r'), KeyModifiers::CONTROL | KeyModifiers::ALT), Action::QueryReplace);
         bindings.insert((KeyCode::F(3), KeyModifiers::empty()), Action::FindNext);
         bindings.insert((KeyCode::F(3), KeyModifiers::SHIFT), Action::FindPrevious);
 
@@ -1294,6 +1297,7 @@ impl KeybindingResolver {
             Action::FindNext => "Find next search match".to_string(),
             Action::FindPrevious => "Find previous search match".to_string(),
             Action::Replace => "Replace text in buffer".to_string(),
+            Action::QueryReplace => "Interactive replace (y/n/!/q for each match)".to_string(),
             Action::PluginAction(name) => format!("Plugin action: {}", name),
             Action::None => "No action".to_string(),
         }
