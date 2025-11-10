@@ -74,10 +74,8 @@ struct InteractiveReplaceState {
     search: String,
     /// The replacement text
     replacement: String,
-    /// All match positions (byte offsets)
-    matches: Vec<usize>,
-    /// Current match index we're prompting about
-    current_index: usize,
+    /// Current match position (byte offset of the match we're at)
+    current_match_pos: usize,
     /// Number of replacements made so far
     replacements_made: usize,
 }
@@ -5441,52 +5439,31 @@ impl Editor {
             return;
         }
 
-        // Find all matches using the search state if available
-        let matches = if let Some(ref search_state) = self.search_state {
-            search_state.matches.clone()
-        } else {
-            // No search state - need to find all matches
-            let state = self.active_state();
-            let buffer_len = state.buffer.len();
-            let mut matches = Vec::new();
-            let mut pos = 0;
+        // Find the first match lazily (don't find all matches upfront)
+        let state = self.active_state();
+        let start_pos = state.cursors.primary().position;
+        let first_match = state.buffer.find_next(search, start_pos);
 
-            while pos < buffer_len {
-                if let Some(offset) = state.buffer.find_next(search, pos) {
-                    matches.push(offset);
-                    pos = offset + search.len();
-                } else {
-                    break;
-                }
-            }
-            matches
-        };
-
-        if matches.is_empty() {
+        let Some(first_match_pos) = first_match else {
             self.set_status_message(format!("No occurrences of '{}' found.", search));
             return;
-        }
+        };
 
-        // Initialize interactive replace state
+        // Initialize interactive replace state with just the current match
         self.interactive_replace_state = Some(InteractiveReplaceState {
             search: search.to_string(),
             replacement: replacement.to_string(),
-            matches: matches.clone(),
-            current_index: 0,
+            current_match_pos: first_match_pos,
             replacements_made: 0,
         });
 
         // Move cursor to first match and show prompt
-        let first_match = matches[0];
         let state = self.active_state_mut();
-        state.cursors.primary_mut().position = first_match;
+        state.cursors.primary_mut().position = first_match_pos;
         state.cursors.primary_mut().anchor = None;
         state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
 
-        self.set_status_message(format!(
-            "Replace this occurrence? (y/n/!/q) [1/{}]",
-            matches.len()
-        ));
+        self.set_status_message("Replace this occurrence? (y/n/!/q)".to_string());
     }
 
     /// Handle interactive replace key press (y/n/!/q)
@@ -5499,15 +5476,13 @@ impl Editor {
         match c {
             'y' | 'Y' => {
                 // Replace current match
-                let size_delta = self.replace_current_match(&ir_state)?;
+                self.replace_current_match(&ir_state)?;
                 ir_state.replacements_made += 1;
 
-                // Adjust positions of subsequent matches
-                self.adjust_match_positions(&mut ir_state, size_delta);
-                ir_state.current_index += 1;
-
-                // Move to next match or finish
-                if ir_state.current_index < ir_state.matches.len() {
+                // Find next match lazily (after the replacement)
+                let search_pos = ir_state.current_match_pos + ir_state.replacement.len();
+                if let Some(next_match) = self.find_next_match_for_replace(&ir_state, search_pos) {
+                    ir_state.current_match_pos = next_match;
                     self.interactive_replace_state = Some(ir_state.clone());
                     self.move_to_current_match(&ir_state);
                 } else {
@@ -5515,11 +5490,10 @@ impl Editor {
                 }
             }
             'n' | 'N' => {
-                // Skip current match
-                ir_state.current_index += 1;
-
-                // Move to next match or finish
-                if ir_state.current_index < ir_state.matches.len() {
+                // Skip current match and find next
+                let search_pos = ir_state.current_match_pos + ir_state.search.len();
+                if let Some(next_match) = self.find_next_match_for_replace(&ir_state, search_pos) {
+                    ir_state.current_match_pos = next_match;
                     self.interactive_replace_state = Some(ir_state.clone());
                     self.move_to_current_match(&ir_state);
                 } else {
@@ -5527,13 +5501,16 @@ impl Editor {
                 }
             }
             '!' => {
-                // Replace all remaining matches
-                for _ in ir_state.current_index..ir_state.matches.len() {
-                    let size_delta = self.replace_current_match(&ir_state)?;
-                    ir_state.replacements_made += 1;
-                    self.adjust_match_positions(&mut ir_state, size_delta);
-                    ir_state.current_index += 1;
-                }
+                // Replace all remaining matches using the efficient replace_all method
+                // First replace the current match
+                self.replace_current_match(&ir_state)?;
+                ir_state.replacements_made += 1;
+
+                // Then use replace_all for all remaining matches from current position
+                let state = self.active_state_mut();
+                let count = state.buffer.replace_all(&ir_state.search, &ir_state.replacement);
+                ir_state.replacements_made += count;
+
                 self.finish_interactive_replace(ir_state.replacements_made);
             }
             'q' | 'Q' | '\x1b' => {
@@ -5542,21 +5519,24 @@ impl Editor {
             }
             _ => {
                 // Unknown key - show help
-                self.set_status_message(format!(
-                    "Replace this occurrence? (y=yes, n=no, !=all, q=quit) [{}/{}]",
-                    ir_state.current_index + 1,
-                    ir_state.matches.len()
-                ));
+                self.set_status_message(
+                    "Replace this occurrence? (y=yes, n=no, !=all, q=quit)".to_string()
+                );
             }
         }
 
         Ok(())
     }
 
+    /// Find the next match for interactive replace (lazy search)
+    fn find_next_match_for_replace(&self, ir_state: &InteractiveReplaceState, start_pos: usize) -> Option<usize> {
+        let state = self.active_state();
+        state.buffer.find_next(&ir_state.search, start_pos)
+    }
+
     /// Replace the current match in interactive replace mode
-    /// Returns the size delta (can be negative if replacement is shorter than search)
-    fn replace_current_match(&mut self, ir_state: &InteractiveReplaceState) -> std::io::Result<isize> {
-        let match_pos = ir_state.matches[ir_state.current_index];
+    fn replace_current_match(&mut self, ir_state: &InteractiveReplaceState) -> std::io::Result<()> {
+        let match_pos = ir_state.current_match_pos;
         let search_len = ir_state.search.len();
         let range = match_pos..(match_pos + search_len);
 
@@ -5588,36 +5568,18 @@ impl Editor {
         self.active_event_log_mut().append(batch.clone());
         self.apply_event_to_active_buffer(&batch);
 
-        // Calculate size delta for position adjustment
-        let size_delta = ir_state.replacement.len() as isize - search_len as isize;
-        Ok(size_delta)
-    }
-
-    /// Adjust match positions after a replacement
-    fn adjust_match_positions(&mut self, ir_state: &mut InteractiveReplaceState, size_delta: isize) {
-        // Adjust all subsequent match positions
-        for i in (ir_state.current_index + 1)..ir_state.matches.len() {
-            if size_delta > 0 {
-                ir_state.matches[i] += size_delta as usize;
-            } else if size_delta < 0 {
-                ir_state.matches[i] = ir_state.matches[i].saturating_sub((-size_delta) as usize);
-            }
-        }
+        Ok(())
     }
 
     /// Move cursor to the current match in interactive replace
     fn move_to_current_match(&mut self, ir_state: &InteractiveReplaceState) {
-        let match_pos = ir_state.matches[ir_state.current_index];
+        let match_pos = ir_state.current_match_pos;
         let state = self.active_state_mut();
         state.cursors.primary_mut().position = match_pos;
         state.cursors.primary_mut().anchor = None;
         state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
 
-        self.set_status_message(format!(
-            "Replace this occurrence? (y/n/!/q) [{}/{}]",
-            ir_state.current_index + 1,
-            ir_state.matches.len()
-        ));
+        self.set_status_message("Replace this occurrence? (y/n/!/q)".to_string());
     }
 
     /// Finish interactive replace and show summary
