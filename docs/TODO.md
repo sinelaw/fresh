@@ -83,14 +83,22 @@
   - Without active search: prompts for search query, then replacement
   - Incremental highlighting during search input
 - ✅ **Property-based tests** - 11 tests, 1,100 cases covering all replace functions
+- ✅ **Search in selection** (Nov 2025) - Limit search to selected range, no wrap-around
+- ✅ **Interactive replace** (Ctrl+Alt+R, Nov 2025):
+  - Emacs-style query-replace with y/n/!/q prompts
+  - y: Replace current and move to next
+  - n: Skip current and move to next
+  - !: Replace all remaining
+  - q/Esc: Quit
+  - Event-based architecture for proper undo/redo
+  - Position adjustment after each replacement
+  - Progress indicator: "Replace this occurrence? (y/n/!/q) [N/M]"
 
 **TODO:**
-- [ ] Search in selection (limit search range)
 - [ ] Case-sensitive/insensitive toggle
 - [ ] Whole word matching
 - [ ] Search history (recent searches)
 - [ ] Multi-file search/replace (integrate with git grep)
-- [ ] Interactive replace (y/n/!/q for each occurrence)
 - [ ] Progress bar for replace_all on huge files
 
 #### Auto-Indent & Smart Editing
