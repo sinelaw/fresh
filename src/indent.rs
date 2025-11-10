@@ -152,8 +152,67 @@ impl IndentCalculator {
             return Some(indent);
         }
 
-        // Fallback: copy previous line's indent
+        // Fallback: pattern-based indent (for incomplete syntax)
+        if let Some(indent) = Self::calculate_indent_pattern(buffer, position, tab_size) {
+            return Some(indent);
+        }
+
+        // Final fallback: copy previous line's indent
         Some(Self::get_previous_line_indent(buffer, position))
+    }
+
+    /// Calculate indent using simple pattern matching (fallback for incomplete syntax)
+    /// Checks if the line before cursor ends with indent-triggering characters
+    fn calculate_indent_pattern(
+        buffer: &Buffer,
+        position: usize,
+        tab_size: usize,
+    ) -> Option<usize> {
+        if position == 0 {
+            return None;
+        }
+
+        let base_indent = Self::get_previous_line_indent(buffer, position);
+
+        // Find start of the line we're currently on (before pressing Enter)
+        let mut line_start = position;
+        while line_start > 0 {
+            if Self::byte_at(buffer, line_start.saturating_sub(1)) == Some(b'\n') {
+                break;
+            }
+            line_start = line_start.saturating_sub(1);
+        }
+
+        // Get the content of the current line (the one we're leaving)
+        let line_bytes = buffer.slice_bytes(line_start..position);
+
+        // Find the last non-whitespace character
+        let last_non_whitespace = line_bytes
+            .iter()
+            .rev()
+            .find(|&&b| b != b' ' && b != b'\t' && b != b'\r');
+
+        if let Some(&last_char) = last_non_whitespace {
+            tracing::debug!("Pattern match: last char = '{}'", last_char as char);
+            // Check for common indent triggers
+            match last_char {
+                b'{' | b'[' | b'(' => {
+                    // Opening braces/brackets/parens: increase indent
+                    tracing::debug!("Pattern match: found opening brace/bracket at end of line");
+                    return Some(base_indent + tab_size);
+                }
+                b':' => {
+                    // Colon (for Python, YAML, etc.): increase indent
+                    tracing::debug!("Pattern match: found colon at end of line");
+                    return Some(base_indent + tab_size);
+                }
+                _ => {
+                    tracing::debug!("Pattern match: no indent trigger found");
+                }
+            }
+        }
+
+        None
     }
 
     /// Calculate indent using tree-sitter queries
@@ -200,6 +259,7 @@ impl IndentCalculator {
         let cursor_offset = position - parse_start;
 
         let mut indent_delta = 0i32;
+        let mut found_any_captures = false;
         let base_indent = Self::get_previous_line_indent(buffer, position);
 
         // Manually iterate through matches
@@ -209,6 +269,7 @@ impl IndentCalculator {
                 let node = capture.node;
                 let node_start = node.start_byte();
                 let node_end = node.end_byte();
+                let node_text = String::from_utf8_lossy(&source[node_start.min(source.len())..node_end.min(source.len())]);
 
                 // Check if this node affects indent at cursor position
                 if let Some(idx) = indent_capture_idx {
@@ -218,19 +279,29 @@ impl IndentCalculator {
                         // Allow some tolerance for the cursor being right at or after the opening token.
                         if node_start < cursor_offset && cursor_offset <= node_end {
                             indent_delta += 1;
+                            found_any_captures = true;
                         }
                     }
                 }
 
                 if let Some(idx) = dedent_capture_idx {
                     if capture.index == idx as u32 {
-                        // Dedent node: if cursor is at/after a dedent marker (like }), decrease indent
-                        if cursor_offset >= node_start {
+                        // Dedent node: only apply if cursor is right at the start of this dedent marker
+                        // (e.g., right after typing `}` on a new line)
+                        // Don't dedent just because cursor is somewhere after a `)` or `}`
+                        if cursor_offset == node_start {
                             indent_delta -= 1;
+                            found_any_captures = true;
                         }
                     }
                 }
             }
+        }
+
+        // If no captures were found, return None to trigger pattern-based fallback
+        if !found_any_captures {
+            tracing::debug!("No tree-sitter captures found, falling back to pattern matching");
+            return None;
         }
 
         // Calculate final indent
@@ -314,10 +385,23 @@ mod tests {
     }
 
     #[test]
+    fn test_pattern_matching_basic() {
+        let buffer = Buffer::from_str("fn main() {");
+        let position = buffer.len();
+        let result = IndentCalculator::calculate_indent_pattern(&buffer, position, 4);
+        println!("Pattern result for 'fn main() {{': {:?}", result);
+        assert_eq!(result, Some(4), "Should detect {{ and return 4 space indent");
+    }
+
+    #[test]
     fn test_rust_indent_after_brace_debug() {
         let mut calc = IndentCalculator::new();
         let buffer = Buffer::from_str("fn main() {");
         let position = buffer.len(); // After the {
+
+        // Test pattern matching directly first
+        let pattern_result = IndentCalculator::calculate_indent_pattern(&buffer, position, 4);
+        println!("Pattern matching result: {:?}", pattern_result);
 
         // This should trigger tree-sitter parsing
         let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
