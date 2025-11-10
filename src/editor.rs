@@ -1513,20 +1513,25 @@ impl Editor {
 
         // 2. Clear search highlights on edit (Insert/Delete events)
         // This preserves highlights while navigating but clears them when modifying text
-        match event {
-            Event::Insert { .. } | Event::Delete { .. } => {
-                self.clear_search_highlights();
-            }
-            Event::Batch { events, .. } => {
-                // Check if batch contains any Insert/Delete events
-                let has_edits = events.iter().any(|e| {
-                    matches!(e, Event::Insert { .. } | Event::Delete { .. })
-                });
-                if has_edits {
+        // EXCEPT during interactive replace where we want to keep highlights visible
+        let in_interactive_replace = self.interactive_replace_state.is_some();
+
+        if !in_interactive_replace {
+            match event {
+                Event::Insert { .. } | Event::Delete { .. } => {
                     self.clear_search_highlights();
                 }
+                Event::Batch { events, .. } => {
+                    // Check if batch contains any Insert/Delete events
+                    let has_edits = events.iter().any(|e| {
+                        matches!(e, Event::Insert { .. } | Event::Delete { .. })
+                    });
+                    if has_edits {
+                        self.clear_search_highlights();
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
 
         // 3. Trigger plugin hooks for this event
@@ -5417,9 +5422,26 @@ impl Editor {
             return;
         }
 
-        // Create events for all replacements (in reverse order to preserve positions)
+        // Capture current cursor state for undo
         let cursor_id = self.active_state().cursors.primary_id();
+        let cursor = self.active_state().cursors.get(cursor_id).unwrap().clone();
+        let old_position = cursor.position;
+        let old_anchor = cursor.anchor;
+        let old_sticky_column = cursor.sticky_column;
+
+        // Create events for all replacements (in reverse order to preserve positions)
         let mut events = Vec::new();
+
+        // Add MoveCursor at the beginning to save cursor position for undo
+        events.push(Event::MoveCursor {
+            cursor_id,
+            old_position,
+            new_position: old_position, // Keep cursor where it is
+            old_anchor,
+            new_anchor: old_anchor,
+            old_sticky_column,
+            new_sticky_column: old_sticky_column,
+        });
 
         for match_pos in matches.into_iter().rev() {
             let end = match_pos + search.len();
@@ -5598,9 +5620,26 @@ impl Editor {
                 let remaining_count = remaining_matches.len();
 
                 if remaining_count > 0 {
-                    // Create events for all remaining replacements (reverse order preserves positions)
+                    // Capture current cursor state for undo
                     let cursor_id = self.active_state().cursors.primary_id();
+                    let cursor = self.active_state().cursors.get(cursor_id).unwrap().clone();
+                    let old_position = cursor.position;
+                    let old_anchor = cursor.anchor;
+                    let old_sticky_column = cursor.sticky_column;
+
+                    // Create events for all remaining replacements (reverse order preserves positions)
                     let mut events = Vec::new();
+
+                    // Add MoveCursor at the beginning to save cursor position for undo
+                    events.push(Event::MoveCursor {
+                        cursor_id,
+                        old_position,
+                        new_position: old_position, // Keep cursor where it is
+                        old_anchor,
+                        new_anchor: old_anchor,
+                        old_sticky_column,
+                        new_sticky_column: old_sticky_column,
+                    });
 
                     for match_pos in remaining_matches.into_iter().rev() {
                         let end = match_pos + ir_state.search.len();
@@ -5690,9 +5729,25 @@ impl Editor {
         // Get the deleted text for the event
         let deleted_text = self.active_state().buffer.slice(range.clone());
 
-        // Create Delete and Insert events
+        // Capture current cursor state for undo
         let cursor_id = self.active_state().cursors.primary_id();
-        let events = vec![
+        let cursor = self.active_state().cursors.get(cursor_id).unwrap().clone();
+        let old_position = cursor.position;
+        let old_anchor = cursor.anchor;
+        let old_sticky_column = cursor.sticky_column;
+
+        // Create events: MoveCursor, Delete, Insert
+        // The MoveCursor saves the cursor position so undo can restore it
+        let mut events = vec![
+            Event::MoveCursor {
+                cursor_id,
+                old_position,
+                new_position: match_pos,
+                old_anchor,
+                new_anchor: None,
+                old_sticky_column,
+                new_sticky_column: 0,
+            },
             Event::Delete {
                 range: range.clone(),
                 deleted_text,
@@ -5707,7 +5762,7 @@ impl Editor {
 
         // Wrap in batch for atomic undo
         let batch = Event::Batch {
-            events: events.clone(),
+            events,
             description: format!("Query replace '{}' with '{}'", ir_state.search, ir_state.replacement),
         };
 
