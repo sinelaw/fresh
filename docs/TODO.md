@@ -67,24 +67,31 @@
 ### Priority 1: Critical Editor Features
 
 #### Search & Replace
-**Status**: Search infrastructure complete, replace not yet implemented
+**Status**: Core replace functionality complete! (Nov 2025)
 
 **Completed:**
 - ✅ Streaming search (literal & regex) - efficient on GB+ files
 - ✅ Search UI (F3/Shift+F3)
 - ✅ Wrap-around, highlighting, incremental search
+- ✅ **Replace functions** (Nov 2025):
+  - `replace_range()` - Replace specific byte range
+  - `replace_next()` - Find and replace next occurrence
+  - `replace_all()` - Replace all occurrences (literal strings)
+  - `replace_all_regex()` - Replace all with regex capture groups (${1}, ${2})
+- ✅ **Replace UI** (Ctrl+R) - Emacs-like two-step prompts:
+  - With active search: directly prompts for replacement
+  - Without active search: prompts for search query, then replacement
+  - Incremental highlighting during search input
+- ✅ **Property-based tests** - 11 tests, 1,100 cases covering all replace functions
 
 **TODO:**
-- [ ] `replace()` - Replace single occurrence at current position
-- [ ] `replace_next()` - Find and replace next occurrence
-- [ ] `replace_all()` - Replace all occurrences (with progress bar for large files)
-- [ ] `replace_all_regex()` - Replace all with regex capture groups
-- [ ] Replace UI (prompt for replacement text)
 - [ ] Search in selection (limit search range)
 - [ ] Case-sensitive/insensitive toggle
 - [ ] Whole word matching
 - [ ] Search history (recent searches)
 - [ ] Multi-file search/replace (integrate with git grep)
+- [ ] Interactive replace (y/n/!/q for each occurrence)
+- [ ] Progress bar for replace_all on huge files
 
 #### Auto-Indent & Smart Editing
 - [ ] Auto-indent on newline (language-aware)
