@@ -61,14 +61,12 @@ impl EventHooks for Event {
                 old_position,
                 new_position,
                 ..
-            } => {
-                Some(HookArgs::CursorMoved {
-                    buffer_id,
-                    cursor_id: *cursor_id,
-                    old_position: *old_position,
-                    new_position: *new_position,
-                })
-            }
+            } => Some(HookArgs::CursorMoved {
+                buffer_id,
+                cursor_id: *cursor_id,
+                old_position: *old_position,
+                new_position: *new_position,
+            }),
             _ => None,
         }
     }

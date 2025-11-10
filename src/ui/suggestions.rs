@@ -130,9 +130,7 @@ impl SuggestionsRenderer {
                         .fg(Color::Cyan)
                         .bg(theme.suggestion_selected_bg)
                 } else {
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .bg(theme.suggestion_bg)
+                    Style::default().fg(Color::DarkGray).bg(theme.suggestion_bg)
                 };
 
                 if let Some(keybinding) = &suggestion.keybinding {
@@ -153,8 +151,11 @@ impl SuggestionsRenderer {
             // Column 3: Description (takes remaining space)
             if let Some(desc) = &suggestion.description {
                 // Calculate how much space we've used so far
-                let used_width = left_margin + max_name_width + column_spacing
-                    + max_keybinding_width + column_spacing;
+                let used_width = left_margin
+                    + max_name_width
+                    + column_spacing
+                    + max_keybinding_width
+                    + column_spacing;
 
                 // Only show description if we have enough space
                 if used_width < available_width {

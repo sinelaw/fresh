@@ -284,8 +284,7 @@ impl Prompt {
 
     /// Check if there's an active selection
     pub fn has_selection(&self) -> bool {
-        self.selection_anchor.is_some()
-            && self.selection_anchor != Some(self.cursor_pos)
+        self.selection_anchor.is_some() && self.selection_anchor != Some(self.cursor_pos)
     }
 
     /// Get the selection range (start, end) where start <= end
@@ -681,13 +680,13 @@ mod tests {
         prompt.input = "one two three four".to_string();
         prompt.cursor_pos = 18;
 
-        prompt.delete_word_backward();  // Delete "four"
+        prompt.delete_word_backward(); // Delete "four"
         assert_eq!(prompt.input, "one two three ");
 
-        prompt.delete_word_backward();  // Delete "three"
+        prompt.delete_word_backward(); // Delete "three"
         assert_eq!(prompt.input, "one two ");
 
-        prompt.delete_word_backward();  // Delete "two"
+        prompt.delete_word_backward(); // Delete "two"
         assert_eq!(prompt.input, "one ");
     }
 

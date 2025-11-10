@@ -231,7 +231,9 @@ fn test_todo_highlighter_updates_on_edit() {
     // Enable tracing for debugging
     use tracing_subscriber::{fmt, EnvFilter};
     let _ = fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("fresh=trace".parse().unwrap()))
+        .with_env_filter(
+            EnvFilter::from_default_env().add_directive("fresh=trace".parse().unwrap()),
+        )
         .with_test_writer()
         .try_init();
 
@@ -453,9 +455,7 @@ fn test_todo_highlighter_updates_on_delete() {
     harness.render().unwrap();
 
     // Select the entire first line
-    harness
-        .send_key(KeyCode::End, KeyModifiers::SHIFT)
-        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
     harness
         .send_key(KeyCode::Right, KeyModifiers::SHIFT)
         .unwrap(); // Include the newline

@@ -690,7 +690,8 @@ fn test_enter_toggles_directory() {
 
     // Verify files inside testdir are no longer visible
     assert!(
-        !screen_after_collapse.contains("file1.txt") && !screen_after_collapse.contains("file2.txt"),
+        !screen_after_collapse.contains("file1.txt")
+            && !screen_after_collapse.contains("file2.txt"),
         "Files inside testdir should not be visible when collapsed"
     );
 }
@@ -903,7 +904,10 @@ fn test_unsaved_change_indicators() {
     let screen_with_unsaved = harness.screen_to_string();
 
     println!("Screen with unsaved changes:\n{}", screen_with_unsaved);
-    println!("File explorer visible: {}", harness.editor().file_explorer_visible());
+    println!(
+        "File explorer visible: {}",
+        harness.editor().file_explorer_visible()
+    );
 
     // Should now see an unsaved change indicator (●) next to test.txt
     assert!(
@@ -943,8 +947,11 @@ fn test_scroll_allows_cursor_to_top() {
 
     // Create many files to force scrolling (need more than viewport height)
     for i in 0..25 {
-        fs::write(project_root.join(format!("file{:02}.txt", i)), format!("content {}", i))
-            .unwrap();
+        fs::write(
+            project_root.join(format!("file{:02}.txt", i)),
+            format!("content {}", i),
+        )
+        .unwrap();
     }
 
     // Open file explorer
@@ -1059,11 +1066,17 @@ fn test_tabs_above_editor_area_only() {
     fs::write(project_root.join("file2.txt"), "content2").unwrap();
 
     // Open first file
-    harness.editor_mut().open_file(&project_root.join("file1.txt")).unwrap();
+    harness
+        .editor_mut()
+        .open_file(&project_root.join("file1.txt"))
+        .unwrap();
     harness.render().unwrap();
 
     // Open second file
-    harness.editor_mut().open_file(&project_root.join("file2.txt")).unwrap();
+    harness
+        .editor_mut()
+        .open_file(&project_root.join("file2.txt"))
+        .unwrap();
     harness.render().unwrap();
 
     // Open file explorer
@@ -1087,14 +1100,19 @@ fn test_tabs_above_editor_area_only() {
     let explorer_line_idx = lines.iter().position(|l| l.contains("File Explorer"));
 
     // Find lines with tab content (file1.txt, file2.txt)
-    let tab_line_idx = lines.iter().position(|l| l.contains("file1.txt") && l.contains("file2.txt"));
+    let tab_line_idx = lines
+        .iter()
+        .position(|l| l.contains("file1.txt") && l.contains("file2.txt"));
 
     if let (Some(explorer_idx), Some(tab_idx)) = (explorer_line_idx, tab_line_idx) {
         // Tabs and file explorer should be on the same line (line 0)
         // The tab line should contain both the explorer border and the tabs
         let tab_line = lines.get(tab_idx).unwrap_or(&"");
 
-        println!("Tab line index: {}, Explorer line index: {}", tab_idx, explorer_idx);
+        println!(
+            "Tab line index: {}, Explorer line index: {}",
+            tab_idx, explorer_idx
+        );
         println!("Tab line: '{}'", tab_line);
 
         // The critical check: tabs should be on the same line as file explorer header
@@ -1174,7 +1192,10 @@ fn test_auto_select_file_on_focus_switch() {
     );
 
     // Should see App.js in the file explorer tree (not just in tabs)
-    let app_line = lines.iter().find(|l| l.contains("App.js") && l.contains("│")).unwrap_or(&"");
+    let app_line = lines
+        .iter()
+        .find(|l| l.contains("App.js") && l.contains("│"))
+        .unwrap_or(&"");
     assert!(
         !app_line.is_empty() && app_line.contains("│"),
         "App.js should be visible in file explorer tree. Found line: {}",
@@ -1270,7 +1291,10 @@ fn test_file_explorer_sync_after_hide_and_tab_switch() {
     harness.render().unwrap();
 
     let screen_switched = harness.screen_to_string();
-    println!("Screen after switching to file1 (explorer hidden):\n{}", screen_switched);
+    println!(
+        "Screen after switching to file1 (explorer hidden):\n{}",
+        screen_switched
+    );
 
     // Verify we're on file1.txt
     assert!(
@@ -1285,7 +1309,10 @@ fn test_file_explorer_sync_after_hide_and_tab_switch() {
     harness.render().unwrap();
 
     let screen_explorer_reopened = harness.screen_to_string();
-    println!("Screen after re-opening explorer:\n{}", screen_explorer_reopened);
+    println!(
+        "Screen after re-opening explorer:\n{}",
+        screen_explorer_reopened
+    );
 
     // BUG: The explorer should now show file1.txt selected (the current active file)
     // but it might still be showing file2.txt from before it was hidden

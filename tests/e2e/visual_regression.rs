@@ -438,7 +438,10 @@ fn visual_lsp_rename() {
 
     let rename_overlay = overlays[0];
     // The overlay should cover "value" at position 14 (after "fn calculate(")
-    let overlay_text = state.buffer.slice(rename_overlay.range(&state.marker_list)).to_string();
+    let overlay_text = state
+        .buffer
+        .slice(rename_overlay.range(&state.marker_list))
+        .to_string();
     assert_eq!(
         overlay_text, "value",
         "Overlay should cover the 'value' symbol"
@@ -744,7 +747,10 @@ fn test_lsp_rename_cancel_restores_original() {
         .collect();
     assert_eq!(overlays.len(), 1, "Should have exactly one rename overlay");
 
-    let overlay_text = state.buffer.slice(overlays[0].range(&state.marker_list)).to_string();
+    let overlay_text = state
+        .buffer
+        .slice(overlays[0].range(&state.marker_list))
+        .to_string();
     assert_eq!(
         overlay_text, "value",
         "Overlay should cover the 'value' symbol"
@@ -860,7 +866,11 @@ fn test_lsp_rename_undo_restores_all() {
     assert_eq!(original_content.matches("value").count(), 3);
 
     // Create file URI from the temp file path
-    let file_uri = url::Url::from_file_path(&test_file).unwrap().as_str().parse::<Uri>().unwrap();
+    let file_uri = url::Url::from_file_path(&test_file)
+        .unwrap()
+        .as_str()
+        .parse::<Uri>()
+        .unwrap();
 
     // Simulate LSP WorkspaceEdit response with multiple edits
     let mut changes = HashMap::new();
@@ -1070,21 +1080,81 @@ fn visual_multi_language_highlighting() {
 
     // All supported languages with their test files
     let test_files = [
-        ("Rust", "hello.rs", include_str!("../fixtures/syntax_highlighting/hello.rs")),
-        ("Python", "hello.py", include_str!("../fixtures/syntax_highlighting/hello.py")),
-        ("JavaScript", "hello.js", include_str!("../fixtures/syntax_highlighting/hello.js")),
-        ("TypeScript", "hello.ts", include_str!("../fixtures/syntax_highlighting/hello.ts")),
-        ("HTML", "hello.html", include_str!("../fixtures/syntax_highlighting/hello.html")),
-        ("CSS", "hello.css", include_str!("../fixtures/syntax_highlighting/hello.css")),
-        ("C", "hello.c", include_str!("../fixtures/syntax_highlighting/hello.c")),
-        ("C++", "hello.cpp", include_str!("../fixtures/syntax_highlighting/hello.cpp")),
-        ("Go", "hello.go", include_str!("../fixtures/syntax_highlighting/hello.go")),
-        ("JSON", "hello.json", include_str!("../fixtures/syntax_highlighting/hello.json")),
-        ("Java", "hello.java", include_str!("../fixtures/syntax_highlighting/hello.java")),
-        ("C#", "hello.cs", include_str!("../fixtures/syntax_highlighting/hello.cs")),
-        ("PHP", "hello.php", include_str!("../fixtures/syntax_highlighting/hello.php")),
-        ("Ruby", "hello.rb", include_str!("../fixtures/syntax_highlighting/hello.rb")),
-        ("Bash", "hello.sh", include_str!("../fixtures/syntax_highlighting/hello.sh")),
+        (
+            "Rust",
+            "hello.rs",
+            include_str!("../fixtures/syntax_highlighting/hello.rs"),
+        ),
+        (
+            "Python",
+            "hello.py",
+            include_str!("../fixtures/syntax_highlighting/hello.py"),
+        ),
+        (
+            "JavaScript",
+            "hello.js",
+            include_str!("../fixtures/syntax_highlighting/hello.js"),
+        ),
+        (
+            "TypeScript",
+            "hello.ts",
+            include_str!("../fixtures/syntax_highlighting/hello.ts"),
+        ),
+        (
+            "HTML",
+            "hello.html",
+            include_str!("../fixtures/syntax_highlighting/hello.html"),
+        ),
+        (
+            "CSS",
+            "hello.css",
+            include_str!("../fixtures/syntax_highlighting/hello.css"),
+        ),
+        (
+            "C",
+            "hello.c",
+            include_str!("../fixtures/syntax_highlighting/hello.c"),
+        ),
+        (
+            "C++",
+            "hello.cpp",
+            include_str!("../fixtures/syntax_highlighting/hello.cpp"),
+        ),
+        (
+            "Go",
+            "hello.go",
+            include_str!("../fixtures/syntax_highlighting/hello.go"),
+        ),
+        (
+            "JSON",
+            "hello.json",
+            include_str!("../fixtures/syntax_highlighting/hello.json"),
+        ),
+        (
+            "Java",
+            "hello.java",
+            include_str!("../fixtures/syntax_highlighting/hello.java"),
+        ),
+        (
+            "C#",
+            "hello.cs",
+            include_str!("../fixtures/syntax_highlighting/hello.cs"),
+        ),
+        (
+            "PHP",
+            "hello.php",
+            include_str!("../fixtures/syntax_highlighting/hello.php"),
+        ),
+        (
+            "Ruby",
+            "hello.rb",
+            include_str!("../fixtures/syntax_highlighting/hello.rb"),
+        ),
+        (
+            "Bash",
+            "hello.sh",
+            include_str!("../fixtures/syntax_highlighting/hello.sh"),
+        ),
     ];
 
     // Create all test files
@@ -1112,7 +1182,13 @@ fn visual_multi_language_highlighting() {
             unique_colors
         );
 
-        let step_name = format!("{}_highlighting", lang_name.to_lowercase().replace("#", "sharp").replace("+", "plus"));
+        let step_name = format!(
+            "{}_highlighting",
+            lang_name
+                .to_lowercase()
+                .replace("#", "sharp")
+                .replace("+", "plus")
+        );
         let description = format!("{} code with syntax highlighting", lang_name);
 
         harness

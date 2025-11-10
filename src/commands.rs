@@ -404,7 +404,8 @@ pub fn filter_commands(
         .filter(|cmd| matches_query(cmd))
         .map(|cmd| {
             let available = is_available(&cmd);
-            let keybinding = keybinding_resolver.get_keybinding_for_action(&cmd.action, current_context);
+            let keybinding =
+                keybinding_resolver.get_keybinding_for_action(&cmd.action, current_context);
             Suggestion::with_all(
                 cmd.name.clone(),
                 Some(cmd.description),

@@ -97,7 +97,9 @@ fn test_slow_network_fs_preset() {
     let mut harness = EditorTestHarness::with_slow_fs(80, 24, slow_config).unwrap();
 
     // Should still be able to create buffers and type
-    harness.type_text("Testing slow network filesystem").unwrap();
+    harness
+        .type_text("Testing slow network filesystem")
+        .unwrap();
     harness.render().unwrap();
 
     let content = harness.get_buffer_content();
@@ -128,15 +130,9 @@ fn test_navigation_with_slow_fs() {
 
     // Navigate around (these operations should not touch filesystem)
     for _ in 0..10 {
-        harness
-            .send_key(KeyCode::Up, KeyModifiers::NONE)
-            .unwrap();
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
-        harness
-            .send_key(KeyCode::Left, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
         harness
             .send_key(KeyCode::Right, KeyModifiers::NONE)
             .unwrap();
@@ -152,7 +148,10 @@ fn test_navigation_with_slow_fs() {
     );
 
     // Verify no extra filesystem calls were made for navigation
-    let metrics = tokio::runtime::Runtime::new().unwrap().block_on(harness.get_fs_metrics_snapshot()).unwrap();
+    let metrics = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(harness.get_fs_metrics_snapshot())
+        .unwrap();
 
     // Since we started with an empty buffer and didn't open files,
     // there should be minimal filesystem calls
@@ -170,7 +169,10 @@ fn test_metrics_provide_timing_info() {
     let slow_config = SlowFsConfig::uniform(delay);
     let harness = EditorTestHarness::with_slow_fs(80, 24, slow_config).unwrap();
 
-    let metrics = tokio::runtime::Runtime::new().unwrap().block_on(harness.get_fs_metrics_snapshot()).unwrap();
+    let metrics = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(harness.get_fs_metrics_snapshot())
+        .unwrap();
 
     // The metrics should track total delay time
     // (exact value depends on how many fs operations happened during editor init)
@@ -226,12 +228,22 @@ fn test_common_edit_flow_responsiveness() {
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
 
     // Add a new function
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.type_text("fn greet(name: &str) {").unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    harness.type_text("    println!(\"Hello, {}!\", name);").unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .type_text("    println!(\"Hello, {}!\", name);")
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.type_text("}").unwrap();
 
     let phase2_elapsed = phase2_start.elapsed();
@@ -245,11 +257,17 @@ fn test_common_edit_flow_responsiveness() {
     let phase3_start = std::time::Instant::now();
 
     // Move cursor around the document
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap(); // Go to start
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap(); // Go to start
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -265,10 +283,14 @@ fn test_common_edit_flow_responsiveness() {
     let phase4_start = std::time::Instant::now();
 
     // Test undo
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
 
     // Test redo
-    harness.send_key(KeyCode::Char('y'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('y'), KeyModifiers::CONTROL)
+        .unwrap();
 
     let phase4_elapsed = phase4_start.elapsed();
     assert!(
@@ -280,14 +302,24 @@ fn test_common_edit_flow_responsiveness() {
     // === Phase 5: Multiple small edits (simulating real typing) ===
     let phase5_start = std::time::Instant::now();
 
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
 
     // Simulate typing with some backspacing (realistic editing)
     harness.type_text("// Add some comme").unwrap();
-    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
     harness.type_text("ment").unwrap();
 
     let phase5_elapsed = phase5_start.elapsed();
@@ -327,9 +359,18 @@ fn test_common_edit_flow_responsiveness() {
 
     // Verify the content is correct
     let final_content = harness.get_buffer_content();
-    assert!(final_content.contains("fn main()"), "Main function should be present");
-    assert!(final_content.contains("fn greet"), "Greet function should be present");
-    assert!(final_content.contains("// Add some comment"), "Comment should be present");
+    assert!(
+        final_content.contains("fn main()"),
+        "Main function should be present"
+    );
+    assert!(
+        final_content.contains("fn greet"),
+        "Greet function should be present"
+    );
+    assert!(
+        final_content.contains("// Add some comment"),
+        "Comment should be present"
+    );
 
     // Print metrics for analysis
     println!("=== Edit Flow Performance Metrics ===");
@@ -370,7 +411,9 @@ fn test_buffer_switching_with_slow_fs() {
         // These would be buffer switching commands
         // For now we'll just verify we can create and work with multiple buffers
         harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
     }
 
     let elapsed = start.elapsed();
@@ -443,7 +486,16 @@ fn test_large_file_editing_with_slow_fs() {
 
     // Verify content contains our edit
     let final_content = harness.get_buffer_content();
-    assert!(final_content.contains("[EDITED]"), "Edit should be present in buffer");
-    assert!(final_content.contains("Line 1:"), "First line should be present");
-    assert!(final_content.contains("Line 50:"), "Last line should be present");
+    assert!(
+        final_content.contains("[EDITED]"),
+        "Edit should be present in buffer"
+    );
+    assert!(
+        final_content.contains("Line 1:"),
+        "First line should be present"
+    );
+    assert!(
+        final_content.contains("Line 50:"),
+        "Last line should be present"
+    );
 }

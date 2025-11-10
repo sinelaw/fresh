@@ -298,7 +298,9 @@ fn test_append_at_end_of_file() {
     assert_eq!(cursor_pos, 20, "Cursor should be at end of Line 3");
 
     // Type a character - this should append to the end
-    harness.send_key(KeyCode::Char('!'), KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('!'), KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Verify the character was appended
@@ -309,22 +311,38 @@ fn test_append_at_end_of_file() {
     assert_eq!(cursor_pos_after, 21, "Cursor should be after '!'");
 
     // Type another character to ensure we can continue appending
-    harness.send_key(KeyCode::Char('!'), KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('!'), KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_buffer_content("Line 1\nLine 2\nLine 3!!");
 
     // Now press Enter to add a new line
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_buffer_content("Line 1\nLine 2\nLine 3!!\n");
 
     // Type on the new line
-    harness.send_key(KeyCode::Char('L'), KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Char('i'), KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Char('n'), KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Char('e'), KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Char('4'), KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('L'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('4'), KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     harness.assert_buffer_content("Line 1\nLine 2\nLine 3!!\nLine 4");

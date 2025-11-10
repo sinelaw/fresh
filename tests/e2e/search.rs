@@ -31,12 +31,17 @@ fn test_basic_search_forward() {
     harness.render().unwrap();
 
     // Confirm search
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Cursor should move to the first match ("hello" at position 0)
     let cursor_pos = harness.cursor_position();
-    assert_eq!(cursor_pos, 0, "Cursor should be at the start of first 'hello'");
+    assert_eq!(
+        cursor_pos, 0,
+        "Cursor should be at the start of first 'hello'"
+    );
 
     // Find next match with F3
     harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
@@ -129,7 +134,9 @@ fn test_search_highlighting_visible_only() {
     // In a real scenario, only visible lines would be highlighted
 
     // Confirm search
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Should be at first match
@@ -137,7 +144,9 @@ fn test_search_highlighting_visible_only() {
     assert!(cursor_pos > 0, "Cursor should have moved to a match");
 
     // Scroll down and search should still work efficiently
-    harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Find next should work even after scrolling

@@ -303,7 +303,8 @@ impl LspState {
             },
         };
 
-        self.document_versions.insert(PathBuf::from(uri.path().as_str()), 0);
+        self.document_versions
+            .insert(PathBuf::from(uri.path().as_str()), 0);
 
         self.send_notification::<DidOpenTextDocument>(params).await
     }
@@ -359,7 +360,12 @@ impl LspState {
             TextDocumentPositionParams, WorkDoneProgressParams,
         };
 
-        tracing::debug!("LSP: completion request at {}:{}:{}", uri.as_str(), line, character);
+        tracing::debug!(
+            "LSP: completion request at {}:{}:{}",
+            uri.as_str(),
+            line,
+            character
+        );
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -750,7 +756,10 @@ impl LspTask {
                                                 text,
                                                 language_id,
                                             } => {
-                                                tracing::info!("Replaying DidOpen for {}", uri.as_str());
+                                                tracing::info!(
+                                                    "Replaying DidOpen for {}",
+                                                    uri.as_str()
+                                                );
                                                 let _ = state
                                                     .handle_did_open_sequential(
                                                         uri,
@@ -764,7 +773,10 @@ impl LspTask {
                                                 uri,
                                                 content_changes,
                                             } => {
-                                                tracing::info!("Replaying DidChange for {}", uri.as_str());
+                                                tracing::info!(
+                                                    "Replaying DidChange for {}",
+                                                    uri.as_str()
+                                                );
                                                 let _ = state
                                                     .handle_did_change_sequential(
                                                         uri,
@@ -774,7 +786,10 @@ impl LspTask {
                                                     .await;
                                             }
                                             LspCommand::DidSave { uri, text } => {
-                                                tracing::info!("Replaying DidSave for {}", uri.as_str());
+                                                tracing::info!(
+                                                    "Replaying DidSave for {}",
+                                                    uri.as_str()
+                                                );
                                                 let _ = state.handle_did_save(uri, text).await;
                                             }
                                             _ => {}
@@ -844,7 +859,10 @@ impl LspTask {
                             character,
                         } => {
                             if state.initialized {
-                                tracing::info!("Processing Completion request for {}", uri.as_str());
+                                tracing::info!(
+                                    "Processing Completion request for {}",
+                                    uri.as_str()
+                                );
                                 let _ = state
                                     .handle_completion(request_id, uri, line, character, &pending)
                                     .await;
@@ -863,7 +881,10 @@ impl LspTask {
                             character,
                         } => {
                             if state.initialized {
-                                tracing::info!("Processing GotoDefinition request for {}", uri.as_str());
+                                tracing::info!(
+                                    "Processing GotoDefinition request for {}",
+                                    uri.as_str()
+                                );
                                 let _ = state
                                     .handle_goto_definition(
                                         request_id, uri, line, character, &pending,
@@ -988,7 +1009,8 @@ impl LspTask {
             },
         };
 
-        self.document_versions.insert(PathBuf::from(uri.path().as_str()), 0);
+        self.document_versions
+            .insert(PathBuf::from(uri.path().as_str()), 0);
 
         self.send_notification::<DidOpenTextDocument>(params).await
     }

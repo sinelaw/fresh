@@ -22,9 +22,9 @@ fn test_overlay_background_color_direct() {
     // Directly add an overlay with orange background
     state.apply(&Event::AddOverlay {
         overlay_id: "test_todo".to_string(),
-        range: 3..7,  // "TODO"
+        range: 3..7, // "TODO"
         face: EventOverlayFace::Background {
-            color: (255, 165, 0),  // Orange
+            color: (255, 165, 0), // Orange
         },
         priority: 10,
         message: None,
@@ -39,7 +39,7 @@ fn test_overlay_background_color_direct() {
         }
     }
 
-    let overlays = state.overlays.at_position(5, &state.marker_list);  // Middle of "TODO"
+    let overlays = state.overlays.at_position(5, &state.marker_list); // Middle of "TODO"
     println!("Overlays at position 5: {}", overlays.len());
 
     assert_eq!(overlays.len(), 1, "Should have one overlay");
@@ -49,8 +49,11 @@ fn test_overlay_background_color_direct() {
     match &overlay.face {
         fresh::overlay::OverlayFace::Background { color } => {
             println!("Overlay color: {:?}", color);
-            assert!(matches!(color, ratatui::style::Color::Rgb(255, 165, 0)),
-                "Expected RGB(255, 165, 0) but got {:?}", color);
+            assert!(
+                matches!(color, ratatui::style::Color::Rgb(255, 165, 0)),
+                "Expected RGB(255, 165, 0) but got {:?}",
+                color
+            );
         }
         _ => panic!("Expected Background face"),
     }

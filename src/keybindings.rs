@@ -818,14 +818,8 @@ impl KeybindingResolver {
         );
 
         // Search and replace (Ctrl+F for search, Ctrl+R for replace, F3/Shift+F3 for next/prev)
-        bindings.insert(
-            (KeyCode::Char('f'), KeyModifiers::CONTROL),
-            Action::Search,
-        );
-        bindings.insert(
-            (KeyCode::Char('r'), KeyModifiers::CONTROL),
-            Action::Replace,
-        );
+        bindings.insert((KeyCode::Char('f'), KeyModifiers::CONTROL), Action::Search);
+        bindings.insert((KeyCode::Char('r'), KeyModifiers::CONTROL), Action::Replace);
         bindings.insert((KeyCode::F(3), KeyModifiers::empty()), Action::FindNext);
         bindings.insert((KeyCode::F(3), KeyModifiers::SHIFT), Action::FindPrevious);
 
@@ -1308,7 +1302,11 @@ impl KeybindingResolver {
     /// Get the keybinding string for an action in a specific context
     /// Returns the first keybinding found (prioritizing custom bindings over defaults)
     /// Returns None if no binding is found
-    pub fn get_keybinding_for_action(&self, action: &Action, context: KeyContext) -> Option<String> {
+    pub fn get_keybinding_for_action(
+        &self,
+        action: &Action,
+        context: KeyContext,
+    ) -> Option<String> {
         // Check custom bindings first (higher priority)
         if let Some(context_bindings) = self.bindings.get(&context) {
             for ((keycode, modifiers), bound_action) in context_bindings {

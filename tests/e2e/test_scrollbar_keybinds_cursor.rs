@@ -153,9 +153,7 @@ fn test_cursor_visible_when_scrolling_down_in_large_file() {
 
     // Move down 15 times (past the visible area)
     for i in 0..15 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
 
         // After each key press, cursor should be visible on screen
@@ -270,9 +268,7 @@ fn test_empty_last_line_delete_preserves_margin() {
     );
 
     // Now test cursor movement: move left (should go to end of previous line)
-    harness
-        .send_key(KeyCode::Left, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     let cursor_after_left = harness.cursor_position();
@@ -334,8 +330,7 @@ fn test_cursor_x_position_after_enter_at_end_of_line() {
     assert_eq!(
         screen_x, expected_x,
         "BUG: Cursor X should be at leftmost column {} (after gutter), got {}",
-        expected_x,
-        screen_x
+        expected_x, screen_x
     );
 
     // Now type a character - it should appear in the correct place
