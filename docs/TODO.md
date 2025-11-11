@@ -39,8 +39,8 @@
 - File explorer (create/delete files/dirs, show/hide hidden, respect gitignore, auto-expand on focus)
 
 ### Git Integration
-- Git grep (Ctrl+Shift+G)
-- Git find file (Ctrl+Shift+P)
+- Git grep (Ctrl+Shift+G) - **Can be converted to plugin** (see Plugin Refactoring below)
+- Git find file (Ctrl+Shift+P) - **Can be converted to plugin** (see Plugin Refactoring below)
 
 ### Plugin System
 - ✅ **Lua 5.4 runtime** - Fully integrated plugin manager, lifecycle management
@@ -212,31 +212,191 @@ This plan aims to evolve the LSP client to be performant, full-featured, and rob
 - [ ] Project-specific configuration
 - [ ] Multiple workspace folders
 
-### Priority 5: Plugin System (Advanced APIs)
+### Priority 5: Plugin System Refactoring
+
+#### Convert Git Operations to Plugins (High Value Refactoring)
+
+**Analysis Summary (2025-01-11):**
+
+The current git grep and git find files are hardcoded in `src/git.rs` (200 lines), `src/actions.rs`, and `src/editor.rs`. These can be refactored into Lua plugins with minimal new API additions.
+
+**Current Implementation:**
+- **Git grep**: Spawns `git grep -n --column -I`, parses output, sends to AsyncBridge
+- **Git find files**: Spawns `git ls-files`, fuzzy filters, sends to AsyncBridge
+- **Integration**: Hardcoded in Action enum, PromptType enum, and editor event loop
+- **UI**: Uses prompt system with suggestions populated from AsyncMessage results
+
+**Emacs Approach (Magit Reference):**
+- Uses `make-process` for async git commands with filters for streaming output
+- Process objects allow cancellation and incremental updates
+- Buffers display results with custom keybindings and interactive commands
+- Minimal coupling to core editor - all UI is plugin-managed
+
+**✅ Available Plugin APIs (Already Implemented):**
+- `editor.spawn(cmd, args, callback)` - Async process execution (lines 417-471 in plugin_manager.rs)
+- `editor.on(hook, callback)` - Event hooks (16+ types)
+- `editor.register_command({name, action, contexts})` - Dynamic commands
+- `editor.add_overlay(...)` - Visual highlighting
+- `editor.set_status(msg)` - Status messages
+- `editor.get_buffer_info(id)` - Buffer metadata queries
+- `editor.list_buffers()` - Enumerate open buffers
+- Process callbacks with stdout/stderr/exit_code
+
+**❌ Missing APIs for Full Git Plugin Support:**
+
+1. **Prompt/Selection UI API** (CRITICAL)
+   ```lua
+   -- Need: Interactive prompt with suggestions
+   editor.show_prompt({
+       label = "Git grep: ",
+       on_change = function(query)
+           -- Update suggestions as user types
+       end,
+       on_select = function(selection)
+           -- Open file at line:column
+       end,
+       suggestions = { ... }
+   })
+   ```
+
+2. **File Opening API** (HIGH)
+   ```lua
+   -- Need: Open file at specific location
+   editor.open_file({
+       path = "src/main.rs",
+       line = 42,
+       column = 10
+   })
+   ```
+
+3. **Virtual/Scratch Buffers** (MEDIUM - for Magit-style interfaces)
+   ```lua
+   -- Need: Create non-file buffer with custom keybindings
+   local buf = editor.create_virtual_buffer("*git-status*", {
+       read_only = true,
+       context = "git-status-mode"
+   })
+   ```
+
+4. **Custom Context/Keybindings** (MEDIUM)
+   ```lua
+   -- Need: Define buffer-local keybindings
+   editor.register_keybinding({
+       key = "Enter",
+       context = "git-grep-results",
+       action = function() jump_to_match() end
+   })
+   ```
+
+**Recommended Implementation Plan:**
+
+**Phase 1: Add Minimal Prompt API (1-2 days)**
+- Add `PluginCommand::ShowPrompt` with callback support
+- Add `PluginCommand::UpdatePromptSuggestions`
+- Add `PluginCommand::OpenFileAtLocation`
+- Expose via Lua as `editor.show_prompt()`, `editor.open_file()`
+
+**Phase 2: Implement Git Grep Plugin (1 day)**
+```lua
+-- plugins/git-grep.lua
+editor.register_command({
+    name = "Git Grep",
+    action = function()
+        editor.show_prompt({
+            label = "Git grep: ",
+            on_change = function(query)
+                if query ~= "" then
+                    editor.spawn("git", {"grep", "-n", "--column", "-I", "--", query},
+                        function(stdout, stderr, exit_code)
+                            local results = parse_git_grep(stdout)
+                            editor.update_prompt_suggestions(results)
+                        end)
+                end
+            end,
+            on_select = function(match)
+                editor.open_file({path = match.file, line = match.line, column = match.column})
+            end
+        })
+    end,
+    contexts = {"normal"}
+})
+```
+
+**Phase 3: Implement Git Find Files Plugin (1 day)**
+- Similar structure to git grep
+- Uses `git ls-files` with fuzzy filtering in Lua
+- Demonstrates reusability of prompt API
+
+**Phase 4: Remove Hardcoded Git Code (1 day)**
+- Delete `src/git.rs` (200 lines)
+- Remove `Action::GitGrep`, `Action::GitFindFile`
+- Remove `PromptType::GitGrep`, `PromptType::GitFindFile`
+- Remove async message handlers in editor.rs
+- Bundle git plugins as default plugins (auto-load)
+
+**Benefits:**
+- ✅ Reduces core editor code by ~300+ lines
+- ✅ Makes git features user-customizable (change git args, add new commands)
+- ✅ Demonstrates plugin system capabilities
+- ✅ Opens path for community git plugins (git blame, git log, magit-style interface)
+- ✅ Validates plugin API design with real-world use case
+- ✅ Core editor becomes more focused (fewer hardcoded features)
+
+**Risks/Challenges:**
+- Prompt API needs careful design (balances power vs. complexity)
+- Maintaining same UX quality as hardcoded version
+- Migration path for users (plugins must be auto-loaded initially)
+- Performance: Lua overhead for parsing git output (likely negligible)
+
+**Alternative: Enhanced Plugin APIs First**
+If prompt API is too complex, prioritize virtual buffers + custom contexts:
+- Git grep displays results in a buffer (like LSP diagnostics)
+- Navigate results with j/k, press Enter to jump
+- More Emacs-like, potentially more powerful than prompts
+
+**Next Steps:**
+1. Review prompt.rs to understand current prompt implementation
+2. Design `PluginCommand::ShowPrompt` API (minimal viable interface)
+3. Prototype git grep plugin with mock prompt API
+4. Implement prompt API in editor
+5. Port git grep and git find files to plugins
+6. Remove hardcoded git code
+
+---
+
+### Priority 6: Plugin System (Advanced APIs - Post Git Refactoring)
+
+**Note:** Priority 5 (Git Operations as Plugins) should be completed first, as it will inform the design of these advanced APIs.
 
 #### Interactive UI API
-- [ ] Virtual buffers / selection lists / input dialogs
+- [ ] Virtual buffers / selection lists / input dialogs (partially addressed by Prompt API in Priority 5)
 - [ ] Read-only buffers
-- [ ] Generic popups
+- [ ] Generic popups (custom content rendering)
+- [ ] Tree/list widgets for structured data
 
 #### Modal Interaction & Navigation
-- [ ] Define custom modes
-- [ ] Dynamic keybindings
-- [ ] Goto line/position, set selection, scroll control
+- [ ] Define custom modes/contexts (needed for git grep results, magit)
+- [ ] Buffer-local keybindings (partially addressed in Priority 5)
+- [ ] Goto line/position API, set selection, scroll control
+- [ ] Cursor manipulation API
 
 #### Enhanced Hooks & Integration
-- [ ] More hooks: `on_buffer_open`, `on_selection_change`, `on_key_press`
-- [ ] State persistence API
-- [ ] LSP access / Search API / Undo history API
-- [ ] Process cancellation support
+- [ ] More hooks: `on_buffer_open`, `on_selection_change`, `on_key_press`, `on_cursor_moved`
+- [ ] State persistence API (plugin configuration, session state)
+- [ ] LSP access API (query diagnostics, trigger completion from plugins)
+- [ ] Search API (invoke search from plugins, get search state)
+- [ ] Undo history API (query undo tree, create undo boundaries)
+- [ ] Process cancellation support (cancel long-running spawned processes)
 
 #### Target Showcase Plugins
-- [ ] Magit-style Git interface
-- [ ] Telescope-style fuzzy finder
-- [ ] Undo tree visualizer
-- [ ] Project search & replace
+- [ ] Git grep & find files (Priority 5 - in progress)
+- [ ] Magit-style Git interface (needs virtual buffers + custom contexts)
+- [ ] Telescope-style fuzzy finder (reuses prompt API from Priority 5)
+- [ ] Undo tree visualizer (needs virtual buffers + undo history API)
+- [ ] Project search & replace (needs search API + prompt API)
+- [ ] Git blame (line annotations + async git commands)
 
-### Priority 6: Future Enhancements
+### Priority 7: Future Enhancements
 
 #### Performance & Optimization
 - [ ] Syntax highlighting cache
@@ -543,10 +703,18 @@ Where:
 - ✅ Auto-indent (Jan 2025) - Tree-sitter based with hybrid heuristics
 - ✅ Plugin System (Nov 2025) - Fully integrated with Lua runtime, hooks, and overlay management
 - ✅ Marker System (Nov 2025) - O(log n) IntervalTree implementation with lazy delta propagation
+- ✅ Git Plugin Refactoring Analysis (Jan 2025) - Identified path to convert git operations to plugins
 
-**Critical Gaps**: Advanced LSP features (hover, code actions, find references), bracket matching, snippets, terminal integration
+**Critical Gaps**:
+- Advanced LSP features (hover, code actions, find references)
+- Bracket matching, snippets
+- Terminal integration
+- Plugin prompt/selection UI API (needed for git grep/find files as plugins)
 
-**Next Steps**: Focus on LSP advanced features and smart editing (bracket matching, toggle comment)
+**Next Steps**:
+1. **High Priority**: Implement plugin prompt API + convert git operations to plugins (demonstrates plugin system, reduces core code by ~300 lines)
+2. **Medium Priority**: LSP advanced features (hover, code actions, find references)
+3. **Medium Priority**: Smart editing (bracket matching, toggle comment)
 
 ### Milestones
 
