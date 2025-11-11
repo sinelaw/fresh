@@ -2621,6 +2621,52 @@ impl Editor {
                     // 2. This is a plugin-initiated action, not a user edit
                 }
             }
+            PluginCommand::OpenFileAtLocation { path, line, column } => {
+                // Open the file
+                if let Err(e) = self.open_file(&path) {
+                    tracing::error!("Failed to open file from plugin: {}", e);
+                    return Ok(());
+                }
+
+                // If line/column specified, jump to that location
+                if line.is_some() || column.is_some() {
+                    let state = self.active_state_mut();
+
+                    // Convert 1-indexed line/column to byte position
+                    let target_line = line.unwrap_or(1).saturating_sub(1); // Convert to 0-indexed
+                    let column_offset = column.unwrap_or(1).saturating_sub(1); // Convert to 0-indexed
+
+                    let mut iter = state.buffer.line_iterator(0);
+                    let mut target_byte = 0;
+
+                    // Iterate through lines until we reach the target
+                    for current_line in 0..=target_line {
+                        if let Some((line_start, _)) = iter.next() {
+                            if current_line == target_line {
+                                target_byte = line_start;
+                                break;
+                            }
+                        } else {
+                            // Reached end of buffer before target line
+                            break;
+                        }
+                    }
+
+                    // Add the column offset to position within the line
+                    // Column offset is byte offset from line start (matching git grep --column behavior)
+                    let final_position = target_byte + column_offset;
+
+                    // Ensure we don't go past the buffer end
+                    let buffer_len = state.buffer.len();
+                    state.cursors.primary_mut().position = final_position.min(buffer_len);
+                    state.cursors.primary_mut().anchor = None;
+
+                    // Ensure the position is visible
+                    state
+                        .viewport
+                        .ensure_visible(&mut state.buffer, state.cursors.primary());
+                }
+            }
         }
         Ok(())
     }
