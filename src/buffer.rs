@@ -862,11 +862,14 @@ impl Buffer {
     pub fn position_to_lsp_position(&self, byte_pos: usize) -> (usize, usize) {
         let mut iter = self.line_iterator(0);
         let mut line_number = 0;
+        let mut last_line_info: Option<(usize, String)> = None;
 
         while let Some((line_start, line_content)) = iter.next() {
             let line_end = line_start + line_content.len();
 
-            if byte_pos >= line_start && byte_pos <= line_end {
+            // Position belongs to this line if it's within [line_start, line_end)
+            // Exception: if this is the last line and byte_pos == line_end (EOF), include it
+            if byte_pos >= line_start && byte_pos < line_end {
                 // Found the line containing byte_pos
                 let byte_offset = byte_pos - line_start;
 
@@ -880,10 +883,22 @@ impl Buffer {
                 return (line_number, utf16_offset);
             }
 
+            last_line_info = Some((line_start, line_content));
             line_number += 1;
         }
 
-        // If position is beyond the end, return the last line
+        // Handle EOF case: if byte_pos is exactly at the end of the buffer,
+        // return position at the end of the last line
+        if let Some((line_start, line_content)) = last_line_info {
+            let line_end = line_start + line_content.len();
+            if byte_pos == line_end {
+                // Position is exactly at EOF - return end of last line
+                let utf16_offset = line_content.encode_utf16().count();
+                return (line_number - 1, utf16_offset);
+            }
+        }
+
+        // Position is beyond EOF - return start of last line (or 0,0 if no lines)
         if line_number > 0 {
             line_number -= 1;
         }

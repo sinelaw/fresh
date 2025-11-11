@@ -6476,4 +6476,165 @@ mod tests {
         let events = editor.action_to_events(Action::None);
         assert!(events.is_none());
     }
+
+    #[test]
+    fn test_lsp_incremental_insert_generates_correct_range() {
+        // Test that insert events generate correct incremental LSP changes
+        // with zero-width ranges at the insertion point
+        use crate::buffer::Buffer;
+
+        let mut buffer = Buffer::from_str("hello\nworld");
+
+        // Insert "NEW" at position 0 (before "hello")
+        // Expected LSP range: line 0, char 0 to line 0, char 0 (zero-width)
+        let position = 0;
+        let (line, character) = buffer.position_to_lsp_position(position);
+
+        assert_eq!(line, 0, "Insertion at start should be line 0");
+        assert_eq!(character, 0, "Insertion at start should be char 0");
+
+        // Create the range as we do in notify_lsp_change
+        let lsp_pos = Position::new(line as u32, character as u32);
+        let lsp_range = LspRange::new(lsp_pos, lsp_pos);
+
+        assert_eq!(lsp_range.start.line, 0);
+        assert_eq!(lsp_range.start.character, 0);
+        assert_eq!(lsp_range.end.line, 0);
+        assert_eq!(lsp_range.end.character, 0);
+        assert_eq!(lsp_range.start, lsp_range.end, "Insert should have zero-width range");
+
+        // Test insertion at middle of first line (position 3, after "hel")
+        let position = 3;
+        let (line, character) = buffer.position_to_lsp_position(position);
+
+        assert_eq!(line, 0);
+        assert_eq!(character, 3);
+
+        // Test insertion at start of second line (position 6, after "hello\n")
+        let position = 6;
+        let (line, character) = buffer.position_to_lsp_position(position);
+
+        assert_eq!(line, 1, "Position after newline should be line 1");
+        assert_eq!(character, 0, "Position at start of line 2 should be char 0");
+    }
+
+    #[test]
+    fn test_lsp_incremental_delete_generates_correct_range() {
+        // Test that delete events generate correct incremental LSP changes
+        // with proper start/end ranges
+        use crate::buffer::Buffer;
+
+        let buffer = Buffer::from_str("hello\nworld");
+
+        // Delete "ello" (positions 1-5 on line 0)
+        let range_start = 1;
+        let range_end = 5;
+
+        let (start_line, start_char) = buffer.position_to_lsp_position(range_start);
+        let (end_line, end_char) = buffer.position_to_lsp_position(range_end);
+
+        assert_eq!(start_line, 0);
+        assert_eq!(start_char, 1);
+        assert_eq!(end_line, 0);
+        assert_eq!(end_char, 5);
+
+        let lsp_range = LspRange::new(
+            Position::new(start_line as u32, start_char as u32),
+            Position::new(end_line as u32, end_char as u32),
+        );
+
+        assert_eq!(lsp_range.start.line, 0);
+        assert_eq!(lsp_range.start.character, 1);
+        assert_eq!(lsp_range.end.line, 0);
+        assert_eq!(lsp_range.end.character, 5);
+        assert_ne!(lsp_range.start, lsp_range.end, "Delete should have non-zero range");
+
+        // Test deletion across lines (delete "o\nw" - positions 4-8)
+        let range_start = 4;
+        let range_end = 8;
+
+        let (start_line, start_char) = buffer.position_to_lsp_position(range_start);
+        let (end_line, end_char) = buffer.position_to_lsp_position(range_end);
+
+        assert_eq!(start_line, 0, "Delete start on line 0");
+        assert_eq!(start_char, 4, "Delete start at char 4");
+        assert_eq!(end_line, 1, "Delete end on line 1");
+        assert_eq!(end_char, 2, "Delete end at char 2 of line 1");
+    }
+
+    #[test]
+    fn test_lsp_incremental_utf16_encoding() {
+        // Test that position_to_lsp_position correctly handles UTF-16 encoding
+        // LSP uses UTF-16 code units, not byte positions
+        use crate::buffer::Buffer;
+
+        // Test with emoji (4 bytes in UTF-8, 2 code units in UTF-16)
+        let buffer = Buffer::from_str("😀hello");
+
+        // Position 4 is after the emoji (4 bytes)
+        let (line, character) = buffer.position_to_lsp_position(4);
+
+        assert_eq!(line, 0);
+        assert_eq!(character, 2, "Emoji should count as 2 UTF-16 code units");
+
+        // Position 9 is after "😀hell" (4 bytes emoji + 5 bytes text)
+        let (line, character) = buffer.position_to_lsp_position(9);
+
+        assert_eq!(line, 0);
+        assert_eq!(character, 7, "Should be 2 (emoji) + 5 (text) = 7 UTF-16 code units");
+
+        // Test with multi-byte character (é is 2 bytes in UTF-8, 1 code unit in UTF-16)
+        let buffer = Buffer::from_str("café");
+
+        // Position 3 is after "caf" (3 bytes)
+        let (line, character) = buffer.position_to_lsp_position(3);
+
+        assert_eq!(line, 0);
+        assert_eq!(character, 3);
+
+        // Position 5 is after "café" (3 + 2 bytes)
+        let (line, character) = buffer.position_to_lsp_position(5);
+
+        assert_eq!(line, 0);
+        assert_eq!(character, 4, "é should count as 1 UTF-16 code unit");
+    }
+
+    #[test]
+    fn test_lsp_content_change_event_structure() {
+        // Test that we can create TextDocumentContentChangeEvent for incremental updates
+
+        // Incremental insert
+        let insert_change = TextDocumentContentChangeEvent {
+            range: Some(LspRange::new(
+                Position::new(0, 5),
+                Position::new(0, 5),
+            )),
+            range_length: None,
+            text: "NEW".to_string(),
+        };
+
+        assert!(insert_change.range.is_some());
+        assert_eq!(insert_change.text, "NEW");
+        let range = insert_change.range.unwrap();
+        assert_eq!(range.start, range.end, "Insert should have zero-width range");
+
+        // Incremental delete
+        let delete_change = TextDocumentContentChangeEvent {
+            range: Some(LspRange::new(
+                Position::new(0, 2),
+                Position::new(0, 7),
+            )),
+            range_length: None,
+            text: String::new(),
+        };
+
+        assert!(delete_change.range.is_some());
+        assert_eq!(delete_change.text, "");
+        let range = delete_change.range.unwrap();
+        assert_ne!(range.start, range.end, "Delete should have non-zero range");
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.start.character, 2);
+        assert_eq!(range.end.line, 0);
+        assert_eq!(range.end.character, 7);
+    }
 }
