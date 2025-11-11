@@ -25,6 +25,11 @@ pub struct Viewport {
     /// Whether line wrapping is enabled
     /// When true, horizontal scrolling is disabled
     pub line_wrap_enabled: bool,
+
+    /// Whether viewport needs synchronization with cursor positions
+    /// When true, ensure_visible needs to be called before rendering
+    /// This allows batching multiple cursor movements into a single viewport update
+    needs_sync: bool,
 }
 
 impl Viewport {
@@ -38,6 +43,7 @@ impl Viewport {
             scroll_offset: 3,
             horizontal_scroll_offset: 5,
             line_wrap_enabled: false,
+            needs_sync: false,
         }
     }
 
@@ -184,6 +190,26 @@ impl Viewport {
 
         // If we didn't find the line, stay at the last valid position
         self.set_top_byte_with_limit(buffer, iter.current_position());
+    }
+
+    /// Mark viewport as needing synchronization with cursor positions
+    /// This defers the actual viewport update until sync_with_cursor is called
+    pub fn mark_needs_sync(&mut self) {
+        self.needs_sync = true;
+    }
+
+    /// Check if viewport needs synchronization
+    pub fn needs_sync(&self) -> bool {
+        self.needs_sync
+    }
+
+    /// Synchronize viewport with cursor position (deferred ensure_visible)
+    /// This should be called before rendering to batch multiple cursor movements
+    pub fn sync_with_cursor(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
+        if self.needs_sync {
+            self.ensure_visible(buffer, cursor);
+            self.needs_sync = false;
+        }
     }
 
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)

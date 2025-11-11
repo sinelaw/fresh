@@ -4961,6 +4961,13 @@ impl Editor {
         let _span = tracing::trace_span!("render").entered();
         let size = frame.area();
 
+        // Sync viewport with cursor position if needed (deferred from event processing)
+        // This batches multiple cursor movements into a single viewport update
+        if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+            let primary_cursor = *state.cursors.primary();
+            state.viewport.sync_with_cursor(&mut state.buffer, &primary_cursor);
+        }
+
         // If help is visible, render help page instead
         if self.help_renderer.is_visible() {
             self.help_renderer
