@@ -285,10 +285,6 @@ pub enum Action {
     LspGotoDefinition,
     LspRename,
 
-    // Git operations
-    GitGrep,
-    GitFindFile,
-
     // Search and replace
     Search,
     FindNext,
@@ -451,9 +447,6 @@ impl Action {
             "lsp_completion" => Some(Action::LspCompletion),
             "lsp_goto_definition" => Some(Action::LspGotoDefinition),
             "lsp_rename" => Some(Action::LspRename),
-
-            "git_grep" => Some(Action::GitGrep),
-            "git_find_file" => Some(Action::GitFindFile),
 
             "search" => Some(Action::Search),
             "find_next" => Some(Action::FindNext),
@@ -835,22 +828,6 @@ impl KeybindingResolver {
         );
         bindings.insert((KeyCode::F(3), KeyModifiers::empty()), Action::FindNext);
         bindings.insert((KeyCode::F(3), KeyModifiers::SHIFT), Action::FindPrevious);
-
-        // Git operations (Ctrl+Shift+F for grep, Ctrl+Shift+P for find file)
-        bindings.insert(
-            (
-                KeyCode::Char('F'),
-                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-            ),
-            Action::GitGrep,
-        );
-        bindings.insert(
-            (
-                KeyCode::Char('P'),
-                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-            ),
-            Action::GitFindFile,
-        );
 
         // Buffer navigation (Ctrl+PageUp/PageDown - standard in terminals and browsers)
         bindings.insert((KeyCode::PageUp, KeyModifiers::CONTROL), Action::PrevBuffer);
@@ -1309,10 +1286,6 @@ impl KeybindingResolver {
             Action::LspCompletion => "LSP: Show completion suggestions".to_string(),
             Action::LspGotoDefinition => "LSP: Go to definition".to_string(),
             Action::LspRename => "LSP: Rename symbol".to_string(),
-            Action::GitGrep => "Git: Grep - search through git-tracked files".to_string(),
-            Action::GitFindFile => {
-                "Git: Find File - find file by filtering git ls-files".to_string()
-            }
             Action::Search => "Search for text in buffer".to_string(),
             Action::FindNext => "Find next search match".to_string(),
             Action::FindPrevious => "Find previous search match".to_string(),

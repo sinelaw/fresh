@@ -22,10 +22,6 @@ pub enum PromptType {
     QueryReplace { search: String },
     /// Execute a command by name (M-x)
     Command,
-    /// Git grep - search through git-tracked files
-    GitGrep,
-    /// Git find file - find file by filtering git ls-files
-    GitFindFile,
     /// Plugin-controlled prompt with custom type identifier
     /// The string identifier is used to filter hooks in plugin code
     Plugin { custom_type: String },

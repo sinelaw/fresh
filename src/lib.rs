@@ -16,7 +16,6 @@ pub mod event;
 pub mod event_hooks;
 pub mod file_tree;
 pub mod fs;
-pub mod git;
 pub mod highlighter;
 pub mod hooks;
 pub mod indent;
