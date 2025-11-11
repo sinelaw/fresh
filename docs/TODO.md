@@ -265,6 +265,251 @@ This plan aims to evolve the LSP client to be performant, full-featured, and rob
 
 ## Technical Debt & Refactoring
 
+### Unified Line Cache Architecture (High Priority)
+
+**Current Problem**: Line number ↔ byte offset conversions are a major performance bottleneck:
+- `populate_line_cache()` takes **61.95%** of diagnostic processing time
+- Line cache uses eager updates on edits: O(K log K) where K = cached lines (can be 1000+)
+- Separate systems for markers (interval tree with lazy deltas) and lines (BTreeMap with eager updates)
+
+**Proposed Solution**: Unify line tracking into the existing IntervalTree marker system
+
+#### Architecture Overview
+
+Lines ARE intervals! A line is just the interval between two newlines:
+- Line 0: `[0, first_\n)`
+- Line 1: `[first_\n, second_\n)`
+- Line N: `[nth_\n, (n+1)th_\n)`
+
+**Key Insight**: The marker tree already has lazy delta propagation for edits. We can represent lines as special markers and get O(log N) edits for free!
+
+```
+Current:
+┌──────────┐  ┌──────────────┐  ┌─────────────┐
+│  Buffer  │  │  MarkerList  │  │  LineCache  │
+│          │  │              │  │             │
+│ Virtual  │  │ IntervalTree │  │  BTreeMap   │
+│ Buffer   │  │ (lazy Δ) ✅  │  │ (eager) ❌  │
+└──────────┘  └──────────────┘  └─────────────┘
+     │              │                    │
+     └─────Edit─────┴──────────────────┘
+           │                             │
+      O(chunks)                    O(K log K) SLOW!
+
+Proposed:
+┌──────────┐  ┌──────────────────────────────┐
+│  Buffer  │  │  UnifiedMarkerTree           │
+│          │  │                              │
+│ Virtual  │  │  IntervalTree with:          │
+│ Buffer   │  │  - Position markers          │
+│          │  │  - LINE markers (newlines)   │
+│          │  │  Both use lazy Δ! ✅         │
+└──────────┘  └──────────────────────────────┘
+     │                     │
+     └─────Edit────────────┘
+           │
+      Both O(log N) FAST!
+```
+
+#### How It Works
+
+**1. Initialization (File Load)**
+```rust
+// Scan buffer ONCE to find all newlines
+let mut byte = 0;
+let mut line_num = 0;
+for newline_pos in buffer.find_all_newlines() {
+    marker_tree.insert_line_marker(byte..newline_pos, line_num);
+    byte = newline_pos;
+    line_num += 1;
+}
+```
+**Cost**: O(N) scan + O(L log L) insertions where L = line count
+**When**: Only on file load, NOT on every diagnostic update!
+
+**2. Edits (Every Keystroke)**
+```rust
+Event::Insert { position, text } => {
+    // Adjust ALL markers (positions + lines) with lazy deltas
+    marker_tree.adjust_for_edit(position, +text.len());  // O(log N) ✅
+
+    // If text contains newlines, invalidate and rescan affected region
+    if text.contains('\n') {
+        marker_tree.invalidate_lines(position..position+text.len());
+        rescan_lines(affected_region);  // O(M) where M = affected lines
+    }
+
+    buffer.insert(position, text);
+}
+```
+**Cost for edit WITHOUT newlines**: O(log N) - just lazy delta! ✅
+**Cost for edit WITH newlines**: O(log N) + O(M) where M = affected lines (usually 1-5) ✅
+
+**3. Query: Line Number → Byte Offset**
+```rust
+fn line_to_byte(&self, line_num: usize) -> usize {
+    // Query marker tree for line marker
+    if let Some(marker) = self.marker_tree.get_line_marker(line_num) {
+        return marker.start + marker.pending_delta;  // O(log N)
+    }
+    // Not cached - scan from nearest known line
+    scan_from_nearest(line_num)  // O(M) where M = distance
+}
+```
+
+**4. Query: Byte Offset → Line Number**
+```rust
+fn byte_to_line(&self, byte_offset: usize) -> usize {
+    // Use interval tree range query - lines ARE intervals!
+    let markers = self.marker_tree.query_lines(byte_offset, byte_offset+1);
+    markers.first().map(|m| m.line_number)  // O(log N + k) where k=1
+}
+```
+
+#### Marker Types
+
+```rust
+enum MarkerType {
+    Position {
+        overlay_id: Option<String>,
+        affinity: bool,
+    },
+    Line {
+        line_number: usize,
+        // interval.start = line start (after previous \n)
+        // interval.end = line end (at next \n)
+    },
+}
+
+struct Marker {
+    id: MarkerId,
+    interval: Range<u64>,
+    marker_type: MarkerType,
+}
+```
+
+#### Huge File Strategy: Anchor-Based Line Numbering
+
+**Problem**: For huge files (1GB+, 10M lines), there's no "nearest cached line" for random access:
+- LSP diagnostic at line 8,500,000
+- No cached lines nearby
+- Scanning from line 0 or even "nearest" line (could be millions of lines away) is unacceptable
+
+**Solution: Estimated Anchors + Sparse Network**
+
+Instead of exact line numbers everywhere, use **byte-anchored positions with estimated line numbers**:
+
+```rust
+struct LineAnchor {
+    byte_offset: usize,           // Known: exact byte position
+    estimated_line: usize,        // May be estimated from avg line length
+    confidence: AnchorConfidence,
+}
+
+enum AnchorConfidence {
+    Exact,                  // Scanned from known position
+    Estimated,              // Calculated from avg line length
+    Relative(MarkerId),     // Relative to parent anchor
+}
+```
+
+**Key Operations:**
+
+1. **Create Anchor at Line N (no long scan)**
+```rust
+// Need line 8,500,000 but no nearby anchors
+let estimated_byte = 8_500_000 * avg_line_length;  // ~850MB
+let line_start = scan_to_prev_newline(estimated_byte);  // O(100 bytes)
+create_anchor(line_start, 8_500_000, Estimated);
+// Cost: O(avg_line_length) not O(millions of lines)! ✅
+```
+
+2. **Relative Anchoring for Nearby Lines**
+```rust
+// Diagnostic at line 8,500,050, anchor exists at 8,500,000
+let parent = nearest_anchor_before(8_500_050);
+scan_forward_n_lines(parent, 50);  // O(50 * avg_line_length)
+create_anchor(..., 8_500_050, Relative(parent.id));
+// Cost: O(5000 bytes) not O(8.5M lines)! ✅
+```
+
+3. **Lazy Refinement**
+```rust
+// When exact position discovered (e.g., viewport scroll from top):
+let exact_line = scan_from_zero_to(byte);
+if anchor.confidence == Estimated {
+    let error = exact_line - anchor.estimated_line;
+    refine_anchor_and_children(anchor, exact_line, error);
+    anchor.confidence = Exact;
+}
+```
+
+**Properties:**
+- **Maximum scan**: Never scan more than max(100 lines, 10KB) between anchors
+- **Sparse network**: ~50-200 anchors for 1GB file (viewport + diagnostics + search hits)
+- **Self-correcting**: Anchors refine from Estimated→Exact as file is navigated
+- **Local errors**: Wrong estimate at line 8.5M doesn't affect line 9.2M
+- **Byte positions always exact**: Overlays/diagnostics appear correctly regardless of line number estimates
+
+**When Estimation Matters:**
+- Line number gutter display (acceptable to be slightly off until scrolled to)
+- "Go to line N" command (refine on navigation)
+
+**When Estimation Doesn't Matter:**
+- Diagnostics (use byte positions for rendering)
+- Hover/go-to-def (LSP returns byte positions)
+- Overlays (anchored to bytes via markers)
+
+**Fallback: Byte-Based LSPs**
+- If LSP supports `PositionEncodingKind::Utf8`, skip line conversion entirely
+- Work directly with byte offsets (no line numbers needed)
+
+#### Performance Comparison
+
+| Operation | Current (BTreeMap) | Proposed (Unified Tree) |
+|-----------|-------------------|-------------------------|
+| File load | O(1) - no cache | O(L log L) optional pre-scan OR O(1) lazy |
+| Edit (no \n) | O(K log K) 😱 | O(log N) ✅ |
+| Edit (with \n) | O(K log K) 😱 | O(log N + M) ✅ |
+| Line→byte | O(log K) or O(M) scan | O(log N) or O(M) scan |
+| Byte→line | O(log K) or O(M) scan | O(log N + k) query |
+| LSP diagnostics | O(L) scan + O(D) converts | O(D log N) ✅ |
+
+Where:
+- N = total markers (positions + lines)
+- L = total lines in file
+- K = cached lines (can be 1000+)
+- M = lines to scan (distance to nearest cached)
+- D = new diagnostics to convert
+
+**Current bottleneck**: `populate_line_cache` takes 61.95% of time (53B samples in flame graph)
+
+#### Benefits
+
+1. **Single Source of Truth**: ONE tree for ALL position tracking
+2. **Efficient Edits**: O(log N) for everything, not O(K log K)
+3. **Memory Efficiency**: Sparse cache, only accessed lines
+4. **Code Simplification**: Remove `line_cache.rs`, `handle_insertion/deletion`
+5. **Viewport Query Synergy**: Same `query_viewport` works for both overlays AND lines
+6. **Huge File Support**: Lazy population scales to GB+ files
+
+#### Implementation Plan
+
+- [ ] **Phase 1**: Extend IntervalTree with `MarkerType` enum and line marker methods
+- [ ] **Phase 2**: Add `line_to_byte` / `byte_to_line` to unified tree (parallel with old cache)
+- [ ] **Phase 3**: Migrate `lsp_position_to_byte` to use new system
+- [ ] **Phase 4**: Remove `LineCache` struct and eager update logic from Buffer
+- [ ] **Phase 5**: Add lazy line marker rescanning for edits with newlines
+- [ ] **Phase 6**: Implement viewport-based line population strategy
+- [ ] **Phase 7**: Benchmark with large files (1GB+) and many diagnostics (10k+)
+
+**Expected Performance Gain**:
+- LSP diagnostic processing: 61.95% reduction (remove populate_line_cache bottleneck)
+- Edit performance: 10-100x faster for files with large caches
+- Memory: Proportional to accessed lines, not total lines
+
+---
+
 ### Line Wrapping Refactoring
 - [ ] Unify wrapping and no-wrapping code paths (treat no-wrap as infinite-width)
 - [ ] Move cursor position calculation into rendering traversal (eliminate duplicate iteration)
