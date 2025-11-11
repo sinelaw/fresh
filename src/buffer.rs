@@ -315,6 +315,51 @@ impl Buffer {
         None
     }
 
+    /// Find all occurrences of a pattern in a single pass through the buffer
+    /// This is much more efficient than calling find_pattern_streaming repeatedly
+    fn find_all_matches(&self, start: usize, end: usize, pattern: &[u8]) -> Vec<usize> {
+        if pattern.is_empty() || start >= end {
+            return Vec::new();
+        }
+
+        const CHUNK_SIZE: usize = 4096;
+        let overlap = pattern.len().saturating_sub(1);
+        let iter = self.virtual_buffer.iter_at(start);
+        let chunks = OverlappingChunks::new(iter, start, end, CHUNK_SIZE, overlap);
+
+        let mut matches = Vec::new();
+
+        for chunk in chunks {
+            // Search entire buffer including overlap, but only accept matches
+            // that END in or after the valid zone to avoid duplicates
+            let mut pos = 0;
+
+            while pos + pattern.len() <= chunk.buffer.len() {
+                if &chunk.buffer[pos..pos + pattern.len()] == pattern {
+                    let match_end = pos + pattern.len();
+                    // Only accept matches that END in or after the valid zone
+                    // This ensures patterns spanning chunk boundaries are found exactly once
+                    if match_end > chunk.valid_start {
+                        let match_pos = chunk.absolute_pos + pos;
+                        if match_pos + pattern.len() <= end {
+                            matches.push(match_pos);
+                            // Skip past this match (no overlapping matches)
+                            pos += pattern.len();
+                        } else {
+                            break;
+                        }
+                    } else {
+                        pos += 1;
+                    }
+                } else {
+                    pos += 1;
+                }
+            }
+        }
+
+        matches
+    }
+
     /// Find the next occurrence of a regex pattern starting from a given position
     /// Returns the byte offset of the match, or None if not found
     /// Uses streaming iteration with overlapping chunks to support patterns spanning boundaries
@@ -432,25 +477,15 @@ impl Buffer {
 
         let pattern_bytes = pattern.as_bytes();
         let buffer_len = self.len();
-        let mut replacements = 0;
-        let mut current_pos = 0;
 
-        // Find all matches first (before making any modifications)
-        let mut matches = Vec::new();
-        while current_pos < buffer_len {
-            if let Some(offset) = self.find_pattern_streaming(current_pos, buffer_len, pattern_bytes) {
-                matches.push(offset);
-                current_pos = offset + pattern.len();
-            } else {
-                break;
-            }
-        }
+        // Find all matches in a single efficient pass through the buffer
+        let matches = self.find_all_matches(0, buffer_len, pattern_bytes);
 
         // Apply replacements in reverse order to preserve positions
+        let replacements = matches.len();
         for match_pos in matches.into_iter().rev() {
             let end = match_pos + pattern.len();
             self.replace_range(match_pos..end, replacement);
-            replacements += 1;
         }
 
         replacements
@@ -1280,6 +1315,10 @@ mod tests {
                 let mut streaming_positions = Vec::new();
                 let mut search_from = 0;
                 while let Some(found_at) = buffer.find_next(&pattern, search_from) {
+                    // If found position is before search start, we've wrapped around - stop
+                    if found_at < search_from {
+                        break;
+                    }
                     streaming_positions.push(found_at);
                     search_from = found_at + 1;
                 }
