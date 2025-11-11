@@ -137,23 +137,44 @@ pub fn diagnostic_to_overlay(
     Some((start_byte..end_byte, face, priority))
 }
 
+/// Create a stable ID for a diagnostic based on its content
+/// This allows us to track which diagnostics have changed
+fn diagnostic_id(diagnostic: &Diagnostic) -> String {
+    // Create an ID based on position and message
+    // Format: "lsp-diagnostic-L{line}C{col}-{hash}"
+    let line = diagnostic.range.start.line;
+    let col = diagnostic.range.start.character;
+
+    // Simple hash of the message (first 8 chars is enough for uniqueness in most cases)
+    let msg_hash: String = diagnostic.message.chars().take(8).collect();
+
+    format!("lsp-diagnostic-L{}C{}-{}", line, col, msg_hash)
+}
+
 /// Apply LSP diagnostics to editor state as overlays
 ///
 /// This function:
-/// 1. Clears existing diagnostic overlays (IDs starting with "lsp-diagnostic-")
-/// 2. Converts diagnostics to overlays
-/// 3. Adds overlays to the editor state
-/// 4. Adds red bullet point indicators in the margin for lines with diagnostics
+/// 1. Compares incoming diagnostics with existing overlays
+/// 2. Removes overlays for diagnostics that no longer exist
+/// 3. Adds overlays for new diagnostics
+/// 4. Keeps overlays for unchanged diagnostics (incremental update)
+/// 5. Updates margin indicators
 pub fn apply_diagnostics_to_state(
     state: &mut EditorState,
     diagnostics: &[Diagnostic],
     theme: &crate::theme::Theme,
 ) {
     use crate::overlay::Overlay;
+    use std::collections::HashSet;
 
-    // Clear existing diagnostic overlays
-    // We'll use a special prefix for diagnostic overlay IDs
-    let overlay_ids: Vec<String> = state
+    // Build set of incoming diagnostic IDs
+    let incoming_ids: HashSet<String> = diagnostics
+        .iter()
+        .map(|d| diagnostic_id(d))
+        .collect();
+
+    // Find existing diagnostic overlay IDs
+    let existing_ids: Vec<String> = state
         .overlays
         .all()
         .iter()
@@ -168,35 +189,53 @@ pub fn apply_diagnostics_to_state(
         })
         .collect();
 
-    for id in overlay_ids {
-        state.overlays.remove_by_id(&id, &mut state.marker_list);
+    // Remove overlays for diagnostics that are no longer present
+    let mut removed_count = 0;
+    for id in &existing_ids {
+        if !incoming_ids.contains(id) {
+            state.overlays.remove_by_id(id, &mut state.marker_list);
+            removed_count += 1;
+        }
     }
 
-    // Clear existing diagnostic indicators
-    state.margins.clear_diagnostic_indicators();
+    // Convert existing IDs to a set for fast lookup
+    let existing_id_set: HashSet<String> = existing_ids.into_iter().collect();
+
+    // Add new diagnostics (only those that don't already exist)
+    let mut added_count = 0;
 
     // Track unique lines with diagnostics to avoid duplicate margin markers
     let mut diagnostic_lines = std::collections::HashSet::new();
 
     // Sort diagnostics by start line to process them in order
     // This allows us to build up the line cache incrementally, avoiding O(N²) behavior
-    let mut diagnostics_with_idx: Vec<_> = diagnostics.iter().enumerate().collect();
-    diagnostics_with_idx.sort_by_key(|(_, diag)| diag.range.start.line);
+    let mut sorted_diagnostics: Vec<_> = diagnostics.iter().collect();
+    sorted_diagnostics.sort_by_key(|diag| diag.range.start.line);
 
     // Pre-populate the line cache for the maximum line we'll need
     // This transforms the O(N²) iteration problem into O(N)
-    if let Some((_, last_diag)) = diagnostics_with_idx.last() {
+    if let Some(last_diag) = sorted_diagnostics.last() {
         let max_line = last_diag.range.end.line as usize;
         // Populate cache from start to max_line + 1
         state.buffer.populate_line_cache(0, max_line + 1);
     }
 
-    // Add new diagnostic overlays and collect diagnostic lines
-    for (idx, diagnostic) in diagnostics_with_idx {
+    // Add new diagnostic overlays (skip if already exists)
+    for diagnostic in sorted_diagnostics {
+        let overlay_id = diagnostic_id(diagnostic);
+
+        // Skip if this diagnostic already has an overlay
+        if existing_id_set.contains(&overlay_id) {
+            // Still track the line for margin indicators
+            let line = diagnostic.range.start.line as usize;
+            diagnostic_lines.insert(line);
+            continue;
+        }
+
+        // This is a new diagnostic, create an overlay for it
         if let Some((range, face, priority)) =
             diagnostic_to_overlay(diagnostic, &state.buffer, theme)
         {
-            let overlay_id = format!("lsp-diagnostic-{}", idx);
             let message = diagnostic.message.clone();
 
             let overlay = Overlay::with_id(&mut state.marker_list, range, face, overlay_id)
@@ -204,6 +243,7 @@ pub fn apply_diagnostics_to_state(
                 .with_message(message);
 
             state.overlays.add(overlay);
+            added_count += 1;
 
             // Track the line number for diagnostic indicator
             let line = diagnostic.range.start.line as usize;
@@ -211,11 +251,22 @@ pub fn apply_diagnostics_to_state(
         }
     }
 
-    // Add red bullet point indicators for each unique diagnostic line
+    // Clear and rebuild diagnostic indicators (this is fast)
+    state.margins.clear_diagnostic_indicators();
     for line in diagnostic_lines {
         state
             .margins
             .set_diagnostic_indicator(line, "●".to_string(), Color::Red);
+    }
+
+    // Log incremental update stats
+    if added_count > 0 || removed_count > 0 {
+        tracing::debug!(
+            "Incremental diagnostic update: added={}, removed={}, kept={}",
+            added_count,
+            removed_count,
+            diagnostics.len() - added_count
+        );
     }
 }
 
