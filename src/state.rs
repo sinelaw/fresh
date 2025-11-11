@@ -166,10 +166,8 @@ impl EditorState {
                     };
                 }
 
-                // Smart scroll to keep cursor visible
-                if let Some(cursor) = self.cursors.get(*cursor_id) {
-                    self.viewport.ensure_visible(&mut self.buffer, cursor);
-                }
+                // Defer viewport sync to rendering time for better performance
+                self.viewport.mark_needs_sync();
             }
 
             Event::Delete {
@@ -217,10 +215,8 @@ impl EditorState {
                     };
                 }
 
-                // Smart scroll to keep cursor visible
-                if let Some(cursor) = self.cursors.get(*cursor_id) {
-                    self.viewport.ensure_visible(&mut self.buffer, cursor);
-                }
+                // Defer viewport sync to rendering time for better performance
+                self.viewport.mark_needs_sync();
             }
 
             Event::MoveCursor {
@@ -234,10 +230,10 @@ impl EditorState {
                     cursor.position = *new_position;
                     cursor.anchor = *new_anchor;
                     cursor.sticky_column = *new_sticky_column;
-
-                    // Smart scroll to keep cursor visible
-                    self.viewport.ensure_visible(&mut self.buffer, cursor);
                 }
+
+                // Defer viewport sync to rendering time for better performance
+                self.viewport.mark_needs_sync();
 
                 // Update primary cursor line number if this is the primary cursor
                 // For MoveCursor events, we lose absolute line tracking and switch to Relative

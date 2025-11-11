@@ -135,35 +135,58 @@ fn run_event_loop(
     editor: &mut Editor,
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
 ) -> io::Result<()> {
+    use std::time::Instant;
+
+    // Frame rate limiting: target 60fps (16.67ms per frame)
+    const FRAME_DURATION: Duration = Duration::from_millis(16);
+    let mut last_render = Instant::now();
+    let mut needs_render = true;
+
     loop {
         // Process async messages from tokio tasks (LSP, file watching, etc.)
         editor.process_async_messages();
-
-        // Render the editor
-        terminal.draw(|frame| editor.render(frame))?;
 
         // Check if we should quit
         if editor.should_quit() {
             break;
         }
 
-        // Poll for events with shorter timeout for responsive UI (~60fps)
-        if event_poll(Duration::from_millis(16))? {
+        // Render only if enough time has passed since last render (60fps cap)
+        let now = Instant::now();
+        let time_since_render = now.duration_since(last_render);
+        if needs_render && time_since_render >= FRAME_DURATION {
+            terminal.draw(|frame| editor.render(frame))?;
+            last_render = now;
+            needs_render = false;
+        }
+
+        // Calculate remaining time in frame budget
+        let time_since_last_render = Instant::now().duration_since(last_render);
+        let poll_timeout = FRAME_DURATION.saturating_sub(time_since_last_render);
+
+        // Poll for events with remaining frame time
+        if event_poll(poll_timeout)? {
             match event_read()? {
                 CrosstermEvent::Key(key_event) => {
                     handle_key_event(editor, key_event)?;
+                    needs_render = true; // Schedule render for next frame
                 }
                 CrosstermEvent::Mouse(mouse_event) => {
                     handle_mouse_event(editor, mouse_event)?;
+                    needs_render = true; // Schedule render for next frame
                 }
                 CrosstermEvent::Resize(width, height) => {
                     tracing::info!("Terminal resize event: {}x{}", width, height);
                     editor.resize(width, height);
+                    needs_render = true; // Schedule render for next frame
                 }
                 _ => {
                     // Ignore other events
                 }
             }
+        } else {
+            // No events, ensure we render at least once per frame
+            needs_render = true;
         }
     }
 
