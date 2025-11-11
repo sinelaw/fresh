@@ -162,19 +162,26 @@ editor.on("prompt-confirmed", function(args)
         return true  -- Not our prompt
     end
 
+    debug(string.format("prompt-confirmed: selected_index=%s, num_filtered=%d, input='%s'",
+        tostring(args.selected_index), #filtered_files, args.input))
+
     -- Check if user selected a file
-    if args.selected_index and filtered_files[args.selected_index + 1] then
+    if args.selected_index ~= nil and filtered_files[args.selected_index + 1] then
         -- Lua is 1-indexed, but selected_index comes from Rust as 0-indexed
         local selected = filtered_files[args.selected_index + 1]
+
+        debug(string.format("Opening selected file: %s", selected))
 
         -- Open the file
         editor.open_file(selected)
         editor.set_status("Opened " .. selected)
     elseif args.input ~= "" then
         -- Try to open the input as a file path
+        debug(string.format("Opening input as path: %s", args.input))
         editor.open_file(args.input)
         editor.set_status("Opened " .. args.input)
     else
+        debug("No file selected - selected_index is nil and input is empty")
         editor.set_status("No file selected")
     end
 

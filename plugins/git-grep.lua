@@ -43,6 +43,11 @@ local function parse_git_grep_output(stdout)
                 disabled = false,
                 keybinding = nil
             })
+
+            -- Limit to 100 results for performance
+            if #results >= 100 then
+                break
+            end
         end
     end
 
@@ -120,10 +125,15 @@ editor.on("prompt-confirmed", function(args)
         return true  -- Not our prompt
     end
 
+    debug(string.format("prompt-confirmed: selected_index=%s, num_results=%d",
+        tostring(args.selected_index), #git_grep_results))
+
     -- Check if user selected a suggestion
-    if args.selected_index and git_grep_results[args.selected_index + 1] then
+    if args.selected_index ~= nil and git_grep_results[args.selected_index + 1] then
         -- Lua is 1-indexed, but selected_index comes from Rust as 0-indexed
         local selected = git_grep_results[args.selected_index + 1]
+
+        debug(string.format("Opening file: %s:%d:%d", selected.file, selected.line, selected.column))
 
         -- Open the file at the specific location
         editor.open_file({
@@ -136,6 +146,7 @@ editor.on("prompt-confirmed", function(args)
             selected.file, selected.line, selected.column))
     else
         -- No selection, maybe user just pressed Enter on empty input
+        debug("No file selected - selected_index is nil or out of bounds")
         editor.set_status("No file selected")
     end
 
