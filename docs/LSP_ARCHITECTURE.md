@@ -150,18 +150,22 @@ Language Server Protocol (LSP) support enables IDE-like features:
 **Full Document Sync:**
 - Send entire file content on every change
 - Simple to implement, works well for small files
-- Current implementation: `TextDocumentContentChangeEvent { range: None, text: full_content }`
+- Implementation: `TextDocumentContentChangeEvent { range: None, text: full_content }`
 
-**Incremental Sync:**
-- Send only changed ranges
-- Better performance for large files
-- More complex: requires accurate position tracking
-- Must handle multi-cursor edits atomically
+**Incremental Sync (Current Implementation):**
+- Send only changed ranges with each edit event
+- Better performance for large files and frequent edits
+- For insertions: send a zero-width range (start == end) with the inserted text
+- For deletions: send the affected range with an empty string
+- Requires accurate position tracking (byte offset → LSP Position with UTF-16 encoding)
+- Each `Event::Insert` and `Event::Delete` generates its own incremental update
+- Implementation: `TextDocumentContentChangeEvent { range: Some(Range), text: changed_text }`
 
-**Recommendation:**
-- Start with full sync (simpler, sufficient for most cases)
-- Add incremental sync later if profiling shows it's needed
-- Measure before optimizing - full sync is often fast enough
+**Benefits of Incremental Sync:**
+- Reduces bandwidth, especially for large files
+- Allows LSP servers to incrementally update their AST instead of re-parsing the entire file
+- Standard practice in VS Code, Neovim, and other modern editors
+- Crucial for smooth typing experience with minimal latency
 
 ### 6. Workspace Root Detection
 
