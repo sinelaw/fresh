@@ -458,6 +458,170 @@ A fully functional plugin that demonstrates Phase 2 capabilities. It highlights 
 
 ---
 
+## Performance Best Practices for Overlay Plugins
+
+When writing plugins that use overlays (like syntax highlighters, diagnostic markers, or TODO highlighters), follow these patterns to avoid performance issues:
+
+### ❌ Anti-Pattern: Recreating Overlays Every Frame
+
+```lua
+-- DON'T DO THIS
+editor.on("render-line", function(args)
+    -- This runs for every visible line on EVERY frame (60fps!)
+    editor.remove_overlay(args.buffer_id, "my-overlay-" .. args.line_number)
+    editor.add_overlay(args.buffer_id, "my-overlay-" .. args.line_number,
+                      args.byte_start, args.byte_start + 10, 255, 0, 0, false)
+    return true
+end)
+```
+
+**Problem:** This creates/destroys overlays constantly, causing:
+- Flickering (overlays disappear and reappear each frame)
+- Marker ID explosion (thousands of markers created per second)
+- High CPU usage even when idle
+- Poor performance
+
+### ✅ Pattern: Content-Based Change Detection
+
+```lua
+-- Track line content to detect actual changes
+local line_hashes = {}
+
+local function hash_string(str)
+    local hash = 5381
+    for i = 1, #str do
+        hash = ((hash * 33) + string.byte(str, i)) % 2147483647
+    end
+    return hash
+end
+
+editor.on("render-line", function(args)
+    if not line_hashes[args.buffer_id] then
+        line_hashes[args.buffer_id] = {}
+    end
+
+    local content_hash = hash_string(args.content)
+    local previous_hash = line_hashes[args.buffer_id][args.line_number]
+
+    -- Only recreate overlays if content actually changed
+    if content_hash ~= previous_hash then
+        -- Clear old overlays for this line
+        local prefix = string.format("my_overlay_L%d_", args.line_number)
+        editor.remove_overlays_by_prefix(args.buffer_id, prefix)
+
+        -- Add new overlays based on content
+        scan_and_add_overlays(args)
+
+        -- Update hash
+        line_hashes[args.buffer_id][args.line_number] = content_hash
+    end
+
+    return true
+end)
+```
+
+**Benefits:**
+- No work when scrolling (content unchanged)
+- No work when idle (no frames triggered)
+- Overlays only recreated when line content actually changes
+- Markers automatically adjust positions when text is inserted/deleted elsewhere
+
+### ✅ Pattern: Smart Invalidation on Edits
+
+```lua
+editor.on("after-insert", function(args)
+    local needs_rescan = false
+
+    -- Only invalidate if the edit might affect your overlays
+    -- For example, check if inserted text contains keywords you care about
+    if args.text:find("TODO", 1, true) then
+        needs_rescan = true
+    end
+
+    if needs_rescan then
+        -- Clear overlays and hashes - next render will rescan
+        editor.remove_overlays_by_prefix(args.buffer_id, "my_overlay_")
+        line_hashes[args.buffer_id] = nil
+    end
+    -- Otherwise: markers auto-adjust, no action needed!
+
+    return true
+end)
+```
+
+**Key insight:** Don't invalidate on every edit!
+- **Simple typing** (no keywords): Markers auto-adjust → zero plugin work
+- **Newlines alone**: Markers auto-adjust → let content hash detect changes
+- **Keywords appear**: Invalidate and rescan
+
+### ❌ Anti-Pattern: Invalidating on Newlines
+
+```lua
+-- DON'T DO THIS
+editor.on("after-insert", function(args)
+    if args.text:find("\n") then
+        -- This triggers full invalidation on every Enter press!
+        clear_all_overlays(args.buffer_id)
+    end
+    return true
+end)
+```
+
+**Problem:** Pressing Enter causes full buffer rescan unnecessarily. Markers already handle position adjustments!
+
+### ✅ Pattern: Per-Line Overlay IDs with Prefix
+
+```lua
+-- Include line number in overlay ID for efficient clearing
+local overlay_id = string.format("my_plugin_L%d_keyword_O%d",
+                                line_number, occurrence)
+
+-- Clear just this line's overlays
+local prefix = string.format("my_plugin_L%d_", line_number)
+editor.remove_overlays_by_prefix(buffer_id, prefix)
+```
+
+**Benefits:**
+- Clear overlays per-line instead of entire buffer
+- Much cheaper than removing overlays one by one
+- Enables selective invalidation strategies
+
+### Understanding Marker-Based Overlays
+
+The editor uses **markers** (self-adjusting position trackers) for overlays:
+
+```
+Buffer: "Hello World"
+         ^     ^
+         m1    m2
+        (0)   (6)
+
+Insert "Beautiful " at position 6:
+Buffer: "Hello Beautiful World"
+         ^                ^
+         m1               m2
+        (0)              (16)  ← Automatically adjusted!
+```
+
+When you create an overlay at positions (10, 20), the editor:
+1. Creates markers at those positions
+2. When text is inserted at position 5, markers move to (15, 25)
+3. Your overlay stays anchored to the correct content - no plugin code needed!
+
+**This is why you should minimize invalidation and trust markers to handle position tracking.**
+
+### Performance Checklist
+
+For overlay-based plugins, ensure:
+- ✅ Content hash tracking prevents unnecessary recreation
+- ✅ Invalidation only happens when content semantically changes
+- ✅ Frame-duplicate detection (don't process same line twice in one frame)
+- ✅ Per-line overlay IDs with prefixes for efficient clearing
+- ✅ No invalidation on plain newlines (markers handle it)
+- ✅ Test by monitoring `/tmp/editor.log` - should be quiet when idle
+
+---
+
 ## Questions?
 
 Check the logs for debugging:

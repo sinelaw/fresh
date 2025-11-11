@@ -1,14 +1,22 @@
--- TODO Highlighter Plugin - Simple Invalidation Strategy
+-- TODO Highlighter Plugin - Optimized with Marker-Based Overlays
 -- Highlights keywords like TODO, FIXME, HACK, NOTE, XXX, and BUG in comments
 --
--- DESIGN: Simple and robust approach
--- 1. On render-line: Scan the line and add overlays
--- 2. On after-insert/delete: Clear ALL overlays (invalidate everything)
--- 3. Natural re-scanning: Only visible lines get scanned during rendering
--- 4. Scrolling handled automatically: New lines trigger render-line hook
+-- DESIGN: Leverages marker-based overlay system for automatic position tracking
+-- 1. On render-line: Hash line content, only re-scan if changed
+-- 2. On after-insert/delete: Only invalidate if text contains keywords/newlines/comments
+-- 3. Markers automatically adjust to text movement - no manual repositioning needed!
 --
--- This is similar to VS Code's approach: invalidate on edit, re-scan on render.
--- It's fast (only ~24 visible lines) and correct (no stale overlays).
+-- KEY INSIGHT: Overlays use markers that automatically adjust when text is inserted/deleted
+-- before them. Combined with content hashing, we get huge performance wins:
+--
+-- - Simple typing (no keywords): Markers auto-adjust, zero plugin work! ✨
+-- - Scrolling: Content hash matches, no re-scanning needed! ✨
+-- - Typing keywords/newlines: Full invalidation, hashes cleared, lines re-scanned
+--
+-- This means:
+-- - Zero overhead when scrolling (markers keep overlays positioned correctly)
+-- - Zero overhead when typing regular code (markers auto-adjust positions)
+-- - Only pays cost when actual TODO keywords appear/disappear in edits
 
 local M = {}
 
@@ -16,7 +24,7 @@ local M = {}
 M.config = {
     enabled = false,
 
-    -- Keywords to highlight with their colors (r, g, b, alpha)
+    -- Keywords to highlight with their colors (r, g, b)
     keywords = {
         {pattern = "TODO",  color = {255, 165, 0},   name = "TODO"},   -- Orange
         {pattern = "FIXME", color = {255, 50, 50},   name = "FIXME"},  -- Red
@@ -38,18 +46,28 @@ M.config = {
 }
 
 -- Track which lines we've already scanned (to avoid re-scanning same line in one frame)
--- Key: buffer_id, Value: { [line_number] = true, ... }
+-- Key: buffer_id, Value: { last_line = N, lines = {[line_number] = true} }
 M.scanned_this_frame = {}
+
+-- Track line content hashes to detect actual changes
+-- Key: buffer_id, Value: { [line_number] = content_hash }
+M.line_content_hashes = {}
 
 -- Prefix for all overlay IDs created by this plugin
 M.OVERLAY_PREFIX = "todo_hl_"
 
--- Frame counter to detect new frames
-M.frame_counter = 0
+-- Simple hash function for strings (djb2 algorithm)
+local function hash_string(str)
+    local hash = 5381
+    for i = 1, #str do
+        hash = ((hash * 33) + string.byte(str, i)) % 2147483647
+    end
+    return hash
+end
 
 -- Initialize the plugin
 function M.init()
-    debug("TODO Highlighter: Initializing plugin (simple invalidation mode)")
+    debug("TODO Highlighter: Initializing (marker-optimized mode)")
 
     -- Register render-line hook for scanning
     editor.on("render-line", function(args)
@@ -85,30 +103,80 @@ function M.init()
         -- Mark as scanned for this frame
         frame_data.lines[line_number] = true
 
-        -- Clear old overlays for this line only
-        M.clear_line_overlays(buffer_id, line_number)
+        -- Check if line content has changed
+        if not M.line_content_hashes[buffer_id] then
+            M.line_content_hashes[buffer_id] = {}
+        end
 
-        -- Scan and add new overlays
-        M.scan_line_for_keywords(buffer_id, line_number, byte_start, content)
+        local content_hash = hash_string(content)
+        local previous_hash = M.line_content_hashes[buffer_id][line_number]
+
+        -- Only re-scan if content actually changed
+        if content_hash ~= previous_hash then
+            -- Clear existing overlays for this line
+            M.clear_line_overlays(buffer_id, line_number)
+
+            -- Scan and add new overlays
+            M.scan_line_for_keywords(buffer_id, line_number, byte_start, content)
+
+            -- Update hash
+            M.line_content_hashes[buffer_id][line_number] = content_hash
+        end
 
         return true
     end)
 
-    -- Register hooks to detect buffer changes - SIMPLE INVALIDATION
+    -- Register hooks to detect buffer changes
+    -- SMART INVALIDATION: Only invalidate lines that might be affected
     editor.on("after-insert", function(args)
         if not M.config.enabled or not args.buffer_id then
             return true
         end
 
         local buffer_id = args.buffer_id
+        local position = args.position
+        local text = args.text
 
-        debug(string.format("Insert in buffer %d, invalidating all overlays", buffer_id))
+        -- Strategy: Only invalidate if the insertion might create/destroy TODO highlights
+        -- Markers will auto-adjust for position changes!
 
-        -- Simple approach: Just clear everything
-        M.clear_buffer_overlays(buffer_id)
+        local needs_rescan = false
 
-        -- Reset frame tracking for this buffer
-        M.scanned_this_frame[buffer_id] = nil
+        -- Check if inserted text contains TODO keywords
+        for _, keyword_info in ipairs(M.config.keywords) do
+            if text:find(keyword_info.pattern, 1, true) then
+                needs_rescan = true
+                debug(string.format("Insert contains keyword '%s', invalidating buffer %d", keyword_info.pattern, buffer_id))
+                break
+            end
+        end
+
+        -- Check if inserted text contains comment markers (might create new comment lines)
+        if not needs_rescan then
+            for _, pattern in ipairs(M.config.comment_patterns) do
+                if text:find(pattern, 1, true) then
+                    needs_rescan = true
+                    debug(string.format("Insert contains comment marker, invalidating buffer %d", buffer_id))
+                    break
+                end
+            end
+        end
+
+        -- Note: We deliberately DON'T invalidate on plain newlines!
+        -- When you press Enter on an empty line or split a line without adding keywords,
+        -- the markers will automatically adjust to the new positions. The content hash
+        -- will detect the change and re-scan only the affected lines on next render.
+
+        if needs_rescan then
+            -- Clear everything and let render-line re-scan
+            M.clear_buffer_overlays(buffer_id)
+            M.scanned_this_frame[buffer_id] = nil
+            M.line_content_hashes[buffer_id] = nil
+            debug(string.format("Insert triggered rescan of buffer %d", buffer_id))
+        else
+            -- Markers auto-adjust! No action needed.
+            debug(string.format("Simple insert in buffer %d, markers auto-adjust", buffer_id))
+        end
 
         return true
     end)
@@ -119,14 +187,47 @@ function M.init()
         end
 
         local buffer_id = args.buffer_id
+        local range = args.range
+        local deleted_text = args.deleted_text or ""
 
-        debug(string.format("Delete in buffer %d, invalidating all overlays", buffer_id))
+        -- Strategy: Only invalidate if deletion might destroy TODO highlights
 
-        -- Simple approach: Just clear everything
-        M.clear_buffer_overlays(buffer_id)
+        local needs_rescan = false
 
-        -- Reset frame tracking for this buffer
-        M.scanned_this_frame[buffer_id] = nil
+        -- Check if deleted text contained TODO keywords
+        for _, keyword_info in ipairs(M.config.keywords) do
+            if deleted_text:find(keyword_info.pattern, 1, true) then
+                needs_rescan = true
+                debug(string.format("Delete contains keyword '%s', invalidating buffer %d", keyword_info.pattern, buffer_id))
+                break
+            end
+        end
+
+        -- Check if deleted text contained comment markers
+        if not needs_rescan then
+            for _, pattern in ipairs(M.config.comment_patterns) do
+                if deleted_text:find(pattern, 1, true) then
+                    needs_rescan = true
+                    debug(string.format("Delete contains comment marker, invalidating buffer %d", buffer_id))
+                    break
+                end
+            end
+        end
+
+        -- Note: We deliberately DON'T invalidate on plain newlines!
+        -- When you delete lines without removing keywords, markers auto-adjust.
+        -- Content hash will detect changes and re-scan affected lines on next render.
+
+        if needs_rescan then
+            -- Clear everything and let render-line re-scan
+            M.clear_buffer_overlays(buffer_id)
+            M.scanned_this_frame[buffer_id] = nil
+            M.line_content_hashes[buffer_id] = nil
+            debug(string.format("Delete triggered rescan of buffer %d", buffer_id))
+        else
+            -- Markers auto-adjust! No action needed.
+            debug(string.format("Simple delete in buffer %d, markers auto-adjust", buffer_id))
+        end
 
         return true
     end)
@@ -208,6 +309,8 @@ function M.find_and_highlight_keyword(buffer_id, line_number, byte_start, conten
         local highlight_end = byte_start + end_pos
 
         -- Create stable overlay ID using line number
+        -- The line number in the ID is for organizational purposes only
+        -- The actual position is tracked by markers automatically!
         local overlay_id = string.format("%sL%d_%s_O%d",
             M.OVERLAY_PREFIX,
             line_number,
@@ -215,7 +318,9 @@ function M.find_and_highlight_keyword(buffer_id, line_number, byte_start, conten
             occurrence
         )
 
-        -- Add overlay
+        -- Add overlay with markers
+        -- The editor will create markers at these positions
+        -- These markers will automatically adjust when text is inserted/deleted before them!
         local success, err = pcall(function()
             editor.add_overlay(
                 buffer_id,
@@ -238,54 +343,64 @@ end
 
 -- Register plugin commands
 function M.register_commands()
+    -- Enable command
+    function todo_highlight_enable()
+        M.enable()
+    end
+
     editor.register_command({
         name = "TODO Highlighter: Enable",
         description = "Enable TODO/FIXME/etc highlighting in comments",
         action = "todo_highlight_enable",
-        contexts = {"normal"},
-        callback = function()
-            M.enable()
-        end
+        contexts = {"normal"}
     })
+
+    -- Disable command
+    function todo_highlight_disable()
+        M.disable()
+    end
 
     editor.register_command({
         name = "TODO Highlighter: Disable",
         description = "Disable TODO highlighting",
         action = "todo_highlight_disable",
-        contexts = {"normal"},
-        callback = function()
-            M.disable()
-        end
+        contexts = {"normal"}
     })
+
+    -- Toggle command
+    function todo_highlight_toggle()
+        M.toggle()
+    end
 
     editor.register_command({
         name = "TODO Highlighter: Toggle",
         description = "Toggle TODO highlighting on/off",
         action = "todo_highlight_toggle",
-        contexts = {"normal"},
-        callback = function()
-            M.toggle()
-        end
+        contexts = {"normal"}
     })
+
+    -- Show keywords command
+    function todo_highlight_keywords()
+        M.show_keywords()
+    end
 
     editor.register_command({
         name = "TODO Highlighter: Show Keywords",
         description = "Display list of highlighted keywords",
         action = "todo_highlight_keywords",
-        contexts = {"normal"},
-        callback = function()
-            M.show_keywords()
-        end
+        contexts = {"normal"}
     })
+
+    -- Refresh command
+    function todo_highlight_refresh()
+        M.refresh_active_buffer()
+    end
 
     editor.register_command({
         name = "TODO Highlighter: Refresh",
         description = "Clear and refresh all TODO highlights",
         action = "todo_highlight_refresh",
-        contexts = {"normal"},
-        callback = function()
-            M.refresh_active_buffer()
-        end
+        contexts = {"normal"}
     })
 end
 
@@ -293,7 +408,8 @@ end
 function M.enable()
     M.config.enabled = true
     M.scanned_this_frame = {}
-    editor.set_status("TODO Highlighter: Enabled (simple invalidation mode)")
+    M.line_content_hashes = {}
+    editor.set_status("TODO Highlighter: Enabled (marker-optimized)")
     debug("TODO Highlighter: Enabled")
 end
 
@@ -301,6 +417,7 @@ end
 function M.disable()
     M.config.enabled = false
     M.scanned_this_frame = {}
+    M.line_content_hashes = {}
 
     -- Clear all highlights from active buffer
     M.clear_active_buffer()
@@ -335,6 +452,7 @@ function M.clear_active_buffer()
     if buffer_id then
         M.clear_buffer_overlays(buffer_id)
         M.scanned_this_frame[buffer_id] = nil
+        M.line_content_hashes[buffer_id] = nil
         editor.set_status("TODO Highlighter: Cleared highlights from buffer")
         debug(string.format("TODO Highlighter: Cleared overlays from buffer %d", buffer_id))
     end
@@ -346,6 +464,7 @@ function M.refresh_active_buffer()
     if buffer_id then
         M.clear_buffer_overlays(buffer_id)
         M.scanned_this_frame[buffer_id] = nil
+        M.line_content_hashes[buffer_id] = nil
         editor.set_status("TODO Highlighter: Buffer marked for refresh")
         debug(string.format("TODO Highlighter: Buffer %d marked for refresh", buffer_id))
     end
