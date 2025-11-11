@@ -69,10 +69,16 @@ pub enum HookArgs {
     BufferDeactivated { buffer_id: BufferId },
 
     /// Before a command/action is executed
-    PreCommand { action: Action },
+    PreCommand {
+        action: Action,
+        command_name: Option<String>,
+    },
 
     /// After a command/action was executed
-    PostCommand { action: Action },
+    PostCommand {
+        action: Action,
+        command_name: Option<String>,
+    },
 
     /// Editor has been idle for N milliseconds (no input)
     Idle { milliseconds: u64 },
@@ -355,9 +361,11 @@ mod tests {
             },
             HookArgs::PreCommand {
                 action: Action::Save,
+                command_name: None,
             },
             HookArgs::PostCommand {
                 action: Action::Save,
+                command_name: None,
             },
             HookArgs::Idle { milliseconds: 500 },
             HookArgs::EditorInitialized,
