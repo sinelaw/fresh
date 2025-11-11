@@ -17,11 +17,23 @@ Demonstrates visual overlays:
 - Using the overlay API
 
 ### git_grep_demo.lua
-Demonstrates git integration and file navigation:
+Simple demo of git integration and file navigation:
 - Spawning async git processes
 - Parsing git grep output
 - Opening files at specific line:column positions
-- Prototype for implementing git grep as a plugin
+- Basic prototype (see full plugins in parent directory)
+
+### async_demo.lua
+Demonstrates async process spawning:
+- Running external commands
+- Processing stdout/stderr
+- Handling exit codes
+
+### buffer_query_demo.lua
+Demonstrates buffer queries:
+- Getting buffer metadata
+- Listing all open buffers
+- Querying cursor and viewport information
 
 ## Plugin API
 

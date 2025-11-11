@@ -41,6 +41,59 @@ Highlights TODO/FIXME/HACK/NOTE/XXX/BUG keywords in comments with color-coded ov
 
 ---
 
+### Git Grep (`git-grep.lua`)
+
+**Full-featured git grep with hook-based prompt API (Phase 2 - Jan 2025)**
+
+Interactive search through all git-tracked files with real-time results.
+
+**Features:**
+- Search as you type with async git grep
+- Shows file:line:column context for each match
+- Opens files at exact match location
+- Graceful handling of empty results and errors
+- ~150 lines of Lua demonstrating prompt API
+
+**Usage:**
+```lua
+start_git_grep()  -- From Lua or keybinding
+```
+Or use command palette: "Git Grep"
+
+**APIs Used:**
+- Hook-based Prompt API: `start_prompt()`, `set_prompt_suggestions()`
+- Prompt Hooks: `prompt-changed`, `prompt-confirmed`, `prompt-cancelled`
+- Async Process: `editor.spawn()`
+- File Navigation: `editor.open_file({path, line, column})`
+
+---
+
+### Git Find File (`git-find-file.lua`)
+
+**Fast fuzzy file finder for git repos (Phase 2 - Jan 2025)**
+
+Find and open git-tracked files with fuzzy matching, similar to Ctrl+P in VSCode.
+
+**Features:**
+- Fuzzy file name filtering (all chars match in order)
+- Caches git ls-files for instant filtering
+- Shows up to 100 matches in real-time
+- Opens selected file or manual path
+- ~150 lines of pure Lua implementation
+
+**Usage:**
+```lua
+start_git_find_file()  -- From Lua or keybinding
+```
+Or use command palette: "Git Find File"
+
+**APIs Used:**
+- Same hook-based prompt API as git grep
+- Demonstrates reusability of prompt system
+- Pure Lua fuzzy matching algorithm
+
+---
+
 ### Welcome (`welcome.lua`)
 
 Simple welcome message plugin that demonstrates basic plugin loading and status messages.
