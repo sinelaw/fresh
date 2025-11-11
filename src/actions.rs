@@ -1051,6 +1051,8 @@ pub fn action_to_events(
         | Action::FocusEditor
         | Action::FileExplorerUp
         | Action::FileExplorerDown
+        | Action::FileExplorerPageUp
+        | Action::FileExplorerPageDown
         | Action::FileExplorerExpand
         | Action::FileExplorerCollapse
         | Action::FileExplorerOpen
