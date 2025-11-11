@@ -891,11 +891,23 @@ impl PluginManager {
                 table.set("path", path.to_string_lossy().as_ref())?;
                 table.set("buffer_id", buffer_id.0)?;
             }
-            HookArgs::PreCommand { action } => {
+            HookArgs::PreCommand {
+                action,
+                command_name,
+            } => {
                 table.set("action", format!("{:?}", action))?;
+                if let Some(name) = command_name {
+                    table.set("command_name", name.clone())?;
+                }
             }
-            HookArgs::PostCommand { action } => {
+            HookArgs::PostCommand {
+                action,
+                command_name,
+            } => {
                 table.set("action", format!("{:?}", action))?;
+                if let Some(name) = command_name {
+                    table.set("command_name", name.clone())?;
+                }
             }
             HookArgs::Idle { milliseconds } => {
                 table.set("milliseconds", *milliseconds)?;

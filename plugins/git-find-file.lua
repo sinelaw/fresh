@@ -99,9 +99,17 @@ end
 editor.register_command({
     name = "Git Find File",
     description = "Find and open a git-tracked file",
-    action = "git-find-file",
+    action = "none",
     contexts = {"normal"}
 })
+
+-- Hook into command execution to trigger git find file
+editor.on("post-command", function(args)
+    if args.command_name == "Git Find File" then
+        start_git_find_file()
+    end
+    return true
+end)
 
 -- Global function to start git find file
 function start_git_find_file()

@@ -53,16 +53,19 @@ end
 editor.register_command({
     name = "Git Grep",
     description = "Search for text in git-tracked files",
-    action = "git-grep",
+    action = "none",
     contexts = {"normal"}
 })
 
--- Start prompt when Git Grep command is executed
--- Note: We need to hook into a command execution event, but for now
--- we'll use a workaround by having the user bind this to a key
--- or invoke it via command palette
+-- Hook into command execution to trigger git grep
+editor.on("post-command", function(args)
+    if args.command_name == "Git Grep" then
+        start_git_grep()
+    end
+    return true
+end)
 
--- Alternative: Create a global function that can be called
+-- Global function to start git grep
 function start_git_grep()
     -- Clear previous results
     git_grep_results = {}
