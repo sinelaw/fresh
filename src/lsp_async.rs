@@ -11,7 +11,9 @@
 //! - LspHandle: Sync handle that can send commands to the task
 //! - Uses tokio channels for command/response communication
 
-use crate::async_bridge::{AsyncBridge, AsyncMessage};
+use crate::async_bridge::{
+    AsyncBridge, AsyncMessage, LspMessageType, LspProgressValue, LspServerStatus,
+};
 use crate::process_limits::ProcessLimits;
 use lsp_types::{
     notification::{
@@ -277,6 +279,12 @@ impl LspState {
         // Notify main loop
         let _ = self.async_tx.send(AsyncMessage::LspInitialized {
             language: self.language.clone(),
+        });
+
+        // Send running status
+        let _ = self.async_tx.send(AsyncMessage::LspStatusUpdate {
+            language: self.language.clone(),
+            status: LspServerStatus::Running,
         });
 
         tracing::info!("Async LSP server initialized successfully");
@@ -697,8 +705,10 @@ impl LspTask {
 
         // Spawn stdout reader task - continuously reads and dispatches messages
         let pending_clone = pending.clone();
+        let async_tx_reader = async_tx.clone();
+        let language_clone_reader = language_clone.clone();
         tokio::spawn(async move {
-            tracing::info!("LSP stdout reader task started for {}", language_clone);
+            tracing::info!("LSP stdout reader task started for {}", language_clone_reader);
             loop {
                 match read_message_from_stdout(&mut stdout).await {
                     Ok(message) => {
@@ -706,8 +716,8 @@ impl LspTask {
                         if let Err(e) = handle_message_dispatch(
                             message,
                             &pending_clone,
-                            &async_tx,
-                            &language_clone,
+                            &async_tx_reader,
+                            &language_clone_reader,
                         )
                         .await
                         {
@@ -716,15 +726,19 @@ impl LspTask {
                     }
                     Err(e) => {
                         tracing::error!("Error reading from LSP server: {}", e);
-                        let _ = async_tx.send(AsyncMessage::LspError {
-                            language: language_clone.clone(),
+                        let _ = async_tx_reader.send(AsyncMessage::LspStatusUpdate {
+                            language: language_clone_reader.clone(),
+                            status: LspServerStatus::Error,
+                        });
+                        let _ = async_tx_reader.send(AsyncMessage::LspError {
+                            language: language_clone_reader.clone(),
                             error: format!("Read error: {}", e),
                         });
                         break;
                     }
                 }
             }
-            tracing::info!("LSP stdout reader task exiting for {}", language_clone);
+            tracing::info!("LSP stdout reader task exiting for {}", language_clone_reader);
         });
 
         // Sequential command processing loop
@@ -735,6 +749,11 @@ impl LspTask {
                     tracing::debug!("LspTask received command: {:?}", cmd);
                     match cmd {
                         LspCommand::Initialize { root_uri, response } => {
+                            // Send initializing status
+                            let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
+                                language: language_clone.clone(),
+                                status: LspServerStatus::Initializing,
+                            });
                             tracing::info!("Processing Initialize command");
                             let result =
                                 state.handle_initialize_sequential(root_uri, &pending).await;
@@ -983,6 +1002,12 @@ impl LspTask {
         // Notify main loop
         let _ = self.async_tx.send(AsyncMessage::LspInitialized {
             language: self.language.clone(),
+        });
+
+        // Send running status
+        let _ = self.async_tx.send(AsyncMessage::LspStatusUpdate {
+            language: self.language.clone(),
+            status: LspServerStatus::Running,
         });
 
         tracing::info!("Async LSP server initialized successfully");
@@ -1261,23 +1286,172 @@ impl LspTask {
                     });
                 }
             }
-            "window/showMessage" | "window/logMessage" => {
+            "window/showMessage" => {
                 if let Some(params) = notification.params {
                     if let Ok(msg) =
                         serde_json::from_value::<serde_json::Map<String, Value>>(params)
                     {
-                        let message_type = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let message_type_num = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(3);
                         let message = msg
                             .get("message")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("(no message)");
+                            .unwrap_or("(no message)")
+                            .to_string();
 
+                        let message_type = match message_type_num {
+                            1 => LspMessageType::Error,
+                            2 => LspMessageType::Warning,
+                            3 => LspMessageType::Info,
+                            _ => LspMessageType::Log,
+                        };
+
+                        // Log it
                         match message_type {
-                            1 => tracing::error!("LSP: {}", message),
-                            2 => tracing::warn!("LSP: {}", message),
-                            3 => tracing::info!("LSP: {}", message),
-                            4 => tracing::debug!("LSP: {}", message),
-                            _ => tracing::trace!("LSP: {}", message),
+                            LspMessageType::Error => tracing::error!("LSP: {}", message),
+                            LspMessageType::Warning => tracing::warn!("LSP: {}", message),
+                            LspMessageType::Info => tracing::info!("LSP: {}", message),
+                            LspMessageType::Log => tracing::debug!("LSP: {}", message),
+                        }
+
+                        // Send to UI
+                        let _ = self.async_tx.send(AsyncMessage::LspWindowMessage {
+                            language: self.language.clone(),
+                            message_type,
+                            message,
+                        });
+                    }
+                }
+            }
+            "window/logMessage" => {
+                if let Some(params) = notification.params {
+                    if let Ok(msg) =
+                        serde_json::from_value::<serde_json::Map<String, Value>>(params)
+                    {
+                        let message_type_num = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(4);
+                        let message = msg
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("(no message)")
+                            .to_string();
+
+                        let message_type = match message_type_num {
+                            1 => LspMessageType::Error,
+                            2 => LspMessageType::Warning,
+                            3 => LspMessageType::Info,
+                            _ => LspMessageType::Log,
+                        };
+
+                        // Log it
+                        match message_type {
+                            LspMessageType::Error => tracing::error!("LSP: {}", message),
+                            LspMessageType::Warning => tracing::warn!("LSP: {}", message),
+                            LspMessageType::Info => tracing::info!("LSP: {}", message),
+                            LspMessageType::Log => tracing::debug!("LSP: {}", message),
+                        }
+
+                        // Send to UI
+                        let _ = self.async_tx.send(AsyncMessage::LspLogMessage {
+                            language: self.language.clone(),
+                            message_type,
+                            message,
+                        });
+                    }
+                }
+            }
+            "$/progress" => {
+                if let Some(params) = notification.params {
+                    if let Ok(progress) =
+                        serde_json::from_value::<serde_json::Map<String, Value>>(params)
+                    {
+                        let token = progress
+                            .get("token")
+                            .and_then(|v| {
+                                if let Some(s) = v.as_str() {
+                                    Some(s.to_string())
+                                } else if let Some(n) = v.as_i64() {
+                                    Some(n.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or_else(|| "unknown".to_string());
+
+                        if let Some(value_obj) = progress.get("value").and_then(|v| v.as_object()) {
+                            let kind = value_obj.get("kind").and_then(|v| v.as_str());
+
+                            let value = match kind {
+                                Some("begin") => {
+                                    let title = value_obj
+                                        .get("title")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("Working...")
+                                        .to_string();
+                                    let message = value_obj
+                                        .get("message")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+                                    let percentage = value_obj
+                                        .get("percentage")
+                                        .and_then(|v| v.as_u64())
+                                        .map(|p| p as u32);
+
+                                    tracing::info!(
+                                        "LSP ({}) progress begin: {} {:?} {:?}",
+                                        self.language,
+                                        title,
+                                        message,
+                                        percentage
+                                    );
+
+                                    Some(LspProgressValue::Begin {
+                                        title,
+                                        message,
+                                        percentage,
+                                    })
+                                }
+                                Some("report") => {
+                                    let message = value_obj
+                                        .get("message")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+                                    let percentage = value_obj
+                                        .get("percentage")
+                                        .and_then(|v| v.as_u64())
+                                        .map(|p| p as u32);
+
+                                    tracing::debug!(
+                                        "LSP ({}) progress report: {:?} {:?}",
+                                        self.language,
+                                        message,
+                                        percentage
+                                    );
+
+                                    Some(LspProgressValue::Report { message, percentage })
+                                }
+                                Some("end") => {
+                                    let message = value_obj
+                                        .get("message")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+
+                                    tracing::info!(
+                                        "LSP ({}) progress end: {:?}",
+                                        self.language,
+                                        message
+                                    );
+
+                                    Some(LspProgressValue::End { message })
+                                }
+                                _ => None,
+                            };
+
+                            if let Some(value) = value {
+                                let _ = self.async_tx.send(AsyncMessage::LspProgress {
+                                    language: self.language.clone(),
+                                    token,
+                                    value,
+                                });
+                            }
                         }
                     }
                 }
@@ -1407,21 +1581,162 @@ async fn handle_notification_dispatch(
                 });
             }
         }
-        "window/showMessage" | "window/logMessage" => {
+        "window/showMessage" => {
             if let Some(params) = notification.params {
                 if let Ok(msg) = serde_json::from_value::<serde_json::Map<String, Value>>(params) {
-                    let message_type = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let message_type_num = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(3);
                     let message = msg
                         .get("message")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("(no message)");
+                        .unwrap_or("(no message)")
+                        .to_string();
 
+                    let message_type = match message_type_num {
+                        1 => LspMessageType::Error,
+                        2 => LspMessageType::Warning,
+                        3 => LspMessageType::Info,
+                        _ => LspMessageType::Log,
+                    };
+
+                    // Log it as well
                     match message_type {
-                        1 => tracing::error!("LSP ({}): {}", language, message),
-                        2 => tracing::warn!("LSP ({}): {}", language, message),
-                        3 => tracing::info!("LSP ({}): {}", language, message),
-                        4 => tracing::debug!("LSP ({}): {}", language, message),
-                        _ => tracing::trace!("LSP ({}): {}", language, message),
+                        LspMessageType::Error => tracing::error!("LSP ({}): {}", language, message),
+                        LspMessageType::Warning => tracing::warn!("LSP ({}): {}", language, message),
+                        LspMessageType::Info => tracing::info!("LSP ({}): {}", language, message),
+                        LspMessageType::Log => tracing::debug!("LSP ({}): {}", language, message),
+                    }
+
+                    // Send to UI
+                    let _ = async_tx.send(AsyncMessage::LspWindowMessage {
+                        language: language.to_string(),
+                        message_type,
+                        message,
+                    });
+                }
+            }
+        }
+        "window/logMessage" => {
+            if let Some(params) = notification.params {
+                if let Ok(msg) = serde_json::from_value::<serde_json::Map<String, Value>>(params) {
+                    let message_type_num = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(4);
+                    let message = msg
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(no message)")
+                        .to_string();
+
+                    let message_type = match message_type_num {
+                        1 => LspMessageType::Error,
+                        2 => LspMessageType::Warning,
+                        3 => LspMessageType::Info,
+                        _ => LspMessageType::Log,
+                    };
+
+                    // Log it as well
+                    match message_type {
+                        LspMessageType::Error => tracing::error!("LSP ({}): {}", language, message),
+                        LspMessageType::Warning => tracing::warn!("LSP ({}): {}", language, message),
+                        LspMessageType::Info => tracing::info!("LSP ({}): {}", language, message),
+                        LspMessageType::Log => tracing::debug!("LSP ({}): {}", language, message),
+                    }
+
+                    // Send to UI
+                    let _ = async_tx.send(AsyncMessage::LspLogMessage {
+                        language: language.to_string(),
+                        message_type,
+                        message,
+                    });
+                }
+            }
+        }
+        "$/progress" => {
+            if let Some(params) = notification.params {
+                if let Ok(progress) = serde_json::from_value::<serde_json::Map<String, Value>>(params) {
+                    let token = progress
+                        .get("token")
+                        .and_then(|v| {
+                            if let Some(s) = v.as_str() {
+                                Some(s.to_string())
+                            } else if let Some(n) = v.as_i64() {
+                                Some(n.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    if let Some(value_obj) = progress.get("value").and_then(|v| v.as_object()) {
+                        let kind = value_obj.get("kind").and_then(|v| v.as_str());
+
+                        let value = match kind {
+                            Some("begin") => {
+                                let title = value_obj
+                                    .get("title")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Working...")
+                                    .to_string();
+                                let message = value_obj
+                                    .get("message")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                let percentage = value_obj
+                                    .get("percentage")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|p| p as u32);
+
+                                tracing::info!(
+                                    "LSP ({}) progress begin: {} {:?} {:?}",
+                                    language,
+                                    title,
+                                    message,
+                                    percentage
+                                );
+
+                                Some(LspProgressValue::Begin {
+                                    title,
+                                    message,
+                                    percentage,
+                                })
+                            }
+                            Some("report") => {
+                                let message = value_obj
+                                    .get("message")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                let percentage = value_obj
+                                    .get("percentage")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|p| p as u32);
+
+                                tracing::debug!(
+                                    "LSP ({}) progress report: {:?} {:?}",
+                                    language,
+                                    message,
+                                    percentage
+                                );
+
+                                Some(LspProgressValue::Report { message, percentage })
+                            }
+                            Some("end") => {
+                                let message = value_obj
+                                    .get("message")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+
+                                tracing::info!("LSP ({}) progress end: {:?}", language, message);
+
+                                Some(LspProgressValue::End { message })
+                            }
+                            _ => None,
+                        };
+
+                        if let Some(value) = value {
+                            let _ = async_tx.send(AsyncMessage::LspProgress {
+                                language: language.to_string(),
+                                token,
+                                value,
+                            });
+                        }
                     }
                 }
             }
@@ -1463,6 +1778,12 @@ impl LspHandle {
         let args = args.to_vec();
         let initialized = Arc::new(Mutex::new(false));
 
+        // Send starting status
+        let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
+            language: language.clone(),
+            status: LspServerStatus::Starting,
+        });
+
         runtime.spawn(async move {
             match LspTask::spawn(
                 &command,
@@ -1478,6 +1799,10 @@ impl LspHandle {
                 }
                 Err(e) => {
                     tracing::error!("Failed to spawn LSP task: {}", e);
+                    let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
+                        language: language_clone.clone(),
+                        status: LspServerStatus::Error,
+                    });
                     let _ = async_tx.send(AsyncMessage::LspError {
                         language: language_clone,
                         error: e,
