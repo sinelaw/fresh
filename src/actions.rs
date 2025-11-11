@@ -1070,8 +1070,6 @@ pub fn action_to_events(
         | Action::RenameMoveRight
         | Action::RenameMoveHome
         | Action::RenameMoveEnd
-        | Action::GitGrep
-        | Action::GitFindFile
         | Action::Search
         | Action::FindNext
         | Action::FindPrevious
