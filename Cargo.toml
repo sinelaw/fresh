@@ -23,7 +23,6 @@ url = "2.5"
 tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "io-util", "sync", "process", "time", "macros", "fs"] }
 async-trait = "0.1"
 lru = "0.16"
-glob = "0.3"
 ignore = "0.4"
 regex = "1.12"
 ctrlc = "3.5"
@@ -49,10 +48,8 @@ tree-sitter-lua = "0.2.0"
 
 [dev-dependencies]
 proptest = "1.9"
-criterion = "0.7"
 tempfile = "3.23.0"
 insta = { version = "1.43", features = ["yaml"] }
-ctor = "0.6"
 
 [profile.release]
 debug = true
