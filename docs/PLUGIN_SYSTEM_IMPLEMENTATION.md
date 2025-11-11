@@ -1,8 +1,13 @@
 # Plugin System Implementation Status
 
-**Date:** 2025-01-11 (Updated)
-**Status:** Phase 1 ✅ + Phase 2 ✅ + Phase 3 ✅ **FULLY INTEGRATED**
+**Status:** Phase 1 ✅ + Phase 2 ✅ + Phase 3 ✅ + **Git Refactoring ✅** **FULLY INTEGRATED**
 **Branch:** N/A (integrated into main)
+
+**Recent Major Additions:**
+- ✅ Hook-based prompt API (prompt-changed, prompt-confirmed, prompt-cancelled)
+- ✅ String-based function mapping for commands
+- ✅ File opening API with line/column positioning
+- ✅ Full git-grep and git-find-file plugins (~465 lines of Rust code removed)
 
 ---
 
@@ -14,7 +19,7 @@
 Event subscription system inspired by Emacs hooks.
 
 **Features:**
-- 16 hook types (before/after events)
+- 20+ hook types (before/after events, prompt events, render events)
 - Safe callback registration
 - Timeout protection for slow hooks
 - Thread-safe with `Send + Sync` traits
@@ -31,6 +36,8 @@ BufferActivated, BufferDeactivated
 PreCommand, PostCommand
 Idle
 EditorInitialized
+RenderLine
+PromptChanged, PromptConfirmed, PromptCancelled
 ```
 
 **Tests:** 8 passing tests
@@ -249,7 +256,7 @@ for cmd in plugin_commands {
 
 ---
 
-## Recent Updates (Nov 2025)
+## Recent Updates
 
 ### Overlay Lifecycle Management ✅
 **Added:**
