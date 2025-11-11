@@ -53,17 +53,9 @@ end
 editor.register_command({
     name = "Git Grep",
     description = "Search for text in git-tracked files",
-    action = "none",
+    action = "start_git_grep",  -- Name of global Lua function
     contexts = {"normal"}
 })
-
--- Hook into command execution to trigger git grep
-editor.on("post-command", function(args)
-    if args.command_name == "Git Grep" then
-        start_git_grep()
-    end
-    return true
-end)
 
 -- Global function to start git grep
 function start_git_grep()

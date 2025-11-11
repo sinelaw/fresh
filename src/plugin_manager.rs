@@ -740,25 +740,19 @@ impl PluginManager {
     pub fn execute_action(&self, action_name: &str) -> Result<(), String> {
         tracing::info!("Executing plugin action: {}", action_name);
 
-        // Get the callbacks table
-        let callbacks: mlua::Table = self
-            .lua
-            .globals()
-            .get("_plugin_callbacks")
-            .map_err(|e| format!("Failed to get callbacks table: {}", e))?;
+        // Look up the global function by name (Option 2: string-based function mapping)
+        let globals = self.lua.globals();
+        let function: Option<mlua::Function> = globals.get(action_name).ok();
 
-        // Get the callback function
-        let callback: Option<mlua::Function> = callbacks.get(action_name).ok();
-
-        if let Some(cb) = callback {
-            // Call the callback
-            cb.call::<()>(())
-                .map_err(|e| format!("Plugin callback error: {}", e))?;
+        if let Some(func) = function {
+            // Call the global function
+            func.call::<()>(())
+                .map_err(|e| format!("Plugin function '{}' error: {}", action_name, e))?;
             tracing::info!("Plugin action '{}' executed successfully", action_name);
             Ok(())
         } else {
             Err(format!(
-                "No callback registered for action: {}",
+                "No global function '{}' found. Plugin commands should define global Lua functions with this name.",
                 action_name
             ))
         }
@@ -891,23 +885,11 @@ impl PluginManager {
                 table.set("path", path.to_string_lossy().as_ref())?;
                 table.set("buffer_id", buffer_id.0)?;
             }
-            HookArgs::PreCommand {
-                action,
-                command_name,
-            } => {
+            HookArgs::PreCommand { action } => {
                 table.set("action", format!("{:?}", action))?;
-                if let Some(name) = command_name {
-                    table.set("command_name", name.clone())?;
-                }
             }
-            HookArgs::PostCommand {
-                action,
-                command_name,
-            } => {
+            HookArgs::PostCommand { action } => {
                 table.set("action", format!("{:?}", action))?;
-                if let Some(name) = command_name {
-                    table.set("command_name", name.clone())?;
-                }
             }
             HookArgs::Idle { milliseconds } => {
                 table.set("milliseconds", *milliseconds)?;

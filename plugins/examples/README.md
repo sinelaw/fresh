@@ -46,10 +46,17 @@ Register a new command in the command palette.
 editor.register_command({
     name = "My Command",
     description = "What this command does",
-    action = "none",
+    action = "my_command_function",  -- Name of global Lua function to call
     contexts = {"normal"}  -- or {"help", "prompt", "popup", "file_explorer"}
 })
+
+-- Define the global function
+function my_command_function()
+    editor.set_status("My command executed!")
+end
 ```
+
+The `action` field should be the name of a global Lua function that will be called when the command is executed from the command palette.
 
 #### editor.set_status(message)
 Set the status bar message.
