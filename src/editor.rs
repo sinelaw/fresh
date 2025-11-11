@@ -279,6 +279,36 @@ pub struct Editor {
 
     /// Replace history (for replace operations)
     replace_history: crate::input_history::InputHistory,
+
+    /// LSP progress tracking (token -> progress info)
+    lsp_progress: std::collections::HashMap<String, LspProgressInfo>,
+
+    /// LSP server statuses (language -> status)
+    lsp_server_statuses: std::collections::HashMap<String, crate::async_bridge::LspServerStatus>,
+
+    /// LSP window messages (recent messages from window/showMessage)
+    lsp_window_messages: Vec<LspMessageEntry>,
+
+    /// LSP log messages (recent messages from window/logMessage)
+    lsp_log_messages: Vec<LspMessageEntry>,
+}
+
+/// LSP progress information
+#[derive(Debug, Clone)]
+struct LspProgressInfo {
+    pub language: String,
+    pub title: String,
+    pub message: Option<String>,
+    pub percentage: Option<u32>,
+}
+
+/// LSP message entry (for window messages and logs)
+#[derive(Debug, Clone)]
+struct LspMessageEntry {
+    pub language: String,
+    pub message_type: crate::async_bridge::LspMessageType,
+    pub message: String,
+    pub timestamp: std::time::Instant,
 }
 
 /// Mouse state tracking
@@ -493,6 +523,10 @@ impl Editor {
             plugin_manager,
             search_history: crate::input_history::InputHistory::new(),
             replace_history: crate::input_history::InputHistory::new(),
+            lsp_progress: std::collections::HashMap::new(),
+            lsp_server_statuses: std::collections::HashMap::new(),
+            lsp_window_messages: Vec::new(),
+            lsp_log_messages: Vec::new(),
         })
     }
 
@@ -2179,6 +2213,101 @@ impl Editor {
                         }
                     }
                 }
+                AsyncMessage::LspProgress {
+                    language,
+                    token,
+                    value,
+                } => {
+                    use crate::async_bridge::LspProgressValue;
+                    match value {
+                        LspProgressValue::Begin {
+                            title,
+                            message,
+                            percentage,
+                        } => {
+                            // Store progress info
+                            self.lsp_progress.insert(
+                                token.clone(),
+                                LspProgressInfo {
+                                    language: language.clone(),
+                                    title,
+                                    message,
+                                    percentage,
+                                },
+                            );
+                            // Update LSP status to show progress
+                            self.update_lsp_status_from_progress();
+                        }
+                        LspProgressValue::Report { message, percentage } => {
+                            // Update existing progress
+                            if let Some(info) = self.lsp_progress.get_mut(&token) {
+                                info.message = message;
+                                info.percentage = percentage;
+                                self.update_lsp_status_from_progress();
+                            }
+                        }
+                        LspProgressValue::End { .. } => {
+                            // Remove progress
+                            self.lsp_progress.remove(&token);
+                            self.update_lsp_status_from_progress();
+                        }
+                    }
+                }
+                AsyncMessage::LspWindowMessage {
+                    language,
+                    message_type,
+                    message,
+                } => {
+                    // Add to window messages list
+                    self.lsp_window_messages.push(LspMessageEntry {
+                        language: language.clone(),
+                        message_type,
+                        message: message.clone(),
+                        timestamp: std::time::Instant::now(),
+                    });
+
+                    // Keep only last 100 messages
+                    if self.lsp_window_messages.len() > 100 {
+                        self.lsp_window_messages.remove(0);
+                    }
+
+                    // Show important messages in status bar
+                    use crate::async_bridge::LspMessageType;
+                    match message_type {
+                        LspMessageType::Error => {
+                            self.status_message = Some(format!("LSP ({}): {}", language, message));
+                        }
+                        LspMessageType::Warning => {
+                            self.status_message = Some(format!("LSP ({}): {}", language, message));
+                        }
+                        _ => {
+                            // Info and Log messages are not shown in status bar
+                        }
+                    }
+                }
+                AsyncMessage::LspLogMessage {
+                    language,
+                    message_type,
+                    message,
+                } => {
+                    // Add to log messages list
+                    self.lsp_log_messages.push(LspMessageEntry {
+                        language,
+                        message_type,
+                        message,
+                        timestamp: std::time::Instant::now(),
+                    });
+
+                    // Keep only last 500 log messages
+                    if self.lsp_log_messages.len() > 500 {
+                        self.lsp_log_messages.remove(0);
+                    }
+                }
+                AsyncMessage::LspStatusUpdate { language, status } => {
+                    // Update server status
+                    self.lsp_server_statuses.insert(language.clone(), status);
+                    self.update_lsp_status_from_server_statuses();
+                }
             }
         }
 
@@ -2200,6 +2329,64 @@ impl Editor {
         if processed_any_commands {
             self.update_plugin_state_snapshot();
         }
+    }
+
+    /// Update LSP status bar string from active progress operations
+    fn update_lsp_status_from_progress(&mut self) {
+        if self.lsp_progress.is_empty() {
+            // No active progress, update from server statuses
+            self.update_lsp_status_from_server_statuses();
+            return;
+        }
+
+        // Show the first active progress operation
+        if let Some((_, info)) = self.lsp_progress.iter().next() {
+            let mut status = format!("LSP ({}): {}", info.language, info.title);
+            if let Some(ref msg) = info.message {
+                status.push_str(&format!(" - {}", msg));
+            }
+            if let Some(pct) = info.percentage {
+                status.push_str(&format!(" ({}%)", pct));
+            }
+            self.lsp_status = status;
+        }
+    }
+
+    /// Update LSP status bar string from server statuses
+    fn update_lsp_status_from_server_statuses(&mut self) {
+        use crate::async_bridge::LspServerStatus;
+
+        // Collect all server statuses
+        let mut statuses: Vec<(String, LspServerStatus)> = self
+            .lsp_server_statuses
+            .iter()
+            .map(|(lang, status)| (lang.clone(), *status))
+            .collect();
+
+        if statuses.is_empty() {
+            self.lsp_status = String::new();
+            return;
+        }
+
+        // Sort by language name for consistent display
+        statuses.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Build status string
+        let status_parts: Vec<String> = statuses
+            .iter()
+            .map(|(lang, status)| {
+                let status_str = match status {
+                    LspServerStatus::Starting => "starting",
+                    LspServerStatus::Initializing => "initializing",
+                    LspServerStatus::Running => "ready",
+                    LspServerStatus::Error => "error",
+                    LspServerStatus::Shutdown => "shutdown",
+                };
+                format!("{}: {}", lang, status_str)
+            })
+            .collect();
+
+        self.lsp_status = format!("LSP [{}]", status_parts.join(", "));
     }
 
     /// Update the plugin state snapshot with current editor state

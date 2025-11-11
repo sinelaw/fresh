@@ -130,10 +130,12 @@ This plan aims to evolve the LSP client to be performant, full-featured, and rob
 - [ ] **Semantic Tokens:** Implement `textDocument/semanticTokens` for more advanced and accurate syntax highlighting.
 - [ ] **Document & Workspace Symbols:** Implement `textDocument/documentSymbol` for an outline/breadcrumb view and `workspace/symbol` for project-wide symbol search.
 - [ ] **Inlay Hints:** Display inlay hints (`textDocument/inlayHint`) for type annotations and parameter names.
-- [ ] **Progress Reporting:** Handle `$/progress` notifications from the server to show activity indicators in the UI (e.g., for indexing).
-- [ ] **Server Communication & Logging:**
-    - [ ] Handle `window/logMessage` to display server logs for debugging.
-    - [ ] Handle `window/showMessage` and `window/showMessageRequest` to show info/warnings and ask questions.
+- [x] **Progress Reporting:** Handle `$/progress` notifications from the server to show activity indicators in the UI (e.g., for indexing). ✅ **COMPLETE** (Nov 2025)
+- [x] **Server Communication & Logging:** ✅ **PARTIAL** (Nov 2025)
+    - [x] Handle `window/logMessage` to capture server logs (stored for future viewer).
+    - [x] Handle `window/showMessage` to show info/warnings in status bar.
+    - [x] Server status indicators (starting/initializing/running/error) displayed in status bar.
+    - [ ] Log viewer panel (view captured logs in dedicated UI).
 - [ ] **Document Formatting:** Add commands for `textDocument/formatting` and `textDocument/rangeFormatting`.
 - [ ] **Call Hierarchy / Type Hierarchy:** Implement `callHierarchy/incomingCalls` and `typeHierarchy/supertypes`.
 - [ ] **Code Lens / Folding Ranges:** Implement `textDocument/codeLens` and `textDocument/foldingRange`.

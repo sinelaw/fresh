@@ -99,6 +99,69 @@ pub enum AsyncMessage {
         /// Exit code
         exit_code: i32,
     },
+
+    /// LSP progress notification ($/progress)
+    LspProgress {
+        language: String,
+        token: String,
+        value: LspProgressValue,
+    },
+
+    /// LSP window message (window/showMessage)
+    LspWindowMessage {
+        language: String,
+        message_type: LspMessageType,
+        message: String,
+    },
+
+    /// LSP log message (window/logMessage)
+    LspLogMessage {
+        language: String,
+        message_type: LspMessageType,
+        message: String,
+    },
+
+    /// LSP server status update
+    LspStatusUpdate {
+        language: String,
+        status: LspServerStatus,
+    },
+}
+
+/// LSP progress value types
+#[derive(Debug, Clone)]
+pub enum LspProgressValue {
+    Begin {
+        title: String,
+        message: Option<String>,
+        percentage: Option<u32>,
+    },
+    Report {
+        message: Option<String>,
+        percentage: Option<u32>,
+    },
+    End {
+        message: Option<String>,
+    },
+}
+
+/// LSP message type (corresponds to MessageType in LSP spec)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LspMessageType {
+    Error = 1,
+    Warning = 2,
+    Info = 3,
+    Log = 4,
+}
+
+/// LSP server status
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LspServerStatus {
+    Starting,
+    Initializing,
+    Running,
+    Error,
+    Shutdown,
 }
 
 /// Bridge between async Tokio runtime and sync main loop
