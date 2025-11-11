@@ -304,6 +304,7 @@ struct LspProgressInfo {
 
 /// LSP message entry (for window messages and logs)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct LspMessageEntry {
     pub language: String,
     pub message_type: crate::async_bridge::LspMessageType,
@@ -1940,7 +1941,7 @@ impl Editor {
                     // Fire plugin hook for prompt cancellation
                     if let Some(plugin_manager) = &mut self.plugin_manager {
                         use crate::hooks::HookArgs;
-                        plugin_manager.run_hook(
+                        let _ = plugin_manager.run_hook(
                             "prompt-cancelled",
                             &HookArgs::PromptCancelled {
                                 prompt_type: custom_type.clone(),
@@ -2063,7 +2064,7 @@ impl Editor {
                 // Fire plugin hook for prompt input change
                 if let Some(plugin_manager) = &mut self.plugin_manager {
                     use crate::hooks::HookArgs;
-                    plugin_manager.run_hook(
+                    let _ = plugin_manager.run_hook(
                         "prompt-changed",
                         &HookArgs::PromptChanged {
                             prompt_type: custom_type,
@@ -2669,7 +2670,7 @@ impl Editor {
                 // This allows plugins to initialize the prompt state
                 if let Some(plugin_manager) = &mut self.plugin_manager {
                     use crate::hooks::HookArgs;
-                    plugin_manager.run_hook(
+                    let _ = plugin_manager.run_hook(
                         "prompt-changed",
                         &HookArgs::PromptChanged {
                             prompt_type: prompt_type.clone(),
@@ -3598,7 +3599,7 @@ impl Editor {
                                 use crate::hooks::HookArgs;
 
                                 // selected_index is already captured from confirm_prompt()
-                                plugin_manager.run_hook(
+                                let _ = plugin_manager.run_hook(
                                     "prompt-confirmed",
                                     &HookArgs::PromptConfirmed {
                                         prompt_type: custom_type,

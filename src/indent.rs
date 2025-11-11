@@ -913,6 +913,7 @@ impl IndentCalculator {
     }
 
     /// Get the indent of the previous line (line before cursor's line)
+    #[cfg(test)]
     fn get_previous_line_indent(buffer: &Buffer, position: usize) -> usize {
         // Find start of current line
         let mut line_start = position;
