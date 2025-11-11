@@ -7,6 +7,8 @@
 -- State management
 local all_files = {}  -- Cache of all git-tracked files
 local filtered_files = {}  -- Currently filtered file list
+local is_loading = false  -- Track if git ls-files is currently running
+local pending_prompt_input = nil  -- Store input if prompt is active during load
 
 -- Simple fuzzy filter function
 -- Returns true if all characters in pattern appear in order in str (case-insensitive)
@@ -76,8 +78,15 @@ end
 
 -- Load git-tracked files
 local function load_git_files()
+    if is_loading then
+        return  -- Already loading, don't spawn duplicate processes
+    end
+
+    is_loading = true
     editor.spawn("git", {"ls-files"},
         function(stdout, stderr, exit_code)
+            is_loading = false
+
             if exit_code == 0 then
                 -- Parse file list
                 all_files = {}
@@ -88,9 +97,28 @@ local function load_git_files()
                 end
 
                 debug(string.format("Loaded %d git-tracked files", #all_files))
+
+                -- If there's a pending prompt waiting for files, update it now
+                if pending_prompt_input ~= nil then
+                    local query = pending_prompt_input
+                    filtered_files = filter_files(all_files, query)
+                    local suggestions = files_to_suggestions(filtered_files)
+                    editor.set_prompt_suggestions(suggestions)
+
+                    if #filtered_files > 0 then
+                        editor.set_status(string.format("Showing %d of %d files", #filtered_files, #all_files))
+                    else
+                        editor.set_status("No matches found")
+                    end
+                end
             else
                 debug("Failed to load git files: " .. stderr)
                 all_files = {}
+
+                -- Update status if prompt is active
+                if pending_prompt_input ~= nil then
+                    editor.set_status("Error loading git files: " .. stderr)
+                end
             end
         end)
 end
@@ -106,12 +134,15 @@ editor.register_command({
 -- Global function to start git find file
 function start_git_find_file()
     -- Load files if not already loaded
-    if #all_files == 0 then
+    if #all_files == 0 and not is_loading then
         load_git_files()
     end
 
     -- Clear filtered results
     filtered_files = {}
+
+    -- Mark that we have an active prompt (empty query initially)
+    pending_prompt_input = ""
 
     -- Start the prompt
     editor.start_prompt({
@@ -119,15 +150,19 @@ function start_git_find_file()
         prompt_type = "git-find-file"
     })
 
-    -- Show initial file list (first 100)
-    filtered_files = filter_files(all_files, "")
-    local suggestions = files_to_suggestions(filtered_files)
-    editor.set_prompt_suggestions(suggestions)
-
+    -- Show initial file list if files are already loaded
     if #all_files > 0 then
+        filtered_files = filter_files(all_files, "")
+        local suggestions = files_to_suggestions(filtered_files)
+        editor.set_prompt_suggestions(suggestions)
         editor.set_status(string.format("Showing %d of %d files", #filtered_files, #all_files))
-    else
+    elseif is_loading then
+        -- Files are currently loading
         editor.set_status("Loading git files...")
+        -- Suggestions will be set when load completes (via callback)
+    else
+        -- No files and not loading (maybe git repo has no files?)
+        editor.set_status("No git-tracked files found")
     end
 end
 
@@ -139,18 +174,30 @@ editor.on("prompt-changed", function(args)
 
     local query = args.input
 
-    -- Filter files by query
-    filtered_files = filter_files(all_files, query)
-    local suggestions = files_to_suggestions(filtered_files)
+    -- Update pending input for when files finish loading
+    pending_prompt_input = query
 
-    -- Update prompt with filtered suggestions
-    editor.set_prompt_suggestions(suggestions)
+    -- Only update suggestions if files are loaded
+    if #all_files > 0 then
+        -- Filter files by query
+        filtered_files = filter_files(all_files, query)
+        local suggestions = files_to_suggestions(filtered_files)
 
-    -- Update status
-    if #filtered_files > 0 then
-        editor.set_status(string.format("Showing %d of %d files", #filtered_files, #all_files))
+        -- Update prompt with filtered suggestions
+        editor.set_prompt_suggestions(suggestions)
+
+        -- Update status
+        if #filtered_files > 0 then
+            editor.set_status(string.format("Showing %d of %d files", #filtered_files, #all_files))
+        else
+            editor.set_status("No matches found")
+        end
+    elseif is_loading then
+        -- Still loading, keep showing loading message
+        editor.set_status("Loading git files...")
     else
-        editor.set_status("No matches found")
+        -- No files loaded and not loading
+        editor.set_status("No git-tracked files found")
     end
 
     return true
@@ -194,8 +241,9 @@ editor.on("prompt-cancelled", function(args)
         return true  -- Not our prompt
     end
 
-    -- Clear results
+    -- Clear results and pending state
     filtered_files = {}
+    pending_prompt_input = nil  -- Clear pending state
     editor.set_status("Find file cancelled")
 
     return true
