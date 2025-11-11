@@ -1,6 +1,6 @@
 //! E2E tests for git features (git grep and git find file)
 
-use crate::common::git_test_helper::GitTestRepo;
+use crate::common::git_test_helper::{DirGuard, GitTestRepo};
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
@@ -267,6 +267,10 @@ fn test_git_find_file_shows_results() {
     repo.setup_typical_project();
     repo.setup_git_plugins();
 
+    // Change to repo directory so git commands work correctly
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
             .unwrap();
@@ -277,14 +281,15 @@ fn test_git_find_file_shows_results() {
     // Check that the prompt appeared
     harness.assert_screen_contains("Find file: ");
 
-    // Wait for initial file list (git ls-files with empty query)
+    // Wait for async git ls-files to complete and populate file list
+    // The plugin loads files asynchronously, so we need to wait for results
     let found = harness
         .wait_for_async(
             |h| {
                 let screen = h.screen_to_string();
                 screen.contains("src/") || screen.contains(".rs") || screen.contains("Cargo.toml")
             },
-            2000,
+            3000,  // Increased timeout for async git command
         )
         .unwrap();
 
@@ -567,6 +572,10 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
     repo.setup_typical_project();
     repo.setup_git_plugins();
 
+    // Change to repo directory so git commands work correctly
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
             .unwrap();
@@ -647,6 +656,10 @@ fn test_git_find_file_actually_opens_file() {
     repo.setup_typical_project();
     repo.setup_git_plugins();
 
+    // Change to repo directory so git commands work correctly
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
             .unwrap();
@@ -660,6 +673,10 @@ fn test_git_find_file_actually_opens_file() {
 
     // Trigger git find file
     trigger_git_find_file(&mut harness);
+
+    // Wait for file list to load first (async operation)
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    harness.render().unwrap();
 
     // Type to find lib.rs
     harness.type_text("lib.rs").unwrap();
@@ -681,7 +698,7 @@ fn test_git_find_file_actually_opens_file() {
                     .take(lines.len().saturating_sub(1))
                     .any(|line| line.contains("src/"))
             },
-            2000,
+            3000,  // Increased timeout
         )
         .unwrap();
 
@@ -745,6 +762,10 @@ fn test_git_grep_cursor_position_accuracy() {
     repo.git_add(&["test.txt"]);
     repo.git_commit("Add test file");
     repo.setup_git_plugins();
+
+    // Change to repo directory so git commands work correctly
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
