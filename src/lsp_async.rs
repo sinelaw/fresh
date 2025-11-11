@@ -1857,13 +1857,48 @@ mod tests {
         )
         .unwrap();
 
-        // did_change now succeeds and queues the command for when server is initialized
+        // Test incremental sync: insert "fn main() {}" at position (0, 0)
         let result = handle.did_change(
             "file:///test.rs".parse().unwrap(),
             vec![TextDocumentContentChangeEvent {
-                range: None,
+                range: Some(lsp_types::Range::new(
+                    lsp_types::Position::new(0, 0),
+                    lsp_types::Position::new(0, 0),
+                )),
                 range_length: None,
                 text: "fn main() {}".to_string(),
+            }],
+        );
+
+        // Should succeed (command is queued)
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_lsp_handle_incremental_change_with_range() {
+        let runtime = tokio::runtime::Handle::current();
+        let async_bridge = AsyncBridge::new();
+
+        let handle = LspHandle::spawn(
+            &runtime,
+            "cat",
+            &[],
+            "test".to_string(),
+            &async_bridge,
+            ProcessLimits::unlimited(),
+        )
+        .unwrap();
+
+        // Test incremental delete: remove text from (0, 3) to (0, 7)
+        let result = handle.did_change(
+            "file:///test.rs".parse().unwrap(),
+            vec![TextDocumentContentChangeEvent {
+                range: Some(lsp_types::Range::new(
+                    lsp_types::Position::new(0, 3),
+                    lsp_types::Position::new(0, 7),
+                )),
+                range_length: None,
+                text: String::new(), // Empty string for deletion
             }],
         );
 
