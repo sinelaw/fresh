@@ -4,7 +4,7 @@
 
 Fresh has achieved its core architectural goals: a **fast, stable, and truly extensible editor** powered by Rust and Lua. The plugin system is production-ready, marker-based overlays are implemented, and the editor handles GB+ files with ease. The path forward focuses on closing LSP feature gaps and building showcase plugins to demonstrate the platform's unique capabilities.
 
-## Current Status (January 2025)
+## Current Status
 
 ### ✅ Major Architectural Achievements
 
@@ -32,7 +32,7 @@ Fresh has achieved its core architectural goals: a **fast, stable, and truly ext
 
 ### Current Feature Gaps
 
-Based on comprehensive codebase analysis (January 2025):
+Based on comprehensive codebase analysis:
 
 1. **LSP Integration - Partial** (4/15 features implemented)
    - ✅ Implemented: Diagnostics, Completion, Go-to-definition, Rename
@@ -73,7 +73,7 @@ ______________________________________________________________________
 
 ## Roadmap Phases
 
-## Phase 1: Daily Driver Readiness (Q1 2025)
+## Phase 1: Daily Driver Readiness
 
 **Goal**: Close the feature gaps that prevent developers from using Fresh full-time.
 
@@ -128,7 +128,7 @@ Complete the search & replace feature set:
 
 ______________________________________________________________________
 
-## Phase 2: Showcase the Plugin System (Q2 2025)
+## Phase 2: Showcase the Plugin System
 
 **Goal**: Demonstrate Fresh's unique architectural advantages through killer-app plugins.
 
@@ -177,7 +177,7 @@ Implement the remaining APIs needed for showcase plugins:
 
 ______________________________________________________________________
 
-## Phase 3: Ecosystem & Polish (Q3-Q4 2025)
+## Phase 3: Ecosystem & Polish
 
 **Goal**: Build a thriving plugin ecosystem and production-ready user experience.
 
@@ -233,7 +233,7 @@ Complete the LSP implementation:
 
 ______________________________________________________________________
 
-## Phase 4: Advanced Features (2026+)
+## Phase 4: Advanced Features
 
 **Goal**: Become the best-in-class editor for specific workflows.
 
@@ -310,7 +310,7 @@ ______________________________________________________________________
 - [ ] New user onboarding tutorial complete
 - [ ] Crash recovery and session persistence implemented
 
-### Long-term Vision (2026):
+### Long-term Vision:
 - [ ] 100+ community plugins
 - [ ] 1000+ daily active users
 - [ ] Recognized as "Neovim performance with VSCode usability"
