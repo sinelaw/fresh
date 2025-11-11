@@ -17,10 +17,34 @@ pub struct Interval {
     pub end: u64,
 }
 
+/// Type of marker - either a position marker or a line anchor
+#[derive(Debug, Clone, PartialEq)]
+pub enum MarkerType {
+    /// Regular position marker (for overlays, cursors, etc.)
+    Position,
+    /// Line anchor with estimated/exact line number
+    LineAnchor {
+        estimated_line: usize,
+        confidence: AnchorConfidence,
+    },
+}
+
+/// Confidence level for line anchor estimates
+#[derive(Debug, Clone, PartialEq)]
+pub enum AnchorConfidence {
+    /// Exact line number (scanned from known position)
+    Exact,
+    /// Estimated from average line length
+    Estimated,
+    /// Relative to another anchor
+    Relative(MarkerId),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Marker {
     pub id: MarkerId,
     pub interval: Interval,
+    pub marker_type: MarkerType,
 }
 
 /// A Strong pointer to a tree node (child/sibling/map reference)
@@ -139,11 +163,17 @@ impl IntervalTree {
 
     /// Inserts a new marker interval. Performance: O(log n)
     pub fn insert(&mut self, start: u64, end: u64) -> MarkerId {
+        self.insert_with_type(start, end, MarkerType::Position)
+    }
+
+    /// Insert a marker with a specific type
+    pub fn insert_with_type(&mut self, start: u64, end: u64, marker_type: MarkerType) -> MarkerId {
         let id = self.next_id;
         self.next_id += 1;
         let marker = Marker {
             id,
             interval: Interval { start, end },
+            marker_type,
         };
 
         let new_node = Node::new(marker.clone(), Weak::new());
@@ -151,6 +181,24 @@ impl IntervalTree {
 
         self.marker_map.insert(id, new_node);
         id
+    }
+
+    /// Insert a line anchor at a specific position
+    pub fn insert_line_anchor(
+        &mut self,
+        start: u64,
+        end: u64,
+        estimated_line: usize,
+        confidence: AnchorConfidence,
+    ) -> MarkerId {
+        self.insert_with_type(
+            start,
+            end,
+            MarkerType::LineAnchor {
+                estimated_line,
+                confidence,
+            },
+        )
     }
 
     /// Finds the current true position of a marker by its ID. Performance: O(log n)
@@ -206,6 +254,39 @@ impl IntervalTree {
         let mut results = Vec::new();
         Self::query_recursive(&self.root, query_start, query_end, &mut results);
         results
+    }
+
+    /// Get the marker data for a given marker ID
+    pub fn get_marker(&self, id: MarkerId) -> Option<Marker> {
+        let node_rc = self.marker_map.get(&id)?;
+        Some(node_rc.borrow().marker.clone())
+    }
+
+    /// Update a line anchor's estimated line number and confidence
+    pub fn update_line_anchor(
+        &mut self,
+        id: MarkerId,
+        estimated_line: usize,
+        confidence: AnchorConfidence,
+    ) -> bool {
+        if let Some(node_rc) = self.marker_map.get(&id) {
+            let mut node = node_rc.borrow_mut();
+            node.marker.marker_type = MarkerType::LineAnchor {
+                estimated_line,
+                confidence,
+            };
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Query only line anchors in a range
+    pub fn query_line_anchors(&self, query_start: u64, query_end: u64) -> Vec<Marker> {
+        self.query(query_start, query_end)
+            .into_iter()
+            .filter(|m| matches!(m.marker_type, MarkerType::LineAnchor { .. }))
+            .collect()
     }
 }
 

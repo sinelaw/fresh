@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_line_cache_basic() {
-        let buffer = Buffer::from_str("line1\nline2\nline3\n");
+        let buffer = Buffer::from_str_test("line1\nline2\nline3\n");
         let mut cache = LineCache::new();
 
         // Ensure line for byte 0
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_line_cache_populate_range() {
-        let buffer = Buffer::from_str("line1\nline2\nline3\nline4\n");
+        let buffer = Buffer::from_str_test("line1\nline2\nline3\nline4\n");
         let mut cache = LineCache::new();
 
         // Populate 3 lines starting from byte 0
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_line_cache_invalidation() {
-        let buffer = Buffer::from_str("line1\nline2\nline3\n");
+        let buffer = Buffer::from_str_test("line1\nline2\nline3\n");
         let mut cache = LineCache::new();
 
         // Populate cache

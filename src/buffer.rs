@@ -4,6 +4,7 @@ use crate::line_cache::{LineCache, LineInfo};
 use crate::persistence::ChunkTreePersistence;
 use crate::virtual_buffer::VirtualBuffer;
 use regex::bytes::Regex;
+use std::cell::RefCell;
 use std::io::{self, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -73,39 +74,51 @@ pub struct Buffer {
     /// Has the buffer been modified since last save?
     modified: bool,
 
-    /// Cache of line number to byte offset mappings
+    /// Cache of line number to byte offset mappings (old system - will be removed)
     line_cache: LineCache,
+
+    /// Line anchor manager for efficient line number ↔ byte offset conversion
+    line_anchor_manager: crate::line_anchor::LineAnchorManager,
+
+    /// Marker list for line anchors (uses RefCell for interior mutability)
+    line_markers: RefCell<crate::marker::MarkerList>,
 }
 
 impl Buffer {
     /// Create a new empty buffer
-    pub fn new() -> Self {
+    pub fn new(large_file_threshold: usize) -> Self {
         let persistence = Box::new(ChunkTreePersistence::new(DEFAULT_CONFIG));
         Self {
             virtual_buffer: VirtualBuffer::new(persistence),
             file_path: None,
             modified: false,
             line_cache: LineCache::new(),
+            line_anchor_manager: crate::line_anchor::LineAnchorManager::new(0, large_file_threshold),
+            line_markers: RefCell::new(crate::marker::MarkerList::new()),
         }
     }
 
     /// Create a buffer from a string
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_str(s: &str, large_file_threshold: usize) -> Self {
         // Leak the string to get 'static lifetime for ChunkTree
         let leaked: &'static [u8] = Box::leak(s.as_bytes().to_vec().into_boxed_slice());
         let tree = ChunkTree::from_slice(leaked, DEFAULT_CONFIG);
         let persistence = Box::new(ChunkTreePersistence::from_tree(tree));
+        let len = s.len();
 
         Self {
             virtual_buffer: VirtualBuffer::new(persistence),
             file_path: None,
             modified: false,
             line_cache: LineCache::new(),
+            line_anchor_manager: crate::line_anchor::LineAnchorManager::new(len, large_file_threshold),
+            line_markers: RefCell::new(crate::marker::MarkerList::new()),
         }
     }
 
+
     /// Load a buffer from a file
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+    pub fn load_from_file<P: AsRef<Path>>(path: P, large_file_threshold: usize) -> io::Result<Self> {
         let path = path.as_ref();
         let mut file = std::fs::File::open(path)?;
         let mut contents = Vec::new();
@@ -113,6 +126,7 @@ impl Buffer {
 
         // Leak for 'static lifetime
         let leaked: &'static [u8] = Box::leak(contents.into_boxed_slice());
+        let len = leaked.len();
         let tree = ChunkTree::from_slice(leaked, DEFAULT_CONFIG);
         let persistence = Box::new(ChunkTreePersistence::from_tree(tree));
 
@@ -121,6 +135,8 @@ impl Buffer {
             file_path: Some(path.to_path_buf()),
             modified: false,
             line_cache: LineCache::new(),
+            line_anchor_manager: crate::line_anchor::LineAnchorManager::new(len, large_file_threshold),
+            line_markers: RefCell::new(crate::marker::MarkerList::new()),
         })
     }
 
@@ -154,9 +170,13 @@ impl Buffer {
         let _ = self.virtual_buffer.insert(pos, text.as_bytes());
         self.modified = true;
 
-        // Update line cache with insertion
+        // Update line cache with insertion (old system)
         let newlines = text.matches('\n').count();
         self.handle_line_cache_insertion(pos, text.len(), newlines);
+
+        // Update line anchors with lazy delta
+        self.line_markers.borrow_mut().adjust_for_insert(pos, text.len());
+        self.line_anchor_manager.update_file_size(self.len());
     }
 
     /// Delete a range of bytes
@@ -172,8 +192,12 @@ impl Buffer {
         let _ = self.virtual_buffer.delete(range.clone());
         self.modified = true;
 
-        // Update line cache with deletion
+        // Update line cache with deletion (old system)
         self.handle_line_cache_deletion(range.start, range.len(), newlines);
+
+        // Update line anchors with lazy delta
+        self.line_markers.borrow_mut().adjust_for_delete(range.start, range.len());
+        self.line_anchor_manager.update_file_size(self.len());
     }
 
     /// Get a slice of the buffer as a string
@@ -948,38 +972,16 @@ impl Buffer {
     /// This function uses the line cache for performance. It reads from the cache but doesn't
     /// modify it (to keep &self). The cache is populated during normal navigation/editing.
     pub fn lsp_position_to_byte(&self, line: usize, utf16_offset: usize) -> usize {
-        // Try to get a cached line start position at or before the target line
-        let (start_byte, start_line) = if let Some(cached_byte) = self.get_cached_byte_offset_for_line(line) {
-            // Exact match - we have the line start cached!
-            (cached_byte, line)
-        } else if let Some(info) = self.line_cache.get_nearest_before(usize::MAX) {
-            // Get the nearest cached line before our target
-            // Start from there instead of from byte 0
-            if info.line_number <= line {
-                (info.byte_offset, info.line_number)
-            } else {
-                (0, 0)
-            }
-        } else {
-            (0, 0)
-        };
+        // Use line anchor system to find the line start
+        let line_start = self
+            .line_anchor_manager
+            .line_to_byte(line, self, &mut self.line_markers.borrow_mut());
 
-        // Iterate from the nearest cached position to the target line
-        let mut iter = self.line_iterator(start_byte);
-        let mut current_line = start_line;
-
-        // Skip to target line
-        while current_line < line {
-            if iter.next().is_some() {
-                current_line += 1;
-            } else {
-                // Line doesn't exist, return end of buffer
-                return self.len();
-            }
-        }
+        // Get the line content starting from line_start
+        let mut iter = self.line_iterator(line_start);
 
         // Get the start of the target line
-        if let Some((line_start, line_content)) = iter.next() {
+        if let Some((_, line_content)) = iter.next() {
             // Convert UTF-16 offset to byte offset
             // We need to count UTF-16 code units until we reach the target offset
             let mut current_utf16 = 0;
@@ -1005,7 +1007,7 @@ impl Buffer {
 
 impl Default for Buffer {
     fn default() -> Self {
-        Self::new()
+        Self::new(crate::config::LARGE_FILE_THRESHOLD_BYTES as usize)
     }
 }
 
@@ -1115,19 +1117,32 @@ impl LineIterator {
 }
 
 #[cfg(test)]
+impl Buffer {
+    /// Create a buffer from a string with default threshold (test helper)
+    pub fn from_str_test(s: &str) -> Self {
+        Self::from_str(s, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize)
+    }
+
+    /// Create a new empty buffer with default threshold (test helper)
+    pub fn new_test() -> Self {
+        Self::new(crate::config::LARGE_FILE_THRESHOLD_BYTES as usize)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_buffer_basic() {
-        let buffer = Buffer::from_str("hello world");
+        let buffer = Buffer::from_str_test("hello world");
         assert_eq!(buffer.len(), 11);
         assert_eq!(buffer.to_string(), "hello world");
     }
 
     #[test]
     fn test_buffer_insert() {
-        let mut buffer = Buffer::from_str("hello world");
+        let mut buffer = Buffer::from_str_test("hello world");
         buffer.insert(5, " beautiful");
         assert_eq!(buffer.to_string(), "hello beautiful world");
         assert!(buffer.is_modified());
@@ -1135,14 +1150,14 @@ mod tests {
 
     #[test]
     fn test_buffer_delete() {
-        let mut buffer = Buffer::from_str("hello world");
+        let mut buffer = Buffer::from_str_test("hello world");
         buffer.delete(5..11);
         assert_eq!(buffer.to_string(), "hello");
     }
 
     #[test]
     fn test_line_iterator() {
-        let buffer = Buffer::from_str("line1\nline2\nline3");
+        let buffer = Buffer::from_str_test("line1\nline2\nline3");
         let mut iter = buffer.line_iterator(0);
 
         let (start, content) = iter.next().unwrap();
@@ -1162,7 +1177,7 @@ mod tests {
 
     #[test]
     fn test_line_iterator_from_middle() {
-        let buffer = Buffer::from_str("line1\nline2\nline3");
+        let buffer = Buffer::from_str_test("line1\nline2\nline3");
         let mut iter = buffer.line_iterator(8); // Middle of "line2"
 
         // Should start from beginning of line2
@@ -1173,14 +1188,14 @@ mod tests {
 
     #[test]
     fn test_buffer_slice() {
-        let buffer = Buffer::from_str("hello world");
+        let buffer = Buffer::from_str_test("hello world");
         assert_eq!(buffer.slice(0..5), "hello");
         assert_eq!(buffer.slice(6..11), "world");
     }
 
     #[test]
     fn test_buffer_find_next() {
-        let buffer = Buffer::from_str("hello world hello");
+        let buffer = Buffer::from_str_test("hello world hello");
         assert_eq!(buffer.find_next("hello", 0), Some(0));
         assert_eq!(buffer.find_next("hello", 1), Some(12));
         assert_eq!(buffer.find_next("hello", 13), Some(0)); // Wraps around
@@ -1196,7 +1211,7 @@ mod tests {
         //     let result = log_line.len();
         // }
         let code = "fn main() {\n    let log_line = \"hello world\";\n    println!(\"{}\", log_line);\n    let result = log_line.len();\n}\n";
-        let buffer = Buffer::from_str(code);
+        let buffer = Buffer::from_str_test(code);
 
         // Test the 3 edits from rust-analyzer (as shown in VSCode logs):
 
@@ -1230,7 +1245,7 @@ mod tests {
 
     #[test]
     fn test_buffer_find_next_regex() {
-        let buffer = Buffer::from_str("hello world hello");
+        let buffer = Buffer::from_str_test("hello world hello");
 
         // Simple literal pattern
         let regex = Regex::new("hello").unwrap();
@@ -1251,7 +1266,7 @@ mod tests {
     fn test_buffer_find_regex_across_chunks() {
         // Create a buffer larger than chunk size to test cross-chunk matching
         let content = "x".repeat(5000) + "hello world" + &"y".repeat(5000);
-        let buffer = Buffer::from_str(&content);
+        let buffer = Buffer::from_str_test(&content);
 
         let regex = Regex::new(r"hello\s+world").unwrap();
         let match_pos = buffer.find_next_regex(&regex, 0);
@@ -1261,7 +1276,7 @@ mod tests {
 
     #[test]
     fn test_buffer_find_regex_unicode() {
-        let buffer = Buffer::from_str("hello 世界 world");
+        let buffer = Buffer::from_str_test("hello 世界 world");
 
         // Unicode character class
         let regex = Regex::new(r"\p{Han}+").unwrap();
@@ -1284,7 +1299,7 @@ mod tests {
         // - next() reads forward and advances
         // - prev() reads backward and retreats
 
-        let buffer = Buffer::from_str("Line 1\nLine 2\nLine 3");
+        let buffer = Buffer::from_str_test("Line 1\nLine 2\nLine 3");
         let mut iter = buffer.line_iterator(10); // Middle of Line 2
 
         // Cursor is at Line 2
@@ -1340,7 +1355,7 @@ mod tests {
                 suffix in "[a-zA-Z0-9 ]{0,200}",
             ) {
                 let content = format!("{}{}{}", prefix, pattern, suffix);
-                let buffer = Buffer::from_str(&content);
+                let buffer = Buffer::from_str_test(&content);
 
                 // Naive search
                 let naive_result = content.find(&pattern);
@@ -1364,7 +1379,7 @@ mod tests {
                     .map(|_| pattern.clone())
                     .collect();
                 let content = parts.join(&separator);
-                let buffer = Buffer::from_str(&content);
+                let buffer = Buffer::from_str_test(&content);
 
                 // Collect all matches with naive search
                 let mut naive_positions = Vec::new();
@@ -1400,7 +1415,7 @@ mod tests {
                 start_offset in 0usize..50,
             ) {
                 let content = format!("{}{}{}", before, pattern, after);
-                let buffer = Buffer::from_str(&content);
+                let buffer = Buffer::from_str_test(&content);
 
                 let start_pos = start_offset.min(content.len());
 
@@ -1425,7 +1440,7 @@ mod tests {
             fn prop_find_edge_cases(
                 content in "[a-z]{10,100}",
             ) {
-                let buffer = Buffer::from_str(&content);
+                let buffer = Buffer::from_str_test(&content);
 
                 // Empty pattern should return None
                 prop_assert_eq!(buffer.find_next("", 0), None, "Empty pattern should not match");
@@ -1446,7 +1461,7 @@ mod tests {
                 after_pattern in "[a-z]{20,50}",
             ) {
                 let content = format!("{}{}{}{}", pattern, before_pattern, pattern, after_pattern);
-                let buffer = Buffer::from_str(&content);
+                let buffer = Buffer::from_str_test(&content);
 
                 // Start search after first occurrence
                 let start_pos = pattern.len() + 1;
@@ -1472,7 +1487,7 @@ mod tests {
                 suffix in "[a-z]{0,100}",
             ) {
                 let content = format!("{}{}{}", prefix, digits, suffix);
-                let buffer = Buffer::from_str(&content);
+                let buffer = Buffer::from_str_test(&content);
 
                 let regex = Regex::new(r"\d+").unwrap();
 
@@ -1496,7 +1511,7 @@ mod tests {
                 // (assuming CHUNK_SIZE of 64KB in find_regex_streaming)
                 let prefix = "x".repeat(chunk_boundary);
                 let content = format!("{}{}", prefix, pattern_text);
-                let buffer = Buffer::from_str(&content);
+                let buffer = Buffer::from_str_test(&content);
 
                 // Create regex that matches our pattern
                 let regex_str = regex::escape(&pattern_text);
@@ -1515,7 +1530,7 @@ mod tests {
                 suffix in "[a-z]{0,50}",
             ) {
                 let content = format!("{}{}{}", prefix, unicode_chars, suffix);
-                let buffer = Buffer::from_str(&content);
+                let buffer = Buffer::from_str_test(&content);
 
                 // Match any Han character
                 let regex = Regex::new(r"\p{Han}+").unwrap();
@@ -1540,7 +1555,7 @@ mod tests {
                 let prefix = "a".repeat(position_bytes);
                 let suffix = "b".repeat(5000);
                 let content = format!("{}{}{}", prefix, pattern, suffix);
-                let buffer = Buffer::from_str(&content);
+                let buffer = Buffer::from_str_test(&content);
 
                 let result = buffer.find_next(&pattern, 0);
                 prop_assert_eq!(result, Some(position_bytes),
@@ -1560,7 +1575,7 @@ mod tests {
                 replacement in "[A-Z]{3,10}",
             ) {
                 let content = format!("{}{}{}", prefix, pattern, suffix);
-                let mut buffer = Buffer::from_str(&content);
+                let mut buffer = Buffer::from_str_test(&content);
 
                 // Naive replace using standard library
                 let naive_result = content.replace(&pattern, &replacement);
@@ -1591,7 +1606,7 @@ mod tests {
                     .map(|_| pattern.clone())
                     .collect();
                 let content = parts.join(&separator);
-                let mut buffer = Buffer::from_str(&content);
+                let mut buffer = Buffer::from_str_test(&content);
 
                 let count = buffer.replace_all(&pattern, &replacement);
                 let result = buffer.to_string();
@@ -1622,7 +1637,7 @@ mod tests {
 
                 // Create content with known occurrences
                 let content = vec![pattern.clone(); occurrences].join(" ");
-                let mut buffer = Buffer::from_str(&content);
+                let mut buffer = Buffer::from_str_test(&content);
 
                 let original_len = content.len();
                 let count = buffer.replace_all(&pattern, &replacement);
@@ -1649,7 +1664,7 @@ mod tests {
                 replacement in "[A-Z]{5,25}",
             ) {
                 let content = format!("{}{}{}", prefix, middle, suffix);
-                let mut buffer = Buffer::from_str(&content);
+                let mut buffer = Buffer::from_str_test(&content);
 
                 let start = prefix.len();
                 let end = start + middle.len();
@@ -1675,7 +1690,7 @@ mod tests {
             ) {
                 // Ensure pattern appears at least once
                 let content = format!("{}{}{}{}", prefix, pattern, middle, suffix);
-                let mut buffer = Buffer::from_str(&content);
+                let mut buffer = Buffer::from_str_test(&content);
 
                 let result = buffer.replace_next(&pattern, &replacement, 0);
 
@@ -1706,7 +1721,7 @@ mod tests {
                 let base_char = 'a';
                 let pattern = base_char.to_string().repeat(2);
                 let content = base_char.to_string().repeat(repetitions);
-                let mut buffer = Buffer::from_str(&content);
+                let mut buffer = Buffer::from_str_test(&content);
 
                 let count = buffer.replace_all(&pattern, &replacement);
                 let result = buffer.to_string();
@@ -1728,7 +1743,7 @@ mod tests {
                 content in "[a-zA-Z0-9 ]{10,100}",
                 replacement in "[A-Z]{5,15}",
             ) {
-                let mut buffer = Buffer::from_str(&content);
+                let mut buffer = Buffer::from_str_test(&content);
                 let original = buffer.to_string();
 
                 let count = buffer.replace_all("", &replacement);
@@ -1746,7 +1761,7 @@ mod tests {
             ) {
                 // Use a pattern that definitely won't be in lowercase content
                 let pattern = "XXXYYY";
-                let mut buffer = Buffer::from_str(&content);
+                let mut buffer = Buffer::from_str_test(&content);
                 let original = buffer.to_string();
 
                 let count = buffer.replace_all(pattern, &replacement);
@@ -1769,7 +1784,7 @@ mod tests {
                     .map(|_| pattern.clone())
                     .collect();
                 let content = parts.join(&separator);
-                let mut buffer = Buffer::from_str(&content);
+                let mut buffer = Buffer::from_str_test(&content);
 
                 let mut replaced_count = 0;
                 let mut search_pos = 0;
@@ -1804,7 +1819,7 @@ mod tests {
                 let content = (0..lines)
                     .map(|_| format!("prefix {} suffix\n", pattern))
                     .collect::<String>();
-                let mut buffer = Buffer::from_str(&content);
+                let mut buffer = Buffer::from_str_test(&content);
 
                 let count = buffer.replace_all(&pattern, &replacement);
 
@@ -1824,7 +1839,7 @@ mod tests {
 
     #[test]
     fn test_replace_range() {
-        let mut buffer = Buffer::from_str("hello world");
+        let mut buffer = Buffer::from_str_test("hello world");
         assert!(buffer.replace_range(6..11, "rust"));
         assert_eq!(buffer.to_string(), "hello rust");
         assert!(buffer.is_modified());
@@ -1832,21 +1847,21 @@ mod tests {
 
     #[test]
     fn test_replace_range_empty() {
-        let mut buffer = Buffer::from_str("hello world");
+        let mut buffer = Buffer::from_str_test("hello world");
         assert!(buffer.replace_range(5..5, " beautiful"));
         assert_eq!(buffer.to_string(), "hello beautiful world");
     }
 
     #[test]
     fn test_replace_range_with_empty() {
-        let mut buffer = Buffer::from_str("hello world");
+        let mut buffer = Buffer::from_str_test("hello world");
         assert!(buffer.replace_range(5..11, ""));
         assert_eq!(buffer.to_string(), "hello");
     }
 
     #[test]
     fn test_replace_range_invalid() {
-        let mut buffer = Buffer::from_str("hello");
+        let mut buffer = Buffer::from_str_test("hello");
         assert!(!buffer.replace_range(0..100, "text")); // End out of bounds
         assert!(!buffer.replace_range(10..15, "text")); // Start out of bounds
         assert!(!buffer.replace_range(5..3, "text")); // Start > end
@@ -1854,7 +1869,7 @@ mod tests {
 
     #[test]
     fn test_replace_next() {
-        let mut buffer = Buffer::from_str("hello world hello");
+        let mut buffer = Buffer::from_str_test("hello world hello");
         assert_eq!(buffer.replace_next("hello", "hi", 0), Some(0));
         assert_eq!(buffer.to_string(), "hi world hello");
 
@@ -1864,14 +1879,14 @@ mod tests {
 
     #[test]
     fn test_replace_next_not_found() {
-        let mut buffer = Buffer::from_str("hello world");
+        let mut buffer = Buffer::from_str_test("hello world");
         assert_eq!(buffer.replace_next("xyz", "abc", 0), None);
         assert_eq!(buffer.to_string(), "hello world");
     }
 
     #[test]
     fn test_replace_all_simple() {
-        let mut buffer = Buffer::from_str("hello world hello");
+        let mut buffer = Buffer::from_str_test("hello world hello");
         let count = buffer.replace_all("hello", "hi");
         assert_eq!(count, 2);
         assert_eq!(buffer.to_string(), "hi world hi");
@@ -1879,7 +1894,7 @@ mod tests {
 
     #[test]
     fn test_replace_all_overlapping() {
-        let mut buffer = Buffer::from_str("aaaa");
+        let mut buffer = Buffer::from_str_test("aaaa");
         let count = buffer.replace_all("aa", "b");
         assert_eq!(count, 2);
         assert_eq!(buffer.to_string(), "bb");
@@ -1887,7 +1902,7 @@ mod tests {
 
     #[test]
     fn test_replace_all_empty_pattern() {
-        let mut buffer = Buffer::from_str("hello");
+        let mut buffer = Buffer::from_str_test("hello");
         let count = buffer.replace_all("", "x");
         assert_eq!(count, 0);
         assert_eq!(buffer.to_string(), "hello");
@@ -1895,7 +1910,7 @@ mod tests {
 
     #[test]
     fn test_replace_all_no_matches() {
-        let mut buffer = Buffer::from_str("hello world");
+        let mut buffer = Buffer::from_str_test("hello world");
         let count = buffer.replace_all("xyz", "abc");
         assert_eq!(count, 0);
         assert_eq!(buffer.to_string(), "hello world");
@@ -1903,7 +1918,7 @@ mod tests {
 
     #[test]
     fn test_replace_all_size_change() {
-        let mut buffer = Buffer::from_str("a b c d e");
+        let mut buffer = Buffer::from_str_test("a b c d e");
         let count = buffer.replace_all(" ", "---");
         assert_eq!(count, 4);
         assert_eq!(buffer.to_string(), "a---b---c---d---e");
@@ -1911,7 +1926,7 @@ mod tests {
 
     #[test]
     fn test_replace_all_multiline() {
-        let mut buffer = Buffer::from_str("line1\nline2\nline3");
+        let mut buffer = Buffer::from_str_test("line1\nline2\nline3");
         let count = buffer.replace_all("line", "LINE");
         assert_eq!(count, 3);
         assert_eq!(buffer.to_string(), "LINE1\nLINE2\nLINE3");
@@ -1920,7 +1935,7 @@ mod tests {
     #[test]
     fn test_replace_all_regex_simple() {
         use regex::Regex;
-        let mut buffer = Buffer::from_str("hello world hello");
+        let mut buffer = Buffer::from_str_test("hello world hello");
         let regex = Regex::new(r"hello").unwrap();
         let count = buffer.replace_all_regex(&regex, "hi");
         assert_eq!(count, 2);
@@ -1930,7 +1945,7 @@ mod tests {
     #[test]
     fn test_replace_all_regex_with_captures() {
         use regex::Regex;
-        let mut buffer = Buffer::from_str("foo123 bar456 baz789");
+        let mut buffer = Buffer::from_str_test("foo123 bar456 baz789");
         let regex = Regex::new(r"([a-z]+)(\d+)").unwrap();
         // Note: Use ${1} syntax when capture group is followed by non-whitespace
         let count = buffer.replace_all_regex(&regex, "${1}_${2}");
@@ -1941,7 +1956,7 @@ mod tests {
     #[test]
     fn test_replace_all_regex_word_boundaries() {
         use regex::Regex;
-        let mut buffer = Buffer::from_str("the theory is theoretical");
+        let mut buffer = Buffer::from_str_test("the theory is theoretical");
         let regex = Regex::new(r"\bthe\b").unwrap();
         let count = buffer.replace_all_regex(&regex, "a");
         assert_eq!(count, 1); // Only "the" at the beginning
@@ -1951,7 +1966,7 @@ mod tests {
     #[test]
     fn test_replace_all_regex_no_matches() {
         use regex::Regex;
-        let mut buffer = Buffer::from_str("hello world");
+        let mut buffer = Buffer::from_str_test("hello world");
         let regex = Regex::new(r"\d+").unwrap();
         let count = buffer.replace_all_regex(&regex, "NUM");
         assert_eq!(count, 0);
@@ -1962,7 +1977,7 @@ mod tests {
     fn test_replace_all_large_file() {
         // Test with a larger buffer to ensure streaming works
         let content = "test\n".repeat(1000); // 5000 bytes
-        let mut buffer = Buffer::from_str(&content);
+        let mut buffer = Buffer::from_str_test(&content);
         let count = buffer.replace_all("test", "TEST");
         assert_eq!(count, 1000);
         assert_eq!(buffer.to_string(), "TEST\n".repeat(1000));

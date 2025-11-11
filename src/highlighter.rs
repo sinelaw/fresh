@@ -10,12 +10,13 @@
 //! This is achieved by only parsing the visible viewport (~50 lines), not the entire file.
 
 use crate::buffer::Buffer;
+use crate::config::LARGE_FILE_THRESHOLD_BYTES;
 use ratatui::style::Color;
 use std::ops::Range;
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter as TSHighlighter};
 
 /// Maximum bytes to parse in a single operation (for viewport highlighting)
-const MAX_PARSE_BYTES: usize = 100_000; // ~50 lines * 2000 chars/line
+const MAX_PARSE_BYTES: usize = LARGE_FILE_THRESHOLD_BYTES as usize; // 1MB
 
 /// A highlighted span of text
 #[derive(Debug, Clone)]
@@ -905,7 +906,7 @@ mod tests {
 
     #[test]
     fn test_highlighter_basic() {
-        let buffer = Buffer::from_str("fn main() {\n    println!(\"Hello\");\n}");
+        let buffer = Buffer::from_str_test("fn main() {\n    println!(\"Hello\");\n}");
         let mut highlighter = Highlighter::new(Language::Rust).unwrap();
 
         // Highlight entire buffer
@@ -926,7 +927,7 @@ mod tests {
         for i in 0..1000 {
             content.push_str(&format!("fn function_{i}() {{}}\n"));
         }
-        let buffer = Buffer::from_str(&content);
+        let buffer = Buffer::from_str_test(&content);
 
         let mut highlighter = Highlighter::new(Language::Rust).unwrap();
 
@@ -951,7 +952,7 @@ mod tests {
 
     #[test]
     fn test_cache_invalidation() {
-        let buffer = Buffer::from_str("fn main() {\n    println!(\"Hello\");\n}");
+        let buffer = Buffer::from_str_test("fn main() {\n    println!(\"Hello\");\n}");
         let mut highlighter = Highlighter::new(Language::Rust).unwrap();
 
         // First highlight

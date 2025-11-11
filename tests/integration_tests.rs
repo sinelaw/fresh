@@ -10,7 +10,7 @@ use fresh::{
 /// Test that cursor positions are correctly adjusted after buffer edits
 #[test]
 fn test_buffer_cursor_adjustment_on_insert() {
-    let mut state = EditorState::new(80, 24);
+    let mut state = EditorState::new(80, 24, fresh::config::LARGE_FILE_THRESHOLD_BYTES as usize);
 
     // Get the initial primary cursor ID (CursorId(0))
     let original_primary = state.cursors.primary_id();
@@ -67,7 +67,7 @@ fn test_buffer_cursor_adjustment_on_insert() {
 /// Test that cursor positions are correctly adjusted after deletions
 #[test]
 fn test_buffer_cursor_adjustment_on_delete() {
-    let mut state = EditorState::new(80, 24);
+    let mut state = EditorState::new(80, 24, fresh::config::LARGE_FILE_THRESHOLD_BYTES as usize);
 
     // Insert initial text
     state.apply(&Event::Insert {
@@ -102,7 +102,7 @@ fn test_buffer_cursor_adjustment_on_delete() {
 /// Test undo/redo with EditorState and EventLog
 #[test]
 fn test_state_eventlog_undo_redo() {
-    let mut state = EditorState::new(80, 24);
+    let mut state = EditorState::new(80, 24, fresh::config::LARGE_FILE_THRESHOLD_BYTES as usize);
     let mut log = EventLog::new();
 
     let cursor_id = state.cursors.primary_id();
@@ -158,7 +158,7 @@ fn test_state_eventlog_undo_redo() {
 /// Test that undo/redo maintains cursor positions correctly
 #[test]
 fn test_undo_redo_cursor_positions() {
-    let mut state = EditorState::new(80, 24);
+    let mut state = EditorState::new(80, 24, fresh::config::LARGE_FILE_THRESHOLD_BYTES as usize);
     let mut log = EventLog::new();
 
     let cursor_id = state.cursors.primary_id();
@@ -205,7 +205,7 @@ fn test_undo_redo_cursor_positions() {
 /// Test viewport ensures cursor stays visible after edits
 #[test]
 fn test_viewport_tracks_cursor_through_edits() {
-    let mut state = EditorState::new(80, 10); // Small viewport
+    let mut state = EditorState::new(80, 10, fresh::config::LARGE_FILE_THRESHOLD_BYTES as usize); // Small viewport
 
     let cursor_id = state.cursors.primary_id();
 
@@ -233,7 +233,7 @@ fn test_viewport_tracks_cursor_through_edits() {
 /// Test multi-cursor normalization after overlapping edits
 #[test]
 fn test_multi_cursor_normalization() {
-    let mut state = EditorState::new(80, 24);
+    let mut state = EditorState::new(80, 24, fresh::config::LARGE_FILE_THRESHOLD_BYTES as usize);
 
     // Insert initial text
     state.apply(&Event::Insert {
@@ -269,7 +269,7 @@ fn test_multi_cursor_normalization() {
 /// Test that viewport resizing maintains cursor visibility
 #[test]
 fn test_viewport_resize_maintains_cursor() {
-    let mut state = EditorState::new(80, 24);
+    let mut state = EditorState::new(80, 24, fresh::config::LARGE_FILE_THRESHOLD_BYTES as usize);
 
     // Insert text and move cursor to middle
     state.apply(&Event::Insert {
@@ -304,7 +304,7 @@ fn test_viewport_resize_maintains_cursor() {
 fn test_overlay_events() {
     use fresh::event::{OverlayFace, UnderlineStyle};
 
-    let mut state = EditorState::new(80, 24);
+    let mut state = EditorState::new(80, 24, fresh::config::LARGE_FILE_THRESHOLD_BYTES as usize);
 
     // Insert some text
     state.apply(&Event::Insert {
@@ -369,7 +369,7 @@ fn test_overlay_events() {
 fn test_popup_events() {
     use fresh::event::{PopupContentData, PopupData, PopupListItemData, PopupPositionData};
 
-    let mut state = EditorState::new(80, 24);
+    let mut state = EditorState::new(80, 24, fresh::config::LARGE_FILE_THRESHOLD_BYTES as usize);
 
     // Create a popup with list items
     let popup_data = PopupData {
@@ -442,7 +442,7 @@ fn test_overlay_undo_redo() {
     use fresh::event::{OverlayFace, UnderlineStyle};
 
     let mut log = EventLog::new();
-    let mut state = EditorState::new(80, 24);
+    let mut state = EditorState::new(80, 24, fresh::config::LARGE_FILE_THRESHOLD_BYTES as usize);
 
     // Insert text and add overlay
     let event1 = Event::Insert {
@@ -502,10 +502,10 @@ fn test_overlay_undo_redo() {
 /// Test LSP diagnostic to overlay conversion
 #[test]
 fn test_lsp_diagnostic_to_overlay() {
-    use fresh::{buffer::Buffer, lsp_diagnostics::diagnostic_to_overlay};
+    use fresh::{buffer::Buffer, config::LARGE_FILE_THRESHOLD_BYTES, lsp_diagnostics::diagnostic_to_overlay};
     use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 
-    let buffer = Buffer::from_str("let x = 5;\nlet y = 10;");
+    let buffer = Buffer::from_str("let x = 5;\nlet y = 10;", LARGE_FILE_THRESHOLD_BYTES as usize);
 
     // Create an error diagnostic on first line
     let diagnostic = Diagnostic {
@@ -556,7 +556,7 @@ fn test_lsp_diagnostic_to_overlay() {
 fn test_overlay_priority_layering() {
     use fresh::event::{OverlayFace, UnderlineStyle};
 
-    let mut state = EditorState::new(80, 24);
+    let mut state = EditorState::new(80, 24, fresh::config::LARGE_FILE_THRESHOLD_BYTES as usize);
 
     // Insert text
     state.apply(&Event::Insert {

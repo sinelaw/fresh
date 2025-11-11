@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn test_find_word_start() {
-        let buffer = Buffer::from_str("hello world test");
+        let buffer = Buffer::from_str_test("hello world test");
         assert_eq!(find_word_start(&buffer, 0), 0); // Start of "hello"
         assert_eq!(find_word_start(&buffer, 3), 0); // Middle of "hello"
         assert_eq!(find_word_start(&buffer, 6), 6); // Start of "world"
@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn test_find_word_end() {
-        let buffer = Buffer::from_str("hello world test");
+        let buffer = Buffer::from_str_test("hello world test");
         assert_eq!(find_word_end(&buffer, 0), 5); // End of "hello"
         assert_eq!(find_word_end(&buffer, 3), 5); // Middle of "hello"
         assert_eq!(find_word_end(&buffer, 6), 11); // End of "world"
@@ -303,14 +303,14 @@ mod tests {
 
     #[test]
     fn test_find_word_start_left() {
-        let buffer = Buffer::from_str("hello world test");
+        let buffer = Buffer::from_str_test("hello world test");
         assert_eq!(find_word_start_left(&buffer, 6), 0); // From "world" to "hello"
         assert_eq!(find_word_start_left(&buffer, 12), 6); // From "test" to "world"
     }
 
     #[test]
     fn test_find_word_start_right() {
-        let buffer = Buffer::from_str("hello world test");
+        let buffer = Buffer::from_str_test("hello world test");
         assert_eq!(find_word_start_right(&buffer, 0), 6); // From "hello" to "world"
         assert_eq!(find_word_start_right(&buffer, 6), 12); // From "world" to "test"
     }

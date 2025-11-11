@@ -1,4 +1,5 @@
 /// Test that overlay colors are correctly applied and rendered
+use fresh::config::LARGE_FILE_THRESHOLD_BYTES;
 use fresh::event::CursorId;
 use fresh::event::{Event, OverlayFace as EventOverlayFace};
 use fresh::state::EditorState;
@@ -6,7 +7,7 @@ use fresh::state::EditorState;
 #[test]
 fn test_overlay_background_color_direct() {
     // Create a state with some content
-    let mut state = EditorState::new(80, 24);
+    let mut state = EditorState::new(80, 24, LARGE_FILE_THRESHOLD_BYTES as usize);
 
     // Insert text using proper event so marker list is updated
     let text = "// TODO: test".to_string();

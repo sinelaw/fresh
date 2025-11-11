@@ -201,6 +201,89 @@ impl MarkerList {
         // IntervalTree maintains its own invariants internally
         Ok(())
     }
+
+    // --- Line Anchor Methods ---
+
+    /// Create a line anchor at a specific byte range
+    ///
+    /// This creates a marker that represents a line with an estimated line number.
+    /// The byte positions are exact, but the line number may be estimated.
+    pub fn create_line_anchor(
+        &mut self,
+        start: usize,
+        end: usize,
+        estimated_line: usize,
+        confidence: crate::marker_tree::AnchorConfidence,
+    ) -> MarkerId {
+        let tree_id = self
+            .tree
+            .insert_line_anchor(start as u64, end as u64, estimated_line, confidence);
+        MarkerId(tree_id)
+    }
+
+    /// Get the line number and confidence for a line anchor
+    pub fn get_line_anchor_info(
+        &self,
+        id: MarkerId,
+    ) -> Option<(usize, crate::marker_tree::AnchorConfidence)> {
+        let marker = self.tree.get_marker(id.0)?;
+        match marker.marker_type {
+            crate::marker_tree::MarkerType::LineAnchor {
+                estimated_line,
+                confidence,
+            } => Some((estimated_line, confidence)),
+            _ => None,
+        }
+    }
+
+    /// Update a line anchor's line number and confidence
+    pub fn update_line_anchor(
+        &mut self,
+        id: MarkerId,
+        estimated_line: usize,
+        confidence: crate::marker_tree::AnchorConfidence,
+    ) -> bool {
+        self.tree.update_line_anchor(id.0, estimated_line, confidence)
+    }
+
+    /// Query all line anchors in a byte range
+    pub fn query_line_anchors(&self, start: usize, end: usize) -> Vec<(MarkerId, usize, usize, usize)> {
+        self.tree
+            .query_line_anchors(start as u64, end as u64)
+            .into_iter()
+            .filter_map(|m| {
+                if let crate::marker_tree::MarkerType::LineAnchor { estimated_line, .. } = m.marker_type {
+                    Some((
+                        MarkerId(m.id),
+                        m.interval.start as usize,
+                        m.interval.end as usize,
+                        estimated_line,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Find the nearest line anchor before a given byte position
+    pub fn nearest_line_anchor_before(&self, byte_offset: usize) -> Option<(MarkerId, usize, usize, usize)> {
+        // Query from 0 to byte_offset to get all anchors before
+        let anchors = self.query_line_anchors(0, byte_offset);
+        // Return the one closest to byte_offset
+        anchors.into_iter().max_by_key(|(_, start, _, _)| *start)
+    }
+
+    /// Find the nearest line anchor before a given line number
+    pub fn nearest_line_anchor_before_line(&self, line_num: usize) -> Option<(MarkerId, usize, usize, usize)> {
+        // Query all anchors (we need to check line numbers, not byte positions)
+        // This is not optimal but simple - in practice we won't have many anchors
+        let all_anchors = self.query_line_anchors(0, usize::MAX);
+        all_anchors
+            .into_iter()
+            .filter(|(_, _, _, estimated_line)| *estimated_line <= line_num)
+            .max_by_key(|(_, _, _, estimated_line)| *estimated_line)
+    }
 }
 
 impl Default for MarkerList {

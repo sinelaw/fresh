@@ -966,7 +966,7 @@ mod tests {
 
     #[test]
     fn test_current_and_previous_line_indent() {
-        let buffer = Buffer::from_str("fn main() {\n    let x = 1;");
+        let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;");
 
         // At end of buffer (end of line 2)
         let current_indent = IndentCalculator::get_current_line_indent(&buffer, buffer.len());
@@ -978,7 +978,7 @@ mod tests {
 
     #[test]
     fn test_pattern_matching_basic() {
-        let buffer = Buffer::from_str("fn main() {");
+        let buffer = Buffer::from_str_test("fn main() {");
         let position = buffer.len();
         let result = IndentCalculator::calculate_indent_pattern(&buffer, position, 4);
         println!("Pattern result for 'fn main() {{': {:?}", result);
@@ -992,7 +992,7 @@ mod tests {
     #[test]
     fn test_rust_indent_after_brace_debug() {
         let mut calc = IndentCalculator::new();
-        let buffer = Buffer::from_str("fn main() {");
+        let buffer = Buffer::from_str_test("fn main() {");
         let position = buffer.len(); // After the {
 
         // Test pattern matching directly first
@@ -1020,7 +1020,7 @@ mod tests {
     #[test]
     fn test_python_indent_after_colon() {
         let mut calc = IndentCalculator::new();
-        let buffer = Buffer::from_str("def foo():");
+        let buffer = Buffer::from_str_test("def foo():");
         let position = buffer.len(); // After the :
 
         let indent = calc.calculate_indent(&buffer, position, &Language::Python, 4);
@@ -1033,7 +1033,7 @@ mod tests {
     fn test_tree_sitter_used_for_complete_block() {
         // Test that tree-sitter is used when we have a complete block with context
         let mut calc = IndentCalculator::new();
-        let buffer = Buffer::from_str("fn main() {\n    let x = 1;\n}");
+        let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;\n}");
         // Position after the closing }
         let position = buffer.len();
 
@@ -1054,7 +1054,7 @@ mod tests {
         let mut calc = IndentCalculator::new();
 
         // Create nested structure - position at end of line with just whitespace
-        let buffer = Buffer::from_str("fn main() {\n    if true {\n        ");
+        let buffer = Buffer::from_str_test("fn main() {\n    if true {\n        ");
         let position = buffer.len();
 
         // This should be 8 spaces (maintaining nested indent from current line)
@@ -1070,7 +1070,7 @@ mod tests {
     #[test]
     fn test_pattern_fallback_for_incomplete_syntax() {
         // Verify pattern matching kicks in when tree-sitter can't help
-        let buffer = Buffer::from_str("fn main() {");
+        let buffer = Buffer::from_str_test("fn main() {");
         let position = buffer.len();
 
         // Pattern matching should detect the '{'
@@ -1086,7 +1086,7 @@ mod tests {
     fn test_fallback_to_previous_line() {
         let mut calc = IndentCalculator::new();
         // C# not supported, should fall back
-        let buffer = Buffer::from_str("    var x = 1;");
+        let buffer = Buffer::from_str_test("    var x = 1;");
         let position = buffer.len();
 
         let indent = calc.calculate_indent(&buffer, position, &Language::CSharp, 4);
@@ -1097,7 +1097,7 @@ mod tests {
     #[test]
     fn test_typescript_interface_indent() {
         let mut calc = IndentCalculator::new();
-        let buffer = Buffer::from_str("interface User {");
+        let buffer = Buffer::from_str_test("interface User {");
         let position = buffer.len(); // Position after the {
 
         let indent = calc.calculate_indent(&buffer, position, &Language::TypeScript, 4);
@@ -1112,7 +1112,7 @@ mod tests {
     #[test]
     fn test_no_language_fallback_copies_indent() {
         // Test that files without language support (like .txt) copy current line indent
-        let buffer = Buffer::from_str("    indented text");
+        let buffer = Buffer::from_str_test("    indented text");
         let position = buffer.len();
 
         let indent = IndentCalculator::calculate_indent_no_language(&buffer, position, 4);
@@ -1122,7 +1122,7 @@ mod tests {
     #[test]
     fn test_no_language_fallback_with_brace() {
         // Test that pattern matching works for files without language support
-        let buffer = Buffer::from_str("some text {");
+        let buffer = Buffer::from_str_test("some text {");
         let position = buffer.len();
 
         let indent = IndentCalculator::calculate_indent_no_language(&buffer, position, 4);
@@ -1136,7 +1136,7 @@ mod tests {
     fn test_tree_sitter_enter_after_close_brace_returns_zero() {
         // Verify tree-sitter correctly handles Enter after closing brace
         let mut calc = IndentCalculator::new();
-        let buffer = Buffer::from_str("fn main() {\n    let x = 1;\n}");
+        let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;\n}");
         let position = buffer.len(); // Position right after the }
 
         // Tree-sitter should recognize we're outside the block and return 0 indent
@@ -1158,7 +1158,7 @@ mod tests {
         let mut calc = IndentCalculator::new();
 
         // Simulate typing } on an indented line
-        let buffer = Buffer::from_str("fn main() {\n    ");
+        let buffer = Buffer::from_str_test("fn main() {\n    ");
         let position = buffer.len(); // Cursor after 4 spaces
 
         // Calculate where the } should be placed using tree-sitter
@@ -1173,7 +1173,7 @@ mod tests {
         );
 
         // Verify this uses tree-sitter by checking it works
-        let nested_buffer = Buffer::from_str("fn main() {\n    if true {\n        ");
+        let nested_buffer = Buffer::from_str_test("fn main() {\n    if true {\n        ");
         let nested_pos = nested_buffer.len();
 
         let nested_indent = calc.calculate_dedent_for_delimiter(
@@ -1197,12 +1197,12 @@ mod tests {
         let mut calc = IndentCalculator::new();
 
         // Python
-        let py_buffer = Buffer::from_str("def foo():\n    ");
+        let py_buffer = Buffer::from_str_test("def foo():\n    ");
         let py_indent = calc.calculate_indent(&py_buffer, py_buffer.len(), &Language::Python, 4);
         assert_eq!(py_indent, Some(4), "Python should indent after colon");
 
         // JavaScript
-        let js_buffer = Buffer::from_str("function foo() {\n    ");
+        let js_buffer = Buffer::from_str_test("function foo() {\n    ");
         let js_dedent = calc.calculate_dedent_for_delimiter(
             &js_buffer,
             js_buffer.len(),
@@ -1213,7 +1213,7 @@ mod tests {
         assert_eq!(js_dedent, Some(0), "JavaScript closing brace should dedent");
 
         // C++
-        let cpp_buffer = Buffer::from_str("class Foo {\n    ");
+        let cpp_buffer = Buffer::from_str_test("class Foo {\n    ");
         let cpp_dedent = calc.calculate_dedent_for_delimiter(
             &cpp_buffer,
             cpp_buffer.len(),
@@ -1230,7 +1230,7 @@ mod tests {
         let mut calc = IndentCalculator::new();
 
         // Buffer with closing brace to test if tree-sitter works with complete syntax
-        let buffer = Buffer::from_str("fn main() {\n    let x = 1;\n}");
+        let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;\n}");
         let position = 27; // Position after second \n, before the }
 
         let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
@@ -1247,7 +1247,7 @@ mod tests {
         // Test with incomplete syntax (no closing brace) - this is the real-world case
         let mut calc = IndentCalculator::new();
 
-        let buffer = Buffer::from_str("fn main() {\n    let x = 1;\n");
+        let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;\n");
         let position = buffer.len(); // After the second \n, start of empty line
 
         let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);

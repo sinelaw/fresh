@@ -404,7 +404,7 @@ impl Editor {
         let mut event_logs = HashMap::new();
 
         let buffer_id = BufferId(0);
-        let mut state = EditorState::new(width, height);
+        let mut state = EditorState::new(width, height, config.editor.large_file_threshold_bytes as usize);
         state.viewport.line_wrap_enabled = config.editor.line_wrap;
         tracing::info!(
             "EditorState created with viewport height: {}",
@@ -587,7 +587,7 @@ impl Editor {
             id
         };
 
-        let mut state = EditorState::from_file(path, self.terminal_width, self.terminal_height)?;
+        let mut state = EditorState::from_file(path, self.terminal_width, self.terminal_height, self.config.editor.large_file_threshold_bytes as usize)?;
         state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
@@ -699,7 +699,7 @@ impl Editor {
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
 
-        let mut state = EditorState::new(self.terminal_width, self.terminal_height);
+        let mut state = EditorState::new(self.terminal_width, self.terminal_height, self.config.editor.large_file_threshold_bytes as usize);
         state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
@@ -6677,7 +6677,7 @@ mod tests {
         // with zero-width ranges at the insertion point
         use crate::buffer::Buffer;
 
-        let mut buffer = Buffer::from_str("hello\nworld");
+        let mut buffer = Buffer::from_str_test("hello\nworld");
 
         // Insert "NEW" at position 0 (before "hello")
         // Expected LSP range: line 0, char 0 to line 0, char 0 (zero-width)
@@ -6718,7 +6718,7 @@ mod tests {
         // with proper start/end ranges
         use crate::buffer::Buffer;
 
-        let buffer = Buffer::from_str("hello\nworld");
+        let buffer = Buffer::from_str_test("hello\nworld");
 
         // Delete "ello" (positions 1-5 on line 0)
         let range_start = 1;
@@ -6763,7 +6763,7 @@ mod tests {
         use crate::buffer::Buffer;
 
         // Test with emoji (4 bytes in UTF-8, 2 code units in UTF-16)
-        let buffer = Buffer::from_str("😀hello");
+        let buffer = Buffer::from_str_test("😀hello");
 
         // Position 4 is after the emoji (4 bytes)
         let (line, character) = buffer.position_to_lsp_position(4);
@@ -6778,7 +6778,7 @@ mod tests {
         assert_eq!(character, 7, "Should be 2 (emoji) + 5 (text) = 7 UTF-16 code units");
 
         // Test with multi-byte character (é is 2 bytes in UTF-8, 1 code unit in UTF-16)
-        let buffer = Buffer::from_str("café");
+        let buffer = Buffer::from_str_test("café");
 
         // Position 3 is after "caf" (3 bytes)
         let (line, character) = buffer.position_to_lsp_position(3);

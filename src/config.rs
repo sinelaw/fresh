@@ -72,8 +72,13 @@ fn default_tab_size() -> usize {
     4
 }
 
+/// Large file threshold in bytes
+/// Files larger than this will use optimized algorithms (estimation, viewport-only parsing)
+/// Files smaller will use exact algorithms (full line tracking, complete parsing)
+pub const LARGE_FILE_THRESHOLD_BYTES: u64 = 1024 * 1024; // 1MB
+
 fn default_large_file_threshold() -> u64 {
-    1024 * 1024 // 1MB
+    LARGE_FILE_THRESHOLD_BYTES
 }
 
 fn default_true() -> bool {

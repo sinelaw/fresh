@@ -519,7 +519,7 @@ mod tests {
             }
             content.push_str(&format!("line{}", i));
         }
-        let buffer = Buffer::from_str(&content);
+        let buffer = Buffer::from_str_test(&content);
         let mut vp = Viewport::new(80, 24);
 
         vp.scroll_down(&buffer, 10);
@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn test_ensure_line_visible() {
-        let buffer = Buffer::from_str("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51");
+        let buffer = Buffer::from_str_test("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51");
         let mut vp = Viewport::new(80, 24);
         vp.scroll_offset = 3;
 
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn test_ensure_visible_with_cursor() {
-        let mut buffer = Buffer::from_str("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20");
+        let mut buffer = Buffer::from_str_test("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20");
         let mut vp = Viewport::new(80, 10);
 
         // Find byte position of line 15 using iterator
@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn test_cursor_screen_position() {
-        let mut buffer = Buffer::from_str("line1\nline2\nline3");
+        let mut buffer = Buffer::from_str_test("line1\nline2\nline3");
         let vp = Viewport::new(80, 24);
 
         let cursor = Cursor::new(6); // Start of line 1 ("line2")
@@ -600,7 +600,7 @@ mod tests {
     #[test]
     fn test_ensure_visible_cursor_above_viewport() {
         // Create buffer with many lines
-        let mut buffer = Buffer::from_str("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20");
+        let mut buffer = Buffer::from_str_test("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20");
         let mut vp = Viewport::new(80, 10); // 10 lines visible
 
         // Scroll down to show lines 10-19 (top_byte at line 10)
@@ -665,7 +665,7 @@ mod tests {
     #[test]
     fn test_ensure_visible_cursor_below_viewport_centers() {
         // Create buffer with many lines
-        let mut buffer = Buffer::from_str("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20");
+        let mut buffer = Buffer::from_str_test("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20");
         let mut vp = Viewport::new(80, 10); // 10 lines visible
 
         // Start at top (line 1 visible)

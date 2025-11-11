@@ -175,7 +175,7 @@ mod tests {
         use crate::state::EditorState;
         use std::sync::RwLock;
 
-        let mut state = EditorState::new(80, 24);
+        let mut state = EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
         let hook_registry = RwLock::new(HookRegistry::new());
 
         // Register a hook that cancels the operation
@@ -203,7 +203,7 @@ mod tests {
         use crate::state::EditorState;
         use std::sync::RwLock;
 
-        let mut state = EditorState::new(80, 24);
+        let mut state = EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
         let hook_registry = RwLock::new(HookRegistry::new());
 
         // Register a hook that allows the operation

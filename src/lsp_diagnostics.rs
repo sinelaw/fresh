@@ -207,21 +207,9 @@ pub fn apply_diagnostics_to_state(
     // Track unique lines with diagnostics to avoid duplicate margin markers
     let mut diagnostic_lines = std::collections::HashSet::new();
 
-    // Sort diagnostics by start line to process them in order
-    // This allows us to build up the line cache incrementally, avoiding O(N²) behavior
-    let mut sorted_diagnostics: Vec<_> = diagnostics.iter().collect();
-    sorted_diagnostics.sort_by_key(|diag| diag.range.start.line);
-
-    // Pre-populate the line cache for the maximum line we'll need
-    // This transforms the O(N²) iteration problem into O(N)
-    if let Some(last_diag) = sorted_diagnostics.last() {
-        let max_line = last_diag.range.end.line as usize;
-        // Populate cache from start to max_line + 1
-        state.buffer.populate_line_cache(0, max_line + 1);
-    }
-
     // Add new diagnostic overlays (skip if already exists)
-    for diagnostic in sorted_diagnostics {
+    // The line anchor system creates anchors on-demand, so no pre-population needed
+    for diagnostic in diagnostics {
         let overlay_id = diagnostic_id(diagnostic);
 
         // Skip if this diagnostic already has an overlay
@@ -279,7 +267,7 @@ mod tests {
 
     #[test]
     fn test_lsp_position_to_byte() {
-        let buffer = Buffer::from_str("hello\nworld\ntest");
+        let buffer = Buffer::from_str_test("hello\nworld\ntest");
 
         // Line 0, character 0
         assert_eq!(buffer.lsp_position_to_byte(0, 0), 0);
@@ -302,7 +290,7 @@ mod tests {
 
     #[test]
     fn test_diagnostic_to_overlay_error() {
-        let buffer = Buffer::from_str("hello world");
+        let buffer = Buffer::from_str_test("hello world");
 
         let diagnostic = Diagnostic {
             range: Range {
@@ -343,7 +331,7 @@ mod tests {
 
     #[test]
     fn test_diagnostic_to_overlay_warning() {
-        let buffer = Buffer::from_str("hello world");
+        let buffer = Buffer::from_str_test("hello world");
 
         let diagnostic = Diagnostic {
             range: Range {
@@ -384,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_diagnostic_to_overlay_multiline() {
-        let buffer = Buffer::from_str("line1\nline2\nline3");
+        let buffer = Buffer::from_str_test("line1\nline2\nline3");
 
         let diagnostic = Diagnostic {
             range: Range {
