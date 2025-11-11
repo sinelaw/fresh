@@ -1,12 +1,14 @@
--- TODO Highlighter Plugin - Incremental Update Implementation
+-- TODO Highlighter Plugin - Simple Invalidation Strategy
 -- Highlights keywords like TODO, FIXME, HACK, NOTE, XXX, and BUG in comments
 --
--- PERFORMANCE OPTIMIZATIONS:
--- 1. Scans each line once, not every frame
--- 2. Incremental updates: Only re-scans affected lines when text changes
--- 3. Uses position info from insert/delete hooks for localized updates
--- 4. Bulk overlay removal only for affected line range
--- 5. Scales to GB+ files via efficient render-line hook
+-- DESIGN: Simple and robust approach
+-- 1. On render-line: Scan the line and add overlays
+-- 2. On after-insert/delete: Clear ALL overlays (invalidate everything)
+-- 3. Natural re-scanning: Only visible lines get scanned during rendering
+-- 4. Scrolling handled automatically: New lines trigger render-line hook
+--
+-- This is similar to VS Code's approach: invalidate on edit, re-scan on render.
+-- It's fast (only ~24 visible lines) and correct (no stale overlays).
 
 local M = {}
 
@@ -35,27 +37,19 @@ M.config = {
     }
 }
 
--- Track which buffers have been fully scanned
--- Key: buffer_id, Value: true if fully scanned
-M.scanned_buffers = {}
-
--- Track which lines are "dirty" and need re-scanning
--- Key: buffer_id, Value: { [line_num] = true, ... }
-M.dirty_lines = {}
-
--- Track which lines we've already scanned in this session
--- Key: buffer_id, Value: { [line_num] = true, ... }
-M.scanned_lines = {}
+-- Track which lines we've already scanned (to avoid re-scanning same line in one frame)
+-- Key: buffer_id, Value: { [line_number] = true, ... }
+M.scanned_this_frame = {}
 
 -- Prefix for all overlay IDs created by this plugin
 M.OVERLAY_PREFIX = "todo_hl_"
 
--- Average bytes per line (used for position->line estimation)
-M.AVG_BYTES_PER_LINE = 80
+-- Frame counter to detect new frames
+M.frame_counter = 0
 
 -- Initialize the plugin
 function M.init()
-    debug("TODO Highlighter: Initializing plugin (incremental mode)")
+    debug("TODO Highlighter: Initializing plugin (simple invalidation mode)")
 
     -- Register render-line hook for scanning
     editor.on("render-line", function(args)
@@ -68,84 +62,53 @@ function M.init()
         local byte_start = args.byte_start
         local content = args.content
 
-        -- Check if this line needs (re-)scanning
-        local needs_scan = false
-
-        if not M.scanned_buffers[buffer_id] then
-            -- First time scanning this buffer
-            needs_scan = true
-        elseif M.dirty_lines[buffer_id] and M.dirty_lines[buffer_id][line_number] then
-            -- This specific line was marked dirty
-            needs_scan = true
-        elseif not M.scanned_lines[buffer_id] or not M.scanned_lines[buffer_id][line_number] then
-            -- We haven't seen this line yet (new line or scrolled into view)
-            needs_scan = true
+        -- Detect frame reset (when line numbers go backwards, we started a new frame)
+        if not M.scanned_this_frame[buffer_id] then
+            M.scanned_this_frame[buffer_id] = {
+                last_line = -1,
+                lines = {}
+            }
         end
 
-        if needs_scan then
-            -- Remove old overlays for this line only (much faster!)
-            M.clear_line_overlays(buffer_id, line_number)
-
-            -- Scan and add new overlays
-            M.scan_line_for_keywords(buffer_id, line_number, byte_start, content)
-
-            -- Mark this line as scanned
-            if not M.scanned_lines[buffer_id] then
-                M.scanned_lines[buffer_id] = {}
-            end
-            M.scanned_lines[buffer_id][line_number] = true
-
-            -- Clear dirty flag
-            if M.dirty_lines[buffer_id] then
-                M.dirty_lines[buffer_id][line_number] = nil
-            end
+        local frame_data = M.scanned_this_frame[buffer_id]
+        if line_number < frame_data.last_line then
+            -- New frame started, clear the set
+            frame_data.lines = {}
         end
+        frame_data.last_line = line_number
 
-        return true
-    end)
-
-    -- Detect end of first full scan
-    local last_line_number = 0
-    local consecutive_decreases = 0
-    editor.on("render-line", function(args)
-        if not M.config.enabled then
+        -- Check if we've already scanned this line in this frame
+        if frame_data.lines[line_number] then
             return true
         end
 
-        -- If line number decreased, we might have completed a frame
-        if args.line_number < last_line_number then
-            consecutive_decreases = consecutive_decreases + 1
-            -- After seeing a decrease, mark buffer as fully scanned
-            if consecutive_decreases >= 1 and not M.scanned_buffers[args.buffer_id] then
-                M.scanned_buffers[args.buffer_id] = true
-                debug(string.format("Buffer %d initial scan complete", args.buffer_id))
-            end
-        else
-            consecutive_decreases = 0
-        end
+        -- Mark as scanned for this frame
+        frame_data.lines[line_number] = true
 
-        last_line_number = args.line_number
+        -- Clear old overlays for this line only
+        M.clear_line_overlays(buffer_id, line_number)
+
+        -- Scan and add new overlays
+        M.scan_line_for_keywords(buffer_id, line_number, byte_start, content)
+
         return true
     end)
 
-    -- Register hooks to detect buffer changes - INCREMENTAL UPDATES
+    -- Register hooks to detect buffer changes - SIMPLE INVALIDATION
     editor.on("after-insert", function(args)
         if not M.config.enabled or not args.buffer_id then
             return true
         end
 
         local buffer_id = args.buffer_id
-        local position = args.position
-        local text = args.text or ""
 
-        -- Estimate which lines are affected by this insert
-        local affected_lines = M.estimate_affected_lines_insert(position, text)
+        debug(string.format("Insert in buffer %d, invalidating all overlays", buffer_id))
 
-        debug(string.format("Insert at pos %d, marking ~%d lines dirty",
-            position, #affected_lines))
+        -- Simple approach: Just clear everything
+        M.clear_buffer_overlays(buffer_id)
 
-        -- Mark only affected lines as dirty
-        M.mark_lines_dirty(buffer_id, affected_lines)
+        -- Reset frame tracking for this buffer
+        M.scanned_this_frame[buffer_id] = nil
 
         return true
     end)
@@ -156,18 +119,14 @@ function M.init()
         end
 
         local buffer_id = args.buffer_id
-        local range_start = args.start or 0
-        local range_end = args["end"] or range_start
-        local deleted_text = args.deleted_text or ""
 
-        -- Estimate which lines are affected by this delete
-        local affected_lines = M.estimate_affected_lines_delete(range_start, range_end, deleted_text)
+        debug(string.format("Delete in buffer %d, invalidating all overlays", buffer_id))
 
-        debug(string.format("Delete range %d-%d, marking ~%d lines dirty",
-            range_start, range_end, #affected_lines))
+        -- Simple approach: Just clear everything
+        M.clear_buffer_overlays(buffer_id)
 
-        -- Mark only affected lines as dirty
-        M.mark_lines_dirty(buffer_id, affected_lines)
+        -- Reset frame tracking for this buffer
+        M.scanned_this_frame[buffer_id] = nil
 
         return true
     end)
@@ -176,67 +135,6 @@ function M.init()
     M.register_commands()
 
     debug("TODO Highlighter: Plugin initialized")
-end
-
--- Estimate which lines are affected by an insert operation
-function M.estimate_affected_lines_insert(position, text)
-    local affected = {}
-
-    -- Calculate approximate line number where insert happened
-    local line_num = math.floor(position / M.AVG_BYTES_PER_LINE)
-
-    -- Count newlines in inserted text
-    local newline_count = 0
-    for _ in text:gmatch("\n") do
-        newline_count = newline_count + 1
-    end
-
-    -- Mark current line + any new lines created + buffer zone
-    -- Buffer zone accounts for line number shifts
-    local buffer_zone = 2
-    for i = line_num - buffer_zone, line_num + newline_count + buffer_zone do
-        if i >= 0 then
-            table.insert(affected, i)
-        end
-    end
-
-    return affected
-end
-
--- Estimate which lines are affected by a delete operation
-function M.estimate_affected_lines_delete(range_start, range_end, deleted_text)
-    local affected = {}
-
-    -- Calculate approximate line numbers for the deleted range
-    local start_line = math.floor(range_start / M.AVG_BYTES_PER_LINE)
-    local end_line = math.floor(range_end / M.AVG_BYTES_PER_LINE)
-
-    -- Count newlines in deleted text
-    local newline_count = 0
-    for _ in deleted_text:gmatch("\n") do
-        newline_count = newline_count + 1
-    end
-
-    -- Mark affected range + buffer zone
-    local buffer_zone = 2
-    for i = start_line - buffer_zone, end_line + newline_count + buffer_zone do
-        if i >= 0 then
-            table.insert(affected, i)
-        end
-    end
-
-    return affected
-end
-
--- Mark specific lines as dirty (need re-scan)
-function M.mark_lines_dirty(buffer_id, line_numbers)
-    if not M.dirty_lines[buffer_id] then
-        M.dirty_lines[buffer_id] = {}
-    end
-
-    for _, line_num in ipairs(line_numbers) do
-        M.dirty_lines[buffer_id][line_num] = true
-    end
 end
 
 -- Clear overlays for a specific line only
@@ -309,8 +207,7 @@ function M.find_and_highlight_keyword(buffer_id, line_number, byte_start, conten
         local highlight_start = byte_start + start_pos - 1
         local highlight_end = byte_start + end_pos
 
-        -- Create stable overlay ID
-        -- Using line number (not byte position) for stability across edits
+        -- Create stable overlay ID using line number
         local overlay_id = string.format("%sL%d_%s_O%d",
             M.OVERLAY_PREFIX,
             line_number,
@@ -318,7 +215,7 @@ function M.find_and_highlight_keyword(buffer_id, line_number, byte_start, conten
             occurrence
         )
 
-        -- Add overlay (will update existing if ID matches)
+        -- Add overlay
         local success, err = pcall(function()
             editor.add_overlay(
                 buffer_id,
@@ -382,22 +279,12 @@ function M.register_commands()
     })
 
     editor.register_command({
-        name = "TODO Highlighter: Clear All",
-        description = "Clear all TODO highlights from active buffer",
-        action = "todo_highlight_clear",
+        name = "TODO Highlighter: Refresh",
+        description = "Clear and refresh all TODO highlights",
+        action = "todo_highlight_refresh",
         contexts = {"normal"},
         callback = function()
-            M.clear_active_buffer()
-        end
-    })
-
-    editor.register_command({
-        name = "TODO Highlighter: Rescan",
-        description = "Force full re-scan of active buffer",
-        action = "todo_highlight_rescan",
-        contexts = {"normal"},
-        callback = function()
-            M.rescan_active_buffer()
+            M.refresh_active_buffer()
         end
     })
 end
@@ -405,19 +292,15 @@ end
 -- Enable highlighting
 function M.enable()
     M.config.enabled = true
-    M.scanned_buffers = {}
-    M.dirty_lines = {}
-    M.scanned_lines = {}
-    editor.set_status("TODO Highlighter: Enabled (incremental mode)")
+    M.scanned_this_frame = {}
+    editor.set_status("TODO Highlighter: Enabled (simple invalidation mode)")
     debug("TODO Highlighter: Enabled")
 end
 
 -- Disable highlighting
 function M.disable()
     M.config.enabled = false
-    M.scanned_buffers = {}
-    M.dirty_lines = {}
-    M.scanned_lines = {}
+    M.scanned_this_frame = {}
 
     -- Clear all highlights from active buffer
     M.clear_active_buffer()
@@ -451,23 +334,20 @@ function M.clear_active_buffer()
     local buffer_id = editor.get_active_buffer_id()
     if buffer_id then
         M.clear_buffer_overlays(buffer_id)
-        M.scanned_buffers[buffer_id] = nil
-        M.dirty_lines[buffer_id] = nil
-        M.scanned_lines[buffer_id] = nil
+        M.scanned_this_frame[buffer_id] = nil
         editor.set_status("TODO Highlighter: Cleared highlights from buffer")
         debug(string.format("TODO Highlighter: Cleared overlays from buffer %d", buffer_id))
     end
 end
 
--- Force full re-scan of active buffer
-function M.rescan_active_buffer()
+-- Force refresh of active buffer
+function M.refresh_active_buffer()
     local buffer_id = editor.get_active_buffer_id()
     if buffer_id then
-        M.scanned_buffers[buffer_id] = nil
-        M.dirty_lines[buffer_id] = nil
-        M.scanned_lines[buffer_id] = nil
-        editor.set_status("TODO Highlighter: Buffer marked for full re-scan")
-        debug(string.format("TODO Highlighter: Buffer %d marked for full re-scan", buffer_id))
+        M.clear_buffer_overlays(buffer_id)
+        M.scanned_this_frame[buffer_id] = nil
+        editor.set_status("TODO Highlighter: Buffer marked for refresh")
+        debug(string.format("TODO Highlighter: Buffer %d marked for refresh", buffer_id))
     end
 end
 
