@@ -531,6 +531,57 @@ impl PluginManager {
         })?;
         editor.set("open_file", open_file)?;
 
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.start_prompt({label = "Prompt: ", prompt_type = "my-prompt"})
+        // Starts a plugin-controlled prompt
+        let start_prompt = lua.create_function(move |_lua, args: mlua::Table| {
+            let label: String = args.get("label")?;
+            let prompt_type: String = args.get("prompt_type")?;
+
+            api_clone
+                .start_prompt(label, prompt_type)
+                .map_err(|e| mlua::Error::RuntimeError(e))
+        })?;
+        editor.set("start_prompt", start_prompt)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.set_prompt_suggestions({...})
+        // Updates the suggestions list for the current prompt
+        // Each suggestion should be a table with: {text = "...", description = "...", value = "...", disabled = false, keybinding = "..."}
+        let set_prompt_suggestions = lua.create_function(move |_lua, suggestions: mlua::Table| {
+            use crate::commands::Suggestion;
+
+            let mut result_suggestions = Vec::new();
+
+            // Iterate through the Lua table (1-indexed)
+            for pair in suggestions.pairs::<usize, mlua::Table>() {
+                let (_, sugg_table) = pair?;
+
+                let text: String = sugg_table.get("text")?;
+                let description: Option<String> = sugg_table.get("description").ok();
+                let value: Option<String> = sugg_table.get("value").ok();
+                let disabled: Option<bool> = sugg_table.get("disabled").ok();
+                let keybinding: Option<String> = sugg_table.get("keybinding").ok();
+
+                result_suggestions.push(Suggestion {
+                    text,
+                    description,
+                    value,
+                    disabled: disabled.unwrap_or(false),
+                    keybinding,
+                });
+            }
+
+            api_clone
+                .set_prompt_suggestions(result_suggestions)
+                .map_err(|e| mlua::Error::RuntimeError(e))
+        })?;
+        editor.set("set_prompt_suggestions", set_prompt_suggestions)?;
+
         // NOTE: We intentionally do NOT provide a get_buffer_content() API
         // because it would materialize the entire buffer into memory, which
         // defeats the editor's streaming architecture for huge files (GB+).
@@ -851,6 +902,25 @@ impl PluginManager {
             }
             HookArgs::EditorInitialized => {
                 // No args for EditorInitialized
+            }
+            HookArgs::PromptChanged { prompt_type, input } => {
+                table.set("prompt_type", prompt_type.as_str())?;
+                table.set("input", input.as_str())?;
+            }
+            HookArgs::PromptConfirmed {
+                prompt_type,
+                input,
+                selected_index,
+            } => {
+                table.set("prompt_type", prompt_type.as_str())?;
+                table.set("input", input.as_str())?;
+                if let Some(idx) = selected_index {
+                    table.set("selected_index", *idx)?;
+                }
+            }
+            HookArgs::PromptCancelled { prompt_type, input } => {
+                table.set("prompt_type", prompt_type.as_str())?;
+                table.set("input", input.as_str())?;
             }
         }
 

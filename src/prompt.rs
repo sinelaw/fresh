@@ -26,6 +26,9 @@ pub enum PromptType {
     GitGrep,
     /// Git find file - find file by filtering git ls-files
     GitFindFile,
+    /// Plugin-controlled prompt with custom type identifier
+    /// The string identifier is used to filter hooks in plugin code
+    Plugin { custom_type: String },
 }
 
 /// Prompt state for the minibuffer
