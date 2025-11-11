@@ -23,7 +23,7 @@ use crate::ui::{
     FileExplorerRenderer, HelpRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer,
     TabsRenderer,
 };
-use lsp_types::TextDocumentContentChangeEvent;
+use lsp_types::{Position, Range as LspRange, TextDocumentContentChangeEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     Frame,
@@ -5078,13 +5078,29 @@ impl Editor {
 
     /// Notify LSP of a text change event
     fn notify_lsp_change(&mut self, event: &Event) {
-        // Only notify for insert and delete events
-        match event {
-            Event::Insert { .. } | Event::Delete { .. } => {
-                tracing::debug!("notify_lsp_change: processing event {:?}", event);
+        // Calculate the incremental change from the event
+        let (range, text) = match event {
+            Event::Insert { position, text, .. } => {
+                tracing::debug!("notify_lsp_change: processing Insert at position {}", position);
+                // For insert: create a zero-width range at the insertion point
+                let (line, character) = self.active_state().buffer.position_to_lsp_position(*position);
+                let lsp_pos = Position::new(line as u32, character as u32);
+                let lsp_range = LspRange::new(lsp_pos, lsp_pos);
+                (Some(lsp_range), text.clone())
+            }
+            Event::Delete { range, .. } => {
+                tracing::debug!("notify_lsp_change: processing Delete range {:?}", range);
+                // For delete: create a range from start to end, send empty string
+                let (start_line, start_char) = self.active_state().buffer.position_to_lsp_position(range.start);
+                let (end_line, end_char) = self.active_state().buffer.position_to_lsp_position(range.end);
+                let lsp_range = LspRange::new(
+                    Position::new(start_line as u32, start_char as u32),
+                    Position::new(end_line as u32, end_char as u32),
+                );
+                (Some(lsp_range), String::new())
             }
             _ => return, // Ignore cursor movements and other events
-        }
+        };
 
         // Check if LSP is enabled for this buffer
         let metadata = match self.buffer_metadata.get(&self.active_buffer) {
@@ -5132,28 +5148,27 @@ impl Editor {
             }
         };
 
-        // Get the full text before borrowing lsp mutably
-        let full_text = self.active_state().buffer.to_string();
         tracing::debug!(
-            "notify_lsp_change: sending didChange to {} (text length: {} bytes)",
+            "notify_lsp_change: sending incremental didChange to {} (range: {:?}, text length: {} bytes)",
             uri.as_str(),
-            full_text.len()
+            range,
+            text.len()
         );
 
         if let Some(lsp) = &mut self.lsp {
             if let Some(client) = lsp.get_or_spawn(&language) {
-                // Use full document sync (send entire text after change)
-                // This is simpler than incremental sync and works well for small files
+                // Use incremental sync (send only the changed text with range)
+                // This is more efficient than full document sync, especially for large files
                 let change = TextDocumentContentChangeEvent {
-                    range: None, // Full document sync
+                    range,
                     range_length: None,
-                    text: full_text,
+                    text,
                 };
 
                 if let Err(e) = client.did_change(uri, vec![change]) {
                     tracing::warn!("Failed to send didChange to LSP: {}", e);
                 } else {
-                    tracing::info!("Successfully sent didChange to LSP");
+                    tracing::info!("Successfully sent incremental didChange to LSP");
                 }
             } else {
                 tracing::warn!(

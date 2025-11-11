@@ -58,7 +58,10 @@ Document synchronization is the process of keeping the server's view of a file c
 - **When:** Sent when a buffer is modified.
 - **Content:** The LSP supports two modes of synchronization:
     - **Full:** The entire content of the buffer is sent with each change. This is simpler to implement but can be inefficient for large files.
-    - **Incremental:** Only the changed parts of the buffer are sent. This is more efficient but requires more complex implementation on the client side to correctly calculate the changes in the format the server expects (`TextDocumentContentChangeEvent`).
+    - **Incremental (Implemented):** Only the changed parts of the buffer are sent. Each `Event::Insert` and `Event::Delete` generates an incremental update with:
+        - A `Range` specifying the affected text positions (line and UTF-16 character offsets)
+        - The replacement text (or empty string for deletions)
+        - For insertions, the range has start == end (zero-width at insertion point)
 - **Versioning:** The version number of the document must be incremented and included in the notification.
 
 #### `textDocument/didSave`
@@ -172,7 +175,7 @@ Implementing LSP support can have some tricky aspects. Here are some common pitf
 
 
 
-- **Large Files and Performance:** Sending the full content of large files on every change can be slow. Implementing incremental synchronization is crucial for good performance. Additionally, some LSP features, like folding ranges or document symbols, can be slow on large files. The client should consider debouncing requests or using other strategies to avoid blocking the UI.
+- **Large Files and Performance:** Incremental synchronization is now implemented to avoid sending the full content of large files on every change. Each edit event (insert/delete) sends only the affected range and replacement text, which significantly improves performance. Additionally, some LSP features, like folding ranges or document symbols, can be slow on large files. The client should consider debouncing requests or using other strategies to avoid blocking the UI.
 
 
 
