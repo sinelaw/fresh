@@ -133,10 +133,7 @@ pub enum PluginCommand {
     ClearAllOverlays { buffer_id: BufferId },
 
     /// Remove overlays whose ID starts with the given prefix
-    RemoveOverlaysByPrefix {
-        buffer_id: BufferId,
-        prefix: String,
-    },
+    RemoveOverlaysByPrefix { buffer_id: BufferId, prefix: String },
 }
 
 /// Plugin API context - provides safe access to editor functionality

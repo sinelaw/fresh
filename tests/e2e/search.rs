@@ -388,7 +388,11 @@ fn test_search_highlights_update_on_scroll() {
         .overlays
         .all()
         .iter()
-        .find(|o| o.id.as_ref().map(|id| id.starts_with("search_highlight_")).unwrap_or(false))
+        .find(|o| {
+            o.id.as_ref()
+                .map(|id| id.starts_with("search_highlight_"))
+                .unwrap_or(false)
+        })
         .and_then(|o| state.marker_list.get_position(o.start_marker))
         .expect("Should have at least one highlight");
 
@@ -415,7 +419,11 @@ fn test_search_highlights_update_on_scroll() {
         .overlays
         .all()
         .iter()
-        .find(|o| o.id.as_ref().map(|id| id.starts_with("search_highlight_")).unwrap_or(false))
+        .find(|o| {
+            o.id.as_ref()
+                .map(|id| id.starts_with("search_highlight_"))
+                .unwrap_or(false)
+        })
         .and_then(|o| state.marker_list.get_position(o.start_marker))
         .expect("Should have at least one highlight after scrolling");
 
@@ -770,7 +778,10 @@ fn test_history_updates_incremental_highlights() {
     // Verify "foo" appears on screen (should be highlighted incrementally)
     let screen = harness.screen_to_string();
     assert!(screen.contains("foo bar"), "Should show 'foo' in content");
-    assert!(screen.contains("Search: foo"), "Should show 'foo' in prompt");
+    assert!(
+        screen.contains("Search: foo"),
+        "Should show 'foo' in prompt"
+    );
 
     // Press Up to navigate to "hello"
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
@@ -817,7 +828,10 @@ fn test_incremental_highlighting_on_second_search() {
         screen.contains("hello world"),
         "Should show 'hello' in content"
     );
-    assert!(screen.contains("Search: hello"), "Should show search prompt");
+    assert!(
+        screen.contains("Search: hello"),
+        "Should show search prompt"
+    );
 
     // Confirm first search
     harness
@@ -837,7 +851,10 @@ fn test_incremental_highlighting_on_second_search() {
 
     // Verify incremental highlighting appears for "f" (not "hello")
     let screen = harness.screen_to_string();
-    assert!(screen.contains("Search: f"), "Should show 'f' in search prompt");
+    assert!(
+        screen.contains("Search: f"),
+        "Should show 'f' in search prompt"
+    );
 
     // Type rest of "foo"
     harness.type_text("oo").unwrap();
@@ -846,7 +863,10 @@ fn test_incremental_highlighting_on_second_search() {
     // Verify incremental highlighting appears for "foo"
     let screen = harness.screen_to_string();
     assert!(screen.contains("foo bar"), "Should show 'foo' in content");
-    assert!(screen.contains("Search: foo"), "Should show 'foo' in prompt");
+    assert!(
+        screen.contains("Search: foo"),
+        "Should show 'foo' in prompt"
+    );
 
     // Cancel
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();

@@ -16,7 +16,7 @@ const DEFAULT_CONFIG: ChunkTreeConfig = ChunkTreeConfig::new(4096, 128);
 // For large jumps (> 100KB), use estimation instead of iterating
 // This prevents hanging when jumping to the end of large files
 const ESTIMATION_THRESHOLD: usize = 10_000_000; // 10 MB
-        
+
 /// Represents a line number that may be absolute (known/cached) or relative (estimated)
 /// NOTE: This enum is kept for backward compatibility but will eventually be removed
 /// as we transition fully to iterator-based APIs
@@ -248,7 +248,8 @@ impl Buffer {
 
         // Search from start_pos to end
         if start_pos < buffer_len {
-            if let Some(offset) = self.find_pattern_streaming(start_pos, buffer_len, pattern_bytes) {
+            if let Some(offset) = self.find_pattern_streaming(start_pos, buffer_len, pattern_bytes)
+            {
                 return Some(offset);
             }
         }
@@ -267,7 +268,12 @@ impl Buffer {
     /// If range is None, searches the entire buffer with wrap-around (same as find_next)
     /// If range is Some, searches only within that range without wrap-around
     /// Returns the byte offset of the match, or None if not found
-    pub fn find_next_in_range(&self, pattern: &str, start_pos: usize, range: Option<Range<usize>>) -> Option<usize> {
+    pub fn find_next_in_range(
+        &self,
+        pattern: &str,
+        start_pos: usize,
+        range: Option<Range<usize>>,
+    ) -> Option<usize> {
         if pattern.is_empty() {
             return None;
         }
@@ -395,7 +401,12 @@ impl Buffer {
     /// If range is None, searches the entire buffer with wrap-around (same as find_next_regex)
     /// If range is Some, searches only within that range without wrap-around
     /// Returns the byte offset of the match, or None if not found
-    pub fn find_next_regex_in_range(&self, regex: &Regex, start_pos: usize, range: Option<Range<usize>>) -> Option<usize> {
+    pub fn find_next_regex_in_range(
+        &self,
+        regex: &Regex,
+        start_pos: usize,
+        range: Option<Range<usize>>,
+    ) -> Option<usize> {
         if let Some(search_range) = range {
             // Search within range only, no wrap-around
             let search_start = start_pos.max(search_range.start);
@@ -462,7 +473,12 @@ impl Buffer {
 
     /// Find the next occurrence of a pattern and replace it
     /// Returns the position of the replacement, or None if pattern not found
-    pub fn replace_next(&mut self, pattern: &str, replacement: &str, start_pos: usize) -> Option<usize> {
+    pub fn replace_next(
+        &mut self,
+        pattern: &str,
+        replacement: &str,
+        start_pos: usize,
+    ) -> Option<usize> {
         if let Some(pos) = self.find_next(pattern, start_pos) {
             let end = pos + pattern.len();
             self.replace_range(pos..end, replacement);
@@ -1785,7 +1801,7 @@ mod tests {
         let mut buffer = Buffer::from_str("hello");
         assert!(!buffer.replace_range(0..100, "text")); // End out of bounds
         assert!(!buffer.replace_range(10..15, "text")); // Start out of bounds
-        assert!(!buffer.replace_range(5..3, "text"));   // Start > end
+        assert!(!buffer.replace_range(5..3, "text")); // Start > end
     }
 
     #[test]

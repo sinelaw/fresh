@@ -44,7 +44,15 @@ impl StatusBarRenderer {
         }
 
         // Normal status bar rendering
-        Self::render_status(frame, area, state, status_message, lsp_status, theme, display_name);
+        Self::render_status(
+            frame,
+            area,
+            state,
+            status_message,
+            lsp_status,
+            theme,
+            display_name,
+        );
     }
 
     /// Render the prompt/minibuffer

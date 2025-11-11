@@ -447,8 +447,7 @@ impl EditorTestHarness {
             .all()
             .iter()
             .filter(|o| {
-                o.id
-                    .as_ref()
+                o.id.as_ref()
                     .map(|id| id.starts_with("search_highlight_"))
                     .unwrap_or(false)
             })

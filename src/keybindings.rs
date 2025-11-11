@@ -292,7 +292,7 @@ pub enum Action {
     FindNext,
     FindPrevious,
     Replace,
-    QueryReplace,  // Interactive replace (y/n/!/q for each match)
+    QueryReplace, // Interactive replace (y/n/!/q for each match)
 
     // Plugin custom actions
     PluginAction(String),
@@ -822,7 +822,13 @@ impl KeybindingResolver {
         // Search and replace (Ctrl+F for search, Ctrl+R for replace, Ctrl+Alt+R for query-replace, F3/Shift+F3 for next/prev)
         bindings.insert((KeyCode::Char('f'), KeyModifiers::CONTROL), Action::Search);
         bindings.insert((KeyCode::Char('r'), KeyModifiers::CONTROL), Action::Replace);
-        bindings.insert((KeyCode::Char('r'), KeyModifiers::CONTROL | KeyModifiers::ALT), Action::QueryReplace);
+        bindings.insert(
+            (
+                KeyCode::Char('r'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            ),
+            Action::QueryReplace,
+        );
         bindings.insert((KeyCode::F(3), KeyModifiers::empty()), Action::FindNext);
         bindings.insert((KeyCode::F(3), KeyModifiers::SHIFT), Action::FindPrevious);
 

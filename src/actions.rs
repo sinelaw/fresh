@@ -91,7 +91,7 @@ pub fn action_to_events(
                     let mut line_start = insert_position;
                     while line_start > 0 {
                         let prev = line_start - 1;
-                        if state.buffer.slice_bytes(prev..prev+1).first() == Some(&b'\n') {
+                        if state.buffer.slice_bytes(prev..prev + 1).first() == Some(&b'\n') {
                             break;
                         }
                         line_start = prev;
@@ -106,13 +106,17 @@ pub fn action_to_events(
                         // This temporarily inserts the delimiter and uses @dedent captures to find correct position
                         let correct_indent = if let Some(highlighter) = &state.highlighter {
                             let language = highlighter.language();
-                            let result = state.indent_calculator.borrow_mut().calculate_dedent_for_delimiter(
-                                &state.buffer,
-                                insert_position,
-                                ch,
-                                language,
-                                tab_size,
-                            ).unwrap_or(0);
+                            let result = state
+                                .indent_calculator
+                                .borrow_mut()
+                                .calculate_dedent_for_delimiter(
+                                    &state.buffer,
+                                    insert_position,
+                                    ch,
+                                    language,
+                                    tab_size,
+                                )
+                                .unwrap_or(0);
                             result
                         } else {
                             0
@@ -175,21 +179,21 @@ pub fn action_to_events(
                     if let Some(highlighter) = &state.highlighter {
                         // Use tree-sitter-based indent when we have a highlighter
                         let language = highlighter.language();
-                        if let Some(indent_spaces) = state.indent_calculator.borrow_mut().calculate_indent(
-                            &state.buffer,
-                            indent_position,
-                            language,
-                            tab_size,
-                        ) {
+                        if let Some(indent_spaces) = state
+                            .indent_calculator
+                            .borrow_mut()
+                            .calculate_indent(&state.buffer, indent_position, language, tab_size)
+                        {
                             text.push_str(&" ".repeat(indent_spaces));
                         }
                     } else {
                         // Fallback for files without syntax highlighting (e.g., .txt)
-                        let indent_spaces = crate::indent::IndentCalculator::calculate_indent_no_language(
-                            &state.buffer,
-                            indent_position,
-                            tab_size,
-                        );
+                        let indent_spaces =
+                            crate::indent::IndentCalculator::calculate_indent_no_language(
+                                &state.buffer,
+                                indent_position,
+                                tab_size,
+                            );
                         text.push_str(&" ".repeat(indent_spaces));
                     }
                 }

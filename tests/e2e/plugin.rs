@@ -100,7 +100,6 @@ editor.set_status("Test plugin loaded!")
     // The fact that we got here without panicking means "Rendered" was found in status
 }
 
-
 /// Test TODO Highlighter plugin - loads plugin, enables it, and checks highlighting
 #[test]
 fn test_todo_highlighter_plugin() {

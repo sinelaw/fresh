@@ -204,8 +204,8 @@ impl Viewport {
         // Scroll if cursor is beyond the visible area OR at the last visible line
         // At the last line (lines_from_top == visible_count - 1), we want to scroll to make room
         // Must also check cursor is not above viewport (saturating_sub would make it appear at line 0)
-        let cursor_is_visible =
-            cursor_line_number >= top_line_number && lines_from_top < visible_count.saturating_sub(1);
+        let cursor_is_visible = cursor_line_number >= top_line_number
+            && lines_from_top < visible_count.saturating_sub(1);
 
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {

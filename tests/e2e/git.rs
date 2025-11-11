@@ -718,7 +718,10 @@ fn test_git_find_file_actually_opens_file() {
 
                 // The last line is the prompt "Find file: lib.rs"
                 // Check if any line EXCEPT the last one contains "src/"
-                lines.iter().take(lines.len().saturating_sub(1)).any(|line| line.contains("src/"))
+                lines
+                    .iter()
+                    .take(lines.len().saturating_sub(1))
+                    .any(|line| line.contains("src/"))
             },
             2000,
         )

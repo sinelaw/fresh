@@ -1,8 +1,8 @@
 use std::cell::{RefCell, RefMut};
 use std::cmp::{max, Ordering};
-use std::rc::{Rc, Weak};
 use std::collections::HashMap;
 use std::mem;
+use std::rc::{Rc, Weak};
 
 /// Use a simple u64 for marker IDs
 pub type MarkerId = u64;
@@ -61,8 +61,8 @@ pub struct IntervalTree {
 impl Node {
     fn new(marker: Marker, parent: WeakNodePtr) -> Rc<RefCell<Self>> {
         // Fix E0382: Calculate max_end before moving ownership of `marker` into the struct.
-        let max_end_val = marker.interval.end; 
-        
+        let max_end_val = marker.interval.end;
+
         Rc::new(RefCell::new(Node {
             marker,
             height: 1,
@@ -93,11 +93,11 @@ impl Node {
         }
 
         let delta = node.lazy_delta;
-        
+
         // Apply delta to self (start and end)
         node.marker.interval.start = (node.marker.interval.start as i64 + delta) as u64;
         node.marker.interval.end = (node.marker.interval.end as i64 + delta) as u64;
-        
+
         // Apply delta to children (only update their lazy_delta fields)
         if let Some(ref left) = node.left {
             left.borrow_mut().lazy_delta += delta;
@@ -107,7 +107,7 @@ impl Node {
         }
 
         node.lazy_delta = 0;
-        
+
         // The max_end needs to be updated after the push
         let max_l = node.left.as_ref().map_or(0, |l| l.borrow().max_end);
         let max_r = node.right.as_ref().map_or(0, |r| r.borrow().max_end);
@@ -119,9 +119,9 @@ impl Node {
         let mut n = node.borrow_mut();
         let height_l = Self::height(&n.left);
         let height_r = Self::height(&n.right);
-        
+
         n.height = 1 + max(height_l, height_r);
-        
+
         let max_l = n.left.as_ref().map_or(0, |l| l.borrow().max_end);
         let max_r = n.right.as_ref().map_or(0, |r| r.borrow().max_end);
         n.max_end = max(n.marker.interval.end, max(max_l, max_r));
@@ -148,7 +148,7 @@ impl IntervalTree {
 
         let new_node = Node::new(marker.clone(), Weak::new());
         self.root = Self::insert_recursive(self.root.take(), new_node.clone());
-        
+
         self.marker_map.insert(id, new_node);
         id
     }
@@ -162,7 +162,7 @@ impl IntervalTree {
         // Walk up the tree, collecting all deltas that haven't been applied yet.
         while let Some(current_rc) = node_opt {
             let current = current_rc.borrow();
-            
+
             // Add this node's delta (if any)
             current_delta += current.lazy_delta;
 
@@ -171,10 +171,10 @@ impl IntervalTree {
         }
 
         let raw_marker = node_rc.borrow().marker.interval.clone();
-        
+
         let start = (raw_marker.start as i64 + current_delta) as u64;
         let end = (raw_marker.end as i64 + current_delta) as u64;
-        
+
         Some((start, end))
     }
 
@@ -184,13 +184,13 @@ impl IntervalTree {
             Some(pos) => pos,
             None => return false,
         };
-        
+
         if !self.marker_map.contains_key(&id) {
             return false;
         }
 
         self.root = Self::delete_recursive(self.root.take(), start, id);
-        
+
         self.marker_map.remove(&id).is_some()
     }
 
@@ -224,8 +224,11 @@ impl IntervalTree {
 
         Node::push_delta(&root);
 
-        let (start, id) = (new_node.borrow().marker.interval.start, new_node.borrow().marker.id);
-        
+        let (start, id) = (
+            new_node.borrow().marker.interval.start,
+            new_node.borrow().marker.id,
+        );
+
         let mut root_mut = root.borrow_mut();
         let (root_start, root_id) = (root_mut.marker.interval.start, root_mut.marker.id);
 
@@ -237,7 +240,7 @@ impl IntervalTree {
             root_mut.right.as_ref().unwrap().borrow_mut().parent = Rc::downgrade(&root);
         }
 
-        drop(root_mut); 
+        drop(root_mut);
         Node::update_stats(&root);
         Self::balance(root)
     }
@@ -262,22 +265,20 @@ impl IntervalTree {
             Ordering::Greater => {
                 root_mut.right = Self::delete_recursive(root_mut.right.take(), start, id);
             }
-            Ordering::Equal => {
-                match id.cmp(&root_id) {
-                    Ordering::Less => {
-                        root_mut.left = Self::delete_recursive(root_mut.left.take(), start, id);
-                    }
-                    Ordering::Greater => {
-                        root_mut.right = Self::delete_recursive(root_mut.right.take(), start, id);
-                    }
-                    Ordering::Equal => {
-                        return Self::perform_node_deletion(root_mut, Rc::clone(&root));
-                    }
+            Ordering::Equal => match id.cmp(&root_id) {
+                Ordering::Less => {
+                    root_mut.left = Self::delete_recursive(root_mut.left.take(), start, id);
                 }
-            }
+                Ordering::Greater => {
+                    root_mut.right = Self::delete_recursive(root_mut.right.take(), start, id);
+                }
+                Ordering::Equal => {
+                    return Self::perform_node_deletion(root_mut, Rc::clone(&root));
+                }
+            },
         }
 
-        drop(root_mut); 
+        drop(root_mut);
         Node::update_stats(&root);
         Self::balance(root)
     }
@@ -298,17 +299,17 @@ impl IntervalTree {
             return left;
         } else {
             let successor_rc = Self::min_node(&node.right.as_ref().unwrap());
-            
+
             let (successor_start, successor_id) = {
                 let s = successor_rc.borrow();
                 (s.marker.interval.start, s.marker.id)
             };
-            
+
             mem::swap(&mut node.marker, &mut successor_rc.borrow_mut().marker);
-            
+
             node.right = Self::delete_recursive(node.right.take(), successor_start, successor_id);
-            
-            drop(node); 
+
+            drop(node);
             Node::update_stats(&node_rc);
             return Self::balance(node_rc);
         }
@@ -318,12 +319,12 @@ impl IntervalTree {
     fn min_node(node_rc: &Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
         let mut current = Rc::clone(node_rc);
         loop {
-            Node::push_delta(&current); 
-            
-            // Fix E0506: Clone the next node pointer before the borrow (Ref<Node>) on 
+            Node::push_delta(&current);
+
+            // Fix E0506: Clone the next node pointer before the borrow (Ref<Node>) on
             // `current` is dropped and potentially prevents reassignment.
             let next_left_opt = current.borrow().left.clone();
-            
+
             if let Some(next) = next_left_opt {
                 current = next;
             } else {
@@ -370,17 +371,19 @@ impl IntervalTree {
 
             // 3. Recurse left, as it may contain markers spanning the edit pos.
             Self::adjust_recursive(&mut node.left, pos, delta);
-
-        } else { // pos > start
+        } else {
+            // pos > start
             // CASE 2: This node's start is BEFORE the edit.
             // Its start is unaffected. We only need to check the right subtree
             // for nodes that might be affected.
             Self::adjust_recursive(&mut node.right, pos, delta);
         }
-        
+
         // Always handle the interval span case (where end >= pos)
         if node.marker.interval.end >= pos {
-            node.marker.interval.end = (node.marker.interval.end as i64 + delta).max(node.marker.interval.start as i64) as u64;
+            node.marker.interval.end = (node.marker.interval.end as i64 + delta)
+                .max(node.marker.interval.start as i64)
+                as u64;
         }
 
         drop(node);
@@ -417,7 +420,7 @@ impl IntervalTree {
     }
 
     // --- AVL Balancing ---
-    
+
     fn balance(node: Rc<RefCell<Node>>) -> NodePtr {
         let bf = Node::balance_factor(&node);
 
@@ -449,7 +452,7 @@ impl IntervalTree {
 
         let mut y = node_rc.borrow_mut();
         let mut x = x_rc.borrow_mut();
-        
+
         y.right = x.left.take();
         if let Some(ref r) = y.right {
             r.borrow_mut().parent = Rc::downgrade(&node_rc);
@@ -457,10 +460,10 @@ impl IntervalTree {
         x.left = Some(Rc::clone(&node_rc));
         x.parent = y.parent.clone();
         y.parent = Rc::downgrade(&x_rc);
-        
+
         drop(x);
         drop(y);
-        
+
         Node::update_stats(&node_rc);
         Node::update_stats(&x_rc);
         Some(x_rc)
@@ -470,7 +473,7 @@ impl IntervalTree {
         Node::push_delta(&node_rc);
         let x_rc = node_rc.borrow_mut().left.take().unwrap();
         Node::push_delta(&x_rc);
-        
+
         let mut y = node_rc.borrow_mut();
         let mut x = x_rc.borrow_mut();
 
@@ -481,16 +484,15 @@ impl IntervalTree {
         x.right = Some(Rc::clone(&node_rc));
         x.parent = y.parent.clone();
         y.parent = Rc::downgrade(&x_rc);
-        
+
         drop(x);
         drop(y);
-        
+
         Node::update_stats(&node_rc);
         Node::update_stats(&x_rc);
         Some(x_rc)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -531,21 +533,37 @@ mod tests {
         tree.adjust_for_edit(30, 5);
 
         // id1 (10-20) should not move
-        assert_eq!(get_pos(&tree, id1), (10, 20), "Marker before edit should not move.");
-        
+        assert_eq!(
+            get_pos(&tree, id1),
+            (10, 20),
+            "Marker before edit should not move."
+        );
+
         // id2 (30-40) should move to (35-45)
-        assert_eq!(get_pos(&tree, id2), (35, 45), "Marker at/after edit should move.");
+        assert_eq!(
+            get_pos(&tree, id2),
+            (35, 45),
+            "Marker at/after edit should move."
+        );
 
         // Delete 10 characters at position 5
         tree.adjust_for_edit(5, -10); // All markers are after position 5
 
         // id1 (10-20) is inside the deletion [5, 15) and should be clamped and shrunk.
-        assert_eq!(get_pos(&tree, id1), (5, 10), "Marker moved back by deletion.");
-        
+        assert_eq!(
+            get_pos(&tree, id1),
+            (5, 10),
+            "Marker moved back by deletion."
+        );
+
         // id2 (35-45) -> (25-35)
-        assert_eq!(get_pos(&tree, id2), (25, 35), "Marker moved back by deletion.");
+        assert_eq!(
+            get_pos(&tree, id2),
+            (25, 35),
+            "Marker moved back by deletion."
+        );
     }
-    
+
     #[test]
     fn test_problematic_lazy_delta_scenario() {
         // This test replicates the tricky tree structure to ensure the O(log n) lazy
@@ -559,11 +577,23 @@ mod tests {
         let id_p = insert_marker(&mut tree, 200, 250); // Parent node (P)
         let id_r = insert_marker(&mut tree, 300, 350); // Right child (R)
         let id_l = insert_marker(&mut tree, 100, 150); // Left child (L)
-        
+
         // --- Verify initial state ---
-        assert_eq!(get_pos(&tree, id_l), (100, 150), "L initial position incorrect.");
-        assert_eq!(get_pos(&tree, id_p), (200, 250), "P initial position incorrect.");
-        assert_eq!(get_pos(&tree, id_r), (300, 350), "R initial position incorrect.");
+        assert_eq!(
+            get_pos(&tree, id_l),
+            (100, 150),
+            "L initial position incorrect."
+        );
+        assert_eq!(
+            get_pos(&tree, id_p),
+            (200, 250),
+            "P initial position incorrect."
+        );
+        assert_eq!(
+            get_pos(&tree, id_r),
+            (300, 350),
+            "R initial position incorrect."
+        );
 
         // --- Apply the problematic edit ---
         // Edit: Insert 50 characters at position 150 (P=150, delta=+50)
@@ -572,33 +602,45 @@ mod tests {
         tree.adjust_for_edit(150, 50);
 
         // --- Verify corrected final state ---
-        
+
         // L(100) should have its end expanded (100 < 150, but 150 >= 150).
-        assert_eq!(get_pos(&tree, id_l), (100, 200), 
-                   "L(100) should expand to (100, 200).");
-        
+        assert_eq!(
+            get_pos(&tree, id_l),
+            (100, 200),
+            "L(100) should expand to (100, 200)."
+        );
+
         // P(200) should be shifted (200 >= 150) -> 250
-        assert_eq!(get_pos(&tree, id_p), (250, 300), 
-                   "P(200) did not shift correctly. Should be 250.");
+        assert_eq!(
+            get_pos(&tree, id_p),
+            (250, 300),
+            "P(200) did not shift correctly. Should be 250."
+        );
 
         // R(300) should be shifted (300 >= 150) -> 350
-        assert_eq!(get_pos(&tree, id_r), (350, 400), 
-                   "R(300) did not shift correctly. Should be 350.");
+        assert_eq!(
+            get_pos(&tree, id_r),
+            (350, 400),
+            "R(300) did not shift correctly. Should be 350."
+        );
     }
-    
+
     #[test]
     fn test_interval_spanning_edit() {
         let mut tree = IntervalTree::new();
         // Marker S starts before edit, but spans it.
-        let id_s = insert_marker(&mut tree, 50, 200); 
+        let id_s = insert_marker(&mut tree, 50, 200);
 
         // Edit: Insert 10 characters at position 100 (P=100, delta=+10)
         tree.adjust_for_edit(100, 10);
-        
+
         // S(50, 200) starts before 100, so its start (50) is fixed.
         // Its end (200) is at/after 100, so its end should move to 210.
-        assert_eq!(get_pos(&tree, id_s), (50, 210), 
-                   "Spanning marker end did not move correctly.");
+        assert_eq!(
+            get_pos(&tree, id_s),
+            (50, 210),
+            "Spanning marker end did not move correctly."
+        );
     }
 
     #[test]
@@ -613,7 +655,11 @@ mod tests {
         // So new interval should be (5, 10).
         tree.adjust_for_edit(5, -10);
 
-        assert_eq!(get_pos(&tree, id1), (5, 10), "Marker should be clamped and shrunk.");
+        assert_eq!(
+            get_pos(&tree, id1),
+            (5, 10),
+            "Marker should be clamped and shrunk."
+        );
     }
 
     #[test]
@@ -623,22 +669,38 @@ mod tests {
 
         // Insertion at the marker's position should push it.
         tree.adjust_for_edit(10, 5);
-        assert_eq!(get_pos(&tree, id1), (15, 15), "Insertion at zero-length marker.");
+        assert_eq!(
+            get_pos(&tree, id1),
+            (15, 15),
+            "Insertion at zero-length marker."
+        );
 
         // Insertion before should also push it.
         tree.adjust_for_edit(5, 5);
-        assert_eq!(get_pos(&tree, id1), (20, 20), "Insertion before zero-length marker.");
+        assert_eq!(
+            get_pos(&tree, id1),
+            (20, 20),
+            "Insertion before zero-length marker."
+        );
 
         // Deletion after should not affect it.
         tree.adjust_for_edit(25, -5);
-        assert_eq!(get_pos(&tree, id1), (20, 20), "Deletion after zero-length marker.");
+        assert_eq!(
+            get_pos(&tree, id1),
+            (20, 20),
+            "Deletion after zero-length marker."
+        );
 
         // Deletion that contains the marker.
         tree.adjust_for_edit(15, -10);
         // Marker at 20. Deletion on [15, 25).
         // Start becomes max(15, 20-10) = 15.
         // End becomes max(new_start, 20-10) = max(15, 10) = 15.
-        assert_eq!(get_pos(&tree, id1), (15, 15), "Deletion containing zero-length marker.");
+        assert_eq!(
+            get_pos(&tree, id1),
+            (15, 15),
+            "Deletion containing zero-length marker."
+        );
     }
 
     #[test]
@@ -697,19 +759,41 @@ mod tests {
         ];
 
         // Verify ordering is preserved (no inversions)
-        for i in 0..positions.len()-1 {
+        for i in 0..positions.len() - 1 {
             assert!(
-                positions[i] <= positions[i+1],
+                positions[i] <= positions[i + 1],
                 "Ordering violated at index {}: {:?}[{}]={} > {:?}[{}]={}",
-                i, positions, i, positions[i], positions, i+1, positions[i+1]
+                i,
+                positions,
+                i,
+                positions[i],
+                positions,
+                i + 1,
+                positions[i + 1]
             );
         }
 
         // Verify specific expected positions
         assert_eq!(get_pos(&tree, id0), (0, 0), "Marker at 0 should stay at 0");
-        assert_eq!(get_pos(&tree, id1), (5, 5), "Marker at 10 should clamp to 5");
-        assert_eq!(get_pos(&tree, id2), (5, 5), "Marker at 20 should clamp to 5");
-        assert_eq!(get_pos(&tree, id3), (14, 14), "Marker at 30 should shift to 14");
-        assert_eq!(get_pos(&tree, id4), (24, 24), "Marker at 40 should shift to 24");
+        assert_eq!(
+            get_pos(&tree, id1),
+            (5, 5),
+            "Marker at 10 should clamp to 5"
+        );
+        assert_eq!(
+            get_pos(&tree, id2),
+            (5, 5),
+            "Marker at 20 should clamp to 5"
+        );
+        assert_eq!(
+            get_pos(&tree, id3),
+            (14, 14),
+            "Marker at 30 should shift to 14"
+        );
+        assert_eq!(
+            get_pos(&tree, id4),
+            (24, 24),
+            "Marker at 40 should shift to 24"
+        );
     }
 }

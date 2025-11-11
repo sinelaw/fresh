@@ -184,7 +184,9 @@ impl IndentCalculator {
         tab_size: usize,
     ) -> Option<usize> {
         // Try tree-sitter-based indent
-        if let Some(indent) = self.calculate_indent_tree_sitter(buffer, position, language, tab_size) {
+        if let Some(indent) =
+            self.calculate_indent_tree_sitter(buffer, position, language, tab_size)
+        {
             return Some(indent);
         }
 
@@ -383,7 +385,8 @@ impl IndentCalculator {
         // Formula: reference_indent + (cursor_depth - reference_depth - 1) * tab_size
         // The -1 accounts for the closing delimiter dedenting one level
         let indent_delta = cursor_indent_count - reference_indent_count - 1;
-        let final_indent = (reference_line_indent as i32 + (indent_delta * tab_size as i32)).max(0) as usize;
+        let final_indent =
+            (reference_line_indent as i32 + (indent_delta * tab_size as i32)).max(0) as usize;
 
         tracing::debug!(
             "Tree-sitter dedent: reference_indent={}, cursor_depth={}, reference_depth={}, delta={}, final_indent={}",
@@ -453,7 +456,7 @@ impl IndentCalculator {
             }
 
             // Get line content
-            let line_bytes = buffer.slice_bytes(line_start..search_pos+1);
+            let line_bytes = buffer.slice_bytes(line_start..search_pos + 1);
             let last_non_ws = line_bytes
                 .iter()
                 .rev()
@@ -479,7 +482,11 @@ impl IndentCalculator {
                     // Closing delimiter: increment depth to skip its matching opening
                     b'}' | b']' | b')' => {
                         depth += 1;
-                        tracing::debug!("Pattern dedent: found closing '{}', depth now {}", last_char as char, depth);
+                        tracing::debug!(
+                            "Pattern dedent: found closing '{}', depth now {}",
+                            last_char as char,
+                            depth
+                        );
                     }
 
                     // Opening delimiter: check if it's matched or unmatched
@@ -487,17 +494,29 @@ impl IndentCalculator {
                         if depth > 0 {
                             // Already matched by a closing delimiter we saw earlier
                             depth -= 1;
-                            tracing::debug!("Pattern dedent: skipping matched '{}' (depth {}→{})", last_char as char, depth + 1, depth);
+                            tracing::debug!(
+                                "Pattern dedent: skipping matched '{}' (depth {}→{})",
+                                last_char as char,
+                                depth + 1,
+                                depth
+                            );
                         } else {
                             // Unmatched! This is the opening delimiter we're closing
-                            tracing::debug!("Pattern dedent: found unmatched '{}' at indent {}", last_char as char, line_indent);
+                            tracing::debug!(
+                                "Pattern dedent: found unmatched '{}' at indent {}",
+                                last_char as char,
+                                line_indent
+                            );
                             return Some(line_indent);
                         }
                     }
 
                     // Content line: continue searching
                     _ => {
-                        tracing::debug!("Pattern dedent: line ends with '{}', continuing", last_char as char);
+                        tracing::debug!(
+                            "Pattern dedent: line ends with '{}', continuing",
+                            last_char as char
+                        );
                     }
                 }
             }
@@ -552,7 +571,7 @@ impl IndentCalculator {
         } else {
             // Current line is empty - find previous non-empty line and check for indent triggers
             let mut search_pos = if line_start > 0 {
-                line_start - 1  // Position of \n before current line
+                line_start - 1 // Position of \n before current line
             } else {
                 0
             };
@@ -569,7 +588,7 @@ impl IndentCalculator {
                 }
 
                 // Check if this line has non-whitespace content
-                let ref_line_bytes = buffer.slice_bytes(ref_line_start..search_pos+1);
+                let ref_line_bytes = buffer.slice_bytes(ref_line_start..search_pos + 1);
                 let ref_last_non_ws = ref_line_bytes
                     .iter()
                     .rev()
@@ -597,7 +616,10 @@ impl IndentCalculator {
                     if let Some(&last_char) = ref_last_non_ws {
                         match last_char {
                             b'{' | b'[' | b'(' => {
-                                tracing::debug!("Pattern match: reference line ends with '{}'", last_char as char);
+                                tracing::debug!(
+                                    "Pattern match: reference line ends with '{}'",
+                                    last_char as char
+                                );
                                 return Some(found_reference_indent + tab_size);
                             }
                             b':' => {
@@ -805,7 +827,8 @@ impl IndentCalculator {
                         // Cursor position: count if cursor is inside this node
                         // Also check: node must start on a previous line (not current line)
                         let node_on_previous_line = node_start < line_start_offset;
-                        let cursor_inside_node = node_start < cursor_offset && cursor_offset <= node_end;
+                        let cursor_inside_node =
+                            node_start < cursor_offset && cursor_offset <= node_end;
 
                         if cursor_inside_node && node_on_previous_line && !last_nonws_is_closing {
                             cursor_indent_count += 1;
@@ -841,7 +864,8 @@ impl IndentCalculator {
         }
 
         // Calculate final indent: reference line indent + delta
-        let final_indent = (reference_line_indent as i32 + (indent_delta * tab_size as i32)).max(0) as usize;
+        let final_indent =
+            (reference_line_indent as i32 + (indent_delta * tab_size as i32)).max(0) as usize;
 
         tracing::debug!(
             "Indent calculation: reference={}, delta={}, final={}",
@@ -879,7 +903,7 @@ impl IndentCalculator {
             match Self::byte_at(buffer, pos) {
                 Some(b' ') => indent += 1,
                 Some(b'\t') => indent += 4, // Assuming tab = 4 spaces
-                Some(_) => break, // Hit non-whitespace
+                Some(_) => break,           // Hit non-whitespace
                 None => break,
             }
             pos += 1;
@@ -919,7 +943,7 @@ impl IndentCalculator {
             match Self::byte_at(buffer, pos) {
                 Some(b' ') => indent += 1,
                 Some(b'\t') => indent += 4, // Assuming tab = 4 spaces
-                Some(_) => break, // Hit non-whitespace
+                Some(_) => break,           // Hit non-whitespace
                 None => break,
             }
             pos += 1;
@@ -958,7 +982,11 @@ mod tests {
         let position = buffer.len();
         let result = IndentCalculator::calculate_indent_pattern(&buffer, position, 4);
         println!("Pattern result for 'fn main() {{': {:?}", result);
-        assert_eq!(result, Some(4), "Should detect {{ and return 4 space indent");
+        assert_eq!(
+            result,
+            Some(4),
+            "Should detect {{ and return 4 space indent"
+        );
     }
 
     #[test]
@@ -983,7 +1011,10 @@ mod tests {
         println!("Indent value: {}", indent_val);
 
         // Should suggest indenting (4 spaces)
-        assert_eq!(indent_val, 4, "Should indent by 4 spaces after opening brace");
+        assert_eq!(
+            indent_val, 4,
+            "Should indent by 4 spaces after opening brace"
+        );
     }
 
     #[test]
@@ -1011,7 +1042,10 @@ mod tests {
         let ts_result = calc.calculate_indent_tree_sitter(&buffer, position, &Language::Rust, 4);
 
         // Tree-sitter should return Some (even if it's 0 indent)
-        assert!(ts_result.is_some(), "Tree-sitter should handle complete blocks");
+        assert!(
+            ts_result.is_some(),
+            "Tree-sitter should handle complete blocks"
+        );
     }
 
     #[test]
@@ -1025,7 +1059,12 @@ mod tests {
 
         // This should be 8 spaces (maintaining nested indent from current line)
         let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
-        assert_eq!(indent, Some(8), "Should maintain nested indent level (got {:?})", indent);
+        assert_eq!(
+            indent,
+            Some(8),
+            "Should maintain nested indent level (got {:?})",
+            indent
+        );
     }
 
     #[test]
@@ -1036,7 +1075,11 @@ mod tests {
 
         // Pattern matching should detect the '{'
         let pattern_result = IndentCalculator::calculate_indent_pattern(&buffer, position, 4);
-        assert_eq!(pattern_result, Some(4), "Pattern matching should detect opening brace");
+        assert_eq!(
+            pattern_result,
+            Some(4),
+            "Pattern matching should detect opening brace"
+        );
     }
 
     #[test]
@@ -1059,7 +1102,11 @@ mod tests {
 
         let indent = calc.calculate_indent(&buffer, position, &Language::TypeScript, 4);
         assert!(indent.is_some(), "TypeScript interface should get indent");
-        assert_eq!(indent.unwrap(), 4, "Should indent 4 spaces after opening brace");
+        assert_eq!(
+            indent.unwrap(),
+            4,
+            "Should indent 4 spaces after opening brace"
+        );
     }
 
     #[test]
@@ -1079,7 +1126,10 @@ mod tests {
         let position = buffer.len();
 
         let indent = IndentCalculator::calculate_indent_no_language(&buffer, position, 4);
-        assert_eq!(indent, 4, "Should indent 4 spaces after brace even without language");
+        assert_eq!(
+            indent, 4,
+            "Should indent 4 spaces after brace even without language"
+        );
     }
 
     #[test]
@@ -1091,7 +1141,11 @@ mod tests {
 
         // Tree-sitter should recognize we're outside the block and return 0 indent
         let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
-        assert_eq!(indent, Some(0), "Should return 0 indent after closing brace");
+        assert_eq!(
+            indent,
+            Some(0),
+            "Should return 0 indent after closing brace"
+        );
 
         // Verify tree-sitter is being used (not just pattern fallback)
         let ts_result = calc.calculate_indent_tree_sitter(&buffer, position, &Language::Rust, 4);
@@ -1108,16 +1162,15 @@ mod tests {
         let position = buffer.len(); // Cursor after 4 spaces
 
         // Calculate where the } should be placed using tree-sitter
-        let correct_indent = calc.calculate_dedent_for_delimiter(
-            &buffer,
-            position,
-            '}',
-            &Language::Rust,
-            4,
-        );
+        let correct_indent =
+            calc.calculate_dedent_for_delimiter(&buffer, position, '}', &Language::Rust, 4);
 
         // Should dedent to column 0 (same level as fn main)
-        assert_eq!(correct_indent, Some(0), "Closing brace should dedent to column 0");
+        assert_eq!(
+            correct_indent,
+            Some(0),
+            "Closing brace should dedent to column 0"
+        );
 
         // Verify this uses tree-sitter by checking it works
         let nested_buffer = Buffer::from_str("fn main() {\n    if true {\n        ");
@@ -1132,7 +1185,10 @@ mod tests {
         );
 
         // Should return a valid indent level
-        assert!(nested_indent.is_some(), "Nested closing brace should get valid indent");
+        assert!(
+            nested_indent.is_some(),
+            "Nested closing brace should get valid indent"
+        );
     }
 
     #[test]

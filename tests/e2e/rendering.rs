@@ -374,9 +374,7 @@ fn test_page_down_line_numbers() {
     // Verify the first line is visible on screen
     harness.assert_screen_contains("x1");
     let initial_cursor = harness.cursor_position();
-    println!(
-        "Initial state: line {initial_line}, cursor at {initial_cursor}, screen contains x1"
-    );
+    println!("Initial state: line {initial_line}, cursor at {initial_cursor}, screen contains x1");
     println!("Initial screen:\n{}", harness.screen_to_string());
 
     // Press page down once
@@ -387,9 +385,7 @@ fn test_page_down_line_numbers() {
     let after_first_pagedown = harness.top_line_number();
     let cursor_after_first = harness.cursor_position();
 
-    println!(
-        "\nAfter first PageDown: line {after_first_pagedown}, cursor at {cursor_after_first}"
-    );
+    println!("\nAfter first PageDown: line {after_first_pagedown}, cursor at {cursor_after_first}");
     println!(
         "Screen after first PageDown:\n{}",
         harness.screen_to_string()

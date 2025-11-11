@@ -362,9 +362,7 @@ impl Editor {
 
         // Canonicalize working_dir to resolve symlinks and normalize path components
         // This ensures consistent path comparisons throughout the editor
-        let working_dir = working_dir
-            .canonicalize()
-            .unwrap_or_else(|_| working_dir);
+        let working_dir = working_dir.canonicalize().unwrap_or_else(|_| working_dir);
 
         // Load theme from config
         let theme = crate::theme::Theme::from_name(&config.theme);
@@ -1555,9 +1553,9 @@ impl Editor {
                 }
                 Event::Batch { events, .. } => {
                     // Check if batch contains any Insert/Delete events
-                    let has_edits = events.iter().any(|e| {
-                        matches!(e, Event::Insert { .. } | Event::Delete { .. })
-                    });
+                    let has_edits = events
+                        .iter()
+                        .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
                     if has_edits {
                         self.clear_search_highlights();
                     }
@@ -1866,9 +1864,7 @@ impl Editor {
         // Determine prompt type and reset appropriate history navigation
         if let Some(ref prompt) = self.prompt {
             match prompt.prompt_type {
-                PromptType::Search
-                | PromptType::ReplaceSearch
-                | PromptType::QueryReplaceSearch => {
+                PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {
                     self.search_history.reset_navigation();
                     self.clear_search_highlights();
                 }
@@ -1918,9 +1914,7 @@ impl Editor {
 
             // Add to appropriate history based on prompt type
             match prompt.prompt_type {
-                PromptType::Search
-                | PromptType::ReplaceSearch
-                | PromptType::QueryReplaceSearch => {
+                PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {
                     self.search_history.push(final_input.clone());
                     // Reset navigation state
                     self.search_history.reset_navigation();
@@ -4023,7 +4017,10 @@ impl Editor {
             Action::QueryReplace => {
                 // Always prompt for search query first (with incremental highlighting)
                 // TODO: Implement search history - pre-fill with previous search and allow up/down arrows
-                self.start_prompt("Query replace: ".to_string(), PromptType::QueryReplaceSearch);
+                self.start_prompt(
+                    "Query replace: ".to_string(),
+                    PromptType::QueryReplaceSearch,
+                );
             }
             Action::FindNext => {
                 self.find_next();
@@ -5565,7 +5562,11 @@ impl Editor {
             let mut current_pos = 0;
 
             while current_pos < buffer_len {
-                if let Some(offset) = state.buffer.find_next_in_range(search, current_pos, Some(current_pos..buffer_len)) {
+                if let Some(offset) = state.buffer.find_next_in_range(
+                    search,
+                    current_pos,
+                    Some(current_pos..buffer_len),
+                ) {
                     matches.push(offset);
                     current_pos = offset + search.len();
                 } else {
@@ -5700,7 +5701,9 @@ impl Editor {
         let state = self.active_state_mut();
         state.cursors.primary_mut().position = first_match_pos;
         state.cursors.primary_mut().anchor = None;
-        state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
+        state
+            .viewport
+            .ensure_visible(&mut state.buffer, state.cursors.primary());
 
         self.set_status_message("Replace? (y/n/!/q)".to_string());
     }
@@ -5720,7 +5723,9 @@ impl Editor {
 
                 // Find next match lazily (after the replacement)
                 let search_pos = ir_state.current_match_pos + ir_state.replacement.len();
-                if let Some((next_match, wrapped)) = self.find_next_match_for_replace(&ir_state, search_pos) {
+                if let Some((next_match, wrapped)) =
+                    self.find_next_match_for_replace(&ir_state, search_pos)
+                {
                     ir_state.current_match_pos = next_match;
                     if wrapped {
                         ir_state.has_wrapped = true;
@@ -5734,7 +5739,9 @@ impl Editor {
             'n' | 'N' => {
                 // Skip current match and find next
                 let search_pos = ir_state.current_match_pos + ir_state.search.len();
-                if let Some((next_match, wrapped)) = self.find_next_match_for_replace(&ir_state, search_pos) {
+                if let Some((next_match, wrapped)) =
+                    self.find_next_match_for_replace(&ir_state, search_pos)
+                {
                     ir_state.current_match_pos = next_match;
                     if wrapped {
                         ir_state.has_wrapped = true;
@@ -5764,7 +5771,9 @@ impl Editor {
 
                     // Find matches lazily one at a time, collect positions
                     loop {
-                        if let Some((next_match, wrapped)) = self.find_next_match_for_replace(&temp_state, current_pos) {
+                        if let Some((next_match, wrapped)) =
+                            self.find_next_match_for_replace(&temp_state, current_pos)
+                        {
                             matches.push(next_match);
                             current_pos = next_match + temp_state.search.len();
                             if wrapped {
@@ -5822,7 +5831,10 @@ impl Editor {
                     // Single Batch = single undo step for all remaining replacements
                     let batch = Event::Batch {
                         events,
-                        description: format!("Query replace remaining '{}' with '{}'", ir_state.search, ir_state.replacement),
+                        description: format!(
+                            "Query replace remaining '{}' with '{}'",
+                            ir_state.search, ir_state.replacement
+                        ),
                     };
 
                     self.active_event_log_mut().append(batch.clone());
@@ -5840,7 +5852,7 @@ impl Editor {
             _ => {
                 // Unknown key - show help
                 self.set_status_message(
-                    "Replace this occurrence? (y=yes, n=no, !=all, q=quit)".to_string()
+                    "Replace this occurrence? (y=yes, n=no, !=all, q=quit)".to_string(),
                 );
             }
         }
@@ -5849,14 +5861,22 @@ impl Editor {
     }
 
     /// Find the next match for interactive replace (lazy search with wrap-around)
-    fn find_next_match_for_replace(&self, ir_state: &InteractiveReplaceState, start_pos: usize) -> Option<(usize, bool)> {
+    fn find_next_match_for_replace(
+        &self,
+        ir_state: &InteractiveReplaceState,
+        start_pos: usize,
+    ) -> Option<(usize, bool)> {
         let state = self.active_state();
 
         if ir_state.has_wrapped {
             // We've already wrapped - only search from start_pos up to (but not including) the original start position
             // Use find_next_in_range to avoid wrapping again
             let search_range = Some(start_pos..ir_state.start_pos);
-            if let Some(match_pos) = state.buffer.find_next_in_range(&ir_state.search, start_pos, search_range) {
+            if let Some(match_pos) =
+                state
+                    .buffer
+                    .find_next_in_range(&ir_state.search, start_pos, search_range)
+            {
                 return Some((match_pos, true));
             }
             None // No more matches before original start position
@@ -5865,14 +5885,22 @@ impl Editor {
             // First try from start_pos to end of buffer
             let buffer_len = state.buffer.len();
             let search_range = Some(start_pos..buffer_len);
-            if let Some(match_pos) = state.buffer.find_next_in_range(&ir_state.search, start_pos, search_range) {
+            if let Some(match_pos) =
+                state
+                    .buffer
+                    .find_next_in_range(&ir_state.search, start_pos, search_range)
+            {
                 return Some((match_pos, false));
             }
 
             // No match from start_pos to end - wrap to beginning
             // Search from 0 to start_pos (original position)
             let wrap_range = Some(0..ir_state.start_pos);
-            if let Some(match_pos) = state.buffer.find_next_in_range(&ir_state.search, 0, wrap_range) {
+            if let Some(match_pos) =
+                state
+                    .buffer
+                    .find_next_in_range(&ir_state.search, 0, wrap_range)
+            {
                 return Some((match_pos, true)); // Found match after wrapping
             }
 
@@ -5923,7 +5951,10 @@ impl Editor {
         // Wrap in batch for atomic undo
         let batch = Event::Batch {
             events,
-            description: format!("Query replace '{}' with '{}'", ir_state.search, ir_state.replacement),
+            description: format!(
+                "Query replace '{}' with '{}'",
+                ir_state.search, ir_state.replacement
+            ),
         };
 
         // Apply the batch through the event log
@@ -5939,7 +5970,9 @@ impl Editor {
         let state = self.active_state_mut();
         state.cursors.primary_mut().position = match_pos;
         state.cursors.primary_mut().anchor = None;
-        state.viewport.ensure_visible(&mut state.buffer, state.cursors.primary());
+        state
+            .viewport
+            .ensure_visible(&mut state.buffer, state.cursors.primary());
 
         let msg = if ir_state.has_wrapped {
             "[Wrapped] Replace? (y/n/!/q)".to_string()
