@@ -1154,6 +1154,116 @@ fn test_rust_analyzer_rename_content_modified() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Test typing performance with many LSP diagnostics
+///
+/// This test reproduces the performance issue where typing becomes slow when
+/// there are many diagnostics. It measures the time it takes to process diagnostics
+/// with 100+ diagnostics active.
+#[test]
+#[ignore] // Run with: cargo test test_lsp_typing_performance_with_many_diagnostics -- --ignored --nocapture
+fn test_lsp_typing_performance_with_many_diagnostics() -> std::io::Result<()> {
+    use fresh::event::{Event, OverlayFace};
+    use std::time::Instant;
+
+    const DIAGNOSTIC_COUNT: usize = 200; // Simulate 200 diagnostics (100 lines)
+
+    // Create a file with 200 lines directly
+    let mut file_content = String::new();
+    file_content.push_str("fn main() {\n");
+    for i in 0..200 {
+        file_content.push_str(&format!("    let var_{} = {};\n", i, i));
+    }
+    file_content.push_str("}\n");
+
+    // Create buffer directly instead of typing (much faster for test setup)
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, &file_content)?;
+
+    let mut harness = crate::common::harness::EditorTestHarness::new(80, 24)?;
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    println!("✓ Created file with {} lines", 200);
+
+    // Manually add many diagnostics (simulating what LSP would do)
+    // This tests the apply_diagnostics_to_state function directly
+    let state = harness.editor_mut().active_state_mut();
+
+    let diagnostics_json = format!(r#"{{
+        "uri": "file:///test.rs",
+        "diagnostics": [
+            {}
+        ]
+    }}"#, (0..DIAGNOSTIC_COUNT).map(|i| {
+        let line = i / 2;
+        let char_start = (i % 2) * 10;
+        let char_end = char_start + 5;
+        format!(r#"{{
+            "range": {{
+                "start": {{"line": {}, "character": {}}},
+                "end": {{"line": {}, "character": {}}}
+            }},
+            "severity": 1,
+            "message": "Error {} from fake LSP"
+        }}"#, line, char_start, line, char_end, i)
+    }).collect::<Vec<_>>().join(","));
+
+    // Parse diagnostics
+    let diag_params: lsp_types::PublishDiagnosticsParams =
+        serde_json::from_str(&diagnostics_json).expect("Failed to parse diagnostics JSON");
+
+    println!("✓ Parsed {} diagnostics", diag_params.diagnostics.len());
+
+    // Measure performance of applying diagnostics
+    let start = Instant::now();
+
+    // This is the slow function - apply_diagnostics_to_state
+    fresh::lsp_diagnostics::apply_diagnostics_to_state(
+        state,
+        &diag_params.diagnostics,
+        &fresh::theme::Theme::dark(),
+    );
+
+    let apply_duration = start.elapsed();
+
+    println!("⏱  Applying {} diagnostics took: {:?}", DIAGNOSTIC_COUNT, apply_duration);
+
+    harness.render()?;
+
+    // Verify diagnostics are present
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("E:") || screen.contains("●"),
+        "Expected diagnostics to be shown in UI"
+    );
+
+    // Performance assertion: applying diagnostics should be fast (< 500ms)
+    // With the bug (O(N²) line iteration), 200 diagnostics can take seconds
+    // After the fix, it should be < 500ms
+    let max_acceptable_ms = 500;
+
+    if apply_duration.as_millis() > max_acceptable_ms {
+        println!("\n❌ PERFORMANCE BUG REPRODUCED!");
+        println!("   Applying {} diagnostics took {}ms", DIAGNOSTIC_COUNT, apply_duration.as_millis());
+        println!("   Expected < {}ms", max_acceptable_ms);
+        println!("   This indicates the O(N²) performance bug in line_char_to_byte");
+        println!("   where it iterates from line 0 for every diagnostic.");
+        panic!(
+            "Applying diagnostics took {}ms with {} diagnostics - TOO SLOW! Expected < {}ms. \
+            This confirms the O(N²) performance bug in line_char_to_byte.",
+            apply_duration.as_millis(),
+            DIAGNOSTIC_COUNT,
+            max_acceptable_ms
+        );
+    }
+
+    println!("✅ Performance test passed! Applying diagnostics was fast ({:?}) with {} diagnostics",
+             apply_duration, DIAGNOSTIC_COUNT);
+
+    Ok(())
+}
+
 /// Test that handle_rename_response correctly processes documentChanges
 /// (This tests the fix for rust-analyzer which sends documentChanges instead of changes)
 #[test]

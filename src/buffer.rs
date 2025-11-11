@@ -944,16 +944,38 @@ impl Buffer {
     /// Convert LSP position (line, UTF-16 code units) to byte position - 0-indexed
     /// LSP uses UTF-16 code units for character offsets, not bytes
     /// Returns byte position (clamps to end of buffer/line if out of bounds)
+    ///
+    /// This function uses the line cache for performance. It reads from the cache but doesn't
+    /// modify it (to keep &self). The cache is populated during normal navigation/editing.
     pub fn lsp_position_to_byte(&self, line: usize, utf16_offset: usize) -> usize {
-        let mut iter = self.line_iterator(0);
-        let mut current_line = 0;
+        // Try to get a cached line start position at or before the target line
+        let (start_byte, start_line) = if let Some(cached_byte) = self.get_cached_byte_offset_for_line(line) {
+            // Exact match - we have the line start cached!
+            (cached_byte, line)
+        } else if let Some(info) = self.line_cache.get_nearest_before(usize::MAX) {
+            // Get the nearest cached line before our target
+            // Start from there instead of from byte 0
+            if info.line_number <= line {
+                (info.byte_offset, info.line_number)
+            } else {
+                (0, 0)
+            }
+        } else {
+            (0, 0)
+        };
 
+        // Iterate from the nearest cached position to the target line
+        let mut iter = self.line_iterator(start_byte);
+        let mut current_line = start_line;
+
+        // Skip to target line
         while current_line < line {
-            if iter.next().is_none() {
+            if iter.next().is_some() {
+                current_line += 1;
+            } else {
                 // Line doesn't exist, return end of buffer
                 return self.len();
             }
-            current_line += 1;
         }
 
         // Get the start of the target line

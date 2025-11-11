@@ -226,6 +226,119 @@ done
         std::env::temp_dir().join("fake_lsp_server_blocking.sh")
     }
 
+    /// Spawn a fake LSP server that generates many diagnostics
+    ///
+    /// This version responds to didChange notifications with a large number of diagnostics
+    /// across many lines. This is useful for testing performance with many diagnostics.
+    pub fn spawn_many_diagnostics(diagnostic_count: usize) -> std::io::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        // Generate JSON for many diagnostics
+        let mut diagnostics_json = String::from("[");
+        for i in 0..diagnostic_count {
+            if i > 0 {
+                diagnostics_json.push(',');
+            }
+            // Spread diagnostics across different lines
+            let line = i / 2; // 2 diagnostics per line
+            let char_start = (i % 2) * 10;
+            let char_end = char_start + 5;
+            diagnostics_json.push_str(&format!(
+                r#"{{"range":{{"start":{{"line":{},"character":{}}},"end":{{"line":{},"character":{}}}}},"severity":1,"message":"Error {} from fake LSP"}}"#,
+                line, char_start, line, char_end, i
+            ));
+        }
+        diagnostics_json.push(']');
+
+        // Create a Bash script that sends many diagnostics on didChange
+        let script = format!(r#"#!/bin/bash
+
+# Function to read a message
+read_message() {{
+    # Read headers
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        # Empty line marks end of headers
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+
+    # Read content
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}}
+
+# Function to send a message
+send_message() {{
+    local message="$1"
+    local length=${{#message}}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}}
+
+# Main loop
+while true; do
+    # Read incoming message
+    msg=$(read_message)
+
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    # Extract method from JSON
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+    case "$method" in
+        "initialize")
+            # Send initialize response
+            send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"capabilities":{{"textDocumentSync":2}}}}}}'
+            ;;
+        "textDocument/didChange"|"textDocument/didOpen")
+            # Send many diagnostics on every change
+            uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+            send_message '{{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{{"uri":"'$uri'","diagnostics":{diagnostics}}}}}'
+            ;;
+        "shutdown")
+            send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":null}}'
+            break
+            ;;
+    esac
+done
+"#, diagnostics = diagnostics_json);
+
+        // Write script to a temporary file
+        let script_path = std::env::temp_dir().join("fake_lsp_server_many_diags.sh");
+        std::fs::write(&script_path, script)?;
+
+        // Make it executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            // Wait for stop signal
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Get the path to the many-diagnostics fake LSP server script
+    pub fn many_diagnostics_script_path() -> std::path::PathBuf {
+        std::env::temp_dir().join("fake_lsp_server_many_diags.sh")
+    }
+
     /// Stop the server
     pub fn stop(&mut self) {
         let _ = self.stop_tx.send(());
