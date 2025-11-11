@@ -134,6 +134,14 @@ pub enum PluginCommand {
 
     /// Remove overlays whose ID starts with the given prefix
     RemoveOverlaysByPrefix { buffer_id: BufferId, prefix: String },
+
+    /// Open a file at a specific line and column
+    /// Line and column are 1-indexed to match git grep output
+    OpenFileAtLocation {
+        path: PathBuf,
+        line: Option<usize>,    // 1-indexed, None = go to start
+        column: Option<usize>,  // 1-indexed, None = go to line start
+    },
 }
 
 /// Plugin API context - provides safe access to editor functionality
@@ -246,6 +254,17 @@ impl PluginApi {
     /// Set the status message
     pub fn set_status(&self, message: String) -> Result<(), String> {
         self.send_command(PluginCommand::SetStatus { message })
+    }
+
+    /// Open a file at a specific line and column (1-indexed)
+    /// This is useful for jumping to locations from git grep, LSP definitions, etc.
+    pub fn open_file_at_location(
+        &self,
+        path: PathBuf,
+        line: Option<usize>,
+        column: Option<usize>,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::OpenFileAtLocation { path, line, column })
     }
 
     // === Query Methods ===

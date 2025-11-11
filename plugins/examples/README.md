@@ -16,6 +16,13 @@ Demonstrates visual overlays:
 - Adding colored overlays to buffers
 - Using the overlay API
 
+### git_grep_demo.lua
+Demonstrates git integration and file navigation:
+- Spawning async git processes
+- Parsing git grep output
+- Opening files at specific line:column positions
+- Prototype for implementing git grep as a plugin
+
 ## Plugin API
 
 ### Available Functions
@@ -63,6 +70,38 @@ editor.on("after-file-save", function(args)
     return true  -- return false to cancel operation
 end)
 ```
+
+#### editor.spawn(command, args, callback) or editor.spawn(command, args, options, callback)
+Spawn an async process and get its output.
+
+```lua
+-- Simple form
+editor.spawn("git", {"status", "--porcelain"}, function(stdout, stderr, exit_code)
+    editor.set_status("Git status: " .. stdout)
+end)
+
+-- With options (e.g., working directory)
+editor.spawn("ls", {"-la"}, {cwd = "/tmp"}, function(stdout, stderr, exit_code)
+    print("Files: " .. stdout)
+end)
+```
+
+#### editor.open_file(path) or editor.open_file({path, line, column})
+Open a file, optionally jumping to a specific line and column.
+
+```lua
+-- Open file at start
+editor.open_file("src/main.rs")
+
+-- Open file and jump to line 42, column 10 (1-indexed)
+editor.open_file({
+    path = "src/main.rs",
+    line = 42,
+    column = 10
+})
+```
+
+This is particularly useful for implementing features like git grep, LSP go-to-definition, etc.
 
 ## Available Hooks
 

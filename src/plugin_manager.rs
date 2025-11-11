@@ -498,6 +498,39 @@ impl PluginManager {
             })?;
         editor.set("remove_overlays_by_prefix", remove_overlays_by_prefix)?;
 
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.open_file({path = "file.txt", line = 10, column = 5})
+        // or editor.open_file("file.txt") -- just open without jumping
+        // Line and column are 1-indexed to match git grep output
+        let open_file = lua.create_function(move |_lua, args: mlua::Value| {
+            // Handle both table and string arguments
+            let (path, line, column) = if let mlua::Value::Table(table) = args {
+                // Table format: {path = "...", line = 10, column = 5}
+                let path: String = table.get("path")?;
+                let line: Option<usize> = table.get("line").ok();
+                let column: Option<usize> = table.get("column").ok();
+                (path, line, column)
+            } else if let mlua::Value::String(s) = args {
+                // String format: just the path
+                (s.to_str()?.to_string(), None, None)
+            } else {
+                return Err(mlua::Error::RuntimeError(
+                    "open_file requires a table {path, line, column} or a string path".to_string(),
+                ));
+            };
+
+            api_clone
+                .open_file_at_location(
+                    std::path::PathBuf::from(path),
+                    line,
+                    column,
+                )
+                .map_err(|e| mlua::Error::RuntimeError(e))
+        })?;
+        editor.set("open_file", open_file)?;
+
         // NOTE: We intentionally do NOT provide a get_buffer_content() API
         // because it would materialize the entire buffer into memory, which
         // defeats the editor's streaming architecture for huge files (GB+).
