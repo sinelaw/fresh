@@ -223,6 +223,67 @@ impl OverlayManager {
             .collect()
     }
 
+    /// Query overlays in a viewport range efficiently using the marker interval tree
+    ///
+    /// This is much faster than calling `at_position()` for every character in the range.
+    /// Returns overlays with their resolved byte ranges.
+    ///
+    /// # Performance
+    /// - Old approach: O(N * M) where N = positions to check, M = overlay count
+    /// - This approach: O(log M + k) where k = overlays in viewport (typically 2-10)
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Query once per frame
+    /// let viewport_overlays = overlays.query_viewport(viewport_start, viewport_end, &marker_list);
+    ///
+    /// // Then for each character position, only check the small viewport_overlays list
+    /// for pos in positions {
+    ///     let overlays_here = viewport_overlays
+    ///         .iter()
+    ///         .filter(|(_, range)| range.contains(&pos))
+    ///         .map(|(overlay, _)| *overlay);
+    /// }
+    /// ```
+    pub fn query_viewport(
+        &self,
+        start: usize,
+        end: usize,
+        marker_list: &MarkerList,
+    ) -> Vec<(&Overlay, Range<usize>)> {
+        use std::collections::HashMap;
+
+        // Query the marker interval tree once for all markers in viewport
+        // This is O(log N + k) where k = markers in viewport
+        let visible_markers = marker_list.query_range(start, end);
+
+        // Build a quick lookup map: marker_id -> position
+        let marker_positions: HashMap<_, _> = visible_markers
+            .into_iter()
+            .map(|(id, start, _end)| (id, start))
+            .collect();
+
+        // Find overlays whose markers are in the viewport
+        // Only resolve positions for overlays that are actually visible
+        self.overlays
+            .iter()
+            .filter_map(|overlay| {
+                // Try to get positions from our viewport query results
+                let start_pos = marker_positions.get(&overlay.start_marker)?;
+                let end_pos = marker_positions.get(&overlay.end_marker)?;
+
+                let range = *start_pos..*end_pos;
+
+                // Only include if actually overlaps viewport
+                if range.start < end && range.end > start {
+                    Some((overlay, range))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Get overlay by ID
     pub fn get_by_id(&self, id: &str) -> Option<&Overlay> {
         self.overlays.iter().find(|o| o.id.as_deref() == Some(id))

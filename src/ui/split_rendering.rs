@@ -387,6 +387,13 @@ impl SplitRenderer {
             Vec::new()
         };
 
+        // Query overlays once for the entire viewport using interval tree
+        // This is O(log N + k) instead of O(N * M) for per-character queries
+        let viewport_overlays =
+            state
+                .overlays
+                .query_viewport(viewport_start, viewport_end, &state.marker_list);
+
         let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
         let mut lines_rendered = 0;
 
@@ -528,8 +535,13 @@ impl SplitRenderer {
                         .find(|span| span.range.contains(&byte_pos))
                         .map(|span| span.color);
 
-                    // Find overlays at this position (sorted by priority, low to high)
-                    let overlays = state.overlays.at_position(byte_pos, &state.marker_list);
+                    // Find overlays at this position from the pre-queried viewport overlays
+                    // This avoids expensive marker tree lookups for every character
+                    let overlays: Vec<_> = viewport_overlays
+                        .iter()
+                        .filter(|(_, range)| range.contains(&byte_pos))
+                        .map(|(overlay, _)| *overlay)
+                        .collect();
 
                     // Build style by layering: base -> syntax -> overlays -> selection
                     let mut style = if let Some(color) = highlight_color {

@@ -107,6 +107,26 @@ impl MarkerList {
         Some(start as usize)
     }
 
+    /// Query all markers that overlap with a byte range
+    ///
+    /// This is an efficient way to find all markers in a viewport/visible region.
+    /// Returns a Vec of (MarkerId, start_position, end_position) tuples.
+    ///
+    /// Cost: O(log n + k) where k is the number of overlapping markers
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Get all markers in the visible viewport
+    /// let visible_markers = marker_list.query_range(viewport_start, viewport_end);
+    /// ```
+    pub fn query_range(&self, start: usize, end: usize) -> Vec<(MarkerId, usize, usize)> {
+        self.tree
+            .query(start as u64, end as u64)
+            .into_iter()
+            .map(|m| (MarkerId(m.id), m.interval.start as usize, m.interval.end as usize))
+            .collect()
+    }
+
     /// Adjust all markers for an insertion
     ///
     /// # Arguments
