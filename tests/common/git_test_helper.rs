@@ -249,6 +249,32 @@ A sample project for testing.
         std::env::set_current_dir(&self.path).expect("Failed to change directory");
         original_dir
     }
+
+    /// Set up git plugins by copying them from the project's plugins directory
+    /// This is needed for testing git functionality which has been moved to Lua plugins
+    pub fn setup_git_plugins(&self) {
+        // Create plugins directory in the test repo
+        let plugins_dir = self.path.join("plugins");
+        fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
+
+        // Get the project root by using the CARGO_MANIFEST_DIR environment variable
+        // which is set by cargo and points to the directory containing Cargo.toml
+        let project_root = std::env::var("CARGO_MANIFEST_DIR")
+            .map(PathBuf::from)
+            .expect("CARGO_MANIFEST_DIR not set");
+
+        // Copy git-grep.lua plugin
+        let git_grep_src = project_root.join("plugins/git-grep.lua");
+        let git_grep_dst = plugins_dir.join("git-grep.lua");
+        fs::copy(&git_grep_src, &git_grep_dst)
+            .unwrap_or_else(|e| panic!("Failed to copy git-grep.lua from {:?}: {}", git_grep_src, e));
+
+        // Copy git-find-file.lua plugin
+        let git_find_file_src = project_root.join("plugins/git-find-file.lua");
+        let git_find_file_dst = plugins_dir.join("git-find-file.lua");
+        fs::copy(&git_find_file_src, &git_find_file_dst)
+            .unwrap_or_else(|e| panic!("Failed to copy git-find-file.lua from {:?}: {}", git_find_file_src, e));
+    }
 }
 
 /// Helper to restore original directory

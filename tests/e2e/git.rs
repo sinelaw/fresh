@@ -1,27 +1,49 @@
 //! E2E tests for git features (git grep and git find file)
 
-use crate::common::git_test_helper::{DirGuard, GitTestRepo};
+use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
+
+/// Helper to trigger git grep via command palette
+fn trigger_git_grep(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Git Grep").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
+
+/// Helper to trigger git find file via command palette
+fn trigger_git_find_file(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Git Find File").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
 
 /// Test git grep basic functionality - visibility of results
 #[test]
 fn test_git_grep_shows_results() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    repo.setup_git_plugins();
 
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
-    // Trigger git grep with Ctrl+Shift+F
-    harness
-        .send_key(
-            KeyCode::Char('F'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    // Trigger git grep
+    trigger_git_grep(&mut harness);
 
     // Check that the prompt appeared
     harness.assert_screen_contains("Git grep: ");
@@ -59,19 +81,14 @@ fn test_git_grep_shows_results() {
 fn test_git_grep_interactive_updates() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    repo.setup_git_plugins();
 
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
     // Trigger git grep
-    harness
-        .send_key(
-            KeyCode::Char('F'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    trigger_git_grep(&mut harness);
 
     // Type first query
     harness.type_text("Config").unwrap();
@@ -123,19 +140,14 @@ fn test_git_grep_interactive_updates() {
 fn test_git_grep_selection_navigation() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    repo.setup_git_plugins();
 
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
     // Trigger git grep
-    harness
-        .send_key(
-            KeyCode::Char('F'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    trigger_git_grep(&mut harness);
 
     // Search for something that appears multiple times
     harness.type_text("config").unwrap();
@@ -170,18 +182,14 @@ fn test_git_grep_selection_navigation() {
 fn test_git_grep_confirm_jumps_to_location() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
-    let original_dir = repo.change_to_repo_dir();
+    repo.setup_git_plugins();
 
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
     // Trigger git grep
-    harness
-        .send_key(
-            KeyCode::Char('F'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    trigger_git_grep(&mut harness);
 
     // Search for specific text
     harness.type_text("Hello, world").unwrap();
@@ -203,9 +211,6 @@ fn test_git_grep_confirm_jumps_to_location() {
 
     let screen = harness.screen_to_string();
     println!("After confirming grep result:\n{screen}");
-
-    // Restore directory
-    let _guard = DirGuard::new(original_dir);
 
     // The file should have opened and we should be out of prompt mode
     // Note: The file might not show content if paths are relative and directory changed,
@@ -233,19 +238,14 @@ fn test_git_grep_confirm_jumps_to_location() {
 fn test_git_grep_cancel() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    repo.setup_git_plugins();
 
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
     // Trigger git grep
-    harness
-        .send_key(
-            KeyCode::Char('F'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    trigger_git_grep(&mut harness);
 
     harness.assert_screen_contains("Git grep: ");
 
@@ -265,19 +265,14 @@ fn test_git_grep_cancel() {
 fn test_git_find_file_shows_results() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    repo.setup_git_plugins();
 
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
-    // Trigger git find file with Ctrl+Shift+P
-    harness
-        .send_key(
-            KeyCode::Char('P'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    // Trigger git find file
+    trigger_git_find_file(&mut harness);
 
     // Check that the prompt appeared
     harness.assert_screen_contains("Find file: ");
@@ -310,19 +305,14 @@ fn test_git_find_file_shows_results() {
 fn test_git_find_file_interactive_filtering() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    repo.setup_git_plugins();
 
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
     // Trigger git find file
-    harness
-        .send_key(
-            KeyCode::Char('P'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    trigger_git_find_file(&mut harness);
 
     // Wait for initial results
     harness
@@ -375,19 +365,14 @@ fn test_git_find_file_interactive_filtering() {
 fn test_git_find_file_selection_navigation() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    repo.setup_git_plugins();
 
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
     // Trigger git find file
-    harness
-        .send_key(
-            KeyCode::Char('P'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    trigger_git_find_file(&mut harness);
 
     // Wait for results
     harness
@@ -418,18 +403,14 @@ fn test_git_find_file_selection_navigation() {
 fn test_git_find_file_confirm_opens_file() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
-    let original_dir = repo.change_to_repo_dir();
+    repo.setup_git_plugins();
 
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
     // Trigger git find file
-    harness
-        .send_key(
-            KeyCode::Char('P'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    trigger_git_find_file(&mut harness);
 
     // Filter to main.rs
     harness.type_text("main.rs").unwrap();
@@ -452,9 +433,6 @@ fn test_git_find_file_confirm_opens_file() {
     let screen = harness.screen_to_string();
     println!("After confirming file:\n{screen}");
 
-    // Restore directory
-    let _guard = DirGuard::new(original_dir);
-
     // The file should have opened and we should be out of prompt mode
     harness.assert_screen_not_contains("Find file:");
 
@@ -476,20 +454,14 @@ fn test_git_grep_scrolling_many_results() {
 
     // Create many files with searchable content
     repo.setup_many_files(50);
+    repo.setup_git_plugins();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
     // Trigger git grep
-    harness
-        .send_key(
-            KeyCode::Char('F'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    trigger_git_grep(&mut harness);
 
     // Search for "Searchable" which appears in all files
     harness.type_text("Searchable").unwrap();
@@ -519,20 +491,14 @@ fn test_git_grep_scrolling_many_results() {
 fn test_git_find_file_scrolling_many_files() {
     let repo = GitTestRepo::new();
     repo.setup_many_files(50);
+    repo.setup_git_plugins();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
     // Trigger git find file
-    harness
-        .send_key(
-            KeyCode::Char('P'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    trigger_git_find_file(&mut harness);
 
     // Wait for file list
     harness
@@ -565,11 +531,13 @@ fn test_git_find_file_scrolling_many_files() {
 fn test_git_commands_via_command_palette() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    repo.setup_git_plugins();
 
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
+    // Test that we can invoke git commands via command palette
     // Open command palette with Ctrl+P
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -578,8 +546,8 @@ fn test_git_commands_via_command_palette() {
 
     harness.assert_screen_contains("Command: ");
 
-    // Type to filter to git commands
-    harness.type_text("Git: Grep").unwrap();
+    // Type to filter to git commands (note: no colon in command name)
+    harness.type_text("Git Grep").unwrap();
     harness.render().unwrap();
 
     // Confirm
@@ -597,10 +565,11 @@ fn test_git_commands_via_command_palette() {
 fn test_git_grep_opens_correct_file_and_jumps_to_line() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    repo.setup_git_plugins();
 
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
     // Verify we start with an empty buffer
     let initial_content = harness.get_buffer_content();
@@ -610,13 +579,7 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
     );
 
     // Trigger git grep
-    harness
-        .send_key(
-            KeyCode::Char('F'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    trigger_git_grep(&mut harness);
 
     // Search for "println" which appears in main.rs line 2
     harness.type_text("println").unwrap();
@@ -682,10 +645,11 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
 fn test_git_find_file_actually_opens_file() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    repo.setup_git_plugins();
 
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
     // Verify we start with an empty buffer
     let initial_content = harness.get_buffer_content();
@@ -695,13 +659,7 @@ fn test_git_find_file_actually_opens_file() {
     );
 
     // Trigger git find file
-    harness
-        .send_key(
-            KeyCode::Char('P'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    trigger_git_find_file(&mut harness);
 
     // Type to find lib.rs
     harness.type_text("lib.rs").unwrap();
@@ -786,20 +744,14 @@ fn test_git_grep_cursor_position_accuracy() {
     );
     repo.git_add(&["test.txt"]);
     repo.git_commit("Add test file");
+    repo.setup_git_plugins();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
+            .unwrap();
 
     // Trigger git grep
-    harness
-        .send_key(
-            KeyCode::Char('F'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )
-        .unwrap();
-    harness.render().unwrap();
+    trigger_git_grep(&mut harness);
 
     // Search for MARKER (should be on line 3)
     harness.type_text("MARKER").unwrap();
