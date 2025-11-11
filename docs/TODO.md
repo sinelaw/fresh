@@ -96,18 +96,52 @@
 
 ### Priority 2: LSP & Developer Tools
 
-#### LSP Features (Complete Integration)
-- [ ] Hover documentation
-- [ ] Code actions (quick fixes, refactorings)
-- [ ] Find references
-- [ ] Document symbols (outline/breadcrumb)
-- [ ] Workspace symbols (find symbol across project)
-- [ ] Signature help (parameter hints)
-- [ ] Inlay hints (type annotations, parameter names)
-- [ ] Call hierarchy / Type hierarchy
-- [ ] Document formatting / Range formatting
-- [ ] Semantic tokens (advanced syntax highlighting)
-- [ ] Code lens / Folding ranges
+### LSP Support (Maturity Roadmap)
+
+This plan aims to evolve the LSP client to be performant, full-featured, and robust, based on the principles for building a mature LSP client.
+
+#### Priority 1: Performance & Stability Foundation
+
+- [ ] **Implement Incremental Synchronization (Deltas):**
+    - **Problem:** The editor currently sends the entire file content on every keystroke, causing significant UI lag in large files.
+    - **Solution:** Modify the `didChange` notification to send only the changed text (deltas). This requires checking for the `TextDocumentSyncKind::Incremental` capability from the server and calculating the text diffs to send. This is the highest priority performance fix.
+- [ ] **Implement Request Cancellation:**
+    - **Problem:** Slow or outdated results (e.g., from code completion) can appear after the user has already moved on, creating UI "jank."
+    - **Solution:** Implement support for sending `$/cancelRequest` notifications when a new request is issued before an old one completes (e.g., typing more characters while a completion menu is visible).
+- [ ] **Robust Server Lifecycle Management:**
+    - **Problem:** A crashed or hung LSP server can leave the editor in a broken state with no feedback.
+    - **Solution:** Implement robust error handling to detect when the LSP process dies. Notify the user and offer to restart the server.
+- [ ] **Harden JSON-RPC Message Parsing:**
+    - **Problem:** A malformed or partial message from the LSP server could crash the editor's message handling loop.
+    - **Solution:** Improve the robustness of the JSON-RPC transport layer to gracefully handle framing errors, corrupt headers, or invalid JSON, preventing panics.
+
+#### Priority 2: Core UX Features
+
+- [ ] **Dedicated Diagnostics Panel:**
+    - **Problem:** Diagnostics are only visible as squiggles in the text. There is no way to see a full list of problems in the current file or project.
+    - **Solution:** Create a new UI panel that lists all diagnostics from `textDocument/publishDiagnostics`, allowing users to quickly navigate to each error location.
+- [ ] **Hover Documentation:** Show documentation for the symbol under the cursor in a popup window on `textDocument/hover`.
+- [ ] **Code Actions:** Query for `textDocument/codeAction` and allow the user to apply quick fixes and refactorings (e.g., via a menu).
+- [ ] **Find References:** Implement `textDocument/references` and display the results in a list or quickfix window.
+- [ ] **Signature Help:** Show function/method parameter hints as the user is typing, triggered by `textDocument/signatureHelp`.
+
+#### Priority 3: Advanced Features & Polish
+
+- [ ] **Semantic Tokens:** Implement `textDocument/semanticTokens` for more advanced and accurate syntax highlighting.
+- [ ] **Document & Workspace Symbols:** Implement `textDocument/documentSymbol` for an outline/breadcrumb view and `workspace/symbol` for project-wide symbol search.
+- [ ] **Inlay Hints:** Display inlay hints (`textDocument/inlayHint`) for type annotations and parameter names.
+- [ ] **Progress Reporting:** Handle `$/progress` notifications from the server to show activity indicators in the UI (e.g., for indexing).
+- [ ] **Server Communication & Logging:**
+    - [ ] Handle `window/logMessage` to display server logs for debugging.
+    - [ ] Handle `window/showMessage` and `window/showMessageRequest` to show info/warnings and ask questions.
+- [ ] **Document Formatting:** Add commands for `textDocument/formatting` and `textDocument/rangeFormatting`.
+- [ ] **Call Hierarchy / Type Hierarchy:** Implement `callHierarchy/incomingCalls` and `typeHierarchy/supertypes`.
+- [ ] **Code Lens / Folding Ranges:** Implement `textDocument/codeLens` and `textDocument/foldingRange`.
+
+#### Priority 4: Project & Configuration
+
+- [ ] **Multi-Root Workspace Support:** Support `workspace/workspaceFolders` to correctly handle projects with multiple sub-projects, potentially launching separate LSP instances per folder.
+- [ ] **Configuration Synchronization:** Send `workspace/didChangeConfiguration` notifications when editor settings (like tab size or diagnostics settings) change.
 
 #### File Explorer Polish
 - [ ] Input dialog system for custom names
@@ -203,7 +237,6 @@
 ### Priority 6: Future Enhancements
 
 #### Performance & Optimization
-- [ ] Incremental LSP sync
 - [ ] Syntax highlighting cache
 - [ ] Lazy plugin loading
 - [ ] Memory usage profiling
