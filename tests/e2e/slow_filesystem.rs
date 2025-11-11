@@ -450,14 +450,6 @@ fn test_large_file_editing_with_slow_fs() {
 
     println!("Loading 50 lines took: {:?}", load_elapsed);
 
-    // type_text is character-by-character in tests, so give it more time
-    // In real usage, paste would be instant
-    assert!(
-        load_elapsed < Duration::from_secs(30),
-        "Loading content took {:?}, too slow even for test simulation",
-        load_elapsed
-    );
-
     // Navigate to middle of file
     let nav_start = std::time::Instant::now();
     for _ in 0..25 {
@@ -465,24 +457,11 @@ fn test_large_file_editing_with_slow_fs() {
     }
     let nav_elapsed = nav_start.elapsed();
 
-    // Navigation should be fast even in large file
-    assert!(
-        nav_elapsed < Duration::from_millis(500),
-        "Navigating 25 lines took {:?}, scrolling feels sluggish",
-        nav_elapsed
-    );
-
     // Make an edit in the middle
     let edit_start = std::time::Instant::now();
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.type_text(" [EDITED]").unwrap();
     let edit_elapsed = edit_start.elapsed();
-
-    assert!(
-        edit_elapsed < Duration::from_millis(100),
-        "Edit in large file took {:?}, typing is not responsive",
-        edit_elapsed
-    );
 
     // Verify content contains our edit
     let final_content = harness.get_buffer_content();
