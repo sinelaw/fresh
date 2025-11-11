@@ -267,6 +267,8 @@ pub enum Action {
     FocusEditor,
     FileExplorerUp,
     FileExplorerDown,
+    FileExplorerPageUp,
+    FileExplorerPageDown,
     FileExplorerExpand,
     FileExplorerCollapse,
     FileExplorerOpen,
@@ -433,6 +435,8 @@ impl Action {
             "focus_editor" => Some(Action::FocusEditor),
             "file_explorer_up" => Some(Action::FileExplorerUp),
             "file_explorer_down" => Some(Action::FileExplorerDown),
+            "file_explorer_page_up" => Some(Action::FileExplorerPageUp),
+            "file_explorer_page_down" => Some(Action::FileExplorerPageDown),
             "file_explorer_expand" => Some(Action::FileExplorerExpand),
             "file_explorer_collapse" => Some(Action::FileExplorerCollapse),
             "file_explorer_open" => Some(Action::FileExplorerOpen),
@@ -1037,6 +1041,14 @@ impl KeybindingResolver {
             Action::FileExplorerDown,
         );
         explorer_bindings.insert(
+            (KeyCode::PageUp, KeyModifiers::empty()),
+            Action::FileExplorerPageUp,
+        );
+        explorer_bindings.insert(
+            (KeyCode::PageDown, KeyModifiers::empty()),
+            Action::FileExplorerPageDown,
+        );
+        explorer_bindings.insert(
             (KeyCode::Enter, KeyModifiers::empty()),
             Action::FileExplorerOpen,
         );
@@ -1280,6 +1292,8 @@ impl KeybindingResolver {
             Action::FocusEditor => "Focus editor".to_string(),
             Action::FileExplorerUp => "File explorer: navigate up".to_string(),
             Action::FileExplorerDown => "File explorer: navigate down".to_string(),
+            Action::FileExplorerPageUp => "File explorer: page up".to_string(),
+            Action::FileExplorerPageDown => "File explorer: page down".to_string(),
             Action::FileExplorerExpand => "File explorer: expand directory".to_string(),
             Action::FileExplorerCollapse => "File explorer: collapse directory".to_string(),
             Action::FileExplorerOpen => "File explorer: open file".to_string(),

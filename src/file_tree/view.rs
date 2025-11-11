@@ -120,6 +120,48 @@ impl FileTreeView {
         }
     }
 
+    /// Move selection up by a page (viewport height)
+    pub fn select_page_up(&mut self) {
+        if self.viewport_height == 0 {
+            return;
+        }
+
+        let visible = self.tree.get_visible_nodes();
+        if visible.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.selected_node {
+            if let Some(pos) = visible.iter().position(|&id| id == current) {
+                let new_pos = pos.saturating_sub(self.viewport_height);
+                self.selected_node = Some(visible[new_pos]);
+            }
+        } else {
+            self.selected_node = Some(visible[0]);
+        }
+    }
+
+    /// Move selection down by a page (viewport height)
+    pub fn select_page_down(&mut self) {
+        if self.viewport_height == 0 {
+            return;
+        }
+
+        let visible = self.tree.get_visible_nodes();
+        if visible.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.selected_node {
+            if let Some(pos) = visible.iter().position(|&id| id == current) {
+                let new_pos = (pos + self.viewport_height).min(visible.len() - 1);
+                self.selected_node = Some(visible[new_pos]);
+            }
+        } else {
+            self.selected_node = Some(visible[0]);
+        }
+    }
+
     /// Update scroll offset to ensure symmetric scrolling behavior
     ///
     /// This should be called after navigation to implement symmetric scrolling:

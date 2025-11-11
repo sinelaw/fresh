@@ -1136,6 +1136,24 @@ impl Editor {
         }
     }
 
+    /// Handle file explorer page up
+    pub fn file_explorer_page_up(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.select_page_up();
+            // Update scroll using stored viewport_height (set during rendering)
+            explorer.update_scroll_for_selection();
+        }
+    }
+
+    /// Handle file explorer page down
+    pub fn file_explorer_page_down(&mut self) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.select_page_down();
+            // Update scroll using stored viewport_height (set during rendering)
+            explorer.update_scroll_for_selection();
+        }
+    }
+
     /// Handle file explorer expand/collapse
     pub fn file_explorer_toggle_expand(&mut self) {
         // Extract needed data first
@@ -4234,6 +4252,8 @@ impl Editor {
             Action::FocusEditor => self.focus_editor(),
             Action::FileExplorerUp => self.file_explorer_navigate_up(),
             Action::FileExplorerDown => self.file_explorer_navigate_down(),
+            Action::FileExplorerPageUp => self.file_explorer_page_up(),
+            Action::FileExplorerPageDown => self.file_explorer_page_down(),
             Action::FileExplorerExpand => self.file_explorer_toggle_expand(),
             Action::FileExplorerCollapse => self.file_explorer_toggle_expand(), // Same as expand
             Action::FileExplorerOpen => self.file_explorer_open_file()?,
@@ -4460,6 +4480,12 @@ impl Editor {
                 self.mouse_state.drag_start_row = None;
                 self.mouse_state.drag_start_top_byte = None;
             }
+            MouseEventKind::ScrollUp => {
+                self.handle_mouse_scroll(col, row, -3)?;
+            }
+            MouseEventKind::ScrollDown => {
+                self.handle_mouse_scroll(col, row, 3)?;
+            }
             _ => {
                 // Ignore other mouse events for now
             }
@@ -4554,6 +4580,61 @@ impl Editor {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Handle mouse wheel scroll event
+    fn handle_mouse_scroll(&mut self, col: u16, row: u16, delta: i32) -> std::io::Result<()> {
+        // Check if scroll is over the file explorer
+        if let Some(explorer_area) = self.cached_layout.file_explorer_area {
+            if col >= explorer_area.x
+                && col < explorer_area.x + explorer_area.width
+                && row >= explorer_area.y
+                && row < explorer_area.y + explorer_area.height
+            {
+                // Scroll the file explorer
+                if let Some(explorer) = &mut self.file_explorer {
+                    let visible = explorer.tree().get_visible_nodes();
+                    if visible.is_empty() {
+                        return Ok(());
+                    }
+
+                    // Get current selected index
+                    let current_index = explorer.get_selected_index().unwrap_or(0);
+
+                    // Calculate new index based on scroll delta
+                    let new_index = if delta < 0 {
+                        // Scroll up (negative delta)
+                        current_index.saturating_sub(delta.abs() as usize)
+                    } else {
+                        // Scroll down (positive delta)
+                        (current_index + delta as usize).min(visible.len() - 1)
+                    };
+
+                    // Set the new selection
+                    if let Some(node_id) = explorer.get_node_at_index(new_index) {
+                        explorer.set_selected(Some(node_id));
+                        explorer.update_scroll_for_selection();
+                    }
+                }
+                return Ok(());
+            }
+        }
+
+        // Otherwise, scroll the editor in the active split
+        if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+            // Scroll the viewport by the delta amount
+            if delta < 0 {
+                // Scroll up
+                let lines_to_scroll = delta.abs() as usize;
+                state.viewport.scroll_up(&state.buffer, lines_to_scroll);
+            } else {
+                // Scroll down
+                let lines_to_scroll = delta as usize;
+                state.viewport.scroll_down(&state.buffer, lines_to_scroll);
+            }
+        }
+
         Ok(())
     }
 
