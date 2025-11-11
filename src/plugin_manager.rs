@@ -931,7 +931,7 @@ impl PluginManager {
     ///
     /// This method:
     /// 1. Uses the provided callback_id to identify the callback
-    /// 2. Spawns the process asynchronously via tokio
+    /// 2. Spawns the process asynchronously in a dedicated thread with Tokio runtime
     /// 3. Returns the callback_id as process_id for tracking
     pub fn spawn_process(
         &mut self,
@@ -950,10 +950,23 @@ impl PluginManager {
         // Use callback_id as process_id (they're the same thing)
         let process_id = callback_id;
 
-        // Spawn the process asynchronously
-        tokio::spawn(crate::plugin_process::spawn_plugin_process(
-            process_id, command, args, cwd, sender,
-        ));
+        // Spawn the process in a dedicated thread with its own Tokio runtime
+        // This avoids requiring the main thread to be in a Tokio context
+        std::thread::spawn(move || {
+            // Create a new Tokio runtime for this thread
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!("Failed to create Tokio runtime for plugin process: {}", e);
+                    return;
+                }
+            };
+
+            // Run the async process spawn on this runtime
+            rt.block_on(crate::plugin_process::spawn_plugin_process(
+                process_id, command, args, cwd, sender,
+            ));
+        });
 
         Ok(process_id)
     }
