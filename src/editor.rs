@@ -5898,7 +5898,7 @@ impl Editor {
 
         // Create events: MoveCursor, Delete, Insert
         // The MoveCursor saves the cursor position so undo can restore it
-        let mut events = vec![
+        let events = vec![
             Event::MoveCursor {
                 cursor_id,
                 old_position,

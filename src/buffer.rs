@@ -13,6 +13,10 @@ use std::path::{Path, PathBuf};
 // For a 61MB file, this creates ~15K leaf nodes instead of 1M with 64-byte chunks
 const DEFAULT_CONFIG: ChunkTreeConfig = ChunkTreeConfig::new(4096, 128);
 
+// For large jumps (> 100KB), use estimation instead of iterating
+// This prevents hanging when jumping to the end of large files
+const ESTIMATION_THRESHOLD: usize = 10_000_000; // 10 MB
+        
 /// Represents a line number that may be absolute (known/cached) or relative (estimated)
 /// NOTE: This enum is kept for backward compatibility but will eventually be removed
 /// as we transition fully to iterator-based APIs
@@ -676,10 +680,6 @@ impl Buffer {
             };
 
         let distance = byte_offset.saturating_sub(start_byte);
-
-        // For large jumps (> 100KB), use estimation instead of iterating
-        // This prevents hanging when jumping to the end of large files
-        const ESTIMATION_THRESHOLD: usize = 100_000; // 100KB
 
         if distance > ESTIMATION_THRESHOLD {
             // Estimate line number based on average line length (80 chars)
