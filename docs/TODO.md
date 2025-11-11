@@ -548,6 +548,12 @@ Where:
 - [ ] Split large modules (editor.rs is ~3000 lines)
 
 ### Test Infrastructure
+- [ ] **Lua Plugin Testing Infrastructure** - Need comprehensive testing infra/API/best practices for testing Lua scripts, preferably tests that could be written in the Lua environment itself. Currently, plugin tests require copying plugin files to test directories and setting up editor harnesses. Ideally, we'd have:
+  - Unit testing framework for Lua plugins (similar to busted or luaunit)
+  - Integration testing API that allows plugins to be tested in isolation
+  - Mock/stub support for editor APIs (editor.spawn, editor.open_file, etc.)
+  - Test helpers for common patterns (setting up test buffers, simulating user input)
+  - Documentation and examples for plugin testing best practices
 - [ ] Fix async file loading in test harness (6 tests ignored)
 - [ ] Fix BIG.txt generation timing (2 scrolling tests fail)
 - [ ] Support independent buffers per split (if desired)
