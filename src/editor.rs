@@ -1946,9 +1946,11 @@ impl Editor {
 
     /// Get the confirmed input and prompt type, consuming the prompt
     /// For command palette, returns the selected suggestion if available, otherwise the raw input
+    /// Returns (input, prompt_type, selected_index)
     /// Returns None if trying to confirm a disabled command
-    pub fn confirm_prompt(&mut self) -> Option<(String, PromptType)> {
+    pub fn confirm_prompt(&mut self) -> Option<(String, PromptType, Option<usize>)> {
         if let Some(prompt) = self.prompt.take() {
+            let selected_index = prompt.selected_suggestion;
             // For command prompts, prefer the selected suggestion over raw input
             let final_input = if matches!(
                 prompt.prompt_type,
@@ -1992,7 +1994,7 @@ impl Editor {
                 _ => {}
             }
 
-            Some((final_input, prompt.prompt_type))
+            Some((final_input, prompt.prompt_type, selected_index))
         } else {
             None
         }
@@ -3592,7 +3594,7 @@ impl Editor {
 
             // Prompt mode actions
             Action::PromptConfirm => {
-                if let Some((input, prompt_type)) = self.confirm_prompt() {
+                if let Some((input, prompt_type, selected_index)) = self.confirm_prompt() {
                     match prompt_type {
                         PromptType::OpenFile => {
                             let path = Path::new(&input);
@@ -3732,9 +3734,7 @@ impl Editor {
                             if let Some(plugin_manager) = &mut self.plugin_manager {
                                 use crate::hooks::HookArgs;
 
-                                // Get the prompt to extract selected index
-                                let selected_index = self.prompt.as_ref().and_then(|p| p.selected_suggestion);
-
+                                // selected_index is already captured from confirm_prompt()
                                 plugin_manager.run_hook(
                                     "prompt-confirmed",
                                     &HookArgs::PromptConfirmed {
