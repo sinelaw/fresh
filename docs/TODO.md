@@ -242,32 +242,54 @@ The current git grep and git find files are hardcoded in `src/git.rs` (200 lines
 - `editor.list_buffers()` - Enumerate open buffers
 - Process callbacks with stdout/stderr/exit_code
 
+**✅ Available Plugin APIs (Phase 1 Complete):**
+- ✅ `editor.open_file({path, line, column})` - Open file at specific location (Jan 2025)
+
 **❌ Missing APIs for Full Git Plugin Support:**
 
-1. **Prompt/Selection UI API** (CRITICAL)
+1. **Prompt/Selection UI API** (CRITICAL) - **Using Hook-Based Design**
+
+   **Hook-based approach** (simpler than callbacks):
    ```lua
-   -- Need: Interactive prompt with suggestions
-   editor.show_prompt({
+   -- Start a prompt
+   editor.start_prompt({
        label = "Git grep: ",
-       on_change = function(query)
-           -- Update suggestions as user types
-       end,
-       on_select = function(selection)
-           -- Open file at line:column
-       end,
-       suggestions = { ... }
+       prompt_type = "git-grep"  -- For filtering hooks
    })
+
+   -- React to user input via hooks (fires as they type)
+   editor.on("prompt-changed", function(args)
+       if args.prompt_type == "git-grep" then
+           local query = args.input
+
+           -- Spawn async git grep
+           editor.spawn("git", {"grep", "-n", "--column", "-I", "--", query},
+               function(stdout, stderr, exit_code)
+                   local results = parse_git_grep(stdout)
+                   editor.set_prompt_suggestions(results)
+               end)
+       end
+   end)
+
+   -- Handle selection via hooks
+   editor.on("prompt-confirmed", function(args)
+       if args.prompt_type == "git-grep" and args.selected then
+           editor.open_file({
+               path = args.selected.file,
+               line = args.selected.line,
+               column = args.selected.column
+           })
+       end
+   end)
    ```
 
-2. **File Opening API** (HIGH)
-   ```lua
-   -- Need: Open file at specific location
-   editor.open_file({
-       path = "src/main.rs",
-       line = 42,
-       column = 10
-   })
-   ```
+   **Advantages over callback-based design:**
+   - Uses existing hook infrastructure (no new callback storage)
+   - More Emacs-like (hooks are the Emacs standard)
+   - Simpler implementation (~200-300 LOC vs 500+)
+   - Natural cleanup when prompt closes
+   - Multiple plugins can react to same prompt
+   - No complex async callback lifetime management
 
 3. **Virtual/Scratch Buffers** (MEDIUM - for Magit-style interfaces)
    ```lua
@@ -290,44 +312,68 @@ The current git grep and git find files are hardcoded in `src/git.rs` (200 lines
 
 **Recommended Implementation Plan:**
 
-**Phase 1: Add Minimal Prompt API (1-2 days)**
-- Add `PluginCommand::ShowPrompt` with callback support
-- Add `PluginCommand::UpdatePromptSuggestions`
-- Add `PluginCommand::OpenFileAtLocation`
-- Expose via Lua as `editor.show_prompt()`, `editor.open_file()`
+**Phase 1: Add File Opening API** ✅ **COMPLETE** (Jan 2025)
+- ✅ Add `PluginCommand::OpenFileAtLocation`
+- ✅ Expose via Lua as `editor.open_file({path, line, column})`
+- ✅ Created git_grep_demo.lua prototype
 
-**Phase 2: Implement Git Grep Plugin (1 day)**
+**Phase 2: Add Hook-Based Prompt API (1 day)**
+- Add 3 new hook types: `prompt-changed`, `prompt-confirmed`, `prompt-cancelled`
+- Add `PluginCommand::StartPrompt` and `PluginCommand::SetPromptSuggestions`
+- Wire hooks in editor when prompt state changes
+- Expose `editor.start_prompt()` and `editor.set_prompt_suggestions()` in Lua
+
+**Phase 3: Implement Git Grep Plugin (1 day)**
 ```lua
 -- plugins/git-grep.lua
 editor.register_command({
     name = "Git Grep",
-    action = function()
-        editor.show_prompt({
-            label = "Git grep: ",
-            on_change = function(query)
-                if query ~= "" then
-                    editor.spawn("git", {"grep", "-n", "--column", "-I", "--", query},
-                        function(stdout, stderr, exit_code)
-                            local results = parse_git_grep(stdout)
-                            editor.update_prompt_suggestions(results)
-                        end)
-                end
-            end,
-            on_select = function(match)
-                editor.open_file({path = match.file, line = match.line, column = match.column})
-            end
-        })
-    end,
+    description = "Search in git-tracked files",
+    action = "git-grep",
     contexts = {"normal"}
 })
+
+-- Start prompt when command is invoked
+editor.on("command-executed", function(args)
+    if args.command == "git-grep" then
+        editor.start_prompt({
+            label = "Git grep: ",
+            prompt_type = "git-grep"
+        })
+    end
+end)
+
+-- Update results as user types
+editor.on("prompt-changed", function(args)
+    if args.prompt_type == "git-grep" and args.input ~= "" then
+        editor.spawn("git", {"grep", "-n", "--column", "-I", "--", args.input},
+            function(stdout, stderr, exit_code)
+                if exit_code == 0 then
+                    local results = parse_git_grep(stdout)
+                    editor.set_prompt_suggestions(results)
+                end
+            end)
+    end
+end)
+
+-- Jump to selected result
+editor.on("prompt-confirmed", function(args)
+    if args.prompt_type == "git-grep" and args.selected then
+        editor.open_file({
+            path = args.selected.file,
+            line = args.selected.line,
+            column = args.selected.column
+        })
+    end
+end)
 ```
 
-**Phase 3: Implement Git Find Files Plugin (1 day)**
+**Phase 4: Implement Git Find Files Plugin (1 day)**
 - Similar structure to git grep
 - Uses `git ls-files` with fuzzy filtering in Lua
-- Demonstrates reusability of prompt API
+- Demonstrates reusability of hook-based prompt API
 
-**Phase 4: Remove Hardcoded Git Code (1 day)**
+**Phase 5: Remove Hardcoded Git Code (1 day)**
 - Delete `src/git.rs` (200 lines)
 - Remove `Action::GitGrep`, `Action::GitFindFile`
 - Remove `PromptType::GitGrep`, `PromptType::GitFindFile`
@@ -354,13 +400,15 @@ If prompt API is too complex, prioritize virtual buffers + custom contexts:
 - Navigate results with j/k, press Enter to jump
 - More Emacs-like, potentially more powerful than prompts
 
-**Next Steps:**
-1. Review prompt.rs to understand current prompt implementation
-2. Design `PluginCommand::ShowPrompt` API (minimal viable interface)
-3. Prototype git grep plugin with mock prompt API
-4. Implement prompt API in editor
-5. Port git grep and git find files to plugins
-6. Remove hardcoded git code
+**Next Steps (Hook-Based Approach):**
+1. ✅ Phase 1 complete - File opening API implemented
+2. Implement hook-based prompt API (~200-300 LOC):
+   - Add hook types: `prompt-changed`, `prompt-confirmed`, `prompt-cancelled`
+   - Add plugin commands: `StartPrompt`, `SetPromptSuggestions`
+   - Wire hooks in editor prompt handling code
+3. Implement full git grep plugin using hooks
+4. Implement git find files plugin
+5. Remove hardcoded git code (~300 lines removed)
 
 ---
 

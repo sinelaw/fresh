@@ -142,6 +142,19 @@ pub enum PluginCommand {
         line: Option<usize>,    // 1-indexed, None = go to start
         column: Option<usize>,  // 1-indexed, None = go to line start
     },
+
+    /// Start a prompt (minibuffer) with a custom type identifier
+    /// This allows plugins to create interactive prompts
+    StartPrompt {
+        label: String,
+        prompt_type: String,  // e.g., "git-grep", "git-find-file"
+    },
+
+    /// Update the suggestions list for the current prompt
+    /// Uses the editor's Suggestion type
+    SetPromptSuggestions {
+        suggestions: Vec<crate::commands::Suggestion>,
+    },
 }
 
 /// Plugin API context - provides safe access to editor functionality
@@ -265,6 +278,21 @@ impl PluginApi {
         column: Option<usize>,
     ) -> Result<(), String> {
         self.send_command(PluginCommand::OpenFileAtLocation { path, line, column })
+    }
+
+    /// Start a prompt (minibuffer) with a custom type identifier
+    /// The prompt_type is used to filter hooks in plugin code
+    pub fn start_prompt(&self, label: String, prompt_type: String) -> Result<(), String> {
+        self.send_command(PluginCommand::StartPrompt { label, prompt_type })
+    }
+
+    /// Set the suggestions for the current prompt
+    /// This updates the prompt's autocomplete/selection list
+    pub fn set_prompt_suggestions(
+        &self,
+        suggestions: Vec<crate::commands::Suggestion>,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::SetPromptSuggestions { suggestions })
     }
 
     // === Query Methods ===

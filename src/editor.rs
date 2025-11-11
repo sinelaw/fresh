@@ -1915,13 +1915,26 @@ impl Editor {
     pub fn cancel_prompt(&mut self) {
         // Determine prompt type and reset appropriate history navigation
         if let Some(ref prompt) = self.prompt {
-            match prompt.prompt_type {
+            match &prompt.prompt_type {
                 PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {
                     self.search_history.reset_navigation();
                     self.clear_search_highlights();
                 }
                 PromptType::Replace { .. } | PromptType::QueryReplace { .. } => {
                     self.replace_history.reset_navigation();
+                }
+                PromptType::Plugin { custom_type } => {
+                    // Fire plugin hook for prompt cancellation
+                    if let Some(plugin_manager) = &mut self.plugin_manager {
+                        use crate::hooks::HookArgs;
+                        plugin_manager.run_hook(
+                            "prompt-cancelled",
+                            &HookArgs::PromptCancelled {
+                                prompt_type: custom_type.clone(),
+                                input: prompt.input.clone(),
+                            },
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -2041,6 +2054,19 @@ impl Editor {
             PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {
                 // Update incremental search highlights as user types
                 self.update_search_highlights(&input);
+            }
+            PromptType::Plugin { custom_type } => {
+                // Fire plugin hook for prompt input change
+                if let Some(plugin_manager) = &mut self.plugin_manager {
+                    use crate::hooks::HookArgs;
+                    plugin_manager.run_hook(
+                        "prompt-changed",
+                        &HookArgs::PromptChanged {
+                            prompt_type: custom_type,
+                            input,
+                        },
+                    );
+                }
             }
             _ => {}
         }
@@ -2665,6 +2691,40 @@ impl Editor {
                     state
                         .viewport
                         .ensure_visible(&mut state.buffer, state.cursors.primary());
+                }
+            }
+            PluginCommand::StartPrompt { label, prompt_type } => {
+                // Create a plugin-controlled prompt
+                use crate::prompt::{Prompt, PromptType};
+                self.prompt = Some(Prompt::new(
+                    label,
+                    PromptType::Plugin {
+                        custom_type: prompt_type.clone(),
+                    },
+                ));
+
+                // Fire the prompt-changed hook immediately with empty input
+                // This allows plugins to initialize the prompt state
+                if let Some(plugin_manager) = &mut self.plugin_manager {
+                    use crate::hooks::HookArgs;
+                    plugin_manager.run_hook(
+                        "prompt-changed",
+                        &HookArgs::PromptChanged {
+                            prompt_type: prompt_type.clone(),
+                            input: String::new(),
+                        },
+                    );
+                }
+            }
+            PluginCommand::SetPromptSuggestions { suggestions } => {
+                // Update the current prompt's suggestions
+                if let Some(prompt) = &mut self.prompt {
+                    prompt.suggestions = suggestions;
+                    prompt.selected_suggestion = if prompt.suggestions.is_empty() {
+                        None
+                    } else {
+                        Some(0) // Select first suggestion by default
+                    };
                 }
             }
         }
@@ -3665,6 +3725,24 @@ impl Editor {
                                 self.set_status_message(format!("Error opening file: {e}"));
                             } else {
                                 self.set_status_message(format!("Opened: {input}"));
+                            }
+                        }
+                        PromptType::Plugin { custom_type } => {
+                            // Fire plugin hook for prompt confirmation
+                            if let Some(plugin_manager) = &mut self.plugin_manager {
+                                use crate::hooks::HookArgs;
+
+                                // Get the prompt to extract selected index
+                                let selected_index = self.prompt.as_ref().and_then(|p| p.selected_suggestion);
+
+                                plugin_manager.run_hook(
+                                    "prompt-confirmed",
+                                    &HookArgs::PromptConfirmed {
+                                        prompt_type: custom_type,
+                                        input,
+                                        selected_index,
+                                    },
+                                );
                             }
                         }
                     }

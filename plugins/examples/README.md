@@ -103,16 +103,85 @@ editor.open_file({
 
 This is particularly useful for implementing features like git grep, LSP go-to-definition, etc.
 
+#### editor.start_prompt(options) and editor.set_prompt_suggestions(suggestions)
+Create interactive prompts with hook-based event handling.
+
+```lua
+-- Start a prompt
+editor.start_prompt({
+    label = "Git grep: ",
+    prompt_type = "git-grep"  -- Custom identifier for hook filtering
+})
+
+-- React to input changes via hooks
+editor.on("prompt-changed", function(args)
+    if args.prompt_type == "git-grep" then
+        local query = args.input
+
+        -- Spawn async git grep
+        editor.spawn("git", {"grep", "-n", "--column", "-I", "--", query},
+            function(stdout, stderr, exit_code)
+                if exit_code == 0 then
+                    local results = parse_git_grep(stdout)
+
+                    -- Update suggestions
+                    editor.set_prompt_suggestions(results)
+                end
+            end)
+    end
+end)
+
+-- Handle selection
+editor.on("prompt-confirmed", function(args)
+    if args.prompt_type == "git-grep" and args.selected_index then
+        local selected = prompt_suggestions[args.selected_index + 1] -- Lua is 1-indexed
+        editor.open_file({
+            path = selected.file,
+            line = selected.line,
+            column = selected.column
+        })
+    end
+end)
+```
+
+Suggestions format:
+```lua
+editor.set_prompt_suggestions({
+    {
+        text = "src/main.rs:42:10: match found here",
+        value = "src/main.rs:42:10",  -- Optional: value to use when selected
+        description = "Path to file",  -- Optional
+        disabled = false,              -- Optional: grey out this suggestion
+        keybinding = nil               -- Optional: show keyboard shortcut
+    },
+    -- ... more suggestions
+})
+```
+
+This hook-based approach is simpler than callbacks and matches Emacs' extensibility model.
+
 ## Available Hooks
 
+### File Hooks
 - `before-file-open` - Before a file is opened
 - `after-file-open` - After a file is successfully opened
 - `before-file-save` - Before a file is saved
 - `after-file-save` - After a file is saved
+
+### Edit Hooks
 - `after-insert` - After text is inserted
 - `after-delete` - After text is deleted
+
+### Command Hooks
 - `pre-command` - Before a command executes
 - `post-command` - After a command executes
+
+### Prompt Hooks (NEW - Jan 2025)
+- `prompt-changed` - User typed/edited prompt input (args: `prompt_type`, `input`)
+- `prompt-confirmed` - User pressed Enter (args: `prompt_type`, `input`, `selected_index`)
+- `prompt-cancelled` - User pressed Escape/Ctrl+G (args: `prompt_type`, `input`)
+
+These prompt hooks enable plugins to create interactive prompts like git grep, file finders, etc.
 
 ## Writing Your Own Plugin
 
