@@ -1190,24 +1190,33 @@ fn test_lsp_typing_performance_with_many_diagnostics() -> std::io::Result<()> {
     // This tests the apply_diagnostics_to_state function directly
     let state = harness.editor_mut().active_state_mut();
 
-    let diagnostics_json = format!(r#"{{
+    let diagnostics_json = format!(
+        r#"{{
         "uri": "file:///test.rs",
         "diagnostics": [
             {}
         ]
-    }}"#, (0..DIAGNOSTIC_COUNT).map(|i| {
-        let line = i / 2;
-        let char_start = (i % 2) * 10;
-        let char_end = char_start + 5;
-        format!(r#"{{
+    }}"#,
+        (0..DIAGNOSTIC_COUNT)
+            .map(|i| {
+                let line = i / 2;
+                let char_start = (i % 2) * 10;
+                let char_end = char_start + 5;
+                format!(
+                    r#"{{
             "range": {{
                 "start": {{"line": {}, "character": {}}},
                 "end": {{"line": {}, "character": {}}}
             }},
             "severity": 1,
             "message": "Error {} from fake LSP"
-        }}"#, line, char_start, line, char_end, i)
-    }).collect::<Vec<_>>().join(","));
+        }}"#,
+                    line, char_start, line, char_end, i
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    );
 
     // Parse diagnostics
     let diag_params: lsp_types::PublishDiagnosticsParams =
@@ -1227,7 +1236,10 @@ fn test_lsp_typing_performance_with_many_diagnostics() -> std::io::Result<()> {
 
     let apply_duration = start.elapsed();
 
-    println!("⏱  Applying {} diagnostics took: {:?}", DIAGNOSTIC_COUNT, apply_duration);
+    println!(
+        "⏱  Applying {} diagnostics took: {:?}",
+        DIAGNOSTIC_COUNT, apply_duration
+    );
 
     harness.render()?;
 
@@ -1238,8 +1250,10 @@ fn test_lsp_typing_performance_with_many_diagnostics() -> std::io::Result<()> {
         "Expected diagnostics to be shown in UI"
     );
 
-    println!("✅ First application completed in {:?} with {} diagnostics",
-             apply_duration, DIAGNOSTIC_COUNT);
+    println!(
+        "✅ First application completed in {:?} with {} diagnostics",
+        apply_duration, DIAGNOSTIC_COUNT
+    );
 
     // Test repeated application (simulates typing with LSP enabled)
     // With caching, subsequent applications with same diagnostics should be instant
@@ -1259,19 +1273,28 @@ fn test_lsp_typing_performance_with_many_diagnostics() -> std::io::Result<()> {
         total_reapply_time += reapply_duration;
 
         if i == 0 {
-            println!("⏱  Re-applying {} diagnostics (iteration 1, cached) took: {:?}", DIAGNOSTIC_COUNT, reapply_duration);
+            println!(
+                "⏱  Re-applying {} diagnostics (iteration 1, cached) took: {:?}",
+                DIAGNOSTIC_COUNT, reapply_duration
+            );
         }
     }
 
     let avg_reapply_time = total_reapply_time / REAPPLY_COUNT as u32;
-    println!("⏱  Average re-application time over {} iterations (cached): {:?}", REAPPLY_COUNT, avg_reapply_time);
+    println!(
+        "⏱  Average re-application time over {} iterations (cached): {:?}",
+        REAPPLY_COUNT, avg_reapply_time
+    );
 
     // With caching, the average should be very close to 0 (sub-millisecond)
     println!("💡 Expected: First iteration ~236ms (not cached yet), subsequent ~0ms (cached)");
     if avg_reapply_time.as_millis() < 50 {
         println!("✅ Cache is working! Average time is very low.");
     } else {
-        println!("⚠️  Cache might not be working optimally. Expected <50ms average, got {:?}", avg_reapply_time);
+        println!(
+            "⚠️  Cache might not be working optimally. Expected <50ms average, got {:?}",
+            avg_reapply_time
+        );
     }
 
     // Verify that re-application is working (diagnostics still showing)
@@ -1282,7 +1305,10 @@ fn test_lsp_typing_performance_with_many_diagnostics() -> std::io::Result<()> {
         "Diagnostics should still be present after re-application"
     );
 
-    println!("✅ Performance test completed! Diagnostics re-applied {} times", REAPPLY_COUNT);
+    println!(
+        "✅ Performance test completed! Diagnostics re-applied {} times",
+        REAPPLY_COUNT
+    );
 
     Ok(())
 }

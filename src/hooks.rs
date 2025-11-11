@@ -92,10 +92,7 @@ pub enum HookArgs {
     },
 
     /// Prompt input changed (user typed/edited)
-    PromptChanged {
-        prompt_type: String,
-        input: String,
-    },
+    PromptChanged { prompt_type: String, input: String },
 
     /// Prompt was confirmed (user pressed Enter)
     PromptConfirmed {
@@ -105,10 +102,7 @@ pub enum HookArgs {
     },
 
     /// Prompt was cancelled (user pressed Escape/Ctrl+G)
-    PromptCancelled {
-        prompt_type: String,
-        input: String,
-    },
+    PromptCancelled { prompt_type: String, input: String },
 }
 
 /// Type for hook callbacks

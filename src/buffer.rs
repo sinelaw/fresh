@@ -93,7 +93,10 @@ impl Buffer {
             file_path: None,
             modified: false,
             line_cache: LineCache::new(),
-            line_anchor_manager: crate::line_anchor::LineAnchorManager::new(0, large_file_threshold),
+            line_anchor_manager: crate::line_anchor::LineAnchorManager::new(
+                0,
+                large_file_threshold,
+            ),
             line_markers: RefCell::new(crate::marker::MarkerList::new()),
         }
     }
@@ -111,14 +114,19 @@ impl Buffer {
             file_path: None,
             modified: false,
             line_cache: LineCache::new(),
-            line_anchor_manager: crate::line_anchor::LineAnchorManager::new(len, large_file_threshold),
+            line_anchor_manager: crate::line_anchor::LineAnchorManager::new(
+                len,
+                large_file_threshold,
+            ),
             line_markers: RefCell::new(crate::marker::MarkerList::new()),
         }
     }
 
-
     /// Load a buffer from a file
-    pub fn load_from_file<P: AsRef<Path>>(path: P, large_file_threshold: usize) -> io::Result<Self> {
+    pub fn load_from_file<P: AsRef<Path>>(
+        path: P,
+        large_file_threshold: usize,
+    ) -> io::Result<Self> {
         let path = path.as_ref();
         let mut file = std::fs::File::open(path)?;
         let mut contents = Vec::new();
@@ -135,7 +143,10 @@ impl Buffer {
             file_path: Some(path.to_path_buf()),
             modified: false,
             line_cache: LineCache::new(),
-            line_anchor_manager: crate::line_anchor::LineAnchorManager::new(len, large_file_threshold),
+            line_anchor_manager: crate::line_anchor::LineAnchorManager::new(
+                len,
+                large_file_threshold,
+            ),
             line_markers: RefCell::new(crate::marker::MarkerList::new()),
         })
     }
@@ -175,7 +186,9 @@ impl Buffer {
         self.handle_line_cache_insertion(pos, text.len(), newlines);
 
         // Update line anchors with lazy delta
-        self.line_markers.borrow_mut().adjust_for_insert(pos, text.len());
+        self.line_markers
+            .borrow_mut()
+            .adjust_for_insert(pos, text.len());
         self.line_anchor_manager.update_file_size(self.len());
     }
 
@@ -196,7 +209,9 @@ impl Buffer {
         self.handle_line_cache_deletion(range.start, range.len(), newlines);
 
         // Update line anchors with lazy delta
-        self.line_markers.borrow_mut().adjust_for_delete(range.start, range.len());
+        self.line_markers
+            .borrow_mut()
+            .adjust_for_delete(range.start, range.len());
         self.line_anchor_manager.update_file_size(self.len());
     }
 
@@ -888,12 +903,13 @@ impl Buffer {
     /// from the nearest cached line, instead of O(n) from the start of the file.
     pub fn position_to_lsp_position(&self, byte_pos: usize) -> (usize, usize) {
         // Find the nearest cached line at or before byte_pos for fast lookup
-        let (start_byte, start_line) = if let Some(info) = self.line_cache.get_nearest_before(byte_pos) {
-            (info.byte_offset, info.line_number)
-        } else {
-            // No cache entry, start from beginning (rare case)
-            (0, 0)
-        };
+        let (start_byte, start_line) =
+            if let Some(info) = self.line_cache.get_nearest_before(byte_pos) {
+                (info.byte_offset, info.line_number)
+            } else {
+                // No cache entry, start from beginning (rare case)
+                (0, 0)
+            };
 
         // Start iterating from the nearest cached position instead of 0
         let mut iter = self.line_iterator(start_byte);
@@ -973,9 +989,9 @@ impl Buffer {
     /// modify it (to keep &self). The cache is populated during normal navigation/editing.
     pub fn lsp_position_to_byte(&self, line: usize, utf16_offset: usize) -> usize {
         // Use line anchor system to find the line start
-        let line_start = self
-            .line_anchor_manager
-            .line_to_byte(line, self, &mut self.line_markers.borrow_mut());
+        let line_start =
+            self.line_anchor_manager
+                .line_to_byte(line, self, &mut self.line_markers.borrow_mut());
 
         // Get the line content starting from line_start
         let mut iter = self.line_iterator(line_start);

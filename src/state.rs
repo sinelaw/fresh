@@ -78,7 +78,12 @@ impl EditorState {
     }
 
     /// Create an editor state from a file
-    pub fn from_file(path: &std::path::Path, width: u16, height: u16, large_file_threshold: usize) -> std::io::Result<Self> {
+    pub fn from_file(
+        path: &std::path::Path,
+        width: u16,
+        height: u16,
+        large_file_threshold: usize,
+    ) -> std::io::Result<Self> {
         // Account for tab bar (1 line) and status bar (1 line)
         let content_height = height.saturating_sub(2);
         let buffer = Buffer::load_from_file(path, large_file_threshold)?;
@@ -577,7 +582,8 @@ mod tests {
 
     #[test]
     fn test_apply_insert() {
-        let mut state = EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
         let cursor_id = state.cursors.primary_id();
 
         state.apply(&Event::Insert {
@@ -593,7 +599,8 @@ mod tests {
 
     #[test]
     fn test_apply_delete() {
-        let mut state = EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
         let cursor_id = state.cursors.primary_id();
 
         // Insert then delete
@@ -615,7 +622,8 @@ mod tests {
 
     #[test]
     fn test_apply_move_cursor() {
-        let mut state = EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
         let cursor_id = state.cursors.primary_id();
 
         state.apply(&Event::Insert {
@@ -639,7 +647,8 @@ mod tests {
 
     #[test]
     fn test_apply_add_cursor() {
-        let mut state = EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
         let cursor_id = CursorId(1);
 
         state.apply(&Event::AddCursor {
@@ -653,7 +662,8 @@ mod tests {
 
     #[test]
     fn test_apply_many() {
-        let mut state = EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
         let cursor_id = state.cursors.primary_id();
 
         let events = vec![
@@ -676,7 +686,8 @@ mod tests {
 
     #[test]
     fn test_cursor_adjustment_after_insert() {
-        let mut state = EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
         let cursor_id = state.cursors.primary_id();
 
         // Add a second cursor at position 5

@@ -251,7 +251,8 @@ done
         diagnostics_json.push(']');
 
         // Create a Bash script that sends many diagnostics on didChange
-        let script = format!(r#"#!/bin/bash
+        let script = format!(
+            r#"#!/bin/bash
 
 # Function to read a message
 read_message() {{
@@ -311,7 +312,9 @@ while true; do
             ;;
     esac
 done
-"#, diagnostics = diagnostics_json);
+"#,
+            diagnostics = diagnostics_json
+        );
 
         // Write script to a temporary file
         let script_path = std::env::temp_dir().join("fake_lsp_server_many_diags.sh");

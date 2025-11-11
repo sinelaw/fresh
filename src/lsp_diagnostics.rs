@@ -168,10 +168,7 @@ pub fn apply_diagnostics_to_state(
     use std::collections::HashSet;
 
     // Build set of incoming diagnostic IDs
-    let incoming_ids: HashSet<String> = diagnostics
-        .iter()
-        .map(|d| diagnostic_id(d))
-        .collect();
+    let incoming_ids: HashSet<String> = diagnostics.iter().map(|d| diagnostic_id(d)).collect();
 
     // Find existing diagnostic overlay IDs
     let existing_ids: Vec<String> = state
@@ -257,7 +254,6 @@ pub fn apply_diagnostics_to_state(
         );
     }
 }
-
 
 #[cfg(test)]
 mod tests {

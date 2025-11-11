@@ -1163,7 +1163,8 @@ mod tests {
 
     #[test]
     fn test_backspace_deletes_newline() {
-        let mut state = EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
 
         // Insert "Hello\nWorld"
         state.apply(&Event::Insert {

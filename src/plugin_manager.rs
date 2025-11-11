@@ -522,11 +522,7 @@ impl PluginManager {
             };
 
             api_clone
-                .open_file_at_location(
-                    std::path::PathBuf::from(path),
-                    line,
-                    column,
-                )
+                .open_file_at_location(std::path::PathBuf::from(path), line, column)
                 .map_err(|e| mlua::Error::RuntimeError(e))
         })?;
         editor.set("open_file", open_file)?;
@@ -552,34 +548,35 @@ impl PluginManager {
         // editor.set_prompt_suggestions({...})
         // Updates the suggestions list for the current prompt
         // Each suggestion should be a table with: {text = "...", description = "...", value = "...", disabled = false, keybinding = "..."}
-        let set_prompt_suggestions = lua.create_function(move |_lua, suggestions: mlua::Table| {
-            use crate::commands::Suggestion;
+        let set_prompt_suggestions =
+            lua.create_function(move |_lua, suggestions: mlua::Table| {
+                use crate::commands::Suggestion;
 
-            let mut result_suggestions = Vec::new();
+                let mut result_suggestions = Vec::new();
 
-            // Iterate through the Lua table (1-indexed)
-            for pair in suggestions.pairs::<usize, mlua::Table>() {
-                let (_, sugg_table) = pair?;
+                // Iterate through the Lua table (1-indexed)
+                for pair in suggestions.pairs::<usize, mlua::Table>() {
+                    let (_, sugg_table) = pair?;
 
-                let text: String = sugg_table.get("text")?;
-                let description: Option<String> = sugg_table.get("description").ok();
-                let value: Option<String> = sugg_table.get("value").ok();
-                let disabled: Option<bool> = sugg_table.get("disabled").ok();
-                let keybinding: Option<String> = sugg_table.get("keybinding").ok();
+                    let text: String = sugg_table.get("text")?;
+                    let description: Option<String> = sugg_table.get("description").ok();
+                    let value: Option<String> = sugg_table.get("value").ok();
+                    let disabled: Option<bool> = sugg_table.get("disabled").ok();
+                    let keybinding: Option<String> = sugg_table.get("keybinding").ok();
 
-                result_suggestions.push(Suggestion {
-                    text,
-                    description,
-                    value,
-                    disabled: disabled.unwrap_or(false),
-                    keybinding,
-                });
-            }
+                    result_suggestions.push(Suggestion {
+                        text,
+                        description,
+                        value,
+                        disabled: disabled.unwrap_or(false),
+                        keybinding,
+                    });
+                }
 
-            api_clone
-                .set_prompt_suggestions(result_suggestions)
-                .map_err(|e| mlua::Error::RuntimeError(e))
-        })?;
+                api_clone
+                    .set_prompt_suggestions(result_suggestions)
+                    .map_err(|e| mlua::Error::RuntimeError(e))
+            })?;
         editor.set("set_prompt_suggestions", set_prompt_suggestions)?;
 
         // NOTE: We intentionally do NOT provide a get_buffer_content() API

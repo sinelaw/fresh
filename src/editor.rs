@@ -404,7 +404,11 @@ impl Editor {
         let mut event_logs = HashMap::new();
 
         let buffer_id = BufferId(0);
-        let mut state = EditorState::new(width, height, config.editor.large_file_threshold_bytes as usize);
+        let mut state = EditorState::new(
+            width,
+            height,
+            config.editor.large_file_threshold_bytes as usize,
+        );
         state.viewport.line_wrap_enabled = config.editor.line_wrap;
         tracing::info!(
             "EditorState created with viewport height: {}",
@@ -587,7 +591,12 @@ impl Editor {
             id
         };
 
-        let mut state = EditorState::from_file(path, self.terminal_width, self.terminal_height, self.config.editor.large_file_threshold_bytes as usize)?;
+        let mut state = EditorState::from_file(
+            path,
+            self.terminal_width,
+            self.terminal_height,
+            self.config.editor.large_file_threshold_bytes as usize,
+        )?;
         state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
@@ -699,7 +708,11 @@ impl Editor {
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
 
-        let mut state = EditorState::new(self.terminal_width, self.terminal_height, self.config.editor.large_file_threshold_bytes as usize);
+        let mut state = EditorState::new(
+            self.terminal_width,
+            self.terminal_height,
+            self.config.editor.large_file_threshold_bytes as usize,
+        );
         state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
@@ -1952,10 +1965,7 @@ impl Editor {
         if let Some(prompt) = self.prompt.take() {
             let selected_index = prompt.selected_suggestion;
             // For command prompts, prefer the selected suggestion over raw input
-            let final_input = if matches!(
-                prompt.prompt_type,
-                PromptType::Command
-            ) {
+            let final_input = if matches!(prompt.prompt_type, PromptType::Command) {
                 // For Command, use the selected suggestion if any
                 if let Some(selected_idx) = prompt.selected_suggestion {
                     if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
@@ -2231,7 +2241,10 @@ impl Editor {
                             // Update LSP status to show progress
                             self.update_lsp_status_from_progress();
                         }
-                        LspProgressValue::Report { message, percentage } => {
+                        LspProgressValue::Report {
+                            message,
+                            percentage,
+                        } => {
                             // Update existing progress
                             if let Some(info) = self.lsp_progress.get_mut(&token) {
                                 info.message = message;
@@ -5002,7 +5015,9 @@ impl Editor {
         // This batches multiple cursor movements into a single viewport update
         if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
             let primary_cursor = *state.cursors.primary();
-            state.viewport.sync_with_cursor(&mut state.buffer, &primary_cursor);
+            state
+                .viewport
+                .sync_with_cursor(&mut state.buffer, &primary_cursor);
         }
 
         // If help is visible, render help page instead
@@ -5312,9 +5327,15 @@ impl Editor {
         // Calculate the incremental change from the event
         let (range, text) = match event {
             Event::Insert { position, text, .. } => {
-                tracing::debug!("notify_lsp_change: processing Insert at position {}", position);
+                tracing::debug!(
+                    "notify_lsp_change: processing Insert at position {}",
+                    position
+                );
                 // For insert: create a zero-width range at the insertion point
-                let (line, character) = self.active_state().buffer.position_to_lsp_position(*position);
+                let (line, character) = self
+                    .active_state()
+                    .buffer
+                    .position_to_lsp_position(*position);
                 let lsp_pos = Position::new(line as u32, character as u32);
                 let lsp_range = LspRange::new(lsp_pos, lsp_pos);
                 (Some(lsp_range), text.clone())
@@ -5322,8 +5343,14 @@ impl Editor {
             Event::Delete { range, .. } => {
                 tracing::debug!("notify_lsp_change: processing Delete range {:?}", range);
                 // For delete: create a range from start to end, send empty string
-                let (start_line, start_char) = self.active_state().buffer.position_to_lsp_position(range.start);
-                let (end_line, end_char) = self.active_state().buffer.position_to_lsp_position(range.end);
+                let (start_line, start_char) = self
+                    .active_state()
+                    .buffer
+                    .position_to_lsp_position(range.start);
+                let (end_line, end_char) = self
+                    .active_state()
+                    .buffer
+                    .position_to_lsp_position(range.end);
                 let lsp_range = LspRange::new(
                     Position::new(start_line as u32, start_char as u32),
                     Position::new(end_line as u32, end_char as u32),
@@ -6732,7 +6759,10 @@ mod tests {
         assert_eq!(lsp_range.start.character, 0);
         assert_eq!(lsp_range.end.line, 0);
         assert_eq!(lsp_range.end.character, 0);
-        assert_eq!(lsp_range.start, lsp_range.end, "Insert should have zero-width range");
+        assert_eq!(
+            lsp_range.start, lsp_range.end,
+            "Insert should have zero-width range"
+        );
 
         // Test insertion at middle of first line (position 3, after "hel")
         let position = 3;
@@ -6778,7 +6808,10 @@ mod tests {
         assert_eq!(lsp_range.start.character, 1);
         assert_eq!(lsp_range.end.line, 0);
         assert_eq!(lsp_range.end.character, 5);
-        assert_ne!(lsp_range.start, lsp_range.end, "Delete should have non-zero range");
+        assert_ne!(
+            lsp_range.start, lsp_range.end,
+            "Delete should have non-zero range"
+        );
 
         // Test deletion across lines (delete "o\nw" - positions 4-8)
         let range_start = 4;
@@ -6812,7 +6845,10 @@ mod tests {
         let (line, character) = buffer.position_to_lsp_position(9);
 
         assert_eq!(line, 0);
-        assert_eq!(character, 7, "Should be 2 (emoji) + 5 (text) = 7 UTF-16 code units");
+        assert_eq!(
+            character, 7,
+            "Should be 2 (emoji) + 5 (text) = 7 UTF-16 code units"
+        );
 
         // Test with multi-byte character (é is 2 bytes in UTF-8, 1 code unit in UTF-16)
         let buffer = Buffer::from_str_test("café");
@@ -6836,10 +6872,7 @@ mod tests {
 
         // Incremental insert
         let insert_change = TextDocumentContentChangeEvent {
-            range: Some(LspRange::new(
-                Position::new(0, 5),
-                Position::new(0, 5),
-            )),
+            range: Some(LspRange::new(Position::new(0, 5), Position::new(0, 5))),
             range_length: None,
             text: "NEW".to_string(),
         };
@@ -6847,14 +6880,14 @@ mod tests {
         assert!(insert_change.range.is_some());
         assert_eq!(insert_change.text, "NEW");
         let range = insert_change.range.unwrap();
-        assert_eq!(range.start, range.end, "Insert should have zero-width range");
+        assert_eq!(
+            range.start, range.end,
+            "Insert should have zero-width range"
+        );
 
         // Incremental delete
         let delete_change = TextDocumentContentChangeEvent {
-            range: Some(LspRange::new(
-                Position::new(0, 2),
-                Position::new(0, 7),
-            )),
+            range: Some(LspRange::new(Position::new(0, 2), Position::new(0, 7))),
             range_length: None,
             text: String::new(),
         };

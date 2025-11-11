@@ -708,7 +708,10 @@ impl LspTask {
         let async_tx_reader = async_tx.clone();
         let language_clone_reader = language_clone.clone();
         tokio::spawn(async move {
-            tracing::info!("LSP stdout reader task started for {}", language_clone_reader);
+            tracing::info!(
+                "LSP stdout reader task started for {}",
+                language_clone_reader
+            );
             loop {
                 match read_message_from_stdout(&mut stdout).await {
                     Ok(message) => {
@@ -738,7 +741,10 @@ impl LspTask {
                     }
                 }
             }
-            tracing::info!("LSP stdout reader task exiting for {}", language_clone_reader);
+            tracing::info!(
+                "LSP stdout reader task exiting for {}",
+                language_clone_reader
+            );
         });
 
         // Sequential command processing loop
@@ -1291,7 +1297,8 @@ impl LspTask {
                     if let Ok(msg) =
                         serde_json::from_value::<serde_json::Map<String, Value>>(params)
                     {
-                        let message_type_num = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(3);
+                        let message_type_num =
+                            msg.get("type").and_then(|v| v.as_i64()).unwrap_or(3);
                         let message = msg
                             .get("message")
                             .and_then(|v| v.as_str())
@@ -1327,7 +1334,8 @@ impl LspTask {
                     if let Ok(msg) =
                         serde_json::from_value::<serde_json::Map<String, Value>>(params)
                     {
-                        let message_type_num = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(4);
+                        let message_type_num =
+                            msg.get("type").and_then(|v| v.as_i64()).unwrap_or(4);
                         let message = msg
                             .get("message")
                             .and_then(|v| v.as_str())
@@ -1426,7 +1434,10 @@ impl LspTask {
                                         percentage
                                     );
 
-                                    Some(LspProgressValue::Report { message, percentage })
+                                    Some(LspProgressValue::Report {
+                                        message,
+                                        percentage,
+                                    })
                                 }
                                 Some("end") => {
                                     let message = value_obj
@@ -1601,7 +1612,9 @@ async fn handle_notification_dispatch(
                     // Log it as well
                     match message_type {
                         LspMessageType::Error => tracing::error!("LSP ({}): {}", language, message),
-                        LspMessageType::Warning => tracing::warn!("LSP ({}): {}", language, message),
+                        LspMessageType::Warning => {
+                            tracing::warn!("LSP ({}): {}", language, message)
+                        }
                         LspMessageType::Info => tracing::info!("LSP ({}): {}", language, message),
                         LspMessageType::Log => tracing::debug!("LSP ({}): {}", language, message),
                     }
@@ -1635,7 +1648,9 @@ async fn handle_notification_dispatch(
                     // Log it as well
                     match message_type {
                         LspMessageType::Error => tracing::error!("LSP ({}): {}", language, message),
-                        LspMessageType::Warning => tracing::warn!("LSP ({}): {}", language, message),
+                        LspMessageType::Warning => {
+                            tracing::warn!("LSP ({}): {}", language, message)
+                        }
                         LspMessageType::Info => tracing::info!("LSP ({}): {}", language, message),
                         LspMessageType::Log => tracing::debug!("LSP ({}): {}", language, message),
                     }
@@ -1651,7 +1666,9 @@ async fn handle_notification_dispatch(
         }
         "$/progress" => {
             if let Some(params) = notification.params {
-                if let Ok(progress) = serde_json::from_value::<serde_json::Map<String, Value>>(params) {
+                if let Ok(progress) =
+                    serde_json::from_value::<serde_json::Map<String, Value>>(params)
+                {
                     let token = progress
                         .get("token")
                         .and_then(|v| {
@@ -1715,7 +1732,10 @@ async fn handle_notification_dispatch(
                                     percentage
                                 );
 
-                                Some(LspProgressValue::Report { message, percentage })
+                                Some(LspProgressValue::Report {
+                                    message,
+                                    percentage,
+                                })
                             }
                             Some("end") => {
                                 let message = value_obj

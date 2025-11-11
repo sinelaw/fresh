@@ -502,10 +502,15 @@ fn test_overlay_undo_redo() {
 /// Test LSP diagnostic to overlay conversion
 #[test]
 fn test_lsp_diagnostic_to_overlay() {
-    use fresh::{buffer::Buffer, config::LARGE_FILE_THRESHOLD_BYTES, lsp_diagnostics::diagnostic_to_overlay};
+    use fresh::{
+        buffer::Buffer, config::LARGE_FILE_THRESHOLD_BYTES, lsp_diagnostics::diagnostic_to_overlay,
+    };
     use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 
-    let buffer = Buffer::from_str("let x = 5;\nlet y = 10;", LARGE_FILE_THRESHOLD_BYTES as usize);
+    let buffer = Buffer::from_str(
+        "let x = 5;\nlet y = 10;",
+        LARGE_FILE_THRESHOLD_BYTES as usize,
+    );
 
     // Create an error diagnostic on first line
     let diagnostic = Diagnostic {

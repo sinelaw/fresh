@@ -139,15 +139,15 @@ pub enum PluginCommand {
     /// Line and column are 1-indexed to match git grep output
     OpenFileAtLocation {
         path: PathBuf,
-        line: Option<usize>,    // 1-indexed, None = go to start
-        column: Option<usize>,  // 1-indexed, None = go to line start
+        line: Option<usize>,   // 1-indexed, None = go to start
+        column: Option<usize>, // 1-indexed, None = go to line start
     },
 
     /// Start a prompt (minibuffer) with a custom type identifier
     /// This allows plugins to create interactive prompts
     StartPrompt {
         label: String,
-        prompt_type: String,  // e.g., "git-grep", "git-find-file"
+        prompt_type: String, // e.g., "git-grep", "git-find-file"
     },
 
     /// Update the suggestions list for the current prompt

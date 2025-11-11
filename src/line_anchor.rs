@@ -2,7 +2,6 @@
 ///
 /// This module provides anchor-based line tracking that scales to huge files
 /// by using estimated anchors and sparse networks of line markers.
-
 use crate::buffer::Buffer;
 use crate::marker::{MarkerId, MarkerList};
 use crate::marker_tree::AnchorConfidence;
@@ -58,7 +57,12 @@ impl LineAnchorManager {
     ///
     /// Creates anchors as needed using estimation for huge jumps.
     /// Maximum scan distance: max(100 lines, 10KB)
-    pub fn line_to_byte(&self, line_num: usize, buffer: &Buffer, markers: &mut MarkerList) -> usize {
+    pub fn line_to_byte(
+        &self,
+        line_num: usize,
+        buffer: &Buffer,
+        markers: &mut MarkerList,
+    ) -> usize {
         // Try to find an exact anchor at this line
         if let Some((_, start, _, _)) = self.find_anchor_at_line(line_num, markers) {
             return start;
@@ -68,7 +72,9 @@ impl LineAnchorManager {
         // This avoids estimation errors on small files
         if self.file_size < self.large_file_threshold {
             // Check if we have an anchor at line 0
-            if let Some((anchor_id, anchor_start, _, anchor_line)) = markers.nearest_line_anchor_before_line(line_num) {
+            if let Some((anchor_id, anchor_start, _, anchor_line)) =
+                markers.nearest_line_anchor_before_line(line_num)
+            {
                 if anchor_line == 0 {
                     // Scan from line 0
                     return self.scan_forward_n_lines(
@@ -84,16 +90,17 @@ impl LineAnchorManager {
 
             // No anchor at line 0, create one and scan from there
             let line0_end = self.scan_to_next_newline(buffer, 0);
-            markers.create_line_anchor(0, line0_end, 0, crate::marker_tree::AnchorConfidence::Exact);
-            let anchor_id = markers.nearest_line_anchor_before_line(line_num + 1).unwrap().0;
-            return self.scan_forward_n_lines(
-                buffer,
-                markers,
-                anchor_id,
+            markers.create_line_anchor(
                 0,
+                line0_end,
                 0,
-                line_num,
+                crate::marker_tree::AnchorConfidence::Exact,
             );
+            let anchor_id = markers
+                .nearest_line_anchor_before_line(line_num + 1)
+                .unwrap()
+                .0;
+            return self.scan_forward_n_lines(buffer, markers, anchor_id, 0, 0, line_num);
         }
 
         // Find nearest anchor before this line
@@ -122,7 +129,12 @@ impl LineAnchorManager {
     /// Convert byte offset to line number
     ///
     /// Creates anchors as needed using estimation for huge jumps.
-    pub fn byte_to_line(&self, byte_offset: usize, buffer: &Buffer, markers: &mut MarkerList) -> usize {
+    pub fn byte_to_line(
+        &self,
+        byte_offset: usize,
+        buffer: &Buffer,
+        markers: &mut MarkerList,
+    ) -> usize {
         // Check if there's an anchor containing this byte
         let anchors = markers.query_line_anchors(byte_offset, byte_offset + 1);
         if let Some((_, _, _, line_num)) = anchors.first() {
@@ -192,7 +204,12 @@ impl LineAnchorManager {
         let line_end = self.scan_to_next_newline(buffer, estimated_byte);
 
         // Create anchor at this line boundary
-        markers.create_line_anchor(line_start, line_end, target_line, AnchorConfidence::Estimated);
+        markers.create_line_anchor(
+            line_start,
+            line_end,
+            target_line,
+            AnchorConfidence::Estimated,
+        );
 
         line_start
     }
@@ -329,7 +346,10 @@ mod tests {
     fn test_line_anchor_basic() {
         let buffer = Buffer::from_str_test("line1\nline2\nline3\n");
         let mut markers = MarkerList::new();
-        let manager = LineAnchorManager::new(buffer.len(), crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        let manager = LineAnchorManager::new(
+            buffer.len(),
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+        );
 
         // Convert line 0 to byte
         let byte = manager.line_to_byte(0, &buffer, &mut markers);
@@ -351,14 +371,20 @@ mod tests {
         let text = text.repeat(1000); // 1000 lines
         let buffer = Buffer::from_str_test(&text);
         let mut markers = MarkerList::new();
-        let manager = LineAnchorManager::new(buffer.len(), crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        let manager = LineAnchorManager::new(
+            buffer.len(),
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+        );
 
         // Jump to line 500 (no nearby anchors)
         let byte = manager.line_to_byte(500, &buffer, &mut markers);
 
         // Should have created an anchor
         let anchors = markers.query_line_anchors(0, buffer.len());
-        assert!(!anchors.is_empty(), "Should have created at least one anchor");
+        assert!(
+            !anchors.is_empty(),
+            "Should have created at least one anchor"
+        );
 
         // The byte position should be approximately correct
         // (within a few lines of the actual position)
@@ -376,7 +402,10 @@ mod tests {
         let text = "line\n".repeat(200);
         let buffer = Buffer::from_str_test(&text);
         let mut markers = MarkerList::new();
-        let manager = LineAnchorManager::new(buffer.len(), crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+        let manager = LineAnchorManager::new(
+            buffer.len(),
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+        );
 
         // Create anchor at line 0
         let _ = manager.line_to_byte(0, &buffer, &mut markers);
