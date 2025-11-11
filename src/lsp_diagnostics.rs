@@ -7,7 +7,84 @@ use crate::overlay::OverlayFace;
 use crate::state::EditorState;
 use lsp_types::{Diagnostic, DiagnosticSeverity};
 use ratatui::style::Color;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
+use std::sync::Mutex;
+
+/// Cache for diagnostic hash to avoid redundant updates
+/// Using a global static with Mutex for simplicity - could be moved to EditorState later
+static DIAGNOSTIC_CACHE: Mutex<Option<u64>> = Mutex::new(None);
+
+/// Compute a hash for a slice of diagnostics
+/// This hash is used to quickly detect if diagnostics have changed
+fn compute_diagnostic_hash(diagnostics: &[Diagnostic]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+
+    // Hash the count first
+    diagnostics.len().hash(&mut hasher);
+
+    // Hash each diagnostic's key properties
+    for diag in diagnostics {
+        // Hash the range (start/end line and character)
+        diag.range.start.line.hash(&mut hasher);
+        diag.range.start.character.hash(&mut hasher);
+        diag.range.end.line.hash(&mut hasher);
+        diag.range.end.character.hash(&mut hasher);
+
+        // Hash severity - match on all variants to get a hashable value
+        let severity_value: i32 = match diag.severity {
+            Some(DiagnosticSeverity::ERROR) => 1,
+            Some(DiagnosticSeverity::WARNING) => 2,
+            Some(DiagnosticSeverity::INFORMATION) => 3,
+            Some(DiagnosticSeverity::HINT) => 4,
+            None => 0,
+            _ => -1,
+        };
+        severity_value.hash(&mut hasher);
+
+        // Hash the message (most important part)
+        diag.message.hash(&mut hasher);
+
+        // Hash the source if present
+        if let Some(source) = &diag.source {
+            source.hash(&mut hasher);
+        }
+    }
+
+    hasher.finish()
+}
+
+/// Apply LSP diagnostics to editor state with hash-based caching
+///
+/// This is the recommended entry point that skips redundant work when diagnostics haven't changed.
+/// On a typical keystroke, diagnostics don't change, so this returns immediately.
+pub fn apply_diagnostics_to_state_cached(
+    state: &mut EditorState,
+    diagnostics: &[Diagnostic],
+    theme: &crate::theme::Theme,
+) {
+    // Compute hash of incoming diagnostics
+    let new_hash = compute_diagnostic_hash(diagnostics);
+
+    // Check if this is the same as last time
+    if let Ok(cache) = DIAGNOSTIC_CACHE.lock() {
+        if let Some(cached_hash) = *cache {
+            if cached_hash == new_hash {
+                // Diagnostics haven't changed, skip all work
+                return;
+            }
+        }
+    }
+
+    // Diagnostics have changed, do the expensive update
+    apply_diagnostics_to_state(state, diagnostics, theme);
+
+    // Update cache
+    if let Ok(mut cache) = DIAGNOSTIC_CACHE.lock() {
+        *cache = Some(new_hash);
+    }
+}
 
 /// Convert an LSP diagnostic to an overlay (range, face, priority)
 /// Returns None if the diagnostic cannot be converted (invalid range, etc.)

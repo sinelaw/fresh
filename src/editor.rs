@@ -2061,7 +2061,7 @@ impl Editor {
                         {
                             // Convert diagnostics to overlays
                             if let Some(state) = self.buffers.get_mut(buffer_id) {
-                                lsp_diagnostics::apply_diagnostics_to_state(
+                                lsp_diagnostics::apply_diagnostics_to_state_cached(
                                     state,
                                     &diagnostics,
                                     &self.theme,
