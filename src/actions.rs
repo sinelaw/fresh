@@ -3,6 +3,7 @@
 use crate::buffer::Buffer;
 use crate::event::Event;
 use crate::keybindings::Action;
+use crate::line_wrapping::{char_position_to_segment, wrap_line, WrapConfig};
 use crate::state::EditorState;
 use crate::word_navigation::{
     find_word_end, find_word_start, find_word_start_left, find_word_start_right,
@@ -39,6 +40,98 @@ fn max_cursor_position(buffer: &Buffer) -> usize {
         // Fallback to 0 if we can't find a line
         0
     }
+}
+
+/// Move cursor up in wrapped line context
+/// Returns new position if movement is possible within wrapped segments, None otherwise
+fn move_up_wrapped(
+    buffer: &Buffer,
+    cursor_position: usize,
+    goal_column: usize,
+    wrap_config: &WrapConfig,
+) -> Option<usize> {
+    let mut iter = buffer.line_iterator(cursor_position);
+    let current_line_start = iter.current_position();
+    let current_line_content = iter.next()?.1;
+
+    // Calculate position within current line (character offset)
+    let chars_before_cursor: usize = buffer
+        .slice(current_line_start..cursor_position)
+        .chars()
+        .count();
+
+    // Get line content without trailing newline for wrapping
+    let line_text = current_line_content.trim_end_matches('\n');
+    let segments = wrap_line(line_text, wrap_config);
+
+    // Find which segment we're in
+    let (current_seg_idx, _col_in_current_seg) = char_position_to_segment(chars_before_cursor, &segments);
+
+    // Try to move to previous segment within same line
+    if current_seg_idx > 0 {
+        let prev_seg = &segments[current_seg_idx - 1];
+        // Calculate target position in previous segment at the same column
+        let col_in_prev = goal_column.min(prev_seg.text.chars().count());
+        let target_char_offset = prev_seg.start_char_offset + col_in_prev;
+
+        // Convert character offset to byte offset
+        let target_byte_offset = buffer
+            .slice(current_line_start..current_line_start + line_text.len())
+            .chars()
+            .take(target_char_offset)
+            .map(|c| c.len_utf8())
+            .sum::<usize>();
+
+        return Some(current_line_start + target_byte_offset);
+    }
+
+    None // Can't move up within this line
+}
+
+/// Move cursor down in wrapped line context
+/// Returns new position if movement is possible within wrapped segments, None otherwise
+fn move_down_wrapped(
+    buffer: &Buffer,
+    cursor_position: usize,
+    goal_column: usize,
+    wrap_config: &WrapConfig,
+) -> Option<usize> {
+    let mut iter = buffer.line_iterator(cursor_position);
+    let current_line_start = iter.current_position();
+    let current_line_content = iter.next()?.1;
+
+    // Calculate position within current line (character offset)
+    let chars_before_cursor: usize = buffer
+        .slice(current_line_start..cursor_position)
+        .chars()
+        .count();
+
+    // Get line content without trailing newline for wrapping
+    let line_text = current_line_content.trim_end_matches('\n');
+    let segments = wrap_line(line_text, wrap_config);
+
+    // Find which segment we're in
+    let (current_seg_idx, _col_in_current_seg) = char_position_to_segment(chars_before_cursor, &segments);
+
+    // Try to move to next segment within same line
+    if current_seg_idx + 1 < segments.len() {
+        let next_seg = &segments[current_seg_idx + 1];
+        // Calculate target position in next segment at the same column
+        let col_in_next = goal_column.min(next_seg.text.chars().count());
+        let target_char_offset = next_seg.start_char_offset + col_in_next;
+
+        // Convert character offset to byte offset
+        let target_byte_offset = buffer
+            .slice(current_line_start..current_line_start + line_text.len())
+            .chars()
+            .take(target_char_offset)
+            .map(|c| c.len_utf8())
+            .sum::<usize>();
+
+        return Some(current_line_start + target_byte_offset);
+    }
+
+    None // Can't move down within this line
 }
 
 /// Convert an action into a sequence of events that can be applied to the editor state
@@ -267,25 +360,100 @@ pub fn action_to_events(
         }
 
         Action::MoveUp => {
+            // Check if line wrapping is enabled
+            let line_wrap_enabled = state.viewport.line_wrap_enabled;
+            let wrap_config = if line_wrap_enabled {
+                Some(WrapConfig::new(
+                    state.viewport.width as usize,
+                    state.viewport.gutter_width(&state.buffer),
+                    true, // has_scrollbar
+                ))
+            } else {
+                None
+            };
+
             for (cursor_id, cursor) in state.cursors.iter() {
                 // Use iterator to navigate to previous line
                 // line_iterator positions us at the start of the current line
                 let mut iter = state.buffer.line_iterator(cursor.position);
                 let current_line_start = iter.current_position();
-                let current_column = cursor.position - current_line_start;
+                let _current_column = cursor.position - current_line_start;
 
-                // Use sticky_column if set, otherwise use current column
+                // For wrapped lines, calculate the column within the current segment
                 let goal_column = if cursor.sticky_column > 0 {
+                    // Use sticky column if already set
                     cursor.sticky_column
+                } else if let Some(ref config) = wrap_config {
+                    // Calculate column within current segment for wrapped lines
+                    let chars_before_cursor = state
+                        .buffer
+                        .slice(current_line_start..cursor.position)
+                        .chars()
+                        .count();
+
+                    // Get the current line content
+                    let mut temp_iter = state.buffer.line_iterator(cursor.position);
+                    if let Some((_, line_content)) = temp_iter.next() {
+                        let line_text = line_content.trim_end_matches('\n');
+                        let segments = wrap_line(line_text, config);
+                        let (_seg_idx, col_in_seg) = char_position_to_segment(chars_before_cursor, &segments);
+                        col_in_seg
+                    } else {
+                        0
+                    }
                 } else {
-                    current_column
+                    // For non-wrapped lines, use byte offset
+                    cursor.position - current_line_start
                 };
 
+                // Try wrapped line navigation first if enabled
+                if let Some(ref config) = wrap_config {
+                    if let Some(new_pos) = move_up_wrapped(&state.buffer, cursor.position, goal_column, config) {
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            old_position: cursor.position,
+                            new_position: new_pos,
+                            old_anchor: cursor.anchor,
+                            new_anchor: None,
+                            old_sticky_column: cursor.sticky_column,
+                            new_sticky_column: goal_column,
+                        });
+                        continue; // Successfully moved within wrapped line
+                    }
+                }
+
+                // Reset iter since we may have consumed it
+                iter = state.buffer.line_iterator(cursor.position);
+
+                // Fall back to logical line navigation
                 // Get previous line
                 if let Some((prev_line_start, prev_line_content)) = iter.prev() {
-                    // Calculate length without trailing newline
-                    let prev_line_len = prev_line_content.trim_end_matches('\n').len();
-                    let new_pos = prev_line_start + goal_column.min(prev_line_len);
+                    // Calculate target position in previous line
+                    let new_pos = if let Some(ref config) = wrap_config {
+                        // For wrapped lines, navigate to the last segment at goal_column
+                        let prev_line_text = prev_line_content.trim_end_matches('\n');
+                        let segments = wrap_line(prev_line_text, config);
+                        if segments.is_empty() {
+                            prev_line_start
+                        } else {
+                            // Navigate to the last segment
+                            let last_seg = &segments[segments.len() - 1];
+                            let col_in_last = goal_column.min(last_seg.text.chars().count());
+                            let target_char_offset = last_seg.start_char_offset + col_in_last;
+
+                            // Convert to byte offset
+                            let target_byte_offset = prev_line_text.chars()
+                                .take(target_char_offset)
+                                .map(|c| c.len_utf8())
+                                .sum::<usize>();
+
+                            prev_line_start + target_byte_offset
+                        }
+                    } else {
+                        // For non-wrapped lines, use byte offset
+                        let prev_line_len = prev_line_content.trim_end_matches('\n').len();
+                        prev_line_start + goal_column.min(prev_line_len)
+                    };
 
                     events.push(Event::MoveCursor {
                         cursor_id,
@@ -301,24 +469,96 @@ pub fn action_to_events(
         }
 
         Action::MoveDown => {
+            // Check if line wrapping is enabled
+            let line_wrap_enabled = state.viewport.line_wrap_enabled;
+            let wrap_config = if line_wrap_enabled {
+                Some(WrapConfig::new(
+                    state.viewport.width as usize,
+                    state.viewport.gutter_width(&state.buffer),
+                    true, // has_scrollbar
+                ))
+            } else {
+                None
+            };
+
             for (cursor_id, cursor) in state.cursors.iter() {
                 let mut iter = state.buffer.line_iterator(cursor.position);
                 let current_line_start = iter.current_position();
-                let current_column = cursor.position - current_line_start;
+                let _current_column = cursor.position - current_line_start;
 
-                // Use sticky_column if set, otherwise use current column
+                // For wrapped lines, calculate the column within the current segment
                 let goal_column = if cursor.sticky_column > 0 {
+                    // Use sticky column if already set
                     cursor.sticky_column
+                } else if let Some(ref config) = wrap_config {
+                    // Calculate column within current segment for wrapped lines
+                    let chars_before_cursor = state
+                        .buffer
+                        .slice(current_line_start..cursor.position)
+                        .chars()
+                        .count();
+
+                    // Get the current line content
+                    let mut temp_iter = state.buffer.line_iterator(cursor.position);
+                    if let Some((_, line_content)) = temp_iter.next() {
+                        let line_text = line_content.trim_end_matches('\n');
+                        let segments = wrap_line(line_text, config);
+                        let (_seg_idx, col_in_seg) = char_position_to_segment(chars_before_cursor, &segments);
+                        col_in_seg
+                    } else {
+                        0
+                    }
                 } else {
-                    current_column
+                    // For non-wrapped lines, use byte offset
+                    cursor.position - current_line_start
                 };
 
+                // Try wrapped line navigation first if enabled
+                if let Some(ref config) = wrap_config {
+                    if let Some(new_pos) = move_down_wrapped(&state.buffer, cursor.position, goal_column, config) {
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            old_position: cursor.position,
+                            new_position: new_pos,
+                            old_anchor: cursor.anchor,
+                            new_anchor: None,
+                            old_sticky_column: cursor.sticky_column,
+                            new_sticky_column: goal_column,
+                        });
+                        continue; // Successfully moved within wrapped line
+                    }
+                }
+
+                // Fall back to logical line navigation
                 // Skip current line, then get next line
                 iter.next();
                 if let Some((next_line_start, next_line_content)) = iter.next() {
-                    // Calculate length without trailing newline
-                    let next_line_len = next_line_content.trim_end_matches('\n').len();
-                    let new_pos = next_line_start + goal_column.min(next_line_len);
+                    // Calculate target position in next line
+                    let new_pos = if let Some(ref config) = wrap_config {
+                        // For wrapped lines, navigate to the first segment at goal_column
+                        let next_line_text = next_line_content.trim_end_matches('\n');
+                        let segments = wrap_line(next_line_text, config);
+                        if segments.is_empty() {
+                            next_line_start
+                        } else {
+                            // Navigate to the first segment
+                            let first_seg = &segments[0];
+                            let col_in_first = goal_column.min(first_seg.text.chars().count());
+                            let target_char_offset = first_seg.start_char_offset + col_in_first;
+
+                            // Convert to byte offset
+                            let target_byte_offset = next_line_text.chars()
+                                .take(target_char_offset)
+                                .map(|c| c.len_utf8())
+                                .sum::<usize>();
+
+                            next_line_start + target_byte_offset
+                        }
+                    } else {
+                        // For non-wrapped lines, use byte offset
+                        let next_line_len = next_line_content.trim_end_matches('\n').len();
+                        next_line_start + goal_column.min(next_line_len)
+                    };
 
                     events.push(Event::MoveCursor {
                         cursor_id,

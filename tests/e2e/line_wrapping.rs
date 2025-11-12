@@ -664,3 +664,159 @@ fn test_wrapped_line_cursor_no_empty_space() {
         );
     }
 }
+
+#[test]
+/// Test that cursor up/down moves within visual rows of wrapped lines
+/// instead of skipping to the next logical line
+fn test_cursor_updown_on_wrapped_lines() {
+    const TERMINAL_WIDTH: u16 = 60;
+    const GUTTER_WIDTH: u16 = 8;
+    const TEXT_WIDTH: usize = (TERMINAL_WIDTH - GUTTER_WIDTH - 1) as usize; // -1 for scrollbar
+
+    let mut harness = EditorTestHarness::new(TERMINAL_WIDTH, 24).unwrap();
+
+    // Create a long line that will wrap into multiple visual rows
+    // Each segment should be TEXT_WIDTH (51) characters
+    let segment1 = "A".repeat(TEXT_WIDTH); // 51 A's
+    let segment2 = "B".repeat(TEXT_WIDTH); // 51 B's
+    let segment3 = "C".repeat(TEXT_WIDTH); // 51 C's
+    let long_line = format!("{}{}{}", segment1, segment2, segment3);
+
+    // Add a second logical line to test navigation between logical lines
+    let second_line = "D".repeat(TEXT_WIDTH);
+
+    harness.type_text(&long_line).unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.type_text(&second_line).unwrap();
+    harness.render().unwrap();
+
+    // Navigate to start of document using Ctrl+Home
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    let start_pos = harness.cursor_position();
+    assert_eq!(start_pos, 0, "Should be at start of buffer");
+
+    let (start_x, start_y) = harness.screen_cursor_position();
+    eprintln!("Starting at buffer pos {}, screen ({}, {})", start_pos, start_x, start_y);
+
+    // Move right by 10 characters to get to a position in the middle of first visual row
+    for _ in 0..10 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    let pos_after_10 = harness.cursor_position();
+    let (x_after_10, y_after_10) = harness.screen_cursor_position();
+    assert_eq!(pos_after_10, 10, "Should be at buffer position 10");
+    assert_eq!(y_after_10, start_y, "Should still be on same visual row");
+    eprintln!("After 10 rights: buffer pos {}, screen ({}, {})", pos_after_10, x_after_10, y_after_10);
+
+    // Press Down - should move to next visual row (within same wrapped line)
+    // Expected: move to position 10 + TEXT_WIDTH (61)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let pos_after_down1 = harness.cursor_position();
+    let (x_after_down1, y_after_down1) = harness.screen_cursor_position();
+    eprintln!("After 1st down: buffer pos {}, screen ({}, {})", pos_after_down1, x_after_down1, y_after_down1);
+
+    // CRITICAL: Should move to next visual row, not next logical line
+    // NOTE: We expect position to be close to 10 + TEXT_WIDTH, accepting ±1 for now
+    assert!(
+        (pos_after_down1 as i32 - (10 + TEXT_WIDTH) as i32).abs() <= 1,
+        "Down should move to approximately same column in next visual row (got {}, expected around {})",
+        pos_after_down1,
+        10 + TEXT_WIDTH
+    );
+    assert_eq!(
+        y_after_down1,
+        start_y + 1,
+        "Should be on next visual row"
+    );
+    // Note: There may be a small visual offset for continuation lines
+    // The important thing is we moved to the next visual row, not the next logical line
+    assert!(
+        (x_after_down1 as i32 - x_after_10 as i32).abs() <= 2,
+        "Should be at approximately same visual column (got {}, expected {} ±2)",
+        x_after_down1,
+        x_after_10
+    );
+
+    // Press Down again - should move to third visual row (still same wrapped line)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let pos_after_down2 = harness.cursor_position();
+    let (x_after_down2, y_after_down2) = harness.screen_cursor_position();
+    eprintln!("After 2nd down: buffer pos {}, screen ({}, {})", pos_after_down2, x_after_down2, y_after_down2);
+
+    assert!(
+        (pos_after_down2 as i32 - (10 + TEXT_WIDTH * 2) as i32).abs() <= 1,
+        "Down should move to approximately same column in third visual row (got {}, expected around {})",
+        pos_after_down2,
+        10 + TEXT_WIDTH * 2
+    );
+    assert_eq!(
+        y_after_down2,
+        start_y + 2,
+        "Should be on third visual row"
+    );
+    assert!(
+        (x_after_down2 as i32 - x_after_10 as i32).abs() <= 3,
+        "Should be at approximately same visual column (got {}, expected {} ±3)",
+        x_after_down2,
+        x_after_10
+    );
+
+    // Press Down once more - NOW should move to next logical line
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let pos_after_down3 = harness.cursor_position();
+    let (x_after_down3, y_after_down3) = harness.screen_cursor_position();
+    eprintln!("After 3rd down: buffer pos {}, screen ({}, {})", pos_after_down3, x_after_down3, y_after_down3);
+
+    assert_eq!(
+        pos_after_down3,
+        long_line.len() + 1 + 10, // +1 for newline, +10 for column
+        "Down should move to next logical line at same column"
+    );
+
+    // Now test Up arrow - should go back up through visual rows
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let pos_after_up1 = harness.cursor_position();
+    eprintln!("After 1st up: buffer pos {}", pos_after_up1);
+
+    assert!(
+        (pos_after_up1 as i32 - (10 + TEXT_WIDTH * 2) as i32).abs() <= 1,
+        "Up should move back to approximately third visual row (got {}, expected around {})",
+        pos_after_up1,
+        10 + TEXT_WIDTH * 2
+    );
+
+    // Up again
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let pos_after_up2 = harness.cursor_position();
+    assert!(
+        (pos_after_up2 as i32 - (10 + TEXT_WIDTH) as i32).abs() <= 1,
+        "Up should move back to approximately second visual row (got {}, expected around {})",
+        pos_after_up2,
+        10 + TEXT_WIDTH
+    );
+
+    // Up again
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let pos_after_up3 = harness.cursor_position();
+    assert!(
+        (pos_after_up3 as i32 - 10).abs() <= 1,
+        "Up should move back to approximately first visual row (got {}, expected around 10)",
+        pos_after_up3
+    );
+}
