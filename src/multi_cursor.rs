@@ -16,7 +16,7 @@ pub enum AddCursorResult {
 
 /// Add a cursor at the next occurrence of the selected text
 /// If no selection, returns Failed
-pub fn add_cursor_at_next_match(state: &EditorState) -> AddCursorResult {
+pub fn add_cursor_at_next_match(state: &mut EditorState) -> AddCursorResult {
     // Get the selected text from the primary cursor
     let primary = state.cursors.primary();
     let selection_range = match primary.selection_range() {
@@ -29,7 +29,7 @@ pub fn add_cursor_at_next_match(state: &EditorState) -> AddCursorResult {
     };
 
     // Extract the selected text
-    let pattern = state.buffer.slice(selection_range.clone());
+    let pattern = state.get_text_range(selection_range.start, selection_range.end);
 
     // Find the next occurrence after the current selection
     let search_start = selection_range.end;

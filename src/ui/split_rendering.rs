@@ -830,9 +830,7 @@ impl SplitRenderer {
         if !cursor_found && primary_cursor_position == state.buffer.len() {
             // Check if buffer ends with newline (creating an implicit empty last line)
             let buffer_ends_with_newline = if state.buffer.len() > 0 {
-                let last_char = state
-                    .buffer
-                    .slice(state.buffer.len() - 1..state.buffer.len());
+                let last_char = state.get_text_range(state.buffer.len() - 1, state.buffer.len());
                 last_char == "\n"
             } else {
                 false

@@ -589,22 +589,41 @@ impl EditorState {
     // These methods provide convenient access to DocumentModel functionality
     // while maintaining backward compatibility with existing code.
 
-    /// Get text in a range with explicit error handling
+    /// Get text in a range, driving lazy loading transparently
     ///
-    /// This is a convenience wrapper around DocumentModel::get_range that uses
-    /// byte offsets directly. Prefer this over buffer.slice() when you need
-    /// explicit error handling for large files.
+    /// This is a convenience wrapper around DocumentModel::get_range that:
+    /// - Drives lazy loading automatically (never fails due to unloaded data)
+    /// - Uses byte offsets directly
+    /// - Returns String (not Result) - errors are logged internally
+    /// - Returns empty string for invalid ranges
+    ///
+    /// This is the preferred API for getting text ranges. The caller never needs
+    /// to worry about lazy loading or buffer preparation.
     ///
     /// # Example
     /// ```ignore
-    /// let text = state.get_text_range_safe(0, 100)?;
+    /// let text = state.get_text_range(0, 100);
     /// ```
-    pub fn get_text_range_safe(&self, start: usize, end: usize) -> Result<String> {
+    pub fn get_text_range(&mut self, start: usize, end: usize) -> String {
+        // Drive lazy loading - ensure data is loaded for this range
+        let line_count = ((end - start) / 80).max(1) + 1;
+        if let Err(e) = self.buffer.prepare_viewport(start, line_count) {
+            tracing::warn!("Failed to prepare viewport for range {}..{}: {}", start, end, e);
+            return String::new();
+        }
+
+        // Now safely get the range
         use crate::document_model::DocumentModel;
-        self.get_range(
+        match self.get_range(
             crate::document_model::DocumentPosition::byte(start),
             crate::document_model::DocumentPosition::byte(end),
-        )
+        ) {
+            Ok(text) => text,
+            Err(e) => {
+                tracing::warn!("Failed to get text range {}..{}: {}", start, end, e);
+                String::new()
+            }
+        }
     }
 
     /// Get the content of a line by its byte offset
@@ -1160,17 +1179,17 @@ mod tests {
         }
 
         #[test]
-        fn test_helper_get_text_range_safe() {
+        fn test_helper_get_text_range() {
             let mut state =
                 EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
             state.buffer = Buffer::from_str_test("hello world");
 
             // Test normal range
-            let text = state.get_text_range_safe(0, 5).unwrap();
+            let text = state.get_text_range(0, 5);
             assert_eq!(text, "hello");
 
             // Test middle range
-            let text2 = state.get_text_range_safe(6, 11).unwrap();
+            let text2 = state.get_text_range(6, 11);
             assert_eq!(text2, "world");
         }
 
