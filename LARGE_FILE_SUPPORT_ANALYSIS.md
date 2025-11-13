@@ -87,6 +87,96 @@ PieceTree { ... UnloadedBuffer ... LoadedBuffer(chunk) ... UnloadedBuffer ... }
 
 ## Detailed Design
 
+### Type Safety for Optional Metadata
+
+Throughout this design, we use proper type safety to distinguish between "known" and "unknown" values:
+
+```rust
+// ✅ Type-safe: None means "unknown" or "not computed"
+line_feed_cnt: Option<usize>
+line_starts: Option<Vec<usize>>
+
+// ❌ NOT type-safe: 0 is ambiguous - does it mean "zero" or "unknown"?
+line_feed_cnt: usize  // 0 could mean no line feeds OR not computed
+```
+
+**Key principle:** Use `Option<T>` for any value that may be unknown or not computed, especially when:
+- Loading files lazily (don't know line count until scanned)
+- Skipping expensive computations for large files
+- Representing optional metadata
+
+**Required type signature changes:**
+
+```rust
+// piece_tree.rs - Update PieceTreeNode::Leaf
+pub enum PieceTreeNode {
+    Internal { /* ... */ },
+    Leaf {
+        location: BufferLocation,
+        offset: usize,
+        bytes: usize,
+        line_feed_cnt: Option<usize>,  // ✅ Changed from usize to Option<usize>
+    },
+}
+
+// piece_tree.rs - Update PieceTree::new signature
+impl PieceTree {
+    pub fn new(
+        location: BufferLocation,
+        offset: usize,
+        bytes: usize,
+        line_feed_cnt: Option<usize>,  // ✅ Changed from usize to Option<usize>
+    ) -> Self { /* ... */ }
+}
+
+// piece_tree.rs - Update StringBuffer
+impl StringBuffer {
+    pub fn line_feed_count(&self) -> Option<usize> {
+        // Returns None if line indexing was not computed
+        match &self.data {
+            BufferData::Loaded { line_starts, .. } => {
+                line_starts.as_ref().map(|starts| starts.len().saturating_sub(1))
+            }
+            BufferData::Unloaded { .. } => None,  // Unknown until loaded
+        }
+    }
+}
+```
+
+**Impact on PieceTree operations:**
+
+When `line_feed_cnt` is `None`, the piece tree cannot provide accurate line counts or line-based navigation. Methods must handle this:
+
+```rust
+impl PieceTree {
+    /// Get line count - returns None if any piece has unknown line count
+    pub fn line_count(&self) -> Option<usize> {
+        self.root.total_line_feeds().map(|lf| lf + 1)
+    }
+}
+
+impl PieceTreeNode {
+    /// Get total line feeds - returns None if unknown
+    fn total_line_feeds(&self) -> Option<usize> {
+        match self {
+            PieceTreeNode::Internal { lf_left, right, .. } => {
+                // If either side is None, total is None
+                match (lf_left, right.total_line_feeds()) {
+                    (Some(left), Some(right_lf)) => Some(left + right_lf),
+                    _ => None,
+                }
+            }
+            PieceTreeNode::Leaf { line_feed_cnt, .. } => *line_feed_cnt,
+        }
+    }
+}
+```
+
+**Note:** For large files without line indexing, `line_count()` returns `None`, forcing the caller to either:
+1. Accept that line count is unknown
+2. Trigger expensive full-file scan via `count_lines_up_to(total_bytes)`
+3. Use byte-based navigation instead of line-based
+
 ### 1. Buffer State Management
 
 **Modify StringBuffer to support unloaded state:**
@@ -96,7 +186,7 @@ pub enum BufferData {
     /// Loaded in memory
     Loaded {
         data: Vec<u8>,
-        line_starts: Option<Vec<usize>>,  // Optional for large files
+        line_starts: Option<Vec<usize>>,  // None = not indexed (large file mode)
     },
     /// Not yet loaded from file
     Unloaded {
@@ -250,7 +340,7 @@ impl TextBuffer {
             BufferLocation::Stored(0),
             0,
             file_size,
-            0,  // line_feed_cnt = 0 (unknown for unloaded buffers)
+            None,  // line_feed_cnt = None (unknown for unloaded buffers)
         );
 
         Ok(TextBuffer {
@@ -267,9 +357,9 @@ impl TextBuffer {
         let bytes = content.len();
         let buffer = StringBuffer::new_loaded(0, content, compute_lines);
         let line_feed_cnt = if compute_lines {
-            buffer.line_feed_count()
+            buffer.line_feed_count()  // Returns Option<usize>
         } else {
-            0
+            None  // ✅ Type-safe: explicitly None when not computing lines
         };
 
         TextBuffer {
@@ -290,52 +380,59 @@ impl TextBuffer {
 
 ### 3. Lazy Loading on Access
 
-**Trigger loading when accessing data:**
+**Trigger loading when accessing data (using efficient PieceRangeIter):**
 
 ```rust
 impl TextBuffer {
     /// Get text in a byte range, loading chunks as needed
+    /// Uses PieceRangeIter for ONE O(log n) traversal instead of O(log n) per piece
     pub fn get_text_range(&mut self, offset: usize, length: usize) -> Vec<u8> {
         let mut result = Vec::with_capacity(length);
-        let mut current_offset = offset;
-        let mut remaining = length;
+        let end = offset + length;
 
-        while remaining > 0 {
-            // Find piece containing current_offset
-            let piece_info = match self.piece_tree.find_by_offset(current_offset) {
-                Some(info) => info,
-                None => break,
-            };
+        // ONE O(log n) traversal to collect all pieces in range
+        let pieces: Vec<_> = self.piece_tree
+            .iter_pieces_in_range(offset, end)
+            .collect();
 
-            let buffer_id = piece_info.location.buffer_id();
-            let buffer = &mut self.buffers[buffer_id];
+        // Now iterate through pieces in O(1) per piece
+        for piece_view in pieces {
+            let buffer_id = piece_view.location.buffer_id();
 
             // LAZY LOAD: Check if buffer is unloaded
-            if !buffer.is_loaded() {
-                // Load chunk around requested offset
-                self.load_chunk_for_piece(buffer_id, current_offset)?;
-                // Note: load_chunk_for_piece will split the piece tree
-                // Continue loop to get new piece info
-                continue;
+            if !self.buffers[buffer_id].is_loaded() {
+                // Load chunk around this piece
+                // Note: This will split the piece tree, so we need to restart iteration
+                self.load_chunk_for_piece(buffer_id, piece_view.doc_offset)?;
+
+                // Recursively call get_text_range with updated piece tree
+                // The loaded chunks will now be in place
+                return self.get_text_range(offset, length);
             }
 
             // Buffer is loaded, extract data
+            let buffer = &self.buffers[buffer_id];
             let data = match &buffer.data {
                 BufferData::Loaded { data, .. } => data,
-                _ => unreachable!(),
+                BufferData::Unloaded { .. } => unreachable!("Just loaded"),
             };
 
-            let offset_in_piece = piece_info.offset_in_piece.unwrap_or(0);
-            let piece_offset = piece_info.offset + offset_in_piece;
-            let available = piece_info.bytes - offset_in_piece;
-            let to_copy = remaining.min(available);
+            // Calculate the portion of this piece to extract
+            let piece_start_in_doc = piece_view.doc_offset;
+            let piece_end_in_doc = piece_start_in_doc + piece_view.bytes;
 
-            result.extend_from_slice(
-                &data[piece_offset..piece_offset + to_copy]
-            );
+            let extract_start = offset.max(piece_start_in_doc);
+            let extract_end = end.min(piece_end_in_doc);
 
-            current_offset += to_copy;
-            remaining -= to_copy;
+            if extract_start < extract_end {
+                let offset_in_piece = extract_start - piece_start_in_doc;
+                let buffer_offset = piece_view.buffer_offset + offset_in_piece;
+                let extract_len = extract_end - extract_start;
+
+                result.extend_from_slice(
+                    &data[buffer_offset..buffer_offset + extract_len]
+                );
+            }
         }
 
         result
@@ -405,7 +502,7 @@ impl TextBuffer {
                 BufferLocation::Stored(buffer_id),
                 0,
                 chunk_start,
-                0,
+                None,  // ✅ Unloaded region - line count unknown
             );
         }
 
@@ -415,7 +512,7 @@ impl TextBuffer {
             BufferLocation::Stored(new_buffer_id),
             0,
             chunk_size,
-            0,  // line_feed_cnt unknown
+            None,  // ✅ Loaded but not indexed (large file mode)
         );
 
         if chunk_end < total_bytes {
@@ -425,7 +522,7 @@ impl TextBuffer {
                 BufferLocation::Stored(buffer_id),
                 chunk_end,
                 total_bytes - chunk_end,
-                0,
+                None,  // ✅ Unloaded region - line count unknown
             );
         }
 
@@ -515,9 +612,43 @@ impl TextBuffer {
 
     fn count_lines_up_to(&mut self, offset: usize) -> usize {
         // Count newlines from 0 to offset
-        // This will trigger lazy loads for accessed regions
-        let data = self.get_text_range(0, offset);
-        data.iter().filter(|&&b| b == b'\n').count()
+        // Uses PieceRangeIter for efficient iteration, triggers lazy loads as needed
+        let mut count = 0;
+
+        // Collect pieces first to avoid borrow checker issues
+        let pieces: Vec<_> = self.piece_tree
+            .iter_pieces_in_range(0, offset)
+            .collect();
+
+        for piece_view in pieces {
+            let buffer_id = piece_view.location.buffer_id();
+
+            // Ensure buffer is loaded
+            if !self.buffers[buffer_id].is_loaded() {
+                self.load_chunk_for_piece(buffer_id, piece_view.doc_offset).ok();
+                // After loading, recursively count (piece tree changed)
+                return self.count_lines_up_to(offset);
+            }
+
+            let buffer = &self.buffers[buffer_id];
+            let data = match &buffer.data {
+                BufferData::Loaded { data, .. } => data,
+                _ => continue,
+            };
+
+            // Count newlines in this piece's data
+            let piece_start = piece_view.buffer_offset;
+            let piece_len = piece_view.bytes.min(
+                offset.saturating_sub(piece_view.doc_offset)
+            );
+
+            count += data[piece_start..piece_start + piece_len]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count();
+        }
+
+        count
     }
 
     fn find_line_start_linear(&mut self, target_line: usize, start: usize) -> usize {
@@ -565,9 +696,9 @@ impl TextBuffer {
 
         // For large files, we don't compute line feeds for inserted text either
         let line_feed_cnt = if !self.large_file {
-            text.iter().filter(|&&b| b == b'\n').count()
+            Some(text.iter().filter(|&&b| b == b'\n').count())
         } else {
-            0
+            None  // ✅ Type-safe: None means not computed for large files
         };
 
         // Create new buffer for inserted text (always loaded)
@@ -587,7 +718,7 @@ impl TextBuffer {
             BufferLocation::Added(buffer_id),
             0,
             text.len(),
-            line_feed_cnt,
+            line_feed_cnt,  // Option<usize>
         );
 
         self.piece_tree.cursor_at_offset(offset + text.len())
@@ -631,19 +762,24 @@ impl TextBuffer {
 
 ### Phase 3: Implement Lazy Loading on Access
 
-1. **Modify `get_text_range()`** to check for unloaded buffers
-2. Implement `load_chunk_for_piece()` with alignment
-3. **Piece tree splitting** when inserting loaded chunks
-4. Handle piece tree updates after loading
+1. **Modify `get_text_range()`** to use `PieceRangeIter` (avoid O(log n) loop)
+2. Check for unloaded buffers during iteration
+3. Implement `load_chunk_for_piece()` with alignment
+4. **Piece tree splitting** when inserting loaded chunks
+5. Handle recursive call after loading (piece tree structure changed)
+
+**Key optimization:** Use `iter_pieces_in_range()` for ONE O(log n) traversal instead of calling `find_by_offset()` in a loop (which would be O(k × log n) for k pieces).
 
 **Files to modify:**
 - `src/text_buffer.rs`: get_text_range, new helper methods
-- `src/piece_tree.rs`: Ensure insert/delete work with zero line_feed_cnt
+- `src/piece_tree.rs`: Ensure insert/delete work with Option<usize> line_feed_cnt
+- `src/piece_tree.rs`: PieceRangeIter already exists and works unchanged
 
 **Testing:**
 - Access different offsets, verify correct chunks loaded
 - Verify piece tree correctly splits unloaded/loaded regions
 - Test overlapping accesses, avoid redundant loads
+- Verify PieceRangeIter triggers lazy loading correctly
 
 ### Phase 4: Position Approximation
 
@@ -674,6 +810,46 @@ impl TextBuffer {
 - Benchmark with real large files
 - Profile memory usage
 - Test scrolling performance
+
+---
+
+## Performance Optimizations
+
+### Critical: Use PieceRangeIter, Not find_by_offset in Loops
+
+**❌ Anti-pattern - O(k × log n) complexity:**
+```rust
+// BAD: Calling find_by_offset in a loop
+while remaining > 0 {
+    let piece = tree.find_by_offset(current_offset);  // O(log n) each iteration!
+    // ... process piece ...
+    current_offset += piece.bytes;
+}
+```
+
+**✅ Correct pattern - O(log n + k) complexity:**
+```rust
+// GOOD: Use PieceRangeIter for ONE O(log n) traversal
+let pieces: Vec<_> = tree.iter_pieces_in_range(start, end).collect();  // ONE O(log n)
+for piece in pieces {  // O(1) per piece
+    // ... process piece ...
+}
+```
+
+**Why this matters:**
+- Reading 1000 pieces in a range:
+  - ❌ Loop with find_by_offset: ~10,000 tree traversals (assuming depth ~10)
+  - ✅ PieceRangeIter: 1 tree traversal + 1000 iterations
+- PieceRangeIter is **~1000× faster** for sequential access patterns
+- Essential for lazy loading where we may hit multiple unloaded pieces
+
+**Where to apply:**
+- ✅ `get_text_range()` - iterate over pieces in range
+- ✅ `count_lines_up_to()` - count newlines across pieces
+- ✅ Any operation that processes multiple consecutive pieces
+- ✅ Line iteration (already uses PieceRangeIter in LineIterator)
+
+**Note:** PieceRangeIter works unchanged with lazy loading! It just yields pieces; the caller checks if buffers are loaded.
 
 ---
 
