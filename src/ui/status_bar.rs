@@ -131,7 +131,7 @@ impl StatusBarRenderer {
             // Find the start of the line containing the cursor
             let cursor_iter = state.buffer.line_iterator(cursor.position);
             let line_start = cursor_iter.current_position();
-            let col = cursor.position - line_start;
+            let col = cursor.position.saturating_sub(line_start);
 
             // Use cached line number from state
             let line_num = state.primary_cursor_line_number.value();
