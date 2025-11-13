@@ -923,4 +923,169 @@ mod tests {
             assert_eq!(cursor.position, 8);
         }
     }
+
+    // DocumentModel trait tests
+    mod document_model_tests {
+        use super::*;
+        use crate::document_model::{DocumentModel, DocumentPosition};
+
+        #[test]
+        fn test_capabilities_small_file() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("line1\nline2\nline3");
+
+            let caps = state.capabilities();
+            assert!(caps.has_line_index, "Small file should have line index");
+            assert_eq!(caps.byte_length, "line1\nline2\nline3".len());
+            assert_eq!(
+                caps.approximate_line_count, 3,
+                "Should have 3 lines"
+            );
+        }
+
+        #[test]
+        fn test_position_conversions() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("hello\nworld\ntest");
+
+            // Test ByteOffset -> offset
+            let pos1 = DocumentPosition::ByteOffset(6);
+            let offset1 = state.position_to_offset(pos1).unwrap();
+            assert_eq!(offset1, 6);
+
+            // Test LineColumn -> offset
+            let pos2 = DocumentPosition::LineColumn { line: 1, column: 0 };
+            let offset2 = state.position_to_offset(pos2).unwrap();
+            assert_eq!(offset2, 6, "Line 1, column 0 should be at byte 6");
+
+            // Test offset -> position (should return LineColumn for small files)
+            let converted = state.offset_to_position(6);
+            match converted {
+                DocumentPosition::LineColumn { line, column } => {
+                    assert_eq!(line, 1);
+                    assert_eq!(column, 0);
+                }
+                _ => panic!("Expected LineColumn for small file"),
+            }
+        }
+
+        #[test]
+        fn test_get_viewport_content() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("line1\nline2\nline3\nline4\nline5");
+
+            let content = state
+                .get_viewport_content(DocumentPosition::ByteOffset(0), 3)
+                .unwrap();
+
+            assert_eq!(content.lines.len(), 3);
+            assert_eq!(content.lines[0].content, "line1");
+            assert_eq!(content.lines[1].content, "line2");
+            assert_eq!(content.lines[2].content, "line3");
+            assert!(content.has_more);
+        }
+
+        #[test]
+        fn test_get_range() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("hello world");
+
+            let text = state
+                .get_range(
+                    DocumentPosition::ByteOffset(0),
+                    DocumentPosition::ByteOffset(5),
+                )
+                .unwrap();
+            assert_eq!(text, "hello");
+
+            let text2 = state
+                .get_range(
+                    DocumentPosition::ByteOffset(6),
+                    DocumentPosition::ByteOffset(11),
+                )
+                .unwrap();
+            assert_eq!(text2, "world");
+        }
+
+        #[test]
+        fn test_get_line_content() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("line1\nline2\nline3");
+
+            let line0 = state.get_line_content(0).unwrap();
+            assert_eq!(line0, "line1");
+
+            let line1 = state.get_line_content(1).unwrap();
+            assert_eq!(line1, "line2");
+
+            let line2 = state.get_line_content(2).unwrap();
+            assert_eq!(line2, "line3");
+        }
+
+        #[test]
+        fn test_insert_delete() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("hello world");
+
+            // Insert text
+            let bytes_inserted = state
+                .insert(DocumentPosition::ByteOffset(6), "beautiful ")
+                .unwrap();
+            assert_eq!(bytes_inserted, 10);
+            assert_eq!(state.buffer.to_string(), "hello beautiful world");
+
+            // Delete text
+            state
+                .delete(
+                    DocumentPosition::ByteOffset(6),
+                    DocumentPosition::ByteOffset(16),
+                )
+                .unwrap();
+            assert_eq!(state.buffer.to_string(), "hello world");
+        }
+
+        #[test]
+        fn test_replace() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("hello world");
+
+            state
+                .replace(
+                    DocumentPosition::ByteOffset(0),
+                    DocumentPosition::ByteOffset(5),
+                    "hi",
+                )
+                .unwrap();
+            assert_eq!(state.buffer.to_string(), "hi world");
+        }
+
+        #[test]
+        fn test_find_matches() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("hello world hello");
+
+            let matches = state.find_matches("hello", None).unwrap();
+            assert_eq!(matches.len(), 2);
+            assert_eq!(matches[0], 0);
+            assert_eq!(matches[1], 12);
+        }
+
+        #[test]
+        fn test_prepare_for_render() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("line1\nline2\nline3\nline4\nline5");
+
+            // Should not panic
+            state.prepare_for_render().unwrap();
+        }
+    }
 }
