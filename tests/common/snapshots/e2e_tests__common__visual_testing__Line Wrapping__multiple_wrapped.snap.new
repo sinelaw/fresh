@@ -1,0 +1,29 @@
+---
+source: tests/common/visual_testing.rs
+assertion_line: 69
+expression: "&screen_text"
+---
+ [No Name]*                                                 
+    1 │ This is a very long line of text that will definit █
+        ely exceed the terminal width and should wrap to m █
+        ultiple lines when line wrapping is enabled.       █
+    4 │ Second extremely long line with even more text to  █
+        demonstrate that multiple lines can be wrapped at  █
+        the same time without any issues in the rendering  █
+        system.                                            █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+                                                           █
+[No Name] [+] | Ln 1, Col 1                    Help: Ctrl+/

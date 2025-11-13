@@ -30,9 +30,3 @@
 
 *Typing new name 'amount' - live preview in editor*
 
-## Step 5: rename_complete
-
-![rename_complete](../screenshots/LSP_Rename_05_rename_complete.svg)
-
-*Rename complete - all 3 occurrences of 'value' renamed to 'amount'*
-
