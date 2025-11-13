@@ -483,23 +483,91 @@ impl TextBuffer {
         // Keep iterating until we've collected all requested bytes
         while current_offset < end_offset {
             let mut made_progress = false;
+            let mut restarted_iteration = false;
 
             // Use the efficient piece iterator (single O(log n) traversal + O(N) iteration)
             for piece_view in self.piece_tree.iter_pieces_in_range(current_offset, end_offset) {
                 let buffer_id = piece_view.location.buffer_id();
-                let buffer = self
-                    .buffers
-                    .get_mut(buffer_id)
-                    .context("Buffer not found")?;
 
-                // Load buffer on-the-fly if unloaded
-                if !buffer.is_loaded() {
-                    // TODO: For very large buffers (> LOAD_CHUNK_SIZE), we should:
-                    // 1. Split the piece in the tree to isolate a chunk
-                    // 2. Create a new buffer with only that chunk loaded
-                    // 3. Restart iteration on the modified tree
-                    // For now, load the entire buffer
-                    buffer.load().context("Failed to load buffer")?;
+                // Check if buffer needs loading
+                let needs_loading = self
+                    .buffers
+                    .get(buffer_id)
+                    .map(|b| !b.is_loaded())
+                    .unwrap_or(false);
+
+                if needs_loading {
+                    // Check if piece is too large for full loading
+                    if piece_view.bytes > LOAD_CHUNK_SIZE {
+                        // Split large piece into chunks
+                        let piece_start_in_doc = piece_view.doc_offset;
+                        let offset_in_piece = current_offset.saturating_sub(piece_start_in_doc);
+
+                        // Calculate chunk boundaries aligned to CHUNK_ALIGNMENT
+                        let chunk_start_in_buffer =
+                            (piece_view.buffer_offset + offset_in_piece) / CHUNK_ALIGNMENT
+                                * CHUNK_ALIGNMENT;
+                        let chunk_bytes = LOAD_CHUNK_SIZE.min(
+                            (piece_view.buffer_offset + piece_view.bytes)
+                                .saturating_sub(chunk_start_in_buffer),
+                        );
+
+                        // Calculate document offsets for splitting
+                        let chunk_start_offset_in_piece =
+                            chunk_start_in_buffer.saturating_sub(piece_view.buffer_offset);
+                        let split_start_in_doc = piece_start_in_doc + chunk_start_offset_in_piece;
+                        let split_end_in_doc = split_start_in_doc + chunk_bytes;
+
+                        // Split the piece to isolate the chunk
+                        if chunk_start_offset_in_piece > 0 {
+                            self.piece_tree.split_at_offset(split_start_in_doc, &self.buffers);
+                        }
+                        if split_end_in_doc < piece_start_in_doc + piece_view.bytes {
+                            self.piece_tree.split_at_offset(split_end_in_doc, &self.buffers);
+                        }
+
+                        // Create a new buffer for this chunk
+                        let chunk_buffer = self
+                            .buffers
+                            .get(buffer_id)
+                            .context("Buffer not found")?
+                            .create_chunk_buffer(
+                                self.next_buffer_id,
+                                chunk_start_in_buffer,
+                                chunk_bytes,
+                            )
+                            .context("Failed to create chunk buffer")?;
+
+                        self.next_buffer_id += 1;
+                        let new_buffer_id = chunk_buffer.id;
+                        self.buffers.push(chunk_buffer);
+
+                        // Update the piece to reference the new chunk buffer
+                        self.piece_tree.replace_buffer_reference(
+                            buffer_id,
+                            piece_view.buffer_offset + chunk_start_offset_in_piece,
+                            chunk_bytes,
+                            BufferLocation::Added(new_buffer_id),
+                        );
+
+                        // Load the chunk buffer
+                        self.buffers
+                            .get_mut(new_buffer_id)
+                            .context("Chunk buffer not found")?
+                            .load()
+                            .context("Failed to load chunk")?;
+
+                        // Restart iteration with the modified tree
+                        restarted_iteration = true;
+                        break;
+                    } else {
+                        // Piece is small enough, load the entire buffer
+                        self.buffers
+                            .get_mut(buffer_id)
+                            .context("Buffer not found")?
+                            .load()
+                            .context("Failed to load buffer")?;
+                    }
                 }
 
                 // Calculate the range to read from this piece
@@ -518,6 +586,7 @@ impl TextBuffer {
                     let buffer_end = buffer_start + bytes_to_read;
 
                     // Buffer should be loaded now
+                    let buffer = self.buffers.get(buffer_id).context("Buffer not found")?;
                     let data = buffer
                         .get_data()
                         .context("Buffer data unavailable after load")?;
@@ -536,9 +605,9 @@ impl TextBuffer {
                 }
             }
 
-            // If we didn't make progress, this is an error - we should always make progress
+            // If we didn't make progress and didn't restart iteration, this is an error
             anyhow::ensure!(
-                made_progress,
+                made_progress || restarted_iteration,
                 "Failed to read data at offset {}: no progress made",
                 current_offset
             );
@@ -2002,6 +2071,108 @@ mod tests {
 
             let text_after_replace = buffer.get_all_text();
             assert!(text_after_replace.starts_with(b"START"));
+        }
+
+        #[test]
+        fn test_large_file_chunk_based_loading() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("huge.txt");
+
+            // Create a file larger than LOAD_CHUNK_SIZE (1MB)
+            // We'll create a 3MB file with a repeating pattern so we can verify chunks
+            let chunk_size = LOAD_CHUNK_SIZE; // 1MB
+            let file_size = chunk_size * 3; // 3MB
+
+            // Pattern: "AAAA...AAAA" (1MB of A's), "BBBB...BBBB" (1MB of B's), "CCCC...CCCC" (1MB of C's)
+            let mut file = File::create(&file_path).unwrap();
+            file.write_all(&vec![b'A'; chunk_size]).unwrap();
+            file.write_all(&vec![b'B'; chunk_size]).unwrap();
+            file.write_all(&vec![b'C'; chunk_size]).unwrap();
+            file.flush().unwrap();
+
+            // Load as large file (use threshold of 1 byte to ensure large file mode)
+            let mut buffer = TextBuffer::load_from_file(&file_path, 1).unwrap();
+
+            // Verify it's in large file mode
+            assert!(buffer.large_file);
+            assert_eq!(buffer.total_bytes(), file_size);
+
+            // Buffer should be unloaded initially
+            assert!(!buffer.buffers[0].is_loaded());
+
+            // Read from the first chunk (should load only first 1MB)
+            let first_chunk_data = buffer.get_text_range_mut(0, 1024).unwrap();
+            assert_eq!(first_chunk_data.len(), 1024);
+            assert!(first_chunk_data.iter().all(|&b| b == b'A'));
+
+            // Read from the middle chunk (offset = 1MB, should load second 1MB)
+            let second_chunk_data = buffer.get_text_range_mut(chunk_size, 1024).unwrap();
+            assert_eq!(second_chunk_data.len(), 1024);
+            assert!(second_chunk_data.iter().all(|&b| b == b'B'));
+
+            // Read from the last chunk (offset = 2MB, should load third 1MB)
+            let third_chunk_data = buffer.get_text_range_mut(chunk_size * 2, 1024).unwrap();
+            assert_eq!(third_chunk_data.len(), 1024);
+            assert!(third_chunk_data.iter().all(|&b| b == b'C'));
+
+            // Verify we can read across chunk boundaries
+            // Read from middle of first chunk to middle of second chunk
+            let cross_chunk_offset = chunk_size - 512;
+            let cross_chunk_data = buffer.get_text_range_mut(cross_chunk_offset, 1024).unwrap();
+            assert_eq!(cross_chunk_data.len(), 1024);
+            // First 512 bytes should be 'A', next 512 bytes should be 'B'
+            assert!(cross_chunk_data[..512].iter().all(|&b| b == b'A'));
+            assert!(cross_chunk_data[512..].iter().all(|&b| b == b'B'));
+
+            // After chunk-based loading, verify the piece tree has been split
+            // The number of buffers should be greater than 1 (original + chunks)
+            assert!(buffer.buffers.len() > 1,
+                "Expected multiple buffers after chunk-based loading, got {}",
+                buffer.buffers.len());
+
+            // Test that editing still works after chunk-based loading
+            buffer.insert_bytes(0, b"PREFIX".to_vec());
+            assert_eq!(buffer.total_bytes(), file_size + 6);
+
+            let after_insert = buffer.get_text_range_mut(0, 6).unwrap();
+            assert_eq!(after_insert, b"PREFIX");
+
+            // Verify the original data is still there after the prefix
+            let after_prefix = buffer.get_text_range_mut(6, 10).unwrap();
+            assert!(after_prefix.iter().all(|&b| b == b'A'));
+
+            // Most importantly: validate the entire buffer content matches the original file
+            // Create a fresh buffer to read the original file
+            let mut buffer2 = TextBuffer::load_from_file(&file_path, 1).unwrap();
+
+            // Read the entire file in chunks and verify each chunk
+            let chunk_read_size = 64 * 1024; // Read in 64KB chunks for efficiency
+            let mut offset = 0;
+            while offset < file_size {
+                let bytes_to_read = chunk_read_size.min(file_size - offset);
+                let chunk_data = buffer2.get_text_range_mut(offset, bytes_to_read).unwrap();
+
+                // Determine which section of the file we're reading
+                let first_mb_end = chunk_size;
+                let second_mb_end = chunk_size * 2;
+
+                // Validate the data based on which MB section we're in
+                for (i, &byte) in chunk_data.iter().enumerate() {
+                    let file_offset = offset + i;
+                    let expected = if file_offset < first_mb_end {
+                        b'A'
+                    } else if file_offset < second_mb_end {
+                        b'B'
+                    } else {
+                        b'C'
+                    };
+                    assert_eq!(byte, expected,
+                        "Mismatch at file offset {}: expected {}, got {}",
+                        file_offset, expected as char, byte as char);
+                }
+
+                offset += bytes_to_read;
+            }
         }
     }
 }

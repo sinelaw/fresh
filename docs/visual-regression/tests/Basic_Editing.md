@@ -18,3 +18,9 @@
 
 *Text typed into buffer*
 
+## Step 3: multiline
+
+![multiline](../screenshots/Basic_Editing_03_multiline.svg)
+
+*Multiple lines of text*
+

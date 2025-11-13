@@ -123,6 +123,45 @@ impl StringBuffer {
         }
     }
 
+    /// Create a new unloaded buffer representing a chunk of this buffer
+    /// This is used for splitting large unloaded buffers into smaller chunks
+    ///
+    /// # Arguments
+    /// * `new_id` - The ID for the new buffer
+    /// * `chunk_offset` - Offset within this buffer where the chunk starts
+    /// * `chunk_bytes` - Number of bytes in the chunk
+    ///
+    /// # Returns
+    /// A new StringBuffer referencing the chunk, or None if this buffer is not unloaded
+    /// or if the chunk range is invalid
+    pub fn create_chunk_buffer(
+        &self,
+        new_id: usize,
+        chunk_offset: usize,
+        chunk_bytes: usize,
+    ) -> Option<StringBuffer> {
+        match &self.data {
+            BufferData::Unloaded {
+                file_path,
+                file_offset,
+                bytes,
+            } => {
+                // Validate chunk range
+                if chunk_offset + chunk_bytes > *bytes {
+                    return None;
+                }
+
+                Some(StringBuffer::new_unloaded(
+                    new_id,
+                    file_path.clone(),
+                    file_offset + chunk_offset,
+                    chunk_bytes,
+                ))
+            }
+            BufferData::Loaded { .. } => None, // Can't create chunk from loaded buffer
+        }
+    }
+
     /// Compute line start offsets for a buffer
     fn compute_line_starts(data: &[u8]) -> Vec<usize> {
         let mut line_starts = vec![0];
@@ -1094,6 +1133,63 @@ impl PieceTree {
         } else {
             // Buffer not available - return None
             None
+        }
+    }
+
+    /// Split a piece at the given offset without inserting anything
+    /// This is useful for isolating a chunk of a large piece for partial loading
+    ///
+    /// If the offset is in the middle of a piece, that piece will be split into two pieces.
+    /// If the offset is at a piece boundary, nothing changes.
+    /// Does nothing if offset is 0 or >= total_bytes.
+    pub fn split_at_offset(&mut self, offset: usize, buffers: &[StringBuffer]) {
+        if offset == 0 || offset >= self.total_bytes {
+            return;
+        }
+
+        // Check if we need to split (offset must be in middle of a piece)
+        if let Some(_result) = self.root.find_by_offset(offset) {
+            // Split the piece at the offset (with no insertion)
+            let mut leaves = Vec::new();
+            self.collect_leaves_with_split(&self.root, 0, offset, None, &mut leaves, buffers);
+
+            self.root = Self::build_balanced(&leaves);
+            self.check_and_rebalance();
+        }
+    }
+
+    /// Replace buffer references in pieces
+    /// This is used when creating chunk buffers from large unloaded buffers
+    ///
+    /// Finds all pieces that reference the old buffer at the specified offset/bytes
+    /// and updates them to reference the new buffer at offset 0.
+    pub fn replace_buffer_reference(
+        &mut self,
+        old_buffer_id: usize,
+        old_buffer_offset: usize,
+        old_buffer_bytes: usize,
+        new_buffer_location: BufferLocation,
+    ) {
+        let mut leaves = Vec::new();
+        self.root.collect_leaves(&mut leaves);
+
+        // Find and update matching pieces
+        let mut modified = false;
+        for leaf in &mut leaves {
+            if leaf.location.buffer_id() == old_buffer_id
+                && leaf.offset == old_buffer_offset
+                && leaf.bytes == old_buffer_bytes
+            {
+                leaf.location = new_buffer_location;
+                leaf.offset = 0; // New buffer starts at 0
+                modified = true;
+            }
+        }
+
+        // Rebuild tree if we made changes
+        if modified {
+            self.root = Self::build_balanced(&leaves);
+            self.check_and_rebalance();
         }
     }
 
