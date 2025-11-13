@@ -5021,6 +5021,14 @@ impl Editor {
                 .sync_with_cursor(&mut state.buffer, &primary_cursor);
         }
 
+        // Prepare all buffers for rendering (pre-load viewport data for lazy loading)
+        for (_, state) in &mut self.buffers {
+            if let Err(e) = state.prepare_for_render() {
+                tracing::error!("Failed to prepare buffer for render: {}", e);
+                // Continue with partial rendering
+            }
+        }
+
         // If help is visible, render help page instead
         if self.help_renderer.is_visible() {
             self.help_renderer
