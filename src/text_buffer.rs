@@ -616,6 +616,34 @@ impl TextBuffer {
         Ok(result)
     }
 
+    /// Prepare a viewport for rendering
+    ///
+    /// This is called before rendering with &mut access to pre-load all data
+    /// that will be needed for the viewport. It estimates the number of bytes
+    /// needed based on the line count and pre-loads them.
+    ///
+    /// # Arguments
+    /// * `start_offset` - The byte offset where the viewport starts
+    /// * `line_count` - The number of lines to prepare (estimate)
+    ///
+    /// # Returns
+    /// Ok(()) if preparation succeeded, Err if loading failed
+    pub fn prepare_viewport(&mut self, start_offset: usize, line_count: usize) -> Result<()> {
+        // Estimate how many bytes we need (pessimistic assumption)
+        // Average line length is typically 80-100 bytes, but we use 200 to be safe
+        let estimated_bytes = line_count.saturating_mul(200);
+
+        // Cap the estimate at the remaining bytes in the document
+        let remaining_bytes = self.total_bytes().saturating_sub(start_offset);
+        let bytes_to_load = estimated_bytes.min(remaining_bytes);
+
+        // Pre-load with full chunk-splitting support
+        // This may load more than we need, but ensures all data is available
+        self.get_text_range_mut(start_offset, bytes_to_load)?;
+
+        Ok(())
+    }
+
     /// Get all text as a single Vec<u8>
     /// Returns empty vector if any buffers are unloaded
     pub fn get_all_text(&self) -> Vec<u8> {

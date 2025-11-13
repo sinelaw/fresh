@@ -1,4 +1,7 @@
 use crate::cursor::{Cursor, Cursors};
+use crate::document_model::{
+    DocumentCapabilities, DocumentModel, DocumentPosition, ViewportContent, ViewportLine,
+};
 use crate::event::{
     Event, MarginContentData, MarginPositionData, OverlayFace as EventOverlayFace, PopupData,
     PopupPositionData,
@@ -11,6 +14,7 @@ use crate::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::popup::{Popup, PopupContent, PopupListItem, PopupManager, PopupPosition};
 use crate::text_buffer::{Buffer, LineNumber};
 use crate::viewport::Viewport;
+use anyhow::Result;
 use ratatui::style::{Color, Style};
 use std::cell::RefCell;
 
@@ -564,6 +568,216 @@ fn convert_margin_content(content: &MarginContentData) -> MarginContent {
             }
         }
         MarginContentData::Empty => MarginContent::Empty,
+    }
+}
+
+impl EditorState {
+    /// Prepare viewport for rendering (called before frame render)
+    ///
+    /// This pre-loads all data that will be needed for rendering the current viewport,
+    /// ensuring that subsequent read-only access during rendering will succeed.
+    pub fn prepare_for_render(&mut self) -> Result<()> {
+        let start_offset = match self.viewport.top_byte {
+            offset => offset,
+        };
+        let line_count = self.viewport.height as usize;
+        self.buffer.prepare_viewport(start_offset, line_count)?;
+        Ok(())
+    }
+}
+
+/// Implement DocumentModel trait for EditorState
+///
+/// This provides a clean abstraction layer between rendering/editing operations
+/// and the underlying text buffer implementation.
+impl DocumentModel for EditorState {
+    fn capabilities(&self) -> DocumentCapabilities {
+        let line_count = self.buffer.line_count();
+        DocumentCapabilities {
+            has_line_index: line_count.is_some(),
+            uses_lazy_loading: false, // TODO: add large file detection
+            byte_length: self.buffer.len(),
+            approximate_line_count: line_count.unwrap_or_else(|| {
+                // Estimate assuming ~80 bytes per line
+                self.buffer.len() / 80
+            }),
+        }
+    }
+
+    fn get_viewport_content(
+        &self,
+        start_pos: DocumentPosition,
+        max_lines: usize,
+    ) -> Result<ViewportContent> {
+        // Convert to byte offset
+        let start_offset = self.position_to_offset(start_pos)?;
+
+        // Use line iterator starting from this byte offset
+        let mut iter = self.buffer.line_iterator(start_offset);
+        let mut lines = Vec::with_capacity(max_lines);
+
+        for _ in 0..max_lines {
+            if let Some((line_start, line_content)) = iter.next() {
+                let has_newline = line_content.ends_with('\n');
+                let content = if has_newline {
+                    line_content[..line_content.len() - 1].to_string()
+                } else {
+                    line_content
+                };
+
+                // Try to get precise line number if available
+                let approximate_line_number = if self.has_line_index() {
+                    // Use offset_to_position instead of get_line_number to avoid &mut
+                    Some(self.buffer.offset_to_position(line_start).line)
+                } else {
+                    None
+                };
+
+                lines.push(ViewportLine {
+                    byte_offset: line_start,
+                    content,
+                    has_newline,
+                    approximate_line_number,
+                });
+            } else {
+                break;
+            }
+        }
+
+        let has_more = iter.next().is_some();
+
+        Ok(ViewportContent {
+            start_position: DocumentPosition::ByteOffset(start_offset),
+            lines,
+            has_more,
+        })
+    }
+
+    fn position_to_offset(&self, pos: DocumentPosition) -> Result<usize> {
+        match pos {
+            DocumentPosition::ByteOffset(offset) => Ok(offset),
+            DocumentPosition::LineColumn { line, column } => {
+                if !self.has_line_index() {
+                    anyhow::bail!("Line indexing not available for this document");
+                }
+                // Use piece tree's position conversion
+                let position = crate::piece_tree::Position { line, column };
+                Ok(self.buffer.position_to_offset(position))
+            }
+        }
+    }
+
+    fn offset_to_position(&self, offset: usize) -> DocumentPosition {
+        if self.has_line_index() {
+            let pos = self.buffer.offset_to_position(offset);
+            DocumentPosition::LineColumn {
+                line: pos.line,
+                column: pos.column,
+            }
+        } else {
+            DocumentPosition::ByteOffset(offset)
+        }
+    }
+
+    fn get_range(&self, start: DocumentPosition, end: DocumentPosition) -> Result<String> {
+        let start_offset = self.position_to_offset(start)?;
+        let end_offset = self.position_to_offset(end)?;
+
+        if start_offset > end_offset {
+            anyhow::bail!("Invalid range: start offset {} > end offset {}", start_offset, end_offset);
+        }
+
+        let bytes = self.buffer.get_text_range(start_offset, end_offset - start_offset)
+            .ok_or_else(|| anyhow::anyhow!("Data not available in range {}..{}", start_offset, end_offset))?;
+
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    fn get_line_content(&self, line_number: usize) -> Option<String> {
+        if !self.has_line_index() {
+            return None;
+        }
+
+        // Convert line number to byte offset
+        let line_start_offset = self.buffer.line_start_offset(line_number)?;
+
+        // Get line content using iterator
+        let mut iter = self.buffer.line_iterator(line_start_offset);
+        if let Some((_start, content)) = iter.next() {
+            let has_newline = content.ends_with('\n');
+            let line_content = if has_newline {
+                content[..content.len() - 1].to_string()
+            } else {
+                content
+            };
+            Some(line_content)
+        } else {
+            None
+        }
+    }
+
+    fn get_chunk_at_offset(&self, offset: usize, size: usize) -> Result<(usize, String)> {
+        let bytes = self.buffer.get_text_range(offset, size)
+            .ok_or_else(|| anyhow::anyhow!("Data not available at offset {}", offset))?;
+
+        Ok((offset, String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
+    fn insert(&mut self, pos: DocumentPosition, text: &str) -> Result<usize> {
+        let offset = self.position_to_offset(pos)?;
+        self.buffer.insert_bytes(offset, text.as_bytes().to_vec());
+        Ok(text.len())
+    }
+
+    fn delete(&mut self, start: DocumentPosition, end: DocumentPosition) -> Result<()> {
+        let start_offset = self.position_to_offset(start)?;
+        let end_offset = self.position_to_offset(end)?;
+
+        if start_offset > end_offset {
+            anyhow::bail!("Invalid range: start offset {} > end offset {}", start_offset, end_offset);
+        }
+
+        self.buffer.delete(start_offset..end_offset);
+        Ok(())
+    }
+
+    fn replace(
+        &mut self,
+        start: DocumentPosition,
+        end: DocumentPosition,
+        text: &str,
+    ) -> Result<()> {
+        // Delete then insert
+        self.delete(start, end)?;
+        self.insert(start, text)?;
+        Ok(())
+    }
+
+    fn find_matches(
+        &self,
+        pattern: &str,
+        search_range: Option<(DocumentPosition, DocumentPosition)>,
+    ) -> Result<Vec<usize>> {
+        let (start_offset, end_offset) = if let Some((start, end)) = search_range {
+            (self.position_to_offset(start)?, self.position_to_offset(end)?)
+        } else {
+            (0, self.buffer.len())
+        };
+
+        // Get text in range
+        let bytes = self.buffer.get_text_range(start_offset, end_offset - start_offset)
+            .ok_or_else(|| anyhow::anyhow!("Data not available for search"))?;
+        let text = String::from_utf8_lossy(&bytes);
+
+        // Find all matches (simple substring search for now)
+        let mut matches = Vec::new();
+        let mut search_offset = 0;
+        while let Some(pos) = text[search_offset..].find(pattern) {
+            matches.push(start_offset + search_offset + pos);
+            search_offset += pos + pattern.len();
+        }
+
+        Ok(matches)
     }
 }
 
