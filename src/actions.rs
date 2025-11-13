@@ -12,33 +12,9 @@ use crate::word_navigation::{
 /// This is the end of the last line (excluding trailing newline).
 /// For empty buffers, returns 0.
 fn max_cursor_position(buffer: &Buffer) -> usize {
-    if buffer.is_empty() {
-        return 0;
-    }
-
-    // Check if buffer ends with newline (creating an implicit empty last line)
-    let buffer_ends_with_newline = {
-        let last_char = buffer.slice(buffer.len() - 1..buffer.len());
-        last_char == "\n"
-    };
-
-    // If buffer ends with newline, cursor can go to buffer.len() (the empty last line)
-    if buffer_ends_with_newline {
-        return buffer.len();
-    }
-
-    // Find the last line by iterating from the end
-    let mut iter = buffer.line_iterator(buffer.len().saturating_sub(1));
-
-    // Get the current line (which should be the last line)
-    if let Some((line_start, line_content)) = iter.next() {
-        // Calculate end position excluding the trailing newline
-        let line_len = line_content.trim_end_matches('\n').len();
-        line_start + line_len
-    } else {
-        // Fallback to 0 if we can't find a line
-        0
-    }
+    // The maximum cursor position is simply the end of the buffer
+    // No need to use line iterator or calculate line positions
+    buffer.len()
 }
 
 /// Convert an action into a sequence of events that can be applied to the editor state
