@@ -655,16 +655,6 @@ impl TextBuffer {
         String::from_utf8_lossy(&self.get_all_text()).into_owned()
     }
 
-    /// Get text from a byte range as a String
-    ///
-    /// Note: For new code, prefer using DocumentModel::get_range() which provides
-    /// better error handling and supports the document model abstraction.
-    pub fn slice(&self, range: Range<usize>) -> String {
-        let bytes = self.get_text_range(range.start, range.end.saturating_sub(range.start))
-            .unwrap_or_default();
-        String::from_utf8_lossy(&bytes).into_owned()
-    }
-
     /// Get text from a byte range as bytes
     /// Returns empty vector if any buffers are unloaded
     ///
@@ -2056,8 +2046,7 @@ mod tests {
             let all_text = buffer.get_all_text();
             assert_eq!(all_text, test_data);
 
-            // Test slice methods
-            assert_eq!(buffer.slice(0..5), "line1");
+            // Test slice_bytes method
             assert_eq!(buffer.slice_bytes(0..5), b"line1");
 
             // Test basic editing operations

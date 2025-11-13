@@ -1696,16 +1696,23 @@ impl Editor {
 
     /// Copy the current selection to clipboard
     pub fn copy_selection(&mut self) {
-        let state = self.active_state();
-        let mut text = String::new();
+        // Collect ranges first
+        let ranges: Vec<_> = {
+            let state = self.active_state();
+            state.cursors.iter()
+                .filter_map(|(_, cursor)| cursor.selection_range())
+                .collect()
+        };
 
-        for (_, cursor) in state.cursors.iter() {
-            if let Some(range) = cursor.selection_range() {
-                if !text.is_empty() {
-                    text.push('\n');
-                }
-                text.push_str(&state.buffer.slice(range));
+        let mut text = String::new();
+        let state = self.active_state_mut();
+        for range in ranges {
+            if !text.is_empty() {
+                text.push('\n');
             }
+            let range_text = state.get_text_range(range.start, range.end)
+                ;
+            text.push_str(&range_text);
         }
 
         if !text.is_empty() {
@@ -1729,15 +1736,18 @@ impl Editor {
         };
 
         // Get deleted text and cursor id
+        let state = self.active_state_mut();
+        let primary_id = state.cursors.primary_id();
         let events: Vec<_> = deletions
             .iter()
             .rev()
             .map(|range| {
-                let state = self.active_state();
+                let deleted_text = state.get_text_range(range.start, range.end)
+                    ;
                 Event::Delete {
                     range: range.clone(),
-                    deleted_text: state.buffer.slice(range.clone()),
-                    cursor_id: state.cursors.primary_id(),
+                    deleted_text,
+                    cursor_id: primary_id,
                 }
             })
             .collect();
@@ -1778,7 +1788,7 @@ impl Editor {
     /// Add a cursor at the next occurrence of the selected text
     /// If no selection, does nothing
     pub fn add_cursor_at_next_match(&mut self) {
-        let state = self.active_state();
+        let state = self.active_state_mut();
         match add_cursor_at_next_match(state) {
             AddCursorResult::Success {
                 cursor,
@@ -2490,7 +2500,8 @@ impl Editor {
             }
             PluginCommand::DeleteRange { buffer_id, range } => {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    let deleted_text = state.buffer.slice(range.clone()).to_string();
+                    let deleted_text = state.get_text_range(range.start, range.end)
+                        ;
                     let event = Event::Delete {
                         range,
                         deleted_text,
@@ -2719,14 +2730,15 @@ impl Editor {
 
         // Get the partial word at cursor to filter completions
         use crate::word_navigation::find_completion_word_start;
-        let state = self.active_state();
-        let cursor_pos = state.cursors.primary().position;
-        let word_start = find_completion_word_start(&state.buffer, cursor_pos);
+        let (word_start, cursor_pos) = {
+            let state = self.active_state();
+            let cursor_pos = state.cursors.primary().position;
+            let word_start = find_completion_word_start(&state.buffer, cursor_pos);
+            (word_start, cursor_pos)
+        };
         let prefix = if word_start < cursor_pos {
-            state
-                .buffer
-                .slice(word_start..cursor_pos)
-                .to_string()
+            self.active_state_mut()
+                .get_text_range(word_start, cursor_pos)
                 .to_lowercase()
         } else {
             String::new()
@@ -3056,7 +3068,7 @@ impl Editor {
 
                             // Create events for all edits
                             for edit in sorted_edits {
-                                let state = self.buffers.get(&buffer_id).ok_or_else(|| {
+                                let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
                                     io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
                                 })?;
 
@@ -3070,17 +3082,18 @@ impl Editor {
                                 let start_pos =
                                     state.buffer.lsp_position_to_byte(start_line, start_char);
                                 let end_pos = state.buffer.lsp_position_to_byte(end_line, end_char);
+                                let buffer_len = state.buffer.len();
 
                                 // Log the conversion for debugging
                                 let old_text =
-                                    if start_pos < end_pos && end_pos <= state.buffer.len() {
-                                        state.buffer.slice(start_pos..end_pos).to_string()
+                                    if start_pos < end_pos && end_pos <= buffer_len {
+                                        state.get_text_range(start_pos, end_pos)
                                     } else {
                                         format!(
                                             "<invalid range: start={}, end={}, buffer_len={}>",
                                             start_pos,
                                             end_pos,
-                                            state.buffer.len()
+                                            buffer_len
                                         )
                                     };
                                 tracing::debug!("  Converting LSP range line {}:{}-{}:{} to bytes {}..{} (replacing {:?} with {:?})",
@@ -3089,8 +3102,7 @@ impl Editor {
 
                                 // Delete old text
                                 if start_pos < end_pos {
-                                    let deleted_text =
-                                        state.buffer.slice(start_pos..end_pos).to_string();
+                                    let deleted_text = state.get_text_range(start_pos, end_pos);
                                     let cursor_id = state.cursors.primary_id();
                                     let delete_event = Event::Delete {
                                         range: start_pos..end_pos,
@@ -3209,7 +3221,7 @@ impl Editor {
 
                             // Create events for all edits
                             for edit in sorted_edits {
-                                let state = self.buffers.get(&buffer_id).ok_or_else(|| {
+                                let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
                                     io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
                                 })?;
 
@@ -3223,17 +3235,18 @@ impl Editor {
                                 let start_pos =
                                     state.buffer.lsp_position_to_byte(start_line, start_char);
                                 let end_pos = state.buffer.lsp_position_to_byte(end_line, end_char);
+                                let buffer_len = state.buffer.len();
 
                                 // Log the conversion for debugging
                                 let old_text =
-                                    if start_pos < end_pos && end_pos <= state.buffer.len() {
-                                        state.buffer.slice(start_pos..end_pos).to_string()
+                                    if start_pos < end_pos && end_pos <= buffer_len {
+                                        state.get_text_range(start_pos, end_pos)
                                     } else {
                                         format!(
                                             "<invalid range: start={}, end={}, buffer_len={}>",
                                             start_pos,
                                             end_pos,
-                                            state.buffer.len()
+                                            buffer_len
                                         )
                                     };
                                 tracing::debug!("  Converting LSP range line {}:{}-{}:{} to bytes {}..{} (replacing {:?} with {:?})",
@@ -3242,8 +3255,7 @@ impl Editor {
 
                                 // Delete old text
                                 if start_pos < end_pos {
-                                    let deleted_text =
-                                        state.buffer.slice(start_pos..end_pos).to_string();
+                                    let deleted_text = state.get_text_range(start_pos, end_pos);
                                     let cursor_id = state.cursors.primary_id();
                                     let delete_event = Event::Delete {
                                         range: start_pos..end_pos,
@@ -3320,21 +3332,25 @@ impl Editor {
         use crate::word_navigation::{find_word_end, find_word_start};
 
         // Get the current buffer and cursor position
-        let state = self.active_state();
-        let cursor_pos = state.cursors.primary().position;
+        let (word_start, word_end) = {
+            let state = self.active_state();
+            let cursor_pos = state.cursors.primary().position;
 
-        // Find the word boundaries
-        let word_start = find_word_start(&state.buffer, cursor_pos);
-        let word_end = find_word_end(&state.buffer, cursor_pos);
+            // Find the word boundaries
+            let word_start = find_word_start(&state.buffer, cursor_pos);
+            let word_end = find_word_end(&state.buffer, cursor_pos);
 
-        // Check if we're on a word
-        if word_start >= word_end {
-            self.status_message = Some("No symbol at cursor".to_string());
-            return Ok(());
-        }
+            // Check if we're on a word
+            if word_start >= word_end {
+                self.status_message = Some("No symbol at cursor".to_string());
+                return Ok(());
+            }
+
+            (word_start, word_end)
+        };
 
         // Get the word text
-        let word_text = state.buffer.slice(word_start..word_end).to_string();
+        let word_text = self.active_state_mut().get_text_range(word_start, word_end);
 
         // Create an overlay to highlight the symbol being renamed
         let overlay_id = format!("rename_overlay_{}", self.next_lsp_request_id);
@@ -3956,16 +3972,20 @@ impl Editor {
                 if let Some(text) = completion_text {
                     use crate::word_navigation::find_completion_word_start;
 
-                    let state = self.active_state();
-                    let cursor_id = state.cursors.primary_id();
-                    let cursor_pos = state.cursors.primary().position;
+                    let (cursor_id, cursor_pos, word_start) = {
+                        let state = self.active_state();
+                        let cursor_id = state.cursors.primary_id();
+                        let cursor_pos = state.cursors.primary().position;
 
-                    // Find the start of the current completion word (stops at delimiters like '.')
-                    let word_start = find_completion_word_start(&state.buffer, cursor_pos);
+                        // Find the start of the current completion word (stops at delimiters like '.')
+                        let word_start = find_completion_word_start(&state.buffer, cursor_pos);
+
+                        (cursor_id, cursor_pos, word_start)
+                    };
 
                     // Get the text being deleted (if any) before we mutate
                     let deleted_text = if word_start < cursor_pos {
-                        state.buffer.slice(word_start..cursor_pos).to_string()
+                        self.active_state_mut().get_text_range(word_start, cursor_pos)
                     } else {
                         String::new()
                     };
@@ -5522,12 +5542,14 @@ impl Editor {
 
     /// Convert an action into a list of events to apply to the active buffer
     /// Returns None for actions that don't generate events (like Quit)
-    pub fn action_to_events(&self, action: Action) -> Option<Vec<Event>> {
+    pub fn action_to_events(&mut self, action: Action) -> Option<Vec<Event>> {
+        let tab_size = self.config.editor.tab_size;
+        let auto_indent = self.config.editor.auto_indent;
         convert_action_to_events(
-            self.active_state(),
+            self.active_state_mut(),
             action,
-            self.config.editor.tab_size,
-            self.config.editor.auto_indent,
+            tab_size,
+            auto_indent,
         )
     }
 
@@ -5617,7 +5639,7 @@ impl Editor {
         visible_end = visible_end.min(state.buffer.len());
 
         // Get the visible text
-        let visible_text = state.buffer.slice(visible_start..visible_end);
+        let visible_text = state.get_text_range(visible_start, visible_end);
 
         // Search for matches in visible area (case-insensitive)
         let query_lower = query.to_lowercase();
@@ -5891,7 +5913,7 @@ impl Editor {
             let range = match_pos..end;
 
             // Get the text being deleted
-            let deleted_text = self.active_state().buffer.slice(range.clone());
+            let deleted_text = self.active_state_mut().get_text_range(range.start, range.end);
 
             // Add Delete event
             events.push(Event::Delete {
@@ -6095,7 +6117,7 @@ impl Editor {
                     for match_pos in remaining_matches.into_iter().rev() {
                         let end = match_pos + ir_state.search.len();
                         let range = match_pos..end;
-                        let deleted_text = self.active_state().buffer.slice(range.clone());
+                        let deleted_text = self.active_state_mut().get_text_range(range.start, range.end);
 
                         events.push(Event::Delete {
                             range: range.clone(),
@@ -6197,7 +6219,7 @@ impl Editor {
         let range = match_pos..(match_pos + search_len);
 
         // Get the deleted text for the event
-        let deleted_text = self.active_state().buffer.slice(range.clone());
+        let deleted_text = self.active_state_mut().get_text_range(range.start, range.end);
 
         // Capture current cursor state for undo
         let cursor_id = self.active_state().cursors.primary_id();
@@ -6338,7 +6360,7 @@ mod tests {
     #[test]
     fn test_action_to_events_insert_char() {
         let config = Config::default();
-        let editor = Editor::new(config, 80, 24).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         let events = editor.action_to_events(Action::InsertChar('a'));
         assert!(events.is_some());
@@ -6429,7 +6451,7 @@ mod tests {
     #[test]
     fn test_action_to_events_insert_newline() {
         let config = Config::default();
-        let editor = Editor::new(config, 80, 24).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         let events = editor.action_to_events(Action::InsertNewline);
         assert!(events.is_some());
@@ -6448,7 +6470,7 @@ mod tests {
     #[test]
     fn test_action_to_events_unimplemented() {
         let config = Config::default();
-        let editor = Editor::new(config, 80, 24).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         // These actions should return None (not yet implemented)
         assert!(editor.action_to_events(Action::Save).is_none());
@@ -6707,7 +6729,7 @@ mod tests {
     #[test]
     fn test_action_to_events_scroll() {
         let config = Config::default();
-        let editor = Editor::new(config, 80, 24).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         // Test ScrollUp
         let events = editor.action_to_events(Action::ScrollUp);
@@ -6737,7 +6759,7 @@ mod tests {
     #[test]
     fn test_action_to_events_none() {
         let config = Config::default();
-        let editor = Editor::new(config, 80, 24).unwrap();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
 
         // None action should return None
         let events = editor.action_to_events(Action::None);
