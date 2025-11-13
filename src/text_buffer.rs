@@ -8,6 +8,16 @@ use std::io::{self, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+// Large file support configuration
+/// Default threshold for considering a file "large" (100 MB)
+pub const DEFAULT_LARGE_FILE_THRESHOLD: usize = 100 * 1024 * 1024;
+
+/// Chunk size to load when lazy loading (1 MB)
+pub const LOAD_CHUNK_SIZE: usize = 1024 * 1024;
+
+/// Chunk alignment for lazy loading (64 KB)
+pub const CHUNK_ALIGNMENT: usize = 64 * 1024;
+
 /// Represents a line number (simplified for new implementation)
 /// Legacy enum kept for backwards compatibility - always Absolute now
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +78,9 @@ pub struct TextBuffer {
 
     /// Has the buffer been modified since last save?
     modified: bool,
+
+    /// Is this a large file (no line indexing, lazy loading enabled)?
+    large_file: bool,
 }
 
 impl TextBuffer {
@@ -80,6 +93,7 @@ impl TextBuffer {
             next_buffer_id: 1,
             file_path: None,
             modified: false,
+            large_file: false,
         }
     }
 
@@ -101,6 +115,7 @@ impl TextBuffer {
             next_buffer_id: 1,
             file_path: None,
             modified: false,
+            large_file: false,
         }
     }
 
@@ -117,14 +132,38 @@ impl TextBuffer {
             next_buffer_id: 1,
             file_path: None,
             modified: false,
+            large_file: false,
         }
     }
 
     /// Load a text buffer from a file
     pub fn load_from_file<P: AsRef<Path>>(
         path: P,
-        _large_file_threshold: usize,
+        large_file_threshold: usize,
     ) -> io::Result<Self> {
+        let path = path.as_ref();
+
+        // Get file size to determine loading strategy
+        let metadata = std::fs::metadata(path)?;
+        let file_size = metadata.len() as usize;
+
+        // Use threshold parameter or default
+        let threshold = if large_file_threshold > 0 {
+            large_file_threshold
+        } else {
+            DEFAULT_LARGE_FILE_THRESHOLD
+        };
+
+        // Choose loading strategy based on file size
+        if file_size >= threshold {
+            Self::load_large_file(path, file_size)
+        } else {
+            Self::load_small_file(path)
+        }
+    }
+
+    /// Load a small file with full eager loading and line indexing
+    fn load_small_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let path = path.as_ref();
         let mut file = std::fs::File::open(path)?;
         let mut contents = Vec::new();
@@ -133,7 +172,42 @@ impl TextBuffer {
         let mut buffer = Self::from_bytes(contents);
         buffer.file_path = Some(path.to_path_buf());
         buffer.modified = false;
+        buffer.large_file = false;
         Ok(buffer)
+    }
+
+    /// Load a large file with unloaded buffer (no line indexing, lazy loading)
+    fn load_large_file<P: AsRef<Path>>(path: P, file_size: usize) -> io::Result<Self> {
+        use crate::piece_tree::{BufferData, BufferLocation};
+
+        let path = path.as_ref();
+
+        // Create an unloaded buffer that references the entire file
+        let buffer = StringBuffer {
+            id: 0,
+            data: BufferData::Unloaded {
+                file_path: path.to_path_buf(),
+                file_offset: 0,
+                bytes: file_size,
+            },
+        };
+
+        // Create piece tree with a single piece covering the whole file
+        // No line feed count (None) since we're not computing line indexing
+        let piece_tree = if file_size > 0 {
+            PieceTree::new(BufferLocation::Stored(0), 0, file_size, None)
+        } else {
+            PieceTree::empty()
+        };
+
+        Ok(TextBuffer {
+            piece_tree,
+            buffers: vec![buffer],
+            next_buffer_id: 1,
+            file_path: Some(path.to_path_buf()),
+            modified: false,
+            large_file: true,
+        })
     }
 
     /// Save the buffer to its associated file
@@ -1256,7 +1330,7 @@ mod tests {
     fn test_empty_buffer() {
         let buffer = TextBuffer::empty();
         assert_eq!(buffer.total_bytes(), 0);
-        assert_eq!(buffer.line_count(), 1); // Empty doc has 1 line
+        assert_eq!(buffer.line_count(), Some(1)); // Empty doc has 1 line
     }
 
     #[test]
@@ -1264,7 +1338,7 @@ mod tests {
         let buffer = TextBuffer::from_bytes(b"Hello\nNew Line\nWorld!".to_vec());
 
         // Check line count
-        assert_eq!(buffer.line_count(), 3);
+        assert_eq!(buffer.line_count(), Some(3));
 
         // Check line starts
         assert_eq!(buffer.line_start_offset(0), Some(0)); // "Hello\n" starts at 0
@@ -1289,7 +1363,7 @@ mod tests {
     fn test_new_from_content() {
         let buffer = TextBuffer::from_bytes(b"hello\nworld".to_vec());
         assert_eq!(buffer.total_bytes(), 11);
-        assert_eq!(buffer.line_count(), 2);
+        assert_eq!(buffer.line_count(), Some(2));
     }
 
     #[test]
@@ -1331,7 +1405,7 @@ mod tests {
         buffer.insert_bytes(5, b"\nworld\ntest".to_vec());
 
         assert_eq!(buffer.get_all_text(), b"hello\nworld\ntest");
-        assert_eq!(buffer.line_count(), 3);
+        assert_eq!(buffer.line_count(), Some(3));
     }
 
     #[test]
@@ -1367,7 +1441,7 @@ mod tests {
         buffer.delete_bytes(5, 7); // Delete "\nworld\n"
 
         assert_eq!(buffer.get_all_text(), b"hellotest");
-        assert_eq!(buffer.line_count(), 1);
+        assert_eq!(buffer.line_count(), Some(1));
     }
 
     #[test]
@@ -1418,13 +1492,13 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"line1\nline2\nline3".to_vec());
 
         buffer.insert_bytes(0, b"start\n".to_vec());
-        assert_eq!(buffer.line_count(), 4);
+        assert_eq!(buffer.line_count(), Some(4));
 
         buffer.delete_bytes(6, 6); // Delete "line1\n"
-        assert_eq!(buffer.line_count(), 3);
+        assert_eq!(buffer.line_count(), Some(3));
 
         buffer.insert_bytes(6, b"new\n".to_vec());
-        assert_eq!(buffer.line_count(), 4);
+        assert_eq!(buffer.line_count(), Some(4));
 
         let text = buffer.get_all_text();
         assert_eq!(text, b"start\nnew\nline2\nline3");
@@ -1467,6 +1541,269 @@ mod tests {
         buffer.insert_bytes(0, vec![b'b']);
         assert_eq!(buffer.get_all_text(), b"ba");
     }
+
+    // ===== Phase 1-3: Large File Support Tests =====
+
+    mod large_file_support {
+        use super::*;
+        use crate::piece_tree::StringBuffer;
+        use std::fs::File;
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        // Phase 1: Option<usize> Type Safety Tests
+
+        #[test]
+        fn test_line_feed_count_is_some_for_loaded_buffer() {
+            let buffer = StringBuffer::new(0, b"hello\nworld\ntest".to_vec());
+            assert_eq!(buffer.line_feed_count(), Some(2));
+        }
+
+        #[test]
+        fn test_line_feed_count_is_none_for_unloaded_buffer() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("test.txt");
+
+            let buffer = StringBuffer::new_unloaded(0, file_path, 0, 100);
+            assert_eq!(buffer.line_feed_count(), None);
+        }
+
+        #[test]
+        fn test_line_count_is_some_for_small_buffer() {
+            let buffer = TextBuffer::from_bytes(b"hello\nworld\ntest".to_vec());
+            assert_eq!(buffer.line_count(), Some(3));
+        }
+
+        #[test]
+        fn test_piece_tree_works_with_none_line_count() {
+            // Create a buffer with no line count information
+            let buffer = StringBuffer::new_loaded(0, b"hello\nworld".to_vec(), false);
+            assert_eq!(buffer.line_feed_count(), None);
+
+            // Create piece tree without line feed count
+            use crate::piece_tree::{BufferLocation, PieceTree};
+            let tree = PieceTree::new(BufferLocation::Stored(0), 0, 11, None);
+
+            // line_count should return None
+            assert_eq!(tree.line_count(), None);
+        }
+
+        // Phase 2: BufferData Enum Tests
+
+        #[test]
+        fn test_buffer_data_loaded_variant() {
+            let data = b"hello world".to_vec();
+            let buffer = StringBuffer::new_loaded(0, data.clone(), true);
+
+            assert!(buffer.is_loaded());
+            assert_eq!(buffer.get_data(), Some(&data[..]));
+            assert!(buffer.get_line_starts().is_some());
+        }
+
+        #[test]
+        fn test_buffer_data_loaded_without_line_starts() {
+            let data = b"hello\nworld".to_vec();
+            let buffer = StringBuffer::new_loaded(0, data.clone(), false);
+
+            assert!(buffer.is_loaded());
+            assert_eq!(buffer.get_data(), Some(&data[..]));
+            assert_eq!(buffer.get_line_starts(), None); // No line indexing
+        }
+
+        #[test]
+        fn test_buffer_data_unloaded_variant() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("test.txt");
+
+            let buffer = StringBuffer::new_unloaded(0, file_path.clone(), 0, 100);
+
+            assert!(!buffer.is_loaded());
+            assert_eq!(buffer.get_data(), None);
+            assert_eq!(buffer.get_line_starts(), None);
+        }
+
+        #[test]
+        fn test_buffer_load_method() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("test.txt");
+
+            // Create test file
+            let test_data = b"hello world";
+            File::create(&file_path)
+                .unwrap()
+                .write_all(test_data)
+                .unwrap();
+
+            // Create unloaded buffer
+            let mut buffer = StringBuffer::new_unloaded(0, file_path, 0, test_data.len());
+            assert!(!buffer.is_loaded());
+
+            // Load the buffer
+            buffer.load().unwrap();
+
+            // Now it should be loaded
+            assert!(buffer.is_loaded());
+            assert_eq!(buffer.get_data(), Some(&test_data[..]));
+        }
+
+        #[test]
+        fn test_string_buffer_new_vs_new_loaded() {
+            let data = b"hello\nworld".to_vec();
+
+            // StringBuffer::new should compute line starts
+            let buf1 = StringBuffer::new(0, data.clone());
+            assert!(buf1.is_loaded());
+            assert!(buf1.get_line_starts().is_some());
+            assert_eq!(buf1.line_feed_count(), Some(1));
+
+            // StringBuffer::new_loaded with compute_lines=false should not
+            let buf2 = StringBuffer::new_loaded(0, data.clone(), false);
+            assert!(buf2.is_loaded());
+            assert_eq!(buf2.get_line_starts(), None);
+            assert_eq!(buf2.line_feed_count(), None);
+        }
+
+        // Phase 3: Large File Detection Tests
+
+        #[test]
+        fn test_load_small_file_eager_loading() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("small.txt");
+
+            // Create a small file (10 bytes < 100MB threshold)
+            let test_data = b"hello\ntest";
+            File::create(&file_path)
+                .unwrap()
+                .write_all(test_data)
+                .unwrap();
+
+            // Load with default threshold
+            let buffer = TextBuffer::load_from_file(&file_path, 0).unwrap();
+
+            // Should be eagerly loaded (not large_file mode)
+            assert!(!buffer.large_file);
+            assert_eq!(buffer.total_bytes(), test_data.len());
+            assert_eq!(buffer.line_count(), Some(2)); // Has line indexing
+            assert_eq!(buffer.get_all_text(), test_data);
+
+            // The buffer should be loaded
+            assert!(buffer.buffers[0].is_loaded());
+        }
+
+        #[test]
+        fn test_load_large_file_lazy_loading() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("large.txt");
+
+            // Create a "large" file by using a small threshold
+            let test_data = b"hello\nworld\ntest";
+            File::create(&file_path)
+                .unwrap()
+                .write_all(test_data)
+                .unwrap();
+
+            // Load with threshold of 10 bytes (file is 17 bytes, so it's "large")
+            let buffer = TextBuffer::load_from_file(&file_path, 10).unwrap();
+
+            // Should be in large_file mode
+            assert!(buffer.large_file);
+            assert_eq!(buffer.total_bytes(), test_data.len());
+
+            // Should NOT have line indexing
+            assert_eq!(buffer.line_count(), None);
+
+            // The buffer should be unloaded
+            assert!(!buffer.buffers[0].is_loaded());
+            assert_eq!(buffer.buffers[0].get_data(), None);
+        }
+
+        #[test]
+        fn test_large_file_threshold_boundary() {
+            let temp_dir = TempDir::new().unwrap();
+
+            // Test exactly at threshold
+            let file_path = temp_dir.path().join("at_threshold.txt");
+            let test_data = vec![b'x'; 100];
+            File::create(&file_path)
+                .unwrap()
+                .write_all(&test_data)
+                .unwrap();
+
+            // Load with threshold of 100 bytes - should be large file (>= threshold)
+            let buffer = TextBuffer::load_from_file(&file_path, 100).unwrap();
+            assert!(buffer.large_file);
+
+            // Test just below threshold
+            let file_path2 = temp_dir.path().join("below_threshold.txt");
+            let test_data2 = vec![b'x'; 99];
+            File::create(&file_path2)
+                .unwrap()
+                .write_all(&test_data2)
+                .unwrap();
+
+            // Load with threshold of 100 bytes - should be small file (< threshold)
+            let buffer2 = TextBuffer::load_from_file(&file_path2, 100).unwrap();
+            assert!(!buffer2.large_file);
+        }
+
+        #[test]
+        fn test_large_file_default_threshold() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("test.txt");
+
+            // Create a small file
+            File::create(&file_path)
+                .unwrap()
+                .write_all(b"hello")
+                .unwrap();
+
+            // Load with threshold 0 - should use DEFAULT_LARGE_FILE_THRESHOLD
+            let buffer = TextBuffer::load_from_file(&file_path, 0).unwrap();
+
+            // 5 bytes < 100MB, so should not be large file
+            assert!(!buffer.large_file);
+        }
+
+        #[test]
+        fn test_large_file_has_correct_piece_tree_structure() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("large.txt");
+
+            let test_data = b"hello world";
+            File::create(&file_path)
+                .unwrap()
+                .write_all(test_data)
+                .unwrap();
+
+            // Load as large file
+            let buffer = TextBuffer::load_from_file(&file_path, 5).unwrap();
+
+            // Should have correct total bytes
+            assert_eq!(buffer.total_bytes(), test_data.len());
+
+            // Should have 1 buffer
+            assert_eq!(buffer.buffers.len(), 1);
+
+            // Buffer should be unloaded
+            assert!(!buffer.buffers[0].is_loaded());
+        }
+
+        #[test]
+        fn test_empty_large_file() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("empty.txt");
+
+            // Create an empty file
+            File::create(&file_path).unwrap();
+
+            // Load as large file
+            let buffer = TextBuffer::load_from_file(&file_path, 0).unwrap();
+
+            // Empty file is handled gracefully
+            assert_eq!(buffer.total_bytes(), 0);
+            assert!(buffer.is_empty());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1507,7 +1844,7 @@ mod property_tests {
             let buffer = TextBuffer::from_bytes(text.clone());
 
             let newline_count = text.iter().filter(|&&b| b == b'\n').count();
-            prop_assert_eq!(buffer.line_count(), newline_count + 1);
+            prop_assert_eq!(buffer.line_count(), Some(newline_count + 1));
         }
 
         #[test]
@@ -1653,7 +1990,7 @@ mod property_tests {
                 }
 
                 // Document always has at least 1 line
-                prop_assert!(buffer.line_count() >= 1);
+                prop_assert!(buffer.line_count().unwrap_or(1) >= 1);
             }
         }
 

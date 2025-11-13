@@ -17,7 +17,7 @@ fn test_offset_to_position_simple() {
         String::from_utf8_lossy(&content.to_vec())
     );
     println!("Buffer length: {}", buffer.len());
-    println!("Line count: {}", buffer.line_count());
+    println!("Line count: {:?}", buffer.line_count());
 
     // Test each byte position
     for byte_pos in 0..=buffer.len() {
@@ -85,7 +85,7 @@ fn test_offset_to_position_after_insert() {
 
     println!("\n=== Initial buffer ===");
     println!("Content: {:?}", buffer.slice_bytes(0..buffer.len()));
-    println!("Line count: {}", buffer.line_count());
+    println!("Line count: {:?}", buffer.line_count());
 
     for byte_pos in 0..=buffer.len() {
         let pos = buffer.offset_to_position(byte_pos);
@@ -103,7 +103,7 @@ fn test_offset_to_position_after_insert() {
 
     println!("\n=== After inserting 'x\\n' at line 1, column 0 ===");
     println!("Content: {:?}", buffer.slice_bytes(0..buffer.len()));
-    println!("Line count: {}", buffer.line_count());
+    println!("Line count: {:?}", buffer.line_count());
 
     for byte_pos in 0..=buffer.len() {
         let pos = buffer.offset_to_position(byte_pos);
@@ -143,7 +143,7 @@ fn test_offset_to_position_empty_lines() {
 
     println!("\n=== Buffer with empty lines ===");
     println!("Content: {:?}", buffer.slice_bytes(0..buffer.len()));
-    println!("Line count: {}", buffer.line_count());
+    println!("Line count: {:?}", buffer.line_count());
 
     for byte_pos in 0..=buffer.len() {
         let pos = buffer.offset_to_position(byte_pos);
@@ -187,7 +187,7 @@ fn test_offset_to_position_long_lines() {
 
     println!("\n=== Buffer with long lines ===");
     println!("Content length: {}", content.len());
-    println!("Line count: {}", buffer.line_count());
+    println!("Line count: {:?}", buffer.line_count());
 
     // Test positions at start of each line
     let pos = buffer.offset_to_position(0);
@@ -281,17 +281,17 @@ fn test_piece_tree_line_count_after_insert() {
     println!("Content: {:?}", String::from_utf8_lossy(&content));
     println!("Newline count: {}", newline_count);
     println!("Expected line count: {}", expected_line_count);
-    println!("Actual line count: {}", actual_line_count);
+    println!("Actual line count: {:?}", actual_line_count);
 
     assert_eq!(
-        actual_line_count, expected_line_count,
+        actual_line_count, Some(expected_line_count),
         "Line count mismatch after insert"
     );
 }
 
 fn print_piece_tree_debug(buffer: &TextBuffer) {
     println!("Total bytes: {}", buffer.len());
-    println!("Line count: {}", buffer.line_count());
+    println!("Line count: {:?}", buffer.line_count());
 
     // Try to get piece tree stats if available
     // Note: This might require adding a debug method to TextBuffer

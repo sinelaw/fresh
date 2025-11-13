@@ -1739,23 +1739,23 @@ mod tests {
 
     #[test]
     fn test_create_with_initial_piece() {
-        let tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+        let tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
         assert_eq!(tree.total_bytes(), 100);
     }
 
     #[test]
     fn test_insert_at_end() {
         let buffers = test_buffers();
-        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
-        tree.insert(100, BufferLocation::Added(1), 0, 50, 0, &buffers);
+        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
+        tree.insert(100, BufferLocation::Added(1), 0, 50, Some(0), &buffers);
         assert_eq!(tree.total_bytes(), 150);
     }
 
     #[test]
     fn test_insert_in_middle() {
         let buffers = test_buffers();
-        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
-        tree.insert(50, BufferLocation::Added(2), 0, 25, 0, &buffers);
+        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
+        tree.insert(50, BufferLocation::Added(2), 0, 25, Some(0), &buffers);
         assert_eq!(tree.total_bytes(), 125);
         let stats = tree.stats();
         assert_eq!(stats.leaf_count, 3); // Original piece split + new piece
@@ -1764,7 +1764,7 @@ mod tests {
     #[test]
     fn test_delete() {
         let buffers = test_buffers();
-        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
         tree.delete(25, 50, &buffers);
         assert_eq!(tree.total_bytes(), 50);
     }
@@ -1772,7 +1772,7 @@ mod tests {
     #[test]
     fn test_delete_at_boundaries() {
         let buffers = test_buffers();
-        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
         // Delete from start
         tree.delete(0, 10, &buffers);
@@ -1786,26 +1786,26 @@ mod tests {
     #[test]
     fn test_multiple_inserts_and_deletes() {
         let buffers = test_buffers();
-        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
-        tree.insert(50, BufferLocation::Added(1), 0, 20, 0, &buffers);
+        tree.insert(50, BufferLocation::Added(1), 0, 20, Some(0), &buffers);
         assert_eq!(tree.total_bytes(), 120);
 
         tree.delete(40, 30, &buffers);
         assert_eq!(tree.total_bytes(), 90);
 
-        tree.insert(0, BufferLocation::Added(1), 20, 10, 0, &buffers);
+        tree.insert(0, BufferLocation::Added(1), 20, 10, Some(0), &buffers);
         assert_eq!(tree.total_bytes(), 100);
     }
 
     #[test]
     fn test_rebalancing_many_inserts() {
         let buffers = test_buffers();
-        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
         // Insert many times, which could create unbalanced tree
         for i in 0..20 {
-            tree.insert(i * 5, BufferLocation::Added(1), i, 1, 0, &buffers);
+            tree.insert(i * 5, BufferLocation::Added(1), i, 1, Some(0), &buffers);
         }
 
         let stats = tree.stats();
@@ -1828,7 +1828,7 @@ mod tests {
 
     #[test]
     fn test_find_by_offset() {
-        let tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+        let tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
         let info = tree.find_by_offset(50).unwrap();
         assert_eq!(info.location, BufferLocation::Stored(0));
@@ -1841,8 +1841,8 @@ mod tests {
     #[test]
     fn test_find_after_inserts() {
         let buffers = test_buffers();
-        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
-        tree.insert(50, BufferLocation::Added(1), 0, 25, 0, &buffers);
+        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
+        tree.insert(50, BufferLocation::Added(1), 0, 25, Some(0), &buffers);
 
         // Should find in added section
         let info = tree.find_by_offset(50).unwrap();
@@ -1904,15 +1904,16 @@ mod property_tests {
         #[test]
         fn prop_total_bytes_consistency(operations in operation_strategy()) {
             let buffers = test_buffers_large();
-            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
             let mut expected_bytes = 100;
 
             for op in operations {
                 match op {
                     Operation::Insert { offset, bytes } => {
                         let offset = offset.min(tree.total_bytes());
-                        let bytes = bytes.min(buffers[1].data.len());
-                        tree.insert(offset, BufferLocation::Added(1), 0, bytes, 0, &buffers);
+                        let buffer_len = buffers[1].get_data().map(|d| d.len()).unwrap_or(0);
+                        let bytes = bytes.min(buffer_len);
+                        tree.insert(offset, BufferLocation::Added(1), 0, bytes, Some(0), &buffers);
                         expected_bytes += bytes;
                     }
                     Operation::Delete { offset, bytes } => {
@@ -1931,14 +1932,15 @@ mod property_tests {
         #[test]
         fn prop_tree_never_negative_bytes(operations in operation_strategy()) {
             let buffers = test_buffers_large();
-            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
             for op in operations {
                 match op {
                     Operation::Insert { offset, bytes } => {
                         let offset = offset.min(tree.total_bytes());
-                        let bytes = bytes.min(buffers[1].data.len());
-                        tree.insert(offset, BufferLocation::Added(1), 0, bytes, 0, &buffers);
+                        let buffer_len = buffers[1].get_data().map(|d| d.len()).unwrap_or(0);
+                        let bytes = bytes.min(buffer_len);
+                        tree.insert(offset, BufferLocation::Added(1), 0, bytes, Some(0), &buffers);
                     }
                     Operation::Delete { offset, bytes } => {
                         tree.delete(offset, bytes, &buffers);
@@ -1953,14 +1955,15 @@ mod property_tests {
         #[test]
         fn prop_balanced_after_operations(operations in operation_strategy()) {
             let buffers = test_buffers_large();
-            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
             for op in operations {
                 match op {
                     Operation::Insert { offset, bytes } => {
                         let offset = offset.min(tree.total_bytes());
-                        let bytes = bytes.min(buffers[1].data.len());
-                        tree.insert(offset, BufferLocation::Added(1), 0, bytes, 0, &buffers);
+                        let buffer_len = buffers[1].get_data().map(|d| d.len()).unwrap_or(0);
+                        let bytes = bytes.min(buffer_len);
+                        tree.insert(offset, BufferLocation::Added(1), 0, bytes, Some(0), &buffers);
                     }
                     Operation::Delete { offset, bytes } => {
                         tree.delete(offset, bytes, &buffers);
@@ -1981,12 +1984,13 @@ mod property_tests {
             insert_bytes in 1usize..50
         ) {
             let buffers = test_buffers_large();
-            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
             let original_bytes = tree.total_bytes();
 
             let insert_offset = insert_offset.min(tree.total_bytes());
-            let insert_bytes = insert_bytes.min(buffers[1].data.len());
-            tree.insert(insert_offset, BufferLocation::Added(1), 0, insert_bytes, 0, &buffers);
+            let buffer_len = buffers[1].get_data().map(|d| d.len()).unwrap_or(0);
+            let insert_bytes = insert_bytes.min(buffer_len);
+            tree.insert(insert_offset, BufferLocation::Added(1), 0, insert_bytes, Some(0), &buffers);
 
             // Delete what we just inserted
             tree.delete(insert_offset, insert_bytes, &buffers);
@@ -1998,7 +2002,7 @@ mod property_tests {
         fn prop_find_offset_in_bounds(
             offset in 0usize..100
         ) {
-            let tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+            let tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
             let result = tree.find_by_offset(offset);
             prop_assert!(result.is_some());
@@ -2008,7 +2012,7 @@ mod property_tests {
         fn prop_find_offset_out_of_bounds(
             offset in 100usize..1000
         ) {
-            let tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+            let tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
             let result = tree.find_by_offset(offset);
             prop_assert!(result.is_none());
@@ -2020,11 +2024,12 @@ mod property_tests {
             insert_size in 1usize..10
         ) {
             let buffers = test_buffers_large();
-            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 10, 0);
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 10, Some(0));
 
             for _i in 0..count {
-                let insert_size = insert_size.min(buffers[1].data.len());
-                tree.insert(tree.total_bytes(), BufferLocation::Added(1), 0, insert_size, 0, &buffers);
+                let buffer_len = buffers[1].get_data().map(|d| d.len()).unwrap_or(0);
+                let insert_size = insert_size.min(buffer_len);
+                tree.insert(tree.total_bytes(), BufferLocation::Added(1), 0, insert_size, Some(0), &buffers);
             }
 
             let expected_bytes = 10 + (count * insert_size);
@@ -2036,7 +2041,7 @@ mod property_tests {
             delete_size in 1usize..10
         ) {
             let buffers = test_buffers_large();
-            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
             while tree.total_bytes() > 0 {
                 let to_delete = delete_size.min(tree.total_bytes());
@@ -2050,7 +2055,7 @@ mod property_tests {
     #[test]
     fn test_empty_delete() {
         let buffers = test_buffers_large();
-        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
         tree.delete(50, 0, &buffers);
         assert_eq!(tree.total_bytes(), 100);
     }
@@ -2061,14 +2066,15 @@ mod property_tests {
         #[test]
         fn prop_tree_consistency_piece_sum(operations in operation_strategy()) {
             let buffers = test_buffers_large();
-            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
             for op in operations {
                 match op {
                     Operation::Insert { offset, bytes } => {
                         let offset = offset.min(tree.total_bytes());
-                        let bytes = bytes.min(buffers[1].data.len());
-                        tree.insert(offset, BufferLocation::Added(1), 0, bytes, 0, &buffers);
+                        let buffer_len = buffers[1].get_data().map(|d| d.len()).unwrap_or(0);
+                        let bytes = bytes.min(buffer_len);
+                        tree.insert(offset, BufferLocation::Added(1), 0, bytes, Some(0), &buffers);
                     }
                     Operation::Delete { offset, bytes } => {
                         tree.delete(offset, bytes, &buffers);
@@ -2093,14 +2099,15 @@ mod property_tests {
         #[test]
         fn prop_tree_consistency_line_feeds(operations in operation_strategy()) {
             let buffers = test_buffers_large();
-            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
             for op in operations {
                 match op {
                     Operation::Insert { offset, bytes } => {
                         let offset = offset.min(tree.total_bytes());
-                        let bytes = bytes.min(buffers[1].data.len());
-                        tree.insert(offset, BufferLocation::Added(1), 0, bytes, 0, &buffers);
+                        let buffer_len = buffers[1].get_data().map(|d| d.len()).unwrap_or(0);
+                        let bytes = bytes.min(buffer_len);
+                        tree.insert(offset, BufferLocation::Added(1), 0, bytes, Some(0), &buffers);
                     }
                     Operation::Delete { offset, bytes } => {
                         tree.delete(offset, bytes, &buffers);
@@ -2109,12 +2116,13 @@ mod property_tests {
 
                 // INVARIANT: Sum of all piece line feeds must equal tree's total
                 let leaves = tree.get_leaves();
-                let sum_of_line_feeds: usize = leaves.iter().map(|leaf| leaf.line_feed_cnt).sum();
+                let sum_of_line_feeds: Option<usize> = leaves.iter()
+                    .try_fold(0, |acc, leaf| leaf.line_feed_cnt.map(|cnt| acc + cnt));
                 let stats = tree.stats();
                 prop_assert_eq!(
                     sum_of_line_feeds,
                     stats.line_feed_count,
-                    "Line feed inconsistency: sum of piece line feeds ({}) != tree total ({})",
+                    "Line feed inconsistency: sum of piece line feeds ({:?}) != tree total ({:?})",
                     sum_of_line_feeds,
                     stats.line_feed_count
                 );
@@ -2126,13 +2134,13 @@ mod property_tests {
         #[test]
         fn prop_tree_consistency_aggressive(operations in aggressive_operation_strategy()) {
             let buffers = test_buffers_large();
-            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
             // Prime the tree with several inserts to create internal nodes first
             // This increases the likelihood of hitting the bug scenario
             for i in 0..5 {
                 let offset = (i * 17) % (tree.total_bytes().max(1));
-                tree.insert(offset, BufferLocation::Added(1), i * 100, 10, 0, &buffers);
+                tree.insert(offset, BufferLocation::Added(1), i * 100, 10, Some(0), &buffers);
             }
 
             // Verify we have internal nodes
@@ -2142,8 +2150,9 @@ mod property_tests {
                 match *op {
                     Operation::Insert { offset, bytes } => {
                         let offset = offset.min(tree.total_bytes());
-                        let bytes = bytes.min(buffers[1].data.len());
-                        tree.insert(offset, BufferLocation::Added(1), 0, bytes, 0, &buffers);
+                        let buffer_len = buffers[1].get_data().map(|d| d.len()).unwrap_or(0);
+                        let bytes = bytes.min(buffer_len);
+                        tree.insert(offset, BufferLocation::Added(1), 0, bytes, Some(0), &buffers);
                     }
                     Operation::Delete { offset, bytes } => {
                         tree.delete(offset, bytes, &buffers);
@@ -2172,7 +2181,7 @@ mod property_tests {
     #[test]
     fn test_delete_beyond_end() {
         let buffers = test_buffers_large();
-        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
         tree.delete(50, 100, &buffers); // Try to delete 100 bytes from offset 50
         assert_eq!(tree.total_bytes(), 50); // Should only delete 50 bytes
     }
@@ -2180,8 +2189,8 @@ mod property_tests {
     #[test]
     fn test_insert_zero_bytes() {
         let buffers = test_buffers_large();
-        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
-        tree.insert(50, BufferLocation::Added(1), 0, 0, 0, &buffers);
+        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
+        tree.insert(50, BufferLocation::Added(1), 0, 0, Some(0), &buffers);
         assert_eq!(tree.total_bytes(), 100);
     }
 
@@ -2190,12 +2199,12 @@ mod property_tests {
         // Regression test: verify tree consistency after each operation
         // This test creates enough inserts to force internal nodes, which is where the bug manifests
         let buffers = test_buffers_large();
-        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
         // Do several inserts to create internal nodes and splits
         for i in 0..10 {
             let offset = (i * 13) % (tree.total_bytes().max(1)); // Varying offsets
-            tree.insert(offset, BufferLocation::Added(1), i * 10, 5, 0, &buffers);
+            tree.insert(offset, BufferLocation::Added(1), i * 10, 5, Some(0), &buffers);
 
             // INVARIANT: sum of piece lengths must equal total_bytes
             let leaves = tree.get_leaves();
@@ -2224,7 +2233,7 @@ mod property_tests {
     fn test_duplicate_piece_bug_exact_scenario() {
         // This replicates the exact scenario that exposed the duplicate insertion bug
         let mut buffers = vec![StringBuffer::new(0, b"initial\ntext".to_vec())];
-        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 12, 1);
+        let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 12, Some(1));
 
         // Delete all - creates an empty piece
         tree.delete(0, 12, &buffers);
@@ -2242,7 +2251,7 @@ mod property_tests {
 
         // Insert 'a' at position 0
         buffers.push(StringBuffer::new(1, b"a".to_vec()));
-        tree.insert(0, BufferLocation::Added(1), 0, 1, 0, &buffers);
+        tree.insert(0, BufferLocation::Added(1), 0, 1, Some(0), &buffers);
 
         // Check consistency
         let leaves = tree.get_leaves();
@@ -2258,7 +2267,7 @@ mod property_tests {
 
         // Insert 'b' at position 0 - this should trigger the bug with buggy code
         buffers.push(StringBuffer::new(2, b"b".to_vec()));
-        tree.insert(0, BufferLocation::Added(2), 0, 1, 0, &buffers);
+        tree.insert(0, BufferLocation::Added(2), 0, 1, Some(0), &buffers);
 
         // Check consistency - this will fail with the bug
         let leaves = tree.get_leaves();
@@ -2282,7 +2291,7 @@ mod property_tests {
             len in 1usize..50
         ) {
             let mut buffers = vec![StringBuffer::new(0, b"x".repeat(100).to_vec())];
-            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
             // Apply operations to build up tree
             for (i, op) in ops.iter().enumerate() {
@@ -2290,7 +2299,7 @@ mod property_tests {
                     Operation::Insert { offset, bytes } => {
                         let offset = (*offset).min(tree.total_bytes());
                         buffers.push(StringBuffer::new(buffers.len(), b"a".repeat(*bytes).to_vec()));
-                        tree.insert(offset, BufferLocation::Added(buffers.len() - 1), 0, *bytes, 0, &buffers);
+                        tree.insert(offset, BufferLocation::Added(buffers.len() - 1), 0, *bytes, Some(0), &buffers);
                     }
                     Operation::Delete { offset, bytes } => {
                         let offset = (*offset).min(tree.total_bytes());
@@ -2332,14 +2341,14 @@ mod property_tests {
         #[test]
         fn test_piece_iter_no_gaps(ops in aggressive_operation_strategy()) {
             let mut buffers = vec![StringBuffer::new(0, b"x".repeat(100).to_vec())];
-            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
             for op in ops {
                 match op {
                     Operation::Insert { offset, bytes } => {
                         let offset = offset.min(tree.total_bytes());
                         buffers.push(StringBuffer::new(buffers.len(), b"a".repeat(bytes).to_vec()));
-                        tree.insert(offset, BufferLocation::Added(buffers.len() - 1), 0, bytes, 0, &buffers);
+                        tree.insert(offset, BufferLocation::Added(buffers.len() - 1), 0, bytes, Some(0), &buffers);
                     }
                     Operation::Delete { offset, bytes } => {
                         let offset = offset.min(tree.total_bytes());
@@ -2372,14 +2381,14 @@ mod property_tests {
         #[test]
         fn test_piece_iter_total_bytes_matches(ops in aggressive_operation_strategy()) {
             let mut buffers = vec![StringBuffer::new(0, b"x".repeat(100).to_vec())];
-            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
             for op in ops {
                 match op {
                     Operation::Insert { offset, bytes } => {
                         let offset = offset.min(tree.total_bytes());
                         buffers.push(StringBuffer::new(buffers.len(), b"a".repeat(bytes).to_vec()));
-                        tree.insert(offset, BufferLocation::Added(buffers.len() - 1), 0, bytes, 0, &buffers);
+                        tree.insert(offset, BufferLocation::Added(buffers.len() - 1), 0, bytes, Some(0), &buffers);
                     }
                     Operation::Delete { offset, bytes } => {
                         let offset = offset.min(tree.total_bytes());
