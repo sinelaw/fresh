@@ -510,94 +510,131 @@ impl SplitRenderer {
 - `Result<T>` for operations that can fail
 - No confusion between "empty" and "unavailable"
 
-## Implementation Phases
+## Implementation Plan - Direct Implementation (No Migration)
 
-### Phase 1: Add Types and Trait (Week 1)
-- [ ] Define `DocumentPosition` enum
-- [ ] Define `DocumentCapabilities` struct
-- [ ] Define `DocumentModel` trait
-- [ ] Define `ViewportContent` and `ViewportLine` types
+**Strategy:** Implement the final solution directly without gradual migration. Break the current code temporarily, then fix it all at once. This is faster and cleaner than maintaining two parallel APIs.
 
-### Phase 2: Implement for EditorState (Week 1-2)
-- [ ] Implement `capabilities()`
-- [ ] Implement `get_viewport_content()`
-- [ ] Implement position conversion methods
-- [ ] Add `prepare_for_render()` method
+### Phase 1: Core Types and Trait (Day 1)
+1. **Create `src/document_model.rs`** - New module with all types and trait
+   - [ ] `DocumentPosition` enum
+   - [ ] `DocumentCapabilities` struct
+   - [ ] `ViewportContent` and `ViewportLine` structs
+   - [ ] `DocumentModel` trait with all methods
+   - [ ] Export from `lib.rs`
 
-### Phase 3: Update TextBuffer (Week 2)
-- [ ] Add `prepare_viewport()` method
-- [ ] Separate read-only and mutable paths
-- [ ] Make `slice()` private
-- [ ] Return `Option<Vec<u8>>` from `get_text_range()`
+### Phase 2: TextBuffer Changes (Day 1-2)
+2. **Update `src/text_buffer.rs`** - Separate read/write paths immediately
+   - [ ] Add `get_text_range(&self) -> Option<Vec<u8>>` (read-only, no loading)
+   - [ ] Add `prepare_viewport(&mut self, offset, line_count) -> Result<()>`
+   - [ ] Make `slice()` private (breaking change - code will break temporarily)
+   - [ ] Keep internal loading logic as-is
 
-### Phase 4: Update Viewport (Week 2-3)
-- [ ] Change `top_byte` to `top_position: DocumentPosition`
-- [ ] Update scroll methods for dual coordinates
-- [ ] Add viewport content caching
-- [ ] Integrate with `prepare_for_render()`
+### Phase 3: EditorState Implementation (Day 2)
+3. **Implement DocumentModel for EditorState** - This is the core abstraction
+   - [ ] Add `impl DocumentModel for EditorState` in `src/editor_state.rs`
+   - [ ] Implement all trait methods (capabilities, get_viewport_content, etc.)
+   - [ ] Add `prepare_for_render(&mut self)` helper method
+   - [ ] Update viewport struct to use `DocumentPosition` instead of byte offset
 
-### Phase 5: Refactor Rendering (Week 3-4)
-- [ ] Call `prepare_for_render()` before each frame
-- [ ] Use `get_viewport_content()` instead of line iterator
-- [ ] Display byte offsets for huge files
-- [ ] Handle errors with on-screen messages
-- [ ] Remove all direct `.buffer` access
+### Phase 4: Fix Rendering (Day 2-3)
+4. **Update all rendering code** - Switch from `slice()` to `DocumentModel`
+   - [ ] Update `src/renderer/mod.rs` to call `prepare_for_render()` before render
+   - [ ] Update `SplitRenderer::render_buffer_in_split()` to use `get_viewport_content()`
+   - [ ] Show byte offsets in gutter for huge files (instead of line numbers)
+   - [ ] Add error rendering (red text) when `get_viewport_content()` fails
+   - [ ] Remove all direct `.buffer.slice()` calls from rendering code
 
-### Phase 6: Refactor Editing (Week 4-5)
-- [ ] Update `actions.rs` to use `DocumentPosition`
-- [ ] Replace `.slice()` with `get_range()`
-- [ ] Update cursor movement for dual coordinates
-- [ ] Update undo/redo to use positions
+### Phase 5: Fix Editing Operations (Day 3-4)
+5. **Update `src/actions.rs`** - Convert all operations to use `DocumentModel`
+   - [ ] Update cursor movement (up/down/left/right) to use `DocumentPosition`
+   - [ ] Update insertion operations to use `insert()` method
+   - [ ] Update deletion operations to use `delete()` method
+   - [ ] Update search/replace to use `find_matches()` and `replace()`
+   - [ ] Remove all direct `.buffer.slice()` calls from actions
 
-### Phase 7: Cleanup and Optimization (Week 5-6)
-- [ ] Make `TextBuffer` module-private
-- [ ] Remove public `slice()` method
-- [ ] Audit all buffer access patterns
-- [ ] Add comprehensive tests
-- [ ] Update documentation
+### Phase 6: Fix Remaining Code (Day 4)
+6. **Audit and fix any remaining usages**
+   - [ ] Search codebase for all `.slice()` calls - replace with `DocumentModel` methods
+   - [ ] Search for direct `.buffer` access - route through `DocumentModel` instead
+   - [ ] Update tests to use new APIs
+   - [ ] Ensure all compilation errors are resolved
 
-## Migration Strategy
+### Phase 7: Validation (Day 5)
+7. **Test everything**
+   - [ ] Run all unit tests - fix any failures
+   - [ ] Run all e2e tests - fix any failures
+   - [ ] Add e2e test for small file (< 1MB) with line numbers
+   - [ ] Add e2e test for large file (> 100MB) with byte offsets
+   - [ ] Add e2e test for editing operations (insert, delete, undo/redo)
+   - [ ] Add e2e test for scrolling in both modes (line-based and byte-based)
+   - [ ] All tests must pass automatically with `cargo test`
 
-### Compatibility During Transition
+### Phase 8: Cleanup (Day 5)
+8. **Final cleanup**
+   - [ ] Make `TextBuffer` fields private if not already
+   - [ ] Add documentation comments to all public APIs
+   - [ ] Remove any dead code or unused methods
+   - [ ] Update related docs (README, architecture docs)
 
-To avoid breaking everything during migration, we'll use a gradual approach:
+## Key Differences from Gradual Migration
 
-1. **Add new APIs alongside old ones**
-   - Keep `buffer.slice()` working temporarily
-   - Add `DocumentModel` trait implementation
-   - Both paths work simultaneously
+### Advantages of Direct Implementation:
+1. **Faster**: 5 days instead of 5-6 weeks
+2. **Cleaner**: No parallel API maintenance
+3. **Simpler**: No compatibility shims or transition code
+4. **Better end result**: No technical debt from migration artifacts
 
-2. **Migrate rendering first**
-   - Rendering is read-only, easier to change
-   - Most visible impact (fixes blank screen bug)
-   - Tests will validate correctness
+### Risks and Mitigation:
+1. **Risk**: Breaking the build for several hours/days
+   - **Mitigation**: Work in a branch, commit frequently, can revert if needed
 
-3. **Migrate editing operations**
-   - Update one operation type at a time
-   - Keep comprehensive tests
-   - Validate with e2e tests
+2. **Risk**: Forgetting to update some code path
+   - **Mitigation**: Use compiler errors as a checklist (make `slice()` private early)
 
-4. **Remove old APIs**
-   - Once all code migrated, remove `slice()`
-   - Make `TextBuffer` module-private
-   - Final API cleanup
+3. **Risk**: Introducing subtle bugs
+   - **Mitigation**: Comprehensive tests at each phase, e2e tests catch regressions
 
-### Testing Strategy
+### Why This Works:
+- Fresh is a single-developer project (so far)
+- No production users depending on API stability
+- Existing e2e tests will catch major regressions
+- Faster to implement correctly once than to maintain two systems
 
-1. **Unit Tests**
-   - Test `DocumentModel` implementation
-   - Test both coordinate systems
-   - Test error cases (load failures)
+## Testing Strategy
 
-2. **Integration Tests**
-   - Test rendering with large files
-   - Test editing operations
-   - Test coordinate conversions
+### Compile-Time Validation:
+- Making `slice()` private immediately turns all usages into compiler errors
+- This gives us a complete checklist of what needs updating
+- Can't accidentally miss a code path
 
-3. **E2E Tests**
-   - Test with actual huge files (>1GB)
-   - Test lazy loading behavior
-   - Test error recovery
+### Automated Testing:
+All testing must be fully automated and pass with `cargo test`.
+
+1. **Unit Tests** (`src/document_model.rs`, `src/editor_state.rs`)
+   - Test each `DocumentModel` method independently
+   - Test position conversions (line-based ↔ byte-based)
+   - Test error cases (invalid positions, load failures)
+   - Test both small and large file modes
+
+2. **Integration Tests** (`tests/`)
+   - Test `DocumentModel` + rendering integration
+   - Test `DocumentModel` + editing integration
+   - Test viewport preparation and content retrieval
+
+3. **E2E Tests** (`tests/e2e/`)
+   - **Small file test**: Open file < 1MB, verify line numbers displayed
+   - **Large file test**: Open file > 100MB, verify byte offsets displayed
+   - **Scroll test**: Scroll through large file, verify no blank screens
+   - **Edit test**: Insert/delete in large file, verify changes persist
+   - **Undo/redo test**: Undo/redo in large file, verify correctness
+   - **Search test**: Search in large file, verify matches found
+   - **Save test**: Save large file, verify file written correctly
+   - All existing large file e2e tests continue to pass
+
+### Test Data:
+- Small test file: Generate < 1MB file with known content
+- Large test file: Generate > 100MB file programmatically (don't commit to repo)
+- Use temp files for all tests (cleanup automatically)
 
 ## Future Extensions
 
