@@ -1086,6 +1086,32 @@ mod tests {
     }
 
     #[test]
+    fn test_line_positions_multiline() {
+        let buffer = TextBuffer::from_bytes(b"Hello\nNew Line\nWorld!".to_vec());
+
+        // Check line count
+        assert_eq!(buffer.line_count(), 3);
+
+        // Check line starts
+        assert_eq!(buffer.line_start_offset(0), Some(0));  // "Hello\n" starts at 0
+        assert_eq!(buffer.line_start_offset(1), Some(6));  // "New Line\n" starts at 6
+        assert_eq!(buffer.line_start_offset(2), Some(15)); // "World!" starts at 15
+
+        // Check offset_to_position
+        assert_eq!(buffer.offset_to_position(0).line, 0);   // Start of "Hello"
+        assert_eq!(buffer.offset_to_position(5).line, 0);   // End of "Hello" (before \n)
+        assert_eq!(buffer.offset_to_position(6).line, 1);   // Start of "New Line"
+        assert_eq!(buffer.offset_to_position(14).line, 1);  // End of "New Line" (before \n)
+        assert_eq!(buffer.offset_to_position(15).line, 2);  // Start of "World!"
+
+        // Check line_col_to_position
+        assert_eq!(buffer.line_col_to_position(0, 5), 5);   // End of line 0
+        assert_eq!(buffer.line_col_to_position(1, 0), 6);   // Start of line 1
+        assert_eq!(buffer.line_col_to_position(1, 8), 14);  // End of line 1
+        assert_eq!(buffer.line_col_to_position(2, 0), 15);  // Start of line 2
+    }
+
+    #[test]
     fn test_new_from_content() {
         let buffer = TextBuffer::from_bytes(b"hello\nworld".to_vec());
         assert_eq!(buffer.total_bytes(), 11);
