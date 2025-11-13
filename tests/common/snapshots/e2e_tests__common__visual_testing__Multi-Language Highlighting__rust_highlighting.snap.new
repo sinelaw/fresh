@@ -1,0 +1,35 @@
+---
+source: tests/common/visual_testing.rs
+assertion_line: 69
+expression: "&screen_text"
+---
+ hello.rs                                                                       
+    1 │ fn greet(name: &str) -> String {                                       █
+    2 │ fn greet(name: &str) -> String {                                       █
+    3 │ fn greet(name: &str) -> String {                                       █
+    4 │ fn greet(name: &str) -> String {                                       █
+    5 │ fn greet(name: &str) -> String {                                       █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+hello.rs | Ln 0, Col 0 | Opened /tmp/.tmphczn9T/project_root/h...  Help: Ctrl+/

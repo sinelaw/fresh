@@ -12,9 +12,3 @@
 
 *Editor before opening help*
 
-## Step 2: help_open
-
-![help_open](../screenshots/Help_System_02_help_open.svg)
-
-*Help panel showing all keybindings*
-
