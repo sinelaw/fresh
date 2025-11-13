@@ -1,7 +1,8 @@
 /// Text buffer that uses PieceTree with integrated line tracking
 /// Architecture where the tree is the single source of truth for text and line information
-
-use crate::piece_tree::{BufferLocation, Cursor, PieceInfo, PieceTree, Position, StringBuffer, TreeStats};
+use crate::piece_tree::{
+    BufferLocation, Cursor, PieceInfo, PieceTree, Position, StringBuffer, TreeStats,
+};
 use regex::bytes::Regex;
 use std::io::{self, Read, Write};
 use std::ops::Range;
@@ -61,7 +62,7 @@ pub struct TextBuffer {
 
     /// Next buffer ID to assign
     next_buffer_id: usize,
-    
+
     /// Optional file path for persistence
     file_path: Option<PathBuf>,
 
@@ -176,7 +177,8 @@ impl TextBuffer {
 
     /// Convert a line/column position to a byte offset
     pub fn position_to_offset(&self, position: Position) -> usize {
-        self.piece_tree.position_to_offset(position.line, position.column, &self.buffers)
+        self.piece_tree
+            .position_to_offset(position.line, position.column, &self.buffers)
     }
 
     /// Insert text at the given byte offset
@@ -217,7 +219,11 @@ impl TextBuffer {
 
     /// Try to append to an existing buffer if insertion point aligns with buffer end
     /// Returns (BufferLocation, buffer_offset, text_len) if append succeeds, None otherwise
-    fn try_append_to_existing_buffer(&mut self, offset: usize, text: &[u8]) -> Option<(BufferLocation, usize, usize)> {
+    fn try_append_to_existing_buffer(
+        &mut self,
+        offset: usize,
+        text: &[u8],
+    ) -> Option<(BufferLocation, usize, usize)> {
         // Only optimize for non-empty insertions after existing content
         if text.is_empty() || offset == 0 {
             return None;
@@ -668,9 +674,7 @@ impl TextBuffer {
         // Note: we search forward from last replacement to handle growth/shrinkage
         loop {
             // Find next occurrence (no wrap-around for replace_all)
-            if let Some(found_pos) =
-                self.find_next_in_range(pattern, pos, Some(0..self.len()))
-            {
+            if let Some(found_pos) = self.find_next_in_range(pattern, pos, Some(0..self.len())) {
                 self.replace_range(found_pos..found_pos + pattern.len(), replacement);
                 count += 1;
 
@@ -1002,22 +1006,22 @@ mod tests {
         assert_eq!(buffer.line_count(), 3);
 
         // Check line starts
-        assert_eq!(buffer.line_start_offset(0), Some(0));  // "Hello\n" starts at 0
-        assert_eq!(buffer.line_start_offset(1), Some(6));  // "New Line\n" starts at 6
+        assert_eq!(buffer.line_start_offset(0), Some(0)); // "Hello\n" starts at 0
+        assert_eq!(buffer.line_start_offset(1), Some(6)); // "New Line\n" starts at 6
         assert_eq!(buffer.line_start_offset(2), Some(15)); // "World!" starts at 15
 
         // Check offset_to_position
-        assert_eq!(buffer.offset_to_position(0).line, 0);   // Start of "Hello"
-        assert_eq!(buffer.offset_to_position(5).line, 0);   // End of "Hello" (before \n)
-        assert_eq!(buffer.offset_to_position(6).line, 1);   // Start of "New Line"
-        assert_eq!(buffer.offset_to_position(14).line, 1);  // End of "New Line" (before \n)
-        assert_eq!(buffer.offset_to_position(15).line, 2);  // Start of "World!"
+        assert_eq!(buffer.offset_to_position(0).line, 0); // Start of "Hello"
+        assert_eq!(buffer.offset_to_position(5).line, 0); // End of "Hello" (before \n)
+        assert_eq!(buffer.offset_to_position(6).line, 1); // Start of "New Line"
+        assert_eq!(buffer.offset_to_position(14).line, 1); // End of "New Line" (before \n)
+        assert_eq!(buffer.offset_to_position(15).line, 2); // Start of "World!"
 
         // Check line_col_to_position
-        assert_eq!(buffer.line_col_to_position(0, 5), 5);   // End of line 0
-        assert_eq!(buffer.line_col_to_position(1, 0), 6);   // Start of line 1
-        assert_eq!(buffer.line_col_to_position(1, 8), 14);  // End of line 1
-        assert_eq!(buffer.line_col_to_position(2, 0), 15);  // Start of line 2
+        assert_eq!(buffer.line_col_to_position(0, 5), 5); // End of line 0
+        assert_eq!(buffer.line_col_to_position(1, 0), 6); // Start of line 1
+        assert_eq!(buffer.line_col_to_position(1, 8), 14); // End of line 1
+        assert_eq!(buffer.line_col_to_position(2, 0), 15); // Start of line 2
     }
 
     #[test]
@@ -1212,10 +1216,7 @@ mod property_tests {
     // Generate text with some newlines
     fn text_with_newlines() -> impl Strategy<Value = Vec<u8>> {
         prop::collection::vec(
-            prop_oneof![
-                (b'a'..=b'z').prop_map(|c| c),
-                Just(b'\n'),
-            ],
+            prop_oneof![(b'a'..=b'z').prop_map(|c| c), Just(b'\n'),],
             0..100,
         )
     }
@@ -1230,12 +1231,10 @@ mod property_tests {
     fn operation_strategy() -> impl Strategy<Value = Vec<Operation>> {
         prop::collection::vec(
             prop_oneof![
-                (0usize..200, text_with_newlines()).prop_map(|(offset, text)| {
-                    Operation::Insert { offset, text }
-                }),
-                (0usize..200, 1usize..50).prop_map(|(offset, bytes)| {
-                    Operation::Delete { offset, bytes }
-                }),
+                (0usize..200, text_with_newlines())
+                    .prop_map(|(offset, text)| { Operation::Insert { offset, text } }),
+                (0usize..200, 1usize..50)
+                    .prop_map(|(offset, bytes)| { Operation::Delete { offset, bytes } }),
             ],
             0..50,
         )

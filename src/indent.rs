@@ -40,8 +40,8 @@
 //! - `@indent`: Increase indent after this node (e.g., `block`)
 //! - `@dedent`: Decrease indent for this node (e.g., closing `}`)
 
-use crate::text_buffer::Buffer;
 use crate::highlighter::Language;
+use crate::text_buffer::Buffer;
 use std::collections::HashMap;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 

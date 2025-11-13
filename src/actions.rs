@@ -1,9 +1,9 @@
 //! Action to event conversion - translates high-level actions into buffer events
 
-use crate::text_buffer::Buffer;
 use crate::event::Event;
 use crate::keybindings::Action;
 use crate::state::EditorState;
+use crate::text_buffer::Buffer;
 use crate::word_navigation::{
     find_word_end, find_word_start, find_word_start_left, find_word_start_right,
 };

@@ -32,7 +32,11 @@ fn test_line_iterator_empty_lines() {
     assert_eq!((pos, content.as_str()), (0, "Line 1\n"));
 
     let (pos, content) = iter.next().unwrap();
-    assert_eq!((pos, content.as_str()), (7, "\n"), "Empty line should be just newline");
+    assert_eq!(
+        (pos, content.as_str()),
+        (7, "\n"),
+        "Empty line should be just newline"
+    );
 
     let (pos, content) = iter.next().unwrap();
     assert_eq!((pos, content.as_str()), (8, "Line 3\n"));
@@ -42,7 +46,11 @@ fn test_line_iterator_empty_lines() {
     assert_eq!(iter.current_position(), 7);
 
     let (pos, content) = iter.next().unwrap();
-    assert_eq!((pos, content.as_str()), (7, "\n"), "Should return empty line, not previous content");
+    assert_eq!(
+        (pos, content.as_str()),
+        (7, "\n"),
+        "Should return empty line, not previous content"
+    );
 
     let (pos, content) = iter.next().unwrap();
     assert_eq!((pos, content.as_str()), (8, "Line 3\n"));
@@ -83,8 +91,8 @@ fn test_line_iterator_after_multiple_edits() {
     let mut buffer = TextBuffer::from_bytes(b"ABC\n".to_vec());
 
     // Create multiple pieces through edits
-    buffer.insert_bytes(4, b"DEF\n".to_vec());  // "ABC\nDEF\n"
-    buffer.insert_bytes(8, b"GHI\n".to_vec());  // "ABC\nDEF\nGHI\n"
+    buffer.insert_bytes(4, b"DEF\n".to_vec()); // "ABC\nDEF\n"
+    buffer.insert_bytes(8, b"GHI\n".to_vec()); // "ABC\nDEF\nGHI\n"
 
     // Test iteration from each line
     let mut iter = buffer.line_iterator(0);

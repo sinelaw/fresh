@@ -69,9 +69,9 @@ impl StringBuffer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufferLocation {
     /// Data is in the original stored/persisted buffer
-    Stored(usize),  // buffer_id
+    Stored(usize), // buffer_id
     /// Data is in the added/modified buffer
-    Added(usize),   // buffer_id
+    Added(usize), // buffer_id
 }
 
 impl BufferLocation {
@@ -88,17 +88,17 @@ impl BufferLocation {
 pub enum PieceTreeNode {
     /// Internal node with left and right children
     Internal {
-        left_bytes: usize,  // Total bytes in left subtree
-        lf_left: usize,     // Total line feeds in left subtree
+        left_bytes: usize, // Total bytes in left subtree
+        lf_left: usize,    // Total line feeds in left subtree
         left: Arc<PieceTreeNode>,
         right: Arc<PieceTreeNode>,
     },
     /// Leaf node representing an actual piece
     Leaf {
-        location: BufferLocation,  // Where this piece's data is (includes buffer_id)
-        offset: usize,             // Offset within the buffer
-        bytes: usize,              // Number of bytes in this piece
-        line_feed_cnt: usize,      // Number of line feeds in this piece
+        location: BufferLocation, // Where this piece's data is (includes buffer_id)
+        offset: usize,            // Offset within the buffer
+        bytes: usize,             // Number of bytes in this piece
+        line_feed_cnt: usize,     // Number of line feeds in this piece
     },
 }
 
@@ -115,15 +115,15 @@ pub struct PieceInfo {
 #[derive(Debug, Clone)]
 struct OffsetFindResult {
     info: PieceInfo,
-    bytes_before: usize,  // Total bytes in all pieces before this one
+    bytes_before: usize, // Total bytes in all pieces before this one
 }
 
 /// A cursor position in the document
 #[derive(Debug, Clone)]
 pub struct Cursor {
-    pub byte_offset: usize,  // Absolute byte offset in document
-    pub line: usize,         // Line number (0-indexed)
-    pub col: usize,          // Column within line (byte offset)
+    pub byte_offset: usize, // Absolute byte offset in document
+    pub line: usize,        // Line number (0-indexed)
+    pub col: usize,         // Column within line (byte offset)
 }
 
 /// Represents the data for a leaf node in the piece tree
@@ -136,7 +136,12 @@ pub struct LeafData {
 }
 
 impl LeafData {
-    pub fn new(location: BufferLocation, offset: usize, bytes: usize, line_feed_cnt: usize) -> Self {
+    pub fn new(
+        location: BufferLocation,
+        offset: usize,
+        bytes: usize,
+        line_feed_cnt: usize,
+    ) -> Self {
         LeafData {
             location,
             offset,
@@ -154,7 +159,6 @@ pub struct TreeStats {
     pub leaf_count: usize,
     pub line_feed_count: usize,
 }
-
 
 // Line iteration can be implemented by:
 // 1. Maintaining a cursor position (current piece + offset within piece)
@@ -211,9 +215,9 @@ impl PieceTreeNode {
     /// Get total bytes in this node
     fn total_bytes(&self) -> usize {
         match self {
-            PieceTreeNode::Internal { left_bytes, right, .. } => {
-                left_bytes + right.total_bytes()
-            }
+            PieceTreeNode::Internal {
+                left_bytes, right, ..
+            } => left_bytes + right.total_bytes(),
             PieceTreeNode::Leaf { bytes, .. } => *bytes,
         }
     }
@@ -221,9 +225,7 @@ impl PieceTreeNode {
     /// Get total line feeds in this node
     fn total_line_feeds(&self) -> usize {
         match self {
-            PieceTreeNode::Internal { lf_left, right, .. } => {
-                lf_left + right.total_line_feeds()
-            }
+            PieceTreeNode::Internal { lf_left, right, .. } => lf_left + right.total_line_feeds(),
             PieceTreeNode::Leaf { line_feed_cnt, .. } => *line_feed_cnt,
         }
     }
@@ -231,9 +233,7 @@ impl PieceTreeNode {
     /// Get the depth of this tree
     fn depth(&self) -> usize {
         match self {
-            PieceTreeNode::Internal { left, right, .. } => {
-                1 + left.depth().max(right.depth())
-            }
+            PieceTreeNode::Internal { left, right, .. } => 1 + left.depth().max(right.depth()),
             PieceTreeNode::Leaf { .. } => 1,
         }
     }
@@ -298,7 +298,11 @@ impl PieceTreeNode {
                     left_count + right_count
                 }
             }
-            PieceTreeNode::Leaf { line_feed_cnt, bytes, .. } => {
+            PieceTreeNode::Leaf {
+                line_feed_cnt,
+                bytes,
+                ..
+            } => {
                 let node_end = current_offset + bytes;
 
                 if end <= current_offset || start >= node_end {
@@ -345,7 +349,13 @@ impl PieceTreeNode {
 
                 if go_left {
                     // Target is in left subtree
-                    let result = left.find_byte_offset_for_line(current_offset, lines_before, target_line, column, buffers);
+                    let result = left.find_byte_offset_for_line(
+                        current_offset,
+                        lines_before,
+                        target_line,
+                        column,
+                        buffers,
+                    );
                     // If left returns None, try right as fallback (happens when line starts after a newline)
                     result.or_else(|| {
                         right.find_byte_offset_for_line(
@@ -451,7 +461,12 @@ pub struct PieceTree {
 
 impl PieceTree {
     /// Create a new piece table with a single initial piece
-    pub fn new(location: BufferLocation, offset: usize, bytes: usize, line_feed_cnt: usize) -> Self {
+    pub fn new(
+        location: BufferLocation,
+        offset: usize,
+        bytes: usize,
+        line_feed_cnt: usize,
+    ) -> Self {
         PieceTree {
             root: Arc::new(PieceTreeNode::Leaf {
                 location,
@@ -565,8 +580,7 @@ impl PieceTree {
         bytes: usize,
         line_feed_cnt: usize,
         buffers: &[StringBuffer],
-    ) -> Cursor
-    {
+    ) -> Cursor {
         if bytes == 0 {
             return self.cursor_at_offset(offset);
         }
@@ -624,12 +638,40 @@ impl PieceTree {
                 // Only pass `insert` to the subtree containing the split point
                 if split_offset < current_offset + left_bytes {
                     // Split is in left subtree
-                    self.collect_leaves_with_split(left, current_offset, split_offset, insert, leaves, buffers);
-                    self.collect_leaves_with_split(right, current_offset + left_bytes, split_offset, None, leaves, buffers);
+                    self.collect_leaves_with_split(
+                        left,
+                        current_offset,
+                        split_offset,
+                        insert,
+                        leaves,
+                        buffers,
+                    );
+                    self.collect_leaves_with_split(
+                        right,
+                        current_offset + left_bytes,
+                        split_offset,
+                        None,
+                        leaves,
+                        buffers,
+                    );
                 } else {
                     // Split is in right subtree (or at boundary)
-                    self.collect_leaves_with_split(left, current_offset, split_offset, None, leaves, buffers);
-                    self.collect_leaves_with_split(right, current_offset + left_bytes, split_offset, insert, leaves, buffers);
+                    self.collect_leaves_with_split(
+                        left,
+                        current_offset,
+                        split_offset,
+                        None,
+                        leaves,
+                        buffers,
+                    );
+                    self.collect_leaves_with_split(
+                        right,
+                        current_offset + left_bytes,
+                        split_offset,
+                        insert,
+                        leaves,
+                        buffers,
+                    );
                 }
             }
             PieceTreeNode::Leaf {
@@ -646,13 +688,13 @@ impl PieceTree {
 
                     // First part (before split)
                     if offset_in_piece > 0 {
-                        let lf_cnt = Self::compute_line_feeds_static(buffers, *location, *offset, offset_in_piece);
-                        leaves.push(LeafData::new(
+                        let lf_cnt = Self::compute_line_feeds_static(
+                            buffers,
                             *location,
                             *offset,
                             offset_in_piece,
-                            lf_cnt,
-                        ));
+                        );
+                        leaves.push(LeafData::new(*location, *offset, offset_in_piece, lf_cnt));
                     }
 
                     // Inserted piece
@@ -663,7 +705,12 @@ impl PieceTree {
                     // Second part (after split)
                     let remaining = bytes - offset_in_piece;
                     if remaining > 0 {
-                        let lf_cnt = Self::compute_line_feeds_static(buffers, *location, offset + offset_in_piece, remaining);
+                        let lf_cnt = Self::compute_line_feeds_static(
+                            buffers,
+                            *location,
+                            offset + offset_in_piece,
+                            remaining,
+                        );
                         leaves.push(LeafData::new(
                             *location,
                             offset + offset_in_piece,
@@ -686,7 +733,12 @@ impl PieceTree {
     }
 
     /// Helper to compute line feeds in a buffer range
-    fn compute_line_feeds_static(buffers: &[StringBuffer], location: BufferLocation, offset: usize, bytes: usize) -> usize {
+    fn compute_line_feeds_static(
+        buffers: &[StringBuffer],
+        location: BufferLocation,
+        offset: usize,
+        bytes: usize,
+    ) -> usize {
         let buffer_id = location.buffer_id();
         if let Some(buffer) = buffers.get(buffer_id) {
             let end = (offset + bytes).min(buffer.data.len());
@@ -734,7 +786,14 @@ impl PieceTree {
                 right,
                 ..
             } => {
-                self.collect_leaves_with_delete(left, current_offset, delete_start, delete_end, leaves, buffers);
+                self.collect_leaves_with_delete(
+                    left,
+                    current_offset,
+                    delete_start,
+                    delete_end,
+                    leaves,
+                    buffers,
+                );
                 self.collect_leaves_with_delete(
                     right,
                     current_offset + left_bytes,
@@ -769,20 +828,21 @@ impl PieceTree {
                 // Keep part before delete range
                 if piece_start < delete_start {
                     let keep_bytes = delete_start - piece_start;
-                    let lf_cnt = Self::compute_line_feeds_static(buffers, *location, *offset, keep_bytes);
-                    leaves.push(LeafData::new(
-                        *location,
-                        *offset,
-                        keep_bytes,
-                        lf_cnt,
-                    ));
+                    let lf_cnt =
+                        Self::compute_line_feeds_static(buffers, *location, *offset, keep_bytes);
+                    leaves.push(LeafData::new(*location, *offset, keep_bytes, lf_cnt));
                 }
 
                 // Keep part after delete range
                 if piece_end > delete_end {
                     let skip_bytes = delete_end - piece_start;
                     let keep_bytes = piece_end - delete_end;
-                    let lf_cnt = Self::compute_line_feeds_static(buffers, *location, offset + skip_bytes, keep_bytes);
+                    let lf_cnt = Self::compute_line_feeds_static(
+                        buffers,
+                        *location,
+                        offset + skip_bytes,
+                        keep_bytes,
+                    );
                     leaves.push(LeafData::new(
                         *location,
                         offset + skip_bytes,
@@ -846,12 +906,14 @@ impl PieceTree {
                 let byte_offset_in_buffer = piece_info.offset + offset_in_piece;
 
                 // Find which line within the buffer
-                let line_in_buffer = buffer.line_starts
+                let line_in_buffer = buffer
+                    .line_starts
                     .binary_search(&byte_offset_in_buffer)
                     .unwrap_or_else(|i| i.saturating_sub(1));
 
                 // Find which line the piece starts at in the buffer
-                let piece_start_line = buffer.line_starts
+                let piece_start_line = buffer
+                    .line_starts
                     .binary_search(&piece_info.offset)
                     .unwrap_or_else(|i| i.saturating_sub(1));
 
@@ -907,7 +969,12 @@ impl PieceTree {
     }
 
     /// Convert line/column position to byte offset using tree's line metadata
-    pub fn position_to_offset(&self, line: usize, column: usize, buffers: &[StringBuffer]) -> usize {
+    pub fn position_to_offset(
+        &self,
+        line: usize,
+        column: usize,
+        buffers: &[StringBuffer],
+    ) -> usize {
         if line == 0 && column == 0 {
             return 0;
         }
@@ -932,12 +999,22 @@ impl PieceTree {
     }
 
     /// Helper: find byte offset for a given line/column
-    fn find_offset_for_line(&self, target_line: usize, column: usize, buffers: &[StringBuffer]) -> Option<usize> {
-        self.root.find_byte_offset_for_line(0, 0, target_line, column, buffers)
+    fn find_offset_for_line(
+        &self,
+        target_line: usize,
+        column: usize,
+        buffers: &[StringBuffer],
+    ) -> Option<usize> {
+        self.root
+            .find_byte_offset_for_line(0, 0, target_line, column, buffers)
     }
 
     /// Get the byte range for a specific line
-    pub fn line_range(&self, line: usize, buffers: &[StringBuffer]) -> Option<(usize, Option<usize>)> {
+    pub fn line_range(
+        &self,
+        line: usize,
+        buffers: &[StringBuffer],
+    ) -> Option<(usize, Option<usize>)> {
         // Check if line exists
         if line >= self.line_count() {
             return None;
@@ -1059,9 +1136,9 @@ mod tests {
     // Helper to create test buffers
     fn test_buffers() -> Vec<StringBuffer> {
         vec![
-            StringBuffer::new(0, vec![b'a'; 100]),  // Buffer 0: 100 'a's
-            StringBuffer::new(1, vec![b'b'; 50]),   // Buffer 1: 50 'b's
-            StringBuffer::new(2, vec![b'c'; 25]),   // Buffer 2: 25 'c's
+            StringBuffer::new(0, vec![b'a'; 100]), // Buffer 0: 100 'a's
+            StringBuffer::new(1, vec![b'b'; 50]),  // Buffer 1: 50 'b's
+            StringBuffer::new(2, vec![b'c'; 25]),  // Buffer 2: 25 'c's
         ]
     }
 
@@ -1151,7 +1228,13 @@ mod tests {
 
         // Depth should be reasonable due to rebalancing
         let max_expected_depth = 2 * (stats.leaf_count as f64).log2().ceil() as usize;
-        assert!(stats.depth <= max_expected_depth + 2, "Tree depth {} exceeds max {} for {} leaves", stats.depth, max_expected_depth, stats.leaf_count);
+        assert!(
+            stats.depth <= max_expected_depth + 2,
+            "Tree depth {} exceeds max {} for {} leaves",
+            stats.depth,
+            max_expected_depth,
+            stats.leaf_count
+        );
     }
 
     #[test]
@@ -1186,7 +1269,7 @@ mod property_tests {
     // Helper to create test buffers - using larger buffers for property tests
     fn test_buffers_large() -> Vec<StringBuffer> {
         vec![
-            StringBuffer::new(0, vec![b'a'; 10000]),  // Large buffer
+            StringBuffer::new(0, vec![b'a'; 10000]), // Large buffer
             StringBuffer::new(1, vec![b'b'; 10000]),
         ]
     }
@@ -1202,12 +1285,10 @@ mod property_tests {
     fn operation_strategy() -> impl Strategy<Value = Vec<Operation>> {
         prop::collection::vec(
             prop_oneof![
-                (0usize..200, 1usize..50).prop_map(|(offset, bytes)| {
-                    Operation::Insert { offset, bytes }
-                }),
-                (0usize..200, 1usize..50).prop_map(|(offset, bytes)| {
-                    Operation::Delete { offset, bytes }
-                }),
+                (0usize..200, 1usize..50)
+                    .prop_map(|(offset, bytes)| { Operation::Insert { offset, bytes } }),
+                (0usize..200, 1usize..50)
+                    .prop_map(|(offset, bytes)| { Operation::Delete { offset, bytes } }),
             ],
             0..50,
         )
@@ -1226,7 +1307,7 @@ mod property_tests {
                     Operation::Delete { offset, bytes }
                 }),
             ],
-            10..30,  // More operations to force tree growth
+            10..30, // More operations to force tree growth
         )
     }
 
@@ -1534,21 +1615,26 @@ mod property_tests {
                 sum,
                 tree.total_bytes(),
                 "After insert {}: sum of pieces ({}) != total_bytes ({}).\nLeaves: {:?}",
-                i, sum, tree.total_bytes(), leaves
+                i,
+                sum,
+                tree.total_bytes(),
+                leaves
             );
         }
 
         // Verify we actually created internal nodes
         let stats = tree.stats();
-        assert!(stats.depth > 1, "Test should create internal nodes, but depth is {}", stats.depth);
+        assert!(
+            stats.depth > 1,
+            "Test should create internal nodes, but depth is {}",
+            stats.depth
+        );
     }
 
     #[test]
     fn test_duplicate_piece_bug_exact_scenario() {
         // This replicates the exact scenario that exposed the duplicate insertion bug
-        let mut buffers = vec![
-            StringBuffer::new(0, b"initial\ntext".to_vec()),
-        ];
+        let mut buffers = vec![StringBuffer::new(0, b"initial\ntext".to_vec())];
         let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 12, 1);
 
         // Delete all - creates an empty piece
@@ -1557,7 +1643,13 @@ mod property_tests {
         // Check tree consistency after delete
         let leaves = tree.get_leaves();
         let sum: usize = leaves.iter().map(|l| l.bytes).sum();
-        assert_eq!(sum, tree.total_bytes(), "After delete: sum={}, total={}", sum, tree.total_bytes());
+        assert_eq!(
+            sum,
+            tree.total_bytes(),
+            "After delete: sum={}, total={}",
+            sum,
+            tree.total_bytes()
+        );
 
         // Insert 'a' at position 0
         buffers.push(StringBuffer::new(1, b"a".to_vec()));
@@ -1566,8 +1658,14 @@ mod property_tests {
         // Check consistency
         let leaves = tree.get_leaves();
         let sum: usize = leaves.iter().map(|l| l.bytes).sum();
-        assert_eq!(sum, tree.total_bytes(), "After first insert: sum={}, total={}. Leaves: {:?}",
-                   sum, tree.total_bytes(), leaves);
+        assert_eq!(
+            sum,
+            tree.total_bytes(),
+            "After first insert: sum={}, total={}. Leaves: {:?}",
+            sum,
+            tree.total_bytes(),
+            leaves
+        );
 
         // Insert 'b' at position 0 - this should trigger the bug with buggy code
         buffers.push(StringBuffer::new(2, b"b".to_vec()));
@@ -1576,9 +1674,14 @@ mod property_tests {
         // Check consistency - this will fail with the bug
         let leaves = tree.get_leaves();
         let sum: usize = leaves.iter().map(|l| l.bytes).sum();
-        assert_eq!(sum, tree.total_bytes(),
-                   "After second insert: sum={}, total={}. Leaves: {:?}",
-                   sum, tree.total_bytes(), leaves);
+        assert_eq!(
+            sum,
+            tree.total_bytes(),
+            "After second insert: sum={}, total={}. Leaves: {:?}",
+            sum,
+            tree.total_bytes(),
+            leaves
+        );
     }
 
     // Property tests for PieceRangeIter

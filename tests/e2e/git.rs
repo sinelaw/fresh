@@ -38,9 +38,13 @@ fn test_git_grep_shows_results() {
     repo.setup_typical_project();
     repo.setup_git_plugins();
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Trigger git grep
     trigger_git_grep(&mut harness);
@@ -83,9 +87,13 @@ fn test_git_grep_interactive_updates() {
     repo.setup_typical_project();
     repo.setup_git_plugins();
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Trigger git grep
     trigger_git_grep(&mut harness);
@@ -142,9 +150,13 @@ fn test_git_grep_selection_navigation() {
     repo.setup_typical_project();
     repo.setup_git_plugins();
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Trigger git grep
     trigger_git_grep(&mut harness);
@@ -184,9 +196,13 @@ fn test_git_grep_confirm_jumps_to_location() {
     repo.setup_typical_project();
     repo.setup_git_plugins();
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Trigger git grep
     trigger_git_grep(&mut harness);
@@ -240,9 +256,13 @@ fn test_git_grep_cancel() {
     repo.setup_typical_project();
     repo.setup_git_plugins();
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Trigger git grep
     trigger_git_grep(&mut harness);
@@ -271,9 +291,13 @@ fn test_git_find_file_shows_results() {
     let original_dir = repo.change_to_repo_dir();
     let _guard = DirGuard::new(original_dir);
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Trigger git find file
     trigger_git_find_file(&mut harness);
@@ -289,7 +313,7 @@ fn test_git_find_file_shows_results() {
                 let screen = h.screen_to_string();
                 screen.contains("src/") || screen.contains(".rs") || screen.contains("Cargo.toml")
             },
-            3000,  // Increased timeout for async git command
+            3000, // Increased timeout for async git command
         )
         .unwrap();
 
@@ -312,9 +336,13 @@ fn test_git_find_file_interactive_filtering() {
     repo.setup_typical_project();
     repo.setup_git_plugins();
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Trigger git find file
     trigger_git_find_file(&mut harness);
@@ -372,9 +400,13 @@ fn test_git_find_file_selection_navigation() {
     repo.setup_typical_project();
     repo.setup_git_plugins();
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Trigger git find file
     trigger_git_find_file(&mut harness);
@@ -410,9 +442,13 @@ fn test_git_find_file_confirm_opens_file() {
     repo.setup_typical_project();
     repo.setup_git_plugins();
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Trigger git find file
     trigger_git_find_file(&mut harness);
@@ -461,9 +497,13 @@ fn test_git_grep_scrolling_many_results() {
     repo.setup_many_files(50);
     repo.setup_git_plugins();
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Trigger git grep
     trigger_git_grep(&mut harness);
@@ -498,9 +538,13 @@ fn test_git_find_file_scrolling_many_files() {
     repo.setup_many_files(50);
     repo.setup_git_plugins();
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Trigger git find file
     trigger_git_find_file(&mut harness);
@@ -538,9 +582,13 @@ fn test_git_commands_via_command_palette() {
     repo.setup_typical_project();
     repo.setup_git_plugins();
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Test that we can invoke git commands via command palette
     // Open command palette with Ctrl+P
@@ -576,9 +624,13 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
     let original_dir = repo.change_to_repo_dir();
     let _guard = DirGuard::new(original_dir);
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Verify we start with an empty buffer
     let initial_content = harness.get_buffer_content();
@@ -660,9 +712,13 @@ fn test_git_find_file_actually_opens_file() {
     let original_dir = repo.change_to_repo_dir();
     let _guard = DirGuard::new(original_dir);
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Verify we start with an empty buffer
     let initial_content = harness.get_buffer_content();
@@ -698,7 +754,7 @@ fn test_git_find_file_actually_opens_file() {
                     .take(lines.len().saturating_sub(1))
                     .any(|line| line.contains("src/"))
             },
-            3000,  // Increased timeout
+            3000, // Increased timeout
         )
         .unwrap();
 
@@ -767,9 +823,13 @@ fn test_git_grep_cursor_position_accuracy() {
     let original_dir = repo.change_to_repo_dir();
     let _guard = DirGuard::new(original_dir);
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
 
     // Trigger git grep
     trigger_git_grep(&mut harness);

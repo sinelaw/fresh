@@ -266,14 +266,19 @@ A sample project for testing.
         // Copy git-grep.lua plugin
         let git_grep_src = project_root.join("plugins/git-grep.lua");
         let git_grep_dst = plugins_dir.join("git-grep.lua");
-        fs::copy(&git_grep_src, &git_grep_dst)
-            .unwrap_or_else(|e| panic!("Failed to copy git-grep.lua from {:?}: {}", git_grep_src, e));
+        fs::copy(&git_grep_src, &git_grep_dst).unwrap_or_else(|e| {
+            panic!("Failed to copy git-grep.lua from {:?}: {}", git_grep_src, e)
+        });
 
         // Copy git-find-file.lua plugin
         let git_find_file_src = project_root.join("plugins/git-find-file.lua");
         let git_find_file_dst = plugins_dir.join("git-find-file.lua");
-        fs::copy(&git_find_file_src, &git_find_file_dst)
-            .unwrap_or_else(|e| panic!("Failed to copy git-find-file.lua from {:?}: {}", git_find_file_src, e));
+        fs::copy(&git_find_file_src, &git_find_file_dst).unwrap_or_else(|e| {
+            panic!(
+                "Failed to copy git-find-file.lua from {:?}: {}",
+                git_find_file_src, e
+            )
+        });
     }
 }
 

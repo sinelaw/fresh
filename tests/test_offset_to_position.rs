@@ -1,6 +1,5 @@
 /// Focused test for offset_to_position bug
 /// This test creates a simple buffer and verifies line number calculations
-
 use fresh::text_buffer::TextBuffer;
 
 #[test]
@@ -13,7 +12,10 @@ fn test_offset_to_position_simple() {
     let content = b"a\nb\nc\nd";
     let buffer = TextBuffer::from_bytes(content.to_vec());
 
-    println!("Buffer content: {:?}", String::from_utf8_lossy(&content.to_vec()));
+    println!(
+        "Buffer content: {:?}",
+        String::from_utf8_lossy(&content.to_vec())
+    );
     println!("Buffer length: {}", buffer.len());
     println!("Line count: {}", buffer.line_count());
 
@@ -94,7 +96,10 @@ fn test_offset_to_position_after_insert() {
     }
 
     // Insert at position 2 (start of line 1)
-    buffer.insert_at_position(fresh::piece_tree::Position { line: 1, column: 0 }, b"x\n".to_vec());
+    buffer.insert_at_position(
+        fresh::piece_tree::Position { line: 1, column: 0 },
+        b"x\n".to_vec(),
+    );
 
     println!("\n=== After inserting 'x\\n' at line 1, column 0 ===");
     println!("Content: {:?}", buffer.slice_bytes(0..buffer.len()));
@@ -176,7 +181,7 @@ fn test_offset_to_position_long_lines() {
     let mut content = Vec::new();
     content.extend_from_slice(b"aaaaaaaaaa\n"); // Line 0: 11 bytes (10 'a's + newline)
     content.extend_from_slice(b"bbbbbbbbbb\n"); // Line 1: 11 bytes
-    content.extend_from_slice(b"cccccccccc");   // Line 2: 10 bytes (no newline)
+    content.extend_from_slice(b"cccccccccc"); // Line 2: 10 bytes (no newline)
 
     let buffer = TextBuffer::from_bytes(content.clone());
 
@@ -221,7 +226,10 @@ fn test_line_iterator_with_offset_to_position() {
     let buffer = TextBuffer::from_bytes(b"line0\nline1\nline2\n".to_vec());
 
     println!("\n=== Testing LineIterator initialization ===");
-    println!("Content: {:?}", String::from_utf8_lossy(&buffer.slice_bytes(0..buffer.len())));
+    println!(
+        "Content: {:?}",
+        String::from_utf8_lossy(&buffer.slice_bytes(0..buffer.len()))
+    );
 
     // Test creating line iterator at various positions
     for byte_pos in 0..=buffer.len() {
@@ -255,7 +263,10 @@ fn test_piece_tree_line_count_after_insert() {
     print_piece_tree_debug(&buffer);
 
     // Insert at line 1, column 0
-    buffer.insert_at_position(fresh::piece_tree::Position { line: 1, column: 0 }, b"x\n".to_vec());
+    buffer.insert_at_position(
+        fresh::piece_tree::Position { line: 1, column: 0 },
+        b"x\n".to_vec(),
+    );
 
     println!("\n=== Piece tree structure AFTER insert ===");
     print_piece_tree_debug(&buffer);

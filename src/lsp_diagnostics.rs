@@ -1,10 +1,10 @@
+use crate::overlay::OverlayFace;
+use crate::state::EditorState;
 ///! LSP diagnostics display
 ///!
 ///! This module handles converting LSP diagnostics to visual overlays in the editor.
 ///! Diagnostics are displayed as colored underlines (red for errors, yellow for warnings, etc.)
 use crate::text_buffer::Buffer;
-use crate::overlay::OverlayFace;
-use crate::state::EditorState;
 use lsp_types::{Diagnostic, DiagnosticSeverity};
 use ratatui::style::Color;
 use std::collections::hash_map::DefaultHasher;

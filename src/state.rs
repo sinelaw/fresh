@@ -1,4 +1,3 @@
-use crate::text_buffer::{Buffer, LineNumber};
 use crate::cursor::{Cursor, Cursors};
 use crate::event::{
     Event, MarginContentData, MarginPositionData, OverlayFace as EventOverlayFace, PopupData,
@@ -10,6 +9,7 @@ use crate::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPositi
 use crate::marker::MarkerList;
 use crate::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::popup::{Popup, PopupContent, PopupListItem, PopupManager, PopupPosition};
+use crate::text_buffer::{Buffer, LineNumber};
 use crate::viewport::Viewport;
 use ratatui::style::{Color, Style};
 use std::cell::RefCell;

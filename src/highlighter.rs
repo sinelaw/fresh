@@ -9,8 +9,8 @@
 //! Must work instantly when loading a 1GB file and jumping to an arbitrary offset.
 //! This is achieved by only parsing the visible viewport (~50 lines), not the entire file.
 
-use crate::text_buffer::Buffer;
 use crate::config::LARGE_FILE_THRESHOLD_BYTES;
+use crate::text_buffer::Buffer;
 use ratatui::style::Color;
 use std::ops::Range;
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter as TSHighlighter};
