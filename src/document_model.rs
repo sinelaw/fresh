@@ -3,6 +3,93 @@
 /// This module provides a clean abstraction layer between the editor's rendering/editing
 /// operations and the underlying text buffer implementation. It supports both small files
 /// with precise line indexing and huge files with lazy loading and byte-based positioning.
+///
+/// # Overview
+///
+/// The document model is inspired by VSCode's architecture but enhanced to support huge files
+/// (multi-GB) with lazy loading. It provides a three-layer architecture:
+///
+/// ```text
+/// ┌─────────────────────────────────────┐
+/// │  View/Editor Layer                  │
+/// │  (rendering, user interaction)      │
+/// └────────────┬────────────────────────┘
+///              │ Uses DocumentModel trait
+///              ▼
+/// ┌─────────────────────────────────────┐
+/// │  DocumentModel (this module)        │
+/// │  - get_viewport_content()           │
+/// │  - get_range(), insert(), delete()  │
+/// │  - Dual coordinate systems          │
+/// └────────────┬────────────────────────┘
+///              │ Implemented by EditorState
+///              ▼
+/// ┌─────────────────────────────────────┐
+/// │  TextBuffer (implementation)        │
+/// │  - Piece tree operations            │
+/// │  - Lazy loading for large files     │
+/// │  - Line indexing for small files    │
+/// └─────────────────────────────────────┘
+/// ```
+///
+/// # Key Concepts
+///
+/// ## Dual Position System
+///
+/// Documents support two coordinate systems:
+/// - **Line/Column**: For small files with precise line indexing (like VSCode)
+/// - **Byte Offset**: For huge files where line indexing may be unavailable or approximate
+///
+/// ## Transparent Lazy Loading
+///
+/// For huge files, the document model uses a two-phase rendering approach:
+/// 1. **Prepare Phase** (`prepare_for_render()`): Pre-loads viewport data with `&mut` access
+/// 2. **Render Phase** (`get_viewport_content()`): Accesses pre-loaded data with `&self`
+///
+/// This avoids RefCell complexity while supporting lazy loading.
+///
+/// ## Explicit Error Handling
+///
+/// Unlike TextBuffer's `slice()` which returns empty strings on error, DocumentModel methods
+/// return `Result<T>` or `Option<T>` to make failures explicit and allow proper error messages.
+///
+/// # Usage Example
+///
+/// ```rust,ignore
+/// use fresh::document_model::{DocumentModel, DocumentPosition};
+///
+/// // Query document capabilities
+/// let caps = state.capabilities();
+/// if caps.has_line_index {
+///     // Use line/column positioning
+///     let pos = DocumentPosition::line_col(10, 5);
+/// } else {
+///     // Use byte offset positioning
+///     let pos = DocumentPosition::byte(1024);
+/// }
+///
+/// // Prepare viewport before rendering
+/// state.prepare_for_render()?;
+///
+/// // Get viewport content for rendering
+/// let viewport = state.get_viewport_content(
+///     DocumentPosition::byte(0),
+///     24  // lines
+/// )?;
+///
+/// for line in viewport.lines {
+///     println!("{}: {}", line.byte_offset, line.content);
+/// }
+/// ```
+///
+/// # Design Benefits
+///
+/// 1. **Clean Abstraction**: Rendering never touches TextBuffer directly
+/// 2. **Better Than VSCode**: Supports multi-GB files (VSCode has 20MB limit)
+/// 3. **Type Safety**: Explicit Optional/Result types prevent silent failures
+/// 4. **Extensibility**: Easy to add RemoteDocument, VirtualDocument, etc.
+///
+/// See also: `docs/DOCUMENT_MODEL.md` for detailed architecture documentation.
 
 use anyhow::Result;
 
