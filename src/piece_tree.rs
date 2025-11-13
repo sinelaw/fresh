@@ -1351,8 +1351,14 @@ impl PieceTree {
             let bytes_before = result.bytes_before;
 
             // Count lines before this piece
-            // If line count is unknown, use 0 as fallback (inaccurate but allows operation)
-            let lines_before = self.count_lines_before_offset(bytes_before).unwrap_or(0);
+            // If line count is unknown, return (0, byte_offset) as fallback
+            let lines_before = match self.count_lines_before_offset(bytes_before) {
+                Some(count) => count,
+                None => {
+                    // No line metadata available - fallback to byte-based position
+                    return (0, offset);
+                }
+            };
 
             // Get the buffer for this piece
             let buffer_id = piece_info.location.buffer_id();
@@ -1417,11 +1423,19 @@ impl PieceTree {
         }
 
         // Fallback: end of document
-        // Calculate the actual column by finding where the last line starts
-        let last_line = self.line_count().unwrap_or(1).saturating_sub(1);
-        let line_start = self.position_to_offset(last_line, 0, buffers);
-        let column = self.total_bytes.saturating_sub(line_start);
-        (last_line, column)
+        // If line count is unknown, return byte-based position
+        match self.line_count() {
+            Some(line_count) => {
+                let last_line = line_count.saturating_sub(1);
+                let line_start = self.position_to_offset(last_line, 0, buffers);
+                let column = self.total_bytes.saturating_sub(line_start);
+                (last_line, column)
+            }
+            None => {
+                // No line metadata - return byte-based position
+                (0, offset)
+            }
+        }
     }
 
     /// Convert line/column position to byte offset using tree's line metadata
