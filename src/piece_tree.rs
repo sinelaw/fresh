@@ -369,23 +369,16 @@ impl PieceTreeNode {
                 // Find the line within the buffer
                 let line_in_piece = target_line - lines_before;
 
-                // Get piece range in buffer
+                // Get piece start in buffer
                 let piece_start_in_buffer = *offset;
-                let piece_end_in_buffer = offset + bytes;
 
-                // Find which line starts are within this piece
-                let mut line_idx_in_buffer = 0;
-                let mut lines_seen = 0;
+                // Find which line the piece starts at in the buffer
+                let piece_start_line = buffer.line_starts
+                    .binary_search(&piece_start_in_buffer)
+                    .unwrap_or_else(|i| i.saturating_sub(1));
 
-                for (idx, &line_start) in buffer.line_starts.iter().enumerate() {
-                    if line_start >= piece_start_in_buffer && line_start < piece_end_in_buffer {
-                        if lines_seen == line_in_piece {
-                            line_idx_in_buffer = idx;
-                            break;
-                        }
-                        lines_seen += 1;
-                    }
-                }
+                // Calculate the target line in the buffer (relative to piece start)
+                let line_idx_in_buffer = piece_start_line + line_in_piece;
 
                 // Get the line start position in buffer
                 let line_start_in_buffer = buffer.line_starts.get(line_idx_in_buffer).copied()?;
@@ -808,11 +801,19 @@ impl PieceTree {
                     .binary_search(&byte_offset_in_buffer)
                     .unwrap_or_else(|i| i.saturating_sub(1));
 
+                // Find which line the piece starts at in the buffer
+                let piece_start_line = buffer.line_starts
+                    .binary_search(&piece_info.offset)
+                    .unwrap_or_else(|i| i.saturating_sub(1));
+
+                // Calculate line relative to piece start (not buffer start)
+                let line_in_piece = line_in_buffer - piece_start_line;
+
                 // Calculate column as distance from line start
                 let line_start_in_buffer = buffer.line_starts.get(line_in_buffer).copied().unwrap_or(0);
                 let column = byte_offset_in_buffer - line_start_in_buffer;
 
-                return (lines_before + line_in_buffer, column);
+                return (lines_before + line_in_piece, column);
             }
         }
 
@@ -1514,15 +1515,15 @@ mod property_tests {
             for (i, op) in ops.iter().enumerate() {
                 match op {
                     Operation::Insert { offset, bytes } => {
-                        let offset = offset.min(tree.total_bytes());
+                        let offset = (*offset).min(tree.total_bytes());
                         buffers.push(StringBuffer::new(buffers.len(), b"a".repeat(*bytes).to_vec()));
-                        tree.insert(*offset, BufferLocation::Added(buffers.len() - 1), 0, *bytes, 0, &buffers);
+                        tree.insert(offset, BufferLocation::Added(buffers.len() - 1), 0, *bytes, 0, &buffers);
                     }
                     Operation::Delete { offset, bytes } => {
-                        let offset = offset.min(tree.total_bytes());
-                        let bytes = bytes.min(tree.total_bytes().saturating_sub(*offset));
+                        let offset = (*offset).min(tree.total_bytes());
+                        let bytes = (*bytes).min(tree.total_bytes().saturating_sub(offset));
                         if bytes > 0 {
-                            tree.delete(*offset, bytes, &buffers);
+                            tree.delete(offset, bytes, &buffers);
                         }
                     }
                 }

@@ -279,8 +279,6 @@ fn test_piece_tree_line_count_after_insert() {
 }
 
 fn print_piece_tree_debug(buffer: &TextBuffer) {
-    use fresh::piece_tree::TreeStats;
-
     println!("Total bytes: {}", buffer.len());
     println!("Line count: {}", buffer.line_count());
 
