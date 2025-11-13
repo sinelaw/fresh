@@ -253,8 +253,11 @@ impl TextBuffer {
         let buffer_id = piece_info.location.buffer_id();
         let buffer = self.buffers.get_mut(buffer_id)?;
 
+        // Check if buffer is loaded
+        let buffer_len = buffer.get_data()?.len();
+
         // Check if this piece ends exactly at the end of its buffer
-        if piece_info.offset + piece_info.bytes != buffer.data.len() {
+        if piece_info.offset + piece_info.bytes != buffer_len {
             return None;
         }
 

@@ -62,7 +62,11 @@ impl<'a> LineIterator<'a> {
             let start_in_buffer = piece.buffer_offset + offset_in_piece;
             let bytes_to_read = piece.bytes - offset_in_piece;
 
-            let piece_data = &buffer.data[start_in_buffer..start_in_buffer + bytes_to_read];
+            let buffer_data = match buffer.get_data() {
+                Some(data) => data,
+                None => continue, // Buffer not loaded, skip
+            };
+            let piece_data = &buffer_data[start_in_buffer..start_in_buffer + bytes_to_read];
 
             // Scan this piece for newline
             for &byte in piece_data.iter() {
@@ -129,9 +133,11 @@ impl<'a> LineIterator<'a> {
             let offset_in_piece = piece_line_start - piece.doc_offset;
             let len_in_piece = piece_line_end - piece_line_start;
 
-            let start_in_buffer = piece.buffer_offset + offset_in_piece;
-            let data = &buffer.data[start_in_buffer..start_in_buffer + len_in_piece];
-            line_bytes.extend_from_slice(data);
+            if let Some(buffer_data) = buffer.get_data() {
+                let start_in_buffer = piece.buffer_offset + offset_in_piece;
+                let data = &buffer_data[start_in_buffer..start_in_buffer + len_in_piece];
+                line_bytes.extend_from_slice(data);
+            }
         }
 
         self.current_pos = line_start;

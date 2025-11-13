@@ -1,4 +1,6 @@
 use std::sync::Arc;
+use std::path::PathBuf;
+use std::io::{self, Read, Seek, SeekFrom};
 
 /// A position in the document (line and column)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7,27 +9,117 @@ pub struct Position {
     pub column: usize, // Byte offset within the line
 }
 
+/// Data storage for a buffer - either loaded in memory or unloaded (file reference)
+#[derive(Debug, Clone)]
+pub enum BufferData {
+    /// Loaded in memory with optional line indexing
+    Loaded {
+        data: Vec<u8>,
+        line_starts: Option<Vec<usize>>, // None = not indexed (large file mode)
+    },
+    /// Not yet loaded from file
+    Unloaded {
+        file_path: PathBuf,
+        file_offset: usize, // Where in file this buffer starts
+        bytes: usize,       // Length of this region
+    },
+}
+
 /// A string buffer containing a chunk of text data and its line metadata
 /// This is the fundamental storage unit - piece tree nodes reference these buffers
 #[derive(Debug, Clone)]
 pub struct StringBuffer {
     /// Unique identifier for this buffer
     pub id: usize,
-    /// The actual text data
-    pub data: Vec<u8>,
-    /// Byte offsets where each line starts within this buffer
-    /// line_starts[0] is always 0, line_starts[i] is the start of line i
-    pub line_starts: Vec<usize>,
+    /// The buffer data - either loaded or unloaded
+    pub data: BufferData,
 }
 
 impl StringBuffer {
-    /// Create a new string buffer with line metadata
+    /// Create a new string buffer with line metadata (legacy constructor)
+    /// Automatically computes line starts
     pub fn new(id: usize, data: Vec<u8>) -> Self {
         let line_starts = Self::compute_line_starts(&data);
         StringBuffer {
             id,
-            data,
-            line_starts,
+            data: BufferData::Loaded {
+                data,
+                line_starts: Some(line_starts),
+            },
+        }
+    }
+
+    /// Create a loaded buffer with optional line indexing
+    pub fn new_loaded(id: usize, data: Vec<u8>, compute_lines: bool) -> Self {
+        let line_starts = if compute_lines {
+            Some(Self::compute_line_starts(&data))
+        } else {
+            None
+        };
+        StringBuffer {
+            id,
+            data: BufferData::Loaded { data, line_starts },
+        }
+    }
+
+    /// Create buffer for file region (not yet loaded)
+    pub fn new_unloaded(id: usize, file_path: PathBuf, file_offset: usize, bytes: usize) -> Self {
+        StringBuffer {
+            id,
+            data: BufferData::Unloaded {
+                file_path,
+                file_offset,
+                bytes,
+            },
+        }
+    }
+
+    /// Check if buffer is loaded
+    pub fn is_loaded(&self) -> bool {
+        matches!(self.data, BufferData::Loaded { .. })
+    }
+
+    /// Get data reference if loaded, None if unloaded
+    pub fn get_data(&self) -> Option<&[u8]> {
+        match &self.data {
+            BufferData::Loaded { data, .. } => Some(data),
+            BufferData::Unloaded { .. } => None,
+        }
+    }
+
+    /// Get line starts if available
+    pub fn get_line_starts(&self) -> Option<&[usize]> {
+        match &self.data {
+            BufferData::Loaded { line_starts, .. } => line_starts.as_deref(),
+            BufferData::Unloaded { .. } => None,
+        }
+    }
+
+    /// Load buffer data from file (for unloaded buffers)
+    /// Returns error if buffer is not unloaded or if I/O fails
+    pub fn load(&mut self) -> io::Result<()> {
+        match &self.data {
+            BufferData::Loaded { .. } => Ok(()), // Already loaded
+            BufferData::Unloaded {
+                file_path,
+                file_offset,
+                bytes,
+            } => {
+                // Load from file
+                let mut file = std::fs::File::open(file_path)?;
+                file.seek(SeekFrom::Start(*file_offset as u64))?;
+
+                let mut buffer = vec![0u8; *bytes];
+                file.read_exact(&mut buffer)?;
+
+                // Replace with loaded data (no line indexing for lazy-loaded chunks)
+                self.data = BufferData::Loaded {
+                    data: buffer,
+                    line_starts: None,
+                };
+
+                Ok(())
+            }
         }
     }
 
@@ -43,26 +135,41 @@ impl StringBuffer {
     }
 
     /// Get the number of line feeds (newlines) in this buffer
-    /// Always returns Some for the current implementation since line_starts is always computed
+    /// Returns None if line indexing was not computed or buffer is unloaded
     pub fn line_feed_count(&self) -> Option<usize> {
-        // line_starts.len() - 1 gives us the number of newlines
-        Some(self.line_starts.len().saturating_sub(1))
+        match &self.data {
+            BufferData::Loaded { line_starts, .. } => {
+                line_starts.as_ref().map(|starts| starts.len().saturating_sub(1))
+            }
+            BufferData::Unloaded { .. } => None,
+        }
     }
 
     /// Append data to this buffer and recompute line starts
     /// Returns the offset where the appended data starts
-    pub fn append(&mut self, data: &[u8]) -> usize {
-        let start_offset = self.data.len();
-        self.data.extend_from_slice(data);
+    /// Only works for loaded buffers with line starts
+    pub fn append(&mut self, data_to_append: &[u8]) -> usize {
+        match &mut self.data {
+            BufferData::Loaded { data, line_starts } => {
+                let start_offset = data.len();
+                data.extend_from_slice(data_to_append);
 
-        // Add new line starts
-        for (i, &byte) in data.iter().enumerate() {
-            if byte == b'\n' {
-                self.line_starts.push(start_offset + i + 1);
+                // Add new line starts if we're tracking them
+                if let Some(ref mut line_starts) = line_starts {
+                    for (i, &byte) in data_to_append.iter().enumerate() {
+                        if byte == b'\n' {
+                            line_starts.push(start_offset + i + 1);
+                        }
+                    }
+                }
+
+                start_offset
+            }
+            BufferData::Unloaded { .. } => {
+                // Can't append to unloaded buffer
+                0
             }
         }
-
-        start_offset
     }
 }
 
@@ -402,8 +509,9 @@ impl PieceTreeNode {
                 // Check if the last byte of this piece is a newline.
                 if column == 0 && target_line == lines_in_piece && target_line > lines_before {
                     let buffer = buffers.get(location.buffer_id())?;
+                    let data = buffer.get_data()?;
                     let last_byte_offset = offset + bytes - 1;
-                    let last_byte = buffer.data.get(last_byte_offset)?;
+                    let last_byte = data.get(last_byte_offset)?;
 
                     if *last_byte == b'\n' {
                         // Piece ends with newline, so the next line starts in the next piece
@@ -420,6 +528,7 @@ impl PieceTreeNode {
                 // Get the buffer for this piece
                 let buffer_id = location.buffer_id();
                 let buffer = buffers.get(buffer_id)?;
+                let line_starts = buffer.get_line_starts()?;
 
                 // Find the line within the piece
                 let line_in_piece = target_line - lines_before;
@@ -438,7 +547,7 @@ impl PieceTreeNode {
                     let mut lines_seen = 0;
                     let mut found_line_start = None;
 
-                    for &line_start in buffer.line_starts.iter() {
+                    for &line_start in line_starts.iter() {
                         // Line starts are positions of newlines + 1, or beginning of buffer (0)
                         // We want line_starts that are > piece_start and < piece_end
                         if line_start > piece_start_in_buffer && line_start < piece_end_in_buffer {
@@ -962,14 +1071,19 @@ impl PieceTree {
     ) -> Option<usize> {
         let buffer_id = location.buffer_id();
         if let Some(buffer) = buffers.get(buffer_id) {
-            let end = (offset + bytes).min(buffer.data.len());
-            Some(buffer.data[offset..end]
-                .iter()
-                .filter(|&&b| b == b'\n')
-                .count())
+            if let Some(data) = buffer.get_data() {
+                let end = (offset + bytes).min(data.len());
+                Some(data[offset..end]
+                    .iter()
+                    .filter(|&&b| b == b'\n')
+                    .count())
+            } else {
+                // Buffer is unloaded - return None
+                None
+            }
         } else {
-            // Buffer not available - return Some(0) as fallback
-            Some(0)
+            // Buffer not available - return None
+            None
         }
     }
 
@@ -1363,62 +1477,64 @@ impl PieceTree {
             // Get the buffer for this piece
             let buffer_id = piece_info.location.buffer_id();
             if let Some(buffer) = buffers.get(buffer_id) {
-                // Find position within the piece
-                let offset_in_piece = piece_info.offset_in_piece.unwrap_or(0);
-                let byte_offset_in_buffer = piece_info.offset + offset_in_piece;
+                // Check if we have line starts available
+                if let Some(line_starts) = buffer.get_line_starts() {
+                    // Find position within the piece
+                    let offset_in_piece = piece_info.offset_in_piece.unwrap_or(0);
+                    let byte_offset_in_buffer = piece_info.offset + offset_in_piece;
 
-                // Find which line within the buffer
-                let line_in_buffer = buffer
-                    .line_starts
-                    .binary_search(&byte_offset_in_buffer)
-                    .unwrap_or_else(|i| i.saturating_sub(1));
+                    // Find which line within the buffer
+                    let line_in_buffer = line_starts
+                        .binary_search(&byte_offset_in_buffer)
+                        .unwrap_or_else(|i| i.saturating_sub(1));
 
-                // Find which line the piece starts at in the buffer
-                let piece_start_line = buffer
-                    .line_starts
-                    .binary_search(&piece_info.offset)
-                    .unwrap_or_else(|i| i.saturating_sub(1));
+                    // Find which line the piece starts at in the buffer
+                    let piece_start_line = line_starts
+                        .binary_search(&piece_info.offset)
+                        .unwrap_or_else(|i| i.saturating_sub(1));
 
-                // Calculate line relative to piece start (not buffer start)
-                let line_in_piece = line_in_buffer - piece_start_line;
+                    // Calculate line relative to piece start (not buffer start)
+                    let line_in_piece = line_in_buffer - piece_start_line;
 
-                // Calculate the document line number
-                let doc_line = lines_before + line_in_piece;
+                    // Calculate the document line number
+                    let doc_line = lines_before + line_in_piece;
 
-                // Check if piece starts at a line boundary in the DOCUMENT
-                // If there are lines before this piece, then this piece starts on a new document line
-                // If lines_before == 0, the piece is part of document line 0 which starts at offset 0
-                let piece_starts_at_doc_line_boundary = (lines_before > 0) || (bytes_before == 0);
+                    // Check if piece starts at a line boundary in the DOCUMENT
+                    // If there are lines before this piece, then this piece starts on a new document line
+                    // If lines_before == 0, the piece is part of document line 0 which starts at offset 0
+                    let piece_starts_at_doc_line_boundary = (lines_before > 0) || (bytes_before == 0);
 
-                // Calculate column
-                let column = if line_in_piece == 0 && !piece_starts_at_doc_line_boundary {
-                    // The current line started before this piece
-                    // We can't calculate column from this piece alone - need to use position_to_offset
-                    // to find where the current document line starts
-                    let line_start = self.position_to_offset(doc_line, 0, buffers);
-                    offset.saturating_sub(line_start)
-                } else if line_in_piece == 0 {
-                    // Piece starts at line boundary, so column is just offset within piece
-                    offset_in_piece
-                } else {
-                    // Line starts within this piece
-                    // Find where the line starts within the piece
-                    let mut count = 0;
-                    let mut line_start_in_buf = piece_info.offset;
-                    for &ls in buffer.line_starts.iter() {
-                        if ls > piece_info.offset && ls < piece_info.offset + piece_info.bytes {
-                            count += 1;
-                            if count == line_in_piece {
-                                line_start_in_buf = ls;
-                                break;
+                    // Calculate column
+                    let column = if line_in_piece == 0 && !piece_starts_at_doc_line_boundary {
+                        // The current line started before this piece
+                        // We can't calculate column from this piece alone - need to use position_to_offset
+                        // to find where the current document line starts
+                        let line_start = self.position_to_offset(doc_line, 0, buffers);
+                        offset.saturating_sub(line_start)
+                    } else if line_in_piece == 0 {
+                        // Piece starts at line boundary, so column is just offset within piece
+                        offset_in_piece
+                    } else {
+                        // Line starts within this piece
+                        // Find where the line starts within the piece
+                        let mut count = 0;
+                        let mut line_start_in_buf = piece_info.offset;
+                        for &ls in line_starts.iter() {
+                            if ls > piece_info.offset && ls < piece_info.offset + piece_info.bytes {
+                                count += 1;
+                                if count == line_in_piece {
+                                    line_start_in_buf = ls;
+                                    break;
+                                }
                             }
                         }
-                    }
-                    let line_start_offset_in_piece = line_start_in_buf - piece_info.offset;
-                    offset_in_piece - line_start_offset_in_piece
-                };
+                        let line_start_offset_in_piece = line_start_in_buf - piece_info.offset;
+                        offset_in_piece - line_start_offset_in_piece
+                    };
 
-                return (doc_line, column);
+                    return (doc_line, column);
+                }
+                // No line starts available - will fall through to byte-based fallback
             }
         }
 
