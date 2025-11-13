@@ -269,9 +269,35 @@ impl TextBuffer {
     }
 
     /// Insert text at a line/column position
+    /// This now uses the optimized piece_tree.insert_at_position() for a single traversal
     pub fn insert_at_position(&mut self, position: Position, text: Vec<u8>) -> Cursor {
-        let offset = self.position_to_offset(position);
-        self.insert_bytes(offset, text)
+        if text.is_empty() {
+            let offset = self.position_to_offset(position);
+            return self.piece_tree.cursor_at_offset(offset);
+        }
+
+        // Mark as modified
+        self.modified = true;
+
+        // Count line feeds in the text to insert
+        let line_feed_cnt = text.iter().filter(|&&b| b == b'\n').count();
+
+        // Create a new StringBuffer for this insertion
+        let buffer_id = self.next_buffer_id;
+        self.next_buffer_id += 1;
+        let buffer = StringBuffer::new(buffer_id, text.clone());
+        self.buffers.push(buffer);
+
+        // Use the optimized position-based insertion (single traversal)
+        self.piece_tree.insert_at_position(
+            position.line,
+            position.column,
+            BufferLocation::Added(buffer_id),
+            0,
+            text.len(),
+            line_feed_cnt,
+            &self.buffers,
+        )
     }
 
     /// Delete text starting at the given byte offset
@@ -295,52 +321,58 @@ impl TextBuffer {
     }
 
     /// Delete text in a line/column range
+    /// This now uses the optimized piece_tree.delete_position_range() for a single traversal
     pub fn delete_range(&mut self, start: Position, end: Position) {
-        let start_offset = self.position_to_offset(start);
-        let end_offset = self.position_to_offset(end);
-
-        if end_offset > start_offset {
-            self.delete_bytes(start_offset, end_offset - start_offset);
-        }
+        // Use the optimized position-based deletion
+        self.piece_tree.delete_position_range(
+            start.line,
+            start.column,
+            end.line,
+            end.column,
+            &self.buffers,
+        );
+        self.modified = true;
     }
 
     /// Get text from a byte offset range
+    /// This now uses the optimized piece_tree.iter_pieces_in_range() for a single traversal
     pub fn get_text_range(&self, offset: usize, bytes: usize) -> Vec<u8> {
+        if bytes == 0 {
+            return Vec::new();
+        }
+
         let mut result = Vec::with_capacity(bytes);
-        let mut remaining = bytes;
-        let mut current_offset = offset;
+        let end_offset = offset + bytes;
+        let mut collected = 0;
 
-        while remaining > 0 {
-            if let Some(piece_info) = self.piece_tree.find_by_offset(current_offset) {
-                // Get the buffer for this piece by ID
-                let buffer_id = piece_info.location.buffer_id();
-                let buffer = if let Some(buf) = self.buffers.get(buffer_id) {
-                    &buf.data
-                } else {
-                    // Shouldn't happen, but handle gracefully
-                    break;
-                };
+        // Use the efficient piece iterator (single O(log n) traversal + O(N) iteration)
+        for piece_view in self.piece_tree.iter_pieces_in_range(offset, end_offset) {
+            let buffer_id = piece_view.location.buffer_id();
+            if let Some(buffer) = self.buffers.get(buffer_id) {
+                // Calculate the range to read from this piece
+                let piece_start_in_doc = piece_view.doc_offset;
+                let piece_end_in_doc = piece_view.doc_offset + piece_view.bytes;
 
-                // Calculate how much to read from this piece
-                let start_in_piece = piece_info.offset_in_piece.unwrap_or(0);
-                let available_in_piece = piece_info.bytes - start_in_piece;
-                let to_read = remaining.min(available_in_piece);
+                // Clip to the requested range
+                let read_start = offset.max(piece_start_in_doc);
+                let read_end = end_offset.min(piece_end_in_doc);
 
-                // Read from buffer
-                let buffer_start = piece_info.offset + start_in_piece;
-                let buffer_end = buffer_start + to_read;
+                if read_end > read_start {
+                    let offset_in_piece = read_start - piece_start_in_doc;
+                    let bytes_to_read = read_end - read_start;
 
-                if buffer_end <= buffer.len() {
-                    result.extend_from_slice(&buffer[buffer_start..buffer_end]);
-                } else {
-                    // Shouldn't happen, but handle gracefully
-                    break;
+                    let buffer_start = piece_view.buffer_offset + offset_in_piece;
+                    let buffer_end = buffer_start + bytes_to_read;
+
+                    if buffer_end <= buffer.data.len() {
+                        result.extend_from_slice(&buffer.data[buffer_start..buffer_end]);
+                        collected += bytes_to_read;
+
+                        if collected >= bytes {
+                            break;
+                        }
+                    }
                 }
-
-                remaining -= to_read;
-                current_offset += to_read;
-            } else {
-                break;
             }
         }
 
@@ -732,15 +764,17 @@ impl TextBuffer {
 
     /// Convert (line, character) to byte position - 0-indexed
     /// character is in BYTES, not UTF-16 code units
+    /// Optimized to use single line_range() call instead of two
     pub fn line_col_to_position(&self, line: usize, character: usize) -> usize {
-        if let Some(line_start) = self.line_start_offset(line) {
-            let line_bytes = if let Some(line_text) = self.get_line(line) {
-                line_text.len()
+        if let Some((start, end)) = self.piece_tree.line_range(line, &self.buffers) {
+            // Calculate line length from the range
+            let line_len = if let Some(end_offset) = end {
+                end_offset.saturating_sub(start)
             } else {
-                0
+                self.total_bytes().saturating_sub(start)
             };
-            let byte_offset = character.min(line_bytes);
-            line_start + byte_offset
+            let byte_offset = character.min(line_len);
+            start + byte_offset
         } else {
             // Line doesn't exist, return end of buffer
             self.len()
@@ -768,10 +802,18 @@ impl TextBuffer {
 
     /// Convert LSP position (line, UTF-16 code units) to byte position
     /// LSP uses UTF-16 code units for character offsets, not bytes
+    /// Optimized to use single line_range() call instead of two
     pub fn lsp_position_to_byte(&self, line: usize, utf16_offset: usize) -> usize {
-        if let Some(line_start) = self.line_start_offset(line) {
-            // Get the line content
-            if let Some(line_bytes) = self.get_line(line) {
+        if let Some((line_start, end)) = self.piece_tree.line_range(line, &self.buffers) {
+            // Calculate line length and get line content
+            let line_len = if let Some(end_offset) = end {
+                end_offset.saturating_sub(line_start)
+            } else {
+                self.total_bytes().saturating_sub(line_start)
+            };
+
+            if line_len > 0 {
+                let line_bytes = self.get_text_range(line_start, line_len);
                 let line_str = String::from_utf8_lossy(&line_bytes);
 
                 // Convert UTF-16 offset to byte offset

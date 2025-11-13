@@ -618,6 +618,215 @@ impl PieceTree {
         self.cursor_at_offset(offset + bytes)
     }
 
+    /// Insert text at the given position (line, column)
+    /// Returns new cursor after the inserted text
+    /// This performs a SINGLE tree traversal (more efficient than position_to_offset + insert)
+    pub fn insert_at_position(
+        &mut self,
+        line: usize,
+        column: usize,
+        location: BufferLocation,
+        buffer_offset: usize,
+        bytes: usize,
+        line_feed_cnt: usize,
+        buffers: &[StringBuffer],
+    ) -> Cursor {
+        if bytes == 0 {
+            let offset = self.position_to_offset(line, column, buffers);
+            return self.cursor_at_offset(offset);
+        }
+
+        // Collect leaves while splitting at the position
+        let mut leaves = Vec::new();
+        let insert_leaf = LeafData::new(location, buffer_offset, bytes, line_feed_cnt);
+
+        self.collect_leaves_with_split_at_position(
+            &self.root,
+            0,
+            0,
+            line,
+            column,
+            Some(insert_leaf),
+            &mut leaves,
+            buffers,
+        );
+
+        self.root = Self::build_balanced(&leaves);
+        self.total_bytes += bytes;
+        self.check_and_rebalance();
+
+        // Return cursor at position after insertion
+        let offset = self.position_to_offset(line, column, buffers) + bytes;
+        self.cursor_at_offset(offset)
+    }
+
+    /// Helper to collect leaves while splitting at a position (line, column)
+    /// Similar to collect_leaves_with_split but works with positions instead of offsets
+    fn collect_leaves_with_split_at_position(
+        &self,
+        node: &Arc<PieceTreeNode>,
+        current_offset: usize,
+        lines_before: usize,
+        target_line: usize,
+        target_column: usize,
+        insert: Option<LeafData>,
+        leaves: &mut Vec<LeafData>,
+        buffers: &[StringBuffer],
+    ) {
+        match node.as_ref() {
+            PieceTreeNode::Internal {
+                left_bytes,
+                lf_left,
+                left,
+                right,
+            } => {
+                let lines_after_left = lines_before + lf_left;
+
+                // Determine if target position is in left or right subtree
+                let go_left = if target_column == 0 {
+                    target_line <= lines_after_left
+                } else {
+                    target_line < lines_after_left
+                };
+
+                if go_left {
+                    // Target is in left subtree
+                    self.collect_leaves_with_split_at_position(
+                        left,
+                        current_offset,
+                        lines_before,
+                        target_line,
+                        target_column,
+                        insert,
+                        leaves,
+                        buffers,
+                    );
+                    self.collect_leaves_with_split_at_position(
+                        right,
+                        current_offset + left_bytes,
+                        lines_after_left,
+                        target_line,
+                        target_column,
+                        None,
+                        leaves,
+                        buffers,
+                    );
+                } else {
+                    // Target is in right subtree
+                    self.collect_leaves_with_split_at_position(
+                        left,
+                        current_offset,
+                        lines_before,
+                        target_line,
+                        target_column,
+                        None,
+                        leaves,
+                        buffers,
+                    );
+                    self.collect_leaves_with_split_at_position(
+                        right,
+                        current_offset + left_bytes,
+                        lines_after_left,
+                        target_line,
+                        target_column,
+                        insert,
+                        leaves,
+                        buffers,
+                    );
+                }
+            }
+            PieceTreeNode::Leaf {
+                location,
+                offset,
+                bytes,
+                line_feed_cnt,
+            } => {
+                let lines_in_piece = lines_before + line_feed_cnt;
+
+                // Check if this piece contains the target line
+                if target_line >= lines_before && target_line <= lines_in_piece {
+                    // Target line is in this piece
+                    let buffer_id = location.buffer_id();
+                    if let Some(buffer) = buffers.get(buffer_id) {
+                        let line_in_piece = target_line - lines_before;
+
+                        // Find the line start within the piece
+                        let line_start_in_buffer = if line_in_piece == 0 {
+                            *offset
+                        } else {
+                            // Find the Nth newline within this piece
+                            let mut lines_seen = 0;
+                            let mut found_line_start = *offset;
+
+                            for &ls in buffer.line_starts.iter() {
+                                if ls > *offset && ls < *offset + *bytes {
+                                    if lines_seen == line_in_piece - 1 {
+                                        found_line_start = ls;
+                                        break;
+                                    }
+                                    lines_seen += 1;
+                                }
+                            }
+
+                            found_line_start
+                        };
+
+                        // Calculate split offset within the piece
+                        let column_offset = target_column.min(*bytes);
+                        let split_in_buffer = line_start_in_buffer + column_offset;
+                        let split_offset_in_piece =
+                            split_in_buffer.saturating_sub(*offset).min(*bytes);
+
+                        // Split the piece at this position
+                        if split_offset_in_piece > 0 {
+                            // First part (before split)
+                            let lf_cnt = Self::compute_line_feeds_static(
+                                buffers,
+                                *location,
+                                *offset,
+                                split_offset_in_piece,
+                            );
+                            leaves.push(LeafData::new(
+                                *location,
+                                *offset,
+                                split_offset_in_piece,
+                                lf_cnt,
+                            ));
+                        }
+
+                        // Inserted piece
+                        if let Some(insert_leaf) = insert {
+                            leaves.push(insert_leaf);
+                        }
+
+                        // Second part (after split)
+                        let remaining = bytes.saturating_sub(split_offset_in_piece);
+                        if remaining > 0 {
+                            let lf_cnt = Self::compute_line_feeds_static(
+                                buffers,
+                                *location,
+                                offset + split_offset_in_piece,
+                                remaining,
+                            );
+                            leaves.push(LeafData::new(
+                                *location,
+                                offset + split_offset_in_piece,
+                                remaining,
+                                lf_cnt,
+                            ));
+                        }
+                    } else {
+                        // Buffer not found, just keep the piece as-is
+                        leaves.push(LeafData::new(*location, *offset, *bytes, *line_feed_cnt));
+                    }
+                } else {
+                    // Target line not in this piece, just keep it
+                    leaves.push(LeafData::new(*location, *offset, *bytes, *line_feed_cnt));
+                }
+            }
+        }
+    }
+
     /// Helper to collect leaves while splitting at insertion point
     fn collect_leaves_with_split(
         &self,
@@ -767,6 +976,238 @@ impl PieceTree {
         self.total_bytes -= delete_bytes;
 
         self.check_and_rebalance();
+    }
+
+    /// Delete text in a range specified by positions (start_line, start_col) to (end_line, end_col)
+    /// This performs a more efficient traversal than converting positions to offsets separately
+    pub fn delete_position_range(
+        &mut self,
+        start_line: usize,
+        start_column: usize,
+        end_line: usize,
+        end_column: usize,
+        buffers: &[StringBuffer],
+    ) {
+        // Edge case: empty range
+        if start_line == end_line && start_column == end_column {
+            return;
+        }
+
+        // Find both positions in a single traversal and collect leaves
+        let mut leaves = Vec::new();
+        let mut delete_start_offset = None;
+        let mut delete_end_offset = None;
+
+        self.collect_leaves_with_position_delete(
+            &self.root,
+            0,
+            0,
+            start_line,
+            start_column,
+            end_line,
+            end_column,
+            &mut delete_start_offset,
+            &mut delete_end_offset,
+            &mut leaves,
+            buffers,
+        );
+
+        // Calculate how many bytes were deleted
+        if let (Some(start), Some(end)) = (delete_start_offset, delete_end_offset) {
+            let deleted_bytes = end.saturating_sub(start);
+            if deleted_bytes > 0 {
+                self.root = Self::build_balanced(&leaves);
+                self.total_bytes = self.total_bytes.saturating_sub(deleted_bytes);
+                self.check_and_rebalance();
+            }
+        }
+    }
+
+    /// Helper to collect leaves while deleting a range specified by positions
+    /// This finds both positions and performs the deletion in a single tree traversal
+    fn collect_leaves_with_position_delete(
+        &self,
+        node: &Arc<PieceTreeNode>,
+        current_offset: usize,
+        lines_before: usize,
+        start_line: usize,
+        start_column: usize,
+        end_line: usize,
+        end_column: usize,
+        delete_start_offset: &mut Option<usize>,
+        delete_end_offset: &mut Option<usize>,
+        leaves: &mut Vec<LeafData>,
+        buffers: &[StringBuffer],
+    ) {
+        match node.as_ref() {
+            PieceTreeNode::Internal {
+                left_bytes,
+                lf_left,
+                left,
+                right,
+            } => {
+                let lines_after_left = lines_before + lf_left;
+
+                // Recursively process both subtrees
+                self.collect_leaves_with_position_delete(
+                    left,
+                    current_offset,
+                    lines_before,
+                    start_line,
+                    start_column,
+                    end_line,
+                    end_column,
+                    delete_start_offset,
+                    delete_end_offset,
+                    leaves,
+                    buffers,
+                );
+                self.collect_leaves_with_position_delete(
+                    right,
+                    current_offset + left_bytes,
+                    lines_after_left,
+                    start_line,
+                    start_column,
+                    end_line,
+                    end_column,
+                    delete_start_offset,
+                    delete_end_offset,
+                    leaves,
+                    buffers,
+                );
+            }
+            PieceTreeNode::Leaf {
+                location,
+                offset,
+                bytes,
+                line_feed_cnt,
+            } => {
+                let lines_in_piece = lines_before + line_feed_cnt;
+                let piece_start = current_offset;
+                let piece_end = current_offset + bytes;
+
+                // Check if this piece contains the start position
+                if start_line >= lines_before
+                    && start_line <= lines_in_piece
+                    && delete_start_offset.is_none()
+                {
+                    if let Some(buffer) = buffers.get(location.buffer_id()) {
+                        let offset_in_piece = self.find_position_in_leaf(
+                            lines_before,
+                            start_line,
+                            start_column,
+                            *offset,
+                            *bytes,
+                            buffer,
+                        );
+                        *delete_start_offset = Some(piece_start + offset_in_piece);
+                    }
+                }
+
+                // Check if this piece contains the end position
+                if end_line >= lines_before
+                    && end_line <= lines_in_piece
+                    && delete_end_offset.is_none()
+                {
+                    if let Some(buffer) = buffers.get(location.buffer_id()) {
+                        let offset_in_piece = self.find_position_in_leaf(
+                            lines_before,
+                            end_line,
+                            end_column,
+                            *offset,
+                            *bytes,
+                            buffer,
+                        );
+                        *delete_end_offset = Some(piece_start + offset_in_piece);
+                    }
+                }
+
+                // Now determine what to keep
+                let del_start = delete_start_offset.unwrap_or(usize::MAX);
+                let del_end = delete_end_offset.unwrap_or(0);
+
+                // Piece completely before delete range
+                if piece_end <= del_start {
+                    leaves.push(LeafData::new(*location, *offset, *bytes, *line_feed_cnt));
+                    return;
+                }
+
+                // Piece completely after delete range (only if we've found end)
+                if delete_end_offset.is_some() && piece_start >= del_end {
+                    leaves.push(LeafData::new(*location, *offset, *bytes, *line_feed_cnt));
+                    return;
+                }
+
+                // Piece overlaps with delete range
+                // Keep part before delete start
+                if piece_start < del_start && del_start < piece_end {
+                    let keep_bytes = del_start - piece_start;
+                    let lf_cnt =
+                        Self::compute_line_feeds_static(buffers, *location, *offset, keep_bytes);
+                    leaves.push(LeafData::new(*location, *offset, keep_bytes, lf_cnt));
+                }
+
+                // Keep part after delete end (if we know where end is)
+                if delete_end_offset.is_some() && del_end > piece_start && del_end < piece_end {
+                    let skip_bytes = del_end - piece_start;
+                    let keep_bytes = piece_end - del_end;
+                    let lf_cnt = Self::compute_line_feeds_static(
+                        buffers,
+                        *location,
+                        offset + skip_bytes,
+                        keep_bytes,
+                    );
+                    leaves.push(LeafData::new(
+                        *location,
+                        offset + skip_bytes,
+                        keep_bytes,
+                        lf_cnt,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Helper to find a position within a leaf piece
+    /// Returns the offset within the piece (not the document offset)
+    fn find_position_in_leaf(
+        &self,
+        lines_before: usize,
+        target_line: usize,
+        target_column: usize,
+        piece_offset: usize,
+        piece_bytes: usize,
+        buffer: &StringBuffer,
+    ) -> usize {
+        let line_in_piece = target_line - lines_before;
+
+        // Find the line start within the piece
+        let line_start_in_buffer = if line_in_piece == 0 {
+            piece_offset
+        } else {
+            // Find the Nth newline within this piece
+            let mut lines_seen = 0;
+            let mut found_line_start = piece_offset;
+
+            for &ls in buffer.line_starts.iter() {
+                if ls > piece_offset && ls < piece_offset + piece_bytes {
+                    if lines_seen == line_in_piece - 1 {
+                        found_line_start = ls;
+                        break;
+                    }
+                    lines_seen += 1;
+                }
+            }
+
+            found_line_start
+        };
+
+        // Calculate offset within the piece
+        let column_offset = target_column.min(piece_bytes);
+        let target_in_buffer = line_start_in_buffer + column_offset;
+        target_in_buffer
+            .saturating_sub(piece_offset)
+            .min(piece_bytes)
     }
 
     /// Helper to collect leaves while deleting a range
