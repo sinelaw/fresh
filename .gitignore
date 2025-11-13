@@ -25,3 +25,4 @@ tests/BIG.txt
 flamegraph.svg
 perf.data
 perf.data.old
+*.snap.new
