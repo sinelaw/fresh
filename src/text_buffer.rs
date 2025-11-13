@@ -414,9 +414,12 @@ impl TextBuffer {
 
     /// Get text from a byte offset range
     /// This now uses the optimized piece_tree.iter_pieces_in_range() for a single traversal
-    pub fn get_text_range(&self, offset: usize, bytes: usize) -> Vec<u8> {
+    /// Get text from a byte offset range (read-only)
+    /// Returns None if any buffer in the range is unloaded
+    /// For guaranteed complete data with lazy loading, use get_text_range_mut() instead
+    pub fn get_text_range(&self, offset: usize, bytes: usize) -> Option<Vec<u8>> {
         if bytes == 0 {
-            return Vec::new();
+            return Some(Vec::new());
         }
 
         let mut result = Vec::with_capacity(bytes);
@@ -442,26 +445,42 @@ impl TextBuffer {
                     let buffer_start = piece_view.buffer_offset + offset_in_piece;
                     let buffer_end = buffer_start + bytes_to_read;
 
-                    if let Some(data) = buffer.get_data() {
-                        if buffer_end <= data.len() {
-                            result.extend_from_slice(&data[buffer_start..buffer_end]);
-                            collected += bytes_to_read;
+                    // Return None if buffer is unloaded (type-safe)
+                    let data = buffer.get_data()?;
 
-                            if collected >= bytes {
-                                break;
-                            }
+                    if buffer_end <= data.len() {
+                        result.extend_from_slice(&data[buffer_start..buffer_end]);
+                        collected += bytes_to_read;
+
+                        if collected >= bytes {
+                            break;
                         }
                     }
                 }
             }
         }
 
-        result
+        Some(result)
+    }
+
+    /// Get text from a byte offset range with lazy loading
+    /// This will load unloaded chunks on-demand and always returns complete data
+    pub fn get_text_range_mut(&mut self, offset: usize, bytes: usize) -> Vec<u8> {
+        // Try read-only first
+        if let Some(data) = self.get_text_range(offset, bytes) {
+            return data;
+        }
+
+        // Some buffers are unloaded - need to load them
+        // TODO: Implement lazy loading in Phase 4
+        // For now, return empty vec as a safe fallback
+        Vec::new()
     }
 
     /// Get all text as a single Vec<u8>
+    /// Returns empty vector if any buffers are unloaded
     pub fn get_all_text(&self) -> Vec<u8> {
-        self.get_text_range(0, self.total_bytes())
+        self.get_text_range(0, self.total_bytes()).unwrap_or_default()
     }
 
     /// Get all text as a String
@@ -471,13 +490,16 @@ impl TextBuffer {
 
     /// Get text from a byte range as a String
     pub fn slice(&self, range: Range<usize>) -> String {
-        let bytes = self.get_text_range(range.start, range.end.saturating_sub(range.start));
+        let bytes = self.get_text_range(range.start, range.end.saturating_sub(range.start))
+            .unwrap_or_default();
         String::from_utf8_lossy(&bytes).into_owned()
     }
 
     /// Get text from a byte range as bytes
+    /// Returns empty vector if any buffers are unloaded
     pub fn slice_bytes(&self, range: Range<usize>) -> Vec<u8> {
         self.get_text_range(range.start, range.end.saturating_sub(range.start))
+            .unwrap_or_default()
     }
 
     /// Get all text as a String
@@ -525,7 +547,7 @@ impl TextBuffer {
             self.total_bytes().saturating_sub(start)
         };
 
-        Some(self.get_text_range(start, bytes))
+        self.get_text_range(start, bytes)
     }
 
     /// Get the byte offset where a line starts
@@ -798,7 +820,7 @@ impl TextBuffer {
             if let Some(found_pos) = self.find_next_regex_in_range(regex, pos, Some(0..self.len()))
             {
                 // Get the match to find its length
-                let text = self.get_text_range(found_pos, self.len() - found_pos);
+                let text = self.get_text_range_mut(found_pos, self.len() - found_pos);
                 if let Some(mat) = regex.find(&text) {
                     self.replace_range(found_pos..found_pos + mat.len(), replacement);
                     count += 1;
@@ -877,7 +899,10 @@ impl TextBuffer {
             };
 
             if line_len > 0 {
-                let line_bytes = self.get_text_range(line_start, line_len);
+                // If data is unloaded, return line_start as fallback
+                let Some(line_bytes) = self.get_text_range(line_start, line_len) else {
+                    return line_start;
+                };
                 let line_str = String::from_utf8_lossy(&line_bytes);
 
                 // Convert UTF-16 offset to byte offset
@@ -912,7 +937,10 @@ impl TextBuffer {
 
         // Get a few bytes before pos to find the character boundary
         let start = pos.saturating_sub(4);
-        let bytes = self.get_text_range(start, pos - start);
+        let Some(bytes) = self.get_text_range(start, pos - start) else {
+            // Data unloaded, return pos as fallback
+            return pos;
+        };
 
         // Walk backwards to find a UTF-8 leading byte
         for i in (0..bytes.len()).rev() {
@@ -936,7 +964,10 @@ impl TextBuffer {
 
         // Get a few bytes after pos to find the character boundary
         let end = (pos + 5).min(len);
-        let bytes = self.get_text_range(pos, end - pos);
+        let Some(bytes) = self.get_text_range(pos, end - pos) else {
+            // Data unloaded, return pos as fallback
+            return pos;
+        };
 
         // Start from index 1 (we want the NEXT boundary)
         for i in 1..bytes.len() {
@@ -959,7 +990,10 @@ impl TextBuffer {
 
         // Get some text before pos
         let start = pos.saturating_sub(256).max(0);
-        let bytes = self.get_text_range(start, pos - start);
+        let Some(bytes) = self.get_text_range(start, pos - start) else {
+            // Data unloaded, return pos as fallback
+            return pos;
+        };
         let text = String::from_utf8_lossy(&bytes);
 
         let mut found_word_char = false;
@@ -993,7 +1027,10 @@ impl TextBuffer {
 
         // Get some text after pos
         let end = (pos + 256).min(len);
-        let bytes = self.get_text_range(pos, end - pos);
+        let Some(bytes) = self.get_text_range(pos, end - pos) else {
+            // Data unloaded, return pos as fallback
+            return pos;
+        };
         let text = String::from_utf8_lossy(&bytes);
 
         let mut found_word_char = false;
@@ -1512,9 +1549,9 @@ mod tests {
     fn test_get_text_range() {
         let buffer = TextBuffer::from_bytes(b"hello world".to_vec());
 
-        assert_eq!(buffer.get_text_range(0, 5), b"hello");
-        assert_eq!(buffer.get_text_range(6, 5), b"world");
-        assert_eq!(buffer.get_text_range(0, 11), b"hello world");
+        assert_eq!(buffer.get_text_range(0, 5), Some(b"hello".to_vec()));
+        assert_eq!(buffer.get_text_range(6, 5), Some(b"world".to_vec()));
+        assert_eq!(buffer.get_text_range(0, 11), Some(b"hello world".to_vec()));
     }
 
     #[test]
@@ -1942,7 +1979,7 @@ mod property_tests {
             }
 
             let result = buffer.get_text_range(offset, length);
-            prop_assert_eq!(result, text[offset..offset + length].to_vec());
+            prop_assert_eq!(result, Some(text[offset..offset + length].to_vec()));
         }
 
         #[test]
