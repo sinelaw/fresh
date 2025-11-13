@@ -980,9 +980,31 @@ pub struct LineIterator<'a> {
 impl<'a> LineIterator<'a> {
     fn new(buffer: &'a TextBuffer, byte_pos: usize) -> Self {
         let buffer_len = buffer.len();
+        let byte_pos = byte_pos.min(buffer_len);
+
+        // Find the start of the line containing byte_pos
+        let line_start = if byte_pos == 0 {
+            0
+        } else {
+            // Search backwards from byte_pos to find the previous newline
+            let search_start = byte_pos.saturating_sub(4096).max(0);
+            let search_len = byte_pos - search_start;
+            let chunk = buffer.get_text_range(search_start, search_len);
+
+            // Find the last newline in the chunk
+            let mut line_start = 0;
+            for i in (0..chunk.len()).rev() {
+                if chunk[i] == b'\n' {
+                    line_start = search_start + i + 1;
+                    break;
+                }
+            }
+            line_start
+        };
+
         LineIterator {
             buffer,
-            current_pos: byte_pos.min(buffer_len),
+            current_pos: line_start,
             buffer_len,
         }
     }
