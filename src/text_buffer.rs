@@ -1,40 +1,40 @@
-/// Text buffer that combines PieceTree and LineIndex
-/// VSCode-style architecture: separate concerns for byte indexing and line tracking
+/// Text buffer that uses PieceTree with integrated line tracking
+/// Architecture where the tree is the single source of truth for text and line information
 
-use crate::line_index::{LineIndex, Position};
-use crate::piece_tree::{BufferLocation, Cursor, PieceInfo, PieceTree};
+use crate::piece_tree::{BufferLocation, Cursor, PieceInfo, PieceTree, Position, StringBuffer, TreeStats};
 
 /// A text buffer that manages document content using a piece table
-/// and maintains line information separately
+/// with integrated line tracking
 pub struct TextBuffer {
-    /// The piece tree for efficient text manipulation (tracks bytes only)
+    /// The piece tree for efficient text manipulation with integrated line tracking
     piece_tree: PieceTree,
 
-    /// Line index for mapping between line/column and byte offsets
-    line_index: LineIndex,
+    /// List of string buffers containing chunks of text data
+    /// Index 0 is typically the original/stored buffer
+    /// Additional buffers are added for modifications
+    buffers: Vec<StringBuffer>,
 
-    /// The original/stored buffer (read-only, from file)
-    stored_buffer: Vec<u8>,
-
-    /// The added buffer (in-memory modifications)
-    added_buffer: Vec<u8>,
+    /// Next buffer ID to assign
+    next_buffer_id: usize,
 }
 
 impl TextBuffer {
     /// Create a new text buffer from initial content
     pub fn new(content: Vec<u8>) -> Self {
         let bytes = content.len();
-        let line_index = LineIndex::build_from_buffer(&content);
+
+        // Create initial StringBuffer with ID 0
+        let buffer = StringBuffer::new(0, content);
+        let line_feed_cnt = buffer.line_feed_count();
 
         TextBuffer {
             piece_tree: if bytes > 0 {
-                PieceTree::new(BufferLocation::Stored, 0, bytes)
+                PieceTree::new(BufferLocation::Stored(0), 0, bytes, line_feed_cnt)
             } else {
                 PieceTree::empty()
             },
-            line_index,
-            stored_buffer: content,
-            added_buffer: Vec::new(),
+            buffers: vec![buffer],
+            next_buffer_id: 1,
         }
     }
 
@@ -42,9 +42,8 @@ impl TextBuffer {
     pub fn empty() -> Self {
         TextBuffer {
             piece_tree: PieceTree::empty(),
-            line_index: LineIndex::new(),
-            stored_buffer: Vec::new(),
-            added_buffer: Vec::new(),
+            buffers: vec![StringBuffer::new(0, Vec::new())],
+            next_buffer_id: 1,
         }
     }
 
@@ -54,18 +53,20 @@ impl TextBuffer {
     }
 
     /// Get the total number of lines in the document
+    /// Uses the piece tree's integrated line tracking
     pub fn line_count(&self) -> usize {
-        self.line_index.line_count()
+        self.piece_tree.line_count()
     }
 
     /// Convert a byte offset to a line/column position
     pub fn offset_to_position(&self, offset: usize) -> Position {
-        self.line_index.offset_to_position(offset)
+        let (line, column) = self.piece_tree.offset_to_position(offset, &self.buffers);
+        Position { line, column }
     }
 
     /// Convert a line/column position to a byte offset
     pub fn position_to_offset(&self, position: Position) -> usize {
-        self.line_index.position_to_offset(position)
+        self.piece_tree.position_to_offset(position.line, position.column, &self.buffers)
     }
 
     /// Insert text at the given byte offset
@@ -74,22 +75,70 @@ impl TextBuffer {
             return self.piece_tree.cursor_at_offset(offset);
         }
 
-        // Add text to the added buffer
-        let buffer_offset = self.added_buffer.len();
-        self.added_buffer.extend_from_slice(&text);
+        // Count line feeds in the text to insert
+        let line_feed_cnt = text.iter().filter(|&&b| b == b'\n').count();
 
-        // Update piece tree
-        let cursor = self.piece_tree.insert(
+        // Optimization: try to append to existing buffer if insertion is at piece boundary
+        let (buffer_location, buffer_offset, text_len) =
+            if let Some(append_info) = self.try_append_to_existing_buffer(offset, &text) {
+                append_info
+            } else {
+                // Create a new StringBuffer for this insertion
+                let buffer_id = self.next_buffer_id;
+                self.next_buffer_id += 1;
+                let buffer = StringBuffer::new(buffer_id, text.clone());
+                self.buffers.push(buffer);
+                (BufferLocation::Added(buffer_id), 0, text.len())
+            };
+
+        // Update piece tree (need to pass buffers reference)
+        self.piece_tree.insert(
             offset,
-            BufferLocation::Added,
+            buffer_location,
             buffer_offset,
-            text.len(),
-        );
+            text_len,
+            line_feed_cnt,
+            &self.buffers,
+        )
+    }
 
-        // Update line index
-        self.line_index.insert(offset, &text);
+    /// Try to append to an existing buffer if insertion point aligns with buffer end
+    /// Returns (BufferLocation, buffer_offset, text_len) if append succeeds, None otherwise
+    fn try_append_to_existing_buffer(&mut self, offset: usize, text: &[u8]) -> Option<(BufferLocation, usize, usize)> {
+        // Only optimize for non-empty insertions after existing content
+        if text.is_empty() || offset == 0 {
+            return None;
+        }
 
-        cursor
+        // Find the piece containing the byte just before the insertion point
+        // This avoids the saturating_sub issue
+        let piece_info = self.piece_tree.find_by_offset(offset - 1)?;
+
+        // Check if insertion is exactly at the end of this piece
+        // offset_in_piece tells us where (offset-1) is within the piece
+        // For insertion to be at piece end, (offset-1) must be the last byte
+        let offset_in_piece = piece_info.offset_in_piece?;
+        if offset_in_piece + 1 != piece_info.bytes {
+            return None; // Not at the end of the piece
+        }
+
+        // Only append to "Added" buffers (not original Stored buffers)
+        if !matches!(piece_info.location, BufferLocation::Added(_)) {
+            return None;
+        }
+
+        let buffer_id = piece_info.location.buffer_id();
+        let buffer = self.buffers.get_mut(buffer_id)?;
+
+        // Check if this piece ends exactly at the end of its buffer
+        if piece_info.offset + piece_info.bytes != buffer.data.len() {
+            return None;
+        }
+
+        // Perfect! Append to this buffer
+        let append_offset = buffer.append(text);
+
+        Some((piece_info.location, append_offset, text.len()))
     }
 
     /// Insert text at a line/column position
@@ -104,14 +153,8 @@ impl TextBuffer {
             return;
         }
 
-        // Get the text that will be deleted (needed for line index update)
-        let deleted_text = self.get_text_range(offset, bytes);
-
         // Update piece tree
-        self.piece_tree.delete(offset, bytes);
-
-        // Update line index
-        self.line_index.delete(offset, bytes, &deleted_text);
+        self.piece_tree.delete(offset, bytes, &self.buffers);
     }
 
     /// Delete text in a line/column range
@@ -132,10 +175,13 @@ impl TextBuffer {
 
         while remaining > 0 {
             if let Some(piece_info) = self.piece_tree.find_by_offset(current_offset) {
-                // Get the buffer for this piece
-                let buffer = match piece_info.location {
-                    BufferLocation::Stored => &self.stored_buffer,
-                    BufferLocation::Added => &self.added_buffer,
+                // Get the buffer for this piece by ID
+                let buffer_id = piece_info.location.buffer_id();
+                let buffer = if let Some(buf) = self.buffers.get(buffer_id) {
+                    &buf.data
+                } else {
+                    // Shouldn't happen, but handle gracefully
+                    break;
                 };
 
                 // Calculate how much to read from this piece
@@ -176,7 +222,7 @@ impl TextBuffer {
 
     /// Get text for a specific line
     pub fn get_line(&self, line: usize) -> Option<Vec<u8>> {
-        let (start, end) = self.line_index.line_range(line)?;
+        let (start, end) = self.piece_tree.line_range(line, &self.buffers)?;
 
         let bytes = if let Some(end_offset) = end {
             end_offset - start
@@ -189,7 +235,8 @@ impl TextBuffer {
 
     /// Get the byte offset where a line starts
     pub fn line_start_offset(&self, line: usize) -> Option<usize> {
-        self.line_index.line_start_offset(line)
+        let (start, _) = self.piece_tree.line_range(line, &self.buffers)?;
+        Some(start)
     }
 
     /// Get piece information at a byte offset
@@ -197,8 +244,8 @@ impl TextBuffer {
         self.piece_tree.find_by_offset(offset)
     }
 
-    /// Get tree statistics for debugging (total_bytes, depth, leaf_count)
-    pub fn stats(&self) -> (usize, usize, usize) {
+    /// Get tree statistics for debugging
+    pub fn stats(&self) -> TreeStats {
         self.piece_tree.stats()
     }
 }
@@ -377,6 +424,24 @@ mod tests {
 
         buffer.delete_bytes(2, 0);
         assert_eq!(buffer.get_all_text(), b"hello");
+    }
+
+    #[test]
+    fn test_sequential_inserts_at_beginning() {
+        // Regression test for piece tree duplicate insertion bug
+        let mut buffer = TextBuffer::new(b"initial\ntext".to_vec());
+
+        // Delete all
+        buffer.delete_bytes(0, 12);
+        assert_eq!(buffer.get_all_text(), b"");
+
+        // Insert 'a' at 0
+        buffer.insert_bytes(0, vec![b'a']);
+        assert_eq!(buffer.get_all_text(), b"a");
+
+        // Insert 'b' at 0 (should give "ba")
+        buffer.insert_bytes(0, vec![b'b']);
+        assert_eq!(buffer.get_all_text(), b"ba");
     }
 }
 
