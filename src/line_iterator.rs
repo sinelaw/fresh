@@ -55,7 +55,14 @@ impl<'a> LineIterator<'a> {
 
         for piece in pieces {
             let buffer = &self.buffer.buffers_ref()[piece.location.buffer_id()];
-            let piece_data = &buffer.data[piece.buffer_offset..piece.buffer_offset + piece.bytes];
+
+            // Calculate where to start reading within this piece
+            let start_offset_in_doc = piece.doc_offset.max(self.current_pos);
+            let offset_in_piece = start_offset_in_doc - piece.doc_offset;
+            let start_in_buffer = piece.buffer_offset + offset_in_piece;
+            let bytes_to_read = piece.bytes - offset_in_piece;
+
+            let piece_data = &buffer.data[start_in_buffer..start_in_buffer + bytes_to_read];
 
             // Scan this piece for newline
             for &byte in piece_data.iter() {
