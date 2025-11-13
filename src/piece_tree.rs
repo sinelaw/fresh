@@ -335,9 +335,27 @@ impl PieceTreeNode {
             } => {
                 let lines_after_left = lines_before + lf_left;
 
-                if target_line < lines_after_left {
+                // When looking for line start (column == 0), we want the leftmost piece containing the line
+                // So use <= instead of < to prefer going left when the line boundary is exactly at lines_after_left
+                let go_left = if column == 0 {
+                    target_line <= lines_after_left
+                } else {
+                    target_line < lines_after_left
+                };
+
+                if go_left {
                     // Target is in left subtree
-                    left.find_byte_offset_for_line(current_offset, lines_before, target_line, column, buffers)
+                    let result = left.find_byte_offset_for_line(current_offset, lines_before, target_line, column, buffers);
+                    // If left returns None, try right as fallback (happens when line starts after a newline)
+                    result.or_else(|| {
+                        right.find_byte_offset_for_line(
+                            current_offset + left_bytes,
+                            lines_after_left,
+                            target_line,
+                            column,
+                            buffers,
+                        )
+                    })
                 } else {
                     // Target is in right subtree
                     right.find_byte_offset_for_line(
@@ -356,6 +374,12 @@ impl PieceTreeNode {
                 line_feed_cnt,
             } => {
                 let lines_in_piece = lines_before + line_feed_cnt;
+
+                // Special case: when looking for column==0 of line N where N == lines_in_piece,
+                // the line actually starts in the NEXT piece (after the newline that ends line N-1)
+                if column == 0 && target_line == lines_in_piece && target_line > lines_before {
+                    return None;
+                }
 
                 if target_line < lines_before || target_line > lines_in_piece {
                     // Target line not in this piece
@@ -825,24 +849,43 @@ impl PieceTree {
                 // Calculate line relative to piece start (not buffer start)
                 let line_in_piece = line_in_buffer - piece_start_line;
 
-                // Check if piece starts at a line boundary
-                let piece_starts_at_line_boundary = buffer.line_starts
-                    .binary_search(&piece_info.offset)
-                    .is_ok();
+                // Calculate the document line number
+                let doc_line = lines_before + line_in_piece;
+
+                // Check if piece starts at a line boundary in the DOCUMENT
+                // If there are lines before this piece, then this piece starts on a new document line
+                // If lines_before == 0, the piece is part of document line 0 which starts at offset 0
+                let piece_starts_at_doc_line_boundary = (lines_before > 0) || (bytes_before == 0);
 
                 // Calculate column
-                let column = if line_in_piece == 0 && !piece_starts_at_line_boundary {
-                    // First line of piece AND piece doesn't start at a line boundary
-                    // Column is relative to piece start, not buffer line start
-                    byte_offset_in_buffer - piece_info.offset
+                let column = if line_in_piece == 0 && !piece_starts_at_doc_line_boundary {
+                    // The current line started before this piece
+                    // We can't calculate column from this piece alone - need to use position_to_offset
+                    // to find where the current document line starts
+                    let line_start = self.position_to_offset(doc_line, 0, buffers);
+                    offset.saturating_sub(line_start)
+                } else if line_in_piece == 0 {
+                    // Piece starts at line boundary, so column is just offset within piece
+                    offset_in_piece
                 } else {
-                    // Either not first line, or piece starts at line boundary
-                    // Column is relative to line start in buffer
-                    let line_start_in_buffer = buffer.line_starts.get(line_in_buffer).copied().unwrap_or(0);
-                    byte_offset_in_buffer - line_start_in_buffer
+                    // Line starts within this piece
+                    // Find where the line starts within the piece
+                    let mut count = 0;
+                    let mut line_start_in_buf = piece_info.offset;
+                    for &ls in buffer.line_starts.iter() {
+                        if ls > piece_info.offset && ls < piece_info.offset + piece_info.bytes {
+                            count += 1;
+                            if count == line_in_piece {
+                                line_start_in_buf = ls;
+                                break;
+                            }
+                        }
+                    }
+                    let line_start_offset_in_piece = line_start_in_buf - piece_info.offset;
+                    offset_in_piece - line_start_offset_in_piece
                 };
 
-                return (lines_before + line_in_piece, column);
+                return (doc_line, column);
             }
         }
 
