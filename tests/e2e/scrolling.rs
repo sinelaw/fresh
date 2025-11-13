@@ -1016,6 +1016,186 @@ fn test_jump_to_eof_large_file() {
     );
 }
 
+/// Test that screen content is correct when loading and navigating a large file
+/// Validates that chunk-based lazy loading displays the correct data
+#[test]
+fn test_large_file_screen_content_validation() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use std::time::Instant;
+
+    println!("\n=== Testing Large File Screen Content Validation ===");
+
+    // Get shared large file (61MB, each line starts with "@00000000: " format showing byte offset)
+    let big_txt_path = TestFixture::big_txt_for_test("screen_content_validation").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&big_txt_path).unwrap();
+
+    let buffer_len = harness.buffer_len();
+    println!("✓ Opened 61MB file (buffer length: {})", buffer_len);
+
+    // Test 1: Validate initial screen shows correct content (beginning of file)
+    println!("\n=== Test 1: Initial screen at file start ===");
+    let screen = harness.screen_to_string();
+
+    println!("Screen content:\n{}", screen);
+
+    // The file starts with "@00000000: " at byte offset 0
+    assert!(
+        screen.contains("@00000000:"),
+        "Initial screen should show first line starting at byte 0. Screen:\n{}",
+        screen
+    );
+    // Each line is 81 bytes, so second line starts at byte 81
+    assert!(
+        screen.contains("@00000081:"),
+        "Initial screen should show second line starting at byte 81"
+    );
+    println!("✓ Initial screen shows correct content from file start (bytes 0-81 visible)");
+
+    // Test 2: Jump to middle of file and validate content
+    println!("\n=== Test 2: Jump to middle of file ===");
+
+    // Jump to approximately 30MB into the file
+    let target_offset = 30 * 1024 * 1024;
+    let start = Instant::now();
+
+    // Page down many times to get near the middle
+    // Each page is ~22 lines * 81 bytes = ~1782 bytes
+    let pages_to_middle = target_offset / 1782;
+    for _ in 0..pages_to_middle.min(500) {
+        harness.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    }
+    println!("✓ Navigated toward middle in: {:?}", start.elapsed());
+
+    let cursor_pos = harness.cursor_position();
+    let screen_middle = harness.screen_to_string();
+
+    println!("Current cursor position: {}", cursor_pos);
+
+    // The cursor should be somewhere in the millions of bytes
+    assert!(
+        cursor_pos > 10_000_000,
+        "After many page downs, cursor should be deep in file (at {})",
+        cursor_pos
+    );
+
+    // The screen should show byte offsets in the appropriate range
+    // Since each line is 81 bytes, round cursor position to nearest line start
+    let line_start = (cursor_pos / 81) * 81;
+    let offset_marker = format!("@{:08}:", line_start);
+
+    // The screen might not show exact cursor position but should be in the ballpark
+    // Just verify we're seeing lines with large byte offsets
+    let has_large_offset = screen_middle.lines().any(|line| {
+        line.contains("@") && {
+            // Extract the byte offset from the line if present
+            if let Some(start_idx) = line.find("@") {
+                if let Some(end_idx) = line[start_idx..].find(":") {
+                    let offset_str = &line[start_idx + 1..start_idx + end_idx];
+                    if let Ok(offset) = offset_str.parse::<usize>() {
+                        return offset > 5_000_000; // At least 5MB in
+                    }
+                }
+            }
+            false
+        }
+    });
+
+    assert!(
+        has_large_offset,
+        "Middle screen should show byte offsets > 5MB"
+    );
+    println!("✓ Middle of file shows correct content with appropriate byte offsets");
+
+    // Test 3: Jump to end of file and validate content
+    println!("\n=== Test 3: Jump to end of file ===");
+    let start = Instant::now();
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    println!("✓ Jumped to EOF in: {:?}", start.elapsed());
+
+    let cursor_pos = harness.cursor_position();
+    assert!(
+        cursor_pos > buffer_len - 1000,
+        "Cursor should be near EOF. Position: {}, Buffer length: {}",
+        cursor_pos,
+        buffer_len
+    );
+
+    let screen_end = harness.screen_to_string();
+
+    // The last line should show a byte offset near the end of the file
+    // buffer_len is ~64MB, so we should see offsets close to that
+    let has_end_offset = screen_end.lines().any(|line| {
+        line.contains("@") && {
+            if let Some(start_idx) = line.find("@") {
+                if let Some(end_idx) = line[start_idx..].find(":") {
+                    let offset_str = &line[start_idx + 1..start_idx + end_idx];
+                    if let Ok(offset) = offset_str.parse::<usize>() {
+                        // Should be within last few MB of file
+                        return offset > buffer_len - 5_000_000;
+                    }
+                }
+            }
+            false
+        }
+    });
+
+    assert!(
+        has_end_offset,
+        "End screen should show byte offsets near EOF (> {})",
+        buffer_len - 5_000_000
+    );
+    println!("✓ End of file shows correct content near EOF");
+
+    // Test 4: Jump back to beginning and validate
+    println!("\n=== Test 4: Jump back to beginning ===");
+    let start = Instant::now();
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    println!("✓ Jumped to start in: {:?}", start.elapsed());
+
+    let cursor_pos = harness.cursor_position();
+    assert_eq!(cursor_pos, 0, "Cursor should be at position 0");
+
+    let screen_start = harness.screen_to_string();
+
+    // Should show byte offset 0 again
+    assert!(
+        screen_start.contains("@00000000:"),
+        "After jumping back, screen should show first line at byte 0"
+    );
+    assert!(
+        screen_start.contains("@00000081:"),
+        "After jumping back, screen should show second line at byte 81"
+    );
+    println!("✓ Beginning of file shows correct content after navigation");
+
+    // Test 5: Make an edit and verify it appears on screen
+    println!("\n=== Test 5: Edit and verify screen update ===");
+    harness.type_text("EDIT_MARKER_").unwrap();
+
+    let screen_after_edit = harness.screen_to_string();
+    assert!(
+        screen_after_edit.contains("EDIT_MARKER_"),
+        "Screen should show the edit we just made"
+    );
+    println!("✓ Edit appears correctly on screen");
+
+    // Test 6: Navigate away and back, verify edit persists
+    println!("\n=== Test 6: Navigate away and back, verify edit persists ===");
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+
+    let screen_after_nav = harness.screen_to_string();
+    assert!(
+        screen_after_nav.contains("EDIT_MARKER_"),
+        "Edit should still be visible after navigation"
+    );
+    println!("✓ Edit persists correctly after navigation");
+
+    println!("\n✓ All screen content validation tests passed!");
+}
+
 /// Test that we can navigate to EOF and back to beginning in a large file
 /// Verifies that navigation works correctly and cursor ends up at the right positions
 #[test]

@@ -64,15 +64,23 @@ impl TestFixture {
         if !path.exists() {
             eprintln!("Generating shared large test file (61MB, one-time)...");
             let mut file = fs::File::create(&path)?;
-            let line = "x".repeat(80) + "\n";
-            let lines_per_mb = 1024 * 1024 / line.len();
-            let size_mb = 61;
 
-            for _ in 0..(size_mb * lines_per_mb) {
+            // Each line: "@00000000: " + 'x' repeated to fill ~80 chars total + "\n"
+            // Byte offset prefix is 12 chars ("@00000000: "), so ~68 x's per line
+            let size_mb = 61;
+            let target_bytes = size_mb * 1024 * 1024;
+
+            let mut byte_offset = 0;
+
+            while byte_offset < target_bytes {
+                let line = format!("@{:08}: {}\n", byte_offset, "x".repeat(68));
                 file.write_all(line.as_bytes())?;
+                byte_offset += line.len();
             }
+
             file.flush()?;
-            eprintln!("Generated shared large test file at {path:?}");
+            let line_count = byte_offset / 81; // Each line is 81 bytes
+            eprintln!("Generated shared large test file with ~{} lines ({} bytes) at {path:?}", line_count, byte_offset);
         }
 
         Ok(path)
