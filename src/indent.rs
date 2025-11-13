@@ -1235,7 +1235,7 @@ mod tests {
         let position = 27; // Position after second \n, before the }
 
         let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
-        eprintln!("TEST: With closing brace, indent = {:?}", indent);
+        tracing::trace!("TEST: With closing brace, indent = {:?}", indent);
         assert_eq!(
             indent,
             Some(4),
@@ -1252,7 +1252,7 @@ mod tests {
         let position = buffer.len(); // After the second \n, start of empty line
 
         let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
-        eprintln!("TEST: Without closing brace, indent = {:?}", indent);
+        tracing::trace!("TEST: Without closing brace, indent = {:?}", indent);
         // With incomplete syntax, tree-sitter returns ERROR nodes
         // We should fall back to pattern matching or reference line heuristic
         assert_eq!(

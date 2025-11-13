@@ -104,7 +104,7 @@ fn main() -> io::Result<()> {
 
     // Enable event log streaming if requested
     if let Some(log_path) = &args.event_log {
-        eprintln!("Event logging enabled: {}", log_path.display());
+        tracing::trace!("Event logging enabled: {}", log_path.display());
         editor.enable_event_streaming(log_path)?;
     }
 

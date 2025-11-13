@@ -629,9 +629,9 @@ mod tests {
                 // Should still be in order (no inversions)
                 for window in positions.windows(2) {
                     if window[0] > window[1] {
-                        eprintln!("Ordering violation detected!");
-                        eprintln!("  Positions: {:?}", positions);
-                        eprintln!("  Full intervals: {:?}", intervals);
+                        tracing::trace!("Ordering violation detected!");
+                        tracing::trace!("  Positions: {:?}", positions);
+                        tracing::trace!("  Full intervals: {:?}", intervals);
                         panic!("Marker ordering violated: {:?}", positions);
                     }
                 }

@@ -556,10 +556,10 @@ impl EventLog {
             });
 
             if let Err(e) = writeln!(file, "{render_info}") {
-                eprintln!("Warning: Failed to write render info to stream: {e}");
+                tracing::trace!("Warning: Failed to write render info to stream: {e}");
             }
             if let Err(e) = file.flush() {
-                eprintln!("Warning: Failed to flush event stream: {e}");
+                tracing::trace!("Warning: Failed to flush event stream: {e}");
             }
         }
     }
@@ -577,10 +577,10 @@ impl EventLog {
             });
 
             if let Err(e) = writeln!(file, "{keystroke_info}") {
-                eprintln!("Warning: Failed to write keystroke to stream: {e}");
+                tracing::trace!("Warning: Failed to write keystroke to stream: {e}");
             }
             if let Err(e) = file.flush() {
-                eprintln!("Warning: Failed to flush event stream: {e}");
+                tracing::trace!("Warning: Failed to flush event stream: {e}");
             }
         }
     }
@@ -604,10 +604,10 @@ impl EventLog {
 
             // Write JSON line and flush immediately for real-time logging
             if let Err(e) = writeln!(file, "{stream_entry}") {
-                eprintln!("Warning: Failed to write to event stream: {e}");
+                tracing::trace!("Warning: Failed to write to event stream: {e}");
             }
             if let Err(e) = file.flush() {
-                eprintln!("Warning: Failed to flush event stream: {e}");
+                tracing::trace!("Warning: Failed to flush event stream: {e}");
             }
         }
 

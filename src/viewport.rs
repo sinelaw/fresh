@@ -110,7 +110,7 @@ impl Viewport {
     /// This prevents scrolling past the end of the buffer by ensuring
     /// the viewport can be filled from the proposed position
     fn set_top_byte_with_limit(&mut self, buffer: &Buffer, proposed_top_byte: usize) {
-        eprintln!(
+        tracing::trace!(
             "DEBUG set_top_byte_with_limit: proposed_top_byte={}",
             proposed_top_byte
         );
@@ -137,7 +137,7 @@ impl Viewport {
             lines_visible += 1;
             if lines_visible >= viewport_height {
                 // We have a full viewport of content, use proposed position
-                eprintln!(
+                tracing::trace!(
                     "DEBUG: Full viewport available, setting top_byte={}",
                     proposed_top_byte
                 );
@@ -146,9 +146,10 @@ impl Viewport {
             }
         }
 
-        eprintln!(
+        tracing::trace!(
             "DEBUG: After iteration, lines_visible={}, viewport_height={}",
-            lines_visible, viewport_height
+            lines_visible,
+            viewport_height
         );
 
         // Check if buffer ends with newline (which creates a phantom empty line)
@@ -157,7 +158,7 @@ impl Viewport {
             !last_byte_slice.is_empty() && last_byte_slice[0] == b'\n'
         };
 
-        eprintln!(
+        tracing::trace!(
             "DEBUG: buffer_ends_with_newline={}",
             buffer_ends_with_newline
         );
@@ -165,7 +166,7 @@ impl Viewport {
         // Account for the phantom line if buffer ends with newline
         if buffer_ends_with_newline {
             lines_visible += 1;
-            eprintln!(
+            tracing::trace!(
                 "DEBUG: After adding phantom line, lines_visible={}",
                 lines_visible
             );
@@ -173,7 +174,7 @@ impl Viewport {
 
         // If we have enough lines to fill the viewport, we're good
         if lines_visible >= viewport_height {
-            eprintln!(
+            tracing::trace!(
                 "DEBUG: Enough lines to fill viewport, setting top_byte={}",
                 proposed_top_byte
             );
@@ -184,31 +185,33 @@ impl Viewport {
         // We don't have enough lines to fill the viewport from proposed_top_byte
         // Calculate how many lines we're short and scroll back
         let lines_short = viewport_height - lines_visible;
-        eprintln!("DEBUG: lines_short={}, scrolling back", lines_short);
+        tracing::trace!("DEBUG: lines_short={}, scrolling back", lines_short);
 
         let mut backtrack_iter = buffer.line_iterator(proposed_top_byte);
-        eprintln!(
+        tracing::trace!(
             "DEBUG: Backtracking from byte {}",
             backtrack_iter.current_position()
         );
         for i in 0..lines_short {
             let pos_before = backtrack_iter.current_position();
             if backtrack_iter.prev().is_none() {
-                eprintln!(
+                tracing::trace!(
                     "DEBUG: Hit beginning of buffer at backtrack iteration {}",
                     i
                 );
                 break; // Hit the beginning of the buffer
             }
             let pos_after = backtrack_iter.current_position();
-            eprintln!(
+            tracing::trace!(
                 "DEBUG: Backtrack iteration {}: {} -> {}",
-                i, pos_before, pos_after
+                i,
+                pos_before,
+                pos_after
             );
         }
 
         let final_top_byte = backtrack_iter.current_position();
-        eprintln!(
+        tracing::trace!(
             "DEBUG: After backtracking, setting top_byte={}",
             final_top_byte
         );
@@ -274,7 +277,7 @@ impl Viewport {
         let visible_count = self.visible_line_count();
         let lines_from_top = cursor_line_number.saturating_sub(top_line_number);
 
-        eprintln!(
+        tracing::trace!(
             "DEBUG ensure_visible: cursor_pos={}, cursor_line_start={}, top_byte={}, top_line={}, cursor_line={}, visible_count={}, lines_from_top={}",
             cursor.position, cursor_line_start, self.top_byte, top_line_number, cursor_line_number, visible_count, lines_from_top
         );
@@ -284,22 +287,22 @@ impl Viewport {
         let cursor_is_visible =
             cursor_line_number >= top_line_number && lines_from_top < visible_count;
 
-        eprintln!(
+        tracing::trace!(
             "DEBUG ensure_visible: cursor_is_visible={}",
             cursor_is_visible
         );
 
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {
-            eprintln!("DEBUG: Scrolling to make cursor visible!");
+            tracing::trace!("DEBUG: Scrolling to make cursor visible!");
 
             // Position cursor at center of viewport when jumping
             let target_line_from_top = self.visible_line_count() / 2;
-            eprintln!("DEBUG: target_line_from_top={}", target_line_from_top);
+            tracing::trace!("DEBUG: target_line_from_top={}", target_line_from_top);
 
             // Move backwards from cursor to find the new top_byte
             let mut iter = buffer.line_iterator(cursor_line_start);
-            eprintln!(
+            tracing::trace!(
                 "DEBUG: Starting iteration from cursor_line_start={}, iter.current_position()={}",
                 cursor_line_start,
                 iter.current_position()
@@ -307,10 +310,10 @@ impl Viewport {
 
             for i in 0..target_line_from_top {
                 if iter.prev().is_none() {
-                    eprintln!("DEBUG: Hit beginning of buffer at iteration {}", i);
+                    tracing::trace!("DEBUG: Hit beginning of buffer at iteration {}", i);
                     break; // Hit beginning of buffer
                 }
-                eprintln!(
+                tracing::trace!(
                     "DEBUG: After prev() iteration {}: iter.current_position()={}",
                     i,
                     iter.current_position()
@@ -318,12 +321,12 @@ impl Viewport {
             }
 
             let new_top_byte = iter.current_position();
-            eprintln!(
+            tracing::trace!(
                 "DEBUG: Calling set_top_byte_with_limit with new_top_byte={}",
                 new_top_byte
             );
             self.set_top_byte_with_limit(buffer, new_top_byte);
-            eprintln!(
+            tracing::trace!(
                 "DEBUG: After set_top_byte_with_limit, self.top_byte={}",
                 self.top_byte
             );
