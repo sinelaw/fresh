@@ -366,22 +366,38 @@ impl PieceTreeNode {
                 let buffer_id = location.buffer_id();
                 let buffer = buffers.get(buffer_id)?;
 
-                // Find the line within the buffer
+                // Find the line within the piece
                 let line_in_piece = target_line - lines_before;
 
-                // Get piece start in buffer
+                // Get piece range in buffer
                 let piece_start_in_buffer = *offset;
+                let piece_end_in_buffer = offset + bytes;
 
-                // Find which line the piece starts at in the buffer
-                let piece_start_line = buffer.line_starts
-                    .binary_search(&piece_start_in_buffer)
-                    .unwrap_or_else(|i| i.saturating_sub(1));
+                // Special case: first line of piece (line_in_piece == 0)
+                let line_start_in_buffer = if line_in_piece == 0 {
+                    // First line starts at piece start
+                    piece_start_in_buffer
+                } else {
+                    // Find the Nth newline within this piece
+                    // Count line_starts that fall within [piece_start, piece_end)
+                    let mut lines_seen = 0;
+                    let mut found_line_start = None;
 
-                // Calculate the target line in the buffer (relative to piece start)
-                let line_idx_in_buffer = piece_start_line + line_in_piece;
+                    for &line_start in buffer.line_starts.iter() {
+                        // Line starts are positions of newlines + 1, or beginning of buffer (0)
+                        // We want line_starts that are > piece_start and < piece_end
+                        if line_start > piece_start_in_buffer && line_start < piece_end_in_buffer {
+                            if lines_seen == line_in_piece - 1 {
+                                // This is the start of our target line
+                                found_line_start = Some(line_start);
+                                break;
+                            }
+                            lines_seen += 1;
+                        }
+                    }
 
-                // Get the line start position in buffer
-                let line_start_in_buffer = buffer.line_starts.get(line_idx_in_buffer).copied()?;
+                    found_line_start?
+                };
 
                 // Add column offset
                 let target_offset_in_buffer = line_start_in_buffer + column;
@@ -809,9 +825,22 @@ impl PieceTree {
                 // Calculate line relative to piece start (not buffer start)
                 let line_in_piece = line_in_buffer - piece_start_line;
 
-                // Calculate column as distance from line start
-                let line_start_in_buffer = buffer.line_starts.get(line_in_buffer).copied().unwrap_or(0);
-                let column = byte_offset_in_buffer - line_start_in_buffer;
+                // Check if piece starts at a line boundary
+                let piece_starts_at_line_boundary = buffer.line_starts
+                    .binary_search(&piece_info.offset)
+                    .is_ok();
+
+                // Calculate column
+                let column = if line_in_piece == 0 && !piece_starts_at_line_boundary {
+                    // First line of piece AND piece doesn't start at a line boundary
+                    // Column is relative to piece start, not buffer line start
+                    byte_offset_in_buffer - piece_info.offset
+                } else {
+                    // Either not first line, or piece starts at line boundary
+                    // Column is relative to line start in buffer
+                    let line_start_in_buffer = buffer.line_starts.get(line_in_buffer).copied().unwrap_or(0);
+                    byte_offset_in_buffer - line_start_in_buffer
+                };
 
                 return (lines_before + line_in_piece, column);
             }
