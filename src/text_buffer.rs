@@ -656,6 +656,9 @@ impl TextBuffer {
     }
 
     /// Get text from a byte range as a String
+    ///
+    /// Note: For new code, prefer using DocumentModel::get_range() which provides
+    /// better error handling and supports the document model abstraction.
     pub fn slice(&self, range: Range<usize>) -> String {
         let bytes = self.get_text_range(range.start, range.end.saturating_sub(range.start))
             .unwrap_or_default();
@@ -664,6 +667,9 @@ impl TextBuffer {
 
     /// Get text from a byte range as bytes
     /// Returns empty vector if any buffers are unloaded
+    ///
+    /// Note: For new code, prefer using DocumentModel methods which provide
+    /// better error handling and support the document model abstraction.
     pub fn slice_bytes(&self, range: Range<usize>) -> Vec<u8> {
         self.get_text_range(range.start, range.end.saturating_sub(range.start))
             .unwrap_or_default()
