@@ -2,7 +2,6 @@
 
 pub mod actions;
 pub mod async_bridge;
-pub mod buffer;
 pub mod command_registry;
 pub mod commands;
 pub mod config;
@@ -18,7 +17,6 @@ pub mod hooks;
 pub mod indent;
 pub mod input_history;
 pub mod keybindings;
-pub mod line_index;
 pub mod line_wrapping;
 pub mod lsp;
 pub mod lsp_async;
@@ -40,6 +38,7 @@ pub mod prompt;
 pub mod signal_handler;
 pub mod split;
 pub mod state;
+pub mod text_buffer;
 pub mod theme;
 pub mod ui;
 pub mod viewport;

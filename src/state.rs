@@ -1,4 +1,4 @@
-use crate::buffer::{Buffer, LineNumber};
+use crate::text_buffer::{Buffer, LineNumber};
 use crate::cursor::{Cursor, Cursors};
 use crate::event::{
     Event, MarginContentData, MarginPositionData, OverlayFace as EventOverlayFace, PopupData,

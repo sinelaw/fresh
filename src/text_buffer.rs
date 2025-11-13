@@ -75,9 +75,8 @@ impl TextBuffer {
     pub fn new(_large_file_threshold: usize) -> Self {
         TextBuffer {
             piece_tree: PieceTree::empty(),
-            line_index: LineIndex::new(),
-            stored_buffer: Vec::new(),
-            added_buffer: Vec::new(),
+            buffers: vec![StringBuffer::new(0, Vec::new())],
+            next_buffer_id: 1,
             file_path: None,
             modified: false,
         }
@@ -185,6 +184,9 @@ impl TextBuffer {
         if text.is_empty() {
             return self.piece_tree.cursor_at_offset(offset);
         }
+
+        // Mark as modified
+        self.modified = true;
 
         // Count line feeds in the text to insert
         let line_feed_cnt = text.iter().filter(|&&b| b == b'\n').count();
@@ -1279,7 +1281,7 @@ mod tests {
     #[test]
     fn test_sequential_inserts_at_beginning() {
         // Regression test for piece tree duplicate insertion bug
-        let mut buffer = TextBuffer::new(b"initial\ntext".to_vec());
+        let mut buffer = TextBuffer::from_bytes(b"initial\ntext".to_vec());
 
         // Delete all
         buffer.delete_bytes(0, 12);

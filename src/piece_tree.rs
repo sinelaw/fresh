@@ -817,7 +817,11 @@ impl PieceTree {
         }
 
         // Fallback: end of document
-        (self.line_count().saturating_sub(1), 0)
+        // Calculate the actual column by finding where the last line starts
+        let last_line = self.line_count().saturating_sub(1);
+        let line_start = self.position_to_offset(last_line, 0, buffers);
+        let column = self.total_bytes.saturating_sub(line_start);
+        (last_line, column)
     }
 
     /// Convert line/column position to byte offset using tree's line metadata

@@ -1,6 +1,6 @@
 //! Word boundary detection and navigation helpers
 
-use crate::buffer::Buffer;
+use crate::text_buffer::Buffer;
 
 /// Check if a byte is a word character (alphanumeric or underscore)
 pub fn is_word_char(byte: u8) -> bool {
@@ -271,7 +271,7 @@ pub fn find_word_start_right(buffer: &Buffer, pos: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::buffer::Buffer;
+    use crate::text_buffer::Buffer;
 
     #[test]
     fn test_is_word_char() {
