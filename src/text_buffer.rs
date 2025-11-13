@@ -1,7 +1,7 @@
 /// Text buffer that uses PieceTree with integrated line tracking
 /// Architecture where the tree is the single source of truth for text and line information
 use crate::piece_tree::{
-    BufferLocation, Cursor, PieceInfo, PieceTree, Position, StringBuffer, TreeStats,
+    BufferLocation, Cursor, PieceInfo, PieceRangeIter, PieceTree, Position, StringBuffer, TreeStats,
 };
 use regex::bytes::Regex;
 use std::io::{self, Read, Write};
@@ -522,44 +522,30 @@ impl TextBuffer {
         }
     }
 
-    /// Find pattern in a byte range
+    /// Find pattern in a byte range using overlapping chunks
     fn find_pattern(&self, start: usize, end: usize, pattern: &[u8]) -> Option<usize> {
         if pattern.is_empty() || start >= end {
             return None;
         }
 
-        // For now, use a simple approach: get the text and search
-        // TODO: Optimize with streaming search for large buffers
-        const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
-        let search_len = end - start;
+        const CHUNK_SIZE: usize = 65536; // 64KB chunks
+        let overlap = pattern.len().saturating_sub(1).max(1);
 
-        if search_len <= CHUNK_SIZE {
-            // Small search, just get the whole range
-            let text = self.get_text_range(start, search_len);
-            if let Some(pos) = Self::find_in_bytes(&text, pattern) {
-                return Some(start + pos);
-            }
-        } else {
-            // Large search, use overlapping chunks
-            let overlap = pattern.len().saturating_sub(1);
-            let mut offset = start;
+        // Use the overlapping chunks iterator for efficient streaming search
+        let chunks = OverlappingChunks::new(self, start, end, CHUNK_SIZE, overlap);
 
-            while offset < end {
-                let chunk_size = CHUNK_SIZE.min(end - offset);
-                let text = self.get_text_range(offset, chunk_size);
-
-                if let Some(pos) = Self::find_in_bytes(&text, pattern) {
-                    // Make sure the match doesn't extend beyond our search range
-                    let match_pos = offset + pos;
-                    if match_pos + pattern.len() <= end {
-                        return Some(match_pos);
+        for chunk in chunks {
+            // Search the entire chunk buffer
+            if let Some(pos) = Self::find_in_bytes(&chunk.buffer, pattern) {
+                let match_end = pos + pattern.len();
+                // Only report if match ENDS in or after the valid zone
+                // This ensures patterns spanning boundaries are found exactly once
+                if match_end > chunk.valid_start {
+                    let absolute_pos = chunk.absolute_pos + pos;
+                    // Verify the match doesn't extend beyond our search range
+                    if absolute_pos + pattern.len() <= end {
+                        return Some(absolute_pos);
                     }
-                }
-
-                // Move forward, but overlap to catch patterns spanning chunks
-                offset += chunk_size;
-                if offset < end {
-                    offset = offset.saturating_sub(overlap);
                 }
             }
         }
@@ -624,39 +610,37 @@ impl TextBuffer {
         }
     }
 
-    /// Find regex pattern in a byte range
+    /// Find regex pattern in a byte range using overlapping chunks
     fn find_regex(&self, start: usize, end: usize, regex: &Regex) -> Option<usize> {
         if start >= end {
             return None;
         }
 
-        // For regex, we need to get the full text to search
-        // TODO: Optimize with overlapping chunks for large buffers
-        const MAX_REGEX_SEARCH: usize = 10 * 1024 * 1024; // 10MB limit
-        let search_len = end - start;
+        const CHUNK_SIZE: usize = 1048576; // 1MB chunks
+        const OVERLAP: usize = 4096; // 4KB overlap for regex
 
-        if search_len > MAX_REGEX_SEARCH {
-            // For very large ranges, search in chunks
-            const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
-            let mut offset = start;
+        // Use the overlapping chunks iterator for efficient streaming search
+        // This fixes the critical bug where regex patterns spanning chunk boundaries were missed
+        let chunks = OverlappingChunks::new(self, start, end, CHUNK_SIZE, OVERLAP);
 
-            while offset < end {
-                let chunk_size = CHUNK_SIZE.min(end - offset);
-                let text = self.get_text_range(offset, chunk_size);
-
-                if let Some(mat) = regex.find(&text) {
-                    return Some(offset + mat.start());
+        for chunk in chunks {
+            // Search the entire chunk buffer
+            if let Some(mat) = regex.find(&chunk.buffer) {
+                let match_end = mat.end();
+                // Only report if match ENDS in or after the valid zone
+                // This ensures patterns spanning boundaries are found exactly once
+                if match_end > chunk.valid_start {
+                    let absolute_pos = chunk.absolute_pos + mat.start();
+                    // Verify the match doesn't extend beyond our search range
+                    let match_len = mat.end() - mat.start();
+                    if absolute_pos + match_len <= end {
+                        return Some(absolute_pos);
+                    }
                 }
-
-                offset += chunk_size;
             }
-
-            None
-        } else {
-            // Get the full range and search
-            let text = self.get_text_range(start, search_len);
-            regex.find(&text).map(|mat| start + mat.start())
         }
+
+        None
     }
 
     /// Replace a range with replacement text
@@ -1028,6 +1012,237 @@ pub type Buffer = TextBuffer;
 
 // Re-export LineIterator from the line_iterator module
 pub use crate::line_iterator::LineIterator;
+
+// ============================================================================
+// Overlapping Chunks Iterator for Efficient Search
+// ============================================================================
+
+/// Information about a chunk of data for pattern matching
+#[derive(Debug)]
+pub struct ChunkInfo {
+    /// The buffer containing this chunk's data (includes overlap from previous chunk)
+    pub buffer: Vec<u8>,
+
+    /// Absolute position in the document where this buffer starts
+    pub absolute_pos: usize,
+
+    /// Offset within buffer where "new" data starts (valid match zone)
+    /// Matches starting before this offset were already checked in the previous chunk
+    pub valid_start: usize,
+}
+
+/// Iterator that yields overlapping chunks for pattern matching
+///
+/// This iterator implements the VSCode/Sublime approach: pull overlapping chunks
+/// from the underlying piece tree and use standard search algorithms on them.
+///
+/// # Algorithm
+///
+/// ```text
+/// Chunk 1: [------------ valid -----------]
+/// Chunk 2:      [overlap][---- valid ----]
+/// Chunk 3:                   [overlap][-- valid --]
+///
+/// Only matches starting in the "valid" zone are reported to avoid duplicates.
+/// ```
+///
+/// # Example
+///
+/// ```ignore
+/// let chunks = OverlappingChunks::new(&text_buffer, start, end, 4096, pattern.len()-1);
+/// for chunk in chunks {
+///     // Search only starting from chunk.valid_start
+///     if let Some(pos) = search(&chunk.buffer[chunk.valid_start..]) {
+///         let absolute_pos = chunk.absolute_pos + chunk.valid_start + pos;
+///         return Some(absolute_pos);
+///     }
+/// }
+/// ```
+pub struct OverlappingChunks<'a> {
+    piece_iter: PieceRangeIter,
+    buffers: &'a [StringBuffer],
+
+    // Reusable chunk buffer that we fill from pieces
+    buffer: Vec<u8>,
+    buffer_absolute_pos: usize,
+
+    // Current state
+    current_pos: usize,
+    end_pos: usize,
+
+    // Configuration
+    chunk_size: usize,
+    overlap: usize,
+
+    // Track first chunk special case
+    first_chunk: bool,
+
+    // Cached piece data for incremental reading
+    current_piece_data: Option<Vec<u8>>,
+    current_piece_offset: usize,
+}
+
+impl<'a> OverlappingChunks<'a> {
+    /// Create a new overlapping chunks iterator
+    ///
+    /// # Arguments
+    ///
+    /// * `text_buffer` - The text buffer to iterate over
+    /// * `start` - Start position in the document
+    /// * `end` - End position in the document (exclusive)
+    /// * `chunk_size` - Target size for each chunk (excluding overlap)
+    /// * `overlap` - Number of bytes to overlap between chunks
+    ///
+    /// # Recommendations
+    ///
+    /// * For literal string search: `chunk_size=65536, overlap=pattern.len()-1`
+    /// * For regex search: `chunk_size=1048576, overlap=4096`
+    pub fn new(
+        text_buffer: &'a TextBuffer,
+        start: usize,
+        end: usize,
+        chunk_size: usize,
+        overlap: usize,
+    ) -> Self {
+        let piece_iter = text_buffer.piece_tree.iter_pieces_in_range(start, end);
+
+        Self {
+            piece_iter,
+            buffers: &text_buffer.buffers,
+            buffer: Vec::with_capacity(chunk_size + overlap),
+            buffer_absolute_pos: start,
+            current_pos: start,
+            end_pos: end,
+            chunk_size,
+            overlap,
+            first_chunk: true,
+            current_piece_data: None,
+            current_piece_offset: 0,
+        }
+    }
+
+    /// Read one byte from the piece iterator
+    fn read_byte(&mut self) -> Option<u8> {
+        loop {
+            // If we have cached piece data, read from it
+            if let Some(ref data) = self.current_piece_data {
+                if self.current_piece_offset < data.len() {
+                    let byte = data[self.current_piece_offset];
+                    self.current_piece_offset += 1;
+                    self.current_pos += 1;
+                    return Some(byte);
+                } else {
+                    // Exhausted current piece, move to next
+                    self.current_piece_data = None;
+                    self.current_piece_offset = 0;
+                }
+            }
+
+            // Get next piece
+            if let Some(piece_view) = self.piece_iter.next() {
+                let buffer_id = piece_view.location.buffer_id();
+                if let Some(buffer) = self.buffers.get(buffer_id) {
+                    // Extract the relevant slice from this piece
+                    let piece_start_in_doc = piece_view.doc_offset;
+                    let piece_end_in_doc = piece_view.doc_offset + piece_view.bytes;
+
+                    // Clip to our search range
+                    let read_start = self.current_pos.max(piece_start_in_doc);
+                    let read_end = self.end_pos.min(piece_end_in_doc);
+
+                    if read_end > read_start {
+                        let offset_in_piece = read_start - piece_start_in_doc;
+                        let bytes_to_read = read_end - read_start;
+
+                        let buffer_start = piece_view.buffer_offset + offset_in_piece;
+                        let buffer_end = buffer_start + bytes_to_read;
+
+                        if buffer_end <= buffer.data.len() {
+                            // Cache this piece's data
+                            self.current_piece_data = Some(
+                                buffer.data[buffer_start..buffer_end].to_vec()
+                            );
+                            self.current_piece_offset = 0;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // No more data
+            return None;
+        }
+    }
+
+    /// Fill the buffer with the next chunk of data
+    fn fill_next_chunk(&mut self) -> bool {
+        if self.first_chunk {
+            // First chunk: fill up to chunk_size
+            self.first_chunk = false;
+            while self.buffer.len() < self.chunk_size && self.current_pos < self.end_pos {
+                if let Some(byte) = self.read_byte() {
+                    self.buffer.push(byte);
+                } else {
+                    break;
+                }
+            }
+            !self.buffer.is_empty()
+        } else {
+            // Subsequent chunks: keep overlap, fill chunk_size NEW bytes
+            if self.current_pos >= self.end_pos {
+                return false;
+            }
+
+            // Keep overlap bytes at the end
+            if self.buffer.len() > self.overlap {
+                let drain_amount = self.buffer.len() - self.overlap;
+                self.buffer.drain(0..drain_amount);
+                self.buffer_absolute_pos += drain_amount;
+            }
+
+            // Fill chunk_size NEW bytes (in addition to overlap)
+            let before_len = self.buffer.len();
+            let target_len = self.overlap + self.chunk_size;
+            while self.buffer.len() < target_len && self.current_pos < self.end_pos {
+                if let Some(byte) = self.read_byte() {
+                    self.buffer.push(byte);
+                } else {
+                    break;
+                }
+            }
+
+            // Return true if we added new data
+            self.buffer.len() > before_len
+        }
+    }
+}
+
+impl<'a> Iterator for OverlappingChunks<'a> {
+    type Item = ChunkInfo;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Track if this is the first chunk before filling
+        let is_first = self.buffer_absolute_pos == self.current_pos;
+
+        if !self.fill_next_chunk() {
+            return None;
+        }
+
+        // First chunk: all data is valid (no overlap from previous)
+        // Subsequent chunks: overlap bytes are not valid (already checked)
+        let valid_start = if is_first {
+            0
+        } else {
+            self.overlap.min(self.buffer.len())
+        };
+
+        Some(ChunkInfo {
+            buffer: self.buffer.clone(),
+            absolute_pos: self.buffer_absolute_pos,
+            valid_start,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
