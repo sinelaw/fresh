@@ -2087,10 +2087,12 @@ fn test_enter_at_bottom_scrolls_immediately() {
 
     let (_, cursor_y_at_bottom) = harness.screen_cursor_position();
     let top_byte_at_bottom = harness.editor().active_state().viewport.top_byte;
+    let cursor_pos_before = harness.editor().active_state().cursors.primary().position;
+    let buffer_len_before = harness.editor().active_state().buffer.len();
 
     println!(
-        "After {} enters: cursor at row {}, top_byte={}",
-        enter_count, cursor_y_at_bottom, top_byte_at_bottom
+        "After {} enters: cursor at row {}, top_byte={}, cursor_pos={}, buffer_len={}",
+        enter_count, cursor_y_at_bottom, top_byte_at_bottom, cursor_pos_before, buffer_len_before
     );
     assert_eq!(
         cursor_y_at_bottom, content_last_row as u16,
@@ -2105,10 +2107,13 @@ fn test_enter_at_bottom_scrolls_immediately() {
 
     let (_, cursor_y_after_enter) = harness.screen_cursor_position();
     let top_byte_after_enter = harness.editor().active_state().viewport.top_byte;
+    let cursor_pos = harness.editor().active_state().cursors.primary().position;
+    let buffer_len = harness.editor().active_state().buffer.len();
+    let viewport_height = harness.editor().active_state().viewport.height;
 
     println!(
-        "After Enter at bottom: cursor at row {}, top_byte={}",
-        cursor_y_after_enter, top_byte_after_enter
+        "After Enter at bottom: cursor at row {}, top_byte={}, cursor_pos={}, buffer_len={}, viewport_height={}",
+        cursor_y_after_enter, top_byte_after_enter, cursor_pos, buffer_len, viewport_height
     );
 
     // The cursor should still be at the bottom row
