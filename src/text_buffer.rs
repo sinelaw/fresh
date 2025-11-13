@@ -1073,11 +1073,18 @@ impl<'a> LineIterator<'a> {
         }
 
         // Get the line content
-        let line_len = search_pos - line_start + 1;
+        // Handle the case where line_start > search_pos (can happen with empty lines)
+        let (line_len, skip_newline_append) = if line_start > search_pos {
+            // We're at an empty line - just get the newline at line_start
+            // Don't append another newline since we already have it
+            (1, true)
+        } else {
+            (search_pos - line_start + 1, false)
+        };
         let mut line_bytes = self.buffer.get_text_range(line_start, line_len);
 
-        // Include the newline if present
-        if search_pos + 1 < self.buffer_len {
+        // Include the newline if present (but not if we already got it above)
+        if !skip_newline_append && search_pos + 1 < self.buffer_len {
             let next_byte = self.buffer.get_text_range(search_pos + 1, 1);
             if !next_byte.is_empty() && next_byte[0] == b'\n' {
                 line_bytes.push(b'\n');
