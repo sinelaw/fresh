@@ -23,7 +23,7 @@ pub mod input_history;
 pub mod keybindings;
 pub mod line_anchor;
 pub mod line_cache;
-pub mod line_index;
+// line_index module removed - Position moved to piece_tree, LineIndex no longer needed
 pub mod line_wrapping;
 pub mod lsp;
 pub mod lsp_async;
