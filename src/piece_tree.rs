@@ -375,11 +375,6 @@ impl PieceTreeNode {
             } => {
                 let lines_in_piece = lines_before + line_feed_cnt;
 
-                if target_line == 1 && column == 0 && current_offset <= 3 {
-                    eprintln!("DEBUG LEAF enter: target_line={}, lines_before={}, lines_in_piece={}, current_offset={}, bytes={}, line_feed_cnt={}",
-                        target_line, lines_before, lines_in_piece, current_offset, bytes, line_feed_cnt);
-                }
-
                 // Special case: when looking for column==0 of line N where N == lines_in_piece,
                 // the line might start in the NEXT piece if this piece ends with a newline.
                 // Check if the last byte of this piece is a newline.
@@ -390,9 +385,6 @@ impl PieceTreeNode {
 
                     if *last_byte == b'\n' {
                         // Piece ends with newline, so the next line starts in the next piece
-                        if target_line == 1 && column == 0 {
-                            eprintln!("  -> Rejected by special case (piece ends with newline)");
-                        }
                         return None;
                     }
                     // Otherwise, line starts within this piece after a newline
@@ -400,9 +392,6 @@ impl PieceTreeNode {
 
                 if target_line < lines_before || target_line > lines_in_piece {
                     // Target line not in this piece
-                    if target_line == 1 && column == 0 && current_offset <= 3 {
-                        eprintln!("  -> Rejected: target_line out of range");
-                    }
                     return None;
                 }
 
@@ -412,11 +401,6 @@ impl PieceTreeNode {
 
                 // Find the line within the piece
                 let line_in_piece = target_line - lines_before;
-
-                if target_line == 1 && column == 0 && current_offset <= 3 {
-                    eprintln!("DEBUG LEAF find_byte_offset: target_line={}, lines_before={}, line_in_piece={}, current_offset={}, bytes={}, line_feed_cnt={}",
-                        target_line, lines_before, line_in_piece, current_offset, bytes, line_feed_cnt);
-                }
 
                 // Get piece range in buffer
                 let piece_start_in_buffer = *offset;
@@ -432,12 +416,6 @@ impl PieceTreeNode {
                     let mut lines_seen = 0;
                     let mut found_line_start = None;
 
-                    if target_line == 1 && column == 0 {
-                        eprintln!("  -> Searching for line_in_piece={} within buffer", line_in_piece);
-                        eprintln!("     piece_start_in_buffer={}, piece_end_in_buffer={}", piece_start_in_buffer, piece_end_in_buffer);
-                        eprintln!("     buffer.line_starts={:?}", buffer.line_starts);
-                    }
-
                     for &line_start in buffer.line_starts.iter() {
                         // Line starts are positions of newlines + 1, or beginning of buffer (0)
                         // We want line_starts that are > piece_start and < piece_end
@@ -451,10 +429,6 @@ impl PieceTreeNode {
                         }
                     }
 
-                    if target_line == 1 && column == 0 {
-                        eprintln!("     found_line_start={:?}, lines_seen={}", found_line_start, lines_seen);
-                    }
-
                     found_line_start?
                 };
 
@@ -463,14 +437,7 @@ impl PieceTreeNode {
 
                 // Convert to document offset
                 let offset_in_piece = target_offset_in_buffer.saturating_sub(piece_start_in_buffer);
-                let result = current_offset + offset_in_piece.min(*bytes);
-
-                if target_line == 1 && column == 0 && current_offset <= 3 {
-                    eprintln!("  -> Calculated: line_start_in_buffer={}, target_offset_in_buffer={}, offset_in_piece={}, result={}",
-                        line_start_in_buffer, target_offset_in_buffer, offset_in_piece, result);
-                }
-
-                Some(result)
+                Some(current_offset + offset_in_piece.min(*bytes))
             }
         }
     }
