@@ -3,6 +3,7 @@
 use crate::piece_tree::{
     BufferLocation, Cursor, PieceInfo, PieceRangeIter, PieceTree, Position, StringBuffer, TreeStats,
 };
+use anyhow::{Context, Result};
 use regex::bytes::Regex;
 use std::io::{self, Read, Write};
 use std::ops::Range;
@@ -465,16 +466,85 @@ impl TextBuffer {
 
     /// Get text from a byte offset range with lazy loading
     /// This will load unloaded chunks on-demand and always returns complete data
-    pub fn get_text_range_mut(&mut self, offset: usize, bytes: usize) -> Vec<u8> {
-        // Try read-only first
-        if let Some(data) = self.get_text_range(offset, bytes) {
-            return data;
+    ///
+    /// Returns an error if loading fails or if data cannot be read for any reason.
+    ///
+    /// NOTE: Currently loads entire buffers on-demand. Future optimization would split
+    /// large pieces and load only LOAD_CHUNK_SIZE chunks at a time.
+    pub fn get_text_range_mut(&mut self, offset: usize, bytes: usize) -> Result<Vec<u8>> {
+        if bytes == 0 {
+            return Ok(Vec::new());
         }
 
-        // Some buffers are unloaded - need to load them
-        // TODO: Implement lazy loading in Phase 4
-        // For now, return empty vec as a safe fallback
-        Vec::new()
+        let mut result = Vec::with_capacity(bytes);
+        let end_offset = offset + bytes;
+        let mut current_offset = offset;
+
+        // Keep iterating until we've collected all requested bytes
+        while current_offset < end_offset {
+            let mut made_progress = false;
+
+            // Use the efficient piece iterator (single O(log n) traversal + O(N) iteration)
+            for piece_view in self.piece_tree.iter_pieces_in_range(current_offset, end_offset) {
+                let buffer_id = piece_view.location.buffer_id();
+                let buffer = self
+                    .buffers
+                    .get_mut(buffer_id)
+                    .context("Buffer not found")?;
+
+                // Load buffer on-the-fly if unloaded
+                if !buffer.is_loaded() {
+                    // TODO: For very large buffers (> LOAD_CHUNK_SIZE), we should:
+                    // 1. Split the piece in the tree to isolate a chunk
+                    // 2. Create a new buffer with only that chunk loaded
+                    // 3. Restart iteration on the modified tree
+                    // For now, load the entire buffer
+                    buffer.load().context("Failed to load buffer")?;
+                }
+
+                // Calculate the range to read from this piece
+                let piece_start_in_doc = piece_view.doc_offset;
+                let piece_end_in_doc = piece_view.doc_offset + piece_view.bytes;
+
+                // Clip to the requested range
+                let read_start = current_offset.max(piece_start_in_doc);
+                let read_end = end_offset.min(piece_end_in_doc);
+
+                if read_end > read_start {
+                    let offset_in_piece = read_start - piece_start_in_doc;
+                    let bytes_to_read = read_end - read_start;
+
+                    let buffer_start = piece_view.buffer_offset + offset_in_piece;
+                    let buffer_end = buffer_start + bytes_to_read;
+
+                    // Buffer should be loaded now
+                    let data = buffer
+                        .get_data()
+                        .context("Buffer data unavailable after load")?;
+
+                    anyhow::ensure!(
+                        buffer_end <= data.len(),
+                        "Buffer range out of bounds: requested {}..{}, buffer size {}",
+                        buffer_start,
+                        buffer_end,
+                        data.len()
+                    );
+
+                    result.extend_from_slice(&data[buffer_start..buffer_end]);
+                    current_offset = read_end;
+                    made_progress = true;
+                }
+            }
+
+            // If we didn't make progress, this is an error - we should always make progress
+            anyhow::ensure!(
+                made_progress,
+                "Failed to read data at offset {}: no progress made",
+                current_offset
+            );
+        }
+
+        Ok(result)
     }
 
     /// Get all text as a single Vec<u8>
@@ -812,7 +882,7 @@ impl TextBuffer {
     }
 
     /// Replace all occurrences of a regex pattern with replacement text
-    pub fn replace_all_regex(&mut self, regex: &Regex, replacement: &str) -> usize {
+    pub fn replace_all_regex(&mut self, regex: &Regex, replacement: &str) -> Result<usize> {
         let mut count = 0;
         let mut pos = 0;
 
@@ -820,7 +890,10 @@ impl TextBuffer {
             if let Some(found_pos) = self.find_next_regex_in_range(regex, pos, Some(0..self.len()))
             {
                 // Get the match to find its length
-                let text = self.get_text_range_mut(found_pos, self.len() - found_pos);
+                let text = self
+                    .get_text_range_mut(found_pos, self.len() - found_pos)
+                    .context("Failed to read text for regex match")?;
+
                 if let Some(mat) = regex.find(&text) {
                     self.replace_range(found_pos..found_pos + mat.len(), replacement);
                     count += 1;
@@ -837,7 +910,7 @@ impl TextBuffer {
             }
         }
 
-        count
+        Ok(count)
     }
 
     // LSP Support (UTF-16 conversions)
@@ -1843,6 +1916,92 @@ mod tests {
             // Empty file is handled gracefully
             assert_eq!(buffer.total_bytes(), 0);
             assert!(buffer.is_empty());
+        }
+
+        #[test]
+        fn test_large_file_basic_api_operations() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("large_test.txt");
+
+            // Create a test file with known content
+            let test_data = b"line1\nline2\nline3\nline4\n";
+            File::create(&file_path)
+                .unwrap()
+                .write_all(test_data)
+                .unwrap();
+
+            // Load as large file (use small threshold to trigger large file mode)
+            let mut buffer = TextBuffer::load_from_file(&file_path, 10).unwrap();
+
+            // Verify it's in large file mode
+            assert!(buffer.large_file);
+            assert_eq!(buffer.line_count(), None); // No line indexing
+
+            // Test basic access functions
+            assert_eq!(buffer.total_bytes(), test_data.len());
+            assert!(!buffer.is_empty());
+            assert_eq!(buffer.len(), test_data.len());
+
+            // Test reading operations using get_text_range_mut (lazy loads on demand)
+            let range_result = buffer.get_text_range_mut(0, 5).unwrap();
+            assert_eq!(range_result, b"line1");
+
+            let range_result2 = buffer.get_text_range_mut(6, 5).unwrap();
+            assert_eq!(range_result2, b"line2");
+
+            // Test get_all_text (via get_text_range after lazy loading)
+            let all_text = buffer.get_all_text();
+            assert_eq!(all_text, test_data);
+
+            // Test slice methods
+            assert_eq!(buffer.slice(0..5), "line1");
+            assert_eq!(buffer.slice_bytes(0..5), b"line1");
+
+            // Test basic editing operations
+            // Insert at offset 0
+            buffer.insert_bytes(0, b"prefix_".to_vec());
+            assert_eq!(buffer.total_bytes(), test_data.len() + 7);
+            assert!(buffer.is_modified());
+
+            // Verify the insertion worked
+            let text_after_insert = buffer.get_all_text();
+            assert_eq!(&text_after_insert[0..7], b"prefix_");
+            assert_eq!(&text_after_insert[7..12], b"line1");
+
+            // Delete some bytes
+            buffer.delete_bytes(0, 7);
+            assert_eq!(buffer.total_bytes(), test_data.len());
+
+            // Verify deletion worked - should be back to original
+            let text_after_delete = buffer.get_all_text();
+            assert_eq!(text_after_delete, test_data);
+
+            // Insert at end
+            let end_offset = buffer.total_bytes();
+            buffer.insert_bytes(end_offset, b"suffix".to_vec());
+            assert_eq!(buffer.total_bytes(), test_data.len() + 6);
+
+            // Verify end insertion
+            let final_text = buffer.get_all_text();
+            assert!(final_text.ends_with(b"suffix"));
+            assert_eq!(&final_text[0..test_data.len()], test_data);
+
+            // Test offset_to_position
+            // Note: Without line indexing, position tracking is limited
+            // but byte-level operations still work
+            let pos = buffer.offset_to_position(0);
+            assert_eq!(pos.column, 0);
+
+            // Test position_to_offset
+            let offset = buffer.position_to_offset(Position { line: 0, column: 0 });
+            assert_eq!(offset, 0);
+
+            // Test replace operations
+            let replace_result = buffer.replace_range(0..5, "START");
+            assert!(replace_result);
+
+            let text_after_replace = buffer.get_all_text();
+            assert!(text_after_replace.starts_with(b"START"));
         }
     }
 }
