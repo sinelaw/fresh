@@ -43,9 +43,10 @@ impl StringBuffer {
     }
 
     /// Get the number of line feeds (newlines) in this buffer
-    pub fn line_feed_count(&self) -> usize {
+    /// Always returns Some for the current implementation since line_starts is always computed
+    pub fn line_feed_count(&self) -> Option<usize> {
         // line_starts.len() - 1 gives us the number of newlines
-        self.line_starts.len().saturating_sub(1)
+        Some(self.line_starts.len().saturating_sub(1))
     }
 
     /// Append data to this buffer and recompute line starts
@@ -88,17 +89,17 @@ impl BufferLocation {
 pub enum PieceTreeNode {
     /// Internal node with left and right children
     Internal {
-        left_bytes: usize, // Total bytes in left subtree
-        lf_left: usize,    // Total line feeds in left subtree
+        left_bytes: usize,          // Total bytes in left subtree
+        lf_left: Option<usize>,     // Total line feeds in left subtree (None if unknown)
         left: Arc<PieceTreeNode>,
         right: Arc<PieceTreeNode>,
     },
     /// Leaf node representing an actual piece
     Leaf {
-        location: BufferLocation, // Where this piece's data is (includes buffer_id)
-        offset: usize,            // Offset within the buffer
-        bytes: usize,             // Number of bytes in this piece
-        line_feed_cnt: usize,     // Number of line feeds in this piece
+        location: BufferLocation,     // Where this piece's data is (includes buffer_id)
+        offset: usize,                // Offset within the buffer
+        bytes: usize,                 // Number of bytes in this piece
+        line_feed_cnt: Option<usize>, // Number of line feeds in this piece (None if unknown)
     },
 }
 
@@ -132,7 +133,7 @@ pub struct LeafData {
     pub location: BufferLocation,
     pub offset: usize,
     pub bytes: usize,
-    pub line_feed_cnt: usize,
+    pub line_feed_cnt: Option<usize>,
 }
 
 impl LeafData {
@@ -140,7 +141,7 @@ impl LeafData {
         location: BufferLocation,
         offset: usize,
         bytes: usize,
-        line_feed_cnt: usize,
+        line_feed_cnt: Option<usize>,
     ) -> Self {
         LeafData {
             location,
@@ -157,7 +158,7 @@ pub struct TreeStats {
     pub total_bytes: usize,
     pub depth: usize,
     pub leaf_count: usize,
-    pub line_feed_count: usize,
+    pub line_feed_count: Option<usize>,
 }
 
 // Line iteration can be implemented by:
@@ -223,9 +224,15 @@ impl PieceTreeNode {
     }
 
     /// Get total line feeds in this node
-    fn total_line_feeds(&self) -> usize {
+    /// Returns None if any piece has unknown line count
+    fn total_line_feeds(&self) -> Option<usize> {
         match self {
-            PieceTreeNode::Internal { lf_left, right, .. } => lf_left + right.total_line_feeds(),
+            PieceTreeNode::Internal { lf_left, right, .. } => {
+                match (lf_left, right.total_line_feeds()) {
+                    (Some(left), Some(right)) => Some(left + right),
+                    _ => None,
+                }
+            }
             PieceTreeNode::Leaf { line_feed_cnt, .. } => *line_feed_cnt,
         }
     }
@@ -268,7 +275,8 @@ impl PieceTreeNode {
 
     /// Count line feeds in a byte range [start, end)
     /// current_offset: byte offset at the start of this node
-    fn count_lines_in_byte_range(&self, current_offset: usize, start: usize, end: usize) -> usize {
+    /// Returns None if any piece in the range has unknown line count
+    fn count_lines_in_byte_range(&self, current_offset: usize, start: usize, end: usize) -> Option<usize> {
         match self {
             PieceTreeNode::Internal {
                 left_bytes,
@@ -279,9 +287,9 @@ impl PieceTreeNode {
                 let left_end = current_offset + left_bytes;
 
                 if end <= current_offset {
-                    0 // Range is completely before this node
+                    Some(0) // Range is completely before this node
                 } else if start >= current_offset + self.total_bytes() {
-                    0 // Range is completely after this node
+                    Some(0) // Range is completely after this node
                 } else if start <= current_offset && end >= current_offset + self.total_bytes() {
                     // Range completely contains this node
                     self.total_line_feeds()
@@ -293,9 +301,9 @@ impl PieceTreeNode {
                     right.count_lines_in_byte_range(left_end, start, end)
                 } else {
                     // Range spans both subtrees
-                    let left_count = left.count_lines_in_byte_range(current_offset, start, end);
-                    let right_count = right.count_lines_in_byte_range(left_end, start, end);
-                    left_count + right_count
+                    let left_count = left.count_lines_in_byte_range(current_offset, start, end)?;
+                    let right_count = right.count_lines_in_byte_range(left_end, start, end)?;
+                    Some(left_count + right_count)
                 }
             }
             PieceTreeNode::Leaf {
@@ -306,7 +314,7 @@ impl PieceTreeNode {
                 let node_end = current_offset + bytes;
 
                 if end <= current_offset || start >= node_end {
-                    0 // No overlap
+                    Some(0) // No overlap
                 } else if start <= current_offset && end >= node_end {
                     // Range completely contains this leaf
                     *line_feed_cnt
@@ -337,6 +345,8 @@ impl PieceTreeNode {
                 left,
                 right,
             } => {
+                // If line count is unknown, we can't do line-based navigation
+                let lf_left = lf_left.as_ref()?;
                 let lines_after_left = lines_before + lf_left;
 
                 // When looking for line start (column == 0), we want the leftmost piece containing the line
@@ -383,6 +393,8 @@ impl PieceTreeNode {
                 bytes,
                 line_feed_cnt,
             } => {
+                // If line count is unknown, we can't do line-based navigation
+                let line_feed_cnt = line_feed_cnt.as_ref()?;
                 let lines_in_piece = lines_before + line_feed_cnt;
 
                 // Special case: when looking for column==0 of line N where N == lines_in_piece,
@@ -465,7 +477,7 @@ impl PieceTree {
         location: BufferLocation,
         offset: usize,
         bytes: usize,
-        line_feed_cnt: usize,
+        line_feed_cnt: Option<usize>,
     ) -> Self {
         PieceTree {
             root: Arc::new(PieceTreeNode::Leaf {
@@ -485,7 +497,7 @@ impl PieceTree {
                 location: BufferLocation::Stored(0),
                 offset: 0,
                 bytes: 0,
-                line_feed_cnt: 0,
+                line_feed_cnt: Some(0), // Empty has zero line feeds (known)
             }),
             total_bytes: 0,
         }
@@ -498,7 +510,7 @@ impl PieceTree {
                 location: BufferLocation::Stored(0),
                 offset: 0,
                 bytes: 0,
-                line_feed_cnt: 0,
+                line_feed_cnt: Some(0), // Empty has zero line feeds (known)
             });
         }
 
@@ -570,7 +582,7 @@ impl PieceTree {
 
     /// Insert text at the given offset
     /// Returns new cursor after the inserted text
-    /// line_feed_cnt: number of line feeds in the inserted text
+    /// line_feed_cnt: number of line feeds in the inserted text (None if unknown/not computed)
     /// buffers: reference to the string buffers for computing line feeds during splits
     pub fn insert(
         &mut self,
@@ -578,7 +590,7 @@ impl PieceTree {
         location: BufferLocation,
         buffer_offset: usize,
         bytes: usize,
-        line_feed_cnt: usize,
+        line_feed_cnt: Option<usize>,
         buffers: &[StringBuffer],
     ) -> Cursor {
         if bytes == 0 {
@@ -947,16 +959,17 @@ impl PieceTree {
         location: BufferLocation,
         offset: usize,
         bytes: usize,
-    ) -> usize {
+    ) -> Option<usize> {
         let buffer_id = location.buffer_id();
         if let Some(buffer) = buffers.get(buffer_id) {
             let end = (offset + bytes).min(buffer.data.len());
-            buffer.data[offset..end]
+            Some(buffer.data[offset..end]
                 .iter()
                 .filter(|&&b| b == b'\n')
-                .count()
+                .count())
         } else {
-            0
+            // Buffer not available - return Some(0) as fallback
+            Some(0)
         }
     }
 
@@ -1302,8 +1315,9 @@ impl PieceTree {
 
     /// Get the total number of lines in the document
     /// Line count = line feeds + 1
-    pub fn line_count(&self) -> usize {
-        self.root.total_line_feeds() + 1
+    /// Returns None if any piece has unknown line count
+    pub fn line_count(&self) -> Option<usize> {
+        self.root.total_line_feeds().map(|lf| lf + 1)
     }
 
     /// Get tree statistics for debugging
@@ -1337,7 +1351,8 @@ impl PieceTree {
             let bytes_before = result.bytes_before;
 
             // Count lines before this piece
-            let lines_before = self.count_lines_before_offset(bytes_before);
+            // If line count is unknown, use 0 as fallback (inaccurate but allows operation)
+            let lines_before = self.count_lines_before_offset(bytes_before).unwrap_or(0);
 
             // Get the buffer for this piece
             let buffer_id = piece_info.location.buffer_id();
@@ -1403,7 +1418,7 @@ impl PieceTree {
 
         // Fallback: end of document
         // Calculate the actual column by finding where the last line starts
-        let last_line = self.line_count().saturating_sub(1);
+        let last_line = self.line_count().unwrap_or(1).saturating_sub(1);
         let line_start = self.position_to_offset(last_line, 0, buffers);
         let column = self.total_bytes.saturating_sub(line_start);
         (last_line, column)
@@ -1426,14 +1441,16 @@ impl PieceTree {
     }
 
     /// Helper: count line feeds before a given byte offset
-    fn count_lines_before_offset(&self, byte_offset: usize) -> usize {
+    /// Returns None if any piece has unknown line count
+    fn count_lines_before_offset(&self, byte_offset: usize) -> Option<usize> {
         self.count_lines_in_range(0, byte_offset)
     }
 
     /// Helper: count line feeds in a byte range
-    fn count_lines_in_range(&self, start: usize, end: usize) -> usize {
+    /// Returns None if any piece has unknown line count
+    fn count_lines_in_range(&self, start: usize, end: usize) -> Option<usize> {
         if start >= end {
-            return 0;
+            return Some(0);
         }
 
         self.root.count_lines_in_byte_range(0, start, end)
@@ -1457,12 +1474,13 @@ impl PieceTree {
         buffers: &[StringBuffer],
     ) -> Option<(usize, Option<usize>)> {
         // Check if line exists
-        if line >= self.line_count() {
+        let line_count = self.line_count()?;
+        if line >= line_count {
             return None;
         }
 
         let start = self.position_to_offset(line, 0, buffers);
-        let end = if line + 1 < self.line_count() {
+        let end = if line + 1 < line_count {
             Some(self.position_to_offset(line + 1, 0, buffers))
         } else {
             None

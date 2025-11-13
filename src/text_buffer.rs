@@ -165,7 +165,8 @@ impl TextBuffer {
 
     /// Get the total number of lines in the document
     /// Uses the piece tree's integrated line tracking
-    pub fn line_count(&self) -> usize {
+    /// Returns None if line count is unknown (e.g., for large files without line indexing)
+    pub fn line_count(&self) -> Option<usize> {
         self.piece_tree.line_count()
     }
 
@@ -191,7 +192,7 @@ impl TextBuffer {
         self.modified = true;
 
         // Count line feeds in the text to insert
-        let line_feed_cnt = text.iter().filter(|&&b| b == b'\n').count();
+        let line_feed_cnt = Some(text.iter().filter(|&&b| b == b'\n').count());
 
         // Optimization: try to append to existing buffer if insertion is at piece boundary
         let (buffer_location, buffer_offset, text_len) =
