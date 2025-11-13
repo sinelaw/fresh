@@ -442,12 +442,14 @@ impl TextBuffer {
                     let buffer_start = piece_view.buffer_offset + offset_in_piece;
                     let buffer_end = buffer_start + bytes_to_read;
 
-                    if buffer_end <= buffer.data.len() {
-                        result.extend_from_slice(&buffer.data[buffer_start..buffer_end]);
-                        collected += bytes_to_read;
+                    if let Some(data) = buffer.get_data() {
+                        if buffer_end <= data.len() {
+                            result.extend_from_slice(&data[buffer_start..buffer_end]);
+                            collected += bytes_to_read;
 
-                        if collected >= bytes {
-                            break;
+                            if collected >= bytes {
+                                break;
+                            }
                         }
                     }
                 }
@@ -1235,13 +1237,15 @@ impl<'a> OverlappingChunks<'a> {
                         let buffer_start = piece_view.buffer_offset + offset_in_piece;
                         let buffer_end = buffer_start + bytes_to_read;
 
-                        if buffer_end <= buffer.data.len() {
-                            // Cache this piece's data
-                            self.current_piece_data = Some(
-                                buffer.data[buffer_start..buffer_end].to_vec()
-                            );
-                            self.current_piece_offset = 0;
-                            continue;
+                        if let Some(data) = buffer.get_data() {
+                            if buffer_end <= data.len() {
+                                // Cache this piece's data
+                                self.current_piece_data = Some(
+                                    data[buffer_start..buffer_end].to_vec()
+                                );
+                                self.current_piece_offset = 0;
+                                continue;
+                            }
                         }
                     }
                 }

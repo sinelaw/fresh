@@ -759,7 +759,7 @@ impl PieceTree {
 
         // Collect leaves while splitting at the position
         let mut leaves = Vec::new();
-        let insert_leaf = LeafData::new(location, buffer_offset, bytes, line_feed_cnt);
+        let insert_leaf = LeafData::new(location, buffer_offset, bytes, Some(line_feed_cnt));
 
         self.collect_leaves_with_split_at_position(
             &self.root,
@@ -801,6 +801,10 @@ impl PieceTree {
                 left,
                 right,
             } => {
+                // If line counts are unknown, we can't do position-based navigation
+                let Some(lf_left) = lf_left else {
+                    return;
+                };
                 let lines_after_left = lines_before + lf_left;
 
                 // Determine if target position is in left or right subtree
@@ -862,6 +866,10 @@ impl PieceTree {
                 bytes,
                 line_feed_cnt,
             } => {
+                // If line counts are unknown, we can't do position-based navigation
+                let Some(line_feed_cnt) = line_feed_cnt else {
+                    return;
+                };
                 let lines_in_piece = lines_before + line_feed_cnt;
 
                 // Check if this piece contains the target line
@@ -879,13 +887,15 @@ impl PieceTree {
                             let mut lines_seen = 0;
                             let mut found_line_start = *offset;
 
-                            for &ls in buffer.line_starts.iter() {
-                                if ls > *offset && ls < *offset + *bytes {
-                                    if lines_seen == line_in_piece - 1 {
-                                        found_line_start = ls;
-                                        break;
+                            if let Some(line_starts) = buffer.get_line_starts() {
+                                for &ls in line_starts.iter() {
+                                    if ls > *offset && ls < *offset + *bytes {
+                                        if lines_seen == line_in_piece - 1 {
+                                            found_line_start = ls;
+                                            break;
+                                        }
+                                        lines_seen += 1;
                                     }
-                                    lines_seen += 1;
                                 }
                             }
 
@@ -938,11 +948,11 @@ impl PieceTree {
                         }
                     } else {
                         // Buffer not found, just keep the piece as-is
-                        leaves.push(LeafData::new(*location, *offset, *bytes, *line_feed_cnt));
+                        leaves.push(LeafData::new(*location, *offset, *bytes, Some(*line_feed_cnt)));
                     }
                 } else {
                     // Target line not in this piece, just keep it
-                    leaves.push(LeafData::new(*location, *offset, *bytes, *line_feed_cnt));
+                    leaves.push(LeafData::new(*location, *offset, *bytes, Some(*line_feed_cnt)));
                 }
             }
         }
@@ -1173,6 +1183,10 @@ impl PieceTree {
                 left,
                 right,
             } => {
+                // If line counts are unknown, we can't do position-based navigation
+                let Some(lf_left) = lf_left else {
+                    return;
+                };
                 let lines_after_left = lines_before + lf_left;
 
                 // Recursively process both subtrees
@@ -1209,6 +1223,10 @@ impl PieceTree {
                 bytes,
                 line_feed_cnt,
             } => {
+                // If line counts are unknown, we can't do position-based navigation
+                let Some(line_feed_cnt) = line_feed_cnt else {
+                    return;
+                };
                 let lines_in_piece = lines_before + line_feed_cnt;
                 let piece_start = current_offset;
                 let piece_end = current_offset + bytes;
@@ -1255,13 +1273,13 @@ impl PieceTree {
 
                 // Piece completely before delete range
                 if piece_end <= del_start {
-                    leaves.push(LeafData::new(*location, *offset, *bytes, *line_feed_cnt));
+                    leaves.push(LeafData::new(*location, *offset, *bytes, Some(*line_feed_cnt)));
                     return;
                 }
 
                 // Piece completely after delete range (only if we've found end)
                 if delete_end_offset.is_some() && piece_start >= del_end {
-                    leaves.push(LeafData::new(*location, *offset, *bytes, *line_feed_cnt));
+                    leaves.push(LeafData::new(*location, *offset, *bytes, Some(*line_feed_cnt)));
                     return;
                 }
 
@@ -1316,13 +1334,15 @@ impl PieceTree {
             let mut lines_seen = 0;
             let mut found_line_start = piece_offset;
 
-            for &ls in buffer.line_starts.iter() {
-                if ls > piece_offset && ls < piece_offset + piece_bytes {
-                    if lines_seen == line_in_piece - 1 {
-                        found_line_start = ls;
-                        break;
+            if let Some(line_starts) = buffer.get_line_starts() {
+                for &ls in line_starts.iter() {
+                    if ls > piece_offset && ls < piece_offset + piece_bytes {
+                        if lines_seen == line_in_piece - 1 {
+                            found_line_start = ls;
+                            break;
+                        }
+                        lines_seen += 1;
                     }
-                    lines_seen += 1;
                 }
             }
 
