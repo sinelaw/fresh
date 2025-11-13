@@ -1,6 +1,6 @@
 //! Action to event conversion - translates high-level actions into buffer events
 
-use crate::buffer::Buffer;
+use crate::text_buffer::Buffer;
 use crate::event::Event;
 use crate::keybindings::Action;
 use crate::state::EditorState;

@@ -40,7 +40,7 @@
 //! - `@indent`: Increase indent after this node (e.g., `block`)
 //! - `@dedent`: Decrease indent for this node (e.g., closing `}`)
 
-use crate::buffer::Buffer;
+use crate::text_buffer::Buffer;
 use crate::highlighter::Language;
 use std::collections::HashMap;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
@@ -963,7 +963,7 @@ impl Default for IndentCalculator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::buffer::Buffer;
+    use crate::text_buffer::Buffer;
 
     #[test]
     fn test_current_and_previous_line_indent() {

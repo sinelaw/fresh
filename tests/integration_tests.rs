@@ -503,7 +503,7 @@ fn test_overlay_undo_redo() {
 #[test]
 fn test_lsp_diagnostic_to_overlay() {
     use fresh::{
-        buffer::Buffer, config::LARGE_FILE_THRESHOLD_BYTES, lsp_diagnostics::diagnostic_to_overlay,
+        text_buffer::Buffer, config::LARGE_FILE_THRESHOLD_BYTES, lsp_diagnostics::diagnostic_to_overlay,
     };
     use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 

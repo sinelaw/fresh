@@ -9,7 +9,7 @@
 //! Must work instantly when loading a 1GB file and jumping to an arbitrary offset.
 //! This is achieved by only parsing the visible viewport (~50 lines), not the entire file.
 
-use crate::buffer::Buffer;
+use crate::text_buffer::Buffer;
 use crate::config::LARGE_FILE_THRESHOLD_BYTES;
 use ratatui::style::Color;
 use std::ops::Range;
@@ -805,7 +805,7 @@ impl Highlighter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::buffer::Buffer;
+    use crate::text_buffer::Buffer;
 
     #[test]
     fn test_language_detection() {

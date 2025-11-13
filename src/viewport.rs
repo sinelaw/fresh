@@ -1,4 +1,4 @@
-use crate::buffer::Buffer;
+use crate::text_buffer::Buffer;
 use crate::cursor::Cursor;
 use crate::line_wrapping::{char_position_to_segment, wrap_line, WrapConfig};
 /// The viewport - what portion of the buffer is visible
@@ -498,7 +498,7 @@ impl Viewport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::buffer::Buffer;
+    use crate::text_buffer::Buffer;
     use crate::cursor::Cursor;
 
     #[test]

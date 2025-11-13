@@ -4818,7 +4818,7 @@ impl Editor {
     /// Calculate the maximum allowed scroll position
     /// Ensures the last line is always at the bottom unless the buffer is smaller than viewport
     fn calculate_max_scroll_position(
-        buffer: &crate::buffer::Buffer,
+        buffer: &crate::text_buffer::Buffer,
         viewport_height: usize,
     ) -> usize {
         if viewport_height == 0 {
@@ -6740,7 +6740,7 @@ mod tests {
     fn test_lsp_incremental_insert_generates_correct_range() {
         // Test that insert events generate correct incremental LSP changes
         // with zero-width ranges at the insertion point
-        use crate::buffer::Buffer;
+        use crate::text_buffer::Buffer;
 
         let mut buffer = Buffer::from_str_test("hello\nworld");
 
@@ -6784,7 +6784,7 @@ mod tests {
     fn test_lsp_incremental_delete_generates_correct_range() {
         // Test that delete events generate correct incremental LSP changes
         // with proper start/end ranges
-        use crate::buffer::Buffer;
+        use crate::text_buffer::Buffer;
 
         let buffer = Buffer::from_str_test("hello\nworld");
 
@@ -6831,7 +6831,7 @@ mod tests {
     fn test_lsp_incremental_utf16_encoding() {
         // Test that position_to_lsp_position correctly handles UTF-16 encoding
         // LSP uses UTF-16 code units, not byte positions
-        use crate::buffer::Buffer;
+        use crate::text_buffer::Buffer;
 
         // Test with emoji (4 bytes in UTF-8, 2 code units in UTF-16)
         let buffer = Buffer::from_str_test("😀hello");

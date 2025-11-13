@@ -2,7 +2,7 @@
 ///!
 ///! This module handles converting LSP diagnostics to visual overlays in the editor.
 ///! Diagnostics are displayed as colored underlines (red for errors, yellow for warnings, etc.)
-use crate::buffer::Buffer;
+use crate::text_buffer::Buffer;
 use crate::overlay::OverlayFace;
 use crate::state::EditorState;
 use lsp_types::{Diagnostic, DiagnosticSeverity};
@@ -258,7 +258,7 @@ pub fn apply_diagnostics_to_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::buffer::Buffer;
+    use crate::text_buffer::Buffer;
     use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 
     #[test]
