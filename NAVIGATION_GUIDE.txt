@@ -1,0 +1,139 @@
+================================================================================
+QUICK NAVIGATION: EXACT LOCATIONS OF ALL ISSUES
+================================================================================
+
+CRITICAL - FIX FIRST (5 minutes):
+
+  Issue #1: Line Numbers Wrong
+  ├─ File: src/ui/split_rendering.rs
+  ├─ Line: 370
+  ├─ Current: let starting_line_num = state.buffer.populate_line_cache(...)
+  ├─ Fix: let starting_line_num = state.buffer.get_line_number(state.viewport.top_byte)
+  └─ Why: populate_line_cache() returns 0, breaking all line number display
+
+================================================================================
+
+HIGH PRIORITY - FIX NEXT (30 minutes total):
+
+  Issue #2: Full Buffer Iteration
+  ├─ File: src/editor.rs
+  ├─ Lines: 4833-4863 (function calculate_max_scrollbar_position)
+  ├─ Problem: Iterates entire buffer TWICE to count lines
+  ├─ Current: while iter.next().is_some() { line_count += 1; }
+  ├─ Fix: let total_lines = buffer.line_count();
+  └─ Why: O(n) instead of O(1), 10,000 iterations per call!
+
+  Issue #3: Sequential Seeking (Instance 1)
+  ├─ File: src/editor.rs
+  ├─ Lines: 2628-2642
+  ├─ Problem: Loops from line 0 to reach target line
+  ├─ Current: for current_line in 0..=target_line { iter.next(); }
+  ├─ Fix: buffer.position_to_offset(Position { line: target_line, column })
+  └─ Why: O(n) iteration instead of O(1) lookup
+
+  Issue #4: Sequential Seeking (Instance 2)
+  ├─ File: src/editor.rs
+  ├─ Lines: 4677-4682
+  ├─ Problem: Same as Issue #3, loops from 0
+  ├─ Current: for _ in 0..target_line { iter.next(); }
+  ├─ Fix: buffer.position_to_offset(Position { line: target_line, column })
+  └─ Why: O(n) iteration instead of O(1) lookup
+
+  Issue #5: Double Iteration (resolved by #2)
+  ├─ File: src/editor.rs
+  ├─ Lines: 4850-4861
+  ├─ Problem: Part of calculate_max_scrollbar_position (Issue #2)
+  └─ Fix: Resolved when Issue #2 is fixed
+
+================================================================================
+
+MEDIUM PRIORITY - OPTIMIZE NEXT (50 minutes total):
+
+  Issue #6: Repeated Binary Searches
+  ├─ File: src/ui/split_rendering.rs
+  ├─ Lines: 101-117 (render_content function)
+  ├─ Problem: Calls get_line_number() twice per buffer per frame
+  ├─ Current: get_line_number(last_byte) + get_line_number(top_byte)
+  ├─ Fix: Cache result or compute once
+  └─ Why: 480+ binary searches/second at 60fps with 4 splits
+
+  Issue #7: Redundant Binary Search
+  ├─ File: src/viewport.rs
+  ├─ Lines: 217-272 (ensure_visible function)
+  ├─ Problem: Iterator called then separate binary search
+  ├─ Current: iter.current_position() then get_line_number()
+  ├─ Fix: Add current_line_number() method to iterator
+  └─ Why: Redundant work after line is already found
+
+  Issue #8: Double Iteration for Visibility
+  ├─ File: src/viewport.rs
+  ├─ Lines: 277-327 (ensure_line_visible function)
+  ├─ Problem: Iterates twice - once to seek, once to check visibility
+  ├─ Current: Two separate while loops over lines
+  ├─ Fix: Use position_to_offset() + line arithmetic
+  └─ Why: O(2n) instead of O(2 log n)
+
+  Issue #9: Iteration to Count Lines
+  ├─ File: src/viewport.rs
+  ├─ Lines: 413-420 (ensure_cursors_visible function)
+  ├─ Problem: Iterates to count lines between two points
+  ├─ Current: while let Some((line_byte, _)) { line_span += 1; }
+  ├─ Fix: max_line.saturating_sub(min_line)
+  └─ Why: O(n) instead of O(log n) binary searches
+
+================================================================================
+
+FILES TO EXAMINE (NO CHANGES):
+
+  viewport.rs - Good design, just needs optimization
+  margin.rs - Works fine, no changes needed
+  buffer.rs - Good API, just needs to be used properly
+  line_index.rs - Efficient implementation, no changes needed
+
+================================================================================
+
+HELPFUL API REFERENCE:
+
+In buffer.rs, these methods are already available and efficient:
+
+  O(1) Methods (instant):
+  ├─ buffer.line_count() - Get total lines
+  └─ buffer.position_to_offset(Position { line, column }) - Line to byte
+
+  O(log n) Methods (fast):
+  ├─ buffer.get_line_number(byte_offset) - Byte to line
+  └─ buffer.offset_to_position(byte_offset) - Byte to line/col
+
+  O(1) per step Methods (for iteration):
+  ├─ iter.next() - Next line
+  ├─ iter.prev() - Previous line
+  └─ iter.current_position() - Current byte position
+
+DO NOT DO:
+  ├─ Iterate from 0 to count lines (use line_count())
+  ├─ Loop from line 0 to reach line N (use position_to_offset())
+  ├─ Call get_line_number() multiple times on same data (cache it)
+  └─ Use iteration to count line span (use subtraction)
+
+================================================================================
+
+IMPLEMENTATION ORDER:
+
+Step 1: Fix Issue #1 (5 min)
+        └─> Verify line numbers display correctly
+
+Step 2: Fix Issue #2 (10 min)
+        └─> Verify scrollbar is responsive
+
+Step 3: Fix Issues #3, #4 (10 min)
+        └─> Verify navigation is instant
+
+Step 4: Fix Issues #6, #7, #8, #9 (50 min)
+        └─> Verify performance improved
+
+Step 5: Test all functionality (20 min)
+        └─> Run full test suite, manual testing
+
+Total: ~105 minutes for all fixes
+
+================================================================================

@@ -1,0 +1,76 @@
+================================================================================
+LINE NUMBER ANALYSIS - SUMMARY TABLE
+================================================================================
+
+ISSUE | SEVERITY | FILE                              | LINES  | PROBLEM              | IMPACT
+------|----------|-----------------------------------|--------|----------------------|------------------
+#1    | CRITICAL | src/ui/split_rendering.rs        | 368-42 | populate_line_cache  | Line numbers wrong
+      |          | src/buffer.rs                    | 876-79 | returns 0 always     | in UI + plugins
+------|----------|-----------------------------------|--------|----------------------|------------------
+#2    | HIGH     | src/editor.rs                    | 4833-6 | Iterates entire      | O(n) instead of
+      |          |                                  | 3      | buffer to count      | O(1), frequent
+      |          |                                  |        | lines (2x)           | 
+------|----------|-----------------------------------|--------|----------------------|------------------
+#3    | HIGH     | src/editor.rs                    | 2628-4 | Sequential line      | O(n) seeking
+      |          |                                  | 2      | seeking from start   | instead of O(1)
+------|----------|-----------------------------------|--------|----------------------|------------------
+#4    | HIGH     | src/editor.rs                    | 4677-8 | Sequential line      | O(n) seeking
+      |          |                                  | 2      | seeking from start   | instead of O(1)
+------|----------|-----------------------------------|--------|----------------------|------------------
+#5    | HIGH     | src/editor.rs                    | 4850-6 | Sequential seeking   | O(n) instead of
+      |          |                                  | 1      | + iteration twice    | O(1), O(log n)
+------|----------|-----------------------------------|--------|----------------------|------------------
+#6    | MEDIUM   | src/ui/split_rendering.rs        | 101-17 | Binary search 2x     | Called every frame
+      |          |                                  |        | per split per frame  | 480+/sec at 60fps
+------|----------|-----------------------------------|--------|----------------------|------------------
+#7    | MEDIUM   | src/viewport.rs                  | 217-27 | Redundant binary     | Called on each
+      |          |                                  | 2      | search after iter    | cursor movement
+------|----------|-----------------------------------|--------|----------------------|------------------
+#8    | MEDIUM   | src/viewport.rs                  | 277-32 | Double iteration:    | O(2n) instead of
+      |          |                                  | 7      | seek + visibility    | O(2 log n)
+------|----------|-----------------------------------|--------|----------------------|------------------
+#9    | MEDIUM   | src/viewport.rs                  | 413-20 | Iteration to count   | O(n) instead of
+      |          |                                  |        | lines between        | O(log n)
+------|----------|-----------------------------------|--------|----------------------|------------------
+
+TOTAL IMPACT:
+
+Current State (BROKEN):
+  - All line numbers displayed are WRONG (issue #1)
+  - For a 10,000-line file:
+    * Scrollbar calc: 10,000 iterations per call
+    * Viewport ops: multiple O(n) operations per action
+    * Rendering: wrong line numbers on every frame
+  - Performance: Degrades linearly with file size
+
+After Fixes:
+  - All line numbers CORRECT
+  - For a 10,000-line file:
+    * Scrollbar calc: O(1) lookups instead of 10,000 iterations
+    * Viewport ops: O(log n) instead of O(n)
+    * Rendering: correct line numbers, cached where possible
+  - Performance: O(log n) or O(1), independent of file size
+  - Expected improvement: 10x-50x faster for large files
+
+KEY METHODS TO USE:
+
+Method                          Complexity    Location
+========================================================
+buffer.line_count()             O(1)          buffer.rs:168
+buffer.get_line_number(byte)    O(log n)      buffer.rs:870
+buffer.position_to_offset(pos)  O(1)          buffer.rs:178
+buffer.offset_to_position(byte) O(log n)      buffer.rs:173
+iter.next()                     O(1)          buffer.rs:942
+iter.prev()                     O(1)          buffer.rs
+
+DO NOT USE (when better alternatives exist):
+
+Pattern                                 Complexity  Better Alternative
+=========================================================================
+Iterating from 0 to count lines        O(n)        buffer.line_count() - O(1)
+Iterating 0 to line N to seek          O(n)        position_to_offset() - O(1)
+Multiple get_line_number() calls       O(log n)×n  Cache results, batch calls
+line_iterator() looping full buffer    O(n)        position_to_offset() - O(1)
+Counting lines between positions       O(n)        get_line_number() diff - O(log n)
+
+================================================================================
