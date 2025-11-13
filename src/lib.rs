@@ -17,6 +17,7 @@ pub mod hooks;
 pub mod indent;
 pub mod input_history;
 pub mod keybindings;
+pub mod line_iterator;
 pub mod line_wrapping;
 pub mod lsp;
 pub mod lsp_async;

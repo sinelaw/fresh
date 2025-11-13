@@ -912,6 +912,16 @@ impl TextBuffer {
         LineIterator::new(self, byte_pos)
     }
 
+    /// Get a reference to piece tree for internal use (package-private)
+    pub(crate) fn piece_tree_ref(&self) -> &PieceTree {
+        &self.piece_tree
+    }
+
+    /// Get a reference to buffers for internal use (package-private)
+    pub(crate) fn buffers_ref(&self) -> &[StringBuffer] {
+        &self.buffers
+    }
+
     // Legacy API methods for backwards compatibility
 
     /// Get the line number for a given byte offset
@@ -970,140 +980,8 @@ impl TextBuffer {
 /// Type alias for backwards compatibility
 pub type Buffer = TextBuffer;
 
-/// Iterator over lines in a TextBuffer with bidirectional support
-pub struct LineIterator<'a> {
-    buffer: &'a TextBuffer,
-    current_pos: usize,
-    buffer_len: usize,
-}
-
-impl<'a> LineIterator<'a> {
-    fn new(buffer: &'a TextBuffer, byte_pos: usize) -> Self {
-        let buffer_len = buffer.len();
-        let byte_pos = byte_pos.min(buffer_len);
-
-        // Find the start of the line containing byte_pos
-        let line_start = if byte_pos == 0 {
-            0
-        } else {
-            // Search backwards from byte_pos to find the previous newline
-            let search_start = byte_pos.saturating_sub(4096).max(0);
-            let search_len = byte_pos - search_start;
-            let chunk = buffer.get_text_range(search_start, search_len);
-
-            // Find the last newline in the chunk
-            let mut line_start = 0;
-            for i in (0..chunk.len()).rev() {
-                if chunk[i] == b'\n' {
-                    line_start = search_start + i + 1;
-                    break;
-                }
-            }
-            line_start
-        };
-
-        LineIterator {
-            buffer,
-            current_pos: line_start,
-            buffer_len,
-        }
-    }
-
-    /// Get the next line (moving forward)
-    pub fn next(&mut self) -> Option<(usize, String)> {
-        if self.current_pos >= self.buffer_len {
-            return None;
-        }
-
-        let line_start = self.current_pos;
-
-        // Find the end of the line (newline or EOF)
-        let remaining = self.buffer_len - self.current_pos;
-        let chunk = self.buffer.get_text_range(self.current_pos, remaining);
-
-        let mut line_len = 0;
-        for (i, &byte) in chunk.iter().enumerate() {
-            line_len = i + 1;
-            if byte == b'\n' {
-                break;
-            }
-        }
-
-        // Get the line content
-        let line_bytes = self.buffer.get_text_range(line_start, line_len);
-        let line_string = String::from_utf8_lossy(&line_bytes).into_owned();
-
-        // Move to the next line
-        self.current_pos += line_len;
-
-        Some((line_start, line_string))
-    }
-
-    /// Get the previous line (moving backward)
-    pub fn prev(&mut self) -> Option<(usize, String)> {
-        if self.current_pos == 0 {
-            return None;
-        }
-
-        // Move back to before the current line's newline (if we're at one)
-        let mut search_pos = self.current_pos.saturating_sub(1);
-
-        // If we're right after a newline, skip it
-        if search_pos < self.buffer_len {
-            let byte = self.buffer.get_text_range(search_pos, 1);
-            if !byte.is_empty() && byte[0] == b'\n' {
-                search_pos = search_pos.saturating_sub(1);
-            }
-        }
-
-        // Find the start of the previous line
-        let mut line_start = 0;
-        if search_pos > 0 {
-            // Search backwards for a newline
-            let chunk_start = search_pos.saturating_sub(4096);
-            let chunk_len = search_pos - chunk_start + 1;
-            let chunk = self.buffer.get_text_range(chunk_start, chunk_len);
-
-            for i in (0..chunk.len()).rev() {
-                if chunk[i] == b'\n' {
-                    line_start = chunk_start + i + 1;
-                    break;
-                }
-            }
-        }
-
-        // Get the line content
-        // Handle the case where line_start > search_pos (can happen with empty lines)
-        let (line_len, skip_newline_append) = if line_start > search_pos {
-            // We're at an empty line - just get the newline at line_start
-            // Don't append another newline since we already have it
-            (1, true)
-        } else {
-            (search_pos - line_start + 1, false)
-        };
-        let mut line_bytes = self.buffer.get_text_range(line_start, line_len);
-
-        // Include the newline if present (but not if we already got it above)
-        if !skip_newline_append && search_pos + 1 < self.buffer_len {
-            let next_byte = self.buffer.get_text_range(search_pos + 1, 1);
-            if !next_byte.is_empty() && next_byte[0] == b'\n' {
-                line_bytes.push(b'\n');
-            }
-        }
-
-        let line_string = String::from_utf8_lossy(&line_bytes).into_owned();
-
-        // Update position
-        self.current_pos = line_start;
-
-        Some((line_start, line_string))
-    }
-
-    /// Get the current position in the buffer
-    pub fn current_position(&self) -> usize {
-        self.current_pos
-    }
-}
+// Re-export LineIterator from the line_iterator module
+pub use crate::line_iterator::LineIterator;
 
 #[cfg(test)]
 mod tests {

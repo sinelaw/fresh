@@ -869,6 +869,105 @@ impl PieceTree {
         };
         Some((start, end))
     }
+
+    /// Iterate through pieces overlapping a byte range
+    /// Does ONE O(log n) tree traversal, then iterates sequentially
+    pub fn iter_pieces_in_range(&self, start: usize, end: usize) -> PieceRangeIter {
+        PieceRangeIter::new(&self.root, start, end)
+    }
+}
+
+/// A view into a piece's data within the document
+#[derive(Debug, Clone)]
+pub struct PieceView {
+    /// The location of this piece (which buffer it references)
+    pub location: BufferLocation,
+    /// Offset within the source buffer where this piece starts
+    pub buffer_offset: usize,
+    /// Number of bytes in this piece
+    pub bytes: usize,
+    /// Byte offset where this piece starts in the document
+    pub doc_offset: usize,
+}
+
+/// Iterator over pieces in a byte range
+/// Performs ONE O(log n) traversal to collect pieces, then iterates in O(1) per piece
+pub struct PieceRangeIter {
+    pieces: Vec<PieceView>,
+    current_index: usize,
+}
+
+impl PieceRangeIter {
+    fn new(root: &Arc<PieceTreeNode>, start: usize, end: usize) -> Self {
+        let mut pieces = Vec::new();
+        Self::collect_pieces(root, 0, start, end, &mut pieces);
+        PieceRangeIter {
+            pieces,
+            current_index: 0,
+        }
+    }
+
+    /// Recursively collect all pieces that overlap [start, end)
+    fn collect_pieces(
+        node: &Arc<PieceTreeNode>,
+        doc_offset: usize,
+        range_start: usize,
+        range_end: usize,
+        pieces: &mut Vec<PieceView>,
+    ) {
+        match node.as_ref() {
+            PieceTreeNode::Internal {
+                left_bytes,
+                left,
+                right,
+                ..
+            } => {
+                let left_end = doc_offset + left_bytes;
+
+                // Check if left subtree overlaps with range
+                if range_start < left_end {
+                    Self::collect_pieces(left, doc_offset, range_start, range_end, pieces);
+                }
+
+                // Check if right subtree overlaps with range
+                if range_end > left_end {
+                    Self::collect_pieces(right, left_end, range_start, range_end, pieces);
+                }
+            }
+            PieceTreeNode::Leaf {
+                location,
+                offset,
+                bytes,
+                ..
+            } => {
+                let piece_end = doc_offset + bytes;
+
+                // Check if this piece overlaps with the range
+                if doc_offset < range_end && piece_end > range_start {
+                    pieces.push(PieceView {
+                        location: *location,
+                        buffer_offset: *offset,
+                        bytes: *bytes,
+                        doc_offset,
+                    });
+                }
+            }
+        }
+    }
+}
+
+impl Iterator for PieceRangeIter {
+    type Item = PieceView;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current_index < self.pieces.len() {
+            let piece = self.pieces[self.current_index].clone();
+            self.current_index += 1;
+            Some(piece)
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1398,5 +1497,136 @@ mod property_tests {
         assert_eq!(sum, tree.total_bytes(),
                    "After second insert: sum={}, total={}. Leaves: {:?}",
                    sum, tree.total_bytes(), leaves);
+    }
+
+    // Property tests for PieceRangeIter
+    proptest! {
+        #[test]
+        fn test_piece_iter_covers_exact_range(
+            ops in aggressive_operation_strategy(),
+            start in 0usize..100,
+            len in 1usize..50
+        ) {
+            let mut buffers = vec![StringBuffer::new(0, b"x".repeat(100).to_vec())];
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+
+            // Apply operations to build up tree
+            for (i, op) in ops.iter().enumerate() {
+                match op {
+                    Operation::Insert { offset, bytes } => {
+                        let offset = offset.min(tree.total_bytes());
+                        buffers.push(StringBuffer::new(buffers.len(), b"a".repeat(*bytes).to_vec()));
+                        tree.insert(*offset, BufferLocation::Added(buffers.len() - 1), 0, *bytes, 0, &buffers);
+                    }
+                    Operation::Delete { offset, bytes } => {
+                        let offset = offset.min(tree.total_bytes());
+                        let bytes = bytes.min(tree.total_bytes().saturating_sub(*offset));
+                        if bytes > 0 {
+                            tree.delete(*offset, bytes, &buffers);
+                        }
+                    }
+                }
+            }
+
+            let total_bytes = tree.total_bytes();
+            if total_bytes == 0 {
+                return Ok(());
+            }
+
+            let start = start.min(total_bytes.saturating_sub(1));
+            let end = (start + len).min(total_bytes);
+
+            // Collect pieces using iterator
+            let pieces: Vec<_> = tree.iter_pieces_in_range(start, end).collect();
+
+            // Verify coverage: pieces should cover [start, end)
+            if !pieces.is_empty() {
+                let first_piece_start = pieces[0].doc_offset;
+                let last_piece = &pieces[pieces.len() - 1];
+                let last_piece_end = last_piece.doc_offset + last_piece.bytes;
+
+                // First piece should start at or before requested start
+                prop_assert!(first_piece_start <= start,
+                    "First piece starts at {}, but requested start is {}", first_piece_start, start);
+
+                // Last piece should end at or after requested end
+                prop_assert!(last_piece_end >= end,
+                    "Last piece ends at {}, but requested end is {}", last_piece_end, end);
+            }
+        }
+
+        #[test]
+        fn test_piece_iter_no_gaps(ops in aggressive_operation_strategy()) {
+            let mut buffers = vec![StringBuffer::new(0, b"x".repeat(100).to_vec())];
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+
+            for op in ops {
+                match op {
+                    Operation::Insert { offset, bytes } => {
+                        let offset = offset.min(tree.total_bytes());
+                        buffers.push(StringBuffer::new(buffers.len(), b"a".repeat(bytes).to_vec()));
+                        tree.insert(offset, BufferLocation::Added(buffers.len() - 1), 0, bytes, 0, &buffers);
+                    }
+                    Operation::Delete { offset, bytes } => {
+                        let offset = offset.min(tree.total_bytes());
+                        let bytes = bytes.min(tree.total_bytes().saturating_sub(offset));
+                        if bytes > 0 {
+                            tree.delete(offset, bytes, &buffers);
+                        }
+                    }
+                }
+            }
+
+            let total_bytes = tree.total_bytes();
+            if total_bytes == 0 {
+                return Ok(());
+            }
+
+            // Iterate over entire document
+            let pieces: Vec<_> = tree.iter_pieces_in_range(0, total_bytes).collect();
+
+            // Verify no gaps: each piece should start where previous one ended
+            for i in 1..pieces.len() {
+                let prev_end = pieces[i - 1].doc_offset + pieces[i - 1].bytes;
+                let curr_start = pieces[i].doc_offset;
+                prop_assert_eq!(prev_end, curr_start,
+                    "Gap between piece {} (ends at {}) and piece {} (starts at {})",
+                    i - 1, prev_end, i, curr_start);
+            }
+        }
+
+        #[test]
+        fn test_piece_iter_total_bytes_matches(ops in aggressive_operation_strategy()) {
+            let mut buffers = vec![StringBuffer::new(0, b"x".repeat(100).to_vec())];
+            let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, 0);
+
+            for op in ops {
+                match op {
+                    Operation::Insert { offset, bytes } => {
+                        let offset = offset.min(tree.total_bytes());
+                        buffers.push(StringBuffer::new(buffers.len(), b"a".repeat(bytes).to_vec()));
+                        tree.insert(offset, BufferLocation::Added(buffers.len() - 1), 0, bytes, 0, &buffers);
+                    }
+                    Operation::Delete { offset, bytes } => {
+                        let offset = offset.min(tree.total_bytes());
+                        let bytes = bytes.min(tree.total_bytes().saturating_sub(offset));
+                        if bytes > 0 {
+                            tree.delete(offset, bytes, &buffers);
+                        }
+                    }
+                }
+            }
+
+            let total_bytes = tree.total_bytes();
+            if total_bytes == 0 {
+                return Ok(());
+            }
+
+            // Sum of piece bytes should equal total bytes
+            let pieces: Vec<_> = tree.iter_pieces_in_range(0, total_bytes).collect();
+            let sum_bytes: usize = pieces.iter().map(|p| p.bytes).sum();
+            prop_assert_eq!(sum_bytes, total_bytes,
+                "Sum of piece bytes ({}) doesn't match total_bytes ({})", sum_bytes, total_bytes);
+        }
     }
 }

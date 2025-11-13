@@ -110,6 +110,8 @@ impl Viewport {
     /// This prevents scrolling past the end of the buffer by ensuring
     /// the viewport can be filled from the proposed position
     fn set_top_byte_with_limit(&mut self, buffer: &Buffer, proposed_top_byte: usize) {
+        eprintln!("DEBUG set_top_byte_with_limit: proposed_top_byte={}", proposed_top_byte);
+
         let viewport_height = self.visible_line_count();
         if viewport_height == 0 {
             self.top_byte = proposed_top_byte;
@@ -132,10 +134,13 @@ impl Viewport {
             lines_visible += 1;
             if lines_visible >= viewport_height {
                 // We have a full viewport of content, use proposed position
+                eprintln!("DEBUG: Full viewport available, setting top_byte={}", proposed_top_byte);
                 self.top_byte = proposed_top_byte;
                 return;
             }
         }
+
+        eprintln!("DEBUG: After iteration, lines_visible={}, viewport_height={}", lines_visible, viewport_height);
 
         // Check if buffer ends with newline (which creates a phantom empty line)
         let buffer_ends_with_newline = buffer_len > 0 && {
@@ -143,13 +148,17 @@ impl Viewport {
             !last_byte_slice.is_empty() && last_byte_slice[0] == b'\n'
         };
 
+        eprintln!("DEBUG: buffer_ends_with_newline={}", buffer_ends_with_newline);
+
         // Account for the phantom line if buffer ends with newline
         if buffer_ends_with_newline {
             lines_visible += 1;
+            eprintln!("DEBUG: After adding phantom line, lines_visible={}", lines_visible);
         }
 
         // If we have enough lines to fill the viewport, we're good
         if lines_visible >= viewport_height {
+            eprintln!("DEBUG: Enough lines to fill viewport, setting top_byte={}", proposed_top_byte);
             self.top_byte = proposed_top_byte;
             return;
         }
@@ -157,15 +166,23 @@ impl Viewport {
         // We don't have enough lines to fill the viewport from proposed_top_byte
         // Calculate how many lines we're short and scroll back
         let lines_short = viewport_height - lines_visible;
+        eprintln!("DEBUG: lines_short={}, scrolling back", lines_short);
 
         let mut backtrack_iter = buffer.line_iterator(proposed_top_byte);
-        for _ in 0..lines_short {
+        eprintln!("DEBUG: Backtracking from byte {}", backtrack_iter.current_position());
+        for i in 0..lines_short {
+            let pos_before = backtrack_iter.current_position();
             if backtrack_iter.prev().is_none() {
+                eprintln!("DEBUG: Hit beginning of buffer at backtrack iteration {}", i);
                 break; // Hit the beginning of the buffer
             }
+            let pos_after = backtrack_iter.current_position();
+            eprintln!("DEBUG: Backtrack iteration {}: {} -> {}", i, pos_before, pos_after);
         }
 
-        self.top_byte = backtrack_iter.current_position();
+        let final_top_byte = backtrack_iter.current_position();
+        eprintln!("DEBUG: After backtracking, setting top_byte={}", final_top_byte);
+        self.top_byte = final_top_byte;
     }
 
     /// Scroll to a specific line (byte-based)
@@ -227,27 +244,42 @@ impl Viewport {
         let visible_count = self.visible_line_count();
         let lines_from_top = cursor_line_number.saturating_sub(top_line_number);
 
-        // Scroll if cursor is beyond the visible area OR at the last visible line
-        // At the last line (lines_from_top == visible_count - 1), we want to scroll to make room
+        eprintln!(
+            "DEBUG ensure_visible: cursor_pos={}, cursor_line_start={}, top_byte={}, top_line={}, cursor_line={}, visible_count={}, lines_from_top={}",
+            cursor.position, cursor_line_start, self.top_byte, top_line_number, cursor_line_number, visible_count, lines_from_top
+        );
+
+        // Scroll if cursor is beyond the visible area
         // Must also check cursor is not above viewport (saturating_sub would make it appear at line 0)
         let cursor_is_visible = cursor_line_number >= top_line_number
-            && lines_from_top < visible_count.saturating_sub(1);
+            && lines_from_top < visible_count;
+
+        eprintln!("DEBUG ensure_visible: cursor_is_visible={}", cursor_is_visible);
 
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {
+            eprintln!("DEBUG: Scrolling to make cursor visible!");
+
             // Position cursor at center of viewport when jumping
             let target_line_from_top = self.visible_line_count() / 2;
+            eprintln!("DEBUG: target_line_from_top={}", target_line_from_top);
 
             // Move backwards from cursor to find the new top_byte
             let mut iter = buffer.line_iterator(cursor_line_start);
+            eprintln!("DEBUG: Starting iteration from cursor_line_start={}, iter.current_position()={}", cursor_line_start, iter.current_position());
 
-            for _ in 0..target_line_from_top {
+            for i in 0..target_line_from_top {
                 if iter.prev().is_none() {
+                    eprintln!("DEBUG: Hit beginning of buffer at iteration {}", i);
                     break; // Hit beginning of buffer
                 }
+                eprintln!("DEBUG: After prev() iteration {}: iter.current_position()={}", i, iter.current_position());
             }
 
-            self.set_top_byte_with_limit(buffer, iter.current_position());
+            let new_top_byte = iter.current_position();
+            eprintln!("DEBUG: Calling set_top_byte_with_limit with new_top_byte={}", new_top_byte);
+            self.set_top_byte_with_limit(buffer, new_top_byte);
+            eprintln!("DEBUG: After set_top_byte_with_limit, self.top_byte={}", self.top_byte);
         }
 
         // Horizontal scrolling - skip if line wrapping is enabled
