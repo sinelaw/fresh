@@ -402,9 +402,9 @@ impl TextBuffer {
         let (start, end) = self.piece_tree.line_range(line, &self.buffers)?;
 
         let bytes = if let Some(end_offset) = end {
-            end_offset - start
+            end_offset.saturating_sub(start)
         } else {
-            self.total_bytes() - start
+            self.total_bytes().saturating_sub(start)
         };
 
         Some(self.get_text_range(start, bytes))
