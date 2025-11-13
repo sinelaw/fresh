@@ -1,6 +1,7 @@
 pub mod auto_indent;
 pub mod basic;
 pub mod command_palette;
+pub mod document_model;
 pub mod file_explorer;
 pub mod git;
 pub mod help;
