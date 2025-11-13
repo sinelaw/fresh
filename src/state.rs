@@ -584,6 +584,77 @@ impl EditorState {
         self.buffer.prepare_viewport(start_offset, line_count)?;
         Ok(())
     }
+
+    // ========== DocumentModel Helper Methods ==========
+    // These methods provide convenient access to DocumentModel functionality
+    // while maintaining backward compatibility with existing code.
+
+    /// Get text in a range with explicit error handling
+    ///
+    /// This is a convenience wrapper around DocumentModel::get_range that uses
+    /// byte offsets directly. Prefer this over buffer.slice() when you need
+    /// explicit error handling for large files.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let text = state.get_text_range_safe(0, 100)?;
+    /// ```
+    pub fn get_text_range_safe(&self, start: usize, end: usize) -> Result<String> {
+        use crate::document_model::DocumentModel;
+        self.get_range(
+            crate::document_model::DocumentPosition::byte(start),
+            crate::document_model::DocumentPosition::byte(end),
+        )
+    }
+
+    /// Get the content of a line by its byte offset
+    ///
+    /// Returns the line containing the given offset, along with its start position.
+    /// This uses DocumentModel's viewport functionality for consistent behavior.
+    ///
+    /// # Returns
+    /// `Some((line_start_offset, line_content))` if successful, `None` if offset is invalid
+    pub fn get_line_at_offset(&self, offset: usize) -> Option<(usize, String)> {
+        use crate::document_model::DocumentModel;
+
+        // Get a single line viewport starting at this offset
+        let viewport = self.get_viewport_content(
+            crate::document_model::DocumentPosition::byte(offset),
+            1,
+        ).ok()?;
+
+        viewport.lines.first().map(|line| {
+            (line.byte_offset, line.content.clone())
+        })
+    }
+
+    /// Get text from current cursor position to end of line
+    ///
+    /// This is a common pattern in editing operations. Uses DocumentModel
+    /// for consistent behavior across file sizes.
+    pub fn get_text_to_end_of_line(&self, cursor_pos: usize) -> Result<String> {
+        use crate::document_model::DocumentModel;
+
+        // Get the line containing cursor
+        let viewport = self.get_viewport_content(
+            crate::document_model::DocumentPosition::byte(cursor_pos),
+            1,
+        )?;
+
+        if let Some(line) = viewport.lines.first() {
+            let line_start = line.byte_offset;
+            let line_end = line_start + line.content.len();
+
+            if cursor_pos >= line_start && cursor_pos <= line_end {
+                let offset_in_line = cursor_pos - line_start;
+                Ok(line.content[offset_in_line..].to_string())
+            } else {
+                Ok(String::new())
+            }
+        } else {
+            Ok(String::new())
+        }
+    }
 }
 
 /// Implement DocumentModel trait for EditorState
@@ -1086,6 +1157,66 @@ mod tests {
 
             // Should not panic
             state.prepare_for_render().unwrap();
+        }
+
+        #[test]
+        fn test_helper_get_text_range_safe() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("hello world");
+
+            // Test normal range
+            let text = state.get_text_range_safe(0, 5).unwrap();
+            assert_eq!(text, "hello");
+
+            // Test middle range
+            let text2 = state.get_text_range_safe(6, 11).unwrap();
+            assert_eq!(text2, "world");
+        }
+
+        #[test]
+        fn test_helper_get_line_at_offset() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("line1\nline2\nline3");
+
+            // Get first line (offset 0)
+            let (offset, content) = state.get_line_at_offset(0).unwrap();
+            assert_eq!(offset, 0);
+            assert_eq!(content, "line1");
+
+            // Get second line (offset in middle of line)
+            let (offset2, content2) = state.get_line_at_offset(8).unwrap();
+            assert_eq!(offset2, 6); // Line starts at byte 6
+            assert_eq!(content2, "line2");
+
+            // Get last line
+            let (offset3, content3) = state.get_line_at_offset(12).unwrap();
+            assert_eq!(offset3, 12);
+            assert_eq!(content3, "line3");
+        }
+
+        #[test]
+        fn test_helper_get_text_to_end_of_line() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("hello world\nline2");
+
+            // From beginning of line
+            let text = state.get_text_to_end_of_line(0).unwrap();
+            assert_eq!(text, "hello world");
+
+            // From middle of line
+            let text2 = state.get_text_to_end_of_line(6).unwrap();
+            assert_eq!(text2, "world");
+
+            // From end of line
+            let text3 = state.get_text_to_end_of_line(11).unwrap();
+            assert_eq!(text3, "");
+
+            // From second line
+            let text4 = state.get_text_to_end_of_line(12).unwrap();
+            assert_eq!(text4, "line2");
         }
     }
 }
