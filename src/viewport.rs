@@ -680,7 +680,7 @@ mod tests {
         // Scroll down to show lines 10-19 (top_byte at line 10)
         // scroll_to uses 1-based line numbers, so line 10 = argument 10
         vp.scroll_to(&buffer, 10);
-        let old_top_byte = vp.top_byte;
+        let _old_top_byte = vp.top_byte;
 
         // Verify we scrolled to around line 10
         let top_line = buffer.get_line_number(vp.top_byte);

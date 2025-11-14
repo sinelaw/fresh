@@ -524,7 +524,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn test_memory_limit_independent() {
         // Test that memory limits can be set independently
-        let limits = ProcessLimits {
+        let _limits = ProcessLimits {
             max_memory_mb: Some(100),
             max_cpu_percent: None, // No CPU limit
             enabled: true,

@@ -6772,7 +6772,7 @@ mod tests {
         // with zero-width ranges at the insertion point
         use crate::text_buffer::Buffer;
 
-        let mut buffer = Buffer::from_str_test("hello\nworld");
+        let buffer = Buffer::from_str_test("hello\nworld");
 
         // Insert "NEW" at position 0 (before "hello")
         // Expected LSP range: line 0, char 0 to line 0, char 0 (zero-width)

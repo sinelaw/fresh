@@ -2410,7 +2410,7 @@ mod property_tests {
             let mut tree = PieceTree::new(BufferLocation::Stored(0), 0, 100, Some(0));
 
             // Apply operations to build up tree
-            for (i, op) in ops.iter().enumerate() {
+            for op in ops.iter() {
                 match op {
                     Operation::Insert { offset, bytes } => {
                         let offset = (*offset).min(tree.total_bytes());
