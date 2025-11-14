@@ -55,8 +55,26 @@ pub fn add_cursor_at_next_match(state: &mut EditorState) -> AddCursorResult {
 pub fn add_cursor_above(state: &mut EditorState) -> AddCursorResult {
     let primary = state.cursors.primary();
 
+    // Check if cursor is at a newline character - if so, treat it as being on the next line
+    // This handles the case where add_cursor_above/below places a cursor at the same column,
+    // which might land on a newline if the previous line is longer
+    let adjusted_position = if primary.position < state.buffer.len() {
+        if let Ok(byte_at_cursor) = state.buffer.get_text_range_mut(primary.position, 1) {
+            if byte_at_cursor.first() == Some(&b'\n') {
+                // Cursor is at newline - treat as being at start of next line
+                primary.position + 1
+            } else {
+                primary.position
+            }
+        } else {
+            primary.position
+        }
+    } else {
+        primary.position
+    };
+
     // Find the start of the current line using iterator
-    let mut iter = state.buffer.line_iterator(primary.position, 80);
+    let mut iter = state.buffer.line_iterator(adjusted_position, 80);
     let Some((line_start, _line_content)) = iter.next() else {
         return AddCursorResult::Failed {
             message: "Unable to find current line".to_string(),
@@ -71,7 +89,8 @@ pub fn add_cursor_above(state: &mut EditorState) -> AddCursorResult {
     }
 
     // Calculate column offset from line start
-    let col_offset = primary.position - line_start;
+    // Use adjusted_position since that's what we used to find the line
+    let col_offset = adjusted_position - line_start;
 
     // After next(), iterator is positioned after current line
     // Call prev() twice: once to get back to current line, once more to get previous line
@@ -79,8 +98,11 @@ pub fn add_cursor_above(state: &mut EditorState) -> AddCursorResult {
 
     // Get the previous line
     if let Some((prev_line_start, prev_line_content)) = iter.prev() {
-        // Calculate new position on previous line, capping at line length
-        let prev_line_len = prev_line_content.len();
+        // Calculate new position on previous line
+        // Don't place cursor on newline - if col_offset would put us on/past the newline,
+        // place cursor at end of line content instead
+        let line_without_newline = prev_line_content.trim_end_matches('\n');
+        let prev_line_len = line_without_newline.len();
         let new_pos = prev_line_start + col_offset.min(prev_line_len);
 
         let new_cursor = Cursor::new(new_pos);
@@ -114,7 +136,8 @@ pub fn add_cursor_below(state: &mut EditorState) -> AddCursorResult {
     // Get next line (we already consumed current line with first iter.next())
     if let Some((next_line_start, next_line_content)) = iter.next() {
         // Calculate new position on next line, capping at line length
-        let next_line_len = next_line_content.len();
+        // Exclude newline from line length calculation
+        let next_line_len = next_line_content.trim_end_matches('\n').len();
         let new_pos = next_line_start + col_offset.min(next_line_len);
         let new_cursor = Cursor::new(new_pos);
 
