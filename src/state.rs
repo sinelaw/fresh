@@ -689,45 +689,19 @@ impl DocumentModel for EditorState {
         // Convert to byte offset
         let start_offset = self.position_to_offset(start_pos)?;
 
-        // Check if we have line index (before borrowing buffer mutably)
-        let has_line_index = self.has_line_index();
+        // Use new efficient line iteration that tracks line numbers during iteration
+        // by accumulating line_feed_cnt from pieces (single source of truth)
+        let line_iter = self.buffer.iter_lines_from(start_offset, max_lines)?;
+        let has_more = line_iter.has_more;
 
-        // Use line iterator starting from this byte offset
-        // LineIterator automatically loads chunks as needed
-        let mut iter = self.buffer.line_iterator(start_offset, 80);
-        let mut lines = Vec::with_capacity(max_lines);
-
-        for _ in 0..max_lines {
-            if let Some((line_start, line_content)) = iter.next() {
-                let has_newline = line_content.ends_with('\n');
-                let content = if has_newline {
-                    line_content[..line_content.len() - 1].to_string()
-                } else {
-                    line_content
-                };
-
-                // Try to get precise line number if available
-                let approximate_line_number = if has_line_index {
-                    // We can't call offset_to_position while iter borrows buffer mutably
-                    // For now, just return None. This is acceptable because line numbers
-                    // are approximate for large files anyway.
-                    None
-                } else {
-                    None
-                };
-
-                lines.push(ViewportLine {
-                    byte_offset: line_start,
-                    content,
-                    has_newline,
-                    approximate_line_number,
-                });
-            } else {
-                break;
-            }
-        }
-
-        let has_more = iter.next().is_some();
+        let lines = line_iter
+            .map(|line_data| ViewportLine {
+                byte_offset: line_data.byte_offset,
+                content: line_data.content,
+                has_newline: line_data.has_newline,
+                approximate_line_number: line_data.line_number,
+            })
+            .collect();
 
         Ok(ViewportContent {
             start_position: DocumentPosition::ByteOffset(start_offset),

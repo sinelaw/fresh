@@ -1782,6 +1782,8 @@ pub struct PieceView {
     pub bytes: usize,
     /// Byte offset where this piece starts in the document
     pub doc_offset: usize,
+    /// Number of line feeds in this piece (None if unknown for large files)
+    pub line_feed_cnt: Option<usize>,
 }
 
 /// Iterator over pieces in a byte range
@@ -1832,7 +1834,7 @@ impl PieceRangeIter {
                 location,
                 offset,
                 bytes,
-                ..
+                line_feed_cnt,
             } => {
                 let piece_end = doc_offset + bytes;
 
@@ -1843,6 +1845,7 @@ impl PieceRangeIter {
                         buffer_offset: *offset,
                         bytes: *bytes,
                         doc_offset,
+                        line_feed_cnt: *line_feed_cnt,
                     });
                 }
             }
