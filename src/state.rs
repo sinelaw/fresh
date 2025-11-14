@@ -625,9 +625,23 @@ impl EditorState {
     pub fn get_line_at_offset(&mut self, offset: usize) -> Option<(usize, String)> {
         use crate::document_model::DocumentModel;
 
-        // Get a single line viewport starting at this offset
+        // Find the start of the line containing this offset
+        // Scan backwards to find the previous newline or start of buffer
+        let mut line_start = offset;
+        while line_start > 0 {
+            if let Ok(text) = self.buffer.get_text_range_mut(line_start - 1, 1) {
+                if text.first() == Some(&b'\n') {
+                    break;
+                }
+                line_start -= 1;
+            } else {
+                break;
+            }
+        }
+
+        // Get a single line viewport starting at the line start
         let viewport = self
-            .get_viewport_content(crate::document_model::DocumentPosition::byte(offset), 1)
+            .get_viewport_content(crate::document_model::DocumentPosition::byte(line_start), 1)
             .ok()?;
 
         viewport
