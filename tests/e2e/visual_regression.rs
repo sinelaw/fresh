@@ -67,6 +67,17 @@ fn visual_file_explorer() {
         .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
+
+    // Wait for file explorer to finish loading files asynchronously
+    // The status will change from "File explorer opened" to "File explorer ready"
+    let ready = harness
+        .wait_for_async(
+            |h| h.screen_to_string().contains("File explorer ready"),
+            2000,
+        )
+        .unwrap();
+    assert!(ready, "File explorer should finish loading");
+
     harness
         .capture_visual_step(
             &mut flow,

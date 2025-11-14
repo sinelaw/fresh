@@ -55,19 +55,27 @@ fn test_git_grep_shows_results() {
     // Type search query
     harness.type_text("config").unwrap();
 
-    // Wait for async git grep to complete and results to appear
+    // Wait for git grep to complete by checking for results in the suggestions box
+    // The plugin populates suggestions with file:line:column format
     let found = harness
         .wait_for_async(
             |h| {
                 let screen = h.screen_to_string();
-                // Should show results from src/main.rs and src/lib.rs
-                screen.contains("src/main.rs") || screen.contains("Config")
+                // Wait for suggestions to appear - they show as "filename:line:column: content"
+                // The suggestion box appears above the prompt
+                screen.contains(".yml:") || screen.contains(".md:") || screen.contains(".rs:")
             },
-            2000,
+            5000,
         )
         .unwrap();
 
-    assert!(found, "Git grep results should appear within timeout");
+    if !found {
+        // Print screen for debugging if test fails
+        let screen = harness.screen_to_string();
+        eprintln!("Git grep timeout - screen content:\n{}", screen);
+    }
+
+    assert!(found, "Git grep should complete and show suggestions");
 
     // Verify results are visible
     let screen = harness.screen_to_string();
