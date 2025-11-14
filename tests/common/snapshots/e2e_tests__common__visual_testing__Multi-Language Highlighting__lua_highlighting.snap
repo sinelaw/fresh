@@ -1,0 +1,34 @@
+---
+source: tests/common/visual_testing.rs
+expression: "&screen_text"
+---
+ hello.rs   hello.py   hello.js   hello.ts   hello.html   hello.css   hello.c   
+    1 │ #!/usr/bin/env lua                                                     █
+    2 │                                                                        █
+    3 │ -- Greeting function with string formatting                            █
+    4 │ function greet(name)                                                   █
+    5 │     return string.format("Hello, %s!", name)                           █
+    6 │ end                                                                    █
+    7 │                                                                        █
+    8 │ -- Table with mixed content                                            █
+    9 │ local config = {                                                       █
+   10 │     version = "1.0",                                                   █
+   11 │     enabled = true,                                                    █
+   12 │     count = 42                                                         █
+   13 │ }                                                                      █
+   14 │                                                                        █
+   15 │ -- Main execution with conditional logic                               █
+   16 │ if arg then                                                            █
+   17 │     local message = greet("World")                                     █
+   18 │     print(message)                                                     █
+   19 │                                                                        █
+   20 │     for i = 1, 3 do                                                    █
+   21 │         print("Iteration: " .. i)                                      █
+   22 │     end                                                                █
+   23 │ end                                                                    █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+hello.lua | Ln 0, Col 0 | Opened hello.lua                         Help: Ctrl+/

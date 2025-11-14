@@ -2,33 +2,33 @@
 source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
-┌ Help ────────────────────────────────────────────────────────────────────────┐
-│KEYBOARD SHORTCUTS                                                            │
-│                                                                              │
-│Ctrl+Alt+Up       Add cursor above                                            │
-│Ctrl+D            Add cursor at next match                                    │
-│Ctrl+Alt+Down     Add cursor below                                            │
-│Alt+X             Close split                                                 │
-│Ctrl+P            Command palette                                             │
-│Ctrl+C            Copy                                                        │
-│Ctrl+X            Cut                                                         │
-│Alt+-             Decrease split size                                         │
-│Backspace         Delete backward                                             │
-│Delete            Delete forward                                              │
-│Ctrl+Backspace    Delete word backward                                        │
-│Ctrl+Delete       Delete word forward                                         │
-│Ctrl+Shift+Right  Expand selection                                            │
-│Alt+Shift+H       File explorer: collapse directory                           │
-│Alt+Shift+D       File explorer: delete                                       │
-│Alt+L             File explorer: expand directory                             │
-│Alt+J             File explorer: navigate down                                │
-│Alt+K             File explorer: navigate up                                  │
-│Alt+Shift+N       File explorer: new directory                                │
-│Alt+N             File explorer: new file                                     │
-│Alt+Enter         File explorer: open file                                    │
-│Alt+R             File explorer: refresh                                      │
-│Alt+I             File explorer: toggle gitignored files                      │
-│Alt+.             File explorer: toggle hidden files                          │
-│Alt+Esc           Focus editor                                                │
-│Alt+E             Focus file explorer                                         │
-└──────────────────────────────────────────────────────────────────────────────┘
+ [No Name]                                                                      
+    1 │                                                                        █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+                                                                               █
+[No Name] | Ln 0, Col 0                                            Help: Ctrl+/

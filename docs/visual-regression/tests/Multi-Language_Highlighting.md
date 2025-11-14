@@ -96,3 +96,9 @@
 
 *Bash code with syntax highlighting*
 
+## Step 16: lua_highlighting
+
+![lua_highlighting](../screenshots/Multi-Language_Highlighting_16_lua_highlighting.svg)
+
+*Lua code with syntax highlighting*
+
