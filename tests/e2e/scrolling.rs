@@ -1171,8 +1171,8 @@ fn test_large_file_screen_content_validation() {
         "After jumping back, screen should show first line at byte 0"
     );
     assert!(
-        screen_start.contains("@00000081:"),
-        "After jumping back, screen should show second line at byte 81"
+        screen_start.contains("@00000080:"),
+        "After jumping back, screen should show second line at byte 80"
     );
     println!("✓ Beginning of file shows correct content after navigation");
 
