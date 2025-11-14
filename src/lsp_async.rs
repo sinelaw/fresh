@@ -82,6 +82,91 @@ pub struct JsonRpcError {
     pub data: Option<Value>,
 }
 
+/// LSP client state machine
+///
+/// Tracks the lifecycle of the LSP client connection with proper state transitions.
+/// This prevents invalid operations (e.g., can't initialize twice, can't send requests when stopped).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LspClientState {
+    /// Initial state before spawning
+    Initial,
+    /// Process spawning in progress
+    Starting,
+    /// Initialize request sent, waiting for response
+    Initializing,
+    /// Initialized and ready for requests
+    Running,
+    /// Shutdown in progress
+    Stopping,
+    /// Cleanly stopped
+    Stopped,
+    /// Failed or crashed
+    Error,
+}
+
+impl LspClientState {
+    /// Check if this state can transition to another state
+    pub fn can_transition_to(&self, next: LspClientState) -> bool {
+        use LspClientState::*;
+        match (self, next) {
+            // From Initial, can only start
+            (Initial, Starting) => true,
+            // From Starting, can initialize or error
+            (Starting, Initializing) | (Starting, Error) => true,
+            // From Initializing, can become running or error
+            (Initializing, Running) | (Initializing, Error) => true,
+            // From Running, can stop or error
+            (Running, Stopping) | (Running, Error) => true,
+            // From Stopping, can become stopped or error
+            (Stopping, Stopped) | (Stopping, Error) => true,
+            // From Stopped or Error, can restart
+            (Stopped, Starting) | (Error, Starting) => true,
+            // Any state can become error
+            (_, Error) => true,
+            // Same state is always valid (no-op)
+            (a, b) if *a == b => true,
+            // All other transitions are invalid
+            _ => false,
+        }
+    }
+
+    /// Transition to a new state, returning error if invalid
+    pub fn transition_to(&mut self, next: LspClientState) -> Result<(), String> {
+        if self.can_transition_to(next) {
+            *self = next;
+            Ok(())
+        } else {
+            Err(format!(
+                "Invalid state transition from {:?} to {:?}",
+                self, next
+            ))
+        }
+    }
+
+    /// Check if the client is ready to send requests
+    pub fn can_send_requests(&self) -> bool {
+        matches!(self, LspClientState::Running)
+    }
+
+    /// Check if the client can accept initialization
+    pub fn can_initialize(&self) -> bool {
+        matches!(self, LspClientState::Initial | LspClientState::Stopped)
+    }
+
+    /// Convert to LspServerStatus for UI reporting
+    pub fn to_server_status(&self) -> LspServerStatus {
+        match self {
+            LspClientState::Initial => LspServerStatus::Starting,
+            LspClientState::Starting => LspServerStatus::Starting,
+            LspClientState::Initializing => LspServerStatus::Initializing,
+            LspClientState::Running => LspServerStatus::Running,
+            LspClientState::Stopping => LspServerStatus::Shutdown,
+            LspClientState::Stopped => LspServerStatus::Shutdown,
+            LspClientState::Error => LspServerStatus::Error,
+        }
+    }
+}
+
 /// Commands sent from the main loop to the LSP task
 #[derive(Debug)]
 enum LspCommand {
@@ -1774,8 +1859,8 @@ pub struct LspHandle {
     /// Channel for sending commands to the task
     command_tx: mpsc::Sender<LspCommand>,
 
-    /// Whether initialized
-    initialized: Arc<Mutex<bool>>,
+    /// Client state
+    state: Arc<Mutex<LspClientState>>,
 
     /// Runtime handle for blocking operations
     runtime: tokio::runtime::Handle,
@@ -1796,7 +1881,7 @@ impl LspHandle {
         let language_clone = language.clone();
         let command = command.to_string();
         let args = args.to_vec();
-        let initialized = Arc::new(Mutex::new(false));
+        let state = Arc::new(Mutex::new(LspClientState::Starting));
 
         // Send starting status
         let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
@@ -1804,6 +1889,7 @@ impl LspHandle {
             status: LspServerStatus::Starting,
         });
 
+        let state_clone = state.clone();
         runtime.spawn(async move {
             match LspTask::spawn(
                 &command,
@@ -1819,6 +1905,12 @@ impl LspHandle {
                 }
                 Err(e) => {
                     tracing::error!("Failed to spawn LSP task: {}", e);
+
+                    // Transition to error state
+                    if let Ok(mut s) = state_clone.lock() {
+                        let _ = s.transition_to(LspClientState::Error);
+                    }
+
                     let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
                         language: language_clone.clone(),
                         status: LspServerStatus::Error,
@@ -1833,7 +1925,7 @@ impl LspHandle {
 
         Ok(Self {
             command_tx,
-            initialized,
+            state,
             runtime: runtime.clone(),
         })
     }
@@ -1844,7 +1936,20 @@ impl LspHandle {
     /// when `is_initialized()` returns true. Other methods that require initialization
     /// will fail gracefully until then.
     pub fn initialize(&self, root_uri: Option<Uri>) -> Result<(), String> {
-        let initialized = self.initialized.clone();
+        // Validate state transition
+        {
+            let mut state = self.state.lock().unwrap();
+            if !state.can_initialize() {
+                return Err(format!(
+                    "Cannot initialize: client is in state {:?}",
+                    *state
+                ));
+            }
+            // Transition to Initializing
+            state.transition_to(LspClientState::Initializing)?;
+        }
+
+        let state = self.state.clone();
 
         // Create a channel for the response, but don't wait for it
         let (tx, rx) = oneshot::channel();
@@ -1856,22 +1961,34 @@ impl LspHandle {
             })
             .map_err(|_| "Failed to send initialize command".to_string())?;
 
-        // Spawn a task to wait for the response and update the initialized flag
+        // Spawn a task to wait for the response and update the state
         let runtime = self.runtime.clone();
         runtime.spawn(async move {
             match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
                 Ok(Ok(Ok(_))) => {
-                    *initialized.lock().unwrap() = true;
+                    // Successfully initialized
+                    if let Ok(mut s) = state.lock() {
+                        let _ = s.transition_to(LspClientState::Running);
+                    }
                     tracing::info!("LSP initialization completed successfully");
                 }
                 Ok(Ok(Err(e))) => {
                     tracing::error!("LSP initialization failed: {}", e);
+                    if let Ok(mut s) = state.lock() {
+                        let _ = s.transition_to(LspClientState::Error);
+                    }
                 }
                 Ok(Err(_)) => {
                     tracing::error!("LSP initialization response channel closed");
+                    if let Ok(mut s) = state.lock() {
+                        let _ = s.transition_to(LspClientState::Error);
+                    }
                 }
                 Err(_) => {
                     tracing::error!("LSP initialization timed out after 10 seconds");
+                    if let Ok(mut s) = state.lock() {
+                        let _ = s.transition_to(LspClientState::Error);
+                    }
                 }
             }
         });
@@ -1881,7 +1998,12 @@ impl LspHandle {
 
     /// Check if the server is initialized
     pub fn is_initialized(&self) -> bool {
-        *self.initialized.lock().unwrap()
+        self.state.lock().unwrap().can_send_requests()
+    }
+
+    /// Get the current client state
+    pub fn state(&self) -> LspClientState {
+        *self.state.lock().unwrap()
     }
 
     /// Notify document opened
@@ -1976,9 +2098,27 @@ impl LspHandle {
 
     /// Shutdown the server
     pub fn shutdown(&self) -> Result<(), String> {
+        // Transition to Stopping state
+        {
+            let mut state = self.state.lock().unwrap();
+            if let Err(e) = state.transition_to(LspClientState::Stopping) {
+                tracing::warn!("State transition warning during shutdown: {}", e);
+                // Don't fail shutdown due to state transition errors
+            }
+        }
+
         self.command_tx
             .try_send(LspCommand::Shutdown)
-            .map_err(|_| "Failed to send shutdown command".to_string())
+            .map_err(|_| "Failed to send shutdown command".to_string())?;
+
+        // Transition to Stopped state
+        // Note: This happens optimistically. The actual shutdown might take time.
+        {
+            let mut state = self.state.lock().unwrap();
+            let _ = state.transition_to(LspClientState::Stopped);
+        }
+
+        Ok(())
     }
 }
 
@@ -1990,6 +2130,11 @@ impl Drop for LspHandle {
         // 2. The channel is full or closed
         // 3. We're dropping during a panic
         let _ = self.command_tx.try_send(LspCommand::Shutdown);
+
+        // Update state to Stopped
+        if let Ok(mut state) = self.state.lock() {
+            let _ = state.transition_to(LspClientState::Stopped);
+        }
     }
 }
 
