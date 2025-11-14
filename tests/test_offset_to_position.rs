@@ -14,7 +14,7 @@ fn test_offset_to_position_simple() {
 
     println!(
         "Buffer content: {:?}",
-        String::from_utf8_lossy(&content.to_vec())
+        String::from_utf8_lossy(content.as_ref())
     );
     println!("Buffer length: {}", buffer.len());
     println!("Line count: {:?}", buffer.line_count());
