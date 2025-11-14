@@ -1568,9 +1568,9 @@ impl PieceTree {
     }
 
     /// Convert byte offset to line/column position using tree's line metadata
-    pub fn offset_to_position(&self, offset: usize, buffers: &[StringBuffer]) -> (usize, usize) {
+    pub fn offset_to_position(&self, offset: usize, buffers: &[StringBuffer]) -> Option<(usize, usize)> {
         if offset == 0 {
-            return (0, 0);
+            return Some((0, 0));
         }
 
         let offset = offset.min(self.total_bytes);
@@ -1581,12 +1581,12 @@ impl PieceTree {
             let bytes_before = result.bytes_before;
 
             // Count lines before this piece
-            // If line count is unknown, return (0, byte_offset) as fallback
+            // If line count is unknown, return None - we can't reliably compute position
             let lines_before = match self.count_lines_before_offset(bytes_before) {
                 Some(count) => count,
                 None => {
-                    // No line metadata available - fallback to byte-based position
-                    return (0, offset);
+                    // No line metadata available - cannot compute position reliably
+                    return None;
                 }
             };
 
@@ -1648,24 +1648,24 @@ impl PieceTree {
                         offset_in_piece - line_start_offset_in_piece
                     };
 
-                    return (doc_line, column);
+                    return Some((doc_line, column));
                 }
-                // No line starts available - will fall through to byte-based fallback
+                // No line starts available - return None
             }
         }
 
         // Fallback: end of document
-        // If line count is unknown, return byte-based position
+        // Only if we have line metadata
         match self.line_count() {
             Some(line_count) => {
                 let last_line = line_count.saturating_sub(1);
                 let line_start = self.position_to_offset(last_line, 0, buffers);
                 let column = self.total_bytes.saturating_sub(line_start);
-                (last_line, column)
+                Some((last_line, column))
             }
             None => {
-                // No line metadata - return byte-based position
-                (0, offset)
+                // No line metadata - cannot compute position
+                None
             }
         }
     }
