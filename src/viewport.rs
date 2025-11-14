@@ -84,7 +84,7 @@ impl Viewport {
 
     /// Scroll up by N lines (byte-based)
     /// LineCache automatically tracks line numbers
-    pub fn scroll_up(&mut self, buffer: &Buffer, lines: usize) {
+    pub fn scroll_up(&mut self, buffer: &mut Buffer, lines: usize) {
         let mut iter = buffer.line_iterator(self.top_byte);
         for _ in 0..lines {
             if iter.prev().is_none() {
@@ -96,7 +96,7 @@ impl Viewport {
 
     /// Scroll down by N lines (byte-based)
     /// LineCache automatically tracks line numbers
-    pub fn scroll_down(&mut self, buffer: &Buffer, lines: usize) {
+    pub fn scroll_down(&mut self, buffer: &mut Buffer, lines: usize) {
         let mut iter = buffer.line_iterator(self.top_byte);
         for _ in 0..lines {
             if iter.next().is_none() {
@@ -109,7 +109,7 @@ impl Viewport {
     /// Set top_byte with automatic scroll limit enforcement
     /// This prevents scrolling past the end of the buffer by ensuring
     /// the viewport can be filled from the proposed position
-    fn set_top_byte_with_limit(&mut self, buffer: &Buffer, proposed_top_byte: usize) {
+    fn set_top_byte_with_limit(&mut self, buffer: &mut Buffer, proposed_top_byte: usize) {
         tracing::trace!(
             "DEBUG set_top_byte_with_limit: proposed_top_byte={}",
             proposed_top_byte
@@ -220,7 +220,7 @@ impl Viewport {
 
     /// Scroll to a specific line (byte-based)
     /// This seeks from the beginning to find the byte position of the line
-    pub fn scroll_to(&mut self, buffer: &Buffer, line: usize) {
+    pub fn scroll_to(&mut self, buffer: &mut Buffer, line: usize) {
         // Seek from the beginning to find the byte position for this line
         let mut iter = buffer.line_iterator(0);
         let mut current_line = 0;
@@ -378,7 +378,7 @@ impl Viewport {
     /// Ensure a line is visible with scroll offset applied
     /// This is a legacy method kept for backward compatibility with tests
     /// In practice, use ensure_visible() which works directly with cursors and bytes
-    pub fn ensure_line_visible(&mut self, buffer: &Buffer, line: usize) {
+    pub fn ensure_line_visible(&mut self, buffer: &mut Buffer, line: usize) {
         // Seek to the target line to get its byte position
         let mut seek_iter = buffer.line_iterator(0);
         let mut current_line = 0;
