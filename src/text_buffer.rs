@@ -1559,11 +1559,11 @@ mod tests {
         assert_eq!(buffer.line_start_offset(2), Some(15)); // "World!" starts at 15
 
         // Check offset_to_position
-        assert_eq!(buffer.offset_to_position(0).line, 0); // Start of "Hello"
-        assert_eq!(buffer.offset_to_position(5).line, 0); // End of "Hello" (before \n)
-        assert_eq!(buffer.offset_to_position(6).line, 1); // Start of "New Line"
-        assert_eq!(buffer.offset_to_position(14).line, 1); // End of "New Line" (before \n)
-        assert_eq!(buffer.offset_to_position(15).line, 2); // Start of "World!"
+        assert_eq!(buffer.offset_to_position(0).unwrap().line, 0); // Start of "Hello"
+        assert_eq!(buffer.offset_to_position(5).unwrap().line, 0); // End of "Hello" (before \n)
+        assert_eq!(buffer.offset_to_position(6).unwrap().line, 1); // Start of "New Line"
+        assert_eq!(buffer.offset_to_position(14).unwrap().line, 1); // End of "New Line" (before \n)
+        assert_eq!(buffer.offset_to_position(15).unwrap().line, 2); // Start of "World!"
 
         // Check line_col_to_position
         assert_eq!(buffer.line_col_to_position(0, 5), 5); // End of line 0
@@ -1662,10 +1662,10 @@ mod tests {
         let buffer = TextBuffer::from_bytes(b"hello\nworld\ntest".to_vec());
 
         let pos = buffer.offset_to_position(0);
-        assert_eq!(pos, Position { line: 0, column: 0 });
+        assert_eq!(pos, Some(Position { line: 0, column: 0 }));
 
         let pos = buffer.offset_to_position(6);
-        assert_eq!(pos, Position { line: 1, column: 0 });
+        assert_eq!(pos, Some(Position { line: 1, column: 0 }));
 
         let offset = buffer.position_to_offset(Position { line: 1, column: 0 });
         assert_eq!(offset, 6);
@@ -2087,7 +2087,7 @@ mod tests {
             // Test offset_to_position
             // Note: Without line indexing, position tracking is limited
             // but byte-level operations still work
-            let pos = buffer.offset_to_position(0);
+            let pos = buffer.offset_to_position(0).unwrap();
             assert_eq!(pos.column, 0);
 
             // Test position_to_offset
@@ -2313,7 +2313,7 @@ mod property_tests {
             let buffer = TextBuffer::from_bytes(text.clone());
 
             for offset in 0..text.len() {
-                let pos = buffer.offset_to_position(offset);
+                let pos = buffer.offset_to_position(offset).expect("offset_to_position should succeed for valid offset");
                 let back = buffer.position_to_offset(pos);
                 prop_assert_eq!(back, offset, "Failed roundtrip for offset {}", offset);
             }
@@ -2432,11 +2432,12 @@ mod property_tests {
                 // Verify we can still convert between offsets and positions
                 if buffer.total_bytes() > 0 {
                     let mid_offset = buffer.total_bytes() / 2;
-                    let pos = buffer.offset_to_position(mid_offset);
-                    let back = buffer.position_to_offset(pos);
+                    if let Some(pos) = buffer.offset_to_position(mid_offset) {
+                        let back = buffer.position_to_offset(pos);
 
-                    // Should be able to roundtrip
-                    prop_assert!(back <= buffer.total_bytes());
+                        // Should be able to roundtrip
+                        prop_assert!(back <= buffer.total_bytes());
+                    }
                 }
             }
         }
