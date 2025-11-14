@@ -43,7 +43,7 @@ impl<'a> LineIterator<'a> {
                     while scan_pos > 0 {
                         scan_pos -= 1;
                         // Get one byte at this position
-                        if let Ok(bytes) = buffer.get_text_range(scan_pos, 1) {
+                        if let Some(bytes) = buffer.get_text_range(scan_pos, 1) {
                             if !bytes.is_empty() && bytes[0] == b'\n' {
                                 // Found newline - line starts at next byte
                                 let line_start = scan_pos + 1;
@@ -140,8 +140,41 @@ impl<'a> LineIterator<'a> {
         }
 
         // Convert current position to line number, then get previous line
-        let current_pos = self.buffer.offset_to_position(self.current_pos);
-        let current_line = current_pos.line;
+        let current_line = match self.buffer.offset_to_position(self.current_pos) {
+            Some(pos) => pos.line,
+            None => {
+                // Can't determine line - scan backwards byte-by-byte
+                if self.current_pos == 0 {
+                    return None;
+                }
+                // Move back one byte and try to find previous line boundary
+                self.current_pos -= 1;
+                while self.current_pos > 0 {
+                    if let Some(bytes) = self.buffer.get_text_range(self.current_pos, 1) {
+                        if !bytes.is_empty() && bytes[0] == b'\n' {
+                            // Found a newline - scan back to find the start of THIS line
+                            let line_end = self.current_pos;
+                            self.current_pos = self.current_pos.saturating_sub(1);
+                            while self.current_pos > 0 {
+                                if let Some(bytes) = self.buffer.get_text_range(self.current_pos - 1, 1) {
+                                    if !bytes.is_empty() && bytes[0] == b'\n' {
+                                        // Found start of line
+                                        break;
+                                    }
+                                }
+                                self.current_pos -= 1;
+                            }
+                            // Get the line content
+                            if let Some(line_bytes) = self.buffer.get_text_range(self.current_pos, line_end - self.current_pos + 1) {
+                                return Some((self.current_pos, String::from_utf8_lossy(&line_bytes).into_owned()));
+                            }
+                        }
+                    }
+                    self.current_pos -= 1;
+                }
+                return None;
+            }
+        };
 
         if current_line == 0 {
             return None;

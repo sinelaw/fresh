@@ -718,7 +718,7 @@ impl DocumentModel for EditorState {
                 // Try to get precise line number if available
                 let approximate_line_number = if self.has_line_index() {
                     // Use offset_to_position instead of get_line_number to avoid &mut
-                    Some(self.buffer.offset_to_position(line_start).line)
+                    self.buffer.offset_to_position(line_start).map(|pos| pos.line)
                 } else {
                     None
                 };
@@ -759,10 +759,14 @@ impl DocumentModel for EditorState {
 
     fn offset_to_position(&self, offset: usize) -> DocumentPosition {
         if self.has_line_index() {
-            let pos = self.buffer.offset_to_position(offset);
-            DocumentPosition::LineColumn {
-                line: pos.line,
-                column: pos.column,
+            if let Some(pos) = self.buffer.offset_to_position(offset) {
+                DocumentPosition::LineColumn {
+                    line: pos.line,
+                    column: pos.column,
+                }
+            } else {
+                // Line index exists but metadata unavailable - fall back to byte offset
+                DocumentPosition::ByteOffset(offset)
             }
         } else {
             DocumentPosition::ByteOffset(offset)
