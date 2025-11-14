@@ -1230,8 +1230,8 @@ impl TextBuffer {
     }
 
     /// Create a line iterator starting at the given byte position
-    pub fn line_iterator(&self, byte_pos: usize) -> LineIterator<'_> {
-        LineIterator::new(self, byte_pos)
+    pub fn line_iterator(&self, byte_pos: usize, estimated_line_length: usize) -> LineIterator<'_> {
+        LineIterator::new(self, byte_pos, estimated_line_length)
     }
 
     /// Get a reference to piece tree for internal use (package-private)
@@ -1247,7 +1247,15 @@ impl TextBuffer {
     // Legacy API methods for backwards compatibility
 
     /// Get the line number for a given byte offset
-    /// Returns exact line number if metadata available, otherwise estimates based on bytes
+    ///
+    /// Returns exact line number if metadata available, otherwise estimates based on bytes.
+    ///
+    /// # Behavior by File Size:
+    /// - **Small files (< 1MB)**: Returns exact line number from piece tree's `line_starts` metadata
+    /// - **Large files (≥ 1MB)**: Returns estimated line number using `byte_offset / 80`
+    ///
+    /// Large files don't maintain line metadata for performance reasons. The estimation
+    /// assumes ~80 bytes per line on average, which works reasonably well for most text files.
     pub fn get_line_number(&self, byte_offset: usize) -> usize {
         self.offset_to_position(byte_offset)
             .map(|pos| pos.line)
@@ -1257,11 +1265,43 @@ impl TextBuffer {
             })
     }
 
-    /// Populate line cache (no-op in new implementation - kept for compatibility)
-    /// The new LineIndex implementation doesn't need pre-population
-    pub fn populate_line_cache(&mut self, _start_byte: usize, _line_count: usize) -> usize {
-        // No-op: LineIndex maintains all line starts automatically
-        0
+    /// Get the starting line number at a byte offset (used for viewport rendering)
+    ///
+    /// # Line Cache Architecture (Post-Refactoring):
+    ///
+    /// The concept of a separate "line cache" is **now obsolete**. After the refactoring,
+    /// line tracking is integrated directly into the piece tree via:
+    /// ```rust
+    /// BufferData::Loaded {
+    ///     data: Vec<u8>,
+    ///     line_starts: Option<Vec<usize>>  // None = large file mode (no line metadata)
+    /// }
+    /// ```
+    ///
+    /// ## Why This Method Still Exists:
+    /// The rendering code needs to know what line number to display in the margin at the
+    /// top of the viewport. This method returns that line number, handling both small
+    /// and large file modes transparently.
+    ///
+    /// ## Small vs Large File Modes:
+    /// - **Small files**: `line_starts = Some(vec)` → returns exact line number from metadata
+    /// - **Large files**: `line_starts = None` → returns estimated line number (byte_offset / 80)
+    ///
+    /// ## Legacy Line Cache Methods:
+    /// These methods are now no-ops and can be removed in a future cleanup:
+    /// - `invalidate_line_cache_from()` - No-op (piece tree updates automatically)
+    /// - `handle_line_cache_insertion()` - No-op (piece tree updates automatically)
+    /// - `handle_line_cache_deletion()` - No-op (piece tree updates automatically)
+    /// - `clear_line_cache()` - No-op (can't clear piece tree metadata)
+    ///
+    /// ## Bug Fix (2025-11):
+    /// Previously this method always returned `0`, causing line numbers in the margin
+    /// to always show 1, 2, 3... regardless of scroll position. Now it correctly returns
+    /// the actual line number at `start_byte`.
+    pub fn populate_line_cache(&mut self, start_byte: usize, _line_count: usize) -> usize {
+        // No-op for cache population: LineIndex maintains all line starts automatically
+        // But we need to return the actual line number at start_byte for rendering
+        self.get_line_number(start_byte)
     }
 
     /// Get cached byte offset for line (compatibility method)

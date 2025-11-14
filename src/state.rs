@@ -706,7 +706,7 @@ impl DocumentModel for EditorState {
         let start_offset = self.position_to_offset(start_pos)?;
 
         // Use line iterator starting from this byte offset
-        let mut iter = self.buffer.line_iterator(start_offset);
+        let mut iter = self.buffer.line_iterator(start_offset, 80);
         let mut lines = Vec::with_capacity(max_lines);
 
         for _ in 0..max_lines {
@@ -813,7 +813,7 @@ impl DocumentModel for EditorState {
         let line_start_offset = self.buffer.line_start_offset(line_number)?;
 
         // Get line content using iterator
-        let mut iter = self.buffer.line_iterator(line_start_offset);
+        let mut iter = self.buffer.line_iterator(line_start_offset, 80);
         if let Some((_start, content)) = iter.next() {
             let has_newline = content.ends_with('\n');
             let line_content = if has_newline {

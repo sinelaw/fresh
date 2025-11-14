@@ -4,23 +4,45 @@ use crate::text_buffer::TextBuffer;
 /// Iterator over lines in a TextBuffer with bidirectional support
 /// Uses piece iterator for efficient sequential scanning (ONE O(log n) initialization)
 ///
-/// TODO: For huge file mode (>100MB), reconsider this design:
-/// - Current implementation scans byte-by-byte when line metadata unavailable
-/// - This is inefficient: get_text_range(pos, 1) per byte = many piece tree lookups
-/// - Alternative approaches:
-///   1. Bulk load chunks (e.g., 64KB) and scan for newlines in memory
-///   2. Use a different iterator that works purely with byte ranges
-///   3. Cache loaded chunks to avoid redundant loads during backward scans
-///   4. For huge files, consider streaming/windowed approach instead of random access
+/// # Performance Characteristics After Piece Tree Refactoring
+///
+/// The recent refactoring integrated line tracking into the piece tree via `BufferData::Loaded { line_starts: Option<Vec<usize>> }`:
+/// - **Small files (< 1MB)**: `line_starts = Some(vec)` → exact line metadata available
+/// - **Large files (≥ 1MB)**: `line_starts = None` → no line metadata (for performance)
+///
+/// ## Current Performance:
+/// - **Forward iteration (`next()`)**: ✅ Efficient O(1) amortized per line using piece iterator
+/// - **Initialization (`new()`)**: ⚠️ Fast path when line metadata exists, but falls back to
+///   O(n * log n) byte-by-byte backward scan when metadata unavailable (lines 43-64)
+/// - **Backward iteration (`prev()`)**: ⚠️ Same issue as `new()` (lines 144-182)
+///
+/// ## Problem:
+/// When `offset_to_position()` returns `None` (large files without line metadata), we scan
+/// backwards byte-by-byte with `get_text_range(pos, 1)`. Each call does a piece tree lookup
+/// O(log n), so scanning N bytes = O(N * log n) total.
+///
+/// ## Implemented Solution:
+/// **Estimation-based approach** for large files:
+/// - Uses configurable `estimated_line_length` (default: 80 bytes, set in EditorConfig)
+/// - Estimates line positions as `byte_offset / estimated_line_length`
+/// - Accepts imprecision for large files in exchange for O(1) performance
+/// - Small files still use exact line metadata from piece tree
+///
+/// Users can adjust `estimated_line_length` in config to match their typical file structure:
+/// - Code with short lines: ~60-80 bytes
+/// - Code with long lines: ~100-120 bytes
+/// - Prose/documentation: ~80-100 bytes
 pub struct LineIterator<'a> {
     buffer: &'a TextBuffer,
     /// Current byte position in the document (points to start of current line)
     current_pos: usize,
     buffer_len: usize,
+    /// Estimated average line length in bytes (for large file estimation)
+    estimated_line_length: usize,
 }
 
 impl<'a> LineIterator<'a> {
-    pub(crate) fn new(buffer: &'a TextBuffer, byte_pos: usize) -> Self {
+    pub(crate) fn new(buffer: &'a TextBuffer, byte_pos: usize, estimated_line_length: usize) -> Self {
         let buffer_len = buffer.len();
         let byte_pos = byte_pos.min(buffer_len);
 
@@ -35,33 +57,21 @@ impl<'a> LineIterator<'a> {
                     column: 0,
                 }),
                 None => {
-                    // Line metadata not available - scan backwards to find newline
-                    // This handles large files with lazy loading
-                    // TODO: This is inefficient for huge files - see struct documentation
+                    // Large file without line metadata - estimate line start
+                    // Uses configured estimated_line_length (default: 80 bytes)
+                    // This avoids expensive O(N * log n) byte-by-byte backward scanning
+                    let estimated_line = byte_pos / estimated_line_length;
+                    let estimated_start = estimated_line * estimated_line_length;
 
-                    // Scan backwards from byte_pos to find the previous newline
-                    let mut scan_pos = byte_pos;
-                    while scan_pos > 0 {
-                        scan_pos -= 1;
-                        // Get one byte at this position
-                        if let Some(bytes) = buffer.get_text_range(scan_pos, 1) {
-                            if !bytes.is_empty() && bytes[0] == b'\n' {
-                                // Found newline - line starts at next byte
-                                let line_start = scan_pos + 1;
-                                return LineIterator {
-                                    buffer,
-                                    current_pos: line_start,
-                                    buffer_len,
-                                };
-                            }
-                        }
-                        // Don't scan too far back - limit to reasonable line length
-                        if byte_pos - scan_pos > 10000 {
-                            break;
-                        }
-                    }
-                    // Either hit start of file or gave up - start from here
-                    scan_pos
+                    tracing::trace!(
+                        "LineIterator: Large file mode - estimating line start at byte {} for requested position {} (using avg line length: {})",
+                        estimated_start,
+                        byte_pos,
+                        estimated_line_length
+                    );
+
+                    // Clamp to valid range
+                    estimated_start.min(byte_pos)
                 }
             }
         };
@@ -70,6 +80,7 @@ impl<'a> LineIterator<'a> {
             buffer,
             current_pos: line_start,
             buffer_len,
+            estimated_line_length,
         }
     }
 
@@ -141,43 +152,39 @@ impl<'a> LineIterator<'a> {
         let current_line = match self.buffer.offset_to_position(self.current_pos) {
             Some(pos) => pos.line,
             None => {
-                // Can't determine line - scan backwards byte-by-byte
+                // Large file without line metadata - estimate line number using configured avg line length
                 if self.current_pos == 0 {
                     return None;
                 }
-                // Move back one byte and try to find previous line boundary
-                self.current_pos -= 1;
-                while self.current_pos > 0 {
-                    if let Some(bytes) = self.buffer.get_text_range(self.current_pos, 1) {
-                        if !bytes.is_empty() && bytes[0] == b'\n' {
-                            // Found a newline - scan back to find the start of THIS line
-                            let line_end = self.current_pos;
-                            self.current_pos = self.current_pos.saturating_sub(1);
-                            while self.current_pos > 0 {
-                                if let Some(bytes) =
-                                    self.buffer.get_text_range(self.current_pos - 1, 1)
-                                {
-                                    if !bytes.is_empty() && bytes[0] == b'\n' {
-                                        // Found start of line
-                                        break;
-                                    }
-                                }
-                                self.current_pos -= 1;
-                            }
-                            // Get the line content
-                            if let Some(line_bytes) = self
-                                .buffer
-                                .get_text_range(self.current_pos, line_end - self.current_pos + 1)
-                            {
-                                return Some((
-                                    self.current_pos,
-                                    String::from_utf8_lossy(&line_bytes).into_owned(),
-                                ));
-                            }
-                        }
-                    }
-                    self.current_pos -= 1;
+
+                let estimated_current_line = self.current_pos / self.estimated_line_length;
+                if estimated_current_line == 0 {
+                    // Already at first line (estimated)
+                    return None;
                 }
+
+                // Estimate previous line position
+                let estimated_prev_line = estimated_current_line.saturating_sub(1);
+                let estimated_prev_start = estimated_prev_line * self.estimated_line_length;
+
+                tracing::trace!(
+                    "LineIterator::prev: Large file mode - estimating prev line {} at byte {} (current at {}, using avg line length: {})",
+                    estimated_prev_line,
+                    estimated_prev_start,
+                    self.current_pos,
+                    self.estimated_line_length
+                );
+
+                // Move iterator to estimated position
+                self.current_pos = estimated_prev_start;
+
+                // Read approximate line (might be partial or span multiple lines, but that's okay for large files)
+                // We'll read estimated_line_length bytes forward to get the "line"
+                if let Some(bytes) = self.buffer.get_text_range(estimated_prev_start, self.estimated_line_length) {
+                    let line_string = String::from_utf8_lossy(&bytes).into_owned();
+                    return Some((estimated_prev_start, line_string));
+                }
+
                 return None;
             }
         };

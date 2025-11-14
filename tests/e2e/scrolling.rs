@@ -614,7 +614,7 @@ fn test_vertical_scroll_when_typing_to_bottom() {
     // Count lines to verify cursor is on expected line
     let buffer = &harness.editor().active_state().buffer;
     let cursor_pos = harness.cursor_position();
-    let mut iter = buffer.line_iterator(0);
+    let mut iter = buffer.line_iterator(0, 80);
     let mut cursor_line = 0;
     while let Some((line_start, _)) = iter.next() {
         if line_start > cursor_pos {
@@ -1264,7 +1264,7 @@ fn test_line_numbers_absolute_after_jump_to_beginning() {
     // Verify first few lines are readable via iterator
     println!("\n  Verifying first few lines are readable:");
     let state = harness.editor().active_state();
-    let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
+    let mut iter = state.buffer.line_iterator(state.viewport.top_byte, 80);
     let mut line_count = 0;
     for i in 0..5 {
         if let Some((byte_pos, content)) = iter.next() {

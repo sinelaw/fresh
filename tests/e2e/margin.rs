@@ -302,3 +302,78 @@ fn test_margin_per_buffer_in_split_view() {
     // This verifies that each EditorState has its own MarginManager
     // If margins were shared, disabling in one would affect both
 }
+
+/// Test that line numbers update correctly when scrolling down incrementally
+/// This reproduces a bug where line numbers in the margin don't update when scrolling
+#[test]
+fn test_line_numbers_update_during_incremental_scroll() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("scroll_test.txt");
+
+    // Create a file with 100 lines (enough to require scrolling)
+    let content: String = (1..=100).map(|i| format!("Line {i}\n")).collect();
+    std::fs::write(&file_path, content).unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Initial state - should show line 1 at the top
+    let screen = harness.screen_to_string();
+    println!("Initial screen:\n{screen}");
+
+    harness.assert_screen_contains("   1 │");
+    harness.assert_screen_contains("Line 1");
+
+    // Scroll down with PageDown
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_after_pagedown = harness.screen_to_string();
+    println!("\nScreen after PageDown:\n{screen_after_pagedown}");
+
+    // After PageDown, we should be around line 22-23 (viewport is ~22 lines tall)
+    // The line numbers in the margin should have updated to reflect the new position
+    // BUG: This assertion will FAIL if line numbers don't update
+    let should_contain_line_20_or_higher =
+        screen_after_pagedown.contains("  20 │") ||
+        screen_after_pagedown.contains("  21 │") ||
+        screen_after_pagedown.contains("  22 │") ||
+        screen_after_pagedown.contains("  23 │") ||
+        screen_after_pagedown.contains("  24 │") ||
+        screen_after_pagedown.contains("  25 │");
+
+    assert!(
+        should_contain_line_20_or_higher,
+        "After PageDown, line numbers should show lines around 20-25, but screen shows:\n{}",
+        screen_after_pagedown
+    );
+
+    // Scroll down a bit more with Down arrow keys
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    let screen_after_down = harness.screen_to_string();
+    println!("\nScreen after 5x Down:\n{screen_after_down}");
+
+    // Should now show even higher line numbers (around 27-30)
+    let should_contain_line_27_or_higher =
+        screen_after_down.contains("  27 │") ||
+        screen_after_down.contains("  28 │") ||
+        screen_after_down.contains("  29 │") ||
+        screen_after_down.contains("  30 │") ||
+        screen_after_down.contains("  31 │");
+
+    assert!(
+        should_contain_line_27_or_higher,
+        "After 5 more Down keys, line numbers should show lines around 27-31, but screen shows:\n{}",
+        screen_after_down
+    );
+
+    // Verify line 1 is no longer visible
+    harness.assert_screen_not_contains("   1 │");
+}

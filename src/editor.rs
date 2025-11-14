@@ -2635,7 +2635,7 @@ impl Editor {
                     let target_line = line.unwrap_or(1).saturating_sub(1); // Convert to 0-indexed
                     let column_offset = column.unwrap_or(1).saturating_sub(1); // Convert to 0-indexed
 
-                    let mut iter = state.buffer.line_iterator(0);
+                    let mut iter = state.buffer.line_iterator(0, 80);
                     let mut target_byte = 0;
 
                     // Iterate through lines until we reach the target
@@ -4688,7 +4688,7 @@ impl Editor {
                     // Find byte position of target line
                     // We need to iterate 'target_line' times to skip past lines 0..target_line-1,
                     // then one more time to get the position of line 'target_line'
-                    let mut iter = state.buffer.line_iterator(0);
+                    let mut iter = state.buffer.line_iterator(0, 80);
                     let mut line_byte = 0;
 
                     for _ in 0..target_line {
@@ -4722,7 +4722,7 @@ impl Editor {
             };
 
             // Find the line start for this byte position
-            let iter = state.buffer.line_iterator(new_top_byte);
+            let iter = state.buffer.line_iterator(new_top_byte, 80);
             let line_start = iter.current_position();
 
             // Set viewport top to this position
@@ -4784,7 +4784,7 @@ impl Editor {
                     // Find byte position of target line
                     // We need to iterate 'target_line' times to skip past lines 0..target_line-1,
                     // then one more time to get the position of line 'target_line'
-                    let mut iter = state.buffer.line_iterator(0);
+                    let mut iter = state.buffer.line_iterator(0, 80);
                     let mut line_byte = 0;
 
                     for _ in 0..target_line {
@@ -4809,7 +4809,7 @@ impl Editor {
             };
 
             // Find the line start for this byte position
-            let iter = state.buffer.line_iterator(target_byte);
+            let iter = state.buffer.line_iterator(target_byte, 80);
             let line_start = iter.current_position();
 
             // Apply scroll limiting
@@ -4846,7 +4846,7 @@ impl Editor {
 
         // Count total lines in buffer
         let mut line_count = 0;
-        let mut iter = buffer.line_iterator(0);
+        let mut iter = buffer.line_iterator(0, 80);
         while iter.next().is_some() {
             line_count += 1;
         }
@@ -4861,7 +4861,7 @@ impl Editor {
         let scrollable_lines = line_count.saturating_sub(viewport_height);
 
         // Find the byte position of the line at scrollable_lines offset
-        let mut iter = buffer.line_iterator(0);
+        let mut iter = buffer.line_iterator(0, 80);
         let mut current_line = 0;
         let mut max_byte_pos = 0;
 
@@ -4916,7 +4916,7 @@ impl Editor {
             let actual_col = (text_col as usize) + state.viewport.left_column;
 
             // Find the byte position for this line and column
-            let mut line_iter = state.buffer.line_iterator(state.viewport.top_byte);
+            let mut line_iter = state.buffer.line_iterator(state.viewport.top_byte, 80);
 
             // Navigate to the clicked line
             let mut line_start = state.viewport.top_byte;
@@ -5178,6 +5178,7 @@ impl Editor {
             lsp_waiting,
             self.config.editor.large_file_threshold_bytes,
             self.config.editor.line_wrap,
+            self.config.editor.estimated_line_length,
             Some(&self.hook_registry),
             self.plugin_manager.as_ref(),
         );
@@ -5539,7 +5540,8 @@ impl Editor {
     pub fn action_to_events(&mut self, action: Action) -> Option<Vec<Event>> {
         let tab_size = self.config.editor.tab_size;
         let auto_indent = self.config.editor.auto_indent;
-        convert_action_to_events(self.active_state_mut(), action, tab_size, auto_indent)
+        let estimated_line_length = self.config.editor.estimated_line_length;
+        convert_action_to_events(self.active_state_mut(), action, tab_size, auto_indent, estimated_line_length)
     }
 
     // === Search and Replace Methods ===
@@ -5614,7 +5616,7 @@ impl Editor {
         let mut visible_end = top_byte;
 
         {
-            let mut line_iter = state.buffer.line_iterator(top_byte);
+            let mut line_iter = state.buffer.line_iterator(top_byte, 80);
             for _ in 0..visible_height {
                 if let Some((line_start, line_content)) = line_iter.next() {
                     visible_end = line_start + line_content.len();

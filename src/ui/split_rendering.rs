@@ -30,6 +30,7 @@ impl SplitRenderer {
     /// * `lsp_waiting` - Whether LSP is waiting
     /// * `large_file_threshold_bytes` - Threshold for using constant scrollbar thumb size
     /// * `line_wrap` - Whether line wrapping is enabled
+    /// * `estimated_line_length` - Estimated average line length for large file line estimation
     /// * `hook_registry` - Optional hook registry for firing render-line hooks
     /// * `plugin_manager` - Optional plugin manager for firing Lua plugin hooks
     ///
@@ -45,6 +46,7 @@ impl SplitRenderer {
         lsp_waiting: bool,
         large_file_threshold_bytes: u64,
         line_wrap: bool,
+        estimated_line_length: usize,
         hook_registry: Option<&Arc<RwLock<HookRegistry>>>,
         plugin_manager: Option<&PluginManager>,
     ) -> Vec<(crate::event::SplitId, BufferId, Rect, Rect, usize, usize)> {
@@ -90,6 +92,7 @@ impl SplitRenderer {
                     theme,
                     lsp_waiting,
                     line_wrap,
+                    estimated_line_length,
                     buffer_id,
                     hook_registry,
                     plugin_manager,
@@ -303,6 +306,7 @@ impl SplitRenderer {
         theme: &crate::theme::Theme,
         lsp_waiting: bool,
         line_wrap: bool,
+        estimated_line_length: usize,
         buffer_id: BufferId,
         hook_registry: Option<&Arc<RwLock<HookRegistry>>>,
         plugin_manager: Option<&PluginManager>,
@@ -371,7 +375,7 @@ impl SplitRenderer {
 
         // Compute syntax highlighting for the visible viewport (if highlighter exists)
         let viewport_start = state.viewport.top_byte;
-        let mut iter_temp = state.buffer.line_iterator(viewport_start);
+        let mut iter_temp = state.buffer.line_iterator(viewport_start, estimated_line_length);
         let mut viewport_end = viewport_start;
         for _ in 0..visible_count {
             if let Some((line_start, line_content)) = iter_temp.next() {
@@ -394,7 +398,7 @@ impl SplitRenderer {
                 .overlays
                 .query_viewport(viewport_start, viewport_end, &state.marker_list);
 
-        let mut iter = state.buffer.line_iterator(state.viewport.top_byte);
+        let mut iter = state.buffer.line_iterator(state.viewport.top_byte, estimated_line_length);
         let mut lines_rendered = 0;
 
         // Track cursor position during rendering (eliminates duplicate line iteration)

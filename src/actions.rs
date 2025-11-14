@@ -33,6 +33,7 @@ pub fn action_to_events(
     action: Action,
     tab_size: usize,
     auto_indent: bool,
+    estimated_line_length: usize,
 ) -> Option<Vec<Event>> {
     let mut events = Vec::new();
 
@@ -301,7 +302,7 @@ pub fn action_to_events(
             for (cursor_id, cursor) in state.cursors.iter() {
                 // Use iterator to navigate to previous line
                 // line_iterator positions us at the start of the current line
-                let mut iter = state.buffer.line_iterator(cursor.position);
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
 
@@ -333,7 +334,7 @@ pub fn action_to_events(
 
         Action::MoveDown => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position);
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
 
@@ -366,7 +367,7 @@ pub fn action_to_events(
 
         Action::MoveLineStart => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position);
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 if let Some((line_start, _)) = iter.next() {
                     events.push(Event::MoveCursor {
                         cursor_id,
@@ -383,7 +384,7 @@ pub fn action_to_events(
 
         Action::MoveLineEnd => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position);
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 if let Some((line_start, line_content)) = iter.next() {
                     // Calculate end position (exclude newline)
                     let line_len = line_content.trim_end_matches('\n').len();
@@ -465,7 +466,7 @@ pub fn action_to_events(
             for (cursor_id, cursor) in state.cursors.iter() {
                 // Move up by viewport height
                 let lines_to_move = state.viewport.height.saturating_sub(1);
-                let mut iter = state.buffer.line_iterator(cursor.position);
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
 
@@ -503,7 +504,7 @@ pub fn action_to_events(
             for (cursor_id, cursor) in state.cursors.iter() {
                 // Move down by viewport height
                 let lines_to_move = state.viewport.height.saturating_sub(1);
-                let mut iter = state.buffer.line_iterator(cursor.position);
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
 
@@ -582,7 +583,7 @@ pub fn action_to_events(
 
         Action::SelectUp => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position);
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
@@ -613,7 +614,7 @@ pub fn action_to_events(
 
         Action::SelectDown => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position);
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
@@ -646,7 +647,7 @@ pub fn action_to_events(
 
         Action::SelectLineStart => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position);
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
 
                 if let Some((line_start, _)) = iter.next() {
@@ -665,7 +666,7 @@ pub fn action_to_events(
 
         Action::SelectLineEnd => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position);
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
 
                 if let Some((line_start, line_content)) = iter.next() {
@@ -752,7 +753,7 @@ pub fn action_to_events(
         Action::SelectPageUp => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 let lines_to_move = state.viewport.height.saturating_sub(1);
-                let mut iter = state.buffer.line_iterator(cursor.position);
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
@@ -790,7 +791,7 @@ pub fn action_to_events(
         Action::SelectPageDown => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 let lines_to_move = state.viewport.height.saturating_sub(1);
-                let mut iter = state.buffer.line_iterator(cursor.position);
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
@@ -998,7 +999,7 @@ pub fn action_to_events(
                 .cursors
                 .iter()
                 .filter_map(|(cursor_id, cursor)| {
-                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                     let line_start = iter.current_position();
                     iter.next().map(|(_start, content)| {
                         let line_end = line_start + content.len();
@@ -1152,7 +1153,7 @@ pub fn action_to_events(
             // Select the entire line for each cursor
             for (cursor_id, cursor) in state.cursors.iter() {
                 // Use iterator to get line bounds
-                let mut iter = state.buffer.line_iterator(cursor.position);
+                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 if let Some((line_start, line_content)) = iter.next() {
                     // Include newline if present
                     let line_end = line_start + line_content.len();
@@ -1258,7 +1259,7 @@ mod tests {
         assert_eq!(state.cursors.primary().position, 6);
 
         // Press Backspace - should delete the newline at position 5
-        let events = action_to_events(&mut state, Action::DeleteBackward, 4, false).unwrap();
+        let events = action_to_events(&mut state, Action::DeleteBackward, 4, false, 80).unwrap();
         println!("Generated events: {:?}", events);
 
         for event in events {

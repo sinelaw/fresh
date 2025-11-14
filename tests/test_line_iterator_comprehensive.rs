@@ -6,7 +6,7 @@ fn test_line_iterator_simple() {
     let buffer = TextBuffer::from_bytes(b"Line 1\nLine 2\nLine 3\n".to_vec());
 
     // Test starting at beginning
-    let mut iter = buffer.line_iterator(0);
+    let mut iter = buffer.line_iterator(0, 80);
     assert_eq!(iter.current_position(), 0);
 
     let (pos, content) = iter.next().unwrap();
@@ -27,7 +27,7 @@ fn test_line_iterator_empty_lines() {
     let buffer = TextBuffer::from_bytes(b"Line 1\n\nLine 3\n".to_vec());
 
     // Test starting at position 0
-    let mut iter = buffer.line_iterator(0);
+    let mut iter = buffer.line_iterator(0, 80);
     let (pos, content) = iter.next().unwrap();
     assert_eq!((pos, content.as_str()), (0, "Line 1\n"));
 
@@ -42,7 +42,7 @@ fn test_line_iterator_empty_lines() {
     assert_eq!((pos, content.as_str()), (8, "Line 3\n"));
 
     // Test starting at position 7 (empty line)
-    let mut iter = buffer.line_iterator(7);
+    let mut iter = buffer.line_iterator(7, 80);
     assert_eq!(iter.current_position(), 7);
 
     let (pos, content) = iter.next().unwrap();
@@ -60,7 +60,7 @@ fn test_line_iterator_empty_lines() {
 fn test_line_iterator_multiple_empty_lines() {
     let buffer = TextBuffer::from_bytes(b"Line 1\n\n\n\nLine 5\n".to_vec());
 
-    let mut iter = buffer.line_iterator(0);
+    let mut iter = buffer.line_iterator(0, 80);
     assert_eq!(iter.next().unwrap().0, 0); // "Line 1\n"
     assert_eq!(iter.next().unwrap(), (7, "\n".to_string())); // Empty line 2
     assert_eq!(iter.next().unwrap(), (8, "\n".to_string())); // Empty line 3
@@ -78,7 +78,7 @@ fn test_line_iterator_starts_mid_piece() {
     // Content is now "Prefix\nLine 1\nLine 2\nLine 3\n"
 
     // Test iterating from within a piece
-    let mut iter = buffer.line_iterator(7); // Start at "Line 1"
+    let mut iter = buffer.line_iterator(7, 80); // Start at "Line 1"
     let (pos, content) = iter.next().unwrap();
     assert_eq!((pos, content.as_str()), (7, "Line 1\n"));
 
@@ -95,13 +95,13 @@ fn test_line_iterator_after_multiple_edits() {
     buffer.insert_bytes(8, b"GHI\n".to_vec()); // "ABC\nDEF\nGHI\n"
 
     // Test iteration from each line
-    let mut iter = buffer.line_iterator(0);
+    let mut iter = buffer.line_iterator(0, 80);
     assert_eq!(iter.next().unwrap(), (0, "ABC\n".to_string()));
     assert_eq!(iter.next().unwrap(), (4, "DEF\n".to_string()));
     assert_eq!(iter.next().unwrap(), (8, "GHI\n".to_string()));
 
     // Test starting mid-buffer
-    let mut iter = buffer.line_iterator(4);
+    let mut iter = buffer.line_iterator(4, 80);
     assert_eq!(iter.current_position(), 4);
     assert_eq!(iter.next().unwrap(), (4, "DEF\n".to_string()));
     assert_eq!(iter.next().unwrap(), (8, "GHI\n".to_string()));
@@ -111,7 +111,7 @@ fn test_line_iterator_after_multiple_edits() {
 fn test_line_iterator_prev() {
     let buffer = TextBuffer::from_bytes(b"Line 1\n\nLine 3\n".to_vec());
 
-    let mut iter = buffer.line_iterator(8); // Start at "Line 3"
+    let mut iter = buffer.line_iterator(8, 80); // Start at "Line 3"
     assert_eq!(iter.current_position(), 8);
 
     let (pos, content) = iter.prev().unwrap();
@@ -127,7 +127,7 @@ fn test_line_iterator_prev() {
 fn test_line_iterator_no_trailing_newline() {
     let buffer = TextBuffer::from_bytes(b"Line 1\nLine 2".to_vec());
 
-    let mut iter = buffer.line_iterator(0);
+    let mut iter = buffer.line_iterator(0, 80);
     assert_eq!(iter.next().unwrap(), (0, "Line 1\n".to_string()));
     assert_eq!(iter.next().unwrap(), (7, "Line 2".to_string())); // No trailing newline
 
@@ -138,7 +138,7 @@ fn test_line_iterator_no_trailing_newline() {
 fn test_line_iterator_single_char_lines() {
     let buffer = TextBuffer::from_bytes(b"a\nb\nc\n".to_vec());
 
-    let mut iter = buffer.line_iterator(0);
+    let mut iter = buffer.line_iterator(0, 80);
     assert_eq!(iter.next().unwrap(), (0, "a\n".to_string()));
     assert_eq!(iter.next().unwrap(), (2, "b\n".to_string()));
     assert_eq!(iter.next().unwrap(), (4, "c\n".to_string()));

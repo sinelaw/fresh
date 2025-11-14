@@ -277,7 +277,7 @@ fn test_line_iterator_with_offset_to_position() {
 
     // Test creating line iterator at various positions
     for byte_pos in 0..=buffer.len() {
-        let iter = buffer.line_iterator(byte_pos);
+        let iter = buffer.line_iterator(byte_pos, 80);
         let iter_pos = iter.current_position();
         let expected_line = buffer
             .offset_to_position(byte_pos)

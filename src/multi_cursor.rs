@@ -56,7 +56,7 @@ pub fn add_cursor_above(state: &EditorState) -> AddCursorResult {
     let primary = state.cursors.primary();
 
     // Find the start of the current line using iterator
-    let mut iter = state.buffer.line_iterator(primary.position);
+    let mut iter = state.buffer.line_iterator(primary.position, 80);
     let Some((line_start, _line_content)) = iter.next() else {
         return AddCursorResult::Failed {
             message: "Unable to find current line".to_string(),
@@ -101,7 +101,7 @@ pub fn add_cursor_below(state: &EditorState) -> AddCursorResult {
     let primary = state.cursors.primary();
 
     // Find the start of the current line using iterator
-    let mut iter = state.buffer.line_iterator(primary.position);
+    let mut iter = state.buffer.line_iterator(primary.position, 80);
     let Some((line_start, _)) = iter.next() else {
         return AddCursorResult::Failed {
             message: "Unable to find current line".to_string(),

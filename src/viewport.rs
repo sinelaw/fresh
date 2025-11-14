@@ -85,7 +85,7 @@ impl Viewport {
     /// Scroll up by N lines (byte-based)
     /// LineCache automatically tracks line numbers
     pub fn scroll_up(&mut self, buffer: &Buffer, lines: usize) {
-        let mut iter = buffer.line_iterator(self.top_byte);
+        let mut iter = buffer.line_iterator(self.top_byte, 80);
         for _ in 0..lines {
             if iter.prev().is_none() {
                 break;
@@ -97,7 +97,7 @@ impl Viewport {
     /// Scroll down by N lines (byte-based)
     /// LineCache automatically tracks line numbers
     pub fn scroll_down(&mut self, buffer: &Buffer, lines: usize) {
-        let mut iter = buffer.line_iterator(self.top_byte);
+        let mut iter = buffer.line_iterator(self.top_byte, 80);
         for _ in 0..lines {
             if iter.next().is_none() {
                 break;
@@ -130,7 +130,7 @@ impl Viewport {
         // Try to iterate viewport_height lines from proposed_top_byte
         // If we can't reach viewport_height lines before hitting EOF,
         // then we need to adjust backward
-        let mut iter = buffer.line_iterator(proposed_top_byte);
+        let mut iter = buffer.line_iterator(proposed_top_byte, 80);
         let mut lines_visible = 0;
 
         while let Some((_, _)) = iter.next() {
@@ -187,7 +187,7 @@ impl Viewport {
         let lines_short = viewport_height - lines_visible;
         tracing::trace!("DEBUG: lines_short={}, scrolling back", lines_short);
 
-        let mut backtrack_iter = buffer.line_iterator(proposed_top_byte);
+        let mut backtrack_iter = buffer.line_iterator(proposed_top_byte, 80);
         tracing::trace!(
             "DEBUG: Backtracking from byte {}",
             backtrack_iter.current_position()
@@ -222,7 +222,7 @@ impl Viewport {
     /// This seeks from the beginning to find the byte position of the line
     pub fn scroll_to(&mut self, buffer: &Buffer, line: usize) {
         // Seek from the beginning to find the byte position for this line
-        let mut iter = buffer.line_iterator(0);
+        let mut iter = buffer.line_iterator(0, 80);
         let mut current_line = 0;
 
         while current_line < line {
@@ -287,7 +287,7 @@ impl Viewport {
         }
 
         // Find the start of the line containing the cursor using iterator
-        let cursor_iter = buffer.line_iterator(cursor.position);
+        let cursor_iter = buffer.line_iterator(cursor.position, 80);
         let cursor_line_start = cursor_iter.current_position();
 
         // Check if cursor is visible by counting lines BETWEEN top_byte and cursor
@@ -297,7 +297,7 @@ impl Viewport {
             false
         } else {
             // Count how many lines are between top_byte and cursor_line_start
-            let mut iter = buffer.line_iterator(self.top_byte);
+            let mut iter = buffer.line_iterator(self.top_byte, 80);
             let mut lines_from_top = 0;
 
             while iter.current_position() < cursor_line_start && lines_from_top < viewport_lines {
@@ -316,7 +316,7 @@ impl Viewport {
             let target_line_from_top = viewport_lines / 2;
 
             // Move backwards from cursor to find the new top_byte
-            let mut iter = buffer.line_iterator(cursor_line_start);
+            let mut iter = buffer.line_iterator(cursor_line_start, 80);
 
             for _ in 0..target_line_from_top {
                 if iter.prev().is_none() {
@@ -334,7 +334,7 @@ impl Viewport {
             let cursor_column = cursor.position.saturating_sub(cursor_line_start);
 
             // Get the line content to know its length (for limiting horizontal scroll)
-            let mut line_iter = buffer.line_iterator(cursor_line_start);
+            let mut line_iter = buffer.line_iterator(cursor_line_start, 80);
             let line_length = if let Some((_start, content)) = line_iter.next() {
                 // Line length without the newline character
                 content.trim_end_matches('\n').len()
@@ -354,7 +354,7 @@ impl Viewport {
     /// In practice, use ensure_visible() which works directly with cursors and bytes
     pub fn ensure_line_visible(&mut self, buffer: &Buffer, line: usize) {
         // Seek to the target line to get its byte position
-        let mut seek_iter = buffer.line_iterator(0);
+        let mut seek_iter = buffer.line_iterator(0, 80);
         let mut current_line = 0;
         let mut target_line_byte = 0;
 
@@ -373,7 +373,7 @@ impl Viewport {
 
         // Check if the line is already visible by iterating from top_byte
         let visible_count = self.visible_line_count();
-        let mut iter = buffer.line_iterator(self.top_byte);
+        let mut iter = buffer.line_iterator(self.top_byte, 80);
         let mut lines_from_top = 0;
         let mut target_is_visible = false;
 
@@ -394,7 +394,7 @@ impl Viewport {
             let target_line_from_top = effective_offset;
 
             // Move backwards from target to find new top_byte
-            let mut iter = buffer.line_iterator(target_line_byte);
+            let mut iter = buffer.line_iterator(target_line_byte, 80);
             for _ in 0..target_line_from_top {
                 if iter.prev().is_none() {
                     break;
@@ -478,7 +478,7 @@ impl Viewport {
         let cursor_line_bytes: Vec<usize> = sorted_cursors
             .iter()
             .map(|(_, cursor)| {
-                let iter = buffer.line_iterator(cursor.position);
+                let iter = buffer.line_iterator(cursor.position, 80);
                 iter.current_position()
             })
             .collect();
@@ -488,7 +488,7 @@ impl Viewport {
         let max_byte = *cursor_line_bytes.iter().max().unwrap();
 
         // Count lines between min and max using iterator
-        let mut iter = buffer.line_iterator(min_byte);
+        let mut iter = buffer.line_iterator(min_byte, 80);
         let mut line_span = 0;
         while let Some((line_byte, _)) = iter.next() {
             if line_byte >= max_byte {
@@ -502,7 +502,7 @@ impl Viewport {
         // If all cursors fit in the viewport, center them
         if line_span < visible_count {
             let lines_to_go_back = visible_count / 2;
-            let mut iter = buffer.line_iterator(min_byte);
+            let mut iter = buffer.line_iterator(min_byte, 80);
             for _ in 0..lines_to_go_back {
                 if iter.prev().is_none() {
                     break;
@@ -524,12 +524,12 @@ impl Viewport {
     /// the line rendering loop in split_rendering.rs to eliminate duplicate line iteration.
     pub fn cursor_screen_position(&self, buffer: &mut Buffer, cursor: &Cursor) -> (u16, u16) {
         // Find line start using iterator
-        let cursor_iter = buffer.line_iterator(cursor.position);
+        let cursor_iter = buffer.line_iterator(cursor.position, 80);
         let line_start = cursor_iter.current_position();
         let column = cursor.position.saturating_sub(line_start);
 
         // Count lines from top_byte to cursor to get screen row
-        let mut iter = buffer.line_iterator(self.top_byte);
+        let mut iter = buffer.line_iterator(self.top_byte, 80);
         let mut screen_row = 0;
 
         while let Some((line_byte, _)) = iter.next() {
@@ -546,7 +546,7 @@ impl Viewport {
             let config = WrapConfig::new(self.width as usize, gutter_width, true);
 
             // Get the line text for wrapping
-            let mut line_iter = buffer.line_iterator(line_start);
+            let mut line_iter = buffer.line_iterator(line_start, 80);
             let line_text = if let Some((_start, content)) = line_iter.next() {
                 // Remove trailing newline if present
                 content.trim_end_matches('\n').to_string()
@@ -628,7 +628,7 @@ mod tests {
         vp.ensure_line_visible(&buffer, 50);
         assert!(vp.top_byte > 0);
         // Verify the line is now visible by checking we can iterate to it
-        let mut iter = buffer.line_iterator(vp.top_byte);
+        let mut iter = buffer.line_iterator(vp.top_byte, 80);
         let mut found = false;
         for _ in 0..vp.visible_line_count() {
             if iter.next().is_none() {
@@ -645,7 +645,7 @@ mod tests {
         let mut vp = Viewport::new(80, 10);
 
         // Find byte position of line 15 using iterator
-        let mut iter = buffer.line_iterator(0);
+        let mut iter = buffer.line_iterator(0, 80);
         let mut cursor_pos = 0;
         for i in 0..15 {
             if let Some((line_start, _)) = iter.next() {
@@ -694,7 +694,7 @@ mod tests {
         );
 
         // Now move cursor to line 5 (above the viewport)
-        let mut iter = buffer.line_iterator(0);
+        let mut iter = buffer.line_iterator(0, 80);
         let mut line_5_byte = 0;
         for i in 0..5 {
             if let Some((line_start, _)) = iter.next() {
@@ -750,7 +750,7 @@ mod tests {
         assert_eq!(vp.top_byte, 0);
 
         // Move cursor to line 15 (below viewport)
-        let mut iter = buffer.line_iterator(0);
+        let mut iter = buffer.line_iterator(0, 80);
         let mut line_15_byte = 0;
         for i in 0..15 {
             if let Some((line_start, _)) = iter.next() {

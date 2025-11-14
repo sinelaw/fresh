@@ -66,6 +66,12 @@ pub struct EditorConfig {
     /// Files smaller will count actual lines for accurate scrollbar rendering
     #[serde(default = "default_large_file_threshold")]
     pub large_file_threshold_bytes: u64,
+
+    /// Estimated average line length in bytes (used for large file line estimation)
+    /// This is used by LineIterator to estimate line positions in large files
+    /// without line metadata. Typical values: 80-120 bytes.
+    #[serde(default = "default_estimated_line_length")]
+    pub estimated_line_length: usize,
 }
 
 fn default_tab_size() -> usize {
@@ -101,6 +107,10 @@ fn default_snapshot_interval() -> usize {
     100
 }
 
+fn default_estimated_line_length() -> usize {
+    80
+}
+
 impl Default for EditorConfig {
     fn default() -> Self {
         Self {
@@ -114,6 +124,7 @@ impl Default for EditorConfig {
             highlight_timeout_ms: default_highlight_timeout(),
             snapshot_interval: default_snapshot_interval(),
             large_file_threshold_bytes: default_large_file_threshold(),
+            estimated_line_length: default_estimated_line_length(),
         }
     }
 }
