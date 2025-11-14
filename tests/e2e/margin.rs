@@ -377,3 +377,149 @@ fn test_line_numbers_update_during_incremental_scroll() {
     // Verify line 1 is no longer visible
     harness.assert_screen_not_contains("   1 │");
 }
+
+/// Test that line numbers update correctly with PageUp/PageDown and Ctrl+Home/End
+#[test]
+fn test_line_numbers_update_with_navigation_keys() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("nav_test.txt");
+
+    // Create a file with 200 lines (enough for multiple page scrolls)
+    let content: String = (1..=200).map(|i| format!("Line {i}\n")).collect();
+    std::fs::write(&file_path, content).unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // === Test 1: Initial state ===
+    harness.assert_screen_contains("   1 │");
+    harness.assert_screen_contains("Line 1");
+
+    // === Test 2: PageDown multiple times ===
+    for i in 1..=3 {
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        println!("\nScreen after PageDown #{i}:\n{screen}");
+    }
+
+    // After 3 PageDowns, should be around line 60-70
+    let screen = harness.screen_to_string();
+    let should_be_around_line_60 =
+        screen.contains("  60 │") ||
+        screen.contains("  61 │") ||
+        screen.contains("  62 │") ||
+        screen.contains("  63 │") ||
+        screen.contains("  64 │") ||
+        screen.contains("  65 │") ||
+        screen.contains("  66 │") ||
+        screen.contains("  67 │") ||
+        screen.contains("  68 │") ||
+        screen.contains("  69 │") ||
+        screen.contains("  70 │");
+
+    assert!(
+        should_be_around_line_60,
+        "After 3 PageDowns, should be around line 60-70, but screen shows:\n{}",
+        screen
+    );
+
+    // === Test 3: PageUp twice ===
+    for i in 1..=2 {
+        harness
+            .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        println!("\nScreen after PageUp #{i}:\n{screen}");
+    }
+
+    // After 2 PageUps from ~line 65, should be around line 20-25
+    let screen = harness.screen_to_string();
+    let should_be_around_line_20 =
+        screen.contains("  20 │") ||
+        screen.contains("  21 │") ||
+        screen.contains("  22 │") ||
+        screen.contains("  23 │") ||
+        screen.contains("  24 │") ||
+        screen.contains("  25 │") ||
+        screen.contains("  26 │") ||
+        screen.contains("  27 │") ||
+        screen.contains("  28 │");
+
+    assert!(
+        should_be_around_line_20,
+        "After 2 PageUps, should be around line 20-28, but screen shows:\n{}",
+        screen
+    );
+
+    // === Test 4: Ctrl+End (jump to end) ===
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("\nScreen after Ctrl+End:\n{screen}");
+
+    // Should show line 200 (last line) and lines near it
+    harness.assert_screen_contains(" 200 │");
+    harness.assert_screen_contains("Line 200");
+
+    // Line 1 should definitely not be visible
+    harness.assert_screen_not_contains("   1 │");
+
+    // Should also see lines in the 180s-190s range (last screenful)
+    let has_high_lines =
+        screen.contains(" 180 │") ||
+        screen.contains(" 185 │") ||
+        screen.contains(" 190 │") ||
+        screen.contains(" 195 │") ||
+        screen.contains(" 199 │");
+
+    assert!(
+        has_high_lines,
+        "At end of file, should show lines in 180s-190s range, but screen shows:\n{}",
+        screen
+    );
+
+    // === Test 5: Ctrl+Home (jump to beginning) ===
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("\nScreen after Ctrl+Home:\n{screen}");
+
+    // Should be back to showing line 1
+    harness.assert_screen_contains("   1 │");
+    harness.assert_screen_contains("Line 1");
+
+    // Line 200 should not be visible
+    harness.assert_screen_not_contains(" 200 │");
+
+    // Should see early lines
+    harness.assert_screen_contains("   2 │");
+    harness.assert_screen_contains("   3 │");
+    harness.assert_screen_contains("  10 │");
+    harness.assert_screen_contains("  20 │");
+
+    // === Test 6: Jump back and forth to ensure consistency ===
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains(" 200 │");
+
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("   1 │");
+}
