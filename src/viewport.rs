@@ -265,8 +265,6 @@ impl Viewport {
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)
     /// Now works entirely with byte offsets - no line number calculations needed!
     pub fn ensure_visible(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
-        eprintln!("DEBUG ensure_visible: cursor.position={}, top_byte={}", cursor.position, self.top_byte);
-
         // For large files with lazy loading, ensure data around cursor is loaded
         let viewport_lines = self.visible_line_count().max(1);
 
@@ -279,20 +277,14 @@ impl Viewport {
         let remaining_bytes = buffer_len.saturating_sub(load_start);
         let load_length = (estimated_viewport_bytes * 3).min(remaining_bytes);
 
-        eprintln!("DEBUG Loading data: get_text_range_mut(start={}, len={}, buffer_len={})", load_start, load_length, buffer_len);
-
         // Force-load the data by actually requesting it (not just prepare_viewport)
         if let Err(e) = buffer.get_text_range_mut(load_start, load_length) {
             tracing::warn!("Failed to load data around cursor at {}: {}", cursor.position, e);
-            eprintln!("ERROR get_text_range_mut failed: {}", e);
-        } else {
-            eprintln!("DEBUG Successfully loaded {} bytes starting at {}", load_length, load_start);
         }
 
         // Find the start of the line containing the cursor using iterator
         let cursor_iter = buffer.line_iterator(cursor.position);
         let cursor_line_start = cursor_iter.current_position();
-        eprintln!("DEBUG cursor_line_start={} (cursor.position={})", cursor_line_start, cursor.position);
 
         // Check if cursor is visible by counting lines BETWEEN top_byte and cursor
         // This avoids needing absolute line numbers!
@@ -311,33 +303,25 @@ impl Viewport {
                 lines_from_top += 1;
             }
 
-            eprintln!("DEBUG lines_from_top={}, visible_count={}", lines_from_top, viewport_lines);
             lines_from_top < viewport_lines
         };
 
-        eprintln!("DEBUG cursor_is_visible={}", cursor_is_visible);
-
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {
-            eprintln!("DEBUG: Scrolling to make cursor visible!");
-
             // Position cursor at center of viewport when jumping
             let target_line_from_top = viewport_lines / 2;
 
             // Move backwards from cursor to find the new top_byte
             let mut iter = buffer.line_iterator(cursor_line_start);
 
-            for i in 0..target_line_from_top {
+            for _ in 0..target_line_from_top {
                 if iter.prev().is_none() {
-                    eprintln!("DEBUG: Hit beginning of buffer at iteration {}", i);
                     break; // Hit beginning of buffer
                 }
             }
 
             let new_top_byte = iter.current_position();
-            eprintln!("DEBUG: Setting new_top_byte={}", new_top_byte);
             self.set_top_byte_with_limit(buffer, new_top_byte);
-            eprintln!("DEBUG: After set_top_byte_with_limit, self.top_byte={}", self.top_byte);
         }
 
         // Horizontal scrolling - skip if line wrapping is enabled

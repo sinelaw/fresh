@@ -3,6 +3,15 @@ use crate::text_buffer::TextBuffer;
 
 /// Iterator over lines in a TextBuffer with bidirectional support
 /// Uses piece iterator for efficient sequential scanning (ONE O(log n) initialization)
+///
+/// TODO: For huge file mode (>100MB), reconsider this design:
+/// - Current implementation scans byte-by-byte when line metadata unavailable
+/// - This is inefficient: get_text_range(pos, 1) per byte = many piece tree lookups
+/// - Alternative approaches:
+///   1. Bulk load chunks (e.g., 64KB) and scan for newlines in memory
+///   2. Use a different iterator that works purely with byte ranges
+///   3. Cache loaded chunks to avoid redundant loads during backward scans
+///   4. For huge files, consider streaming/windowed approach instead of random access
 pub struct LineIterator<'a> {
     buffer: &'a TextBuffer,
     /// Current byte position in the document (points to start of current line)
@@ -22,21 +31,15 @@ impl<'a> LineIterator<'a> {
             // Try using offset_to_position first (fast if line metadata is available)
             match buffer.offset_to_position(byte_pos) {
                 Some(pos) => {
-                    eprintln!("DEBUG LineIterator::new: byte_pos={}, offset_to_position returned Some(({}, {}))",
-                        byte_pos, pos.line, pos.column);
-                    let line_start = buffer.position_to_offset(Position {
+                    buffer.position_to_offset(Position {
                         line: pos.line,
                         column: 0,
-                    });
-                    eprintln!("DEBUG LineIterator::new: position_to_offset({}, 0) returned {}",
-                        pos.line, line_start);
-                    line_start
+                    })
                 }
                 None => {
                     // Line metadata not available - scan backwards to find newline
                     // This handles large files with lazy loading
-                    eprintln!("DEBUG LineIterator::new: byte_pos={}, offset_to_position returned None - scanning backwards",
-                        byte_pos);
+                    // TODO: This is inefficient for huge files - see struct documentation
 
                     // Scan backwards from byte_pos to find the previous newline
                     let mut scan_pos = byte_pos;
@@ -47,7 +50,6 @@ impl<'a> LineIterator<'a> {
                             if !bytes.is_empty() && bytes[0] == b'\n' {
                                 // Found newline - line starts at next byte
                                 let line_start = scan_pos + 1;
-                                eprintln!("DEBUG LineIterator::new: Found newline at {}, line_start={}", scan_pos, line_start);
                                 return LineIterator {
                                     buffer,
                                     current_pos: line_start,
@@ -57,12 +59,10 @@ impl<'a> LineIterator<'a> {
                         }
                         // Don't scan too far back - limit to reasonable line length
                         if byte_pos - scan_pos > 10000 {
-                            eprintln!("DEBUG LineIterator::new: Scanned 10000 bytes back, giving up at {}", scan_pos);
                             break;
                         }
                     }
                     // Either hit start of file or gave up - start from here
-                    eprintln!("DEBUG LineIterator::new: Using scan_pos={} as line_start", scan_pos);
                     scan_pos
                 }
             }
