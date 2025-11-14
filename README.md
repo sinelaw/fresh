@@ -169,10 +169,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for implementation details.
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Implementation details
 - [TESTING.md](docs/TESTING.md) - Testing strategy
 - [VISUAL_REGRESSION_TESTING.md](docs/VISUAL_REGRESSION_TESTING.md) - Visual regression testing guide
-- [visual-regression/tests/](docs/visual-regression/tests/) - Visual test screenshots (auto-generated)
-- [LSP_ARCHITECTURE.md](docs/LSP_ARCHITECTURE.md) - LSP integration
-- [FILE_EXPLORER.md](docs/FILE_EXPLORER.md) - File explorer details
-- [PLUGIN_SYSTEM_IMPLEMENTATION.md](docs/PLUGIN_SYSTEM_IMPLEMENTATION.md) - Plugin system status
+- [PLUGINS.md](docs/PLUGINS.md) - Plugin system overview and API reference
+- [PROCESS_LIMITS.md](docs/PROCESS_LIMITS.md) - Process resource limits for LSP servers
 
 ## Testing
 

@@ -1,76 +1,5 @@
 # TODO
 
-## Recent Major Completions ✅
-
-- **Git Plugin Refactoring** - Removed ~465 lines of hardcoded Rust git code (src/git.rs, Action::GitGrep, Action::GitFindFile, etc.) and replaced with pure Lua plugins using hook-based prompt API and string-based function mapping
-- **Plugin Prompt API** - Hook-based design (prompt-changed, prompt-confirmed, prompt-cancelled) for interactive UI in plugins
-- **String-Based Function Mapping** - Commands call global Lua functions by name (e.g., `action = "start_git_grep"`)
-- **File Opening API** - `editor.open_file({path, line, column})` for precise navigation
-
-## Completed Features ✅
-
-### Core Functionality
-- Event-driven architecture with unlimited undo/redo
-- Multi-cursor editing
-- Clipboard operations (copy/cut/paste)
-- Position history navigation (Alt+Left/Right)
-- Line wrapping
-- Large file support (1GB+) with instant startup
-- Advanced prompt editing (word deletion, copy/paste/cut in all input prompts)
-- **Auto-indent** - Tree-sitter based, hybrid heuristic approach, supports all languages
-
-### UI & Layout
-- Split views (horizontal/vertical)
-- Scrollbar, tab bar, status bar, line numbers
-- Command palette (Ctrl+P), help system (Ctrl+H)
-- File explorer (lazy loading, gitignore support, create/delete, unsaved indicators)
-- Themes (dark/light/high-contrast)
-
-### LSP Integration
-- Diagnostics (errors/warnings)
-- Code completion (Ctrl+Space)
-- Go-to-definition, rename refactoring (F2)
-- Multi-language support, process resource limits
-
-### Search & Replace
-- ✅ **Streaming search** - Literal & regex, efficient on GB+ files with overlapping chunks
-- ✅ **Replace operations** - replace_range(), replace_next(), replace_all(), replace_all_regex() with capture groups
-- ✅ **Replace UI** (Ctrl+R) - Emacs-style two-step prompts with incremental highlighting
-- ✅ **Interactive replace** (Ctrl+Alt+R) - Query-replace with y/n/!/q prompts, proper undo/redo
-- ✅ **Search in selection** - Limit search to selected range
-- ✅ **Search history** - Up/Down navigation, bash-like, 100 items per history
-- Basic text search UI (F3/Shift+F3), wrap-around, highlighting, incremental search
-
-### File Operations
-- Open/save/close, multiple buffers, async I/O
-- File explorer (create/delete files/dirs, show/hide hidden, respect gitignore, auto-expand on focus)
-
-### Git Integration
-- ✅ **Git grep** - Implemented as pure Lua plugin using hook-based prompt API
-- ✅ **Git find file** - Implemented as pure Lua plugin with fuzzy matching
-- Plugins accessible via command palette ("Git Grep", "Git Find File")
-
-### Plugin System
-- ✅ **Lua 5.4 runtime** - Fully integrated plugin manager, lifecycle management
-- ✅ **Dynamic hooks** - 20+ hook types (render-line, after-save, prompt-changed, etc.)
-- ✅ **String-based function mapping** - Commands call global Lua functions by name
-- ✅ **Hook-based prompt API** - Interactive UI via prompt-changed/confirmed/cancelled hooks
-- ✅ **File opening API** - `editor.open_file({path, line, column})`
-- ✅ **Command registration** - Plugins can register custom commands
-- ✅ **Async process spawning** - Non-blocking external commands
-- ✅ **Buffer query API** - Metadata queries, streaming content access via render-line hook
-- ✅ **Overlay lifecycle** - clear_all_overlays(), remove_overlays_by_prefix()
-- ✅ **Full plugins** - git-grep, git-find-file, TODO highlighter (optimized for GB+ files)
-
-### Performance & Optimization
-- ✅ **Marker system (IntervalTree)** - O(log n) marker operations, lazy delta propagation for position tracking
-- ✅ **ChunkTree optimization** - 4KB chunks → 38x speedup (file loading: 3.2s → 83ms)
-- ✅ **Scroll optimization** - O(n) → O(viewport_height)
-- ✅ **Buffer cache removal** - Eliminated expensive `buffer.to_string()` calls
-- 400+ unit tests, 59 E2E tests, property-based tests, visual regression testing
-
----
-
 ## Remaining Work
 
 ### Priority 1: Critical Editor Features
@@ -565,7 +494,7 @@ Where:
 ## Summary
 
 ### Current Status
-**Strengths**: Multi-cursor editing, search & replace, auto-indent, LSP basics, large file support (1GB+), fully integrated Lua plugin system with hook-based prompt API, IntervalTree marker system, strong test coverage (400+ tests)
+**Strengths**: Multi-cursor editing, search & replace, auto-indent, LSP basics, large file support (1GB+), fully integrated Lua plugin system with hook-based prompt API, IntervalTree marker system, strong test coverage
 
 **Recent Major Completions**:
 - ✅ **Git Plugin Refactoring** - Converted git operations to pure Lua plugins, removed ~465 lines of Rust code
@@ -610,3 +539,74 @@ Where:
 - [ ] Welcome screen, configuration UI
 - [ ] Crash recovery, session persistence
 - [ ] Plugin marketplace, comprehensive docs
+
+## Completed Work
+
+## Recent Major Completions ✅
+
+- **Git Plugin Refactoring** - Removed ~465 lines of hardcoded Rust git code (src/git.rs, Action::GitGrep, Action::GitFindFile, etc.) and replaced with pure Lua plugins using hook-based prompt API and string-based function mapping
+- **Plugin Prompt API** - Hook-based design (prompt-changed, prompt-confirmed, prompt-cancelled) for interactive UI in plugins
+- **String-Based Function Mapping** - Commands call global Lua functions by name (e.g., `action = "start_git_grep"`)
+- **File Opening API** - `editor.open_file({path, line, column})` for precise navigation
+
+## Completed Features ✅
+
+### Core Functionality
+- Event-driven architecture with unlimited undo/redo
+- Multi-cursor editing
+- Clipboard operations (copy/cut/paste)
+- Position history navigation (Alt+Left/Right)
+- Line wrapping
+- Large file support (1GB+) with instant startup
+- Advanced prompt editing (word deletion, copy/paste/cut in all input prompts)
+- **Auto-indent** - Tree-sitter based, hybrid heuristic approach, supports all languages
+
+### UI & Layout
+- Split views (horizontal/vertical)
+- Scrollbar, tab bar, status bar, line numbers
+- Command palette (Ctrl+P), help system (Ctrl+H)
+- File explorer (lazy loading, gitignore support, create/delete, unsaved indicators)
+- Themes (dark/light/high-contrast)
+
+### LSP Integration
+- Diagnostics (errors/warnings)
+- Code completion (Ctrl+Space)
+- Go-to-definition, rename refactoring (F2)
+- Multi-language support, process resource limits
+
+### Search & Replace
+- ✅ **Streaming search** - Literal & regex, efficient on GB+ files with overlapping chunks
+- ✅ **Replace operations** - replace_range(), replace_next(), replace_all(), replace_all_regex() with capture groups
+- ✅ **Replace UI** (Ctrl+R) - Emacs-style two-step prompts with incremental highlighting
+- ✅ **Interactive replace** (Ctrl+Alt+R) - Query-replace with y/n/!/q prompts, proper undo/redo
+- ✅ **Search in selection** - Limit search to selected range
+- ✅ **Search history** - Up/Down navigation, bash-like, 100 items per history
+- Basic text search UI (F3/Shift+F3), wrap-around, highlighting, incremental search
+
+### File Operations
+- Open/save/close, multiple buffers, async I/O
+- File explorer (create/delete files/dirs, show/hide hidden, respect gitignore, auto-expand on focus)
+
+### Git Integration
+- ✅ **Git grep** - Implemented as pure Lua plugin using hook-based prompt API
+- ✅ **Git find file** - Implemented as pure Lua plugin with fuzzy matching
+- Plugins accessible via command palette ("Git Grep", "Git Find File")
+
+### Plugin System
+- ✅ **Lua 5.4 runtime** - Fully integrated plugin manager, lifecycle management
+- ✅ **Dynamic hooks** - 20+ hook types (render-line, after-save, prompt-changed, etc.)
+- ✅ **String-based function mapping** - Commands call global Lua functions by name
+- ✅ **Hook-based prompt API** - Interactive UI via prompt-changed/confirmed/cancelled hooks
+- ✅ **File opening API** - `editor.open_file({path, line, column})`
+- ✅ **Command registration** - Plugins can register custom commands
+- ✅ **Async process spawning** - Non-blocking external commands
+- ✅ **Buffer query API** - Metadata queries, streaming content access via render-line hook
+- ✅ **Overlay lifecycle** - clear_all_overlays(), remove_overlays_by_prefix()
+- ✅ **Full plugins** - git-grep, git-find-file, TODO highlighter (optimized for GB+ files)
+
+### Performance & Optimization
+- ✅ **Marker system (IntervalTree)** - O(log n) marker operations, lazy delta propagation for position tracking
+- ✅ **ChunkTree optimization** - 4KB chunks → 38x speedup (file loading: 3.2s → 83ms)
+- ✅ **Scroll optimization** - O(n) → O(viewport_height)
+- ✅ **Buffer cache removal** - Eliminated expensive `buffer.to_string()` calls
+- 400+ unit tests, E2E tests, property-based tests, visual regression testing

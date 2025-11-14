@@ -20,7 +20,7 @@ A VS Code-style file explorer with lazy loading, gitignore support, and async I/
 - Unsaved change indicators (●) for modified files
 - Symmetric scrolling behavior (cursor reaches viewport edges before scrolling)
 - 15+ keybindings
-- 27 E2E tests (all passing in parallel)
+- E2E tests (all passing in parallel)
 
 **In progress:**
 - Rename (needs input dialog system)
@@ -87,9 +87,9 @@ In `config.json`:
 
 ## Tests
 
-- 22 tests in `src/fs/` (filesystem layer)
-- 35 tests in `src/file_tree/` (tree model, including expand_to_path tests)
-- 27 E2E tests in `tests/e2e/file_explorer.rs` (+ 1 ignored for unrelated issue)
+- Tests in `src/fs/` (filesystem layer)
+- Tests in `src/file_tree/` (tree model, including expand_to_path tests)
+- E2E tests in `tests/e2e/file_explorer.rs` (+ 1 ignored for unrelated issue)
   - Enter key behavior (directories and files)
   - Auto-expansion on initialization
   - Auto-expand and select open file on focus switch

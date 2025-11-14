@@ -105,7 +105,7 @@ Methods that needed both line start and line content now call `line_range()` onc
 
 ## Testing
 
-All 465 existing unit tests pass, including:
+All existing tests pass.
 - Property-based tests for tree consistency
 - Insert/delete operation tests
 - Position conversion tests
