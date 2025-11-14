@@ -1113,7 +1113,9 @@ fn test_large_file_screen_content_validation() {
     // Test 3: Jump to end of file and validate content
     println!("\n=== Test 3: Jump to end of file ===");
     let start = Instant::now();
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     println!("✓ Jumped to EOF in: {:?}", start.elapsed());
 
     let cursor_pos = harness.cursor_position();
@@ -1157,7 +1159,9 @@ fn test_large_file_screen_content_validation() {
     // Test 4: Jump back to beginning and validate
     println!("\n=== Test 4: Jump back to beginning ===");
     let start = Instant::now();
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
     println!("✓ Jumped to start in: {:?}", start.elapsed());
 
     let cursor_pos = harness.cursor_position();
@@ -1189,8 +1193,12 @@ fn test_large_file_screen_content_validation() {
 
     // Test 6: Navigate away and back, verify edit persists
     println!("\n=== Test 6: Navigate away and back, verify edit persists ===");
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
-    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
 
     let screen_after_nav = harness.screen_to_string();
     assert!(

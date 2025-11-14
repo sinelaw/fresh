@@ -1,5 +1,5 @@
-use crate::common::harness::EditorTestHarness;
 use crate::common::fixtures::TestFixture;
+use crate::common::harness::EditorTestHarness;
 use fresh::document_model::{DocumentModel, DocumentPosition};
 
 /// Test DocumentModel with a small file (< 1MB) that has precise line indexing
@@ -210,14 +210,8 @@ fn test_document_model_large_file() {
     // Test 6: Verify get_chunk_at_offset works for large files
     let (chunk_offset, chunk_text) = state.get_chunk_at_offset(0, 100).unwrap();
     assert_eq!(chunk_offset, 0, "Chunk should start at requested offset");
-    assert!(
-        chunk_text.len() > 0,
-        "Chunk should contain some text"
-    );
-    assert!(
-        chunk_text.len() <= 200,
-        "Chunk should be reasonably sized"
-    );
+    assert!(chunk_text.len() > 0, "Chunk should contain some text");
+    assert!(chunk_text.len() <= 200, "Chunk should be reasonably sized");
 
     // Test 7: Verify viewport content from middle of file
     let mid_offset = 30_000_000; // ~30MB into the file
@@ -338,18 +332,19 @@ fn test_document_model_search() {
     // But find_matches uses buffer.find_all which is case-sensitive
     // Let's search for "The" specifically
     let matches_the = state.find_matches("The", None).unwrap();
-    assert_eq!(
-        matches_the.len(),
-        2,
-        "Should find 2 occurrences of 'The'"
-    );
+    assert_eq!(matches_the.len(), 2, "Should find 2 occurrences of 'The'");
     assert_eq!(matches_the[0], 0, "First 'The' at offset 0");
-    assert_eq!(matches_the[1], 44, "Second 'The' at offset 44 (after 44 chars)");
+    assert_eq!(
+        matches_the[1], 44,
+        "Second 'The' at offset 44 (after 44 chars)"
+    );
 
     // Test 2: Search in a specific range
     let range_start = DocumentPosition::byte(20);
     let range_end = DocumentPosition::byte(44);
-    let matches_in_range = state.find_matches("the", Some((range_start, range_end))).unwrap();
+    let matches_in_range = state
+        .find_matches("the", Some((range_start, range_end)))
+        .unwrap();
 
     assert_eq!(
         matches_in_range.len(),

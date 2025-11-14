@@ -80,7 +80,10 @@ impl TestFixture {
 
             file.flush()?;
             let line_count = byte_offset / 81; // Each line is 81 bytes
-            eprintln!("Generated shared large test file with ~{} lines ({} bytes) at {path:?}", line_count, byte_offset);
+            eprintln!(
+                "Generated shared large test file with ~{} lines ({} bytes) at {path:?}",
+                line_count, byte_offset
+            );
         }
 
         Ok(path)

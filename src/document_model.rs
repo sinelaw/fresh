@@ -90,7 +90,6 @@
 /// 4. **Extensibility**: Easy to add RemoteDocument, VirtualDocument, etc.
 ///
 /// See also: `docs/DOCUMENT_MODEL.md` for detailed architecture documentation.
-
 use anyhow::Result;
 
 /// Position in a document - can be line-based or byte-based
@@ -235,12 +234,8 @@ pub trait DocumentModel {
     fn delete(&mut self, start: DocumentPosition, end: DocumentPosition) -> Result<()>;
 
     /// Replace a range
-    fn replace(
-        &mut self,
-        start: DocumentPosition,
-        end: DocumentPosition,
-        text: &str,
-    ) -> Result<()>;
+    fn replace(&mut self, start: DocumentPosition, end: DocumentPosition, text: &str)
+        -> Result<()>;
 
     // ===== Search Operations =====
 

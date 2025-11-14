@@ -49,16 +49,19 @@ pub fn action_to_events(
             let is_closing_delimiter = matches!(ch, '}' | ')' | ']');
 
             // First collect all deletions (for selections)
-            let deletions: Vec<_> = cursor_vec.iter()
+            let deletions: Vec<_> = cursor_vec
+                .iter()
                 .filter_map(|(cursor_id, cursor)| {
                     cursor.selection_range().map(|range| (*cursor_id, range))
                 })
                 .collect();
 
             // Collect insertion data (to avoid borrowing during loop)
-            let insertion_data: Vec<_> = cursor_vec.iter()
+            let insertion_data: Vec<_> = cursor_vec
+                .iter()
                 .map(|(cursor_id, cursor)| {
-                    let insert_position = cursor.selection_range()
+                    let insert_position = cursor
+                        .selection_range()
                         .map(|r| r.start)
                         .unwrap_or(cursor.position);
 
@@ -92,7 +95,11 @@ pub fn action_to_events(
             // Now process insertions
             for (cursor_id, insert_position, line_start, only_spaces) in insertion_data {
                 // Auto-dedent logic for closing delimiters
-                if is_closing_delimiter && auto_indent && only_spaces && insert_position > line_start {
+                if is_closing_delimiter
+                    && auto_indent
+                    && only_spaces
+                    && insert_position > line_start
+                {
                     // Calculate correct indent for the closing delimiter using tree-sitter
                     let correct_indent = if let Some(highlighter) = &state.highlighter {
                         let language = highlighter.language();
@@ -148,15 +155,20 @@ pub fn action_to_events(
             cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
 
             // Collect deletions and positions for indentation
-            let deletions: Vec<_> = cursor_vec.iter()
+            let deletions: Vec<_> = cursor_vec
+                .iter()
                 .filter_map(|(cursor_id, cursor)| {
-                    cursor.selection_range().map(|range| (*cursor_id, range.clone(), range.start))
+                    cursor
+                        .selection_range()
+                        .map(|range| (*cursor_id, range.clone(), range.start))
                 })
                 .collect();
 
-            let indent_positions: Vec<_> = cursor_vec.iter()
+            let indent_positions: Vec<_> = cursor_vec
+                .iter()
                 .map(|(cursor_id, cursor)| {
-                    let indent_position = cursor.selection_range()
+                    let indent_position = cursor
+                        .selection_range()
                         .map(|r| r.start)
                         .unwrap_or(cursor.position);
                     (*cursor_id, indent_position)
@@ -175,7 +187,6 @@ pub fn action_to_events(
 
             // Now process insertions
             for (cursor_id, indent_position) in indent_positions {
-
                 // Calculate indent for new line
                 let mut text = "\n".to_string();
 
@@ -217,13 +228,15 @@ pub fn action_to_events(
             cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
 
             // Collect deletions and insert positions
-            let deletions: Vec<_> = cursor_vec.iter()
+            let deletions: Vec<_> = cursor_vec
+                .iter()
                 .filter_map(|(cursor_id, cursor)| {
                     cursor.selection_range().map(|range| (*cursor_id, range))
                 })
                 .collect();
 
-            let insert_positions: Vec<_> = cursor_vec.iter()
+            let insert_positions: Vec<_> = cursor_vec
+                .iter()
                 .map(|(cursor_id, cursor)| (*cursor_id, cursor.position))
                 .collect();
 
@@ -862,7 +875,8 @@ pub fn action_to_events(
             cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
 
             // Collect all deletions first
-            let deletions: Vec<_> = cursor_vec.iter()
+            let deletions: Vec<_> = cursor_vec
+                .iter()
                 .filter_map(|(cursor_id, cursor)| {
                     if let Some(range) = cursor.selection_range() {
                         Some((*cursor_id, range))
@@ -894,7 +908,8 @@ pub fn action_to_events(
             let buffer_len = state.buffer.len();
 
             // Collect all deletions first
-            let deletions: Vec<_> = cursor_vec.iter()
+            let deletions: Vec<_> = cursor_vec
+                .iter()
                 .filter_map(|(cursor_id, cursor)| {
                     if let Some(range) = cursor.selection_range() {
                         Some((*cursor_id, range))
@@ -919,18 +934,22 @@ pub fn action_to_events(
 
         Action::DeleteWordBackward => {
             // Collect ranges first to avoid borrow checker issues
-            let deletions: Vec<_> = state.cursors.iter().filter_map(|(cursor_id, cursor)| {
-                if let Some(range) = cursor.selection_range() {
-                    Some((cursor_id, range))
-                } else {
-                    let word_start = find_word_start_left(&state.buffer, cursor.position);
-                    if word_start < cursor.position {
-                        Some((cursor_id, word_start..cursor.position))
+            let deletions: Vec<_> = state
+                .cursors
+                .iter()
+                .filter_map(|(cursor_id, cursor)| {
+                    if let Some(range) = cursor.selection_range() {
+                        Some((cursor_id, range))
                     } else {
-                        None
+                        let word_start = find_word_start_left(&state.buffer, cursor.position);
+                        if word_start < cursor.position {
+                            Some((cursor_id, word_start..cursor.position))
+                        } else {
+                            None
+                        }
                     }
-                }
-            }).collect();
+                })
+                .collect();
 
             // Now get text and create events
             for (cursor_id, range) in deletions {
@@ -945,18 +964,22 @@ pub fn action_to_events(
 
         Action::DeleteWordForward => {
             // Collect ranges first to avoid borrow checker issues
-            let deletions: Vec<_> = state.cursors.iter().filter_map(|(cursor_id, cursor)| {
-                if let Some(range) = cursor.selection_range() {
-                    Some((cursor_id, range))
-                } else {
-                    let word_end = find_word_start_right(&state.buffer, cursor.position);
-                    if cursor.position < word_end {
-                        Some((cursor_id, cursor.position..word_end))
+            let deletions: Vec<_> = state
+                .cursors
+                .iter()
+                .filter_map(|(cursor_id, cursor)| {
+                    if let Some(range) = cursor.selection_range() {
+                        Some((cursor_id, range))
                     } else {
-                        None
+                        let word_end = find_word_start_right(&state.buffer, cursor.position);
+                        if cursor.position < word_end {
+                            Some((cursor_id, cursor.position..word_end))
+                        } else {
+                            None
+                        }
                     }
-                }
-            }).collect();
+                })
+                .collect();
 
             // Now get text and create events
             for (cursor_id, range) in deletions {
@@ -971,14 +994,18 @@ pub fn action_to_events(
 
         Action::DeleteLine => {
             // Collect line ranges first to avoid borrow checker issues
-            let deletions: Vec<_> = state.cursors.iter().filter_map(|(cursor_id, cursor)| {
-                let mut iter = state.buffer.line_iterator(cursor.position);
-                let line_start = iter.current_position();
-                iter.next().map(|(_start, content)| {
-                    let line_end = line_start + content.len();
-                    (cursor_id, line_start..line_end)
+            let deletions: Vec<_> = state
+                .cursors
+                .iter()
+                .filter_map(|(cursor_id, cursor)| {
+                    let mut iter = state.buffer.line_iterator(cursor.position);
+                    let line_start = iter.current_position();
+                    iter.next().map(|(_start, content)| {
+                        let line_end = line_start + content.len();
+                        (cursor_id, line_start..line_end)
+                    })
                 })
-            }).collect();
+                .collect();
 
             // Now get text and create events
             for (cursor_id, range) in deletions {

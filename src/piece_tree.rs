@@ -1,6 +1,6 @@
-use std::sync::Arc;
-use std::path::PathBuf;
 use std::io::{self, Read, Seek, SeekFrom};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 /// A position in the document (line and column)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,9 +177,9 @@ impl StringBuffer {
     /// Returns None if line indexing was not computed or buffer is unloaded
     pub fn line_feed_count(&self) -> Option<usize> {
         match &self.data {
-            BufferData::Loaded { line_starts, .. } => {
-                line_starts.as_ref().map(|starts| starts.len().saturating_sub(1))
-            }
+            BufferData::Loaded { line_starts, .. } => line_starts
+                .as_ref()
+                .map(|starts| starts.len().saturating_sub(1)),
             BufferData::Unloaded { .. } => None,
         }
     }
@@ -235,16 +235,16 @@ impl BufferLocation {
 pub enum PieceTreeNode {
     /// Internal node with left and right children
     Internal {
-        left_bytes: usize,          // Total bytes in left subtree
-        lf_left: Option<usize>,     // Total line feeds in left subtree (None if unknown)
+        left_bytes: usize,      // Total bytes in left subtree
+        lf_left: Option<usize>, // Total line feeds in left subtree (None if unknown)
         left: Arc<PieceTreeNode>,
         right: Arc<PieceTreeNode>,
     },
     /// Leaf node representing an actual piece
     Leaf {
-        location: BufferLocation,     // Where this piece's data is (includes buffer_id)
-        offset: usize,                // Offset within the buffer
-        bytes: usize,                 // Number of bytes in this piece
+        location: BufferLocation, // Where this piece's data is (includes buffer_id)
+        offset: usize,            // Offset within the buffer
+        bytes: usize,             // Number of bytes in this piece
         line_feed_cnt: Option<usize>, // Number of line feeds in this piece (None if unknown)
     },
 }
@@ -422,7 +422,12 @@ impl PieceTreeNode {
     /// Count line feeds in a byte range [start, end)
     /// current_offset: byte offset at the start of this node
     /// Returns None if any piece in the range has unknown line count
-    fn count_lines_in_byte_range(&self, current_offset: usize, start: usize, end: usize) -> Option<usize> {
+    fn count_lines_in_byte_range(
+        &self,
+        current_offset: usize,
+        start: usize,
+        end: usize,
+    ) -> Option<usize> {
         match self {
             PieceTreeNode::Internal {
                 left_bytes,
@@ -987,11 +992,21 @@ impl PieceTree {
                         }
                     } else {
                         // Buffer not found, just keep the piece as-is
-                        leaves.push(LeafData::new(*location, *offset, *bytes, Some(*line_feed_cnt)));
+                        leaves.push(LeafData::new(
+                            *location,
+                            *offset,
+                            *bytes,
+                            Some(*line_feed_cnt),
+                        ));
                     }
                 } else {
                     // Target line not in this piece, just keep it
-                    leaves.push(LeafData::new(*location, *offset, *bytes, Some(*line_feed_cnt)));
+                    leaves.push(LeafData::new(
+                        *location,
+                        *offset,
+                        *bytes,
+                        Some(*line_feed_cnt),
+                    ));
                 }
             }
         }
@@ -1122,10 +1137,7 @@ impl PieceTree {
         if let Some(buffer) = buffers.get(buffer_id) {
             if let Some(data) = buffer.get_data() {
                 let end = (offset + bytes).min(data.len());
-                Some(data[offset..end]
-                    .iter()
-                    .filter(|&&b| b == b'\n')
-                    .count())
+                Some(data[offset..end].iter().filter(|&&b| b == b'\n').count())
             } else {
                 // Buffer is unloaded - return None
                 None
@@ -1369,13 +1381,23 @@ impl PieceTree {
 
                 // Piece completely before delete range
                 if piece_end <= del_start {
-                    leaves.push(LeafData::new(*location, *offset, *bytes, Some(*line_feed_cnt)));
+                    leaves.push(LeafData::new(
+                        *location,
+                        *offset,
+                        *bytes,
+                        Some(*line_feed_cnt),
+                    ));
                     return;
                 }
 
                 // Piece completely after delete range (only if we've found end)
                 if delete_end_offset.is_some() && piece_start >= del_end {
-                    leaves.push(LeafData::new(*location, *offset, *bytes, Some(*line_feed_cnt)));
+                    leaves.push(LeafData::new(
+                        *location,
+                        *offset,
+                        *bytes,
+                        Some(*line_feed_cnt),
+                    ));
                     return;
                 }
 
@@ -1568,7 +1590,11 @@ impl PieceTree {
     }
 
     /// Convert byte offset to line/column position using tree's line metadata
-    pub fn offset_to_position(&self, offset: usize, buffers: &[StringBuffer]) -> Option<(usize, usize)> {
+    pub fn offset_to_position(
+        &self,
+        offset: usize,
+        buffers: &[StringBuffer],
+    ) -> Option<(usize, usize)> {
         if offset == 0 {
             return Some((0, 0));
         }
@@ -1618,7 +1644,8 @@ impl PieceTree {
                     // Check if piece starts at a line boundary in the DOCUMENT
                     // If there are lines before this piece, then this piece starts on a new document line
                     // If lines_before == 0, the piece is part of document line 0 which starts at offset 0
-                    let piece_starts_at_doc_line_boundary = (lines_before > 0) || (bytes_before == 0);
+                    let piece_starts_at_doc_line_boundary =
+                        (lines_before > 0) || (bytes_before == 0);
 
                     // Calculate column
                     let column = if line_in_piece == 0 && !piece_starts_at_doc_line_boundary {
@@ -2320,7 +2347,14 @@ mod property_tests {
         // Do several inserts to create internal nodes and splits
         for i in 0..10 {
             let offset = (i * 13) % (tree.total_bytes().max(1)); // Varying offsets
-            tree.insert(offset, BufferLocation::Added(1), i * 10, 5, Some(0), &buffers);
+            tree.insert(
+                offset,
+                BufferLocation::Added(1),
+                i * 10,
+                5,
+                Some(0),
+                &buffers,
+            );
 
             // INVARIANT: sum of piece lengths must equal total_bytes
             let leaves = tree.get_leaves();

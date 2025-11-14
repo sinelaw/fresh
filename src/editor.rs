@@ -1699,7 +1699,9 @@ impl Editor {
         // Collect ranges first
         let ranges: Vec<_> = {
             let state = self.active_state();
-            state.cursors.iter()
+            state
+                .cursors
+                .iter()
                 .filter_map(|(_, cursor)| cursor.selection_range())
                 .collect()
         };
@@ -1710,8 +1712,7 @@ impl Editor {
             if !text.is_empty() {
                 text.push('\n');
             }
-            let range_text = state.get_text_range(range.start, range.end)
-                ;
+            let range_text = state.get_text_range(range.start, range.end);
             text.push_str(&range_text);
         }
 
@@ -1742,8 +1743,7 @@ impl Editor {
             .iter()
             .rev()
             .map(|range| {
-                let deleted_text = state.get_text_range(range.start, range.end)
-                    ;
+                let deleted_text = state.get_text_range(range.start, range.end);
                 Event::Delete {
                     range: range.clone(),
                     deleted_text,
@@ -2500,8 +2500,7 @@ impl Editor {
             }
             PluginCommand::DeleteRange { buffer_id, range } => {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    let deleted_text = state.get_text_range(range.start, range.end)
-                        ;
+                    let deleted_text = state.get_text_range(range.start, range.end);
                     let event = Event::Delete {
                         range,
                         deleted_text,
@@ -3085,17 +3084,14 @@ impl Editor {
                                 let buffer_len = state.buffer.len();
 
                                 // Log the conversion for debugging
-                                let old_text =
-                                    if start_pos < end_pos && end_pos <= buffer_len {
-                                        state.get_text_range(start_pos, end_pos)
-                                    } else {
-                                        format!(
-                                            "<invalid range: start={}, end={}, buffer_len={}>",
-                                            start_pos,
-                                            end_pos,
-                                            buffer_len
-                                        )
-                                    };
+                                let old_text = if start_pos < end_pos && end_pos <= buffer_len {
+                                    state.get_text_range(start_pos, end_pos)
+                                } else {
+                                    format!(
+                                        "<invalid range: start={}, end={}, buffer_len={}>",
+                                        start_pos, end_pos, buffer_len
+                                    )
+                                };
                                 tracing::debug!("  Converting LSP range line {}:{}-{}:{} to bytes {}..{} (replacing {:?} with {:?})",
                                     start_line, start_char, end_line, end_char,
                                     start_pos, end_pos, old_text, edit.new_text);
@@ -3238,17 +3234,14 @@ impl Editor {
                                 let buffer_len = state.buffer.len();
 
                                 // Log the conversion for debugging
-                                let old_text =
-                                    if start_pos < end_pos && end_pos <= buffer_len {
-                                        state.get_text_range(start_pos, end_pos)
-                                    } else {
-                                        format!(
-                                            "<invalid range: start={}, end={}, buffer_len={}>",
-                                            start_pos,
-                                            end_pos,
-                                            buffer_len
-                                        )
-                                    };
+                                let old_text = if start_pos < end_pos && end_pos <= buffer_len {
+                                    state.get_text_range(start_pos, end_pos)
+                                } else {
+                                    format!(
+                                        "<invalid range: start={}, end={}, buffer_len={}>",
+                                        start_pos, end_pos, buffer_len
+                                    )
+                                };
                                 tracing::debug!("  Converting LSP range line {}:{}-{}:{} to bytes {}..{} (replacing {:?} with {:?})",
                                     start_line, start_char, end_line, end_char,
                                     start_pos, end_pos, old_text, edit.new_text);
@@ -3985,7 +3978,8 @@ impl Editor {
 
                     // Get the text being deleted (if any) before we mutate
                     let deleted_text = if word_start < cursor_pos {
-                        self.active_state_mut().get_text_range(word_start, cursor_pos)
+                        self.active_state_mut()
+                            .get_text_range(word_start, cursor_pos)
                     } else {
                         String::new()
                     };
@@ -5545,12 +5539,7 @@ impl Editor {
     pub fn action_to_events(&mut self, action: Action) -> Option<Vec<Event>> {
         let tab_size = self.config.editor.tab_size;
         let auto_indent = self.config.editor.auto_indent;
-        convert_action_to_events(
-            self.active_state_mut(),
-            action,
-            tab_size,
-            auto_indent,
-        )
+        convert_action_to_events(self.active_state_mut(), action, tab_size, auto_indent)
     }
 
     // === Search and Replace Methods ===
@@ -5913,7 +5902,9 @@ impl Editor {
             let range = match_pos..end;
 
             // Get the text being deleted
-            let deleted_text = self.active_state_mut().get_text_range(range.start, range.end);
+            let deleted_text = self
+                .active_state_mut()
+                .get_text_range(range.start, range.end);
 
             // Add Delete event
             events.push(Event::Delete {
@@ -6117,7 +6108,9 @@ impl Editor {
                     for match_pos in remaining_matches.into_iter().rev() {
                         let end = match_pos + ir_state.search.len();
                         let range = match_pos..end;
-                        let deleted_text = self.active_state_mut().get_text_range(range.start, range.end);
+                        let deleted_text = self
+                            .active_state_mut()
+                            .get_text_range(range.start, range.end);
 
                         events.push(Event::Delete {
                             range: range.clone(),
@@ -6219,7 +6212,9 @@ impl Editor {
         let range = match_pos..(match_pos + search_len);
 
         // Get the deleted text for the event
-        let deleted_text = self.active_state_mut().get_text_range(range.start, range.end);
+        let deleted_text = self
+            .active_state_mut()
+            .get_text_range(range.start, range.end);
 
         // Capture current cursor state for undo
         let cursor_id = self.active_state().cursors.primary_id();

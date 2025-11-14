@@ -247,7 +247,8 @@ impl TextBuffer {
 
     /// Convert a byte offset to a line/column position
     pub fn offset_to_position(&self, offset: usize) -> Option<Position> {
-        self.piece_tree.offset_to_position(offset, &self.buffers)
+        self.piece_tree
+            .offset_to_position(offset, &self.buffers)
             .map(|(line, column)| Position { line, column })
     }
 
@@ -486,7 +487,10 @@ impl TextBuffer {
             let mut restarted_iteration = false;
 
             // Use the efficient piece iterator (single O(log n) traversal + O(N) iteration)
-            for piece_view in self.piece_tree.iter_pieces_in_range(current_offset, end_offset) {
+            for piece_view in self
+                .piece_tree
+                .iter_pieces_in_range(current_offset, end_offset)
+            {
                 let buffer_id = piece_view.location.buffer_id();
 
                 // Check if buffer needs loading
@@ -504,9 +508,9 @@ impl TextBuffer {
                         let offset_in_piece = current_offset.saturating_sub(piece_start_in_doc);
 
                         // Calculate chunk boundaries aligned to CHUNK_ALIGNMENT
-                        let chunk_start_in_buffer =
-                            (piece_view.buffer_offset + offset_in_piece) / CHUNK_ALIGNMENT
-                                * CHUNK_ALIGNMENT;
+                        let chunk_start_in_buffer = (piece_view.buffer_offset + offset_in_piece)
+                            / CHUNK_ALIGNMENT
+                            * CHUNK_ALIGNMENT;
                         let chunk_bytes = LOAD_CHUNK_SIZE.min(
                             (piece_view.buffer_offset + piece_view.bytes)
                                 .saturating_sub(chunk_start_in_buffer),
@@ -520,10 +524,12 @@ impl TextBuffer {
 
                         // Split the piece to isolate the chunk
                         if chunk_start_offset_in_piece > 0 {
-                            self.piece_tree.split_at_offset(split_start_in_doc, &self.buffers);
+                            self.piece_tree
+                                .split_at_offset(split_start_in_doc, &self.buffers);
                         }
                         if split_end_in_doc < piece_start_in_doc + piece_view.bytes {
-                            self.piece_tree.split_at_offset(split_end_in_doc, &self.buffers);
+                            self.piece_tree
+                                .split_at_offset(split_end_in_doc, &self.buffers);
                         }
 
                         // Create a new buffer for this chunk
@@ -647,7 +653,8 @@ impl TextBuffer {
     /// Get all text as a single Vec<u8>
     /// Returns empty vector if any buffers are unloaded
     pub fn get_all_text(&self) -> Vec<u8> {
-        self.get_text_range(0, self.total_bytes()).unwrap_or_default()
+        self.get_text_range(0, self.total_bytes())
+            .unwrap_or_default()
     }
 
     /// Get all text as a String
@@ -1037,7 +1044,8 @@ impl TextBuffer {
     /// Convert byte position to LSP position (line, UTF-16 code units)
     /// LSP protocol uses UTF-16 code units for character offsets
     pub fn position_to_lsp_position(&self, byte_pos: usize) -> (usize, usize) {
-        let (line, column_bytes) = self.offset_to_position(byte_pos)
+        let (line, column_bytes) = self
+            .offset_to_position(byte_pos)
             .map(|pos| (pos.line, pos.column))
             .unwrap_or_else(|| (byte_pos / 80, 0)); // Estimate if metadata unavailable
 
@@ -1449,9 +1457,8 @@ impl<'a> OverlappingChunks<'a> {
                         if let Some(data) = buffer.get_data() {
                             if buffer_end <= data.len() {
                                 // Cache this piece's data
-                                self.current_piece_data = Some(
-                                    data[buffer_start..buffer_end].to_vec()
-                                );
+                                self.current_piece_data =
+                                    Some(data[buffer_start..buffer_end].to_vec());
                                 self.current_piece_offset = 0;
                                 continue;
                             }
@@ -2155,9 +2162,11 @@ mod tests {
 
             // After chunk-based loading, verify the piece tree has been split
             // The number of buffers should be greater than 1 (original + chunks)
-            assert!(buffer.buffers.len() > 1,
+            assert!(
+                buffer.buffers.len() > 1,
                 "Expected multiple buffers after chunk-based loading, got {}",
-                buffer.buffers.len());
+                buffer.buffers.len()
+            );
 
             // Test that editing still works after chunk-based loading
             buffer.insert_bytes(0, b"PREFIX".to_vec());
@@ -2195,9 +2204,11 @@ mod tests {
                     } else {
                         b'C'
                     };
-                    assert_eq!(byte, expected,
+                    assert_eq!(
+                        byte, expected,
                         "Mismatch at file offset {}: expected {}, got {}",
-                        file_offset, expected as char, byte as char);
+                        file_offset, expected as char, byte as char
+                    );
                 }
 
                 offset += bytes_to_read;

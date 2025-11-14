@@ -525,7 +525,9 @@ impl EditorTestHarness {
     /// Get the selected text (if any)
     pub fn get_selected_text(&mut self) -> String {
         if let Some(range) = self.get_selection_range() {
-            self.editor.active_state_mut().get_text_range(range.start, range.end)
+            self.editor
+                .active_state_mut()
+                .get_text_range(range.start, range.end)
         } else {
             String::new()
         }

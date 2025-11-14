@@ -30,12 +30,10 @@ impl<'a> LineIterator<'a> {
         } else {
             // Try using offset_to_position first (fast if line metadata is available)
             match buffer.offset_to_position(byte_pos) {
-                Some(pos) => {
-                    buffer.position_to_offset(Position {
-                        line: pos.line,
-                        column: 0,
-                    })
-                }
+                Some(pos) => buffer.position_to_offset(Position {
+                    line: pos.line,
+                    column: 0,
+                }),
                 None => {
                     // Line metadata not available - scan backwards to find newline
                     // This handles large files with lazy loading
@@ -156,7 +154,9 @@ impl<'a> LineIterator<'a> {
                             let line_end = self.current_pos;
                             self.current_pos = self.current_pos.saturating_sub(1);
                             while self.current_pos > 0 {
-                                if let Some(bytes) = self.buffer.get_text_range(self.current_pos - 1, 1) {
+                                if let Some(bytes) =
+                                    self.buffer.get_text_range(self.current_pos - 1, 1)
+                                {
                                     if !bytes.is_empty() && bytes[0] == b'\n' {
                                         // Found start of line
                                         break;
@@ -165,8 +165,14 @@ impl<'a> LineIterator<'a> {
                                 self.current_pos -= 1;
                             }
                             // Get the line content
-                            if let Some(line_bytes) = self.buffer.get_text_range(self.current_pos, line_end - self.current_pos + 1) {
-                                return Some((self.current_pos, String::from_utf8_lossy(&line_bytes).into_owned()));
+                            if let Some(line_bytes) = self
+                                .buffer
+                                .get_text_range(self.current_pos, line_end - self.current_pos + 1)
+                            {
+                                return Some((
+                                    self.current_pos,
+                                    String::from_utf8_lossy(&line_bytes).into_owned(),
+                                ));
                             }
                         }
                     }

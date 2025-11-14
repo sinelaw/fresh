@@ -397,7 +397,10 @@ fn visual_lsp_rename() {
     let word_at_cursor = {
         let start = cursor_pos.saturating_sub(2).max(0);
         let end = (cursor_pos + 10).min(buffer_len);
-        harness.editor_mut().active_state_mut().get_text_range(start, end)
+        harness
+            .editor_mut()
+            .active_state_mut()
+            .get_text_range(start, end)
     };
     assert!(
         word_at_cursor.contains("value"),
@@ -721,7 +724,10 @@ fn test_lsp_rename_cancel_restores_original() {
     let word_at_cursor = {
         let start = initial_cursor_pos.saturating_sub(2).max(0);
         let end = (initial_cursor_pos + 10).min(buffer_len);
-        harness.editor_mut().active_state_mut().get_text_range(start, end)
+        harness
+            .editor_mut()
+            .active_state_mut()
+            .get_text_range(start, end)
     };
     assert!(
         word_at_cursor.contains("value"),

@@ -608,7 +608,12 @@ impl EditorState {
         // Drive lazy loading - ensure data is loaded for this range
         let line_count = ((end - start) / 80).max(1) + 1;
         if let Err(e) = self.buffer.prepare_viewport(start, line_count) {
-            tracing::warn!("Failed to prepare viewport for range {}..{}: {}", start, end, e);
+            tracing::warn!(
+                "Failed to prepare viewport for range {}..{}: {}",
+                start,
+                end,
+                e
+            );
             return String::new();
         }
 
@@ -637,14 +642,14 @@ impl EditorState {
         use crate::document_model::DocumentModel;
 
         // Get a single line viewport starting at this offset
-        let viewport = self.get_viewport_content(
-            crate::document_model::DocumentPosition::byte(offset),
-            1,
-        ).ok()?;
+        let viewport = self
+            .get_viewport_content(crate::document_model::DocumentPosition::byte(offset), 1)
+            .ok()?;
 
-        viewport.lines.first().map(|line| {
-            (line.byte_offset, line.content.clone())
-        })
+        viewport
+            .lines
+            .first()
+            .map(|line| (line.byte_offset, line.content.clone()))
     }
 
     /// Get text from current cursor position to end of line
@@ -655,10 +660,8 @@ impl EditorState {
         use crate::document_model::DocumentModel;
 
         // Get the line containing cursor
-        let viewport = self.get_viewport_content(
-            crate::document_model::DocumentPosition::byte(cursor_pos),
-            1,
-        )?;
+        let viewport = self
+            .get_viewport_content(crate::document_model::DocumentPosition::byte(cursor_pos), 1)?;
 
         if let Some(line) = viewport.lines.first() {
             let line_start = line.byte_offset;
@@ -718,7 +721,9 @@ impl DocumentModel for EditorState {
                 // Try to get precise line number if available
                 let approximate_line_number = if self.has_line_index() {
                     // Use offset_to_position instead of get_line_number to avoid &mut
-                    self.buffer.offset_to_position(line_start).map(|pos| pos.line)
+                    self.buffer
+                        .offset_to_position(line_start)
+                        .map(|pos| pos.line)
                 } else {
                     None
                 };
@@ -778,11 +783,23 @@ impl DocumentModel for EditorState {
         let end_offset = self.position_to_offset(end)?;
 
         if start_offset > end_offset {
-            anyhow::bail!("Invalid range: start offset {} > end offset {}", start_offset, end_offset);
+            anyhow::bail!(
+                "Invalid range: start offset {} > end offset {}",
+                start_offset,
+                end_offset
+            );
         }
 
-        let bytes = self.buffer.get_text_range(start_offset, end_offset - start_offset)
-            .ok_or_else(|| anyhow::anyhow!("Data not available in range {}..{}", start_offset, end_offset))?;
+        let bytes = self
+            .buffer
+            .get_text_range(start_offset, end_offset - start_offset)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Data not available in range {}..{}",
+                    start_offset,
+                    end_offset
+                )
+            })?;
 
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
@@ -811,7 +828,9 @@ impl DocumentModel for EditorState {
     }
 
     fn get_chunk_at_offset(&self, offset: usize, size: usize) -> Result<(usize, String)> {
-        let bytes = self.buffer.get_text_range(offset, size)
+        let bytes = self
+            .buffer
+            .get_text_range(offset, size)
             .ok_or_else(|| anyhow::anyhow!("Data not available at offset {}", offset))?;
 
         Ok((offset, String::from_utf8_lossy(&bytes).into_owned()))
@@ -828,7 +847,11 @@ impl DocumentModel for EditorState {
         let end_offset = self.position_to_offset(end)?;
 
         if start_offset > end_offset {
-            anyhow::bail!("Invalid range: start offset {} > end offset {}", start_offset, end_offset);
+            anyhow::bail!(
+                "Invalid range: start offset {} > end offset {}",
+                start_offset,
+                end_offset
+            );
         }
 
         self.buffer.delete(start_offset..end_offset);
@@ -853,13 +876,18 @@ impl DocumentModel for EditorState {
         search_range: Option<(DocumentPosition, DocumentPosition)>,
     ) -> Result<Vec<usize>> {
         let (start_offset, end_offset) = if let Some((start, end)) = search_range {
-            (self.position_to_offset(start)?, self.position_to_offset(end)?)
+            (
+                self.position_to_offset(start)?,
+                self.position_to_offset(end)?,
+            )
         } else {
             (0, self.buffer.len())
         };
 
         // Get text in range
-        let bytes = self.buffer.get_text_range(start_offset, end_offset - start_offset)
+        let bytes = self
+            .buffer
+            .get_text_range(start_offset, end_offset - start_offset)
             .ok_or_else(|| anyhow::anyhow!("Data not available for search"))?;
         let text = String::from_utf8_lossy(&bytes);
 
@@ -1032,10 +1060,7 @@ mod tests {
             let caps = state.capabilities();
             assert!(caps.has_line_index, "Small file should have line index");
             assert_eq!(caps.byte_length, "line1\nline2\nline3".len());
-            assert_eq!(
-                caps.approximate_line_count, 3,
-                "Should have 3 lines"
-            );
+            assert_eq!(caps.approximate_line_count, 3, "Should have 3 lines");
         }
 
         #[test]

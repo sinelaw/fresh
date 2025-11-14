@@ -279,7 +279,11 @@ impl Viewport {
 
         // Force-load the data by actually requesting it (not just prepare_viewport)
         if let Err(e) = buffer.get_text_range_mut(load_start, load_length) {
-            tracing::warn!("Failed to load data around cursor at {}: {}", cursor.position, e);
+            tracing::warn!(
+                "Failed to load data around cursor at {}: {}",
+                cursor.position,
+                e
+            );
         }
 
         // Find the start of the line containing the cursor using iterator
