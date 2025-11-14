@@ -15,21 +15,57 @@ impl<'a> LineIterator<'a> {
         let buffer_len = buffer.len();
         let byte_pos = byte_pos.min(buffer_len);
 
-        // Find the start of the line containing byte_pos using piece tree - ONE O(log n)
+        // Find the start of the line containing byte_pos
         let line_start = if byte_pos == 0 {
             0
         } else {
-            // Use offset_to_position to find line number, then position_to_offset to get line start
-            let pos = buffer.offset_to_position(byte_pos);
-            eprintln!("DEBUG LineIterator::new: byte_pos={}, offset_to_position returned ({}, {})",
-                byte_pos, pos.line, pos.column);
-            let line_start = buffer.position_to_offset(Position {
-                line: pos.line,
-                column: 0,
-            });
-            eprintln!("DEBUG LineIterator::new: position_to_offset({}, 0) returned {}",
-                pos.line, line_start);
-            line_start
+            // Try using offset_to_position first (fast if line metadata is available)
+            match buffer.offset_to_position(byte_pos) {
+                Some(pos) => {
+                    eprintln!("DEBUG LineIterator::new: byte_pos={}, offset_to_position returned Some(({}, {}))",
+                        byte_pos, pos.line, pos.column);
+                    let line_start = buffer.position_to_offset(Position {
+                        line: pos.line,
+                        column: 0,
+                    });
+                    eprintln!("DEBUG LineIterator::new: position_to_offset({}, 0) returned {}",
+                        pos.line, line_start);
+                    line_start
+                }
+                None => {
+                    // Line metadata not available - scan backwards to find newline
+                    // This handles large files with lazy loading
+                    eprintln!("DEBUG LineIterator::new: byte_pos={}, offset_to_position returned None - scanning backwards",
+                        byte_pos);
+
+                    // Scan backwards from byte_pos to find the previous newline
+                    let mut scan_pos = byte_pos;
+                    while scan_pos > 0 {
+                        scan_pos -= 1;
+                        // Get one byte at this position
+                        if let Ok(bytes) = buffer.get_text_range(scan_pos, 1) {
+                            if !bytes.is_empty() && bytes[0] == b'\n' {
+                                // Found newline - line starts at next byte
+                                let line_start = scan_pos + 1;
+                                eprintln!("DEBUG LineIterator::new: Found newline at {}, line_start={}", scan_pos, line_start);
+                                return LineIterator {
+                                    buffer,
+                                    current_pos: line_start,
+                                    buffer_len,
+                                };
+                            }
+                        }
+                        // Don't scan too far back - limit to reasonable line length
+                        if byte_pos - scan_pos > 10000 {
+                            eprintln!("DEBUG LineIterator::new: Scanned 10000 bytes back, giving up at {}", scan_pos);
+                            break;
+                        }
+                    }
+                    // Either hit start of file or gave up - start from here
+                    eprintln!("DEBUG LineIterator::new: Using scan_pos={} as line_start", scan_pos);
+                    scan_pos
+                }
+            }
         };
 
         LineIterator {

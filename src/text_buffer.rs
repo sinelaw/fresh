@@ -246,9 +246,9 @@ impl TextBuffer {
     }
 
     /// Convert a byte offset to a line/column position
-    pub fn offset_to_position(&self, offset: usize) -> Position {
-        let (line, column) = self.piece_tree.offset_to_position(offset, &self.buffers);
-        Position { line, column }
+    pub fn offset_to_position(&self, offset: usize) -> Option<Position> {
+        self.piece_tree.offset_to_position(offset, &self.buffers)
+            .map(|(line, column)| Position { line, column })
     }
 
     /// Convert a line/column position to a byte offset
@@ -1010,8 +1010,9 @@ impl TextBuffer {
 
     /// Convert byte position to (line, column) in bytes
     pub fn position_to_line_col(&self, byte_pos: usize) -> (usize, usize) {
-        let pos = self.offset_to_position(byte_pos);
-        (pos.line, pos.column)
+        self.offset_to_position(byte_pos)
+            .map(|pos| (pos.line, pos.column))
+            .unwrap_or_else(|| (byte_pos / 80, 0)) // Estimate if metadata unavailable
     }
 
     /// Convert (line, character) to byte position - 0-indexed
@@ -1036,9 +1037,9 @@ impl TextBuffer {
     /// Convert byte position to LSP position (line, UTF-16 code units)
     /// LSP protocol uses UTF-16 code units for character offsets
     pub fn position_to_lsp_position(&self, byte_pos: usize) -> (usize, usize) {
-        let pos = self.offset_to_position(byte_pos);
-        let line = pos.line;
-        let column_bytes = pos.column;
+        let (line, column_bytes) = self.offset_to_position(byte_pos)
+            .map(|pos| (pos.line, pos.column))
+            .unwrap_or_else(|| (byte_pos / 80, 0)); // Estimate if metadata unavailable
 
         // Get the line content
         if let Some(line_bytes) = self.get_line(line) {
@@ -1238,9 +1239,14 @@ impl TextBuffer {
     // Legacy API methods for backwards compatibility
 
     /// Get the line number for a given byte offset
-    /// Always returns absolute line numbers (no estimation needed with new implementation)
+    /// Returns exact line number if metadata available, otherwise estimates based on bytes
     pub fn get_line_number(&self, byte_offset: usize) -> usize {
-        self.offset_to_position(byte_offset).line
+        self.offset_to_position(byte_offset)
+            .map(|pos| pos.line)
+            .unwrap_or_else(|| {
+                // Estimate line number based on average line length of ~80 bytes
+                byte_offset / 80
+            })
     }
 
     /// Populate line cache (no-op in new implementation - kept for compatibility)
