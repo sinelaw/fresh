@@ -84,7 +84,7 @@ impl Viewport {
 
     /// Scroll up by N lines (byte-based)
     /// LineCache automatically tracks line numbers
-    pub fn scroll_up(&mut self, buffer: &mut Buffer, lines: usize) {
+    pub fn scroll_up(&mut self, buffer: &Buffer, lines: usize) {
         let mut iter = buffer.line_iterator(self.top_byte);
         for _ in 0..lines {
             if iter.prev().is_none() {
@@ -96,7 +96,7 @@ impl Viewport {
 
     /// Scroll down by N lines (byte-based)
     /// LineCache automatically tracks line numbers
-    pub fn scroll_down(&mut self, buffer: &mut Buffer, lines: usize) {
+    pub fn scroll_down(&mut self, buffer: &Buffer, lines: usize) {
         let mut iter = buffer.line_iterator(self.top_byte);
         for _ in 0..lines {
             if iter.next().is_none() {
@@ -109,7 +109,7 @@ impl Viewport {
     /// Set top_byte with automatic scroll limit enforcement
     /// This prevents scrolling past the end of the buffer by ensuring
     /// the viewport can be filled from the proposed position
-    fn set_top_byte_with_limit(&mut self, buffer: &mut Buffer, proposed_top_byte: usize) {
+    fn set_top_byte_with_limit(&mut self, buffer: &Buffer, proposed_top_byte: usize) {
         tracing::trace!(
             "DEBUG set_top_byte_with_limit: proposed_top_byte={}",
             proposed_top_byte
@@ -220,7 +220,7 @@ impl Viewport {
 
     /// Scroll to a specific line (byte-based)
     /// This seeks from the beginning to find the byte position of the line
-    pub fn scroll_to(&mut self, buffer: &mut Buffer, line: usize) {
+    pub fn scroll_to(&mut self, buffer: &Buffer, line: usize) {
         // Seek from the beginning to find the byte position for this line
         let mut iter = buffer.line_iterator(0);
         let mut current_line = 0;
@@ -263,95 +263,81 @@ impl Viewport {
     }
 
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)
-    /// This now uses ONLY the LineCache - no manual line counting
+    /// Now works entirely with byte offsets - no line number calculations needed!
     pub fn ensure_visible(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
         eprintln!("DEBUG ensure_visible: cursor.position={}, top_byte={}", cursor.position, self.top_byte);
 
         // For large files with lazy loading, ensure data around cursor is loaded
-        // before we try to calculate line numbers and iterate
         let viewport_lines = self.visible_line_count().max(1);
-        eprintln!("DEBUG prepare_viewport: cursor.position={}, viewport_lines={}", cursor.position, viewport_lines);
 
-        // Load data BEFORE the cursor (for cases like jumping to EOF)
-        // Estimate bytes per line conservatively
+        // CRITICAL: Load data around cursor position explicitly before using iterators
+        // Load enough data to cover viewport above and below cursor
         let estimated_viewport_bytes = viewport_lines * 200;
-        let load_start = cursor.position.saturating_sub(estimated_viewport_bytes);
-        let load_length = estimated_viewport_bytes.min(cursor.position - load_start) + viewport_lines * 200;
+        let load_start = cursor.position.saturating_sub(estimated_viewport_bytes * 2);
+        // Cap load_length to not go past EOF
+        let buffer_len = buffer.len();
+        let remaining_bytes = buffer_len.saturating_sub(load_start);
+        let load_length = (estimated_viewport_bytes * 3).min(remaining_bytes);
 
-        eprintln!("DEBUG loading range: {}..{}", load_start, load_start + load_length);
-        if let Err(e) = buffer.prepare_viewport(load_start, viewport_lines * 2) {
-            tracing::warn!("Failed to prepare viewport around cursor at {}: {}", cursor.position, e);
-            eprintln!("ERROR prepare_viewport failed: {}", e);
-            // Continue anyway - we'll work with whatever data is available
+        eprintln!("DEBUG Loading data: get_text_range_mut(start={}, len={}, buffer_len={})", load_start, load_length, buffer_len);
+
+        // Force-load the data by actually requesting it (not just prepare_viewport)
+        if let Err(e) = buffer.get_text_range_mut(load_start, load_length) {
+            tracing::warn!("Failed to load data around cursor at {}: {}", cursor.position, e);
+            eprintln!("ERROR get_text_range_mut failed: {}", e);
+        } else {
+            eprintln!("DEBUG Successfully loaded {} bytes starting at {}", load_length, load_start);
         }
 
         // Find the start of the line containing the cursor using iterator
         let cursor_iter = buffer.line_iterator(cursor.position);
         let cursor_line_start = cursor_iter.current_position();
-        eprintln!("DEBUG cursor_line_start={}", cursor_line_start);
+        eprintln!("DEBUG cursor_line_start={} (cursor.position={})", cursor_line_start, cursor.position);
 
-        // Get line numbers from the cache
-        let top_line_number = buffer.get_line_number(self.top_byte);
-        let cursor_line_number = buffer.get_line_number(cursor_line_start);
-        eprintln!("DEBUG top_line_number={}, cursor_line_number={}", top_line_number, cursor_line_number);
+        // Check if cursor is visible by counting lines BETWEEN top_byte and cursor
+        // This avoids needing absolute line numbers!
+        let cursor_is_visible = if cursor_line_start < self.top_byte {
+            // Cursor is above viewport
+            false
+        } else {
+            // Count how many lines are between top_byte and cursor_line_start
+            let mut iter = buffer.line_iterator(self.top_byte);
+            let mut lines_from_top = 0;
 
-        // Check if cursor line is visible
-        let visible_count = self.visible_line_count();
-        let lines_from_top = cursor_line_number.saturating_sub(top_line_number);
+            while iter.current_position() < cursor_line_start && lines_from_top < viewport_lines {
+                if iter.next().is_none() {
+                    break;
+                }
+                lines_from_top += 1;
+            }
 
-        tracing::trace!(
-            "DEBUG ensure_visible: cursor_pos={}, cursor_line_start={}, top_byte={}, top_line={}, cursor_line={}, visible_count={}, lines_from_top={}",
-            cursor.position, cursor_line_start, self.top_byte, top_line_number, cursor_line_number, visible_count, lines_from_top
-        );
+            eprintln!("DEBUG lines_from_top={}, visible_count={}", lines_from_top, viewport_lines);
+            lines_from_top < viewport_lines
+        };
 
-        // Scroll if cursor is beyond the visible area
-        // Must also check cursor is not above viewport (saturating_sub would make it appear at line 0)
-        let cursor_is_visible =
-            cursor_line_number >= top_line_number && lines_from_top < visible_count;
-
-        tracing::trace!(
-            "DEBUG ensure_visible: cursor_is_visible={}",
-            cursor_is_visible
-        );
+        eprintln!("DEBUG cursor_is_visible={}", cursor_is_visible);
 
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {
-            tracing::trace!("DEBUG: Scrolling to make cursor visible!");
+            eprintln!("DEBUG: Scrolling to make cursor visible!");
 
             // Position cursor at center of viewport when jumping
-            let target_line_from_top = self.visible_line_count() / 2;
-            tracing::trace!("DEBUG: target_line_from_top={}", target_line_from_top);
+            let target_line_from_top = viewport_lines / 2;
 
             // Move backwards from cursor to find the new top_byte
             let mut iter = buffer.line_iterator(cursor_line_start);
-            tracing::trace!(
-                "DEBUG: Starting iteration from cursor_line_start={}, iter.current_position()={}",
-                cursor_line_start,
-                iter.current_position()
-            );
 
             for i in 0..target_line_from_top {
                 if iter.prev().is_none() {
-                    tracing::trace!("DEBUG: Hit beginning of buffer at iteration {}", i);
+                    eprintln!("DEBUG: Hit beginning of buffer at iteration {}", i);
                     break; // Hit beginning of buffer
                 }
-                tracing::trace!(
-                    "DEBUG: After prev() iteration {}: iter.current_position()={}",
-                    i,
-                    iter.current_position()
-                );
             }
 
             let new_top_byte = iter.current_position();
-            tracing::trace!(
-                "DEBUG: Calling set_top_byte_with_limit with new_top_byte={}",
-                new_top_byte
-            );
+            eprintln!("DEBUG: Setting new_top_byte={}", new_top_byte);
             self.set_top_byte_with_limit(buffer, new_top_byte);
-            tracing::trace!(
-                "DEBUG: After set_top_byte_with_limit, self.top_byte={}",
-                self.top_byte
-            );
+            eprintln!("DEBUG: After set_top_byte_with_limit, self.top_byte={}", self.top_byte);
         }
 
         // Horizontal scrolling - skip if line wrapping is enabled
@@ -378,7 +364,7 @@ impl Viewport {
     /// Ensure a line is visible with scroll offset applied
     /// This is a legacy method kept for backward compatibility with tests
     /// In practice, use ensure_visible() which works directly with cursors and bytes
-    pub fn ensure_line_visible(&mut self, buffer: &mut Buffer, line: usize) {
+    pub fn ensure_line_visible(&mut self, buffer: &Buffer, line: usize) {
         // Seek to the target line to get its byte position
         let mut seek_iter = buffer.line_iterator(0);
         let mut current_line = 0;

@@ -21,10 +21,15 @@ impl<'a> LineIterator<'a> {
         } else {
             // Use offset_to_position to find line number, then position_to_offset to get line start
             let pos = buffer.offset_to_position(byte_pos);
-            buffer.position_to_offset(Position {
+            eprintln!("DEBUG LineIterator::new: byte_pos={}, offset_to_position returned ({}, {})",
+                byte_pos, pos.line, pos.column);
+            let line_start = buffer.position_to_offset(Position {
                 line: pos.line,
                 column: 0,
-            })
+            });
+            eprintln!("DEBUG LineIterator::new: position_to_offset({}, 0) returned {}",
+                pos.line, line_start);
+            line_start
         };
 
         LineIterator {
