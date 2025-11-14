@@ -1221,7 +1221,17 @@ impl TextBuffer {
     }
 
     /// Create a line iterator starting at the given byte position
-    pub fn line_iterator(&self, byte_pos: usize) -> LineIterator<'_> {
+    pub fn line_iterator(&mut self, byte_pos: usize) -> LineIterator<'_> {
+        // Ensure data around byte_pos is loaded for lazy-loaded files
+        // Load a reasonable amount of data before and after the position
+        let load_before = 10000; // ~100 lines before
+        let load_after = 10000;  // ~100 lines after
+        let start = byte_pos.saturating_sub(load_before);
+        let length = load_before + load_after;
+
+        // Silently load data - this ensures offset_to_position works correctly
+        let _ = self.get_text_range_mut(start, length);
+
         LineIterator::new(self, byte_pos)
     }
 
@@ -1240,6 +1250,15 @@ impl TextBuffer {
     /// Get the line number for a given byte offset
     /// Always returns absolute line numbers (no estimation needed with new implementation)
     pub fn get_line_number(&mut self, byte_offset: usize) -> usize {
+        // Ensure data at this offset is loaded for lazy-loaded files
+        // Load a small amount of data around the offset
+        let load_radius = 1000; // ~10 lines
+        let start = byte_offset.saturating_sub(load_radius);
+        let length = load_radius * 2;
+
+        // Silently load data - this ensures offset_to_position works correctly
+        let _ = self.get_text_range_mut(start, length);
+
         self.offset_to_position(byte_offset).line
     }
 

@@ -265,21 +265,35 @@ impl Viewport {
     /// Ensure a cursor is visible, scrolling if necessary (smart scroll)
     /// This now uses ONLY the LineCache - no manual line counting
     pub fn ensure_visible(&mut self, buffer: &mut Buffer, cursor: &Cursor) {
+        eprintln!("DEBUG ensure_visible: cursor.position={}, top_byte={}", cursor.position, self.top_byte);
+
         // For large files with lazy loading, ensure data around cursor is loaded
         // before we try to calculate line numbers and iterate
         let viewport_lines = self.visible_line_count().max(1);
-        if let Err(e) = buffer.prepare_viewport(cursor.position, viewport_lines) {
+        eprintln!("DEBUG prepare_viewport: cursor.position={}, viewport_lines={}", cursor.position, viewport_lines);
+
+        // Load data BEFORE the cursor (for cases like jumping to EOF)
+        // Estimate bytes per line conservatively
+        let estimated_viewport_bytes = viewport_lines * 200;
+        let load_start = cursor.position.saturating_sub(estimated_viewport_bytes);
+        let load_length = estimated_viewport_bytes.min(cursor.position - load_start) + viewport_lines * 200;
+
+        eprintln!("DEBUG loading range: {}..{}", load_start, load_start + load_length);
+        if let Err(e) = buffer.prepare_viewport(load_start, viewport_lines * 2) {
             tracing::warn!("Failed to prepare viewport around cursor at {}: {}", cursor.position, e);
+            eprintln!("ERROR prepare_viewport failed: {}", e);
             // Continue anyway - we'll work with whatever data is available
         }
 
         // Find the start of the line containing the cursor using iterator
         let cursor_iter = buffer.line_iterator(cursor.position);
         let cursor_line_start = cursor_iter.current_position();
+        eprintln!("DEBUG cursor_line_start={}", cursor_line_start);
 
         // Get line numbers from the cache
         let top_line_number = buffer.get_line_number(self.top_byte);
         let cursor_line_number = buffer.get_line_number(cursor_line_start);
+        eprintln!("DEBUG top_line_number={}, cursor_line_number={}", top_line_number, cursor_line_number);
 
         // Check if cursor line is visible
         let visible_count = self.visible_line_count();
