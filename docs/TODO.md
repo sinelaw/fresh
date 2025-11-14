@@ -36,54 +36,141 @@
 
 ### Priority 2: LSP & Developer Tools
 
-### LSP Support (Maturity Roadmap)
+### LSP Support (Robustness & Foundation)
 
-This plan aims to evolve the LSP client to be performant, full-featured, and robust, based on the principles for building a mature LSP client.
+**Goal:** Build a production-grade LSP client with solid foundations, inspired by VS Code's battle-tested architecture.
 
-#### Priority 1: Performance & Stability Foundation
+#### Phase 1: Core Robustness (P0 - Foundation) 🔥
 
-- [ ] **Implement Incremental Synchronization (Deltas):**
-    - **Problem:** The editor currently sends the entire file content on every keystroke, causing significant UI lag in large files.
-    - **Solution:** Modify the `didChange` notification to send only the changed text (deltas). This requires checking for the `TextDocumentSyncKind::Incremental` capability from the server and calculating the text diffs to send. This is the highest priority performance fix.
-- [ ] **Implement Request Cancellation:**
-    - **Problem:** Slow or outdated results (e.g., from code completion) can appear after the user has already moved on, creating UI "jank."
-    - **Solution:** Implement support for sending `$/cancelRequest` notifications when a new request is issued before an old one completes (e.g., typing more characters while a completion menu is visible).
-- [ ] **Robust Server Lifecycle Management:**
-    - **Problem:** A crashed or hung LSP server can leave the editor in a broken state with no feedback.
-    - **Solution:** Implement robust error handling to detect when the LSP process dies. Notify the user and offer to restart the server.
-- [ ] **Harden JSON-RPC Message Parsing:**
-    - **Problem:** A malformed or partial message from the LSP server could crash the editor's message handling loop.
-    - **Solution:** Improve the robustness of the JSON-RPC transport layer to gracefully handle framing errors, corrupt headers, or invalid JSON, preventing panics.
+- [ ] **Client State Machine** (`lsp_async.rs:LspHandle`)
+    - Replace `bool` with `enum LspClientState { Initial, Starting, Initializing, Running, Stopping, Stopped, Error }`
+    - Prevent invalid transitions (e.g., can't initialize twice, can't send requests when Stopped)
+    - Better status reporting to UI ("Initializing..." vs "Running" vs "Error")
+    - **Impact:** Prevents bugs, better UX, clearer debugging
+    - **Effort:** Low (2-3 hours)
 
-#### Priority 2: Core UX Features
+- [ ] **Auto-Restart on Crash** (`lsp_error_handler.rs` - new file)
+    - Detect server process death, track restart attempts with time window
+    - Exponential backoff (1s, 2s, 4s, 8s delays)
+    - Give up after 5 restarts in 3 minutes to prevent infinite loops
+    - Notify user on crash with option to manually restart
+    - **Impact:** High - resilient to transient server failures
+    - **Effort:** Medium (4-6 hours)
 
-- [ ] **Dedicated Diagnostics Panel:**
-    - **Problem:** Diagnostics are only visible as squiggles in the text. There is no way to see a full list of problems in the current file or project.
-    - **Solution:** Create a new UI panel that lists all diagnostics from `textDocument/publishDiagnostics`, allowing users to quickly navigate to each error location.
-- [ ] **Hover Documentation:** Show documentation for the symbol under the cursor in a popup window on `textDocument/hover`.
-- [ ] **Code Actions:** Query for `textDocument/codeAction` and allow the user to apply quick fixes and refactorings (e.g., via a menu).
-- [ ] **Find References:** Implement `textDocument/references` and display the results in a list or quickfix window.
-- [ ] **Signature Help:** Show function/method parameter hints as the user is typing, triggered by `textDocument/signatureHelp`.
+- [ ] **Request Cancellation** (`lsp_async.rs`)
+    - Add `CancellationToken` to completion/hover requests
+    - Cancel stale completions when user types more characters
+    - Send `$/cancelRequest` notification to server
+    - Reduces server load, prevents outdated UI results
+    - **Impact:** High - better UX and performance
+    - **Effort:** Medium (4-6 hours)
 
-#### Priority 3: Advanced Features & Polish
+- [ ] **Deferred Document Open** (`lsp_async.rs:LspHandle`)
+    - Don't send `didOpen` for non-visible documents immediately
+    - Queue pending opens, send when document becomes visible
+    - Faster startup for projects with many files
+    - **Impact:** Medium - improves startup performance
+    - **Effort:** Low (2-3 hours)
 
-- [ ] **Semantic Tokens:** Implement `textDocument/semanticTokens` for more advanced and accurate syntax highlighting.
-- [ ] **Document & Workspace Symbols:** Implement `textDocument/documentSymbol` for an outline/breadcrumb view and `workspace/symbol` for project-wide symbol search.
-- [ ] **Inlay Hints:** Display inlay hints (`textDocument/inlayHint`) for type annotations and parameter names.
-- [x] **Progress Reporting:** Handle `$/progress` notifications from the server to show activity indicators in the UI (e.g., for indexing). ✅ **COMPLETE** (Nov 2025)
-- [x] **Server Communication & Logging:** ✅ **PARTIAL** (Nov 2025)
-    - [x] Handle `window/logMessage` to capture server logs (stored for future viewer).
-    - [x] Handle `window/showMessage` to show info/warnings in status bar.
-    - [x] Server status indicators (starting/initializing/running/error) displayed in status bar.
-    - [ ] Log viewer panel (view captured logs in dedicated UI).
-- [ ] **Document Formatting:** Add commands for `textDocument/formatting` and `textDocument/rangeFormatting`.
-- [ ] **Call Hierarchy / Type Hierarchy:** Implement `callHierarchy/incomingCalls` and `typeHierarchy/supertypes`.
-- [ ] **Code Lens / Folding Ranges:** Implement `textDocument/codeLens` and `textDocument/foldingRange`.
+#### Phase 2: Architecture Improvements (P1 - Scalability)
 
-#### Priority 4: Project & Configuration
+- [ ] **Feature Registration System** (`lsp_features.rs` - new file)
+    - Abstract features: `trait LspFeature { initialize(), clear() }`
+    - Dynamic features: `trait DynamicFeature: LspFeature { register(), unregister() }`
+    - Modular completion, hover, diagnostics, etc. (separate files)
+    - Enables dynamic capability registration (LSP 3.16+)
+    - **Impact:** High - maintainability, extensibility
+    - **Effort:** High (8-12 hours)
 
-- [ ] **Multi-Root Workspace Support:** Support `workspace/workspaceFolders` to correctly handle projects with multiple sub-projects, potentially launching separate LSP instances per folder.
-- [ ] **Configuration Synchronization:** Send `workspace/didChangeConfiguration` notifications when editor settings (like tab size or diagnostics settings) change.
+- [ ] **Pull Diagnostics** (`lsp_diagnostic_pull.rs` - new file)
+    - Implement `textDocument/diagnostic` (LSP 3.17+)
+    - Track `resultId` for incremental diagnostic updates
+    - Background scheduler for inter-file dependencies (500ms interval)
+    - Server can return "unchanged" instead of resending all diagnostics
+    - **Impact:** High - reduces bandwidth, better for large projects
+    - **Effort:** High (8-12 hours)
+
+- [ ] **Multi-Root Workspaces** (`lsp_manager.rs`)
+    - Support `Vec<WorkspaceFolder>` instead of single `root_uri`
+    - Send `workspace/didChangeWorkspaceFolders` on add/remove
+    - Essential for monorepos and multi-package projects
+    - **Impact:** Medium - modern LSP clients expect this
+    - **Effort:** Medium (4-6 hours)
+
+#### Phase 3: Core UX Features (P1 - User-Facing)
+
+- [ ] **Hover Documentation** (`editor.rs`, `lsp_async.rs`)
+    - Request `textDocument/hover` on Ctrl+K or hover
+    - Show documentation popup with markdown rendering
+    - Cache results, cancel on cursor move
+    - **Impact:** High - essential IDE feature
+    - **Effort:** Medium (4-6 hours)
+
+- [ ] **Code Actions** (`editor.rs`, `lsp_async.rs`)
+    - Query `textDocument/codeAction` for quick fixes
+    - Show menu/popup with available actions
+    - Apply `WorkspaceEdit` changes
+    - **Impact:** High - quick fixes are essential
+    - **Effort:** Medium (6-8 hours)
+
+- [ ] **Find References** (`editor.rs`, `lsp_async.rs`)
+    - Request `textDocument/references`
+    - Display results in quickfix/location list
+    - Jump to reference on selection
+    - **Impact:** High - navigation feature
+    - **Effort:** Medium (4-6 hours)
+
+- [ ] **Signature Help** (`editor.rs`, `lsp_async.rs`)
+    - Request `textDocument/signatureHelp` on `(` and `,`
+    - Show parameter hints in popup
+    - Highlight active parameter
+    - **Impact:** Medium - helpful for function calls
+    - **Effort:** Medium (4-6 hours)
+
+- [ ] **Diagnostics Panel** (new file: `diagnostics_panel.rs`)
+    - List view of all diagnostics in current file/workspace
+    - Filter by severity (errors, warnings, hints)
+    - Jump to diagnostic location on click
+    - **Impact:** Medium - better error overview
+    - **Effort:** Medium (6-8 hours)
+
+#### Phase 4: Developer Experience (P2 - Polish)
+
+- [ ] **Middleware System** (`lsp_middleware.rs` - new file)
+    - `trait Middleware { intercept_request(), intercept_notification() }`
+    - Logging, metrics, request transformation
+    - Better debugging and extensibility
+    - **Impact:** Medium - helpful for debugging and testing
+    - **Effort:** High (6-8 hours)
+
+- [ ] **Document Selectors** (`lsp_document_selector.rs` - new file)
+    - Match by language, scheme (`file`, `untitled`), glob pattern
+    - Don't send `.rs` files in `/target/` or `/docs/` to rust-analyzer
+    - More precise document routing
+    - **Impact:** Medium - prevents unnecessary server load
+    - **Effort:** Low (2-3 hours)
+
+#### Already Complete ✅
+
+- [x] Incremental text sync (sends ranges, not full documents)
+- [x] Two-task architecture (command processor + stdout reader)
+- [x] Request/response matching via shared HashMap
+- [x] Command queueing before initialization
+- [x] Progress notifications (`$/progress`)
+- [x] Window messages (`window/showMessage`, `window/logMessage`)
+- [x] Server status tracking
+- [x] UTF-16 position encoding with line cache
+
+#### Deferred (Lower Priority)
+
+- **Semantic Tokens** - Advanced highlighting (nice-to-have)
+- **Inlay Hints** - Type annotations (nice-to-have)
+- **Call/Type Hierarchy** - Advanced navigation (nice-to-have)
+- **Log Viewer Panel** - UI polish (can use external tools)
+
+---
+
+**Next Steps:** Start with Phase 1 (robustness). These are quick wins with high impact that make the LSP client production-ready.
 
 #### File Explorer Polish
 - [ ] Input dialog system for custom names
