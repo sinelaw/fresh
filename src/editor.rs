@@ -1816,7 +1816,7 @@ impl Editor {
 
     /// Add a cursor above the primary cursor at the same column
     pub fn add_cursor_above(&mut self) {
-        let state = self.active_state();
+        let state = self.active_state_mut();
         match add_cursor_above(state) {
             AddCursorResult::Success {
                 cursor,
@@ -1844,7 +1844,7 @@ impl Editor {
 
     /// Add a cursor below the primary cursor at the same column
     pub fn add_cursor_below(&mut self) {
-        let state = self.active_state();
+        let state = self.active_state_mut();
         match add_cursor_below(state) {
             AddCursorResult::Success {
                 cursor,
@@ -4611,11 +4611,11 @@ impl Editor {
             if delta < 0 {
                 // Scroll up
                 let lines_to_scroll = delta.abs() as usize;
-                state.viewport.scroll_up(&state.buffer, lines_to_scroll);
+                state.viewport.scroll_up(&mut state.buffer, lines_to_scroll);
             } else {
                 // Scroll down
                 let lines_to_scroll = delta as usize;
-                state.viewport.scroll_down(&state.buffer, lines_to_scroll);
+                state.viewport.scroll_down(&mut state.buffer, lines_to_scroll);
             }
         }
 
@@ -4816,7 +4816,7 @@ impl Editor {
             // Use viewport.height (constant allocated rows) not visible_line_count (varies with content)
             // For large files, use byte-based max to avoid iterating entire buffer
             let max_top_byte = if buffer_len <= large_file_threshold {
-                Self::calculate_max_scroll_position(&state.buffer, viewport_height)
+                Self::calculate_max_scroll_position(&mut state.buffer, viewport_height)
             } else {
                 buffer_len.saturating_sub(1)
             };
@@ -4832,7 +4832,7 @@ impl Editor {
     /// Calculate the maximum allowed scroll position
     /// Ensures the last line is always at the bottom unless the buffer is smaller than viewport
     fn calculate_max_scroll_position(
-        buffer: &crate::text_buffer::Buffer,
+        buffer: &mut crate::text_buffer::Buffer,
         viewport_height: usize,
     ) -> usize {
         if viewport_height == 0 {
@@ -5193,20 +5193,26 @@ impl Editor {
         }
 
         // Render status bar (same for both layouts)
+        // Clone all immutable values before the mutable borrow
         let display_name = self
             .buffer_metadata
             .get(&self.active_buffer)
-            .map(|m| m.display_name.as_str())
-            .unwrap_or("[No Name]");
+            .map(|m| m.display_name.clone())
+            .unwrap_or_else(|| "[No Name]".to_string());
+        let status_message = self.status_message.clone();
+        let prompt = self.prompt.clone();
+        let lsp_status = self.lsp_status.clone();
+        let theme = self.theme.clone();
+
         StatusBarRenderer::render(
             frame,
             main_chunks[status_bar_idx],
-            self.active_state(),
-            &self.status_message,
-            &self.prompt,
-            &self.lsp_status,
-            &self.theme,
-            display_name,
+            self.active_state_mut(),
+            &status_message,
+            &prompt,
+            &lsp_status,
+            &theme,
+            &display_name,
         );
 
         // Render popups from the active buffer state

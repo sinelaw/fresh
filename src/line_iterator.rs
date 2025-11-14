@@ -33,7 +33,7 @@ use crate::text_buffer::TextBuffer;
 /// - Code with long lines: ~100-120 bytes
 /// - Prose/documentation: ~80-100 bytes
 pub struct LineIterator<'a> {
-    buffer: &'a TextBuffer,
+    buffer: &'a mut TextBuffer,
     /// Current byte position in the document (points to start of current line)
     current_pos: usize,
     buffer_len: usize,
@@ -42,7 +42,7 @@ pub struct LineIterator<'a> {
 }
 
 impl<'a> LineIterator<'a> {
-    pub(crate) fn new(buffer: &'a TextBuffer, byte_pos: usize, estimated_line_length: usize) -> Self {
+    pub(crate) fn new(buffer: &'a mut TextBuffer, byte_pos: usize, estimated_line_length: usize) -> Self {
         let buffer_len = buffer.len();
         let byte_pos = byte_pos.min(buffer_len);
 
@@ -85,7 +85,7 @@ impl<'a> LineIterator<'a> {
     }
 
     /// Get the next line (moving forward)
-    /// Uses piece iterator for efficient sequential scanning
+    /// Uses lazy loading to handle unloaded buffers transparently
     pub fn next(&mut self) -> Option<(usize, String)> {
         if self.current_pos >= self.buffer_len {
             return None;
@@ -93,51 +93,80 @@ impl<'a> LineIterator<'a> {
 
         let line_start = self.current_pos;
 
-        // Use piece iterator to scan for newline - amortized O(1) per line
-        let pieces = self
-            .buffer
-            .piece_tree_ref()
-            .iter_pieces_in_range(self.current_pos, self.buffer_len);
+        // Estimate line length for chunk loading (typically lines are < 200 bytes)
+        // We load more than average to handle long lines without multiple loads
+        let estimated_max_line_length = self.estimated_line_length * 3;
+        let bytes_to_scan = estimated_max_line_length.min(self.buffer_len - self.current_pos);
 
-        let mut line_bytes = Vec::new();
-        let mut found_newline = false;
-        let mut bytes_scanned = 0;
-
-        for piece in pieces {
-            let buffer = &self.buffer.buffers_ref()[piece.location.buffer_id()];
-
-            // Calculate where to start reading within this piece
-            let start_offset_in_doc = piece.doc_offset.max(self.current_pos);
-            let offset_in_piece = start_offset_in_doc - piece.doc_offset;
-            let start_in_buffer = piece.buffer_offset + offset_in_piece;
-            let bytes_to_read = piece.bytes - offset_in_piece;
-
-            let buffer_data = match buffer.get_data() {
-                Some(data) => data,
-                None => continue, // Buffer not loaded, skip
-            };
-            let piece_data = &buffer_data[start_in_buffer..start_in_buffer + bytes_to_read];
-
-            // Scan this piece for newline
-            for &byte in piece_data.iter() {
-                line_bytes.push(byte);
-                bytes_scanned += 1;
-
-                if byte == b'\n' {
-                    found_newline = true;
-                    break;
-                }
+        // Use get_text_range_mut() which handles lazy loading automatically
+        // This never scans the entire file - only loads the chunk needed for this line
+        let chunk = match self.buffer.get_text_range_mut(self.current_pos, bytes_to_scan) {
+            Ok(data) => data,
+            Err(e) => {
+                tracing::error!(
+                    "LineIterator: Failed to load chunk at offset {}: {}",
+                    self.current_pos,
+                    e
+                );
+                return None;
             }
+        };
 
-            if found_newline {
+        // Scan for newline in the loaded chunk
+        let mut line_len = 0;
+        let mut found_newline = false;
+        for &byte in chunk.iter() {
+            line_len += 1;
+            if byte == b'\n' {
+                found_newline = true;
                 break;
             }
         }
 
-        // Move to next line
-        self.current_pos += bytes_scanned;
+        // If we didn't find a newline and didn't reach EOF, the line is longer than our estimate
+        // Load more data iteratively (rare case for very long lines)
+        if !found_newline && self.current_pos + line_len < self.buffer_len {
+            // Line is longer than expected, keep loading until we find newline or EOF
+            let mut extended_chunk = chunk;
+            while !found_newline && self.current_pos + extended_chunk.len() < self.buffer_len {
+                let additional_bytes = estimated_max_line_length.min(
+                    self.buffer_len - self.current_pos - extended_chunk.len()
+                );
+                match self.buffer.get_text_range_mut(
+                    self.current_pos + extended_chunk.len(),
+                    additional_bytes
+                ) {
+                    Ok(mut more_data) => {
+                        let start_len = extended_chunk.len();
+                        extended_chunk.append(&mut more_data);
 
-        let line_string = String::from_utf8_lossy(&line_bytes).into_owned();
+                        // Scan the newly added portion
+                        for &byte in extended_chunk[start_len..].iter() {
+                            line_len += 1;
+                            if byte == b'\n' {
+                                found_newline = true;
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("LineIterator: Failed to extend chunk: {}", e);
+                        break;
+                    }
+                }
+            }
+
+            // Use the extended chunk
+            let line_bytes = &extended_chunk[..line_len];
+            self.current_pos += line_len;
+            let line_string = String::from_utf8_lossy(line_bytes).into_owned();
+            return Some((line_start, line_string));
+        }
+
+        // Normal case: found newline or reached EOF within initial chunk
+        let line_bytes = &chunk[..line_len];
+        self.current_pos += line_len;
+        let line_string = String::from_utf8_lossy(line_bytes).into_owned();
         Some((line_start, line_string))
     }
 
@@ -180,12 +209,16 @@ impl<'a> LineIterator<'a> {
 
                 // Read approximate line (might be partial or span multiple lines, but that's okay for large files)
                 // We'll read estimated_line_length bytes forward to get the "line"
-                if let Some(bytes) = self.buffer.get_text_range(estimated_prev_start, self.estimated_line_length) {
-                    let line_string = String::from_utf8_lossy(&bytes).into_owned();
-                    return Some((estimated_prev_start, line_string));
+                match self.buffer.get_text_range_mut(estimated_prev_start, self.estimated_line_length) {
+                    Ok(bytes) => {
+                        let line_string = String::from_utf8_lossy(&bytes).into_owned();
+                        return Some((estimated_prev_start, line_string));
+                    }
+                    Err(e) => {
+                        tracing::error!("LineIterator::prev() failed to load data at {}: {}", estimated_prev_start, e);
+                        return None;
+                    }
                 }
-
-                return None;
             }
         };
 

@@ -29,7 +29,7 @@ fn test_document_model_small_file() {
     harness.open_file(&file_path).unwrap();
 
     // Get the editor state to access DocumentModel
-    let state = harness.editor().active_state();
+    let state = harness.editor_mut().active_state_mut();
 
     // Test 1: Verify capabilities for small file
     let caps = state.capabilities();
@@ -135,7 +135,7 @@ fn test_document_model_large_file() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
     harness.open_file(&big_txt_path).unwrap();
 
-    let state = harness.editor().active_state();
+    let state = harness.editor_mut().active_state_mut();
 
     // Test 1: Verify capabilities for large file
     let caps = state.capabilities();
@@ -323,7 +323,7 @@ fn test_document_model_search() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
     harness.open_file(&file_path).unwrap();
 
-    let state = harness.editor().active_state();
+    let state = harness.editor_mut().active_state_mut();
 
     // Test 1: Find all matches of "the" (case-insensitive search would be in buffer layer)
     let matches = state.find_matches("the", None).unwrap();

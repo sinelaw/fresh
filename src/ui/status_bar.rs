@@ -30,7 +30,7 @@ impl StatusBarRenderer {
     pub fn render(
         frame: &mut Frame,
         area: Rect,
-        state: &EditorState,
+        state: &mut EditorState,
         status_message: &Option<String>,
         prompt: &Option<Prompt>,
         lsp_status: &str,
@@ -109,7 +109,7 @@ impl StatusBarRenderer {
     fn render_status(
         frame: &mut Frame,
         area: Rect,
-        state: &EditorState,
+        state: &mut EditorState,
         status_message: &Option<String>,
         lsp_status: &str,
         theme: &crate::theme::Theme,

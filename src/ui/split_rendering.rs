@@ -398,6 +398,9 @@ impl SplitRenderer {
                 .overlays
                 .query_viewport(viewport_start, viewport_end, &state.marker_list);
 
+        // Check if buffer is empty before creating iterator (to avoid borrow conflict)
+        let is_empty_buffer = state.buffer.is_empty();
+
         let mut iter = state.buffer.line_iterator(state.viewport.top_byte, estimated_line_length);
         let mut lines_rendered = 0;
 
@@ -405,9 +408,6 @@ impl SplitRenderer {
         let mut cursor_screen_x = 0u16;
         let mut cursor_screen_y = 0u16;
         let mut cursor_found = false;
-
-        // For empty buffers, render at least one line with the margin
-        let is_empty_buffer = state.buffer.is_empty();
 
         loop {
             let (line_start, line_content) = if let Some(line_data) = iter.next() {

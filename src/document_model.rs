@@ -192,9 +192,9 @@ pub trait DocumentModel {
     /// Returns lines starting from position, up to max_lines.
     /// This works for both line-based and byte-based positions.
     ///
-    /// Note: Data must be prepared before calling this (via prepare_for_render()).
+    /// For large files, this automatically loads chunks on-demand (never scans entire file).
     fn get_viewport_content(
-        &self,
+        &mut self,
         start_pos: DocumentPosition,
         max_lines: usize,
     ) -> Result<ViewportContent>;
@@ -211,17 +211,20 @@ pub trait DocumentModel {
     // ===== Content Access =====
 
     /// Get a range of text by positions
-    fn get_range(&self, start: DocumentPosition, end: DocumentPosition) -> Result<String>;
+    /// May trigger lazy loading for large files
+    fn get_range(&mut self, start: DocumentPosition, end: DocumentPosition) -> Result<String>;
 
     /// Get a single line if line indexing is available
     ///
     /// Returns None if line indexing is not available.
-    fn get_line_content(&self, line_number: usize) -> Option<String>;
+    /// For large files, this may trigger lazy loading of chunks.
+    fn get_line_content(&mut self, line_number: usize) -> Option<String>;
 
     /// Get text around a byte offset (for operations that don't need exact lines)
     ///
     /// Returns (offset, content) where offset is the start of returned content.
-    fn get_chunk_at_offset(&self, offset: usize, size: usize) -> Result<(usize, String)>;
+    /// May trigger lazy loading for large files
+    fn get_chunk_at_offset(&mut self, offset: usize, size: usize) -> Result<(usize, String)>;
 
     // ===== Editing Operations =====
 
@@ -242,8 +245,9 @@ pub trait DocumentModel {
     /// Find all matches of a pattern in a range
     ///
     /// Returns byte offsets (always precise).
+    /// May trigger lazy loading for large files
     fn find_matches(
-        &self,
+        &mut self,
         pattern: &str,
         search_range: Option<(DocumentPosition, DocumentPosition)>,
     ) -> Result<Vec<usize>>;

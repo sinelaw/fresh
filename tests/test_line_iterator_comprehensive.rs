@@ -3,7 +3,7 @@ use fresh::text_buffer::TextBuffer;
 
 #[test]
 fn test_line_iterator_simple() {
-    let buffer = TextBuffer::from_bytes(b"Line 1\nLine 2\nLine 3\n".to_vec());
+    let mut buffer = TextBuffer::from_bytes(b"Line 1\nLine 2\nLine 3\n".to_vec());
 
     // Test starting at beginning
     let mut iter = buffer.line_iterator(0, 80);
@@ -24,7 +24,7 @@ fn test_line_iterator_simple() {
 
 #[test]
 fn test_line_iterator_empty_lines() {
-    let buffer = TextBuffer::from_bytes(b"Line 1\n\nLine 3\n".to_vec());
+    let mut buffer = TextBuffer::from_bytes(b"Line 1\n\nLine 3\n".to_vec());
 
     // Test starting at position 0
     let mut iter = buffer.line_iterator(0, 80);
@@ -58,7 +58,7 @@ fn test_line_iterator_empty_lines() {
 
 #[test]
 fn test_line_iterator_multiple_empty_lines() {
-    let buffer = TextBuffer::from_bytes(b"Line 1\n\n\n\nLine 5\n".to_vec());
+    let mut buffer = TextBuffer::from_bytes(b"Line 1\n\n\n\nLine 5\n".to_vec());
 
     let mut iter = buffer.line_iterator(0, 80);
     assert_eq!(iter.next().unwrap().0, 0); // "Line 1\n"
@@ -109,7 +109,7 @@ fn test_line_iterator_after_multiple_edits() {
 
 #[test]
 fn test_line_iterator_prev() {
-    let buffer = TextBuffer::from_bytes(b"Line 1\n\nLine 3\n".to_vec());
+    let mut buffer = TextBuffer::from_bytes(b"Line 1\n\nLine 3\n".to_vec());
 
     let mut iter = buffer.line_iterator(8, 80); // Start at "Line 3"
     assert_eq!(iter.current_position(), 8);
@@ -125,7 +125,7 @@ fn test_line_iterator_prev() {
 
 #[test]
 fn test_line_iterator_no_trailing_newline() {
-    let buffer = TextBuffer::from_bytes(b"Line 1\nLine 2".to_vec());
+    let mut buffer = TextBuffer::from_bytes(b"Line 1\nLine 2".to_vec());
 
     let mut iter = buffer.line_iterator(0, 80);
     assert_eq!(iter.next().unwrap(), (0, "Line 1\n".to_string()));
@@ -136,7 +136,7 @@ fn test_line_iterator_no_trailing_newline() {
 
 #[test]
 fn test_line_iterator_single_char_lines() {
-    let buffer = TextBuffer::from_bytes(b"a\nb\nc\n".to_vec());
+    let mut buffer = TextBuffer::from_bytes(b"a\nb\nc\n".to_vec());
 
     let mut iter = buffer.line_iterator(0, 80);
     assert_eq!(iter.next().unwrap(), (0, "a\n".to_string()));

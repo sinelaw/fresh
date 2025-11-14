@@ -84,32 +84,36 @@ impl Viewport {
 
     /// Scroll up by N lines (byte-based)
     /// LineCache automatically tracks line numbers
-    pub fn scroll_up(&mut self, buffer: &Buffer, lines: usize) {
+    pub fn scroll_up(&mut self, buffer: &mut Buffer, lines: usize) {
         let mut iter = buffer.line_iterator(self.top_byte, 80);
         for _ in 0..lines {
             if iter.prev().is_none() {
                 break;
             }
         }
-        self.set_top_byte_with_limit(buffer, iter.current_position());
+        let new_position = iter.current_position();
+        drop(iter); // Explicitly drop to release borrow
+        self.set_top_byte_with_limit(buffer, new_position);
     }
 
     /// Scroll down by N lines (byte-based)
     /// LineCache automatically tracks line numbers
-    pub fn scroll_down(&mut self, buffer: &Buffer, lines: usize) {
+    pub fn scroll_down(&mut self, buffer: &mut Buffer, lines: usize) {
         let mut iter = buffer.line_iterator(self.top_byte, 80);
         for _ in 0..lines {
             if iter.next().is_none() {
                 break;
             }
         }
-        self.set_top_byte_with_limit(buffer, iter.current_position());
+        let new_position = iter.current_position();
+        drop(iter); // Explicitly drop to release borrow
+        self.set_top_byte_with_limit(buffer, new_position);
     }
 
     /// Set top_byte with automatic scroll limit enforcement
     /// This prevents scrolling past the end of the buffer by ensuring
     /// the viewport can be filled from the proposed position
-    fn set_top_byte_with_limit(&mut self, buffer: &Buffer, proposed_top_byte: usize) {
+    fn set_top_byte_with_limit(&mut self, buffer: &mut Buffer, proposed_top_byte: usize) {
         tracing::trace!(
             "DEBUG set_top_byte_with_limit: proposed_top_byte={}",
             proposed_top_byte
@@ -220,7 +224,7 @@ impl Viewport {
 
     /// Scroll to a specific line (byte-based)
     /// This seeks from the beginning to find the byte position of the line
-    pub fn scroll_to(&mut self, buffer: &Buffer, line: usize) {
+    pub fn scroll_to(&mut self, buffer: &mut Buffer, line: usize) {
         // Seek from the beginning to find the byte position for this line
         let mut iter = buffer.line_iterator(0, 80);
         let mut current_line = 0;
@@ -228,6 +232,7 @@ impl Viewport {
         while current_line < line {
             if let Some((line_start, _)) = iter.next() {
                 if current_line + 1 == line {
+                    drop(iter);
                     self.set_top_byte_with_limit(buffer, line_start);
                     return;
                 }
@@ -239,7 +244,9 @@ impl Viewport {
         }
 
         // If we didn't find the line, stay at the last valid position
-        self.set_top_byte_with_limit(buffer, iter.current_position());
+        let target_position = iter.current_position();
+        drop(iter);
+        self.set_top_byte_with_limit(buffer, target_position);
     }
 
     /// Mark viewport as needing synchronization with cursor positions
@@ -352,7 +359,7 @@ impl Viewport {
     /// Ensure a line is visible with scroll offset applied
     /// This is a legacy method kept for backward compatibility with tests
     /// In practice, use ensure_visible() which works directly with cursors and bytes
-    pub fn ensure_line_visible(&mut self, buffer: &Buffer, line: usize) {
+    pub fn ensure_line_visible(&mut self, buffer: &mut Buffer, line: usize) {
         // Seek to the target line to get its byte position
         let mut seek_iter = buffer.line_iterator(0, 80);
         let mut current_line = 0;
@@ -400,7 +407,9 @@ impl Viewport {
                     break;
                 }
             }
-            self.set_top_byte_with_limit(buffer, iter.current_position());
+            let position = iter.current_position();
+            drop(iter);
+            self.set_top_byte_with_limit(buffer, position);
         }
     }
 
@@ -410,7 +419,7 @@ impl Viewport {
     /// * `column` - The column position within the line (0-indexed)
     /// * `line_length` - The length of the line content (without newline)
     /// * `buffer` - The buffer (for calculating gutter width)
-    pub fn ensure_column_visible(&mut self, column: usize, line_length: usize, buffer: &Buffer) {
+    pub fn ensure_column_visible(&mut self, column: usize, line_length: usize, buffer: &mut Buffer) {
         // Calculate visible width (accounting for line numbers gutter which is dynamic)
         let gutter_width = self.gutter_width(buffer);
         // Also account for scrollbar (always present, takes 1 column)
@@ -508,7 +517,9 @@ impl Viewport {
                     break;
                 }
             }
-            self.set_top_byte_with_limit(buffer, iter.current_position());
+            let position = iter.current_position();
+            drop(iter);
+            self.set_top_byte_with_limit(buffer, position);
         } else {
             // Can't fit all cursors, ensure primary is visible
             let primary_cursor = sorted_cursors[0].1;
@@ -597,35 +608,35 @@ mod tests {
             }
             content.push_str(&format!("line{}", i));
         }
-        let buffer = Buffer::from_str_test(&content);
+        let mut buffer = Buffer::from_str_test(&content);
         let mut vp = Viewport::new(80, 24);
 
-        vp.scroll_down(&buffer, 10);
+        vp.scroll_down(&mut buffer, 10);
         // Check that we scrolled down (top_byte should be > 0)
         assert!(vp.top_byte > 0);
 
         let prev_top = vp.top_byte;
-        vp.scroll_up(&buffer, 5);
+        vp.scroll_up(&mut buffer, 5);
         // Check that we scrolled up (top_byte should be less than before)
         assert!(vp.top_byte < prev_top);
 
-        vp.scroll_up(&buffer, 100);
+        vp.scroll_up(&mut buffer, 100);
         assert_eq!(vp.top_byte, 0); // Can't scroll past 0
     }
 
     #[test]
     fn test_ensure_line_visible() {
-        let buffer = Buffer::from_str_test("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51");
+        let mut buffer = Buffer::from_str_test("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20\nline21\nline22\nline23\nline24\nline25\nline26\nline27\nline28\nline29\nline30\nline31\nline32\nline33\nline34\nline35\nline36\nline37\nline38\nline39\nline40\nline41\nline42\nline43\nline44\nline45\nline46\nline47\nline48\nline49\nline50\nline51");
         let mut vp = Viewport::new(80, 24);
         vp.scroll_offset = 3;
 
         // Line within scroll offset should adjust viewport
-        vp.ensure_line_visible(&buffer, 2);
+        vp.ensure_line_visible(&mut buffer, 2);
         // top_byte should be close to the beginning since line 2 is near the top
         assert!(vp.top_byte < 100);
 
         // Line far below should scroll down
-        vp.ensure_line_visible(&buffer, 50);
+        vp.ensure_line_visible(&mut buffer, 50);
         assert!(vp.top_byte > 0);
         // Verify the line is now visible by checking we can iterate to it
         let mut iter = buffer.line_iterator(vp.top_byte, 80);
@@ -683,7 +694,7 @@ mod tests {
 
         // Scroll down to show lines 10-19 (top_byte at line 10)
         // scroll_to uses 1-based line numbers, so line 10 = argument 10
-        vp.scroll_to(&buffer, 10);
+        vp.scroll_to(&mut buffer, 10);
         let _old_top_byte = vp.top_byte;
 
         // Verify we scrolled to around line 10

@@ -80,7 +80,10 @@ impl StringBuffer {
     }
 
     /// Get data reference if loaded, None if unloaded
-    pub fn get_data(&self) -> Option<&[u8]> {
+    ///
+    /// NOTE: This is a low-level API. External code should use TextBuffer::get_text_range_mut()
+    /// which provides automatic lazy loading. This method is pub(crate) to prevent misuse.
+    pub(crate) fn get_data(&self) -> Option<&[u8]> {
         match &self.data {
             BufferData::Loaded { data, .. } => Some(data),
             BufferData::Unloaded { .. } => None,

@@ -52,7 +52,7 @@ pub fn add_cursor_at_next_match(state: &mut EditorState) -> AddCursorResult {
 }
 
 /// Add a cursor above the primary cursor at the same column
-pub fn add_cursor_above(state: &EditorState) -> AddCursorResult {
+pub fn add_cursor_above(state: &mut EditorState) -> AddCursorResult {
     let primary = state.cursors.primary();
 
     // Find the start of the current line using iterator
@@ -97,7 +97,7 @@ pub fn add_cursor_above(state: &EditorState) -> AddCursorResult {
 }
 
 /// Add a cursor below the primary cursor at the same column
-pub fn add_cursor_below(state: &EditorState) -> AddCursorResult {
+pub fn add_cursor_below(state: &mut EditorState) -> AddCursorResult {
     let primary = state.cursors.primary();
 
     // Find the start of the current line using iterator
