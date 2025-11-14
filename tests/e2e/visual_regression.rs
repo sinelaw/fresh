@@ -393,11 +393,11 @@ fn visual_lsp_rename() {
 
     // Verify cursor is at the right position by checking buffer content around cursor
     let cursor_pos = harness.cursor_position();
-    let buffer = &harness.editor().active_state().buffer;
+    let buffer_len = harness.editor().active_state().buffer.len();
     let word_at_cursor = {
         let start = cursor_pos.saturating_sub(2).max(0);
-        let end = (cursor_pos + 10).min(buffer.len());
-        buffer.slice(start..end).to_string()
+        let end = (cursor_pos + 10).min(buffer_len);
+        harness.editor_mut().active_state_mut().get_text_range(start, end)
     };
     assert!(
         word_at_cursor.contains("value"),
@@ -424,31 +424,36 @@ fn visual_lsp_rename() {
     );
 
     // Check that an overlay exists for the symbol being renamed
-    let state = harness.editor().active_state();
-    let overlays: Vec<_> = state
-        .overlays
-        .all()
-        .iter()
-        .filter(|o| {
-            o.id.as_ref()
-                .is_some_and(|id| id.starts_with("rename_overlay_"))
-        })
-        .collect();
-    assert_eq!(overlays.len(), 1, "Should have exactly one rename overlay");
+    let (rename_overlay_range, rename_overlay_face) = {
+        let state = harness.editor().active_state();
+        let overlays: Vec<_> = state
+            .overlays
+            .all()
+            .iter()
+            .filter(|o| {
+                o.id.as_ref()
+                    .is_some_and(|id| id.starts_with("rename_overlay_"))
+            })
+            .collect();
+        assert_eq!(overlays.len(), 1, "Should have exactly one rename overlay");
 
-    let rename_overlay = overlays[0];
+        let rename_overlay = overlays[0];
+        let range = rename_overlay.range(&state.marker_list);
+        (range, rename_overlay.face.clone())
+    };
+
     // The overlay should cover "value" at position 14 (after "fn calculate(")
-    let overlay_text = state
-        .buffer
-        .slice(rename_overlay.range(&state.marker_list))
-        .to_string();
+    let overlay_text = harness
+        .editor_mut()
+        .active_state_mut()
+        .get_text_range(rename_overlay_range.start, rename_overlay_range.end);
     assert_eq!(
         overlay_text, "value",
         "Overlay should cover the 'value' symbol"
     );
 
     // Verify it's a background overlay with blue color
-    if let OverlayFace::Background { color } = rename_overlay.face {
+    if let OverlayFace::Background { color } = rename_overlay_face {
         assert_eq!(
             color,
             Color::Rgb(50, 100, 200),
@@ -712,11 +717,11 @@ fn test_lsp_rename_cancel_restores_original() {
 
     // Verify cursor is positioned on "value"
     let initial_cursor_pos = harness.cursor_position();
-    let buffer = &harness.editor().active_state().buffer;
+    let buffer_len = harness.editor().active_state().buffer.len();
     let word_at_cursor = {
         let start = initial_cursor_pos.saturating_sub(2).max(0);
-        let end = (initial_cursor_pos + 10).min(buffer.len());
-        buffer.slice(start..end).to_string()
+        let end = (initial_cursor_pos + 10).min(buffer_len);
+        harness.editor_mut().active_state_mut().get_text_range(start, end)
     };
     assert!(
         word_at_cursor.contains("value"),
@@ -735,22 +740,25 @@ fn test_lsp_rename_cancel_restores_original() {
     harness.render().unwrap();
 
     // Verify rename mode is active
-    let state = harness.editor().active_state();
-    let overlays: Vec<_> = state
-        .overlays
-        .all()
-        .iter()
-        .filter(|o| {
-            o.id.as_ref()
-                .is_some_and(|id| id.starts_with("rename_overlay_"))
-        })
-        .collect();
-    assert_eq!(overlays.len(), 1, "Should have exactly one rename overlay");
+    let overlay_range = {
+        let state = harness.editor().active_state();
+        let overlays: Vec<_> = state
+            .overlays
+            .all()
+            .iter()
+            .filter(|o| {
+                o.id.as_ref()
+                    .is_some_and(|id| id.starts_with("rename_overlay_"))
+            })
+            .collect();
+        assert_eq!(overlays.len(), 1, "Should have exactly one rename overlay");
+        overlays[0].range(&state.marker_list)
+    };
 
-    let overlay_text = state
-        .buffer
-        .slice(overlays[0].range(&state.marker_list))
-        .to_string();
+    let overlay_text = harness
+        .editor_mut()
+        .active_state_mut()
+        .get_text_range(overlay_range.start, overlay_range.end);
     assert_eq!(
         overlay_text, "value",
         "Overlay should cover the 'value' symbol"
