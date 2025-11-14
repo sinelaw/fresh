@@ -159,15 +159,14 @@ fn visual_help_system() {
 /// Test split view workflow
 #[test]
 fn visual_split_view() {
-    use crate::common::fixtures::test_temp_dir;
-    let temp_dir = test_temp_dir("visual-split-view").unwrap();
-    let file1 = temp_dir.join("file1.txt");
-    let file2 = temp_dir.join("file2.txt");
+    let mut harness = EditorTestHarness::with_temp_project(120, 30).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    let file1 = project_dir.join("file1.txt");
+    let file2 = project_dir.join("file2.txt");
 
     fs::write(&file1, "Content of file 1").unwrap();
     fs::write(&file2, "Content of file 2").unwrap();
-
-    let mut harness = EditorTestHarness::new(120, 30).unwrap();
     let mut flow = VisualFlow::new("Split View", "Layout", "Working with split panes");
 
     // Step 1: Open first file

@@ -688,7 +688,11 @@ impl Editor {
         }
 
         self.set_active_buffer(buffer_id);
-        self.status_message = Some(format!("Opened {}", path.display()));
+        // Use display_name from metadata for relative path display
+        let display_name = self.buffer_metadata.get(&buffer_id)
+            .map(|m| m.display_name.clone())
+            .unwrap_or_else(|| path.display().to_string());
+        self.status_message = Some(format!("Opened {}", display_name));
 
         Ok(buffer_id)
     }
