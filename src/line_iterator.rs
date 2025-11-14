@@ -123,6 +123,7 @@ impl<'a> LineIterator<'a> {
             }
         }
 
+
         // If we didn't find a newline and didn't reach EOF, the line is longer than our estimate
         // Load more data iteratively (rare case for very long lines)
         if !found_newline && self.current_pos + line_len < self.buffer_len {

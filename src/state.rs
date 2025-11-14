@@ -245,11 +245,16 @@ impl EditorState {
                 self.viewport.mark_needs_sync();
 
                 // Update primary cursor line number if this is the primary cursor
-                // For MoveCursor events, we lose absolute line tracking and switch to Relative
+                // Try to get exact line number from buffer, or estimate for large files
                 if *cursor_id == self.cursors.primary_id() {
-                    self.primary_cursor_line_number = LineNumber::Relative {
-                        line: 0,
-                        from_cached_line: 0,
+                    self.primary_cursor_line_number = match self.buffer.offset_to_position(*new_position) {
+                        Some(pos) => LineNumber::Absolute(pos.line),
+                        None => {
+                            // Large file without line metadata - estimate line number
+                            // Use default estimated_line_length of 80 bytes
+                            let estimated_line = *new_position / 80;
+                            LineNumber::Absolute(estimated_line)
+                        }
                     };
                 }
             }

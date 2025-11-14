@@ -1,0 +1,28 @@
+---
+source: tests/common/visual_testing.rs
+expression: "&screen_text"
+---
+ fresh-test-BIG.txt                                                             
+     12 │ @00000880: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx █
+          xxxxxxxxxxx                                                          │
+     14 │ @00000960: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
+          xxxxxxxxxxx                                                          │
+     16 │ @00001040: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
+          xxxxxxxxxxx                                                          │
+     18 │ @00001120: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
+          xxxxxxxxxxx                                                          │
+     20 │ @00001200: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
+          xxxxxxxxxxx                                                          │
+     22 │ @00001280: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
+          xxxxxxxxxxx                                                          │
+     24 │ @00001360: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
+          xxxxxxxxxxx                                                          │
+     26 │ @00001440: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
+          xxxxxxxxxxx                                                          │
+     28 │ @00001520: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
+          xxxxxxxxxxx                                                          │
+     30 │ @00001600: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
+          xxxxxxxxxxx                                                          │
+     32 │ @00001680: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
+     33 │ @00001760: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
+/tmp/fresh-test-BIG.txt | Ln 25, Col 0 | Opened /tmp/fresh-tes...  Help: Ctrl+/
