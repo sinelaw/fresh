@@ -475,7 +475,7 @@ fn test_command_palette_from_file_explorer() {
         .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
         .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
-    harness.editor_mut().process_async_messages();
+    let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
     // Verify file explorer is open by checking for the UI element

@@ -2100,12 +2100,13 @@ impl Editor {
     /// - LSP initialization/errors
     /// - File system changes (future)
     /// - Git status updates (future)
-    pub fn process_async_messages(&mut self) {
+    pub fn process_async_messages(&mut self) -> bool {
         let Some(bridge) = &self.async_bridge else {
-            return;
+            return false;
         };
 
         let messages = bridge.try_recv_all();
+        let needs_render = !messages.is_empty();
 
         for message in messages {
             match message {
@@ -2352,6 +2353,8 @@ impl Editor {
         if processed_any_commands {
             self.update_plugin_state_snapshot();
         }
+
+        needs_render
     }
 
     /// Update LSP status bar string from active progress operations

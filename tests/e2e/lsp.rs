@@ -1105,7 +1105,7 @@ edition = "2021"
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         // Process async messages
-        harness.editor_mut().process_async_messages();
+        let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
 
         // Check if LSP is ready by looking at the screen output (status bar)
@@ -1126,7 +1126,7 @@ edition = "2021"
     println!("Waiting for rust-analyzer to finish indexing...");
     for i in 0..30 {
         std::thread::sleep(std::time::Duration::from_millis(100));
-        harness.editor_mut().process_async_messages();
+        let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
 
         let screen = harness.screen_to_string();
@@ -1194,7 +1194,7 @@ edition = "2021"
     // Wait for LSP response (rust-analyzer can take several seconds)
     for i in 0..20 {
         std::thread::sleep(std::time::Duration::from_millis(500));
-        harness.editor_mut().process_async_messages();
+        let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
 
         // Check if response has arrived
@@ -1692,7 +1692,7 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     let mut wait_count = 0;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(500));
-        harness.editor_mut().process_async_messages();
+        let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
         wait_count += 1;
 
@@ -1753,13 +1753,13 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     eprintln!("\nPressing Enter to confirm rename...");
     harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
     harness.render()?;
-    harness.editor_mut().process_async_messages();
+    let _ = harness.editor_mut().process_async_messages();
 
     // Wait INDEFINITELY for LSP response (no timeout)
     eprintln!("Waiting for rust-analyzer response (no timeout)...");
     loop {
         std::thread::sleep(std::time::Duration::from_millis(200));
-        harness.editor_mut().process_async_messages();
+        let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
 
         let screen = harness.screen_to_string();

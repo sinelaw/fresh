@@ -144,7 +144,10 @@ fn run_event_loop(
 
     loop {
         // Process async messages from tokio tasks (LSP, file watching, etc.)
-        editor.process_async_messages();
+        let async_needs_render = editor.process_async_messages();
+        if async_needs_render {
+            needs_render = true;
+        }
 
         // Check if we should quit
         if editor.should_quit() {
@@ -184,9 +187,6 @@ fn run_event_loop(
                     // Ignore other events
                 }
             }
-        } else {
-            // No events, ensure we render at least once per frame
-            needs_render = true;
         }
     }
 
