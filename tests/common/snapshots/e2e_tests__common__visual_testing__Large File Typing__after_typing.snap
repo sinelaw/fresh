@@ -25,4 +25,4 @@ expression: "&screen_text"
           xxxxxxxxxxx                                                          │
      21 │ HELLO@00000800: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
      22 │ @00000880: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
-/tmp/fresh-test-BIG.txt [+] | Ln 10, Col 0 | Opened /tmp/fresh...  Help: Ctrl+/
+/tmp/fresh-test-BIG.txt [+] | Ln 10, Col 5 | Opened /tmp/fresh...  Help: Ctrl+/
