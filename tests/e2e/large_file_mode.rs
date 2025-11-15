@@ -331,3 +331,246 @@ fn test_large_file_cursor_screen_position_accuracy() {
 
     flow.finalize();
 }
+
+/// Test load-edit-save flow for both small and large file modes
+/// This test validates the complete lifecycle:
+/// 1. Load a file (either small or large mode based on threshold)
+/// 2. Make edits to the content
+/// 3. Save the file
+/// 4. Reload and verify changes persisted
+#[test]
+fn test_load_edit_save_flow_small_and_large_files() {
+    use crossterm::event::KeyModifiers;
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Test 1: Small file mode (under threshold)
+    {
+        let small_file_path = temp_dir.path().join("small_test.txt");
+        let initial_content = "Line 1\nLine 2\nLine 3\n";
+        fs::write(&small_file_path, initial_content).unwrap();
+
+        // Use a large threshold to ensure this stays in small file mode
+        let mut harness = EditorTestHarness::with_config(
+            80,
+            24,
+            fresh::config::Config {
+                editor: fresh::config::EditorConfig {
+                    large_file_threshold_bytes: 10 * 1024 * 1024, // 10MB threshold
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // Load the file
+        harness.open_file(&small_file_path).unwrap();
+        harness.render().unwrap();
+
+        // Verify initial load
+        assert_eq!(harness.cursor_position(), 0);
+
+        // Make edits: Move to end of first line and add text
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness.type_text(" EDITED").unwrap();
+
+        // Move to second line and insert text
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+        harness.type_text("INSERTED ").unwrap();
+
+        // Save the file (Ctrl+S)
+        harness
+            .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+            .unwrap();
+
+        // Verify the file was saved by reading it directly
+        let saved_content = fs::read_to_string(&small_file_path).unwrap();
+        assert!(
+            saved_content.contains("Line 1 EDITED"),
+            "Expected 'Line 1 EDITED' in saved content, got: {}",
+            saved_content
+        );
+        assert!(
+            saved_content.contains("INSERTED Line 2"),
+            "Expected 'INSERTED Line 2' in saved content, got: {}",
+            saved_content
+        );
+
+        // Reload the file in a new harness to verify persistence
+        let mut harness2 = EditorTestHarness::with_config(
+            80,
+            24,
+            fresh::config::Config {
+                editor: fresh::config::EditorConfig {
+                    large_file_threshold_bytes: 10 * 1024 * 1024,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        harness2.open_file(&small_file_path).unwrap();
+        harness2.render().unwrap();
+
+        let reloaded_content = harness2.get_buffer_content();
+        assert!(
+            reloaded_content.contains("Line 1 EDITED"),
+            "Reloaded content should contain edits"
+        );
+        assert!(
+            reloaded_content.contains("INSERTED Line 2"),
+            "Reloaded content should contain edits"
+        );
+    }
+
+    // Test 2: Large file mode (over threshold)
+    {
+        let large_file_path = temp_dir.path().join("large_test.txt");
+        // Create content that will exceed our custom threshold
+        let mut initial_content = String::new();
+        for i in 0..50 {
+            initial_content.push_str(&format!("This is line {} with some content\n", i));
+        }
+        fs::write(&large_file_path, &initial_content).unwrap();
+
+        // Use a small threshold (500 bytes) to force large file mode
+        let mut harness = EditorTestHarness::with_config(
+            80,
+            24,
+            fresh::config::Config {
+                editor: fresh::config::EditorConfig {
+                    large_file_threshold_bytes: 500, // Force large file mode
+                    auto_indent: false,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // Load the file
+        harness.open_file(&large_file_path).unwrap();
+        harness.render().unwrap();
+
+        // Verify initial load
+        assert_eq!(harness.cursor_position(), 0);
+
+        // Make edits in large file mode
+        // Move down several lines
+        for _ in 0..5 {
+            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+
+        let pos_before_edit = harness.cursor_position();
+        assert!(pos_before_edit > 0, "Cursor should have moved");
+
+        // Add text at this position
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness.type_text(" [LARGE FILE EDIT]").unwrap();
+
+        // Move to a different line and make another edit
+        for _ in 0..10 {
+            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+        harness.type_text(">>> ").unwrap();
+
+        // Save the file (Ctrl+S)
+        harness
+            .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+            .unwrap();
+
+        // Verify the file was saved by reading it directly
+        let saved_content = fs::read_to_string(&large_file_path).unwrap();
+        assert!(
+            saved_content.contains("[LARGE FILE EDIT]"),
+            "Expected '[LARGE FILE EDIT]' in saved content"
+        );
+        assert!(
+            saved_content.contains(">>>"),
+            "Expected '>>>' prefix in saved content"
+        );
+
+        // Reload the file in a new harness to verify persistence
+        let mut harness2 = EditorTestHarness::with_config(
+            80,
+            24,
+            fresh::config::Config {
+                editor: fresh::config::EditorConfig {
+                    large_file_threshold_bytes: 500,
+                    auto_indent: false,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        harness2.open_file(&large_file_path).unwrap();
+        harness2.render().unwrap();
+
+        let reloaded_content = harness2.get_buffer_content();
+        assert!(
+            reloaded_content.contains("[LARGE FILE EDIT]"),
+            "Reloaded content should contain large file edits"
+        );
+        assert!(
+            reloaded_content.contains(">>>"),
+            "Reloaded content should contain prefix edits"
+        );
+
+        // Verify we can navigate to the edited sections
+        // Move down to line 5 where we made the first edit
+        for _ in 0..5 {
+            harness2.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        // The content should be visible on screen
+        harness2.assert_screen_contains("[LARGE FILE EDIT]");
+    }
+
+    // Test 3: Verify threshold boundary behavior
+    {
+        let boundary_file_path = temp_dir.path().join("boundary_test.txt");
+        // Create a file exactly at 500 bytes to test threshold boundary
+        let content_498 = "x".repeat(498);
+        fs::write(&boundary_file_path, &content_498).unwrap();
+
+        let mut harness = EditorTestHarness::with_config(
+            80,
+            24,
+            fresh::config::Config {
+                editor: fresh::config::EditorConfig {
+                    large_file_threshold_bytes: 500,
+                    auto_indent: false,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        harness.open_file(&boundary_file_path).unwrap();
+        harness.render().unwrap();
+
+        // Add a few characters to push it over the threshold
+        harness.type_text("abc").unwrap();
+
+        // Save
+        harness
+            .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+            .unwrap();
+
+        // Verify saved
+        let saved_content = fs::read_to_string(&boundary_file_path).unwrap();
+        assert!(
+            saved_content.starts_with("abc"),
+            "Should have saved the inserted content"
+        );
+        assert_eq!(saved_content.len(), 501, "Should be 501 bytes after edit");
+    }
+}
