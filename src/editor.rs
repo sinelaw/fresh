@@ -3475,9 +3475,11 @@ impl Editor {
     fn get_key_context(&self) -> crate::keybindings::KeyContext {
         use crate::keybindings::KeyContext;
 
-        // Priority order: Help > Prompt > Popup > Rename > Current context (FileExplorer or Normal)
+        // Priority order: Help > Menu > Prompt > Popup > Rename > Current context (FileExplorer or Normal)
         if self.help_renderer.is_visible() {
             KeyContext::Help
+        } else if self.menu_state.active_menu.is_some() {
+            KeyContext::Menu
         } else if self.is_prompting() {
             KeyContext::Prompt
         } else if self.active_state().popups.is_visible() {
@@ -4278,6 +4280,66 @@ impl Editor {
                     state.viewport.ensure_visible(&mut state.buffer, &primary);
                 }
             }
+
+            // Menu navigation actions
+            Action::MenuActivate => {
+                // Open the first menu
+                self.menu_state.open_menu(0);
+            }
+            Action::MenuClose => {
+                self.menu_state.close_menu();
+            }
+            Action::MenuLeft => {
+                let total_menus = self.config.menu.menus.len() + self.menu_state.plugin_menus.len();
+                self.menu_state.prev_menu(total_menus);
+            }
+            Action::MenuRight => {
+                let total_menus = self.config.menu.menus.len() + self.menu_state.plugin_menus.len();
+                self.menu_state.next_menu(total_menus);
+            }
+            Action::MenuUp => {
+                if let Some(active_idx) = self.menu_state.active_menu {
+                    let all_menus: Vec<crate::config::Menu> = self.config.menu.menus
+                        .iter()
+                        .chain(self.menu_state.plugin_menus.iter())
+                        .cloned()
+                        .collect();
+                    if let Some(menu) = all_menus.get(active_idx) {
+                        self.menu_state.prev_item(menu);
+                    }
+                }
+            }
+            Action::MenuDown => {
+                if let Some(active_idx) = self.menu_state.active_menu {
+                    let all_menus: Vec<crate::config::Menu> = self.config.menu.menus
+                        .iter()
+                        .chain(self.menu_state.plugin_menus.iter())
+                        .cloned()
+                        .collect();
+                    if let Some(menu) = all_menus.get(active_idx) {
+                        self.menu_state.next_item(menu);
+                    }
+                }
+            }
+            Action::MenuExecute => {
+                // Execute the highlighted menu item's action
+                let all_menus: Vec<crate::config::Menu> = self.config.menu.menus
+                    .iter()
+                    .chain(self.menu_state.plugin_menus.iter())
+                    .cloned()
+                    .collect();
+
+                if let Some((action_name, args)) = self.menu_state.get_highlighted_action(&all_menus) {
+                    // Close the menu
+                    self.menu_state.close_menu();
+
+                    // Parse and execute the action
+                    if let Some(action) = Action::from_str(&action_name, &args) {
+                        return self.handle_action(action);
+                    }
+                }
+            }
+
             Action::None => {}
             Action::DeleteBackward => {
                 // Handle backspace in rename mode
