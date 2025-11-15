@@ -304,7 +304,7 @@ pub fn action_to_events(
                 // line_iterator positions us at the start of the current line
                 let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
-                let current_column = cursor.position - current_line_start;
+                let current_column = cursor.position.saturating_sub(current_line_start);
 
                 // Use sticky_column if set, otherwise use current column
                 let goal_column = if cursor.sticky_column > 0 {
@@ -336,7 +336,7 @@ pub fn action_to_events(
             for (cursor_id, cursor) in state.cursors.iter() {
                 let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
-                let current_column = cursor.position - current_line_start;
+                let current_column = cursor.position.saturating_sub(current_line_start);
 
                 // Use sticky_column if set, otherwise use current column
                 let goal_column = if cursor.sticky_column > 0 {
@@ -1268,5 +1268,631 @@ mod tests {
 
         assert_eq!(state.buffer.to_string(), "HelloWorld");
         assert_eq!(state.cursors.primary().position, 5);
+    }
+
+    #[test]
+    fn test_move_down_basic() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert three lines
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "Line1\nLine2\nLine3".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Move cursor to start of file
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 17,
+            new_position: 0,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        assert_eq!(state.cursors.primary().position, 0);
+
+        // Move down - should go to position 6 (start of Line2)
+        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
+        assert_eq!(events.len(), 1);
+
+        if let Event::MoveCursor { new_position, .. } = &events[0] {
+            assert_eq!(*new_position, 6, "Cursor should move to start of Line2");
+        } else {
+            panic!("Expected MoveCursor event");
+        }
+
+        state.apply(&events[0]);
+        assert_eq!(state.cursors.primary().position, 6);
+
+        // Move down again - should go to position 12 (start of Line3)
+        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
+        assert_eq!(events.len(), 1);
+
+        if let Event::MoveCursor { new_position, .. } = &events[0] {
+            assert_eq!(*new_position, 12, "Cursor should move to start of Line3");
+        } else {
+            panic!("Expected MoveCursor event");
+        }
+    }
+
+    #[test]
+    fn test_move_up_basic() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert three lines
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "Line1\nLine2\nLine3".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Cursor is at end (position 17)
+        // Text structure: "Line1\nLine2\nLine3"
+        // Positions: 0-4 (Line1), 5 (\n), 6-10 (Line2), 11 (\n), 12-16 (Line3)
+        assert_eq!(state.cursors.primary().position, 17);
+        assert_eq!(state.buffer.to_string(), "Line1\nLine2\nLine3");
+
+        // Move up - cursor is at end of Line3 (position 17, column 5)
+        // Should go to end of Line2 (position 11, which is the newline, BUT we want column 5 which is position 11)
+        // Wait, Line2 has content "Line2" (5 chars), so column 5 is position 6+5=11 (the newline)
+        // This is technically correct but weird - we're on the newline
+        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80).unwrap();
+        assert_eq!(events.len(), 1);
+
+        if let Event::MoveCursor { new_position, .. } = &events[0] {
+            // The current behavior puts us at position 11 (the newline after Line2)
+            // This happens because Line2 without newline has length 5, and we preserve column 5
+            // Position 6 (start of Line2) + 5 = 11 (the newline)
+            assert_eq!(*new_position, 11, "Cursor should move to column 5 of Line2 (which is the newline)");
+        } else {
+            panic!("Expected MoveCursor event");
+        }
+
+        state.apply(&events[0]);
+
+        // Move up again - from position 11 (newline after Line2)
+        // Current line is Line2 (starts at 6), column is 11-6=5
+        // Previous line is Line1 (starts at 0), content "Line1" has length 5
+        // So we go to position 0 + min(5, 5) = 5 (the newline after Line1)
+        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80).unwrap();
+        assert_eq!(events.len(), 1);
+
+        if let Event::MoveCursor { new_position, .. } = &events[0] {
+            assert_eq!(*new_position, 5, "Cursor should move to column 5 of Line1 (the newline)");
+        } else {
+            panic!("Expected MoveCursor event");
+        }
+    }
+
+    #[test]
+    fn test_move_down_preserves_column() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert lines with different lengths
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "12345\n123\n12345".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Move cursor to position 3 (column 3 of first line)
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 15,
+            new_position: 3,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        assert_eq!(state.cursors.primary().position, 3);
+
+        // Move down - should go to position 9 (column 3 of second line, which is end of "123")
+        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
+        assert_eq!(events.len(), 1);
+
+        if let Event::MoveCursor { new_position, new_sticky_column, .. } = &events[0] {
+            assert_eq!(*new_position, 9, "Cursor should move to end of shorter line");
+            assert_eq!(*new_sticky_column, 3, "Sticky column should preserve original column");
+        } else {
+            panic!("Expected MoveCursor event");
+        }
+
+        state.apply(&events[0]);
+
+        // Move down again - should go to position 13 (column 3 of third line)
+        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
+        assert_eq!(events.len(), 1);
+
+        if let Event::MoveCursor { new_position, new_sticky_column, .. } = &events[0] {
+            assert_eq!(*new_position, 13, "Cursor should move back to column 3");
+            assert_eq!(*new_sticky_column, 3, "Sticky column should be preserved");
+        } else {
+            panic!("Expected MoveCursor event");
+        }
+    }
+
+    #[test]
+    fn test_move_up_preserves_column() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert lines with different lengths
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "12345\n123\n12345".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Move cursor to position 13 (column 3 of third line)
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 15,
+            new_position: 13,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        assert_eq!(state.cursors.primary().position, 13);
+
+        // Move up - should go to position 9 (column 3 of second line, which is end of "123")
+        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80).unwrap();
+        assert_eq!(events.len(), 1);
+
+        if let Event::MoveCursor { new_position, new_sticky_column, .. } = &events[0] {
+            assert_eq!(*new_position, 9, "Cursor should move to end of shorter line");
+            assert_eq!(*new_sticky_column, 3, "Sticky column should preserve original column");
+        } else {
+            panic!("Expected MoveCursor event");
+        }
+
+        state.apply(&events[0]);
+
+        // Move up again - should go to position 3 (column 3 of first line)
+        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80).unwrap();
+        assert_eq!(events.len(), 1);
+
+        if let Event::MoveCursor { new_position, new_sticky_column, .. } = &events[0] {
+            assert_eq!(*new_position, 3, "Cursor should move back to column 3");
+            assert_eq!(*new_sticky_column, 3, "Sticky column should be preserved");
+        } else {
+            panic!("Expected MoveCursor event");
+        }
+    }
+
+    #[test]
+    fn test_move_down_at_line_start() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert two lines
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "First\nSecond".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Move cursor to start (position 0)
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 12,
+            new_position: 0,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Move down - should go to position 6 (start of second line)
+        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
+        assert_eq!(events.len(), 1);
+
+        if let Event::MoveCursor { new_position, .. } = &events[0] {
+            assert_eq!(*new_position, 6, "Cursor should move to start of next line");
+        } else {
+            panic!("Expected MoveCursor event");
+        }
+    }
+
+    #[test]
+    fn test_move_up_at_line_start() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert two lines
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "First\nSecond".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Move cursor to start of second line (position 6)
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 12,
+            new_position: 6,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Move up - should go to position 0 (start of first line)
+        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80).unwrap();
+        assert_eq!(events.len(), 1);
+
+        if let Event::MoveCursor { new_position, .. } = &events[0] {
+            assert_eq!(*new_position, 0, "Cursor should move to start of previous line");
+        } else {
+            panic!("Expected MoveCursor event");
+        }
+    }
+
+    #[test]
+    fn test_move_down_with_empty_lines() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert lines with empty line in middle
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "Line1\n\nLine3".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Move cursor to start
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 12,
+            new_position: 0,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Move down - should go to position 6 (empty line)
+        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
+        if let Event::MoveCursor { new_position, .. } = &events[0] {
+            assert_eq!(*new_position, 6, "Cursor should move to empty line");
+        }
+
+        state.apply(&events[0]);
+
+        // Move down again - should go to position 7 (start of Line3)
+        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
+        if let Event::MoveCursor { new_position, .. } = &events[0] {
+            assert_eq!(*new_position, 7, "Cursor should move to Line3");
+        }
+    }
+
+    #[test]
+    fn test_column_calculation_doesnt_underflow() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert a single line
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "Hello".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Set cursor at end (position 5)
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 5,
+            new_position: 5,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Try to move up (no previous line exists)
+        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80).unwrap();
+        assert_eq!(events.len(), 0, "Should not generate event when at first line");
+
+        // Try to move down (no next line exists)
+        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
+        assert_eq!(events.len(), 0, "Should not generate event when at last line");
+    }
+
+    #[test]
+    fn test_line_iterator_positioning_for_cursor_movement() {
+        // This test verifies the behavior of line_iterator when positioning at different offsets
+        // to understand how column calculation works
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "Line1\nLine2\nLine3".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // First, let's verify what offset_to_position returns for key positions
+        // Text structure: "Line1\nLine2\nLine3"
+        // Positions: 0-4 (Line1), 5 (\n), 6-10 (Line2), 11 (\n), 12-16 (Line3), 17 (end)
+
+        // Position 11 is the newline after "Line2"
+        if let Some(pos) = state.buffer.offset_to_position(11) {
+            println!("offset_to_position(11) = line={}, column={}", pos.line, pos.column);
+            // The newline is the 6th character of line 1 (0-indexed): "Line2\n"
+            // So column should be 5 (0-indexed)
+        }
+
+        // Position 17 is after "Line3"
+        if let Some(pos) = state.buffer.offset_to_position(17) {
+            println!("offset_to_position(17) = line={}, column={}", pos.line, pos.column);
+            // This is the 6th character of line 2 (after "Line3")
+            // So column should be 5
+        }
+
+        // Test 1: Position at end of Line3 (position 17)
+        // line_iterator(17) should position at start of Line3 (position 12)
+        let iter = state.buffer.line_iterator(17, 80);
+        assert_eq!(iter.current_position(), 12, "Iterator at position 17 should be at line start 12");
+
+        // Test 2: Position in middle of Line2 (position 9, which is 'n' in "Line2")
+        let iter = state.buffer.line_iterator(9, 80);
+        assert_eq!(iter.current_position(), 6, "Iterator at position 9 should be at line start 6");
+
+        // Test 3: Position at newline after Line2 (position 11)
+        let iter = state.buffer.line_iterator(11, 80);
+        assert_eq!(iter.current_position(), 6, "Iterator at position 11 (newline) should be at line start 6");
+
+        // Test 4: Position at start of Line2 (position 6)
+        let iter = state.buffer.line_iterator(6, 80);
+        assert_eq!(iter.current_position(), 6, "Iterator at position 6 should stay at 6");
+    }
+
+    #[test]
+    fn test_move_line_end_positioning() {
+        // Test where MoveLineEnd actually puts the cursor
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "HelloNew Line\nWorld!".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Start at position 0
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 20,
+            new_position: 0,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Move to line end
+        let events = action_to_events(&mut state, Action::MoveLineEnd, 4, false, 80).unwrap();
+        for event in events {
+            println!("MoveLineEnd event: {:?}", event);
+            state.apply(&event);
+        }
+
+        println!("After MoveLineEnd: cursor at {}", state.cursors.primary().position);
+        // "HelloNew Line\n" - the visible part is 13 chars (0-12)
+        // MoveLineEnd should put cursor at position 13 (after the visible text, before/on the newline)
+        assert_eq!(state.cursors.primary().position, 13, "MoveLineEnd should position at end of visible text");
+    }
+
+    #[test]
+    fn test_move_line_start_from_eof() {
+        // Test MoveLineStart when cursor is at EOF (beyond last character)
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "HelloNew Line\nWorld!".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Cursor is at EOF (position 20)
+        assert_eq!(state.cursors.primary().position, 20);
+        println!("Starting at EOF: position 20");
+
+        // Check what line_iterator does at EOF
+        let iter = state.buffer.line_iterator(20, 80);
+        println!("line_iterator(20).current_position() = {}", iter.current_position());
+
+        // Move to line start
+        let events = action_to_events(&mut state, Action::MoveLineStart, 4, false, 80).unwrap();
+        for event in events {
+            println!("MoveLineStart event from EOF: {:?}", event);
+            state.apply(&event);
+        }
+
+        println!("After MoveLineStart from EOF: cursor at {}", state.cursors.primary().position);
+        // Should move to position 14 (start of "World!" line)
+        assert_eq!(state.cursors.primary().position, 14, "MoveLineStart from EOF should go to start of last line");
+    }
+
+    #[test]
+    fn test_move_up_with_unloaded_chunks() {
+        // Test MoveUp when the chunk containing the cursor hasn't been loaded yet
+        // This simulates large file behavior where not all chunks are in memory
+        use std::fs;
+        use crate::text_buffer::TextBuffer;
+
+        // Create a temp file with multiple lines
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join("test_large_file_move_up.txt");
+
+        // Write 100 lines to simulate a larger file (each line ~25 bytes)
+        let mut content = String::new();
+        for i in 0..100 {
+            content.push_str(&format!("This is line number {}\n", i));
+        }
+        fs::write(&test_file, &content).unwrap();
+
+        // Use a VERY SMALL threshold (500 bytes) to force lazy loading behavior
+        // This ensures chunks won't all be loaded at once
+        let large_file_threshold = 500;
+        let buffer = TextBuffer::load_from_file(&test_file, large_file_threshold).unwrap();
+
+        // Create editor state with the loaded buffer
+        let mut state = EditorState::new(80, 24, large_file_threshold);
+        state.buffer = buffer;
+
+        // Move cursor to near the end (line 90)
+        let target_line_start: usize = content.lines().take(90).map(|l| l.len() + 1).sum();
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 0,
+            new_position: target_line_start,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        println!("Cursor at line 90, position: {}", state.cursors.primary().position);
+
+        // Try to move up - this should work even if chunks aren't loaded
+        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80).unwrap();
+        println!("MoveUp events: {:?}", events);
+
+        assert!(!events.is_empty(), "MoveUp should generate events even with unloaded chunks");
+
+        for event in events {
+            state.apply(&event);
+        }
+
+        println!("After MoveUp: cursor at {}", state.cursors.primary().position);
+        assert!(state.cursors.primary().position < target_line_start, "Cursor should have moved up");
+
+        // Clean up
+        fs::remove_file(&test_file).ok();
+    }
+
+    #[test]
+    fn test_move_down_from_newline_position() {
+        // Test moving down when cursor is ON a newline character
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert "HelloNew Line\nWorld!"
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "HelloNew Line\nWorld!".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Text structure: "HelloNew Line\nWorld!"
+        // Positions: 0-12 (HelloNew Line), 13 (\n), 14-19 (World!)
+        assert_eq!(state.buffer.to_string(), "HelloNew Line\nWorld!");
+
+        // Move cursor to position 13 (the newline after "HelloNew Line")
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 20,
+            new_position: 13,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        assert_eq!(state.cursors.primary().position, 13);
+        println!("Starting position: 13 (on the newline)");
+
+        // line_iterator(13) should position at...?
+        let iter = state.buffer.line_iterator(13, 80);
+        println!("line_iterator(13).current_position() = {}", iter.current_position());
+
+        // Move down to second line
+        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
+        println!("MoveDown events: {:?}", events);
+
+        if events.is_empty() {
+            panic!("MoveDown from position 13 generated no events!");
+        }
+
+        for event in events {
+            state.apply(&event);
+        }
+        println!("After MoveDown from position 13: cursor at {}", state.cursors.primary().position);
+
+        // We expect to be at position 14 (start of "World!" line) or somewhere on that line
+        // NOT at position 20 (EOF)
+        assert!(state.cursors.primary().position >= 14 && state.cursors.primary().position <= 20,
+            "After MoveDown from newline, cursor should be on the next line, not at EOF");
+    }
+
+    #[test]
+    fn test_move_down_then_home_backspace() {
+        // Reproduce the e2e test failure scenario
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert "HelloNew Line\nWorld!"
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "HelloNew Line\nWorld!".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Text structure: "HelloNew Line\nWorld!"
+        // Positions: 0-12 (HelloNew Line), 13 (\n), 14-19 (World!)
+        assert_eq!(state.buffer.to_string(), "HelloNew Line\nWorld!");
+        assert_eq!(state.cursors.primary().position, 20); // End of text
+
+        // Move up to first line
+        let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80).unwrap();
+        for event in events {
+            state.apply(&event);
+        }
+        println!("After MoveUp: cursor at {}", state.cursors.primary().position);
+
+        // Move to end of first line
+        let events = action_to_events(&mut state, Action::MoveLineEnd, 4, false, 80).unwrap();
+        for event in events {
+            state.apply(&event);
+        }
+        assert_eq!(state.cursors.primary().position, 13, "Should be at end of first line (position 13, the newline)");
+
+        // Move down to second line
+        let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
+        for event in events {
+            state.apply(&event);
+        }
+        println!("After MoveDown: cursor at {}", state.cursors.primary().position);
+
+        // Move to start of line (Home)
+        let events = action_to_events(&mut state, Action::MoveLineStart, 4, false, 80).unwrap();
+        for event in events {
+            state.apply(&event);
+        }
+        println!("After Home: cursor at {}", state.cursors.primary().position);
+        assert_eq!(state.cursors.primary().position, 14, "Should be at start of second line (position 14)");
+
+        // Delete backward (should delete the newline)
+        let events = action_to_events(&mut state, Action::DeleteBackward, 4, false, 80).unwrap();
+        for event in events.iter() {
+            println!("Event: {:?}", event);
+            state.apply(event);
+        }
+
+        println!("After backspace: buffer = {:?}", state.buffer.to_string());
+        println!("After backspace: cursor at {}", state.cursors.primary().position);
+        assert_eq!(state.buffer.to_string(), "HelloNew LineWorld!", "Lines should be joined");
+        assert_eq!(state.cursors.primary().position, 13, "Cursor should be at join point");
     }
 }
