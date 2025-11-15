@@ -3,6 +3,13 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use tempfile::TempDir;
 
+/// Helper to create a harness with auto-indent enabled
+fn harness_with_auto_indent() -> EditorTestHarness {
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    EditorTestHarness::with_config(80, 24, config).unwrap()
+}
+
 /// Test basic auto-indent in Rust after opening brace
 #[test]
 fn test_rust_auto_indent_after_brace() {
@@ -10,7 +17,7 @@ fn test_rust_auto_indent_after_brace() {
     let file_path = temp_dir.path().join("test.rs");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type function signature with opening brace
@@ -39,7 +46,7 @@ fn test_python_auto_indent_after_colon() {
     let file_path = temp_dir.path().join("test.py");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type function definition with colon
@@ -68,7 +75,7 @@ fn test_javascript_auto_indent_after_brace() {
     let file_path = temp_dir.path().join("test.js");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type function with opening brace
@@ -97,7 +104,7 @@ fn test_rust_nested_indent() {
     let file_path = temp_dir.path().join("test.rs");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type outer block
@@ -129,7 +136,7 @@ fn test_fallback_copies_previous_indent() {
     let file_path = temp_dir.path().join("test.txt");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type some indented text (no syntax highlighting for .txt)
@@ -155,7 +162,7 @@ fn test_auto_indent_with_multi_cursor() {
     let file_path = temp_dir.path().join("test.rs");
     std::fs::write(&file_path, "fn foo() {\nfn bar() {").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Position cursors at end of each line
@@ -223,7 +230,7 @@ fn test_typescript_interface_indent() {
     let file_path = temp_dir.path().join("test.ts");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type interface definition
@@ -249,7 +256,7 @@ fn test_cpp_class_indent() {
     let file_path = temp_dir.path().join("test.cpp");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type class definition
@@ -275,7 +282,7 @@ fn test_go_function_indent() {
     let file_path = temp_dir.path().join("test.go");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type function definition
@@ -301,7 +308,7 @@ fn test_json_object_indent() {
     let file_path = temp_dir.path().join("test.json");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type object opening
@@ -327,7 +334,7 @@ fn test_indent_after_typing_on_same_line() {
     let file_path = temp_dir.path().join("test.rs");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type complete function signature
@@ -355,7 +362,7 @@ fn test_indent_with_selection_deletes_first() {
     let file_path = temp_dir.path().join("test.rs");
     std::fs::write(&file_path, "fn main() {old text}").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Select "old text" (positions 12-20)
@@ -394,7 +401,7 @@ fn test_no_indent_after_close_brace() {
     let file_path = temp_dir.path().join("test.rs");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type a complete struct
@@ -457,7 +464,7 @@ fn test_auto_dedent_on_close_brace() {
     let file_path = temp_dir.path().join("test.rs");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type opening brace and press Enter to get indent
@@ -506,7 +513,7 @@ fn test_auto_dedent_nested_blocks() {
     let file_path = temp_dir.path().join("test.rs");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type nested if statements
@@ -565,7 +572,7 @@ fn test_auto_dedent_with_content_before() {
     let file_path = temp_dir.path().join("test.rs");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type: if (true) {
@@ -627,7 +634,7 @@ fn test_auto_dedent_nested_with_closed_inner() {
     let file_path = temp_dir.path().join("test.rs");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type: if (1) {
@@ -693,7 +700,7 @@ fn test_dedent_with_complete_syntax() {
     // Start with COMPLETE syntax (closing brace already present)
     std::fs::write(&file_path, "if (true) {\n    hi\n}\n").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Move cursor to end of "hi" line
@@ -733,7 +740,7 @@ fn test_indent_after_empty_line_in_function_body() {
     let file_path = temp_dir.path().join("test.rs");
     std::fs::write(&file_path, "").unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
 
     // Type a function with some content

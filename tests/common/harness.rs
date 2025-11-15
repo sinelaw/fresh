@@ -467,8 +467,26 @@ impl EditorTestHarness {
     /// Update shadow string to mirror key operations
     /// This helps catch discrepancies between piece tree and simple string operations
     fn update_shadow_for_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
-        // Ignore modifier-only keys for shadow (they don't modify text in our simplified model)
-        if modifiers.contains(KeyModifiers::CONTROL) || modifiers.contains(KeyModifiers::ALT) {
+        // Handle Ctrl+Home and Ctrl+End specially (goto start/end of document)
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            match code {
+                KeyCode::Home => {
+                    self.shadow_cursor = 0;
+                    return;
+                }
+                KeyCode::End => {
+                    self.shadow_cursor = self.shadow_string.len();
+                    return;
+                }
+                _ => {
+                    // Ignore other Ctrl combinations
+                    return;
+                }
+            }
+        }
+
+        // Ignore Alt modifier keys for shadow
+        if modifiers.contains(KeyModifiers::ALT) {
             return;
         }
 
