@@ -68,6 +68,26 @@ struct UiColors {
     tab_inactive_fg: ColorDef,
     tab_inactive_bg: ColorDef,
     tab_separator_bg: ColorDef,
+    #[serde(default = "default_menu_bg")]
+    menu_bg: ColorDef,
+    #[serde(default = "default_menu_fg")]
+    menu_fg: ColorDef,
+    #[serde(default = "default_menu_active_bg")]
+    menu_active_bg: ColorDef,
+    #[serde(default = "default_menu_active_fg")]
+    menu_active_fg: ColorDef,
+    #[serde(default = "default_menu_dropdown_bg")]
+    menu_dropdown_bg: ColorDef,
+    #[serde(default = "default_menu_dropdown_fg")]
+    menu_dropdown_fg: ColorDef,
+    #[serde(default = "default_menu_highlight_bg")]
+    menu_highlight_bg: ColorDef,
+    #[serde(default = "default_menu_highlight_fg")]
+    menu_highlight_fg: ColorDef,
+    #[serde(default = "default_menu_border_fg")]
+    menu_border_fg: ColorDef,
+    #[serde(default = "default_menu_separator_fg")]
+    menu_separator_fg: ColorDef,
     status_bar_fg: ColorDef,
     status_bar_bg: ColorDef,
     prompt_fg: ColorDef,
@@ -87,6 +107,38 @@ struct UiColors {
     help_indicator_fg: ColorDef,
     help_indicator_bg: ColorDef,
     split_separator_fg: ColorDef,
+}
+
+// Default menu colors (for backward compatibility with existing themes)
+fn default_menu_bg() -> ColorDef {
+    ColorDef::Rgb(40, 40, 40)
+}
+fn default_menu_fg() -> ColorDef {
+    ColorDef::Rgb(220, 220, 220)
+}
+fn default_menu_active_bg() -> ColorDef {
+    ColorDef::Rgb(60, 60, 60)
+}
+fn default_menu_active_fg() -> ColorDef {
+    ColorDef::Rgb(255, 255, 255)
+}
+fn default_menu_dropdown_bg() -> ColorDef {
+    ColorDef::Rgb(50, 50, 50)
+}
+fn default_menu_dropdown_fg() -> ColorDef {
+    ColorDef::Rgb(220, 220, 220)
+}
+fn default_menu_highlight_bg() -> ColorDef {
+    ColorDef::Rgb(70, 130, 180)
+}
+fn default_menu_highlight_fg() -> ColorDef {
+    ColorDef::Rgb(255, 255, 255)
+}
+fn default_menu_border_fg() -> ColorDef {
+    ColorDef::Rgb(100, 100, 100)
+}
+fn default_menu_separator_fg() -> ColorDef {
+    ColorDef::Rgb(80, 80, 80)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +193,18 @@ pub struct Theme {
     pub tab_inactive_fg: Color,
     pub tab_inactive_bg: Color,
     pub tab_separator_bg: Color,
+
+    // Menu bar colors
+    pub menu_bg: Color,
+    pub menu_fg: Color,
+    pub menu_active_bg: Color,
+    pub menu_active_fg: Color,
+    pub menu_dropdown_bg: Color,
+    pub menu_dropdown_fg: Color,
+    pub menu_highlight_bg: Color,
+    pub menu_highlight_fg: Color,
+    pub menu_border_fg: Color,
+    pub menu_separator_fg: Color,
 
     pub status_bar_fg: Color,
     pub status_bar_bg: Color,
@@ -208,6 +272,16 @@ impl From<ThemeFile> for Theme {
             tab_inactive_fg: file.ui.tab_inactive_fg.into(),
             tab_inactive_bg: file.ui.tab_inactive_bg.into(),
             tab_separator_bg: file.ui.tab_separator_bg.into(),
+            menu_bg: file.ui.menu_bg.into(),
+            menu_fg: file.ui.menu_fg.into(),
+            menu_active_bg: file.ui.menu_active_bg.into(),
+            menu_active_fg: file.ui.menu_active_fg.into(),
+            menu_dropdown_bg: file.ui.menu_dropdown_bg.into(),
+            menu_dropdown_fg: file.ui.menu_dropdown_fg.into(),
+            menu_highlight_bg: file.ui.menu_highlight_bg.into(),
+            menu_highlight_fg: file.ui.menu_highlight_fg.into(),
+            menu_border_fg: file.ui.menu_border_fg.into(),
+            menu_separator_fg: file.ui.menu_separator_fg.into(),
             status_bar_fg: file.ui.status_bar_fg.into(),
             status_bar_bg: file.ui.status_bar_bg.into(),
             prompt_fg: file.ui.prompt_fg.into(),
@@ -299,6 +373,18 @@ impl Theme {
             tab_inactive_bg: Color::DarkGray,
             tab_separator_bg: Color::Black,
 
+            // Menu bar colors
+            menu_bg: Color::Rgb(40, 40, 40),
+            menu_fg: Color::Rgb(220, 220, 220),
+            menu_active_bg: Color::Rgb(60, 60, 60),
+            menu_active_fg: Color::Rgb(255, 255, 255),
+            menu_dropdown_bg: Color::Rgb(50, 50, 50),
+            menu_dropdown_fg: Color::Rgb(220, 220, 220),
+            menu_highlight_bg: Color::Rgb(70, 130, 180),
+            menu_highlight_fg: Color::Rgb(255, 255, 255),
+            menu_border_fg: Color::Rgb(100, 100, 100),
+            menu_separator_fg: Color::Rgb(80, 80, 80),
+
             status_bar_fg: Color::Black,
             status_bar_bg: Color::White,
             prompt_fg: Color::Black,
@@ -371,6 +457,18 @@ impl Theme {
             tab_inactive_bg: Color::Gray,
             tab_separator_bg: Color::White,
 
+            // Menu bar colors
+            menu_bg: Color::Rgb(240, 240, 240),
+            menu_fg: Color::Rgb(40, 40, 40),
+            menu_active_bg: Color::Rgb(200, 200, 200),
+            menu_active_fg: Color::Rgb(0, 0, 0),
+            menu_dropdown_bg: Color::Rgb(250, 250, 250),
+            menu_dropdown_fg: Color::Rgb(40, 40, 40),
+            menu_highlight_bg: Color::Rgb(70, 130, 180),
+            menu_highlight_fg: Color::Rgb(255, 255, 255),
+            menu_border_fg: Color::Rgb(150, 150, 150),
+            menu_separator_fg: Color::Rgb(200, 200, 200),
+
             status_bar_fg: Color::White,
             status_bar_bg: Color::Blue,
             prompt_fg: Color::Black,
@@ -442,6 +540,18 @@ impl Theme {
             tab_inactive_fg: Color::White,
             tab_inactive_bg: Color::Black,
             tab_separator_bg: Color::Black,
+
+            // Menu bar colors
+            menu_bg: Color::Black,
+            menu_fg: Color::White,
+            menu_active_bg: Color::Yellow,
+            menu_active_fg: Color::Black,
+            menu_dropdown_bg: Color::Rgb(20, 20, 20),
+            menu_dropdown_fg: Color::White,
+            menu_highlight_bg: Color::Rgb(0, 100, 200),
+            menu_highlight_fg: Color::White,
+            menu_border_fg: Color::Yellow,
+            menu_separator_fg: Color::White,
 
             status_bar_fg: Color::Black,
             status_bar_bg: Color::Yellow,
