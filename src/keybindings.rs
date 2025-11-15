@@ -605,6 +605,71 @@ impl KeybindingResolver {
         Action::None
     }
 
+    /// Find the primary keybinding for a given action (for display in menus)
+    /// Returns a formatted string like "Ctrl+S" or "F12"
+    pub fn find_keybinding_for_action(&self, action_name: &str, context: KeyContext) -> Option<String> {
+        // Parse the action from the action name
+        let target_action = Action::from_str(action_name, &HashMap::new())?;
+
+        // Search in custom bindings first, then default bindings
+        let search_maps = vec![
+            self.bindings.get(&context),
+            self.bindings.get(&KeyContext::Global),
+            self.default_bindings.get(&context),
+            self.default_bindings.get(&KeyContext::Global),
+        ];
+
+        for map in search_maps.into_iter().flatten() {
+            for ((key_code, modifiers), action) in map {
+                // Compare actions using discriminant (ignores associated data)
+                if std::mem::discriminant(action) == std::mem::discriminant(&target_action) {
+                    return Some(Self::format_keybinding(*key_code, *modifiers));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Format a keybinding for display (e.g., "Ctrl+S", "Alt+Enter", "F12")
+    fn format_keybinding(key_code: KeyCode, modifiers: KeyModifiers) -> String {
+        let mut parts = Vec::new();
+
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            parts.push("Ctrl");
+        }
+        if modifiers.contains(KeyModifiers::ALT) {
+            parts.push("Alt");
+        }
+        if modifiers.contains(KeyModifiers::SHIFT) {
+            parts.push("Shift");
+        }
+
+        // Format the key
+        let key_str = match key_code {
+            KeyCode::Char(c) if c == ' ' => "Space".to_string(),
+            KeyCode::Char(c) => c.to_uppercase().to_string(),
+            KeyCode::Enter => "Enter".to_string(),
+            KeyCode::Backspace => "Backspace".to_string(),
+            KeyCode::Delete => "Delete".to_string(),
+            KeyCode::Tab => "Tab".to_string(),
+            KeyCode::Esc => "Esc".to_string(),
+            KeyCode::Left => "Left".to_string(),
+            KeyCode::Right => "Right".to_string(),
+            KeyCode::Up => "Up".to_string(),
+            KeyCode::Down => "Down".to_string(),
+            KeyCode::Home => "Home".to_string(),
+            KeyCode::End => "End".to_string(),
+            KeyCode::PageUp => "PageUp".to_string(),
+            KeyCode::PageDown => "PageDown".to_string(),
+            KeyCode::F(n) => format!("F{}", n),
+            _ => return String::new(),
+        };
+
+        parts.push(&key_str);
+        parts.join("+")
+    }
+
     /// Parse a key string to KeyCode
     fn parse_key(key: &str) -> Option<KeyCode> {
         match key.to_lowercase().as_str() {

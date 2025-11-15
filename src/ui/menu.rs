@@ -103,12 +103,14 @@ impl MenuRenderer {
     /// * `area` - The rectangular area to render the menu bar in
     /// * `menu_config` - The menu configuration
     /// * `menu_state` - Current menu state (which menu/item is active)
+    /// * `keybindings` - Keybinding resolver for displaying shortcuts
     /// * `theme` - The active theme for colors
     pub fn render(
         frame: &mut Frame,
         area: Rect,
         menu_config: &MenuConfig,
         menu_state: &MenuState,
+        keybindings: &crate::keybindings::KeybindingResolver,
         theme: &Theme,
     ) {
         // Combine config menus with plugin menus
@@ -153,6 +155,7 @@ impl MenuRenderer {
                     menu_state.highlighted_item,
                     active_idx,
                     &all_menus,
+                    keybindings,
                     theme,
                 );
             }
@@ -167,6 +170,7 @@ impl MenuRenderer {
         highlighted_item: Option<usize>,
         menu_index: usize,
         all_menus: &[&Menu],
+        keybindings: &crate::keybindings::KeybindingResolver,
         theme: &Theme,
     ) {
         // Calculate the x position of the dropdown based on menu index
@@ -207,7 +211,7 @@ impl MenuRenderer {
             let is_highlighted = highlighted_item == Some(idx);
 
             let line = match item {
-                MenuItem::Action { label, .. } => {
+                MenuItem::Action { label, action, .. } => {
                     let style = if is_highlighted {
                         Style::default()
                             .fg(theme.menu_highlight_fg)
@@ -218,11 +222,20 @@ impl MenuRenderer {
                             .bg(theme.menu_dropdown_bg)
                     };
 
-                    // TODO: Add keybinding display here (Phase 3)
-                    Line::from(vec![Span::styled(
-                        format!(" {:<width$}", label, width = max_width - 2),
-                        style,
-                    )])
+                    // Find keybinding for this action
+                    let keybinding = keybindings
+                        .find_keybinding_for_action(action, crate::keybindings::KeyContext::Normal)
+                        .unwrap_or_default();
+
+                    // Calculate spacing for alignment
+                    let label_width = max_width.saturating_sub(keybinding.len() + 4);
+                    let text = if keybinding.is_empty() {
+                        format!(" {:<width$}", label, width = max_width - 2)
+                    } else {
+                        format!(" {:<label_width$} {}", label, keybinding)
+                    };
+
+                    Line::from(vec![Span::styled(text, style)])
                 }
                 MenuItem::Separator { .. } => {
                     let separator = "─".repeat(max_width - 2);

@@ -5222,6 +5222,7 @@ impl Editor {
             menu_bar_area,
             &self.config.menu,
             &self.menu_state,
+            &self.keybindings,
             &self.theme,
         );
 
