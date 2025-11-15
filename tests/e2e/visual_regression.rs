@@ -1237,3 +1237,101 @@ fn count_unique_colors(buffer: &ratatui::buffer::Buffer) -> usize {
 
     colors.len()
 }
+
+/// Test menu bar navigation and usage
+#[test]
+fn visual_menu_bar() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut flow = VisualFlow::new(
+        "Menu Bar Navigation",
+        "Core Features",
+        "Using the menu bar to discover and execute commands",
+    );
+
+    // Step 1: Initial state - menu bar visible at top
+    harness.type_text("Hello, World!").unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "menu_bar_visible",
+            "Menu bar visible at top showing File, Edit, View, Selection, Go, Help",
+        )
+        .unwrap();
+
+    // Step 2: Activate menu with F10
+    harness.send_key(KeyCode::F(10), KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "file_menu_open",
+            "File menu activated - dropdown shows options with keyboard shortcuts",
+        )
+        .unwrap();
+
+    // Step 3: Navigate to Edit menu (Right arrow)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "edit_menu_open",
+            "Edit menu - shows Undo, Redo, Cut, Copy, Paste, Find, Replace",
+        )
+        .unwrap();
+
+    // Step 4: Navigate to View menu
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "view_menu_open",
+            "View menu - shows File Explorer, Split options",
+        )
+        .unwrap();
+
+    // Step 5: Navigate within menu (Down arrow)
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "menu_item_highlighted",
+            "Second item highlighted within View menu",
+        )
+        .unwrap();
+
+    // Step 6: Navigate to Help menu
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "help_menu_open",
+            "Help menu - shows help and about options",
+        )
+        .unwrap();
+
+    // Step 7: Close menu with Escape
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .capture_visual_step(
+            &mut flow,
+            "menu_closed",
+            "Menu closed - back to normal editing with menu bar still visible at top",
+        )
+        .unwrap();
+}
