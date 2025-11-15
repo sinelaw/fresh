@@ -1172,6 +1172,13 @@ pub fn action_to_events(
         | Action::FindPrevious
         | Action::Replace
         | Action::QueryReplace
+        | Action::MenuActivate
+        | Action::MenuClose
+        | Action::MenuLeft
+        | Action::MenuRight
+        | Action::MenuUp
+        | Action::MenuDown
+        | Action::MenuExecute
         | Action::PluginAction(_)
         | Action::None => return None,
 

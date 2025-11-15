@@ -75,6 +75,8 @@ pub enum KeyContext {
     FileExplorer,
     /// Rename mode is active
     Rename,
+    /// Menu bar is active
+    Menu,
 }
 
 impl KeyContext {
@@ -95,6 +97,7 @@ impl KeyContext {
             "popup" => Some(KeyContext::Popup),
             "fileExplorer" | "file_explorer" => Some(KeyContext::FileExplorer),
             "normal" => Some(KeyContext::Normal),
+            "menu" => Some(KeyContext::Menu),
             _ => None,
         }
     }
@@ -109,6 +112,7 @@ impl KeyContext {
             KeyContext::Popup => "popup",
             KeyContext::FileExplorer => "fileExplorer",
             KeyContext::Rename => "rename",
+            KeyContext::Menu => "menu",
         }
     }
 }
@@ -292,6 +296,15 @@ pub enum Action {
     Replace,
     QueryReplace, // Interactive replace (y/n/!/q for each match)
 
+    // Menu navigation
+    MenuActivate,      // Open menu bar (Alt or F10)
+    MenuClose,         // Close menu (Esc)
+    MenuLeft,          // Navigate to previous menu
+    MenuRight,         // Navigate to next menu
+    MenuUp,            // Navigate to previous item in menu
+    MenuDown,          // Navigate to next item in menu
+    MenuExecute,       // Execute selected menu item (Enter)
+
     // Plugin custom actions
     PluginAction(String),
 
@@ -453,6 +466,14 @@ impl Action {
             "find_previous" => Some(Action::FindPrevious),
             "replace" => Some(Action::Replace),
             "query_replace" => Some(Action::QueryReplace),
+
+            "menu_activate" => Some(Action::MenuActivate),
+            "menu_close" => Some(Action::MenuClose),
+            "menu_left" => Some(Action::MenuLeft),
+            "menu_right" => Some(Action::MenuRight),
+            "menu_up" => Some(Action::MenuUp),
+            "menu_down" => Some(Action::MenuDown),
+            "menu_execute" => Some(Action::MenuExecute),
 
             _ => None,
         }
@@ -729,6 +750,12 @@ impl KeybindingResolver {
         global_bindings.insert(
             (KeyCode::Char('7'), KeyModifiers::CONTROL),
             Action::CommandPalette,
+        );
+
+        // Menu activation (F10 - standard across most applications)
+        global_bindings.insert(
+            (KeyCode::F(10), KeyModifiers::empty()),
+            Action::MenuActivate,
         );
 
         all_bindings.insert(KeyContext::Global, global_bindings);
@@ -1157,6 +1184,25 @@ impl KeybindingResolver {
         rename_bindings.insert((KeyCode::Down, KeyModifiers::empty()), Action::RenameCancel);
         all_bindings.insert(KeyContext::Rename, rename_bindings);
 
+        // Menu context bindings (when menu bar is active)
+        let mut menu_bindings = HashMap::new();
+
+        // Navigate between menus
+        menu_bindings.insert((KeyCode::Left, KeyModifiers::empty()), Action::MenuLeft);
+        menu_bindings.insert((KeyCode::Right, KeyModifiers::empty()), Action::MenuRight);
+
+        // Navigate within menu
+        menu_bindings.insert((KeyCode::Up, KeyModifiers::empty()), Action::MenuUp);
+        menu_bindings.insert((KeyCode::Down, KeyModifiers::empty()), Action::MenuDown);
+
+        // Execute action
+        menu_bindings.insert((KeyCode::Enter, KeyModifiers::empty()), Action::MenuExecute);
+
+        // Close menu
+        menu_bindings.insert((KeyCode::Esc, KeyModifiers::empty()), Action::MenuClose);
+
+        all_bindings.insert(KeyContext::Menu, menu_bindings);
+
         all_bindings
     }
 
@@ -1173,6 +1219,7 @@ impl KeybindingResolver {
             KeyContext::Popup,
             KeyContext::FileExplorer,
             KeyContext::Rename,
+            KeyContext::Menu,
         ] {
             let mut all_keys: HashMap<(KeyCode, KeyModifiers), Action> = HashMap::new();
 
@@ -1356,6 +1403,13 @@ impl KeybindingResolver {
             Action::FindPrevious => "Find previous search match".to_string(),
             Action::Replace => "Replace text in buffer".to_string(),
             Action::QueryReplace => "Interactive replace (y/n/!/q for each match)".to_string(),
+            Action::MenuActivate => "Activate menu bar".to_string(),
+            Action::MenuClose => "Close menu".to_string(),
+            Action::MenuLeft => "Navigate to previous menu".to_string(),
+            Action::MenuRight => "Navigate to next menu".to_string(),
+            Action::MenuUp => "Navigate to previous menu item".to_string(),
+            Action::MenuDown => "Navigate to next menu item".to_string(),
+            Action::MenuExecute => "Execute selected menu item".to_string(),
             Action::PluginAction(name) => format!("Plugin action: {}", name),
             Action::None => "No action".to_string(),
         }
