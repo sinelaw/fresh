@@ -4,71 +4,71 @@
     .terminal { font-family: 'Courier New', 'Consolas', monospace; font-size: 14px; white-space: pre; }
 </style>
 <rect width="100%" height="100%" fill="#000000"/>
-  <rect x="0" y="0" width="9" height="18" fill="#bd93f9"/>
-  <rect x="9" y="0" width="9" height="18" fill="#bd93f9"/>
-  <text x="10" y="14" fill="#f1fa8c" class="terminal" style="font-weight:bold;">[</text>
-  <rect x="18" y="0" width="9" height="18" fill="#bd93f9"/>
-  <text x="19" y="14" fill="#f1fa8c" class="terminal" style="font-weight:bold;">N</text>
-  <rect x="27" y="0" width="9" height="18" fill="#bd93f9"/>
-  <text x="28" y="14" fill="#f1fa8c" class="terminal" style="font-weight:bold;">o</text>
-  <rect x="36" y="0" width="9" height="18" fill="#bd93f9"/>
-  <rect x="45" y="0" width="9" height="18" fill="#bd93f9"/>
-  <text x="46" y="14" fill="#f1fa8c" class="terminal" style="font-weight:bold;">N</text>
-  <rect x="54" y="0" width="9" height="18" fill="#bd93f9"/>
-  <text x="55" y="14" fill="#f1fa8c" class="terminal" style="font-weight:bold;">a</text>
-  <rect x="63" y="0" width="9" height="18" fill="#bd93f9"/>
-  <text x="64" y="14" fill="#f1fa8c" class="terminal" style="font-weight:bold;">m</text>
-  <rect x="72" y="0" width="9" height="18" fill="#bd93f9"/>
-  <text x="73" y="14" fill="#f1fa8c" class="terminal" style="font-weight:bold;">e</text>
-  <rect x="81" y="0" width="9" height="18" fill="#bd93f9"/>
-  <text x="82" y="14" fill="#f1fa8c" class="terminal" style="font-weight:bold;">]</text>
-  <rect x="90" y="0" width="9" height="18" fill="#bd93f9"/>
-  <text x="91" y="14" fill="#f1fa8c" class="terminal" style="font-weight:bold;">*</text>
-  <rect x="99" y="0" width="9" height="18" fill="#bd93f9"/>
-  <text x="37" y="32" fill="#858585" class="terminal" style="">1</text>
-  <text x="55" y="32" fill="#858585" class="terminal" style="">│</text>
-  <text x="73" y="32" fill="#d4d4d4" class="terminal" style="">u</text>
-  <text x="82" y="32" fill="#d4d4d4" class="terminal" style="">l</text>
-  <text x="91" y="32" fill="#d4d4d4" class="terminal" style="">d</text>
-  <text x="109" y="32" fill="#d4d4d4" class="terminal" style="">n</text>
-  <text x="118" y="32" fill="#d4d4d4" class="terminal" style="">o</text>
-  <text x="127" y="32" fill="#d4d4d4" class="terminal" style="">r</text>
-  <text x="136" y="32" fill="#d4d4d4" class="terminal" style="">m</text>
-  <text x="145" y="32" fill="#d4d4d4" class="terminal" style="">a</text>
-  <text x="154" y="32" fill="#d4d4d4" class="terminal" style="">l</text>
-  <text x="163" y="32" fill="#d4d4d4" class="terminal" style="">l</text>
-  <text x="172" y="32" fill="#d4d4d4" class="terminal" style="">y</text>
-  <text x="190" y="32" fill="#d4d4d4" class="terminal" style="">w</text>
-  <text x="199" y="32" fill="#d4d4d4" class="terminal" style="">r</text>
-  <text x="208" y="32" fill="#d4d4d4" class="terminal" style="">a</text>
-  <text x="217" y="32" fill="#d4d4d4" class="terminal" style="">p</text>
-  <text x="235" y="32" fill="#d4d4d4" class="terminal" style="">b</text>
-  <text x="244" y="32" fill="#d4d4d4" class="terminal" style="">u</text>
-  <text x="253" y="32" fill="#d4d4d4" class="terminal" style="">t</text>
-  <text x="271" y="32" fill="#d4d4d4" class="terminal" style="">n</text>
-  <text x="280" y="32" fill="#d4d4d4" class="terminal" style="">o</text>
-  <text x="289" y="32" fill="#d4d4d4" class="terminal" style="">w</text>
-  <text x="307" y="32" fill="#d4d4d4" class="terminal" style="">e</text>
-  <text x="316" y="32" fill="#d4d4d4" class="terminal" style="">x</text>
-  <text x="325" y="32" fill="#d4d4d4" class="terminal" style="">t</text>
-  <text x="334" y="32" fill="#d4d4d4" class="terminal" style="">e</text>
-  <text x="343" y="32" fill="#d4d4d4" class="terminal" style="">n</text>
-  <text x="352" y="32" fill="#d4d4d4" class="terminal" style="">d</text>
-  <text x="361" y="32" fill="#d4d4d4" class="terminal" style="">s</text>
-  <text x="379" y="32" fill="#d4d4d4" class="terminal" style="">b</text>
-  <text x="388" y="32" fill="#d4d4d4" class="terminal" style="">e</text>
-  <text x="397" y="32" fill="#d4d4d4" class="terminal" style="">y</text>
-  <text x="406" y="32" fill="#d4d4d4" class="terminal" style="">o</text>
-  <text x="415" y="32" fill="#d4d4d4" class="terminal" style="">n</text>
-  <text x="424" y="32" fill="#d4d4d4" class="terminal" style="">d</text>
-  <text x="442" y="32" fill="#d4d4d4" class="terminal" style="">t</text>
-  <text x="451" y="32" fill="#d4d4d4" class="terminal" style="">h</text>
-  <text x="460" y="32" fill="#d4d4d4" class="terminal" style="">e</text>
-  <text x="478" y="32" fill="#d4d4d4" class="terminal" style="">v</text>
-  <text x="487" y="32" fill="#d4d4d4" class="terminal" style="">i</text>
-  <text x="496" y="32" fill="#d4d4d4" class="terminal" style="">e</text>
-  <text x="505" y="32" fill="#d4d4d4" class="terminal" style="">w</text>
-  <text x="514" y="32" fill="#d4d4d4" class="terminal" style="">.</text>
+  <rect x="0" y="0" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="9" y="0" width="9" height="18" fill="#f1fa8c"/>
+  <text x="10" y="14" fill="#000000" class="terminal" style="font-weight:bold;">[</text>
+  <rect x="18" y="0" width="9" height="18" fill="#f1fa8c"/>
+  <text x="19" y="14" fill="#000000" class="terminal" style="font-weight:bold;">N</text>
+  <rect x="27" y="0" width="9" height="18" fill="#f1fa8c"/>
+  <text x="28" y="14" fill="#000000" class="terminal" style="font-weight:bold;">o</text>
+  <rect x="36" y="0" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="45" y="0" width="9" height="18" fill="#f1fa8c"/>
+  <text x="46" y="14" fill="#000000" class="terminal" style="font-weight:bold;">N</text>
+  <rect x="54" y="0" width="9" height="18" fill="#f1fa8c"/>
+  <text x="55" y="14" fill="#000000" class="terminal" style="font-weight:bold;">a</text>
+  <rect x="63" y="0" width="9" height="18" fill="#f1fa8c"/>
+  <text x="64" y="14" fill="#000000" class="terminal" style="font-weight:bold;">m</text>
+  <rect x="72" y="0" width="9" height="18" fill="#f1fa8c"/>
+  <text x="73" y="14" fill="#000000" class="terminal" style="font-weight:bold;">e</text>
+  <rect x="81" y="0" width="9" height="18" fill="#f1fa8c"/>
+  <text x="82" y="14" fill="#000000" class="terminal" style="font-weight:bold;">]</text>
+  <rect x="90" y="0" width="9" height="18" fill="#f1fa8c"/>
+  <text x="91" y="14" fill="#000000" class="terminal" style="font-weight:bold;">*</text>
+  <rect x="99" y="0" width="9" height="18" fill="#f1fa8c"/>
+  <text x="37" y="32" fill="#f1fa8c" class="terminal" style="">1</text>
+  <text x="55" y="32" fill="#f1fa8c" class="terminal" style="">│</text>
+  <text x="73" y="32" fill="#ffffff" class="terminal" style="">u</text>
+  <text x="82" y="32" fill="#ffffff" class="terminal" style="">l</text>
+  <text x="91" y="32" fill="#ffffff" class="terminal" style="">d</text>
+  <text x="109" y="32" fill="#ffffff" class="terminal" style="">n</text>
+  <text x="118" y="32" fill="#ffffff" class="terminal" style="">o</text>
+  <text x="127" y="32" fill="#ffffff" class="terminal" style="">r</text>
+  <text x="136" y="32" fill="#ffffff" class="terminal" style="">m</text>
+  <text x="145" y="32" fill="#ffffff" class="terminal" style="">a</text>
+  <text x="154" y="32" fill="#ffffff" class="terminal" style="">l</text>
+  <text x="163" y="32" fill="#ffffff" class="terminal" style="">l</text>
+  <text x="172" y="32" fill="#ffffff" class="terminal" style="">y</text>
+  <text x="190" y="32" fill="#ffffff" class="terminal" style="">w</text>
+  <text x="199" y="32" fill="#ffffff" class="terminal" style="">r</text>
+  <text x="208" y="32" fill="#ffffff" class="terminal" style="">a</text>
+  <text x="217" y="32" fill="#ffffff" class="terminal" style="">p</text>
+  <text x="235" y="32" fill="#ffffff" class="terminal" style="">b</text>
+  <text x="244" y="32" fill="#ffffff" class="terminal" style="">u</text>
+  <text x="253" y="32" fill="#ffffff" class="terminal" style="">t</text>
+  <text x="271" y="32" fill="#ffffff" class="terminal" style="">n</text>
+  <text x="280" y="32" fill="#ffffff" class="terminal" style="">o</text>
+  <text x="289" y="32" fill="#ffffff" class="terminal" style="">w</text>
+  <text x="307" y="32" fill="#ffffff" class="terminal" style="">e</text>
+  <text x="316" y="32" fill="#ffffff" class="terminal" style="">x</text>
+  <text x="325" y="32" fill="#ffffff" class="terminal" style="">t</text>
+  <text x="334" y="32" fill="#ffffff" class="terminal" style="">e</text>
+  <text x="343" y="32" fill="#ffffff" class="terminal" style="">n</text>
+  <text x="352" y="32" fill="#ffffff" class="terminal" style="">d</text>
+  <text x="361" y="32" fill="#ffffff" class="terminal" style="">s</text>
+  <text x="379" y="32" fill="#ffffff" class="terminal" style="">b</text>
+  <text x="388" y="32" fill="#ffffff" class="terminal" style="">e</text>
+  <text x="397" y="32" fill="#ffffff" class="terminal" style="">y</text>
+  <text x="406" y="32" fill="#ffffff" class="terminal" style="">o</text>
+  <text x="415" y="32" fill="#ffffff" class="terminal" style="">n</text>
+  <text x="424" y="32" fill="#ffffff" class="terminal" style="">d</text>
+  <text x="442" y="32" fill="#ffffff" class="terminal" style="">t</text>
+  <text x="451" y="32" fill="#ffffff" class="terminal" style="">h</text>
+  <text x="460" y="32" fill="#ffffff" class="terminal" style="">e</text>
+  <text x="478" y="32" fill="#ffffff" class="terminal" style="">v</text>
+  <text x="487" y="32" fill="#ffffff" class="terminal" style="">i</text>
+  <text x="496" y="32" fill="#ffffff" class="terminal" style="">e</text>
+  <text x="505" y="32" fill="#ffffff" class="terminal" style="">w</text>
+  <text x="514" y="32" fill="#ffffff" class="terminal" style="">.</text>
   <text x="532" y="32" fill="#6272a4" class="terminal" style="">█</text>
   <text x="532" y="50" fill="#6272a4" class="terminal" style="">█</text>
   <text x="532" y="68" fill="#6272a4" class="terminal" style="">█</text>
@@ -91,85 +91,99 @@
   <text x="532" y="374" fill="#6272a4" class="terminal" style="">█</text>
   <text x="532" y="392" fill="#6272a4" class="terminal" style="">█</text>
   <text x="532" y="410" fill="#6272a4" class="terminal" style="">█</text>
-  <rect x="0" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="0" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="1" y="428" fill="#000000" class="terminal" style="">[</text>
-  <rect x="9" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="9" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="10" y="428" fill="#000000" class="terminal" style="">N</text>
-  <rect x="18" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="18" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="19" y="428" fill="#000000" class="terminal" style="">o</text>
-  <rect x="27" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="36" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="27" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="36" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="37" y="428" fill="#000000" class="terminal" style="">N</text>
-  <rect x="45" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="45" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="46" y="428" fill="#000000" class="terminal" style="">a</text>
-  <rect x="54" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="54" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="55" y="428" fill="#000000" class="terminal" style="">m</text>
-  <rect x="63" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="63" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="64" y="428" fill="#000000" class="terminal" style="">e</text>
-  <rect x="72" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="72" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="73" y="428" fill="#000000" class="terminal" style="">]</text>
-  <rect x="81" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="90" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="81" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="90" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="91" y="428" fill="#000000" class="terminal" style="">[</text>
-  <rect x="99" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="99" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="100" y="428" fill="#000000" class="terminal" style="">+</text>
-  <rect x="108" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="108" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="109" y="428" fill="#000000" class="terminal" style="">]</text>
-  <rect x="117" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="126" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="117" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="126" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="127" y="428" fill="#000000" class="terminal" style="">|</text>
-  <rect x="135" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="144" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="135" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="144" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="145" y="428" fill="#000000" class="terminal" style="">L</text>
-  <rect x="153" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="153" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="154" y="428" fill="#000000" class="terminal" style="">n</text>
-  <rect x="162" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="171" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="162" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="171" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="172" y="428" fill="#000000" class="terminal" style="">0</text>
-  <rect x="180" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="180" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="181" y="428" fill="#000000" class="terminal" style="">,</text>
-  <rect x="189" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="198" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="189" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="198" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="199" y="428" fill="#000000" class="terminal" style="">C</text>
-  <rect x="207" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="207" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="208" y="428" fill="#000000" class="terminal" style="">o</text>
-  <rect x="216" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="216" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="217" y="428" fill="#000000" class="terminal" style="">l</text>
-  <rect x="225" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="234" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="225" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="234" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="235" y="428" fill="#000000" class="terminal" style="">1</text>
-  <rect x="243" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="243" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="244" y="428" fill="#000000" class="terminal" style="">3</text>
-  <rect x="252" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="252" y="414" width="9" height="18" fill="#f1fa8c"/>
   <text x="253" y="428" fill="#000000" class="terminal" style="">6</text>
-  <rect x="261" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="270" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="279" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="288" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="297" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="306" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="315" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="324" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="333" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="342" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="351" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="360" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="369" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="378" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="387" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="396" y="414" width="9" height="18" fill="#ffffff"/>
-  <rect x="405" y="414" width="9" height="18" fill="#ffffff"/>
+  <rect x="261" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="270" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="279" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="288" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="297" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="306" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="315" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="324" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="333" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="342" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="351" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="360" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="369" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="378" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="387" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="396" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="405" y="414" width="9" height="18" fill="#f1fa8c"/>
+  <rect x="414" y="414" width="9" height="18" fill="#000000"/>
+  <rect x="423" y="414" width="9" height="18" fill="#000000"/>
   <text x="424" y="428" fill="#ff5555" class="terminal" style="">H</text>
+  <rect x="432" y="414" width="9" height="18" fill="#000000"/>
   <text x="433" y="428" fill="#ff5555" class="terminal" style="">e</text>
+  <rect x="441" y="414" width="9" height="18" fill="#000000"/>
   <text x="442" y="428" fill="#ff5555" class="terminal" style="">l</text>
+  <rect x="450" y="414" width="9" height="18" fill="#000000"/>
   <text x="451" y="428" fill="#ff5555" class="terminal" style="">p</text>
+  <rect x="459" y="414" width="9" height="18" fill="#000000"/>
   <text x="460" y="428" fill="#ff5555" class="terminal" style="">:</text>
+  <rect x="468" y="414" width="9" height="18" fill="#000000"/>
+  <rect x="477" y="414" width="9" height="18" fill="#000000"/>
   <text x="478" y="428" fill="#ff5555" class="terminal" style="">C</text>
+  <rect x="486" y="414" width="9" height="18" fill="#000000"/>
   <text x="487" y="428" fill="#ff5555" class="terminal" style="">t</text>
+  <rect x="495" y="414" width="9" height="18" fill="#000000"/>
   <text x="496" y="428" fill="#ff5555" class="terminal" style="">r</text>
+  <rect x="504" y="414" width="9" height="18" fill="#000000"/>
   <text x="505" y="428" fill="#ff5555" class="terminal" style="">l</text>
+  <rect x="513" y="414" width="9" height="18" fill="#000000"/>
   <text x="514" y="428" fill="#ff5555" class="terminal" style="">+</text>
+  <rect x="522" y="414" width="9" height="18" fill="#000000"/>
   <text x="523" y="428" fill="#ff5555" class="terminal" style="">/</text>
+  <rect x="531" y="414" width="9" height="18" fill="#000000"/>
   <!-- Cursor indicator -->
   <rect x="522" y="18" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
 </svg>
