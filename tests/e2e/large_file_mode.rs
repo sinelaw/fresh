@@ -32,9 +32,7 @@ fn test_large_file_cursor_down_movement() {
     let mut prev_pos = initial_pos;
 
     for i in 1..=50 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
 
         let cursor_pos = harness.cursor_position();
         let screen_pos = harness.screen_cursor_position();
@@ -101,9 +99,7 @@ fn test_large_file_typing() {
 
     // Step 2: Move down several lines to test typing deeper in the file
     for _ in 0..10 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
 
     let cursor_pos_before_typing = harness.cursor_position();
@@ -149,9 +145,7 @@ fn test_large_file_typing() {
 
     // Step 4: Continue to move down and type more to verify consistency throughout the file
     for _ in 0..20 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
 
     let cursor_pos_before_second = harness.cursor_position();
@@ -168,7 +162,11 @@ fn test_large_file_typing() {
     );
 
     harness
-        .capture_visual_step(&mut flow, "after_second_typing", "After typing more text deeper in file")
+        .capture_visual_step(
+            &mut flow,
+            "after_second_typing",
+            "After typing more text deeper in file",
+        )
         .unwrap();
 
     flow.finalize();
@@ -187,9 +185,7 @@ fn test_large_file_rapid_cursor_movement() {
     // Rapidly move down 100 lines
     let target_line = 100;
     for i in 1..=target_line {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
 
         let cursor_pos = harness.cursor_position();
         let expected_byte_pos = i * 80; // Each line is 80 bytes
@@ -233,9 +229,7 @@ fn test_large_file_cursor_movement_and_typing() {
     // Move down several lines
     let moves_down = 10;
     for _ in 0..moves_down {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
 
     let pos_after_movement = harness.cursor_position();
@@ -259,9 +253,7 @@ fn test_large_file_cursor_movement_and_typing() {
     );
 
     // Move down again
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
 
     let pos_after_second_movement = harness.cursor_position();
     // After editing, line boundaries may have shifted, but cursor should still advance
@@ -303,9 +295,7 @@ fn test_large_file_cursor_screen_position_accuracy() {
 
     // Move down and capture screen positions
     for i in 1..=10 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
 
         let screen_pos = harness.screen_cursor_position();
         let cursor_pos = harness.cursor_position();
@@ -330,7 +320,11 @@ fn test_large_file_cursor_screen_position_accuracy() {
         // Take a visual snapshot every 5 lines
         if i % 5 == 0 {
             harness
-                .capture_visual_step(&mut flow, &format!("line_{}", i), &format!("Cursor at line {}", i))
+                .capture_visual_step(
+                    &mut flow,
+                    &format!("line_{}", i),
+                    &format!("Cursor at line {}", i),
+                )
                 .unwrap();
         }
     }

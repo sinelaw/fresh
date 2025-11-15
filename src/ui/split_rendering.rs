@@ -375,7 +375,9 @@ impl SplitRenderer {
 
         // Compute syntax highlighting for the visible viewport (if highlighter exists)
         let viewport_start = state.viewport.top_byte;
-        let mut iter_temp = state.buffer.line_iterator(viewport_start, estimated_line_length);
+        let mut iter_temp = state
+            .buffer
+            .line_iterator(viewport_start, estimated_line_length);
         let mut viewport_end = viewport_start;
         for _ in 0..visible_count {
             if let Some((line_start, line_content)) = iter_temp.next() {
@@ -401,7 +403,9 @@ impl SplitRenderer {
         // Check if buffer is empty before creating iterator (to avoid borrow conflict)
         let is_empty_buffer = state.buffer.is_empty();
 
-        let mut iter = state.buffer.line_iterator(state.viewport.top_byte, estimated_line_length);
+        let mut iter = state
+            .buffer
+            .line_iterator(state.viewport.top_byte, estimated_line_length);
         let mut lines_rendered = 0;
 
         // Track cursor position during rendering (eliminates duplicate line iteration)

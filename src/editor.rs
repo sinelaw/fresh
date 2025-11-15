@@ -689,7 +689,9 @@ impl Editor {
 
         self.set_active_buffer(buffer_id);
         // Use display_name from metadata for relative path display
-        let display_name = self.buffer_metadata.get(&buffer_id)
+        let display_name = self
+            .buffer_metadata
+            .get(&buffer_id)
             .map(|m| m.display_name.clone())
             .unwrap_or_else(|| path.display().to_string());
         self.status_message = Some(format!("Opened {}", display_name));
@@ -4619,7 +4621,9 @@ impl Editor {
             } else {
                 // Scroll down
                 let lines_to_scroll = delta as usize;
-                state.viewport.scroll_down(&mut state.buffer, lines_to_scroll);
+                state
+                    .viewport
+                    .scroll_down(&mut state.buffer, lines_to_scroll);
             }
         }
 
@@ -5551,7 +5555,13 @@ impl Editor {
         let tab_size = self.config.editor.tab_size;
         let auto_indent = self.config.editor.auto_indent;
         let estimated_line_length = self.config.editor.estimated_line_length;
-        convert_action_to_events(self.active_state_mut(), action, tab_size, auto_indent, estimated_line_length)
+        convert_action_to_events(
+            self.active_state_mut(),
+            action,
+            tab_size,
+            auto_indent,
+            estimated_line_length,
+        )
     }
 
     // === Search and Replace Methods ===

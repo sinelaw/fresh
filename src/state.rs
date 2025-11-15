@@ -247,15 +247,16 @@ impl EditorState {
                 // Update primary cursor line number if this is the primary cursor
                 // Try to get exact line number from buffer, or estimate for large files
                 if *cursor_id == self.cursors.primary_id() {
-                    self.primary_cursor_line_number = match self.buffer.offset_to_position(*new_position) {
-                        Some(pos) => LineNumber::Absolute(pos.line),
-                        None => {
-                            // Large file without line metadata - estimate line number
-                            // Use default estimated_line_length of 80 bytes
-                            let estimated_line = *new_position / 80;
-                            LineNumber::Absolute(estimated_line)
-                        }
-                    };
+                    self.primary_cursor_line_number =
+                        match self.buffer.offset_to_position(*new_position) {
+                            Some(pos) => LineNumber::Absolute(pos.line),
+                            None => {
+                                // Large file without line metadata - estimate line number
+                                // Use default estimated_line_length of 80 bytes
+                                let estimated_line = *new_position / 80;
+                                LineNumber::Absolute(estimated_line)
+                            }
+                        };
                 }
             }
 
@@ -611,7 +612,10 @@ impl EditorState {
     /// ```
     pub fn get_text_range(&mut self, start: usize, end: usize) -> String {
         // TextBuffer::get_text_range_mut() handles lazy loading automatically
-        match self.buffer.get_text_range_mut(start, end.saturating_sub(start)) {
+        match self
+            .buffer
+            .get_text_range_mut(start, end.saturating_sub(start))
+        {
             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
             Err(e) => {
                 tracing::warn!("Failed to get text range {}..{}: {}", start, end, e);
@@ -802,9 +806,7 @@ impl DocumentModel for EditorState {
     }
 
     fn get_chunk_at_offset(&mut self, offset: usize, size: usize) -> Result<(usize, String)> {
-        let bytes = self
-            .buffer
-            .get_text_range_mut(offset, size)?;
+        let bytes = self.buffer.get_text_range_mut(offset, size)?;
 
         Ok((offset, String::from_utf8_lossy(&bytes).into_owned()))
     }

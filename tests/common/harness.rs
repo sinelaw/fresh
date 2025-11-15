@@ -48,7 +48,7 @@ impl EditorTestHarness {
         let terminal = Terminal::new(backend)?;
         let mut config = Config::default();
         config.editor.auto_indent = false; // Disable for simpler testing
-        // Use temp directory to avoid loading project plugins in tests
+                                           // Use temp directory to avoid loading project plugins in tests
         let editor = Editor::with_working_dir(config, width, height, Some(temp_path))?;
 
         Ok(EditorTestHarness {
@@ -588,7 +588,9 @@ impl EditorTestHarness {
                 let column = self.shadow_cursor - current_line_start;
 
                 // Find next line start
-                if let Some(next_line_start_offset) = self.shadow_string[self.shadow_cursor..].find('\n') {
+                if let Some(next_line_start_offset) =
+                    self.shadow_string[self.shadow_cursor..].find('\n')
+                {
                     let next_line_start = self.shadow_cursor + next_line_start_offset + 1;
                     if next_line_start < self.shadow_string.len() {
                         // Find next line end

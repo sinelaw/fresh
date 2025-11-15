@@ -1254,7 +1254,11 @@ impl TextBuffer {
     ///
     /// This iterator lazily loads chunks as needed, never scanning the entire file.
     /// For large files with unloaded buffers, chunks are loaded on-demand (1MB at a time).
-    pub fn line_iterator(&mut self, byte_pos: usize, estimated_line_length: usize) -> LineIterator<'_> {
+    pub fn line_iterator(
+        &mut self,
+        byte_pos: usize,
+        estimated_line_length: usize,
+    ) -> LineIterator<'_> {
         LineIterator::new(self, byte_pos, estimated_line_length)
     }
 
@@ -1271,7 +1275,11 @@ impl TextBuffer {
     /// # Performance
     /// - O(1) per line for line number calculation (vs O(log n) per line with offset_to_position)
     /// - Uses single source of truth: piece tree's existing line_feed_cnt metadata
-    pub fn iter_lines_from(&mut self, byte_pos: usize, max_lines: usize) -> Result<TextBufferLineIterator> {
+    pub fn iter_lines_from(
+        &mut self,
+        byte_pos: usize,
+        max_lines: usize,
+    ) -> Result<TextBufferLineIterator> {
         TextBufferLineIterator::new(self, byte_pos, max_lines)
     }
 
@@ -2815,7 +2823,8 @@ impl TextBufferLineIterator {
                 // Line is longer than expected, load more data
                 let remaining = buffer_len - current_offset - line_len;
                 let additional_bytes = estimated_max_line_length.min(remaining);
-                let more_chunk = buffer.get_text_range_mut(current_offset + line_len, additional_bytes)?;
+                let more_chunk =
+                    buffer.get_text_range_mut(current_offset + line_len, additional_bytes)?;
 
                 let mut extended_chunk = chunk;
                 extended_chunk.extend_from_slice(&more_chunk);

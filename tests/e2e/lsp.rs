@@ -1151,7 +1151,10 @@ edition = "2021"
     let cursor_pos = harness.cursor_position();
     let buffer_content = harness.get_buffer_content();
     let char_at_cursor = buffer_content.chars().nth(cursor_pos).unwrap_or('?');
-    println!("Cursor positioned at byte {}, character: '{}'", cursor_pos, char_at_cursor);
+    println!(
+        "Cursor positioned at byte {}, character: '{}'",
+        cursor_pos, char_at_cursor
+    );
 
     // Press F2 to enter rename mode
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE)?;

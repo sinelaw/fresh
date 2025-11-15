@@ -419,7 +419,12 @@ impl Viewport {
     /// * `column` - The column position within the line (0-indexed)
     /// * `line_length` - The length of the line content (without newline)
     /// * `buffer` - The buffer (for calculating gutter width)
-    pub fn ensure_column_visible(&mut self, column: usize, line_length: usize, buffer: &mut Buffer) {
+    pub fn ensure_column_visible(
+        &mut self,
+        column: usize,
+        line_length: usize,
+        buffer: &mut Buffer,
+    ) {
         // Calculate visible width (accounting for line numbers gutter which is dynamic)
         let gutter_width = self.gutter_width(buffer);
         // Also account for scrollbar (always present, takes 1 column)

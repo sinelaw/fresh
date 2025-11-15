@@ -13,7 +13,9 @@ fn test_enter_after_brace_no_autoindent() {
     harness.type_text("{").unwrap();
 
     // Press Enter
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
 
     // Should be just "{\n", not "{\n    " (no auto-indent)
     let buffer = harness.get_buffer_content();
@@ -22,7 +24,10 @@ fn test_enter_after_brace_no_autoindent() {
     println!("Buffer: {:?}", buffer);
     println!("Shadow: {:?}", shadow);
 
-    assert_eq!(buffer, shadow, "Buffer should match shadow (no auto-indent)");
+    assert_eq!(
+        buffer, shadow,
+        "Buffer should match shadow (no auto-indent)"
+    );
     assert_eq!(buffer, "{\n", "Buffer should be just brace and newline");
 }
 
@@ -41,7 +46,9 @@ fn test_simple_sequence_from_e2e() {
     }
 
     // Press Enter to create newline
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
 
     let buffer = harness.get_buffer_content();
     let shadow = harness.get_shadow_string();
@@ -50,7 +57,10 @@ fn test_simple_sequence_from_e2e() {
     println!("Shadow: {:?}", shadow);
 
     assert_eq!(buffer, shadow, "Buffer should match shadow");
-    assert_eq!(buffer, "Hello\nWorld", "Buffer should have newline between words");
+    assert_eq!(
+        buffer, "Hello\nWorld",
+        "Buffer should have newline between words"
+    );
 }
 
 #[test]
@@ -61,24 +71,46 @@ fn test_minimal_proptest_failure() {
     println!("\n=== Step-by-step debugging ===");
 
     // Step 1: Enter
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    println!("After Enter: buffer={:?}, cursor={}", harness.get_buffer_content(), harness.cursor_position());
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    println!(
+        "After Enter: buffer={:?}, cursor={}",
+        harness.get_buffer_content(),
+        harness.cursor_position()
+    );
 
     // Step 2: Type "a0"
     harness.type_text("a0").unwrap();
-    println!("After 'a0': buffer={:?}, cursor={}", harness.get_buffer_content(), harness.cursor_position());
+    println!(
+        "After 'a0': buffer={:?}, cursor={}",
+        harness.get_buffer_content(),
+        harness.cursor_position()
+    );
 
     // Step 3: Left
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
-    println!("After Left: buffer={:?}, cursor={}", harness.get_buffer_content(), harness.cursor_position());
+    println!(
+        "After Left: buffer={:?}, cursor={}",
+        harness.get_buffer_content(),
+        harness.cursor_position()
+    );
 
     // Step 4: Home
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
-    println!("After Home: buffer={:?}, cursor={}", harness.get_buffer_content(), harness.cursor_position());
+    println!(
+        "After Home: buffer={:?}, cursor={}",
+        harness.get_buffer_content(),
+        harness.cursor_position()
+    );
 
     // Step 5: Type "b"
     harness.type_text("b").unwrap();
-    println!("After 'b': buffer={:?}, cursor={}", harness.get_buffer_content(), harness.cursor_position());
+    println!(
+        "After 'b': buffer={:?}, cursor={}",
+        harness.get_buffer_content(),
+        harness.cursor_position()
+    );
 
     let buffer = harness.get_buffer_content();
     let shadow = harness.get_shadow_string();

@@ -34,7 +34,11 @@ pub struct LineIterator<'a> {
 impl<'a> LineIterator<'a> {
     /// Scan backward from byte_pos to find the start of the line
     /// chunk_size: suggested chunk size for loading (used as performance hint only)
-    fn find_line_start_backward(buffer: &mut TextBuffer, byte_pos: usize, chunk_size: usize) -> usize {
+    fn find_line_start_backward(
+        buffer: &mut TextBuffer,
+        byte_pos: usize,
+        chunk_size: usize,
+    ) -> usize {
         if byte_pos == 0 {
             return 0;
         }
@@ -69,7 +73,11 @@ impl<'a> LineIterator<'a> {
         }
     }
 
-    pub(crate) fn new(buffer: &'a mut TextBuffer, byte_pos: usize, estimated_line_length: usize) -> Self {
+    pub(crate) fn new(
+        buffer: &'a mut TextBuffer,
+        byte_pos: usize,
+        estimated_line_length: usize,
+    ) -> Self {
         let buffer_len = buffer.len();
         let byte_pos = byte_pos.min(buffer_len);
 
@@ -119,7 +127,10 @@ impl<'a> LineIterator<'a> {
 
         // Use get_text_range_mut() which handles lazy loading automatically
         // This never scans the entire file - only loads the chunk needed for this line
-        let chunk = match self.buffer.get_text_range_mut(self.current_pos, bytes_to_scan) {
+        let chunk = match self
+            .buffer
+            .get_text_range_mut(self.current_pos, bytes_to_scan)
+        {
             Ok(data) => data,
             Err(e) => {
                 tracing::error!(
@@ -142,20 +153,18 @@ impl<'a> LineIterator<'a> {
             }
         }
 
-
         // If we didn't find a newline and didn't reach EOF, the line is longer than our estimate
         // Load more data iteratively (rare case for very long lines)
         if !found_newline && self.current_pos + line_len < self.buffer_len {
             // Line is longer than expected, keep loading until we find newline or EOF
             let mut extended_chunk = chunk;
             while !found_newline && self.current_pos + extended_chunk.len() < self.buffer_len {
-                let additional_bytes = estimated_max_line_length.min(
-                    self.buffer_len - self.current_pos - extended_chunk.len()
-                );
-                match self.buffer.get_text_range_mut(
-                    self.current_pos + extended_chunk.len(),
-                    additional_bytes
-                ) {
+                let additional_bytes = estimated_max_line_length
+                    .min(self.buffer_len - self.current_pos - extended_chunk.len());
+                match self
+                    .buffer
+                    .get_text_range_mut(self.current_pos + extended_chunk.len(), additional_bytes)
+                {
                     Ok(mut more_data) => {
                         let start_len = extended_chunk.len();
                         extended_chunk.append(&mut more_data);
@@ -241,7 +250,10 @@ impl<'a> LineIterator<'a> {
 
         // Load the previous line content
         let prev_line_len = prev_line_end - prev_line_start + 1; // +1 to include the newline
-        let line_bytes = match self.buffer.get_text_range_mut(prev_line_start, prev_line_len) {
+        let line_bytes = match self
+            .buffer
+            .get_text_range_mut(prev_line_start, prev_line_len)
+        {
             Ok(data) => data,
             Err(e) => {
                 tracing::error!(
@@ -332,7 +344,11 @@ mod tests {
 
         // Start from position 9 (middle of "World")
         let mut iter = buffer.line_iterator(9, 80);
-        assert_eq!(iter.current_position(), 6, "Should be at start of line containing position 9");
+        assert_eq!(
+            iter.current_position(),
+            6,
+            "Should be at start of line containing position 9"
+        );
 
         // First next() should return current line
         let (pos, content) = iter.next().expect("Should have current line");
@@ -365,16 +381,26 @@ mod tests {
         ];
 
         for (offset, expected_line, expected_col) in expected {
-            let pos = buffer.offset_to_position(offset)
+            let pos = buffer
+                .offset_to_position(offset)
                 .expect(&format!("Should have position for offset {}", offset));
             assert_eq!(pos.line, expected_line, "Wrong line for offset {}", offset);
-            assert_eq!(pos.column, expected_col, "Wrong column for offset {}", offset);
+            assert_eq!(
+                pos.column, expected_col,
+                "Wrong column for offset {}",
+                offset
+            );
 
             // Verify LineIterator uses this correctly
             let iter = buffer.line_iterator(offset, 80);
             let expected_line_start = if expected_line == 0 { 0 } else { 6 };
-            assert_eq!(iter.current_position(), expected_line_start,
-                "LineIterator at offset {} should be at line start {}", offset, expected_line_start);
+            assert_eq!(
+                iter.current_position(),
+                expected_line_start,
+                "LineIterator at offset {} should be at line start {}",
+                offset,
+                expected_line_start
+            );
         }
     }
 

@@ -337,13 +337,12 @@ fn test_line_numbers_update_during_incremental_scroll() {
     // After PageDown, we should be around line 22-23 (viewport is ~22 lines tall)
     // The line numbers in the margin should have updated to reflect the new position
     // BUG: This assertion will FAIL if line numbers don't update
-    let should_contain_line_20_or_higher =
-        screen_after_pagedown.contains("  20 │") ||
-        screen_after_pagedown.contains("  21 │") ||
-        screen_after_pagedown.contains("  22 │") ||
-        screen_after_pagedown.contains("  23 │") ||
-        screen_after_pagedown.contains("  24 │") ||
-        screen_after_pagedown.contains("  25 │");
+    let should_contain_line_20_or_higher = screen_after_pagedown.contains("  20 │")
+        || screen_after_pagedown.contains("  21 │")
+        || screen_after_pagedown.contains("  22 │")
+        || screen_after_pagedown.contains("  23 │")
+        || screen_after_pagedown.contains("  24 │")
+        || screen_after_pagedown.contains("  25 │");
 
     assert!(
         should_contain_line_20_or_higher,
@@ -361,12 +360,11 @@ fn test_line_numbers_update_during_incremental_scroll() {
     println!("\nScreen after 5x Down:\n{screen_after_down}");
 
     // Should now show even higher line numbers (around 27-30)
-    let should_contain_line_27_or_higher =
-        screen_after_down.contains("  27 │") ||
-        screen_after_down.contains("  28 │") ||
-        screen_after_down.contains("  29 │") ||
-        screen_after_down.contains("  30 │") ||
-        screen_after_down.contains("  31 │");
+    let should_contain_line_27_or_higher = screen_after_down.contains("  27 │")
+        || screen_after_down.contains("  28 │")
+        || screen_after_down.contains("  29 │")
+        || screen_after_down.contains("  30 │")
+        || screen_after_down.contains("  31 │");
 
     assert!(
         should_contain_line_27_or_higher,
@@ -409,18 +407,17 @@ fn test_line_numbers_update_with_navigation_keys() {
 
     // After 3 PageDowns, should be around line 60-70
     let screen = harness.screen_to_string();
-    let should_be_around_line_60 =
-        screen.contains("  60 │") ||
-        screen.contains("  61 │") ||
-        screen.contains("  62 │") ||
-        screen.contains("  63 │") ||
-        screen.contains("  64 │") ||
-        screen.contains("  65 │") ||
-        screen.contains("  66 │") ||
-        screen.contains("  67 │") ||
-        screen.contains("  68 │") ||
-        screen.contains("  69 │") ||
-        screen.contains("  70 │");
+    let should_be_around_line_60 = screen.contains("  60 │")
+        || screen.contains("  61 │")
+        || screen.contains("  62 │")
+        || screen.contains("  63 │")
+        || screen.contains("  64 │")
+        || screen.contains("  65 │")
+        || screen.contains("  66 │")
+        || screen.contains("  67 │")
+        || screen.contains("  68 │")
+        || screen.contains("  69 │")
+        || screen.contains("  70 │");
 
     assert!(
         should_be_around_line_60,
@@ -441,16 +438,15 @@ fn test_line_numbers_update_with_navigation_keys() {
 
     // After 2 PageUps from ~line 65, should be around line 20-25
     let screen = harness.screen_to_string();
-    let should_be_around_line_20 =
-        screen.contains("  20 │") ||
-        screen.contains("  21 │") ||
-        screen.contains("  22 │") ||
-        screen.contains("  23 │") ||
-        screen.contains("  24 │") ||
-        screen.contains("  25 │") ||
-        screen.contains("  26 │") ||
-        screen.contains("  27 │") ||
-        screen.contains("  28 │");
+    let should_be_around_line_20 = screen.contains("  20 │")
+        || screen.contains("  21 │")
+        || screen.contains("  22 │")
+        || screen.contains("  23 │")
+        || screen.contains("  24 │")
+        || screen.contains("  25 │")
+        || screen.contains("  26 │")
+        || screen.contains("  27 │")
+        || screen.contains("  28 │");
 
     assert!(
         should_be_around_line_20,
@@ -475,12 +471,11 @@ fn test_line_numbers_update_with_navigation_keys() {
     harness.assert_screen_not_contains("   1 │");
 
     // Should also see lines in the 180s-190s range (last screenful)
-    let has_high_lines =
-        screen.contains(" 180 │") ||
-        screen.contains(" 185 │") ||
-        screen.contains(" 190 │") ||
-        screen.contains(" 195 │") ||
-        screen.contains(" 199 │");
+    let has_high_lines = screen.contains(" 180 │")
+        || screen.contains(" 185 │")
+        || screen.contains(" 190 │")
+        || screen.contains(" 195 │")
+        || screen.contains(" 199 │");
 
     assert!(
         has_high_lines,

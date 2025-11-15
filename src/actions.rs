@@ -302,7 +302,9 @@ pub fn action_to_events(
             for (cursor_id, cursor) in state.cursors.iter() {
                 // Use iterator to navigate to previous line
                 // line_iterator positions us at the start of the current line
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position.saturating_sub(current_line_start);
 
@@ -334,7 +336,9 @@ pub fn action_to_events(
 
         Action::MoveDown => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position.saturating_sub(current_line_start);
 
@@ -367,7 +371,9 @@ pub fn action_to_events(
 
         Action::MoveLineStart => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 if let Some((line_start, _)) = iter.next() {
                     events.push(Event::MoveCursor {
                         cursor_id,
@@ -384,7 +390,9 @@ pub fn action_to_events(
 
         Action::MoveLineEnd => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 if let Some((line_start, line_content)) = iter.next() {
                     // Calculate end position (exclude newline)
                     let line_len = line_content.trim_end_matches('\n').len();
@@ -466,7 +474,9 @@ pub fn action_to_events(
             for (cursor_id, cursor) in state.cursors.iter() {
                 // Move up by viewport height
                 let lines_to_move = state.viewport.height.saturating_sub(1);
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
 
@@ -504,7 +514,9 @@ pub fn action_to_events(
             for (cursor_id, cursor) in state.cursors.iter() {
                 // Move down by viewport height
                 let lines_to_move = state.viewport.height.saturating_sub(1);
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
 
@@ -583,7 +595,9 @@ pub fn action_to_events(
 
         Action::SelectUp => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
@@ -614,7 +628,9 @@ pub fn action_to_events(
 
         Action::SelectDown => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
@@ -647,7 +663,9 @@ pub fn action_to_events(
 
         Action::SelectLineStart => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
 
                 if let Some((line_start, _)) = iter.next() {
@@ -666,7 +684,9 @@ pub fn action_to_events(
 
         Action::SelectLineEnd => {
             for (cursor_id, cursor) in state.cursors.iter() {
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
 
                 if let Some((line_start, line_content)) = iter.next() {
@@ -753,7 +773,9 @@ pub fn action_to_events(
         Action::SelectPageUp => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 let lines_to_move = state.viewport.height.saturating_sub(1);
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
@@ -791,7 +813,9 @@ pub fn action_to_events(
         Action::SelectPageDown => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 let lines_to_move = state.viewport.height.saturating_sub(1);
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 let current_line_start = iter.current_position();
                 let current_column = cursor.position - current_line_start;
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
@@ -999,7 +1023,9 @@ pub fn action_to_events(
                 .cursors
                 .iter()
                 .filter_map(|(cursor_id, cursor)| {
-                    let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                    let mut iter = state
+                        .buffer
+                        .line_iterator(cursor.position, estimated_line_length);
                     let line_start = iter.current_position();
                     iter.next().map(|(_start, content)| {
                         let line_end = line_start + content.len();
@@ -1153,7 +1179,9 @@ pub fn action_to_events(
             // Select the entire line for each cursor
             for (cursor_id, cursor) in state.cursors.iter() {
                 // Use iterator to get line bounds
-                let mut iter = state.buffer.line_iterator(cursor.position, estimated_line_length);
+                let mut iter = state
+                    .buffer
+                    .line_iterator(cursor.position, estimated_line_length);
                 if let Some((line_start, line_content)) = iter.next() {
                     // Include newline if present
                     let line_end = line_start + line_content.len();
@@ -1348,7 +1376,10 @@ mod tests {
             // The current behavior puts us at position 11 (the newline after Line2)
             // This happens because Line2 without newline has length 5, and we preserve column 5
             // Position 6 (start of Line2) + 5 = 11 (the newline)
-            assert_eq!(*new_position, 11, "Cursor should move to column 5 of Line2 (which is the newline)");
+            assert_eq!(
+                *new_position, 11,
+                "Cursor should move to column 5 of Line2 (which is the newline)"
+            );
         } else {
             panic!("Expected MoveCursor event");
         }
@@ -1363,7 +1394,10 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         if let Event::MoveCursor { new_position, .. } = &events[0] {
-            assert_eq!(*new_position, 5, "Cursor should move to column 5 of Line1 (the newline)");
+            assert_eq!(
+                *new_position, 5,
+                "Cursor should move to column 5 of Line1 (the newline)"
+            );
         } else {
             panic!("Expected MoveCursor event");
         }
@@ -1398,9 +1432,20 @@ mod tests {
         let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
         assert_eq!(events.len(), 1);
 
-        if let Event::MoveCursor { new_position, new_sticky_column, .. } = &events[0] {
-            assert_eq!(*new_position, 9, "Cursor should move to end of shorter line");
-            assert_eq!(*new_sticky_column, 3, "Sticky column should preserve original column");
+        if let Event::MoveCursor {
+            new_position,
+            new_sticky_column,
+            ..
+        } = &events[0]
+        {
+            assert_eq!(
+                *new_position, 9,
+                "Cursor should move to end of shorter line"
+            );
+            assert_eq!(
+                *new_sticky_column, 3,
+                "Sticky column should preserve original column"
+            );
         } else {
             panic!("Expected MoveCursor event");
         }
@@ -1411,7 +1456,12 @@ mod tests {
         let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
         assert_eq!(events.len(), 1);
 
-        if let Event::MoveCursor { new_position, new_sticky_column, .. } = &events[0] {
+        if let Event::MoveCursor {
+            new_position,
+            new_sticky_column,
+            ..
+        } = &events[0]
+        {
             assert_eq!(*new_position, 13, "Cursor should move back to column 3");
             assert_eq!(*new_sticky_column, 3, "Sticky column should be preserved");
         } else {
@@ -1448,9 +1498,20 @@ mod tests {
         let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80).unwrap();
         assert_eq!(events.len(), 1);
 
-        if let Event::MoveCursor { new_position, new_sticky_column, .. } = &events[0] {
-            assert_eq!(*new_position, 9, "Cursor should move to end of shorter line");
-            assert_eq!(*new_sticky_column, 3, "Sticky column should preserve original column");
+        if let Event::MoveCursor {
+            new_position,
+            new_sticky_column,
+            ..
+        } = &events[0]
+        {
+            assert_eq!(
+                *new_position, 9,
+                "Cursor should move to end of shorter line"
+            );
+            assert_eq!(
+                *new_sticky_column, 3,
+                "Sticky column should preserve original column"
+            );
         } else {
             panic!("Expected MoveCursor event");
         }
@@ -1461,7 +1522,12 @@ mod tests {
         let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80).unwrap();
         assert_eq!(events.len(), 1);
 
-        if let Event::MoveCursor { new_position, new_sticky_column, .. } = &events[0] {
+        if let Event::MoveCursor {
+            new_position,
+            new_sticky_column,
+            ..
+        } = &events[0]
+        {
             assert_eq!(*new_position, 3, "Cursor should move back to column 3");
             assert_eq!(*new_sticky_column, 3, "Sticky column should be preserved");
         } else {
@@ -1531,7 +1597,10 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         if let Event::MoveCursor { new_position, .. } = &events[0] {
-            assert_eq!(*new_position, 0, "Cursor should move to start of previous line");
+            assert_eq!(
+                *new_position, 0,
+                "Cursor should move to start of previous line"
+            );
         } else {
             panic!("Expected MoveCursor event");
         }
@@ -1600,11 +1669,19 @@ mod tests {
 
         // Try to move up (no previous line exists)
         let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80).unwrap();
-        assert_eq!(events.len(), 0, "Should not generate event when at first line");
+        assert_eq!(
+            events.len(),
+            0,
+            "Should not generate event when at first line"
+        );
 
         // Try to move down (no next line exists)
         let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
-        assert_eq!(events.len(), 0, "Should not generate event when at last line");
+        assert_eq!(
+            events.len(),
+            0,
+            "Should not generate event when at last line"
+        );
     }
 
     #[test]
@@ -1626,14 +1703,20 @@ mod tests {
 
         // Position 11 is the newline after "Line2"
         if let Some(pos) = state.buffer.offset_to_position(11) {
-            println!("offset_to_position(11) = line={}, column={}", pos.line, pos.column);
+            println!(
+                "offset_to_position(11) = line={}, column={}",
+                pos.line, pos.column
+            );
             // The newline is the 6th character of line 1 (0-indexed): "Line2\n"
             // So column should be 5 (0-indexed)
         }
 
         // Position 17 is after "Line3"
         if let Some(pos) = state.buffer.offset_to_position(17) {
-            println!("offset_to_position(17) = line={}, column={}", pos.line, pos.column);
+            println!(
+                "offset_to_position(17) = line={}, column={}",
+                pos.line, pos.column
+            );
             // This is the 6th character of line 2 (after "Line3")
             // So column should be 5
         }
@@ -1641,19 +1724,35 @@ mod tests {
         // Test 1: Position at end of Line3 (position 17)
         // line_iterator(17) should position at start of Line3 (position 12)
         let iter = state.buffer.line_iterator(17, 80);
-        assert_eq!(iter.current_position(), 12, "Iterator at position 17 should be at line start 12");
+        assert_eq!(
+            iter.current_position(),
+            12,
+            "Iterator at position 17 should be at line start 12"
+        );
 
         // Test 2: Position in middle of Line2 (position 9, which is 'n' in "Line2")
         let iter = state.buffer.line_iterator(9, 80);
-        assert_eq!(iter.current_position(), 6, "Iterator at position 9 should be at line start 6");
+        assert_eq!(
+            iter.current_position(),
+            6,
+            "Iterator at position 9 should be at line start 6"
+        );
 
         // Test 3: Position at newline after Line2 (position 11)
         let iter = state.buffer.line_iterator(11, 80);
-        assert_eq!(iter.current_position(), 6, "Iterator at position 11 (newline) should be at line start 6");
+        assert_eq!(
+            iter.current_position(),
+            6,
+            "Iterator at position 11 (newline) should be at line start 6"
+        );
 
         // Test 4: Position at start of Line2 (position 6)
         let iter = state.buffer.line_iterator(6, 80);
-        assert_eq!(iter.current_position(), 6, "Iterator at position 6 should stay at 6");
+        assert_eq!(
+            iter.current_position(),
+            6,
+            "Iterator at position 6 should stay at 6"
+        );
     }
 
     #[test]
@@ -1686,10 +1785,17 @@ mod tests {
             state.apply(&event);
         }
 
-        println!("After MoveLineEnd: cursor at {}", state.cursors.primary().position);
+        println!(
+            "After MoveLineEnd: cursor at {}",
+            state.cursors.primary().position
+        );
         // "HelloNew Line\n" - the visible part is 13 chars (0-12)
         // MoveLineEnd should put cursor at position 13 (after the visible text, before/on the newline)
-        assert_eq!(state.cursors.primary().position, 13, "MoveLineEnd should position at end of visible text");
+        assert_eq!(
+            state.cursors.primary().position,
+            13,
+            "MoveLineEnd should position at end of visible text"
+        );
     }
 
     #[test]
@@ -1710,7 +1816,10 @@ mod tests {
 
         // Check what line_iterator does at EOF
         let iter = state.buffer.line_iterator(20, 80);
-        println!("line_iterator(20).current_position() = {}", iter.current_position());
+        println!(
+            "line_iterator(20).current_position() = {}",
+            iter.current_position()
+        );
 
         // Move to line start
         let events = action_to_events(&mut state, Action::MoveLineStart, 4, false, 80).unwrap();
@@ -1719,17 +1828,24 @@ mod tests {
             state.apply(&event);
         }
 
-        println!("After MoveLineStart from EOF: cursor at {}", state.cursors.primary().position);
+        println!(
+            "After MoveLineStart from EOF: cursor at {}",
+            state.cursors.primary().position
+        );
         // Should move to position 14 (start of "World!" line)
-        assert_eq!(state.cursors.primary().position, 14, "MoveLineStart from EOF should go to start of last line");
+        assert_eq!(
+            state.cursors.primary().position,
+            14,
+            "MoveLineStart from EOF should go to start of last line"
+        );
     }
 
     #[test]
     fn test_move_up_with_unloaded_chunks() {
         // Test MoveUp when the chunk containing the cursor hasn't been loaded yet
         // This simulates large file behavior where not all chunks are in memory
-        use std::fs;
         use crate::text_buffer::TextBuffer;
+        use std::fs;
 
         // Create a temp file with multiple lines
         let temp_dir = std::env::temp_dir();
@@ -1763,20 +1879,32 @@ mod tests {
             new_sticky_column: 0,
         });
 
-        println!("Cursor at line 90, position: {}", state.cursors.primary().position);
+        println!(
+            "Cursor at line 90, position: {}",
+            state.cursors.primary().position
+        );
 
         // Try to move up - this should work even if chunks aren't loaded
         let events = action_to_events(&mut state, Action::MoveUp, 4, false, 80).unwrap();
         println!("MoveUp events: {:?}", events);
 
-        assert!(!events.is_empty(), "MoveUp should generate events even with unloaded chunks");
+        assert!(
+            !events.is_empty(),
+            "MoveUp should generate events even with unloaded chunks"
+        );
 
         for event in events {
             state.apply(&event);
         }
 
-        println!("After MoveUp: cursor at {}", state.cursors.primary().position);
-        assert!(state.cursors.primary().position < target_line_start, "Cursor should have moved up");
+        println!(
+            "After MoveUp: cursor at {}",
+            state.cursors.primary().position
+        );
+        assert!(
+            state.cursors.primary().position < target_line_start,
+            "Cursor should have moved up"
+        );
 
         // Clean up
         fs::remove_file(&test_file).ok();
@@ -1815,7 +1943,10 @@ mod tests {
 
         // line_iterator(13) should position at...?
         let iter = state.buffer.line_iterator(13, 80);
-        println!("line_iterator(13).current_position() = {}", iter.current_position());
+        println!(
+            "line_iterator(13).current_position() = {}",
+            iter.current_position()
+        );
 
         // Move down to second line
         let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
@@ -1828,12 +1959,17 @@ mod tests {
         for event in events {
             state.apply(&event);
         }
-        println!("After MoveDown from position 13: cursor at {}", state.cursors.primary().position);
+        println!(
+            "After MoveDown from position 13: cursor at {}",
+            state.cursors.primary().position
+        );
 
         // We expect to be at position 14 (start of "World!" line) or somewhere on that line
         // NOT at position 20 (EOF)
-        assert!(state.cursors.primary().position >= 14 && state.cursors.primary().position <= 20,
-            "After MoveDown from newline, cursor should be on the next line, not at EOF");
+        assert!(
+            state.cursors.primary().position >= 14 && state.cursors.primary().position <= 20,
+            "After MoveDown from newline, cursor should be on the next line, not at EOF"
+        );
     }
 
     #[test]
@@ -1859,21 +1995,31 @@ mod tests {
         for event in events {
             state.apply(&event);
         }
-        println!("After MoveUp: cursor at {}", state.cursors.primary().position);
+        println!(
+            "After MoveUp: cursor at {}",
+            state.cursors.primary().position
+        );
 
         // Move to end of first line
         let events = action_to_events(&mut state, Action::MoveLineEnd, 4, false, 80).unwrap();
         for event in events {
             state.apply(&event);
         }
-        assert_eq!(state.cursors.primary().position, 13, "Should be at end of first line (position 13, the newline)");
+        assert_eq!(
+            state.cursors.primary().position,
+            13,
+            "Should be at end of first line (position 13, the newline)"
+        );
 
         // Move down to second line
         let events = action_to_events(&mut state, Action::MoveDown, 4, false, 80).unwrap();
         for event in events {
             state.apply(&event);
         }
-        println!("After MoveDown: cursor at {}", state.cursors.primary().position);
+        println!(
+            "After MoveDown: cursor at {}",
+            state.cursors.primary().position
+        );
 
         // Move to start of line (Home)
         let events = action_to_events(&mut state, Action::MoveLineStart, 4, false, 80).unwrap();
@@ -1881,7 +2027,11 @@ mod tests {
             state.apply(&event);
         }
         println!("After Home: cursor at {}", state.cursors.primary().position);
-        assert_eq!(state.cursors.primary().position, 14, "Should be at start of second line (position 14)");
+        assert_eq!(
+            state.cursors.primary().position,
+            14,
+            "Should be at start of second line (position 14)"
+        );
 
         // Delete backward (should delete the newline)
         let events = action_to_events(&mut state, Action::DeleteBackward, 4, false, 80).unwrap();
@@ -1891,8 +2041,19 @@ mod tests {
         }
 
         println!("After backspace: buffer = {:?}", state.buffer.to_string());
-        println!("After backspace: cursor at {}", state.cursors.primary().position);
-        assert_eq!(state.buffer.to_string(), "HelloNew LineWorld!", "Lines should be joined");
-        assert_eq!(state.cursors.primary().position, 13, "Cursor should be at join point");
+        println!(
+            "After backspace: cursor at {}",
+            state.cursors.primary().position
+        );
+        assert_eq!(
+            state.buffer.to_string(),
+            "HelloNew LineWorld!",
+            "Lines should be joined"
+        );
+        assert_eq!(
+            state.cursors.primary().position,
+            13,
+            "Cursor should be at join point"
+        );
     }
 }
