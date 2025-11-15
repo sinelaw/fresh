@@ -1,0 +1,62 @@
+{
+  "name": "high-contrast",
+  "editor": {
+    "bg": [0, 0, 0],
+    "fg": [255, 255, 255],
+    "cursor": "Yellow",
+    "selection_bg": [0, 100, 200],
+    "current_line_bg": [20, 20, 20],
+    "line_number_fg": "Yellow",
+    "line_number_bg": [0, 0, 0]
+  },
+  "ui": {
+    "tab_active_fg": "Black",
+    "tab_active_bg": "Yellow",
+    "tab_inactive_fg": "White",
+    "tab_inactive_bg": "Black",
+    "tab_separator_bg": "Black",
+    "status_bar_fg": "Black",
+    "status_bar_bg": "Yellow",
+    "prompt_fg": "Black",
+    "prompt_bg": "Cyan",
+    "prompt_selection_fg": "White",
+    "prompt_selection_bg": [0, 100, 200],
+    "popup_border_fg": "Yellow",
+    "popup_bg": [0, 0, 0],
+    "popup_selection_bg": [0, 100, 200],
+    "popup_text_fg": "White",
+    "suggestion_bg": [0, 0, 0],
+    "suggestion_selected_bg": [0, 100, 200],
+    "help_bg": [0, 0, 0],
+    "help_fg": "White",
+    "help_key_fg": "Yellow",
+    "help_separator_fg": "White",
+    "help_indicator_fg": "Red",
+    "help_indicator_bg": [0, 0, 0],
+    "split_separator_fg": "White"
+  },
+  "search": {
+    "match_bg": "Yellow",
+    "match_fg": "Black"
+  },
+  "diagnostic": {
+    "error_fg": "Red",
+    "error_bg": [100, 0, 0],
+    "warning_fg": "Yellow",
+    "warning_bg": [100, 100, 0],
+    "info_fg": "Cyan",
+    "info_bg": [0, 50, 100],
+    "hint_fg": "White",
+    "hint_bg": [50, 50, 50]
+  },
+  "syntax": {
+    "keyword": "Cyan",
+    "string": "Green",
+    "comment": "Gray",
+    "function": "Yellow",
+    "type": "Magenta",
+    "variable": "White",
+    "constant": "LightBlue",
+    "operator": "White"
+  }
+}

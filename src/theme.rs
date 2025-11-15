@@ -1,4 +1,124 @@
 use ratatui::style::Color;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+
+/// Serializable color representation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum ColorDef {
+    /// RGB color as [r, g, b]
+    Rgb(u8, u8, u8),
+    /// Named color
+    Named(String),
+}
+
+impl From<ColorDef> for Color {
+    fn from(def: ColorDef) -> Self {
+        match def {
+            ColorDef::Rgb(r, g, b) => Color::Rgb(r, g, b),
+            ColorDef::Named(name) => match name.as_str() {
+                "Black" => Color::Black,
+                "Red" => Color::Red,
+                "Green" => Color::Green,
+                "Yellow" => Color::Yellow,
+                "Blue" => Color::Blue,
+                "Magenta" => Color::Magenta,
+                "Cyan" => Color::Cyan,
+                "Gray" => Color::Gray,
+                "DarkGray" => Color::DarkGray,
+                "LightRed" => Color::LightRed,
+                "LightGreen" => Color::LightGreen,
+                "LightYellow" => Color::LightYellow,
+                "LightBlue" => Color::LightBlue,
+                "LightMagenta" => Color::LightMagenta,
+                "LightCyan" => Color::LightCyan,
+                "White" => Color::White,
+                _ => Color::White, // Default fallback
+            },
+        }
+    }
+}
+
+/// Serializable theme definition (matches JSON structure)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ThemeFile {
+    name: String,
+    editor: EditorColors,
+    ui: UiColors,
+    search: SearchColors,
+    diagnostic: DiagnosticColors,
+    syntax: SyntaxColors,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EditorColors {
+    bg: ColorDef,
+    fg: ColorDef,
+    cursor: ColorDef,
+    selection_bg: ColorDef,
+    current_line_bg: ColorDef,
+    line_number_fg: ColorDef,
+    line_number_bg: ColorDef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UiColors {
+    tab_active_fg: ColorDef,
+    tab_active_bg: ColorDef,
+    tab_inactive_fg: ColorDef,
+    tab_inactive_bg: ColorDef,
+    tab_separator_bg: ColorDef,
+    status_bar_fg: ColorDef,
+    status_bar_bg: ColorDef,
+    prompt_fg: ColorDef,
+    prompt_bg: ColorDef,
+    prompt_selection_fg: ColorDef,
+    prompt_selection_bg: ColorDef,
+    popup_border_fg: ColorDef,
+    popup_bg: ColorDef,
+    popup_selection_bg: ColorDef,
+    popup_text_fg: ColorDef,
+    suggestion_bg: ColorDef,
+    suggestion_selected_bg: ColorDef,
+    help_bg: ColorDef,
+    help_fg: ColorDef,
+    help_key_fg: ColorDef,
+    help_separator_fg: ColorDef,
+    help_indicator_fg: ColorDef,
+    help_indicator_bg: ColorDef,
+    split_separator_fg: ColorDef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SearchColors {
+    match_bg: ColorDef,
+    match_fg: ColorDef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DiagnosticColors {
+    error_fg: ColorDef,
+    error_bg: ColorDef,
+    warning_fg: ColorDef,
+    warning_bg: ColorDef,
+    info_fg: ColorDef,
+    info_bg: ColorDef,
+    hint_fg: ColorDef,
+    hint_bg: ColorDef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SyntaxColors {
+    keyword: ColorDef,
+    string: ColorDef,
+    comment: ColorDef,
+    function: ColorDef,
+    #[serde(rename = "type")]
+    type_: ColorDef,
+    variable: ColorDef,
+    constant: ColorDef,
+    operator: ColorDef,
+}
 
 /// Comprehensive theme structure with all UI colors
 #[derive(Debug, Clone)]
@@ -72,8 +192,93 @@ pub struct Theme {
     pub syntax_operator: Color,
 }
 
+impl From<ThemeFile> for Theme {
+    fn from(file: ThemeFile) -> Self {
+        Self {
+            name: file.name,
+            editor_bg: file.editor.bg.into(),
+            editor_fg: file.editor.fg.into(),
+            cursor: file.editor.cursor.into(),
+            selection_bg: file.editor.selection_bg.into(),
+            current_line_bg: file.editor.current_line_bg.into(),
+            line_number_fg: file.editor.line_number_fg.into(),
+            line_number_bg: file.editor.line_number_bg.into(),
+            tab_active_fg: file.ui.tab_active_fg.into(),
+            tab_active_bg: file.ui.tab_active_bg.into(),
+            tab_inactive_fg: file.ui.tab_inactive_fg.into(),
+            tab_inactive_bg: file.ui.tab_inactive_bg.into(),
+            tab_separator_bg: file.ui.tab_separator_bg.into(),
+            status_bar_fg: file.ui.status_bar_fg.into(),
+            status_bar_bg: file.ui.status_bar_bg.into(),
+            prompt_fg: file.ui.prompt_fg.into(),
+            prompt_bg: file.ui.prompt_bg.into(),
+            prompt_selection_fg: file.ui.prompt_selection_fg.into(),
+            prompt_selection_bg: file.ui.prompt_selection_bg.into(),
+            popup_border_fg: file.ui.popup_border_fg.into(),
+            popup_bg: file.ui.popup_bg.into(),
+            popup_selection_bg: file.ui.popup_selection_bg.into(),
+            popup_text_fg: file.ui.popup_text_fg.into(),
+            suggestion_bg: file.ui.suggestion_bg.into(),
+            suggestion_selected_bg: file.ui.suggestion_selected_bg.into(),
+            help_bg: file.ui.help_bg.into(),
+            help_fg: file.ui.help_fg.into(),
+            help_key_fg: file.ui.help_key_fg.into(),
+            help_separator_fg: file.ui.help_separator_fg.into(),
+            help_indicator_fg: file.ui.help_indicator_fg.into(),
+            help_indicator_bg: file.ui.help_indicator_bg.into(),
+            split_separator_fg: file.ui.split_separator_fg.into(),
+            search_match_bg: file.search.match_bg.into(),
+            search_match_fg: file.search.match_fg.into(),
+            diagnostic_error_fg: file.diagnostic.error_fg.into(),
+            diagnostic_error_bg: file.diagnostic.error_bg.into(),
+            diagnostic_warning_fg: file.diagnostic.warning_fg.into(),
+            diagnostic_warning_bg: file.diagnostic.warning_bg.into(),
+            diagnostic_info_fg: file.diagnostic.info_fg.into(),
+            diagnostic_info_bg: file.diagnostic.info_bg.into(),
+            diagnostic_hint_fg: file.diagnostic.hint_fg.into(),
+            diagnostic_hint_bg: file.diagnostic.hint_bg.into(),
+            syntax_keyword: file.syntax.keyword.into(),
+            syntax_string: file.syntax.string.into(),
+            syntax_comment: file.syntax.comment.into(),
+            syntax_function: file.syntax.function.into(),
+            syntax_type: file.syntax.type_.into(),
+            syntax_variable: file.syntax.variable.into(),
+            syntax_constant: file.syntax.constant.into(),
+            syntax_operator: file.syntax.operator.into(),
+        }
+    }
+}
+
 impl Theme {
+    /// Load theme from a JSON file
+    fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read theme file: {}", e))?;
+        let theme_file: ThemeFile = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse theme file: {}", e))?;
+        Ok(theme_file.into())
+    }
+
+    /// Load builtin theme from the themes directory
+    fn load_builtin_theme(name: &str) -> Option<Self> {
+        // Try to load from the themes directory in the project root
+        let theme_paths = [
+            format!("themes/{}.json", name),
+            format!("../themes/{}.json", name),
+            format!("../../themes/{}.json", name),
+        ];
+
+        for path in &theme_paths {
+            if let Ok(theme) = Self::from_file(path) {
+                return Some(theme);
+            }
+        }
+
+        None
+    }
+
     /// Default dark theme (VSCode Dark+ inspired)
+    /// Fallback if JSON file cannot be loaded
     pub fn dark() -> Self {
         Self {
             name: "dark".to_string(),
@@ -290,10 +495,19 @@ impl Theme {
     }
 
     /// Get a theme by name, defaults to dark if not found
+    /// Tries to load from JSON file first, falls back to hardcoded themes
     pub fn from_name(name: &str) -> Self {
-        match name.to_lowercase().as_str() {
+        let normalized_name = name.to_lowercase().replace('_', "-");
+
+        // Try to load from JSON file first
+        if let Some(theme) = Self::load_builtin_theme(&normalized_name) {
+            return theme;
+        }
+
+        // Fall back to hardcoded themes
+        match normalized_name.as_str() {
             "light" => Self::light(),
-            "high-contrast" | "high_contrast" => Self::high_contrast(),
+            "high-contrast" => Self::high_contrast(),
             _ => Self::dark(),
         }
     }
@@ -306,7 +520,7 @@ impl Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        Self::dark()
+        Self::high_contrast()
     }
 }
 
@@ -350,6 +564,6 @@ mod tests {
     #[test]
     fn test_default_theme() {
         let theme = Theme::default();
-        assert_eq!(theme.name, "dark");
+        assert_eq!(theme.name, "high-contrast");
     }
 }

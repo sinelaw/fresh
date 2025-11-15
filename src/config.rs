@@ -26,7 +26,7 @@ pub struct Config {
 }
 
 fn default_theme_name() -> String {
-    "dark".to_string()
+    "high-contrast".to_string()
 }
 
 /// Editor behavior configuration
