@@ -418,4 +418,68 @@ mod tests {
         assert_eq!(pos, 7);
         assert_eq!(content, "Line3");
     }
+
+    /// BUG REPRODUCTION: Line longer than estimated_line_length
+    /// When a line is longer than the estimated_line_length passed to line_iterator(),
+    /// the LineIterator::new() constructor fails to find the actual line start.
+    ///
+    /// This causes Home/End key navigation to fail on long lines.
+    #[test]
+    fn test_line_iterator_long_line_exceeds_estimate() {
+        // Create a line that's 200 bytes long (much longer than typical estimate)
+        let long_line = "x".repeat(200);
+        let content = format!("{}\n", long_line);
+        let mut buffer = TextBuffer::from_bytes(content.as_bytes().to_vec());
+
+        // Use a small estimated_line_length (50 bytes) - smaller than actual line
+        let estimated_line_length = 50;
+
+        // Position cursor at the END of the long line (position 200, before the \n)
+        let cursor_at_end = 200;
+
+        // Create iterator from end of line - this should find position 0 as line start
+        let iter = buffer.line_iterator(cursor_at_end, estimated_line_length);
+
+        // BUG: iter.current_position() returns 150 (200 - 50) instead of 0
+        // because find_line_start_backward only scans back 50 bytes
+        assert_eq!(
+            iter.current_position(),
+            0,
+            "LineIterator should find actual line start (0), not estimation boundary ({})",
+            cursor_at_end - estimated_line_length
+        );
+
+        // Test with cursor in the middle too
+        let cursor_in_middle = 100;
+        let iter = buffer.line_iterator(cursor_in_middle, estimated_line_length);
+        assert_eq!(
+            iter.current_position(),
+            0,
+            "LineIterator should find line start regardless of cursor position"
+        );
+    }
+
+    /// BUG REPRODUCTION: Multiple lines where one exceeds estimate
+    /// Tests that line iteration works correctly even when one line is very long
+    #[test]
+    fn test_line_iterator_mixed_line_lengths() {
+        // Short line, very long line, short line
+        let long_line = "L".repeat(300);
+        let content = format!("Short1\n{}\nShort2\n", long_line);
+        let mut buffer = TextBuffer::from_bytes(content.as_bytes().to_vec());
+
+        let estimated_line_length = 50;
+
+        // Position cursor at end of long line (position 7 + 300 = 307)
+        let cursor_pos = 307;
+
+        let iter = buffer.line_iterator(cursor_pos, estimated_line_length);
+
+        // Should find position 7 (start of long line), not 257 (307 - 50)
+        assert_eq!(
+            iter.current_position(),
+            7,
+            "Should find start of long line at position 7, not estimation boundary"
+        );
+    }
 }
