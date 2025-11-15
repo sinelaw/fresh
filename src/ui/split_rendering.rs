@@ -512,8 +512,37 @@ impl SplitRenderer {
                 );
             }
 
-            for ch in line_content.chars() {
+            // Performance optimization: For very long lines, only process visible characters
+            // Calculate the maximum characters we might need to render based on screen width
+            // For wrapped lines, we need enough characters to fill the visible viewport
+            // For non-wrapped lines, we only need one screen width worth
+            let visible_lines_remaining = visible_count.saturating_sub(lines_rendered);
+            let max_visible_chars = if line_wrap {
+                // With wrapping: might need chars for multiple wrapped lines
+                // Be generous to avoid cutting off wrapped content
+                (area.width as usize)
+                    .saturating_mul(visible_lines_remaining.max(1))
+                    .saturating_add(200)
+            } else {
+                // Without wrapping: only need one line worth of characters
+                (area.width as usize).saturating_add(100)
+            };
+            let max_chars_to_process = left_col.saturating_add(max_visible_chars);
+
+            let mut chars_iterator = line_content.chars().peekable();
+            while let Some(ch) = chars_iterator.next() {
                 let byte_pos = line_start + char_index;
+
+                // Performance: skip expensive style calculations for characters beyond visible range
+                if char_index > max_chars_to_process {
+                    // Fast path: just count remaining characters without processing
+                    // This is critical for performance with very long lines (e.g., 100KB single line)
+                    char_index += ch.len_utf8();
+                    for remaining_ch in chars_iterator.by_ref() {
+                        char_index += remaining_ch.len_utf8();
+                    }
+                    break;
+                }
 
                 // Skip characters before left_column
                 if char_index >= left_col {
