@@ -33,29 +33,40 @@ pub struct LineIterator<'a> {
 
 impl<'a> LineIterator<'a> {
     /// Scan backward from byte_pos to find the start of the line
-    /// max_distance: maximum bytes to scan backward (typically column or estimated_line_length)
-    fn find_line_start_backward(buffer: &mut TextBuffer, byte_pos: usize, max_distance: usize) -> usize {
+    /// chunk_size: suggested chunk size for loading (used as performance hint only)
+    fn find_line_start_backward(buffer: &mut TextBuffer, byte_pos: usize, chunk_size: usize) -> usize {
         if byte_pos == 0 {
             return 0;
         }
 
-        // Scan backward up to max_distance or until we find a newline
-        let scan_start = byte_pos.saturating_sub(max_distance);
-        let scan_len = byte_pos - scan_start;
+        // Scan backward in chunks until we find a newline or reach position 0
+        // The chunk_size is just a hint for performance - we MUST find the actual line start
+        let mut search_end = byte_pos;
 
-        // Load the chunk we need to scan
-        if let Ok(chunk) = buffer.get_text_range_mut(scan_start, scan_len) {
-            // Scan backward through the chunk to find the last newline
-            for i in (0..chunk.len()).rev() {
-                if chunk[i] == b'\n' {
-                    // Found newline - line starts at the next byte
-                    return scan_start + i + 1;
+        loop {
+            let scan_start = search_end.saturating_sub(chunk_size);
+            let scan_len = search_end - scan_start;
+
+            // Load the chunk we need to scan
+            if let Ok(chunk) = buffer.get_text_range_mut(scan_start, scan_len) {
+                // Scan backward through the chunk to find the last newline
+                for i in (0..chunk.len()).rev() {
+                    if chunk[i] == b'\n' {
+                        // Found newline - line starts at the next byte
+                        return scan_start + i + 1;
+                    }
                 }
             }
-        }
 
-        // No newline found in scanned range - line starts at scan_start (or 0 if we hit buffer start)
-        scan_start
+            // No newline found in this chunk
+            if scan_start == 0 {
+                // Reached the start of the buffer - line starts at 0
+                return 0;
+            }
+
+            // Continue searching from earlier position
+            search_end = scan_start;
+        }
     }
 
     pub(crate) fn new(buffer: &'a mut TextBuffer, byte_pos: usize, estimated_line_length: usize) -> Self {
