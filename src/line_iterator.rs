@@ -1,4 +1,3 @@
-use crate::piece_tree::Position;
 use crate::text_buffer::TextBuffer;
 
 /// Iterator over lines in a TextBuffer with bidirectional support
@@ -79,27 +78,10 @@ impl<'a> LineIterator<'a> {
                 let _ = buffer.get_text_range_mut(pos_to_load, 1);
             }
 
-            // If offset_to_position succeeds, the chunk is loaded with line_starts
-            // We can use the position info to efficiently find the line start
-            if let Some(pos) = buffer.offset_to_position(byte_pos) {
-                // If we're already at column 0, byte_pos is the line start
-                if pos.column == 0 {
-                    byte_pos
-                } else {
-                    // We know we're at column N of the line
-                    // Scan backward exactly N bytes to find line start
-                    // Since the chunk is loaded (offset_to_position succeeded), this is fast
-                    byte_pos - pos.column
-                }
-            } else {
-                // Chunk not loaded despite our attempt - fall back to scanning
-                // This shouldn't happen, but handle it gracefully
-                tracing::warn!(
-                    "LineIterator::new(): offset_to_position({}) failed even after pre-loading, falling back to scan",
-                    byte_pos
-                );
-                Self::find_line_start_backward(buffer, byte_pos, estimated_line_length)
-            }
+            // Scan backward from byte_pos to find the start of the line
+            // We scan backward looking for a newline character
+            // NOTE: We previously tried to use offset_to_position() but it has bugs with column calculation
+            Self::find_line_start_backward(buffer, byte_pos, estimated_line_length)
         };
 
         LineIterator {

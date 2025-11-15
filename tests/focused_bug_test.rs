@@ -55,16 +55,32 @@ fn test_simple_sequence_from_e2e() {
 fn test_minimal_proptest_failure() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    // Minimal failing case from proptest
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap(); // "\n"
-    harness.type_text("a0").unwrap();                               // "\na0"
-    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap(); // cursor before '0'
-    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap(); // cursor at start of line (after \n)
-    harness.type_text("b").unwrap();                               // should be "\nba0"
+    println!("\n=== Step-by-step debugging ===");
+
+    // Step 1: Enter
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    println!("After Enter: buffer={:?}, cursor={}", harness.get_buffer_content(), harness.cursor_position());
+
+    // Step 2: Type "a0"
+    harness.type_text("a0").unwrap();
+    println!("After 'a0': buffer={:?}, cursor={}", harness.get_buffer_content(), harness.cursor_position());
+
+    // Step 3: Left
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    println!("After Left: buffer={:?}, cursor={}", harness.get_buffer_content(), harness.cursor_position());
+
+    // Step 4: Home
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    println!("After Home: buffer={:?}, cursor={}", harness.get_buffer_content(), harness.cursor_position());
+
+    // Step 5: Type "b"
+    harness.type_text("b").unwrap();
+    println!("After 'b': buffer={:?}, cursor={}", harness.get_buffer_content(), harness.cursor_position());
 
     let buffer = harness.get_buffer_content();
     let shadow = harness.get_shadow_string();
 
+    println!("\n=== Final state ===");
     println!("Buffer: {:?}", buffer);
     println!("Shadow: {:?}", shadow);
     println!("Cursor: {}", harness.cursor_position());

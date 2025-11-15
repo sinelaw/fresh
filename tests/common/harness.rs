@@ -509,8 +509,53 @@ impl EditorTestHarness {
                     .unwrap_or(self.shadow_string.len());
                 self.shadow_cursor = line_end;
             }
+            KeyCode::Up => {
+                // Move to previous line, same column position
+                let current_line_start = self.shadow_string[..self.shadow_cursor]
+                    .rfind('\n')
+                    .map(|pos| pos + 1)
+                    .unwrap_or(0);
+                let column = self.shadow_cursor - current_line_start;
+
+                if current_line_start > 0 {
+                    // Find start of previous line
+                    let prev_line_end = current_line_start - 1; // The '\n' before current line
+                    let prev_line_start = self.shadow_string[..prev_line_end]
+                        .rfind('\n')
+                        .map(|pos| pos + 1)
+                        .unwrap_or(0);
+                    let prev_line_len = prev_line_end - prev_line_start;
+
+                    // Move to same column or end of previous line
+                    self.shadow_cursor = prev_line_start + column.min(prev_line_len);
+                }
+            }
+            KeyCode::Down => {
+                // Move to next line, same column position
+                let current_line_start = self.shadow_string[..self.shadow_cursor]
+                    .rfind('\n')
+                    .map(|pos| pos + 1)
+                    .unwrap_or(0);
+                let column = self.shadow_cursor - current_line_start;
+
+                // Find next line start
+                if let Some(next_line_start_offset) = self.shadow_string[self.shadow_cursor..].find('\n') {
+                    let next_line_start = self.shadow_cursor + next_line_start_offset + 1;
+                    if next_line_start < self.shadow_string.len() {
+                        // Find next line end
+                        let next_line_end = self.shadow_string[next_line_start..]
+                            .find('\n')
+                            .map(|pos| next_line_start + pos)
+                            .unwrap_or(self.shadow_string.len());
+                        let next_line_len = next_line_end - next_line_start;
+
+                        // Move to same column or end of next line
+                        self.shadow_cursor = next_line_start + column.min(next_line_len);
+                    }
+                }
+            }
             _ => {
-                // Other keys don't modify shadow (e.g., Up, Down, PageUp, PageDown)
+                // Other keys don't modify shadow (e.g., PageUp, PageDown)
             }
         }
     }
