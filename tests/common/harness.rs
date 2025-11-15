@@ -769,6 +769,22 @@ impl EditorTestHarness {
         Ok(false)
     }
 
+    /// Wait indefinitely for async operations until condition is met
+    /// Repeatedly processes async messages until condition is met (no timeout)
+    /// Use this for semantic events that must eventually occur
+    pub fn wait_until<F>(&mut self, mut condition: F) -> io::Result<()>
+    where
+        F: FnMut(&Self) -> bool,
+    {
+        loop {
+            self.process_async_and_render()?;
+            if condition(self) {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     /// Capture a visual step for regression testing
     /// This takes both a text snapshot (for testing) and generates an SVG (for visualization)
     pub fn capture_visual_step(
