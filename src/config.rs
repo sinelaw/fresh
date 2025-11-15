@@ -23,6 +23,9 @@ pub struct Config {
 
     #[serde(default)]
     pub lsp: HashMap<String, LspServerConfig>,
+
+    #[serde(default)]
+    pub menu: MenuConfig,
 }
 
 fn default_theme_name() -> String {
@@ -209,6 +212,42 @@ pub struct LanguageConfig {
     pub auto_indent: bool,
 }
 
+/// Menu bar configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MenuConfig {
+    #[serde(default)]
+    pub menus: Vec<Menu>,
+}
+
+/// A top-level menu in the menu bar
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Menu {
+    pub label: String,
+    pub items: Vec<MenuItem>,
+}
+
+/// A menu item (action, separator, or submenu)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MenuItem {
+    /// A separator line
+    Separator { separator: bool },
+    /// An action item
+    Action {
+        label: String,
+        action: String,
+        #[serde(default)]
+        args: HashMap<String, serde_json::Value>,
+        #[serde(default)]
+        when: Option<String>,
+    },
+    /// A submenu (for future extensibility)
+    Submenu {
+        label: String,
+        items: Vec<MenuItem>,
+    },
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -218,6 +257,15 @@ impl Default for Config {
             keybindings: Self::default_keybindings(),
             languages: Self::default_languages(),
             lsp: Self::default_lsp_config(),
+            menu: MenuConfig::default(),
+        }
+    }
+}
+
+impl Default for MenuConfig {
+    fn default() -> Self {
+        Self {
+            menus: Config::default_menus(),
         }
     }
 }
@@ -683,6 +731,229 @@ impl Config {
         );
 
         lsp
+    }
+
+    /// Create default menu bar configuration
+    fn default_menus() -> Vec<Menu> {
+        vec![
+            // File menu
+            Menu {
+                label: "File".to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: "New File".to_string(),
+                        action: "new_file".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Open File...".to_string(),
+                        action: "prompt_open_file".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: "Save".to_string(),
+                        action: "save".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Save As...".to_string(),
+                        action: "save_as".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: "Close Buffer".to_string(),
+                        action: "close_buffer".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Quit".to_string(),
+                        action: "quit".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                ],
+            },
+            // Edit menu
+            Menu {
+                label: "Edit".to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: "Undo".to_string(),
+                        action: "undo".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Redo".to_string(),
+                        action: "redo".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: "Cut".to_string(),
+                        action: "cut".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Copy".to_string(),
+                        action: "copy".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Paste".to_string(),
+                        action: "paste".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: "Select All".to_string(),
+                        action: "select_all".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: "Find...".to_string(),
+                        action: "start_search".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Replace...".to_string(),
+                        action: "start_replace".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                ],
+            },
+            // View menu
+            Menu {
+                label: "View".to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: "Toggle File Explorer".to_string(),
+                        action: "toggle_file_explorer".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: "Split Horizontal".to_string(),
+                        action: "split_horizontal".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Split Vertical".to_string(),
+                        action: "split_vertical".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Close Split".to_string(),
+                        action: "close_split".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Focus Next Split".to_string(),
+                        action: "focus_next_split".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                ],
+            },
+            // Selection menu
+            Menu {
+                label: "Selection".to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: "Select All".to_string(),
+                        action: "select_all".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Select Word".to_string(),
+                        action: "select_word".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Select Line".to_string(),
+                        action: "select_line".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: "Add Cursor Above".to_string(),
+                        action: "add_cursor_above".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Add Cursor Below".to_string(),
+                        action: "add_cursor_below".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Add Cursor at Next Match".to_string(),
+                        action: "add_cursor_next_match".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                ],
+            },
+            // Go menu
+            Menu {
+                label: "Go".to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: "Go to Definition".to_string(),
+                        action: "lsp_goto_definition".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Go to Line...".to_string(),
+                        action: "prompt_goto_line".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Command Palette...".to_string(),
+                        action: "start_command_palette".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                ],
+            },
+            // Help menu
+            Menu {
+                label: "Help".to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: "Show Help".to_string(),
+                        action: "toggle_help".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                ],
+            },
+        ]
     }
 
     /// Validate the configuration
