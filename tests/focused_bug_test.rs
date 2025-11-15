@@ -7,6 +7,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 #[test]
 fn test_enter_after_brace_no_autoindent() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.enable_shadow_validation();
 
     // Type a brace
     harness.type_text("{").unwrap();
@@ -28,6 +29,7 @@ fn test_enter_after_brace_no_autoindent() {
 #[test]
 fn test_simple_sequence_from_e2e() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.enable_shadow_validation();
 
     // Simplified from test_basic_editing_operations
     harness.type_text("Hello").unwrap();
@@ -54,6 +56,7 @@ fn test_simple_sequence_from_e2e() {
 #[test]
 fn test_minimal_proptest_failure() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.enable_shadow_validation();
 
     println!("\n=== Step-by-step debugging ===");
 

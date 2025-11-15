@@ -7,7 +7,9 @@ use tempfile::TempDir;
 fn harness_with_auto_indent() -> EditorTestHarness {
     let mut config = Config::default();
     config.editor.auto_indent = true;
-    EditorTestHarness::with_config(80, 24, config).unwrap()
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.enable_shadow_validation();
+    harness
 }
 
 /// Test basic auto-indent in Rust after opening brace

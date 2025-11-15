@@ -70,6 +70,7 @@ proptest! {
     #[test]
     fn prop_piece_tree_matches_shadow(ops in prop::collection::vec(edit_op_strategy(), 1..50)) {
         let mut harness = EditorTestHarness::new(80, 24).unwrap();
+        harness.enable_shadow_validation();
 
         // Apply all operations
         for op in &ops {
@@ -115,6 +116,7 @@ proptest! {
     #[test]
     fn prop_buffer_length_matches_shadow(ops in prop::collection::vec(edit_op_strategy(), 1..50)) {
         let mut harness = EditorTestHarness::new(80, 24).unwrap();
+        harness.enable_shadow_validation();
 
         for op in &ops {
             op.apply(&mut harness).unwrap();

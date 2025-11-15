@@ -284,6 +284,7 @@ fn test_append_at_end_of_file() {
     std::fs::write(&file_path, "Line 1\nLine 2\nLine 3").unwrap();
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.enable_shadow_validation();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 

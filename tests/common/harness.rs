@@ -30,6 +30,10 @@ pub struct EditorTestHarness {
 
     /// Shadow cursor position
     shadow_cursor: usize,
+
+    /// Whether to enable shadow buffer validation (off by default)
+    /// Enable this only in tests that focus on simple text editing operations
+    enable_shadow_validation: bool,
 }
 
 impl EditorTestHarness {
@@ -54,6 +58,7 @@ impl EditorTestHarness {
             fs_metrics: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
+            enable_shadow_validation: false,
         })
     }
 
@@ -75,6 +80,7 @@ impl EditorTestHarness {
             fs_metrics: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
+            enable_shadow_validation: false,
         })
     }
 
@@ -105,6 +111,7 @@ impl EditorTestHarness {
             fs_metrics: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
+            enable_shadow_validation: false,
         })
     }
 
@@ -127,6 +134,7 @@ impl EditorTestHarness {
             fs_metrics: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
+            enable_shadow_validation: false,
         })
     }
 
@@ -165,6 +173,7 @@ impl EditorTestHarness {
             fs_metrics: Some(metrics_arc),
             shadow_string: String::new(),
             shadow_cursor: 0,
+            enable_shadow_validation: false,
         })
     }
 
@@ -188,6 +197,13 @@ impl EditorTestHarness {
         self._temp_dir
             .as_ref()
             .map(|d| d.path().join("project_root"))
+    }
+
+    /// Enable shadow buffer validation
+    /// Call this at the start of tests that focus on simple text editing operations
+    /// where you want to validate that the piece tree matches simple string operations
+    pub fn enable_shadow_validation(&mut self) {
+        self.enable_shadow_validation = true;
     }
 
     /// Open a file in the editor
@@ -223,8 +239,10 @@ impl EditorTestHarness {
 
     /// Simulate a key press
     pub fn send_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> io::Result<()> {
-        // Update shadow string to mirror the operation
-        self.update_shadow_for_key(code, modifiers);
+        // Update shadow string to mirror the operation (only if validation is enabled)
+        if self.enable_shadow_validation {
+            self.update_shadow_for_key(code, modifiers);
+        }
 
         // Delegate to the editor's handle_key method (just like main.rs does)
         self.editor.handle_key(code, modifiers)?;
@@ -233,6 +251,7 @@ impl EditorTestHarness {
         self.editor.process_async_messages();
         // Render to make state changes visible
         self.render()?;
+
         Ok(())
     }
 
@@ -260,9 +279,11 @@ impl EditorTestHarness {
     /// Optimized to avoid rendering after each character - only renders once at the end
     pub fn type_text(&mut self, text: &str) -> io::Result<()> {
         for ch in text.chars() {
-            // Update shadow string
-            self.shadow_string.insert(self.shadow_cursor, ch);
-            self.shadow_cursor += ch.len_utf8();
+            // Update shadow string (only if validation is enabled)
+            if self.enable_shadow_validation {
+                self.shadow_string.insert(self.shadow_cursor, ch);
+                self.shadow_cursor += ch.len_utf8();
+            }
 
             // Call handle_key directly without rendering (unlike send_key which renders every time)
             self.editor
@@ -435,17 +456,18 @@ impl EditorTestHarness {
     pub fn assert_buffer_content(&self, expected: &str) {
         let actual = self.get_buffer_content();
 
-        // Also verify shadow string matches to catch discrepancies
-        assert_eq!(
-            self.shadow_string, expected,
-            "Shadow string mismatch (bug in test harness shadow tracking)\nExpected: {expected:?}\nShadow: {:?}",
-            self.shadow_string
-        );
+        // Also verify shadow string matches to catch discrepancies (only if validation is enabled)
+        if self.enable_shadow_validation {
+            assert_eq!(
+                self.shadow_string, expected,
+                "Shadow string mismatch (bug in test harness shadow tracking)\nExpected: {expected:?}\nShadow: {:?}",
+                self.shadow_string
+            );
+        }
 
         assert_eq!(
             actual, expected,
-            "Buffer content mismatch\nExpected: {expected:?}\nActual: {actual:?}\nShadow: {:?}",
-            self.shadow_string
+            "Buffer content mismatch\nExpected: {expected:?}\nActual: {actual:?}",
         );
     }
 

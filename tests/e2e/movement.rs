@@ -6,6 +6,7 @@ use tempfile::TempDir;
 #[test]
 fn test_typing_and_cursor_movement() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.enable_shadow_validation();
 
     // Initial state: empty buffer, cursor at position 0
     harness.assert_buffer_content("");
@@ -73,6 +74,7 @@ fn test_typing_and_cursor_movement() {
 fn test_multiline_editing() {
     use crossterm::event::{KeyCode, KeyModifiers};
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.enable_shadow_validation();
 
     // Create multiple lines
     harness.type_text("Line 1").unwrap();
@@ -117,6 +119,7 @@ fn test_multiline_editing() {
 fn test_basic_editing_operations() {
     use crossterm::event::{KeyCode, KeyModifiers};
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.enable_shadow_validation();
 
     // Test 1: Insert text at beginning
     harness.type_text("Hello").unwrap();
