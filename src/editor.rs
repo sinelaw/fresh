@@ -229,6 +229,9 @@ pub struct Editor {
     /// Current keybinding context
     key_context: KeyContext,
 
+    /// Menu state (active menu, highlighted item)
+    menu_state: crate::ui::MenuState,
+
     /// Working directory for file explorer (set at initialization)
     working_dir: PathBuf,
 
@@ -511,6 +514,7 @@ impl Editor {
             fs_manager,
             file_explorer_visible: false,
             key_context: KeyContext::Normal,
+            menu_state: crate::ui::MenuState::new(),
             working_dir,
             position_history: PositionHistory::new(),
             in_navigation: false,
@@ -5122,8 +5126,11 @@ impl Editor {
             0
         };
 
-        // Build main vertical layout: [main_content, suggestions?, status_bar]
-        let mut constraints = vec![Constraint::Min(0)]; // Main content area
+        // Build main vertical layout: [menu_bar, main_content, suggestions?, status_bar]
+        let mut constraints = vec![
+            Constraint::Length(1), // Menu bar
+            Constraint::Min(0),    // Main content area
+        ];
         if suggestion_lines > 0 {
             constraints.push(Constraint::Length(suggestion_lines as u16 + 2));
         }
@@ -5134,9 +5141,10 @@ impl Editor {
             .constraints(constraints)
             .split(size);
 
-        let main_content_area = main_chunks[0];
-        let suggestions_idx = if suggestion_lines > 0 { Some(1) } else { None };
-        let status_bar_idx = if suggestion_lines > 0 { 2 } else { 1 };
+        let menu_bar_area = main_chunks[0];
+        let main_content_area = main_chunks[1];
+        let suggestions_idx = if suggestion_lines > 0 { Some(2) } else { None };
+        let status_bar_idx = if suggestion_lines > 0 { 3 } else { 2 };
 
         // Split main content area based on file explorer visibility
         let tabs_area;
@@ -5207,6 +5215,15 @@ impl Editor {
             tabs_area = vertical_chunks[0];
             editor_content_area = vertical_chunks[1];
         }
+
+        // Render menu bar
+        crate::ui::MenuRenderer::render(
+            frame,
+            menu_bar_area,
+            &self.config.menu,
+            &self.menu_state,
+            &self.theme,
+        );
 
         // Render tabs (same for both layouts)
         TabsRenderer::render(
