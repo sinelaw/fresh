@@ -35,13 +35,15 @@ pub struct EditorTestHarness {
 impl EditorTestHarness {
     /// Create new test harness with virtual terminal
     /// Uses a temporary directory to avoid loading plugins from the project directory
+    /// Auto-indent is disabled by default to match shadow string behavior
     pub fn new(width: u16, height: u16) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
 
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
-        let config = Config::default();
+        let mut config = Config::default();
+        config.editor.auto_indent = false; // Disable for simpler testing
         // Use temp directory to avoid loading project plugins in tests
         let editor = Editor::with_working_dir(config, width, height, Some(temp_path))?;
 
@@ -521,6 +523,11 @@ impl EditorTestHarness {
     /// Get the buffer length in bytes
     pub fn buffer_len(&self) -> usize {
         self.editor.active_state().buffer.len()
+    }
+
+    /// Get the shadow string (for property testing)
+    pub fn get_shadow_string(&self) -> &str {
+        &self.shadow_string
     }
 
     /// Get the number of cursors
