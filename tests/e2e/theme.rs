@@ -8,9 +8,9 @@ use ratatui::style::Color;
 fn test_default_theme_is_dark() {
     let harness = EditorTestHarness::new(80, 24).unwrap();
 
-    // Default theme should be "dark"
+    // Default theme should be "high-contrast"
     let theme = harness.editor().theme();
-    assert_eq!(theme.name, "dark");
+    assert_eq!(theme.name, "high-contrast");
 }
 
 #[test]
@@ -58,8 +58,8 @@ fn test_theme_loading_from_config_high_contrast() {
     assert_eq!(theme.name, "high-contrast");
 
     // Verify some high-contrast theme colors
-    assert_eq!(theme.editor_bg, Color::Black);
-    assert_eq!(theme.editor_fg, Color::White);
+    assert_eq!(theme.editor_bg, Color::Rgb(0, 0, 0));
+    assert_eq!(theme.editor_fg, Color::Rgb(255, 255, 255));
     assert_eq!(theme.cursor, Color::Yellow);
     assert_eq!(theme.tab_active_fg, Color::Black);
     assert_eq!(theme.tab_active_bg, Color::Yellow);

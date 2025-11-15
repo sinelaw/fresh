@@ -20,13 +20,13 @@ fn test_prompt_rendering() {
     let buffer = harness.buffer();
     let status_y = buffer.area.height - 1; // Status bar is at the bottom
 
-    // Check a cell in the status bar has yellow background
+    // Check a cell in the status bar has cyan background (high-contrast theme default)
     let first_cell_pos = buffer.index_of(0, status_y);
     let first_cell = &buffer.content[first_cell_pos];
     assert_eq!(
         first_cell.bg,
-        ratatui::style::Color::Yellow,
-        "Prompt should have yellow background"
+        ratatui::style::Color::Cyan,
+        "Prompt should have cyan background"
     );
 }
 
