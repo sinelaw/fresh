@@ -194,6 +194,11 @@ impl EditorTestHarness {
     pub fn open_file(&mut self, path: &Path) -> io::Result<()> {
         self.editor.open_file(path)?;
         self.render()?;
+
+        // Initialize shadow string with the file content
+        self.shadow_string = self.get_buffer_content();
+        self.shadow_cursor = self.cursor_position();
+
         Ok(())
     }
 
@@ -468,6 +473,10 @@ impl EditorTestHarness {
         }
 
         match code {
+            KeyCode::Char(ch) => {
+                self.shadow_string.insert(self.shadow_cursor, ch);
+                self.shadow_cursor += ch.len_utf8();
+            }
             KeyCode::Backspace => {
                 if self.shadow_cursor > 0 {
                     self.shadow_cursor -= 1;
