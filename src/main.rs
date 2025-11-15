@@ -163,11 +163,18 @@ fn run_event_loop(
             needs_render = false;
         }
 
-        // Calculate remaining time in frame budget
-        let time_since_last_render = Instant::now().duration_since(last_render);
-        let poll_timeout = FRAME_DURATION.saturating_sub(time_since_last_render);
+        // Calculate poll timeout based on whether we need to render
+        let poll_timeout = if needs_render {
+            // If we need to render, use remaining time in frame budget
+            let time_since_last_render = Instant::now().duration_since(last_render);
+            FRAME_DURATION.saturating_sub(time_since_last_render)
+        } else {
+            // If idle, wait up to 1 second (or until an event arrives)
+            // This prevents busy-polling when there's nothing to do
+            Duration::from_secs(1)
+        };
 
-        // Poll for events with remaining frame time
+        // Poll for events
         if event_poll(poll_timeout)? {
             match event_read()? {
                 CrosstermEvent::Key(key_event) => {
