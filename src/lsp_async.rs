@@ -1570,10 +1570,15 @@ async fn read_message_from_stdout(
 
     loop {
         let mut line = String::new();
-        stdout
+        let bytes_read = stdout
             .read_line(&mut line)
             .await
             .map_err(|e| format!("Failed to read from stdout: {}", e))?;
+
+        // EOF detected - LSP server closed stdout
+        if bytes_read == 0 {
+            return Err("LSP server closed stdout (EOF)".to_string());
+        }
 
         if line == "\r\n" {
             break;
