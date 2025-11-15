@@ -540,6 +540,160 @@ fn test_wrapped_line_cursor_positioning() {
     );
 }
 
+/// Test that scrolling works correctly when navigating down past viewport with wrapped lines
+/// Bug: Using down arrow to scroll past the end of the view area doesn't scroll the page correctly
+/// This test validates that the cursor's buffer position always corresponds to visible content
+#[test]
+fn test_wrapped_line_scrolling_down_past_viewport() {
+    const TERMINAL_WIDTH: u16 = 60;
+    const TERMINAL_HEIGHT: u16 = 12; // Small height to make scrolling happen quickly
+
+    let mut harness = EditorTestHarness::new(TERMINAL_WIDTH, TERMINAL_HEIGHT).unwrap();
+
+    // Create multiple long lines with identifiable prefixes
+    // Each line starts with "[N]" so we can identify which line the cursor is on
+    // Lines are long enough to wrap to 2-3 screen lines
+    for i in 0..20 {
+        harness.type_text(&format!(
+            "[{}] This is line number {} with lots of extra text to make it wrap across multiple display rows in the terminal window. ",
+            i, i
+        )).unwrap();
+        if i < 19 {
+            harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        }
+    }
+
+    // Move cursor to the beginning
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    let buffer_content = harness.get_buffer_content();
+    eprintln!("\n=== Buffer content ===");
+    eprintln!("Total buffer length: {} bytes", buffer_content.len());
+
+    let (initial_x, initial_y) = harness.screen_cursor_position();
+    eprintln!("\n=== Initial state ===");
+    eprintln!("Initial cursor position: ({}, {})", initial_x, initial_y);
+
+    // Verify we're at the start
+    assert_eq!(harness.cursor_position(), 0, "Should be at start of buffer");
+
+    // Get the initial screen content to see what's visible
+    let screen_before = harness.screen_to_string();
+    eprintln!("Screen before scrolling:\n{}", screen_before);
+
+    // Helper function to determine which line number the cursor is on based on buffer position
+    let get_line_at_position = |pos: usize| -> Option<usize> {
+        let text_up_to_cursor = &buffer_content[..pos.min(buffer_content.len())];
+        let lines_before = text_up_to_cursor.matches('\n').count();
+        Some(lines_before)
+    };
+
+    // Press down repeatedly to move through wrapped lines
+    let mut scrolling_occurred = false;
+    let max_down_presses = 50;
+
+    for i in 0..max_down_presses {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        let (cur_x, cur_y) = harness.screen_cursor_position();
+        let buf_pos = harness.cursor_position();
+
+        // Get the screen content
+        let screen_now = harness.screen_to_string();
+
+        // Determine which line the cursor is on
+        let cursor_line = get_line_at_position(buf_pos).unwrap();
+
+        eprintln!("\n=== After {} down presses ===", i + 1);
+        eprintln!("  Buffer position: {}", buf_pos);
+        eprintln!("  Screen position: ({}, {})", cur_x, cur_y);
+        eprintln!("  Cursor is on logical line: {}", cursor_line);
+
+        // The cursor should ALWAYS be visible on screen
+        assert!(
+            cur_y < TERMINAL_HEIGHT,
+            "After {} down presses: Cursor at y={} is beyond terminal height {}. \
+             Buffer position: {}. This indicates scrolling didn't happen when it should have.",
+            i + 1,
+            cur_y,
+            TERMINAL_HEIGHT,
+            buf_pos
+        );
+
+        // CRITICAL CHECK: The line number the cursor is on should be visible in the viewport
+        // Look for the line identifier "[N]" where N is the cursor's line number
+        let line_marker = format!("[{}]", cursor_line);
+        assert!(
+            screen_now.contains(&line_marker),
+            "After {} down presses: Cursor is on line {} (position {}), but '{}' is NOT visible on screen!\n\
+             This means scrolling did not happen correctly.\n\
+             Screen content:\n{}",
+            i + 1,
+            cursor_line,
+            buf_pos,
+            line_marker,
+            screen_now
+        );
+
+        eprintln!("  ✓ Line marker '{}' is visible on screen", line_marker);
+
+        // Additional validation: check a few characters around the cursor position
+        if buf_pos > 0 && buf_pos < buffer_content.len() {
+            let start = buf_pos.saturating_sub(5);
+            let end = (buf_pos + 5).min(buffer_content.len());
+            let context = &buffer_content[start..end];
+            let context_clean = context.replace('\n', "\\n");
+
+            eprintln!("  Context around cursor: '...{}...'", context_clean);
+
+            // Check if any part of this context is visible on screen
+            // (accounting for line breaks)
+            let mut found_context = false;
+            for word in context.split_whitespace() {
+                if word.len() >= 3 && screen_now.contains(word) {
+                    found_context = true;
+                    eprintln!("  ✓ Found context word '{}' on screen", word);
+                    break;
+                }
+            }
+        }
+
+        // Check if scrolling has occurred
+        if !screen_now.contains("[0]") {
+            if !scrolling_occurred {
+                eprintln!("\n=== SCROLLING DETECTED after {} down presses ===", i + 1);
+                scrolling_occurred = true;
+            }
+        }
+
+        // Stop after we've scrolled significantly
+        if cursor_line >= 12 {
+            eprintln!("\n=== Reached line {}, stopping test ===", cursor_line);
+            break;
+        }
+    }
+
+    assert!(
+        scrolling_occurred,
+        "Scrolling should have occurred when navigating through wrapped lines"
+    );
+
+    // Final validation
+    let final_pos = harness.cursor_position();
+    let final_line = get_line_at_position(final_pos).unwrap();
+    eprintln!("\n=== Final state ===");
+    eprintln!("  Final buffer position: {}", final_pos);
+    eprintln!("  Final line: {}", final_line);
+
+    assert!(
+        final_line >= 5,
+        "Should have navigated to at least line 5, but only reached line {}",
+        final_line
+    );
+}
+
 /// Test that cursor doesn't move into empty space beyond wrapped line ends
 /// Bug: Cursor can move several characters past the visible text before wrapping down
 /// TODO: This test is currently disabled due to rendering issues that need investigation

@@ -297,42 +297,151 @@ impl Viewport {
         let cursor_iter = buffer.line_iterator(cursor.position, 80);
         let cursor_line_start = cursor_iter.current_position();
 
-        // Check if cursor is visible by counting lines BETWEEN top_byte and cursor
-        // This avoids needing absolute line numbers!
+        // Check if cursor is visible by counting VISUAL ROWS between top_byte and cursor
+        // When line wrapping is enabled, we need to count wrapped rows, not logical lines!
         let cursor_is_visible = if cursor_line_start < self.top_byte {
             // Cursor is above viewport
             false
         } else {
-            // Count how many lines are between top_byte and cursor_line_start
-            let mut iter = buffer.line_iterator(self.top_byte, 80);
-            let mut lines_from_top = 0;
+            if self.line_wrap_enabled {
+                // With line wrapping: count VISUAL ROWS (wrapped segments), not logical lines
+                let gutter_width = self.gutter_width(buffer);
+                let wrap_config = WrapConfig::new(self.width as usize, gutter_width, true);
 
-            while iter.current_position() < cursor_line_start && lines_from_top < viewport_lines {
-                if iter.next().is_none() {
-                    break;
+                let mut iter = buffer.line_iterator(self.top_byte, 80);
+                let mut visual_rows = 0;
+
+                // Iterate through logical lines, but count their wrapped rows
+                loop {
+                    let current_pos = iter.current_position();
+
+                    // If we reached the cursor's line, check if the cursor is within visible rows
+                    if current_pos >= cursor_line_start {
+                        // The cursor's line starts within or after the viewport
+                        if current_pos == cursor_line_start {
+                            // We need to check if the cursor's SPECIFIC POSITION within the wrapped line is visible
+                            // Get the line content
+                            let line_content = if let Some((_, content)) = iter.next() {
+                                content.trim_end_matches('\n').to_string()
+                            } else {
+                                String::new()
+                            };
+
+                            // Wrap the line
+                            let segments = wrap_line(&line_content, &wrap_config);
+
+                            // Find which segment the cursor is in
+                            let cursor_column = cursor.position.saturating_sub(cursor_line_start);
+                            let (cursor_segment_idx, _) =
+                                char_position_to_segment(cursor_column, &segments);
+
+                            // Add the rows for this line up to and including the cursor's segment
+                            visual_rows += cursor_segment_idx + 1;
+
+                            // Check if cursor's row is within viewport
+                            break visual_rows <= viewport_lines;
+                        } else {
+                            // We passed the cursor's line without finding it - shouldn't happen
+                            break false;
+                        }
+                    }
+
+                    // Get the next line
+                    if let Some((_line_start, line_content)) = iter.next() {
+                        // Wrap this line to count how many visual rows it takes
+                        let line_text = line_content.trim_end_matches('\n');
+                        let segments = wrap_line(line_text, &wrap_config);
+                        visual_rows += segments.len();
+
+                        // If we've exceeded the viewport, cursor is not visible
+                        if visual_rows >= viewport_lines {
+                            break false;
+                        }
+                    } else {
+                        // Reached end of buffer
+                        break false;
+                    }
                 }
-                lines_from_top += 1;
-            }
+            } else {
+                // Without line wrapping: count logical lines as before
+                let mut iter = buffer.line_iterator(self.top_byte, 80);
+                let mut lines_from_top = 0;
 
-            lines_from_top < viewport_lines
+                while iter.current_position() < cursor_line_start
+                    && lines_from_top < viewport_lines
+                {
+                    if iter.next().is_none() {
+                        break;
+                    }
+                    lines_from_top += 1;
+                }
+
+                lines_from_top < viewport_lines
+            }
         };
 
         // If cursor is not visible, scroll to make it visible
         if !cursor_is_visible {
             // Position cursor at center of viewport when jumping
-            let target_line_from_top = viewport_lines / 2;
+            let target_rows_from_top = viewport_lines / 2;
 
-            // Move backwards from cursor to find the new top_byte
-            let mut iter = buffer.line_iterator(cursor_line_start, 80);
+            if self.line_wrap_enabled {
+                // When wrapping is enabled, count visual rows (wrapped segments) not logical lines
+                let gutter_width = self.gutter_width(buffer);
+                let wrap_config = WrapConfig::new(self.width as usize, gutter_width, true);
 
-            for _ in 0..target_line_from_top {
-                if iter.prev().is_none() {
-                    break; // Hit beginning of buffer
+                let mut iter = buffer.line_iterator(cursor_line_start, 80);
+                let mut visual_rows_counted = 0;
+
+                // First, count how many rows the cursor's line takes up to the cursor position
+                if let Some((_line_start, line_content)) = iter.next() {
+                    let line_text = if line_content.ends_with('\n') {
+                        &line_content[..line_content.len() - 1]
+                    } else {
+                        &line_content
+                    };
+                    let segments = wrap_line(line_text, &wrap_config);
+                    let cursor_column = cursor.position.saturating_sub(cursor_line_start);
+                    let (cursor_segment_idx, _) = char_position_to_segment(cursor_column, &segments);
+                    visual_rows_counted += cursor_segment_idx + 1;
                 }
-            }
 
-            let new_top_byte = iter.current_position();
-            self.set_top_byte_with_limit(buffer, new_top_byte);
+                // Now move backwards counting visual rows until we reach target
+                iter = buffer.line_iterator(cursor_line_start, 80);
+                while visual_rows_counted < target_rows_from_top {
+                    if iter.prev().is_none() {
+                        break; // Hit beginning of buffer
+                    }
+
+                    if let Some((_line_start, line_content)) = iter.next() {
+                        let line_text = if line_content.ends_with('\n') {
+                            &line_content[..line_content.len() - 1]
+                        } else {
+                            &line_content
+                        };
+                        let segments = wrap_line(line_text, &wrap_config);
+                        visual_rows_counted += segments.len();
+
+                        // Move back to where prev() left us
+                        iter.prev();
+                    }
+                }
+
+                let new_top_byte = iter.current_position();
+                self.set_top_byte_with_limit(buffer, new_top_byte);
+            } else {
+                // Non-wrapped mode: count logical lines as before
+                let mut iter = buffer.line_iterator(cursor_line_start, 80);
+
+                for _ in 0..target_rows_from_top {
+                    if iter.prev().is_none() {
+                        break; // Hit beginning of buffer
+                    }
+                }
+
+                let new_top_byte = iter.current_position();
+                self.set_top_byte_with_limit(buffer, new_top_byte);
+            }
         }
 
         // Horizontal scrolling - skip if line wrapping is enabled
