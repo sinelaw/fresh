@@ -598,6 +598,76 @@ fn extract_scrollbar_thumb_info(
     }
 }
 
+/// Test that dragging the scrollbar updates the cursor position
+/// Bug: When dragging the scrollbar, the cursor stays at its old position
+/// even though the viewport has scrolled. The cursor should be moved to
+/// somewhere within the newly visible area.
+#[test]
+fn test_scrollbar_drag_updates_cursor_position() {
+    // Initialize tracing
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_test_writer()
+        .try_init();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create a document with 100 lines
+    let content: String = (1..=100).map(|i| format!("Line {i} content\n")).collect();
+    let _fixture = harness.load_buffer_from_text(&content).unwrap();
+
+    // Move cursor to the beginning of the document
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let initial_cursor_pos = harness.cursor_position();
+    let initial_top_line = harness.top_line_number();
+
+    println!("\nInitial state:");
+    println!("  Cursor position: {initial_cursor_pos} bytes");
+    println!("  Top line: {initial_top_line}");
+
+    // Drag scrollbar from top to near bottom
+    // This should scroll the viewport down significantly
+    println!("\nDragging scrollbar from row 2 to row 18");
+    harness.mouse_drag(79, 2, 79, 18).unwrap();
+    harness.render().unwrap();
+
+    let cursor_pos_after_drag = harness.cursor_position();
+    let top_line_after_drag = harness.top_line_number();
+    let top_byte_after_drag = harness.top_byte();
+
+    println!("\nAfter scrollbar drag:");
+    println!("  Cursor position: {cursor_pos_after_drag} bytes");
+    println!("  Top line: {top_line_after_drag}");
+    println!("  Top byte: {top_byte_after_drag}");
+    println!("  Viewport scrolled by: {} lines", top_line_after_drag - initial_top_line);
+
+    // VERIFY: Viewport should have scrolled down
+    assert!(
+        top_line_after_drag > initial_top_line + 20,
+        "Viewport should have scrolled down significantly (was line {initial_top_line}, now line {top_line_after_drag})"
+    );
+
+    // VERIFY: Cursor should have moved to be within the visible area
+    // The cursor should no longer be at the beginning of the file
+    // It should be somewhere near the scrolled viewport position
+    assert!(
+        cursor_pos_after_drag > initial_cursor_pos,
+        "Cursor should have moved from position {initial_cursor_pos} after scrollbar drag, but is still at {cursor_pos_after_drag}"
+    );
+
+    // VERIFY: Cursor should be at the top of the visible area (or close to it)
+    // When scrollbar is dragged, the cursor is moved to top_byte
+    assert_eq!(
+        cursor_pos_after_drag, top_byte_after_drag,
+        "Cursor position {cursor_pos_after_drag} should be at the top of the viewport (top_byte={top_byte_after_drag})"
+    );
+}
+
 /// Test dragging scrollbar all the way to bottom to reproduce bug where:
 /// 1. Scrollbar won't drag to absolute bottom (one char short)
 /// 2. Cursor appears beyond EOF (on status bar)

@@ -700,6 +700,11 @@ impl EditorTestHarness {
             .get_line_number(top_byte)
     }
 
+    /// Get the top byte position of the viewport
+    pub fn top_byte(&self) -> usize {
+        self.editor.active_state().viewport.top_byte
+    }
+
     /// Get the primary cursor's selection range, if any
     pub fn get_selection_range(&self) -> Option<std::ops::Range<usize>> {
         self.editor

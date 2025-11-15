@@ -4737,6 +4737,9 @@ impl Editor {
             state.viewport.top_byte = line_start;
         }
 
+        // Move cursor to be visible in the new viewport (after releasing the state borrow)
+        self.move_cursor_to_visible_area(buffer_id);
+
         Ok(())
     }
 
@@ -4834,7 +4837,46 @@ impl Editor {
             state.viewport.top_byte = limited_line_start;
         }
 
+        // Move cursor to be visible in the new viewport (after releasing the state borrow)
+        self.move_cursor_to_visible_area(buffer_id);
+
         Ok(())
+    }
+
+    /// Move the cursor to a visible position within the current viewport
+    /// This is called after scrollbar operations to ensure the cursor is in view
+    fn move_cursor_to_visible_area(&mut self, buffer_id: BufferId) {
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let top_byte = state.viewport.top_byte;
+            let viewport_height = state.viewport.height as usize;
+            let buffer_len = state.buffer.len();
+
+            // Find the bottom byte of the viewport
+            // We iterate through viewport_height lines starting from top_byte
+            let mut iter = state.buffer.line_iterator(top_byte, 80);
+            let mut bottom_byte = buffer_len;
+
+            // Consume viewport_height lines to find where the visible area ends
+            for _ in 0..viewport_height {
+                if let Some((pos, line)) = iter.next() {
+                    // The bottom of this line is at pos + line.len()
+                    bottom_byte = pos + line.len();
+                } else {
+                    // Reached end of buffer
+                    bottom_byte = buffer_len;
+                    break;
+                }
+            }
+
+            // Check if cursor is outside visible range and move it if needed
+            let cursor_pos = state.cursors.primary().position;
+            if cursor_pos < top_byte || cursor_pos > bottom_byte {
+                // Move cursor to the top of the viewport
+                let cursor = state.cursors.primary_mut();
+                cursor.position = top_byte;
+                // Keep the existing sticky_column value so vertical navigation preserves column
+            }
+        }
     }
 
     /// Calculate the maximum allowed scroll position
