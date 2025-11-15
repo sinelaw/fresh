@@ -1275,16 +1275,6 @@ impl TextBuffer {
         TextBufferLineIterator::new(self, byte_pos, max_lines)
     }
 
-    /// Get a reference to piece tree for internal use (package-private)
-    pub(crate) fn piece_tree_ref(&self) -> &PieceTree {
-        &self.piece_tree
-    }
-
-    /// Get a reference to buffers for internal use (package-private)
-    pub(crate) fn buffers_ref(&self) -> &[StringBuffer] {
-        &self.buffers
-    }
-
     // Legacy API methods for backwards compatibility
 
     /// Get the line number for a given byte offset
