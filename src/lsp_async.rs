@@ -150,7 +150,10 @@ impl LspClientState {
 
     /// Check if the client can accept initialization
     pub fn can_initialize(&self) -> bool {
-        matches!(self, LspClientState::Initial | LspClientState::Stopped)
+        matches!(
+            self,
+            LspClientState::Initial | LspClientState::Starting | LspClientState::Stopped
+        )
     }
 
     /// Convert to LspServerStatus for UI reporting
@@ -751,6 +754,42 @@ impl LspTask {
                 .take()
                 .ok_or_else(|| "Failed to get stdout".to_string())?,
         );
+
+        // Spawn a task to read and log stderr from the LSP process
+        if let Some(stderr) = process.stderr.take() {
+            let language_clone = language.clone();
+            tokio::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
+                let mut stderr_reader = TokioBufReader::new(stderr);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match stderr_reader.read_line(&mut line).await {
+                        Ok(0) => {
+                            tracing::info!(
+                                "LSP ({}) stderr closed (process may have exited)",
+                                language_clone
+                            );
+                            break;
+                        }
+                        Ok(_) => {
+                            let trimmed = line.trim();
+                            if !trimmed.is_empty() {
+                                tracing::warn!("LSP ({}) stderr: {}", language_clone, trimmed);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "LSP ({}) stderr read error: {}",
+                                language_clone,
+                                e
+                            );
+                            break;
+                        }
+                    }
+                }
+            });
+        }
 
         Ok(Self {
             process,
@@ -2472,4 +2511,130 @@ mod tests {
         let debug_str = format!("{:?}", cmd);
         assert!(debug_str.contains("Shutdown"));
     }
+
+    #[test]
+    fn test_lsp_client_state_can_initialize_from_starting() {
+        // This test verifies that the state machine allows initialization from the Starting state.
+        // This is critical because LspHandle::spawn() sets state to Starting, and then
+        // get_or_spawn() immediately calls handle.initialize(). Without this fix,
+        // initialization would fail with "Cannot initialize: client is in state Starting".
+
+        let state = LspClientState::Starting;
+
+        // The fix: Starting state should allow initialization
+        assert!(
+            state.can_initialize(),
+            "Starting state must allow initialization to avoid race condition"
+        );
+
+        // Verify the full initialization flow works
+        let mut state = LspClientState::Starting;
+
+        // Should be able to transition to Initializing
+        assert!(state.can_transition_to(LspClientState::Initializing));
+        assert!(state.transition_to(LspClientState::Initializing).is_ok());
+
+        // And then to Running
+        assert!(state.can_transition_to(LspClientState::Running));
+        assert!(state.transition_to(LspClientState::Running).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_lsp_handle_initialize_from_starting_state() {
+        // This test reproduces the bug where initialize() would fail because
+        // the handle's state is Starting (set by spawn()) but can_initialize()
+        // only allowed Initial or Stopped states.
+        //
+        // The bug manifested as:
+        // ERROR: Failed to send initialize command for rust: Cannot initialize: client is in state Starting
+
+        let runtime = tokio::runtime::Handle::current();
+        let async_bridge = AsyncBridge::new();
+
+        // Spawn creates the handle with state = Starting
+        let handle = LspHandle::spawn(
+            &runtime,
+            "cat", // Simple command that will exit immediately
+            &[],
+            "test".to_string(),
+            &async_bridge,
+            ProcessLimits::unlimited(),
+        )
+        .unwrap();
+
+        // Immediately call initialize - this is what get_or_spawn() does
+        // Before the fix, this would fail with "Cannot initialize: client is in state Starting"
+        let result = handle.initialize(None);
+
+        assert!(
+            result.is_ok(),
+            "initialize() must succeed from Starting state. Got error: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lsp_state_machine_race_condition_fix() {
+        // Integration test that simulates the exact flow that was broken:
+        // 1. LspManager::get_or_spawn() calls LspHandle::spawn()
+        // 2. spawn() sets state to Starting and spawns async task
+        // 3. get_or_spawn() immediately calls handle.initialize()
+        // 4. initialize() should succeed even though state is Starting
+
+        let runtime = tokio::runtime::Handle::current();
+        let async_bridge = AsyncBridge::new();
+
+        // Create a simple fake LSP server script that responds to initialize
+        let fake_lsp_script = r#"
+            read -r line  # Read Content-Length header
+            read -r empty # Read empty line
+            read -r json  # Read JSON body
+
+            # Send a valid initialize response
+            response='{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}'
+            echo "Content-Length: ${#response}"
+            echo ""
+            echo -n "$response"
+
+            # Keep running to avoid EOF
+            sleep 10
+        "#;
+
+        // Spawn with bash to execute the fake LSP
+        let handle = LspHandle::spawn(
+            &runtime,
+            "bash",
+            &["-c".to_string(), fake_lsp_script.to_string()],
+            "fake".to_string(),
+            &async_bridge,
+            ProcessLimits::unlimited(),
+        )
+        .unwrap();
+
+        // This is the critical test: initialize must succeed from Starting state
+        let init_result = handle.initialize(None);
+        assert!(
+            init_result.is_ok(),
+            "initialize() failed from Starting state: {:?}",
+            init_result.err()
+        );
+
+        // Give the async task time to process
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // Check that we received status update messages
+        let messages = async_bridge.try_recv_all();
+        let has_status_update = messages
+            .iter()
+            .any(|msg| matches!(msg, AsyncMessage::LspStatusUpdate { .. }));
+
+        assert!(
+            has_status_update,
+            "Expected status update messages from LSP initialization"
+        );
+
+        // Cleanup
+        let _ = handle.shutdown();
+    }
 }
+

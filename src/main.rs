@@ -59,6 +59,12 @@ fn main() -> io::Result<()> {
 
     // Handle script control mode
     if args.script_mode {
+        // Initialize tracing for script mode - log to stderr so it doesn't interfere with JSON output on stdout
+        tracing_subscriber::registry()
+            .with(fmt::layer().with_writer(io::stderr))
+            .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+            .init();
+
         return run_script_control_mode(&args);
     }
 
