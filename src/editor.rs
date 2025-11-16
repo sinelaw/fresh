@@ -3299,6 +3299,77 @@ impl Editor {
                     );
                 }
             }
+            PluginCommand::CreateVirtualBuffer {
+                name,
+                mode,
+                read_only,
+            } => {
+                let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+                tracing::info!(
+                    "Created virtual buffer '{}' with mode '{}' (id={:?})",
+                    name,
+                    mode,
+                    buffer_id
+                );
+                // TODO: Return buffer_id to plugin via callback or hook
+            }
+            PluginCommand::SetVirtualBufferContent { buffer_id, entries } => {
+                match self.set_virtual_buffer_content(buffer_id, entries) {
+                    Ok(()) => {
+                        tracing::debug!("Set virtual buffer content for {:?}", buffer_id);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to set virtual buffer content: {}", e);
+                    }
+                }
+            }
+            PluginCommand::GetTextPropertiesAtCursor { buffer_id } => {
+                // Get text properties at cursor and fire a hook with the data
+                if let Some(state) = self.buffers.get(&buffer_id) {
+                    let cursor_pos = state.cursors.primary().position;
+                    let properties = state.text_properties.get_at(cursor_pos);
+                    tracing::debug!(
+                        "Text properties at cursor in {:?}: {} properties found",
+                        buffer_id,
+                        properties.len()
+                    );
+                    // TODO: Fire hook with properties data for plugins to consume
+                }
+            }
+            PluginCommand::DefineMode {
+                name,
+                parent,
+                bindings,
+                read_only,
+            } => {
+                use crate::buffer_mode::BufferMode;
+
+                let mut mode = BufferMode::new(name.clone()).with_read_only(read_only);
+
+                if let Some(parent_name) = parent {
+                    mode = mode.with_parent(parent_name);
+                }
+
+                // Parse key bindings from strings
+                for (key_str, command) in bindings {
+                    if let Some((code, modifiers)) = parse_key_string(&key_str) {
+                        mode = mode.with_binding(code, modifiers, command);
+                    } else {
+                        tracing::warn!("Failed to parse key binding: {}", key_str);
+                    }
+                }
+
+                self.mode_registry.register(mode);
+                tracing::info!("Registered buffer mode '{}'", name);
+            }
+            PluginCommand::ShowBuffer { buffer_id } => {
+                if self.buffers.contains_key(&buffer_id) {
+                    self.set_active_buffer(buffer_id);
+                    tracing::info!("Switched to buffer {:?}", buffer_id);
+                } else {
+                    tracing::warn!("Buffer {:?} not found", buffer_id);
+                }
+            }
         }
         Ok(())
     }
@@ -7137,6 +7208,71 @@ impl Editor {
             if replacements_made == 1 { "" } else { "s" }
         ));
     }
+}
+
+/// Parse a key string like "RET", "C-n", "M-x", "q" into KeyCode and KeyModifiers
+///
+/// Supports:
+/// - Single characters: "a", "q", etc.
+/// - Function keys: "F1", "F2", etc.
+/// - Special keys: "RET", "TAB", "ESC", "SPC", "DEL", "BS"
+/// - Modifiers: "C-" (Control), "M-" (Alt/Meta), "S-" (Shift)
+/// - Combinations: "C-n", "M-x", "C-M-s", etc.
+fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut modifiers = KeyModifiers::NONE;
+    let mut remaining = key_str;
+
+    // Parse modifiers
+    loop {
+        if remaining.starts_with("C-") {
+            modifiers |= KeyModifiers::CONTROL;
+            remaining = &remaining[2..];
+        } else if remaining.starts_with("M-") {
+            modifiers |= KeyModifiers::ALT;
+            remaining = &remaining[2..];
+        } else if remaining.starts_with("S-") {
+            modifiers |= KeyModifiers::SHIFT;
+            remaining = &remaining[2..];
+        } else {
+            break;
+        }
+    }
+
+    // Parse the key
+    let code = match remaining.to_uppercase().as_str() {
+        "RET" | "RETURN" | "ENTER" => KeyCode::Enter,
+        "TAB" => KeyCode::Tab,
+        "ESC" | "ESCAPE" => KeyCode::Esc,
+        "SPC" | "SPACE" => KeyCode::Char(' '),
+        "DEL" | "DELETE" => KeyCode::Delete,
+        "BS" | "BACKSPACE" => KeyCode::Backspace,
+        "UP" => KeyCode::Up,
+        "DOWN" => KeyCode::Down,
+        "LEFT" => KeyCode::Left,
+        "RIGHT" => KeyCode::Right,
+        "HOME" => KeyCode::Home,
+        "END" => KeyCode::End,
+        "PAGEUP" | "PGUP" => KeyCode::PageUp,
+        "PAGEDOWN" | "PGDN" => KeyCode::PageDown,
+        s if s.starts_with('F') && s.len() > 1 => {
+            // Function key (F1-F12)
+            if let Ok(n) = s[1..].parse::<u8>() {
+                KeyCode::F(n)
+            } else {
+                return None;
+            }
+        }
+        s if s.len() == 1 => {
+            // Single character
+            let c = s.chars().next()?;
+            KeyCode::Char(c.to_ascii_lowercase())
+        }
+        _ => return None,
+    };
+
+    Some((code, modifiers))
 }
 
 #[cfg(test)]
