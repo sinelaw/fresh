@@ -60,3 +60,45 @@
 
 *Go code with syntax highlighting*
 
+## Step 10: json_highlighting
+
+![json_highlighting](../screenshots/Multi-Language_Highlighting_10_json_highlighting.svg)
+
+*JSON code with syntax highlighting*
+
+## Step 11: java_highlighting
+
+![java_highlighting](../screenshots/Multi-Language_Highlighting_11_java_highlighting.svg)
+
+*Java code with syntax highlighting*
+
+## Step 12: csharp_highlighting
+
+![csharp_highlighting](../screenshots/Multi-Language_Highlighting_12_csharp_highlighting.svg)
+
+*C# code with syntax highlighting*
+
+## Step 13: php_highlighting
+
+![php_highlighting](../screenshots/Multi-Language_Highlighting_13_php_highlighting.svg)
+
+*PHP code with syntax highlighting*
+
+## Step 14: ruby_highlighting
+
+![ruby_highlighting](../screenshots/Multi-Language_Highlighting_14_ruby_highlighting.svg)
+
+*Ruby code with syntax highlighting*
+
+## Step 15: bash_highlighting
+
+![bash_highlighting](../screenshots/Multi-Language_Highlighting_15_bash_highlighting.svg)
+
+*Bash code with syntax highlighting*
+
+## Step 16: lua_highlighting
+
+![lua_highlighting](../screenshots/Multi-Language_Highlighting_16_lua_highlighting.svg)
+
+*Lua code with syntax highlighting*
+

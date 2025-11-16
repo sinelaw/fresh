@@ -2,13 +2,13 @@
 source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
+ File   Edit   View   Selection   Go   Help                                     
  hello.rs   hello.py   hello.js   hello.ts   hello.html   hello.css   hello.c   
     1 │ public class Hello {                                                   █
     2 │     public static void main(String[] args) {                           █
     3 │         System.out.println("Hello, World!");                           █
     4 │     }                                                                  █
     5 │ }                                                                      █
-                                                                               █
                                                                                █
                                                                                █
                                                                                █

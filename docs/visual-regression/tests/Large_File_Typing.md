@@ -24,3 +24,9 @@
 
 *After typing 'HELLO'*
 
+## Step 4: after_second_typing
+
+![after_second_typing](../screenshots/Large_File_Typing_04_after_second_typing.svg)
+
+*After typing more text deeper in file*
+

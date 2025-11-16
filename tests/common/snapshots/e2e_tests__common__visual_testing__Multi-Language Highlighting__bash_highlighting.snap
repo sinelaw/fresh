@@ -2,6 +2,7 @@
 source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
+ File   Edit   View   Selection   Go   Help                                     
  hello.rs   hello.py   hello.js   hello.ts   hello.html   hello.css   hello.c   
     1 │ #!/bin/bash                                                            █
     2 │                                                                        █
@@ -11,7 +12,6 @@ expression: "&screen_text"
     6 │                                                                        █
     7 │ MESSAGE="World"                                                        █
     8 │ greet "$MESSAGE"                                                       █
-                                                                               █
                                                                                █
                                                                                █
                                                                                █
