@@ -898,6 +898,94 @@ impl Editor {
         buffer_id
     }
 
+    /// Create a new virtual buffer (not backed by a file)
+    ///
+    /// # Arguments
+    /// * `name` - Display name (e.g., "*Diagnostics*")
+    /// * `mode` - Buffer mode for keybindings (e.g., "diagnostics-list")
+    /// * `read_only` - Whether the buffer should be read-only
+    ///
+    /// # Returns
+    /// The BufferId of the created virtual buffer
+    pub fn create_virtual_buffer(
+        &mut self,
+        name: String,
+        mode: String,
+        read_only: bool,
+    ) -> BufferId {
+        let buffer_id = BufferId(self.next_buffer_id);
+        self.next_buffer_id += 1;
+
+        let mut state = EditorState::new(
+            self.terminal_width,
+            self.terminal_height,
+            self.config.editor.large_file_threshold_bytes as usize,
+        );
+        state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+
+        self.buffers.insert(buffer_id, state);
+        self.event_logs.insert(buffer_id, EventLog::new());
+
+        // Set virtual buffer metadata
+        let metadata = BufferMetadata::virtual_buffer(name, mode, read_only);
+        self.buffer_metadata.insert(buffer_id, metadata);
+
+        // Create a per-split view state for the active split
+        let active_split = self.split_manager.active_split();
+        if !self.split_view_states.contains_key(&active_split) {
+            let mut view_state = SplitViewState::new(self.terminal_width, self.terminal_height);
+            view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+            self.split_view_states.insert(active_split, view_state);
+        }
+
+        buffer_id
+    }
+
+    /// Set the content of a virtual buffer with text properties
+    ///
+    /// # Arguments
+    /// * `buffer_id` - The virtual buffer to update
+    /// * `entries` - Text entries with embedded properties
+    pub fn set_virtual_buffer_content(
+        &mut self,
+        buffer_id: BufferId,
+        entries: Vec<crate::text_property::TextPropertyEntry>,
+    ) -> Result<(), String> {
+        let state = self
+            .buffers
+            .get_mut(&buffer_id)
+            .ok_or_else(|| "Buffer not found".to_string())?;
+
+        // Build text and properties from entries
+        let (text, properties) =
+            crate::text_property::TextPropertyManager::from_entries(entries);
+
+        // Replace buffer content
+        let current_len = state.buffer.len();
+        if current_len > 0 {
+            state.buffer.delete_bytes(0, current_len);
+        }
+        state.buffer.insert(0, &text);
+
+        // Set text properties
+        state.text_properties = properties;
+
+        // Reset cursor to beginning
+        state.cursors.primary_mut().position = 0;
+        state.cursors.primary_mut().anchor = None;
+
+        Ok(())
+    }
+
+    /// Get text properties at the cursor position in the active buffer
+    pub fn get_text_properties_at_cursor(
+        &self,
+    ) -> Option<Vec<&crate::text_property::TextProperty>> {
+        let state = self.buffers.get(&self.active_buffer)?;
+        let cursor_pos = state.cursors.primary().position;
+        Some(state.text_properties.get_at(cursor_pos))
+    }
+
     /// Close the given buffer
     pub fn close_buffer(&mut self, id: BufferId) -> io::Result<()> {
         // Can't close if it's the only buffer
