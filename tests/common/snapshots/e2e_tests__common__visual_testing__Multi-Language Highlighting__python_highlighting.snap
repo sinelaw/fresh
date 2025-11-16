@@ -2,6 +2,7 @@
 source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
+ File   Edit   View   Selection   Go   Help                                     
  hello.rs   hello.py                                                            
     1 │ #!/usr/bin/env python3                                                 █
     2 │                                                                        █
@@ -11,7 +12,6 @@ expression: "&screen_text"
     6 │ if __name__ == "__main__":                                             █
     7 │     message = greet("World")                                           █
     8 │     print(message)                                                     █
-                                                                               █
                                                                                █
                                                                                █
                                                                                █

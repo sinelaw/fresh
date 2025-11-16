@@ -1,11 +1,10 @@
 ---
 source: tests/common/visual_testing.rs
-assertion_line: 69
 expression: "&screen_text"
 ---
+ File   Edit   View   Selection   Go   Help                                     
  [No Name]                                                                      
     1 │                                                                        █
-                                                                               █
                                                                                █
                                                                                █
                                                                                █

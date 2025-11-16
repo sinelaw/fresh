@@ -408,6 +408,22 @@ impl EditorTestHarness {
         buffer.content.get(pos).map(|cell| cell.style())
     }
 
+    /// Get the text content of a specific screen row
+    pub fn get_row_text(&self, y: u16) -> String {
+        let buffer = self.buffer();
+        let width = buffer.area.width;
+        let mut row_text = String::new();
+
+        for x in 0..width {
+            let pos = buffer.index_of(x, y);
+            if let Some(cell) = buffer.content.get(pos) {
+                row_text.push_str(cell.symbol());
+            }
+        }
+
+        row_text
+    }
+
     /// Get entire screen as string (for debugging)
     pub fn screen_to_string(&self) -> String {
         let buffer = self.buffer();

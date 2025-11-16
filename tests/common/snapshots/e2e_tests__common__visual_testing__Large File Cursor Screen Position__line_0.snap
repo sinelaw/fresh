@@ -2,6 +2,7 @@
 source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
+ File   Edit   View   Selection   Go   Help                                     
  fresh-test-BIG.txt                                                             
       1 │ @00000000: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx █
           xxxxxxxxxxx                                                          │
@@ -24,5 +25,4 @@ expression: "&screen_text"
      19 │ @00000720: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
           xxxxxxxxxxx                                                          │
      21 │ @00000800: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
-     22 │ @00000880: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │
 /tmp/fresh-test-BIG.txt | Ln 0, Col 0 | Opened /tmp/fresh-test...  Help: Ctrl+/

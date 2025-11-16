@@ -2,6 +2,7 @@
 source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
+ File   Edit   View   Selection   Go   Help                                     
  hello.rs   hello.py   hello.js   hello.ts   hello.html                         
     1 │ <!DOCTYPE html>                                                        █
     2 │ <html lang="en">                                                       █
@@ -14,7 +15,6 @@ expression: "&screen_text"
     9 │     <p class="message">Welcome</p>                                     █
    10 │ </body>                                                                █
    11 │ </html>                                                                █
-                                                                               █
                                                                                █
                                                                                █
                                                                                █

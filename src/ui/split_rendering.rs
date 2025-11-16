@@ -83,6 +83,20 @@ impl SplitRenderer {
             let event_log_opt = event_logs.get_mut(&buffer_id);
 
             if let Some(state) = state_opt {
+                // Sync viewport size with actual render area
+                // This ensures the viewport matches the real available space,
+                // automatically accounting for menu bar, tabs, status bar, etc.
+                if state.viewport.width != content_rect.width
+                    || state.viewport.height != content_rect.height
+                {
+                    state
+                        .viewport
+                        .resize(content_rect.width, content_rect.height);
+                    // Re-ensure cursor is visible after resize
+                    let primary = *state.cursors.primary();
+                    state.viewport.ensure_visible(&mut state.buffer, &primary);
+                }
+
                 Self::render_buffer_in_split(
                     frame,
                     state,

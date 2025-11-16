@@ -2,6 +2,7 @@
 source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
+ File   Edit   View   Selection   Go   Help                                     
  hello.rs   hello.py   hello.js   hello.ts   hello.html   hello.css   hello.c   
     1 │ package main                                                           █
     2 │                                                                        █
@@ -15,7 +16,6 @@ expression: "&screen_text"
    10 │     message := greet("World")                                          █
    11 │     fmt.Println(message)                                               █
    12 │ }                                                                      █
-                                                                               █
                                                                                █
                                                                                █
                                                                                █

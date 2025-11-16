@@ -2,11 +2,13 @@
 
 ## Remaining Work
 
-### Priority 0: Menu Bar System (IN PROGRESS)
+### Priority 0: Menu Bar System (MOSTLY COMPLETE ✅)
 
 #### Feature: Top-Level Menu Bar with Keybinding Integration
 
 **Goal**: Add a discoverable menu bar above tabs that helps new users find features via standard conventions (File, Edit, View, etc.)
+
+**Status**: Core implementation complete (Phases 1-4), Plugin API pending (Phase 5)
 
 **Architecture Overview**:
 
@@ -230,30 +232,32 @@ Go                      Help
 
 **Implementation Tasks**:
 
-- [ ] **Phase 1: Core Data Structures**
-  - [ ] Add `MenuConfig`, `Menu`, `MenuItem` to `config.rs`
-  - [ ] Add `MenuState` to `Editor` struct
-  - [ ] Implement JSON serialization/deserialization
-  - [ ] Create default menu configuration
+- [x] **Phase 1: Core Data Structures** ✅
+  - [x] Add `MenuConfig`, `Menu`, `MenuItem` to `config.rs`
+  - [x] Add `MenuState` to `Editor` struct
+  - [x] Implement JSON serialization/deserialization
+  - [x] Create default menu configuration
 
-- [ ] **Phase 2: UI Rendering**
-  - [ ] Create `src/ui/menu.rs` with `MenuRenderer`
-  - [ ] Implement menu bar rendering (horizontal labels)
-  - [ ] Implement dropdown rendering (positioned overlay)
-  - [ ] Update `Editor::render()` to include menu bar above tabs
-  - [ ] Add theme colors for menu (menu_bar, menu_dropdown, menu_highlight, etc.)
+- [x] **Phase 2: UI Rendering** ✅
+  - [x] Create `src/ui/menu.rs` with `MenuRenderer`
+  - [x] Implement menu bar rendering (horizontal labels)
+  - [x] Implement dropdown rendering (positioned overlay)
+  - [x] Update `Editor::render()` to include menu bar above tabs
+  - [x] Add theme colors for menu (menu_bar, menu_dropdown, menu_highlight, etc.)
 
-- [ ] **Phase 3: Keybinding Integration**
-  - [ ] Add `find_keybinding_for_action()` to `KeybindingResolver`
-  - [ ] Implement reverse lookup (Action → Keybinding)
-  - [ ] Format keybindings for display (Ctrl+S, Alt+Enter, etc.)
-  - [ ] Display keybindings in dropdown (right-aligned)
+- [x] **Phase 3: Keybinding Integration** ✅
+  - [x] Add `find_keybinding_for_action()` to `KeybindingResolver`
+  - [x] Implement reverse lookup (Action → Keybinding)
+  - [x] Format keybindings for display (Ctrl+S, Alt+Enter, etc.)
+  - [x] Display keybindings in dropdown (right-aligned)
 
-- [ ] **Phase 4: Interaction Handlers**
-  - [ ] Add keyboard handlers (Alt, F10, arrows, Enter, Esc)
-  - [ ] Add mouse handlers (click menu, click item, click outside)
-  - [ ] Implement menu state transitions (open/close, navigate)
-  - [ ] Execute actions on selection
+- [x] **Phase 4: Interaction Handlers** ✅
+  - [x] Add keyboard handlers (Alt, F10, arrows, Enter, Esc)
+  - [x] Add mouse handlers (click menu, click item, click outside)
+  - [x] Implement menu state transitions (open/close, navigate)
+  - [x] Execute actions on selection
+  - [x] Alt+letter mnemonics (underlined letters in menu labels, dynamically configured via keybindings)
+  - [x] `MenuOpen(String)` action for opening specific menus by name
 
 - [ ] **Phase 5: Plugin API**
   - [ ] Add `PluginCommand::AddMenuItem` and `AddMenu`
@@ -261,11 +265,11 @@ Go                      Help
   - [ ] Add Lua bindings (`editor.add_menu_item()`, `editor.add_menu()`)
   - [ ] Document plugin menu API in `docs/PLUGINS.md`
 
-- [ ] **Phase 6: Testing & Polish**
-  - [ ] Unit tests for menu configuration parsing
-  - [ ] E2E tests for keyboard/mouse navigation
+- [x] **Phase 6: Testing & Polish** (Partial) ✅
+  - [x] Unit tests for menu configuration parsing (16 tests)
+  - [x] E2E visual regression tests for menu bar navigation (7 screenshots)
   - [ ] Test plugin menu augmentation
-  - [ ] Accessibility: ensure keyboard-only navigation works perfectly
+  - [x] Accessibility: keyboard-only navigation works perfectly
   - [ ] Performance: test with many menus/items
 
 **Benefits**:
@@ -865,6 +869,7 @@ Where:
 **Strengths**: Multi-cursor editing, search & replace, auto-indent, LSP basics, large file support (1GB+), fully integrated Lua plugin system with hook-based prompt API, IntervalTree marker system, strong test coverage
 
 **Recent Major Completions**:
+- ✅ **Menu Bar System** - Full implementation with keyboard navigation (F10, arrows, Enter, Esc), mouse interaction (click menu, click item, click outside to close), Alt+letter mnemonics with underlined characters, keybinding display in dropdowns, JSON configuration, and 16 unit tests
 - ✅ **Git Plugin Refactoring** - Converted git operations to pure Lua plugins, removed ~465 lines of Rust code
 - ✅ **Hook-Based Prompt API** - Interactive UI for plugins via prompt-changed/confirmed/cancelled hooks
 - ✅ **String-Based Function Mapping** - Commands call global Lua functions by name
@@ -912,6 +917,16 @@ Where:
 
 ## Recent Major Completions ✅
 
+- **Menu Bar System** - Full implementation with:
+  - Keyboard navigation (F10 to activate, arrows to navigate, Enter to execute, Esc to close)
+  - Mouse interaction (click menu labels, click items, click outside to close)
+  - Alt+letter mnemonics with underlined characters (dynamically configured via keybindings)
+  - Keybinding display in dropdown menus (right-aligned shortcuts)
+  - JSON configuration for menus
+  - Default menus: File, Edit, View, Selection, Go, Help
+  - Theme colors for menu components
+  - 16 unit tests covering parsing, navigation, and state management
+  - Visual regression tests (7 screenshots)
 - **Git Plugin Refactoring** - Removed ~465 lines of hardcoded Rust git code (src/git.rs, Action::GitGrep, Action::GitFindFile, etc.) and replaced with pure Lua plugins using hook-based prompt API and string-based function mapping
 - **Plugin Prompt API** - Hook-based design (prompt-changed, prompt-confirmed, prompt-cancelled) for interactive UI in plugins
 - **String-Based Function Mapping** - Commands call global Lua functions by name (e.g., `action = "start_git_grep"`)
@@ -935,6 +950,7 @@ Where:
 - Command palette (Ctrl+P), help system (Ctrl+H)
 - File explorer (lazy loading, gitignore support, create/delete, unsaved indicators)
 - Themes (dark/light/high-contrast)
+- **Menu bar** - Discoverable feature access via File/Edit/View/Selection/Go/Help menus with keybinding display and Alt+letter mnemonics
 
 ### LSP Integration
 - Diagnostics (errors/warnings)

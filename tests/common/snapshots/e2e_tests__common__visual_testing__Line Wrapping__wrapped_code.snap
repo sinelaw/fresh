@@ -2,6 +2,7 @@
 source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
+ File   Edit   View   Selection   Go   Help                 
  [No Name]*                                                 
     1 │ This is a very long line of text that will definit █
         ely exceed the terminal width and should wrap to m █
@@ -13,7 +14,6 @@ expression: "&screen_text"
     8 │ fn very_long_function_name_with_many_parameters(pa █
         ram1: String, param2: i32, param3: bool, param4: V █
         ec<String>) -> Result<String, Error> {             █
-                                                           █
                                                            █
                                                            █
                                                            █
