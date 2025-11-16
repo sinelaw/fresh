@@ -73,8 +73,6 @@ pub enum KeyContext {
     Popup,
     /// File explorer has focus
     FileExplorer,
-    /// Rename mode is active
-    Rename,
     /// Menu bar is active
     Menu,
 }
@@ -82,10 +80,7 @@ pub enum KeyContext {
 impl KeyContext {
     /// Check if a context should allow input
     pub fn allows_text_input(&self) -> bool {
-        matches!(
-            self,
-            KeyContext::Normal | KeyContext::Prompt | KeyContext::Rename
-        )
+        matches!(self, KeyContext::Normal | KeyContext::Prompt)
     }
 
     /// Parse context from a "when" string
@@ -111,7 +106,6 @@ impl KeyContext {
             KeyContext::Prompt => "prompt",
             KeyContext::Popup => "popup",
             KeyContext::FileExplorer => "fileExplorer",
-            KeyContext::Rename => "rename",
             KeyContext::Menu => "menu",
         }
     }
@@ -259,14 +253,6 @@ pub enum Action {
     PopupPageDown,
     PopupConfirm,
     PopupCancel,
-
-    // Rename mode actions
-    RenameConfirm,
-    RenameCancel,
-    RenameMoveLeft,
-    RenameMoveRight,
-    RenameMoveHome,
-    RenameMoveEnd,
 
     // File explorer operations
     ToggleFileExplorer,
@@ -436,13 +422,6 @@ impl Action {
             "popup_page_down" => Some(Action::PopupPageDown),
             "popup_confirm" => Some(Action::PopupConfirm),
             "popup_cancel" => Some(Action::PopupCancel),
-
-            "rename_confirm" => Some(Action::RenameConfirm),
-            "rename_cancel" => Some(Action::RenameCancel),
-            "rename_move_left" => Some(Action::RenameMoveLeft),
-            "rename_move_right" => Some(Action::RenameMoveRight),
-            "rename_move_home" => Some(Action::RenameMoveHome),
-            "rename_move_end" => Some(Action::RenameMoveEnd),
 
             "toggle_file_explorer" => Some(Action::ToggleFileExplorer),
             "focus_file_explorer" => Some(Action::FocusFileExplorer),
@@ -1255,50 +1234,6 @@ impl KeybindingResolver {
         );
         all_bindings.insert(KeyContext::FileExplorer, explorer_bindings);
 
-        // Rename context bindings
-        // Note: Character input is handled by allows_text_input() in resolve()
-        let mut rename_bindings = HashMap::new();
-        rename_bindings.insert(
-            (KeyCode::Enter, KeyModifiers::empty()),
-            Action::RenameConfirm,
-        );
-        rename_bindings.insert((KeyCode::Esc, KeyModifiers::empty()), Action::RenameCancel);
-        rename_bindings.insert(
-            (KeyCode::Backspace, KeyModifiers::empty()),
-            Action::DeleteBackward,
-        );
-        rename_bindings.insert(
-            (KeyCode::Delete, KeyModifiers::empty()),
-            Action::DeleteForward,
-        );
-        // Arrow keys for restricted movement within the renamed symbol
-        rename_bindings.insert(
-            (KeyCode::Left, KeyModifiers::empty()),
-            Action::RenameMoveLeft,
-        );
-        rename_bindings.insert(
-            (KeyCode::Right, KeyModifiers::empty()),
-            Action::RenameMoveRight,
-        );
-        rename_bindings.insert(
-            (KeyCode::Home, KeyModifiers::empty()),
-            Action::RenameMoveHome,
-        );
-        rename_bindings.insert((KeyCode::End, KeyModifiers::empty()), Action::RenameMoveEnd);
-        // Cancel rename on PageUp/PageDown (these would normally move viewport)
-        rename_bindings.insert(
-            (KeyCode::PageUp, KeyModifiers::empty()),
-            Action::RenameCancel,
-        );
-        rename_bindings.insert(
-            (KeyCode::PageDown, KeyModifiers::empty()),
-            Action::RenameCancel,
-        );
-        // Also cancel on Up/Down arrow keys (navigating away from current line)
-        rename_bindings.insert((KeyCode::Up, KeyModifiers::empty()), Action::RenameCancel);
-        rename_bindings.insert((KeyCode::Down, KeyModifiers::empty()), Action::RenameCancel);
-        all_bindings.insert(KeyContext::Rename, rename_bindings);
-
         // Menu context bindings (when menu bar is active)
         let mut menu_bindings = HashMap::new();
 
@@ -1333,7 +1268,6 @@ impl KeybindingResolver {
             KeyContext::Prompt,
             KeyContext::Popup,
             KeyContext::FileExplorer,
-            KeyContext::Rename,
             KeyContext::Menu,
         ] {
             let mut all_keys: HashMap<(KeyCode, KeyModifiers), Action> = HashMap::new();
@@ -1486,12 +1420,6 @@ impl KeybindingResolver {
             Action::PopupPageDown => "Popup page down".to_string(),
             Action::PopupConfirm => "Popup confirm".to_string(),
             Action::PopupCancel => "Popup cancel".to_string(),
-            Action::RenameConfirm => "Rename confirm".to_string(),
-            Action::RenameCancel => "Rename cancel".to_string(),
-            Action::RenameMoveLeft => "Rename: move cursor left".to_string(),
-            Action::RenameMoveRight => "Rename: move cursor right".to_string(),
-            Action::RenameMoveHome => "Rename: move to start".to_string(),
-            Action::RenameMoveEnd => "Rename: move to end".to_string(),
             Action::ToggleFileExplorer => "Toggle file explorer".to_string(),
             Action::FocusFileExplorer => "Focus file explorer".to_string(),
             Action::FocusEditor => "Focus editor".to_string(),

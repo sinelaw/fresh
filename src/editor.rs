@@ -38,21 +38,6 @@ use std::sync::{Arc, RwLock};
 // Re-export BufferId from event module for backward compatibility
 pub use crate::event::BufferId;
 
-/// Rename state for inline renaming
-#[derive(Debug, Clone)]
-struct RenameState {
-    /// The current text being edited
-    current_text: String,
-    /// The original symbol text (before editing)
-    original_text: String,
-    /// Start position of the symbol in the buffer
-    start_pos: usize,
-    /// End position of the symbol in the buffer
-    end_pos: usize,
-    /// Overlay ID for visual indication
-    overlay_id: String,
-}
-
 /// Search state for find/replace functionality
 #[derive(Debug, Clone)]
 struct SearchState {
@@ -255,9 +240,6 @@ pub struct Editor {
 
     /// Pending LSP go-to-definition request ID (if any)
     pending_goto_definition_request: Option<u64>,
-
-    /// Rename state (if rename is active)
-    rename_state: Option<RenameState>,
 
     /// Search state (if search is active)
     search_state: Option<SearchState>,
@@ -538,7 +520,6 @@ impl Editor {
             next_lsp_request_id: 0,
             pending_completion_request: None,
             pending_goto_definition_request: None,
-            rename_state: None,
             search_state: None,
             interactive_replace_state: None,
             lsp_status: String::new(),
@@ -2153,6 +2134,13 @@ impl Editor {
                             },
                         );
                     }
+                }
+                PromptType::LspRename { overlay_id, .. } => {
+                    // Remove the rename overlay when cancelling
+                    let remove_overlay_event = crate::event::Event::RemoveOverlay {
+                        overlay_id: overlay_id.clone(),
+                    };
+                    self.apply_event_to_active_buffer(&remove_overlay_event);
                 }
                 _ => {}
             }
@@ -3793,100 +3781,96 @@ impl Editor {
             state.apply(&event);
         }
 
-        // Enter rename mode
-        self.rename_state = Some(RenameState {
-            current_text: word_text.clone(),
-            original_text: word_text,
-            start_pos: word_start,
-            end_pos: word_end,
-            overlay_id,
-        });
+        // Enter rename mode using the Prompt system
+        // Store the rename metadata in the PromptType and pre-fill the input with the current name
+        let mut prompt = Prompt::new(
+            "Rename to: ".to_string(),
+            PromptType::LspRename {
+                original_text: word_text.clone(),
+                start_pos: word_start,
+                end_pos: word_end,
+                overlay_id,
+            },
+        );
+        // Pre-fill the input with the current name and position cursor at the end
+        prompt.set_input(word_text);
 
-        self.status_message = Some("Rename mode (Enter to confirm, Esc to cancel)".to_string());
+        self.prompt = Some(prompt);
         Ok(())
     }
 
-    /// Cancel rename mode
-    fn cancel_rename(&mut self) {
-        if let Some(rename_state) = self.rename_state.take() {
-            // The buffer was never modified during rename mode, so no need to restore
-            // Just remove the overlay and clear the state
-            let remove_overlay_event = crate::event::Event::RemoveOverlay {
-                overlay_id: rename_state.overlay_id,
-            };
-            self.apply_event_to_active_buffer(&remove_overlay_event);
-
-            self.status_message = Some("Rename cancelled".to_string());
-        }
+    /// Cancel rename mode - removes overlay if the prompt was for LSP rename
+    fn cancel_rename_overlay(&mut self, overlay_id: &str) {
+        let remove_overlay_event = crate::event::Event::RemoveOverlay {
+            overlay_id: overlay_id.to_string(),
+        };
+        self.apply_event_to_active_buffer(&remove_overlay_event);
     }
 
-    /// Confirm rename - send request to LSP
-    fn confirm_rename(&mut self) -> io::Result<()> {
-        if let Some(rename_state) = self.rename_state.take() {
-            // Remove the overlay first
-            let event = crate::event::Event::RemoveOverlay {
-                overlay_id: rename_state.overlay_id.clone(),
-            };
-            if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
-                state.apply(&event);
-            }
+    /// Perform the actual LSP rename request
+    fn perform_lsp_rename(
+        &mut self,
+        new_name: String,
+        original_text: String,
+        start_pos: usize,
+        overlay_id: String,
+    ) {
+        // Remove the overlay first
+        self.cancel_rename_overlay(&overlay_id);
 
-            // Check if the name actually changed
-            if rename_state.current_text == rename_state.original_text {
-                self.status_message = Some("Name unchanged".to_string());
-                return Ok(());
-            }
+        // Check if the name actually changed
+        if new_name == original_text {
+            self.status_message = Some("Name unchanged".to_string());
+            return;
+        }
 
-            // Use the position from when we entered rename mode, NOT the current cursor position
-            // This ensures we send the rename request for the correct symbol even if cursor moved
-            let rename_pos = rename_state.start_pos;
+        // Use the position from when we entered rename mode, NOT the current cursor position
+        // This ensures we send the rename request for the correct symbol even if cursor moved
+        let rename_pos = start_pos;
 
-            // Convert byte position to LSP position (line, UTF-16 code units)
-            // LSP uses UTF-16 code units for character offsets, not byte offsets
-            let state = self.active_state();
-            let (line, character) = state.buffer.position_to_lsp_position(rename_pos);
+        // Convert byte position to LSP position (line, UTF-16 code units)
+        // LSP uses UTF-16 code units for character offsets, not byte offsets
+        let state = self.active_state();
+        let (line, character) = state.buffer.position_to_lsp_position(rename_pos);
 
-            // Get the current file URI and path
-            let metadata = self.buffer_metadata.get(&self.active_buffer);
-            let (uri, file_path) = if let Some(meta) = metadata {
-                (meta.file_uri.as_ref(), meta.file_path.as_ref())
-            } else {
-                (None, None)
-            };
+        // Get the current file URI and path
+        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let (uri, file_path) = if let Some(meta) = metadata {
+            (meta.file_uri.as_ref(), meta.file_path.as_ref())
+        } else {
+            (None, None)
+        };
 
-            if let (Some(uri), Some(path)) = (uri, file_path) {
-                // Detect language from file extension
-                if let Some(language) = crate::lsp_manager::detect_language(path) {
-                    // Get LSP handle
-                    if let Some(lsp) = self.lsp.as_mut() {
-                        if let Some(handle) = lsp.get_or_spawn(&language) {
-                            let request_id = self.next_lsp_request_id;
-                            self.next_lsp_request_id += 1;
-                            self.lsp_status = "LSP: rename...".to_string();
+        if let (Some(uri), Some(path)) = (uri, file_path) {
+            // Detect language from file extension
+            if let Some(language) = crate::lsp_manager::detect_language(path) {
+                // Get LSP handle
+                if let Some(lsp) = self.lsp.as_mut() {
+                    if let Some(handle) = lsp.get_or_spawn(&language) {
+                        let request_id = self.next_lsp_request_id;
+                        self.next_lsp_request_id += 1;
+                        self.lsp_status = "LSP: rename...".to_string();
 
-                            let _ = handle.rename(
-                                request_id,
-                                uri.clone(),
-                                line as u32,
-                                character as u32,
-                                rename_state.current_text.clone(),
-                            );
-                            tracing::info!(
-                                "Requested rename at {}:{}:{} to '{}'",
-                                uri.as_str(),
-                                line,
-                                character,
-                                rename_state.current_text
-                            );
-                        }
+                        let _ = handle.rename(
+                            request_id,
+                            uri.clone(),
+                            line as u32,
+                            character as u32,
+                            new_name.clone(),
+                        );
+                        tracing::info!(
+                            "Requested rename at {}:{}:{} to '{}'",
+                            uri.as_str(),
+                            line,
+                            character,
+                            new_name
+                        );
                     }
                 }
-            } else {
-                self.status_message = Some("Cannot rename in unsaved buffer".to_string());
             }
+        } else {
+            self.status_message = Some("Cannot rename in unsaved buffer".to_string());
         }
-
-        Ok(())
     }
 
     /// Determine the current keybinding context based on UI state
@@ -3902,8 +3886,6 @@ impl Editor {
             KeyContext::Prompt
         } else if self.active_state().popups.is_visible() {
             KeyContext::Popup
-        } else if self.rename_state.is_some() {
-            KeyContext::Rename
         } else {
             // Use the current context (can be FileExplorer or Normal)
             self.key_context
@@ -4106,6 +4088,15 @@ impl Editor {
                                     },
                                 );
                             }
+                        }
+                        PromptType::LspRename {
+                            original_text,
+                            start_pos,
+                            end_pos: _,
+                            overlay_id,
+                        } => {
+                            // Perform LSP rename with the new name from the prompt input
+                            self.perform_lsp_rename(input, original_text, start_pos, overlay_id);
                         }
                     }
                 }
@@ -4610,90 +4601,6 @@ impl Editor {
             Action::LspRename => {
                 self.start_rename()?;
             }
-            Action::RenameConfirm => {
-                self.confirm_rename()?;
-            }
-            Action::RenameCancel => {
-                self.cancel_rename();
-            }
-            Action::RenameMoveLeft => {
-                // Move cursor left, but constrain to rename boundaries
-                if let Some(rename_state) = &self.rename_state {
-                    let current_pos = self.active_state().cursors.primary().position;
-                    if current_pos > rename_state.start_pos {
-                        // Use prev_char_boundary to ensure we land on a valid UTF-8 character boundary
-                        let new_pos = self
-                            .active_state()
-                            .buffer
-                            .prev_char_boundary(current_pos)
-                            .max(rename_state.start_pos);
-                        let event = Event::MoveCursor {
-                            cursor_id: self.active_state().cursors.primary_id(),
-                            old_position: 0, // TODO: Get actual old position
-                            new_position: new_pos,
-                            old_anchor: None, // TODO: Get actual old anchor
-                            new_anchor: None,
-                            old_sticky_column: 0,
-                            new_sticky_column: 0, // Reset sticky column
-                        };
-                        self.apply_event_to_active_buffer(&event);
-                    }
-                }
-            }
-            Action::RenameMoveRight => {
-                // Move cursor right, but constrain to rename boundaries
-                if let Some(rename_state) = &self.rename_state {
-                    let current_pos = self.active_state().cursors.primary().position;
-                    if current_pos < rename_state.end_pos {
-                        // Use next_char_boundary to ensure we land on a valid UTF-8 character boundary
-                        let new_pos = self
-                            .active_state()
-                            .buffer
-                            .next_char_boundary(current_pos)
-                            .min(rename_state.end_pos);
-                        let event = Event::MoveCursor {
-                            cursor_id: self.active_state().cursors.primary_id(),
-                            old_position: 0, // TODO: Get actual old position
-                            new_position: new_pos,
-                            old_anchor: None, // TODO: Get actual old anchor
-                            new_anchor: None,
-                            old_sticky_column: 0,
-                            new_sticky_column: 0, // Reset sticky column
-                        };
-                        self.apply_event_to_active_buffer(&event);
-                    }
-                }
-            }
-            Action::RenameMoveHome => {
-                // Move cursor to start of rename range
-                if let Some(rename_state) = &self.rename_state {
-                    let event = Event::MoveCursor {
-                        cursor_id: self.active_state().cursors.primary_id(),
-                        old_position: 0, // TODO: Get actual old position
-                        new_position: rename_state.start_pos,
-                        old_anchor: None, // TODO: Get actual old anchor
-                        new_anchor: None,
-                        old_sticky_column: 0,
-                        new_sticky_column: 0, // Reset sticky column
-                    };
-                    self.apply_event_to_active_buffer(&event);
-                }
-            }
-            Action::RenameMoveEnd => {
-                // Move cursor to end of rename range
-                if let Some(rename_state) = &self.rename_state {
-                    let event = Event::MoveCursor {
-                        cursor_id: self.active_state().cursors.primary_id(),
-                        old_position: 0, // TODO: Get actual old position
-                        new_position: rename_state.end_pos,
-                        old_anchor: None, // TODO: Get actual old anchor
-                        new_anchor: None,
-                        old_sticky_column: 0,
-                        new_sticky_column: 0, // Reset sticky column
-                    };
-                    self.apply_event_to_active_buffer(&event);
-                }
-            }
             Action::Search => {
                 // Start search prompt
                 self.start_prompt("Search: ".to_string(), PromptType::Search);
@@ -4846,40 +4753,21 @@ impl Editor {
 
             Action::None => {}
             Action::DeleteBackward => {
-                // Handle backspace in rename mode
-                if let Some(rename_state) = &mut self.rename_state {
-                    if !rename_state.current_text.is_empty() {
-                        // Just update the current_text, don't modify the buffer
-                        rename_state.current_text.pop();
-                        let new_text = rename_state.current_text.clone();
-
-                        // Update status message to show what's being typed
-                        self.status_message = Some(format!(
-                            "Renaming to: {}",
-                            if new_text.is_empty() {
-                                "<empty>"
-                            } else {
-                                &new_text
-                            }
-                        ));
-                    }
-                } else {
-                    // Normal backspace handling - fall through to default action handling below
-                    if let Some(events) = self.action_to_events(Action::DeleteBackward) {
-                        if events.len() > 1 {
-                            let batch = Event::Batch {
-                                events: events.clone(),
-                                description: "Delete backward".to_string(),
-                            };
-                            self.active_event_log_mut().append(batch.clone());
-                            self.apply_event_to_active_buffer(&batch);
+                // Normal backspace handling
+                if let Some(events) = self.action_to_events(Action::DeleteBackward) {
+                    if events.len() > 1 {
+                        let batch = Event::Batch {
+                            events: events.clone(),
+                            description: "Delete backward".to_string(),
+                        };
+                        self.active_event_log_mut().append(batch.clone());
+                        self.apply_event_to_active_buffer(&batch);
+                        // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
+                    } else {
+                        for event in events {
+                            self.active_event_log_mut().append(event.clone());
+                            self.apply_event_to_active_buffer(&event);
                             // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
-                        } else {
-                            for event in events {
-                                self.active_event_log_mut().append(event.clone());
-                                self.apply_event_to_active_buffer(&event);
-                                // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
-                            }
                         }
                     }
                 }
@@ -4904,14 +4792,6 @@ impl Editor {
                 // Handle character insertion in interactive replace mode
                 if self.interactive_replace_state.is_some() {
                     return self.handle_interactive_replace_key(c);
-                // Handle character insertion in rename mode
-                } else if let Some(rename_state) = &mut self.rename_state {
-                    // Just update the current_text, don't modify the buffer
-                    rename_state.current_text.push(c);
-                    let new_text = rename_state.current_text.clone();
-
-                    // Update status message to show what's being typed
-                    self.status_message = Some(format!("Renaming to: {}", new_text));
                 // Handle character insertion in prompt mode
                 } else if self.is_prompting() {
                     if let Some(prompt) = self.prompt_mut() {
@@ -5018,9 +4898,11 @@ impl Editor {
     ) -> std::io::Result<()> {
         use crossterm::event::{MouseButton, MouseEventKind};
 
-        // Cancel rename mode on any mouse interaction
-        if self.rename_state.is_some() {
-            self.cancel_rename();
+        // Cancel LSP rename prompt on any mouse interaction
+        if let Some(ref prompt) = self.prompt {
+            if matches!(prompt.prompt_type, PromptType::LspRename { .. }) {
+                self.cancel_prompt();
+            }
         }
 
         let col = mouse_event.column;

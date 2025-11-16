@@ -1162,12 +1162,6 @@ pub fn action_to_events(
         | Action::LspCompletion
         | Action::LspGotoDefinition
         | Action::LspRename
-        | Action::RenameConfirm
-        | Action::RenameCancel
-        | Action::RenameMoveLeft
-        | Action::RenameMoveRight
-        | Action::RenameMoveHome
-        | Action::RenameMoveEnd
         | Action::Search
         | Action::FindNext
         | Action::FindPrevious

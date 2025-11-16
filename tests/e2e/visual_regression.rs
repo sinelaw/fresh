@@ -432,11 +432,11 @@ fn visual_lsp_rename() {
     harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Validate rename mode is active
+    // Validate rename mode is active (now uses prompt system)
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Rename mode"),
-        "Status should show rename mode message"
+        screen.contains("Rename to:"),
+        "Status should show rename prompt"
     );
 
     // Check that an overlay exists for the symbol being renamed
@@ -799,11 +799,11 @@ fn test_lsp_rename_cancel_restores_original() {
         "Buffer should STILL show original 'value' (not modified during typing)"
     );
 
-    // The typed text should be tracked in status message or rename state, not in buffer
+    // The typed text should be tracked in the prompt input, not in buffer
     let screen_after_delete = harness.screen_to_string();
     assert!(
-        screen_after_delete.contains("Renaming to:"),
-        "Status should show what's being typed"
+        screen_after_delete.contains("Rename to:"),
+        "Status should show the rename prompt"
     );
 
     // Verify overlay still exists during editing
@@ -854,11 +854,11 @@ fn test_lsp_rename_cancel_restores_original() {
         "Rename overlay should be removed after cancel"
     );
 
-    // Verify we're back in normal mode (not rename mode)
+    // Verify we're back in normal mode (not in rename prompt)
     let screen = harness.screen_to_string();
     assert!(
-        !screen.contains("Rename mode"),
-        "Should exit rename mode after cancel"
+        !screen.contains("Rename to:"),
+        "Should exit rename prompt after cancel"
     );
 }
 
