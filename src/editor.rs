@@ -386,6 +386,21 @@ struct LspMessageEntry {
     pub timestamp: std::time::Instant,
 }
 
+/// Types of UI elements that can be hovered over
+#[derive(Debug, Clone, PartialEq)]
+pub enum HoverTarget {
+    /// Hovering over a split separator (split_id, direction)
+    SplitSeparator(SplitId, SplitDirection),
+    /// Hovering over a scrollbar thumb (split_id)
+    ScrollbarThumb(SplitId),
+    /// Hovering over a scrollbar track (split_id)
+    ScrollbarTrack(SplitId),
+    /// Hovering over a menu bar item (menu_index)
+    MenuBarItem(usize),
+    /// Hovering over a menu dropdown item (menu_index, item_index)
+    MenuDropdownItem(usize, usize),
+}
+
 /// Mouse state tracking
 #[derive(Debug, Clone, Default)]
 struct MouseState {
@@ -405,6 +420,8 @@ struct MouseState {
     drag_start_position: Option<(u16, u16)>,
     /// Initial split ratio when starting to drag a separator
     drag_start_ratio: Option<f32>,
+    /// Current hover target (if any)
+    hover_target: Option<HoverTarget>,
 }
 
 /// Cached layout information for mouse hit testing
@@ -5364,6 +5381,9 @@ impl Editor {
                 self.mouse_state.drag_start_position = None;
                 self.mouse_state.drag_start_ratio = None;
             }
+            MouseEventKind::Moved => {
+                self.update_hover_target(col, row);
+            }
             MouseEventKind::ScrollUp => {
                 self.handle_mouse_scroll(col, row, -3)?;
             }
@@ -5377,6 +5397,80 @@ impl Editor {
 
         self.mouse_state.last_position = Some((col, row));
         Ok(())
+    }
+
+    /// Update the current hover target based on mouse position
+    fn update_hover_target(&mut self, col: u16, row: u16) {
+        // Check menu bar (row 0)
+        if row == 0 {
+            let all_menus: Vec<crate::config::Menu> = self.config.menu.menus
+                .iter()
+                .chain(self.menu_state.plugin_menus.iter())
+                .cloned()
+                .collect();
+
+            if let Some(menu_idx) = self.menu_state.get_menu_at_position(&all_menus, col) {
+                self.mouse_state.hover_target = Some(HoverTarget::MenuBarItem(menu_idx));
+                return;
+            }
+        }
+
+        // Check menu dropdown items if a menu is open
+        if let Some(active_idx) = self.menu_state.active_menu {
+            let all_menus: Vec<crate::config::Menu> = self.config.menu.menus
+                .iter()
+                .chain(self.menu_state.plugin_menus.iter())
+                .cloned()
+                .collect();
+
+            if let Some(menu) = all_menus.get(active_idx) {
+                if let Some(item_idx) = self.menu_state.get_item_at_position(menu, row) {
+                    self.mouse_state.hover_target = Some(HoverTarget::MenuDropdownItem(active_idx, item_idx));
+                    return;
+                }
+            }
+        }
+
+        // Check split separators
+        for (split_id, direction, sep_x, sep_y, sep_length) in &self.cached_layout.separator_areas {
+            let is_on_separator = match direction {
+                SplitDirection::Horizontal => {
+                    row == *sep_y && col >= *sep_x && col < sep_x + sep_length
+                }
+                SplitDirection::Vertical => {
+                    col == *sep_x && row >= *sep_y && row < sep_y + sep_length
+                }
+            };
+
+            if is_on_separator {
+                self.mouse_state.hover_target = Some(HoverTarget::SplitSeparator(*split_id, *direction));
+                return;
+            }
+        }
+
+        // Check scrollbars
+        for (split_id, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
+            &self.cached_layout.split_areas
+        {
+            if col >= scrollbar_rect.x
+                && col < scrollbar_rect.x + scrollbar_rect.width
+                && row >= scrollbar_rect.y
+                && row < scrollbar_rect.y + scrollbar_rect.height
+            {
+                let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
+                let is_on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
+
+                if is_on_thumb {
+                    self.mouse_state.hover_target = Some(HoverTarget::ScrollbarThumb(*split_id));
+                } else {
+                    self.mouse_state.hover_target = Some(HoverTarget::ScrollbarTrack(*split_id));
+                }
+                return;
+            }
+        }
+
+        // No hover target
+        self.mouse_state.hover_target = None;
     }
 
     /// Handle mouse click (down event)
@@ -6293,6 +6387,9 @@ impl Editor {
         self.cached_layout.separator_areas = self.split_manager.get_separators_with_ids(editor_content_area);
         self.cached_layout.editor_content_area = Some(editor_content_area);
 
+        // Render hover highlights for separators and scrollbars
+        self.render_hover_highlights(frame);
+
         // Render suggestions if present (same for both layouts)
         if let Some(idx) = suggestions_idx {
             if let Some(prompt) = &self.prompt {
@@ -6352,7 +6449,100 @@ impl Editor {
             &self.menu_state,
             &self.keybindings,
             &self.theme,
+            self.mouse_state.hover_target.as_ref(),
         );
+    }
+
+    /// Render hover highlights for interactive elements (separators, scrollbars)
+    fn render_hover_highlights(&self, frame: &mut Frame) {
+        use ratatui::style::Style;
+        use ratatui::text::Span;
+        use ratatui::widgets::Paragraph;
+
+        match &self.mouse_state.hover_target {
+            Some(HoverTarget::SplitSeparator(split_id, direction)) => {
+                // Highlight the separator with hover color
+                for (sid, dir, x, y, length) in &self.cached_layout.separator_areas {
+                    if sid == split_id && dir == direction {
+                        let hover_style = Style::default().fg(self.theme.split_separator_hover_fg);
+                        match dir {
+                            SplitDirection::Horizontal => {
+                                let line_text = "─".repeat(*length as usize);
+                                let paragraph = Paragraph::new(Span::styled(line_text, hover_style));
+                                frame.render_widget(
+                                    paragraph,
+                                    ratatui::layout::Rect::new(*x, *y, *length, 1),
+                                );
+                            }
+                            SplitDirection::Vertical => {
+                                for offset in 0..*length {
+                                    let paragraph = Paragraph::new(Span::styled("│", hover_style));
+                                    frame.render_widget(
+                                        paragraph,
+                                        ratatui::layout::Rect::new(*x, y + offset, 1, 1),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Some(HoverTarget::ScrollbarThumb(split_id)) => {
+                // Highlight scrollbar thumb
+                for (sid, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
+                    &self.cached_layout.split_areas
+                {
+                    if sid == split_id {
+                        let hover_style = Style::default().fg(self.theme.scrollbar_thumb_hover_fg);
+                        for row_offset in *thumb_start..*thumb_end {
+                            let paragraph = Paragraph::new(Span::styled("█", hover_style));
+                            frame.render_widget(
+                                paragraph,
+                                ratatui::layout::Rect::new(
+                                    scrollbar_rect.x,
+                                    scrollbar_rect.y + row_offset as u16,
+                                    1,
+                                    1,
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+            Some(HoverTarget::ScrollbarTrack(split_id)) => {
+                // Highlight scrollbar track but preserve the thumb
+                for (sid, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
+                    &self.cached_layout.split_areas
+                {
+                    if sid == split_id {
+                        let track_hover_style =
+                            Style::default().fg(self.theme.scrollbar_track_hover_fg);
+                        let thumb_style = Style::default().fg(self.theme.scrollbar_thumb_fg);
+                        for row_offset in 0..scrollbar_rect.height {
+                            let is_thumb =
+                                (row_offset as usize) >= *thumb_start && (row_offset as usize) < *thumb_end;
+                            let (char, style) = if is_thumb {
+                                ("█", thumb_style)
+                            } else {
+                                ("│", track_hover_style)
+                            };
+                            let paragraph = Paragraph::new(Span::styled(char, style));
+                            frame.render_widget(
+                                paragraph,
+                                ratatui::layout::Rect::new(
+                                    scrollbar_rect.x,
+                                    scrollbar_rect.y + row_offset,
+                                    1,
+                                    1,
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+            // Menu hover is handled by MenuRenderer
+            _ => {}
+        }
     }
 
     // === Overlay Management (Event-Driven) ===
