@@ -1062,6 +1062,163 @@ Where:
 - [ ] Extract multi-cursor operations (~200 lines)
 - [ ] Split large modules (editor.rs is ~3000 lines)
 
+### Split View Behavioral Expectations
+
+**Current Status**: Split view has basic functionality implemented but exhibits incorrect behaviors. This section documents the expected behaviors that must be validated and fixed.
+
+#### Core Data Model
+- Split system uses an Emacs-style tree structure (arbitrary nesting depth)
+- Each split (leaf) displays exactly one buffer
+- Multiple splits can display the same buffer simultaneously
+- Active split determines which split receives keyboard input
+- Active buffer determines which buffer is being edited
+
+**Architectural Principle (Emacs-style):**
+- **SHARED across splits**: Buffer content (text), undo history, overlays/diagnostics, file path
+- **PER-SPLIT (independent)**: Cursors (positions + selections), viewport (scroll position), multi-cursor state
+
+This means each split is essentially a "view" into the buffer with its own cursor and scroll position. Edits in one split are immediately visible in all splits showing that buffer, but cursor movements and scrolling are isolated to the active split.
+
+#### Expected Behaviors
+
+##### 1. Split Creation
+- [ ] **Horizontal Split** (`split_horizontal`):
+  - Creates a new split below the active split
+  - New split displays the SAME buffer as the original (shared content)
+  - Split ratio defaults to 50/50
+  - Focus moves to the new (bottom) split
+  - Both splits show the same buffer content
+  - Status line shows buffer for the focused split
+
+- [ ] **Vertical Split** (`split_vertical`):
+  - Creates a new split to the right of the active split
+  - New split displays the SAME buffer as the original (shared content)
+  - Split ratio defaults to 50/50
+  - Focus moves to the new (right) split
+  - Both splits show the same buffer content
+  - Status line shows buffer for the focused split
+
+##### 2. Buffer Assignment (Shared Buffer Model)
+- [ ] Multiple splits can show the SAME buffer simultaneously
+- [ ] Typing in one split modifies the shared buffer (visible in all splits showing it)
+- [ ] Opening a file in a split changes that split's buffer reference (not other splits)
+- [ ] Each split has independent cursor, selection, AND scroll position for its buffer view
+- [ ] Edits are synchronized across all splits viewing the same buffer
+- [ ] ONLY buffer content is shared; all view state is per-split
+
+##### 3. Cursor Management (Per-Split Cursors for Same Buffer)
+- [ ] Each split maintains its OWN cursor set (Cursors struct), independent of other splits
+- [ ] Multi-cursor operations are per-split (adding cursors in split A doesn't add them in split B)
+- [ ] Cursor movements in one split do NOT affect cursor positions in other splits
+- [ ] Primary cursor shows as hardware cursor ONLY in active split
+- [ ] Secondary cursors (multi-cursor) render with REVERSED style
+- [ ] When editing, cursor positions in OTHER splits viewing the same buffer adjust for insertions/deletions
+- [ ] Selections (anchors) are per-split, not shared across splits
+
+##### 4. Scrolling (Per-Split Viewport)
+- [ ] Each split maintains independent scroll position (Viewport.top_byte)
+- [ ] Scrolling in one split does NOT affect other splits (even showing same buffer)
+- [ ] Page Up/Down affects ONLY the active split's viewport
+- [ ] Horizontal scroll (left_column) is per-split, not per-buffer
+- [ ] After split creation, new split's viewport starts at same position as parent
+- [ ] Viewport automatically resizes when split dimensions change
+
+##### 5. Focus Navigation
+- [ ] `next_split` cycles through splits in order (circular navigation)
+- [ ] `prev_split` cycles in reverse order
+- [ ] Focus change updates both active_split and active_buffer
+- [ ] Status bar reflects the focused split's buffer information
+- [ ] Tab bar highlights the active buffer (if tabs shown)
+- [ ] Clicking a split focuses it immediately
+
+##### 6. Split Closing
+- [ ] Closing a split removes it from the tree
+- [ ] Parent split expands to fill the vacated space
+- [ ] Cannot close the last remaining split (error message)
+- [ ] Focus moves to a sibling split after closing
+- [ ] Buffer associated with closed split may remain open (if shown elsewhere) or be closed
+- [ ] Unsaved changes warning before closing split with modified buffer
+
+##### 7. Split Resizing
+- [ ] `increase_split_size` grows the active split by 5% (ratio adjustment)
+- [ ] `decrease_split_size` shrinks the active split by 5%
+- [ ] Ratio clamped between 0.1 and 0.9 (prevents invisible splits)
+- [ ] Resizing adjusts the PARENT split container's ratio, not the leaf
+- [ ] Content in both splits re-renders to fit new dimensions
+
+##### 8. Visual Rendering
+- [ ] Horizontal splits show separator line (`─` characters)
+- [ ] Vertical splits show separator line (`│` characters)
+- [ ] Each split renders its own line numbers (gutter)
+- [ ] Each split has its own scrollbar
+- [ ] Scrollbar color differs for active vs inactive splits
+- [ ] Buffer content respects split boundaries (no overflow)
+- [ ] Status bar shows information for the active split's buffer
+
+##### 9. Text Editing Across Splits (Shared Buffer)
+- [ ] Insert/delete in one split affects the shared buffer (visible in all splits showing it)
+- [ ] Cursor positions in other splits adjust automatically for insertions/deletions
+- [ ] Undo/redo operates on the buffer (affects all splits showing that buffer)
+- [ ] Copy/paste uses single system clipboard (shared across splits)
+- [ ] Find/replace operates on the active split's buffer view
+- [ ] LSP features (completion, diagnostics) work in active split
+
+##### 10. Edge Cases
+- [ ] Splitting a split that already has minimal size (1-2 lines)
+- [ ] Nested splits (3+ levels deep) maintain correct hierarchy
+- [ ] Rapid split/close operations don't leak memory
+- [ ] Focus tracking remains correct after complex split operations
+- [ ] Resizing terminal window redistributes space proportionally
+
+#### Implementation Plan
+
+**Phase 1: Data Structure Changes**
+```rust
+// NEW: Per-split view state (independent of buffer)
+pub struct SplitViewState {
+    pub cursors: Cursors,        // Per-split cursor set (including multi-cursor)
+    pub viewport: Viewport,      // Per-split scroll position
+}
+
+// MODIFIED: Editor struct
+pub struct Editor {
+    buffers: HashMap<BufferId, EditorState>,           // Shared buffer content
+    split_view_states: HashMap<SplitId, SplitViewState>, // Per-split view state
+    // ... rest unchanged
+}
+
+// MODIFIED: EditorState (remove view-specific state)
+pub struct EditorState {
+    pub buffer: Buffer,          // Shared content
+    pub overlays: OverlayList,   // Shared overlays/diagnostics
+    pub marker_list: MarkerList, // Shared markers
+    // REMOVE: pub cursors: Cursors    (move to SplitViewState)
+    // REMOVE: pub viewport: Viewport  (move to SplitViewState)
+}
+```
+
+**Phase 2: Split Operations**
+- [ ] `split_pane_horizontal/vertical`: Clone current split's `SplitViewState` for new split (same buffer, same cursor/scroll initially)
+- [ ] `close_split`: Remove `SplitViewState` entry
+- [ ] `next_split/prev_split`: Just update active split ID (view states already stored)
+
+**Phase 3: Rendering Changes**
+- [ ] `render_content`: Fetch `SplitViewState` for each split, not from buffer
+- [ ] `render_buffer_in_split`: Use split's viewport/cursors, not buffer's
+- [ ] Scrollbar: Use split's viewport for thumb position
+
+**Phase 4: Event Handling**
+- [ ] All cursor operations use `active_split`'s `SplitViewState`
+- [ ] All scroll operations use `active_split`'s viewport
+- [ ] Buffer edits: Apply to shared `EditorState`, then adjust cursors in ALL splits showing that buffer
+
+**Phase 5: Cursor Adjustment on Edits**
+- [ ] When buffer is edited, iterate all `SplitViewState` entries pointing to that buffer
+- [ ] Adjust cursor positions for insertions (shift forward) and deletions (shift backward/clamp)
+- [ ] This ensures cursors in other splits remain valid after edits
+
+---
+
 ### Test Infrastructure
 - [ ] **Lua Plugin Testing Infrastructure** - Need comprehensive testing infra/API/best practices for testing Lua scripts, preferably tests that could be written in the Lua environment itself. Currently, plugin tests require copying plugin files to test directories and setting up editor harnesses. Ideally, we'd have:
   - Unit testing framework for Lua plugins (similar to busted or luaunit)
