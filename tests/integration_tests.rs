@@ -644,7 +644,8 @@ fn test_diagnostic_overlay_visual_rendering() {
     // "let x = 5;" -> "x" is at text position 4, which maps to screen column 8 + 4 = 12
     let gutter_width = 8; // " " (indicator) + "   1" + " │ " for line 1
     let x_column = gutter_width + 4; // Position of "x" in "let x = 5;"
-    let x_row = 1; // First line of content (row 0 is tab bar, row 1 is first text line)
+    let (content_first_row, _) = harness.content_area_rows();
+    let x_row = content_first_row as u16; // First line of content (row 0 is menu bar, row 1 is tab bar, row 2 is first text line)
 
     // Get the style of the "x" character
     let style = harness.get_cell_style(x_column, x_row);
