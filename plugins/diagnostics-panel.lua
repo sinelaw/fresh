@@ -35,30 +35,43 @@ local function setup_mode()
     debug("Registered diagnostics-list mode")
 end
 
+-- Severity configuration with Unicode symbols and colors
+local severity_config = {
+    error = {
+        icon = "●",           -- Filled circle for errors
+        color = {255, 80, 80} -- Red
+    },
+    warning = {
+        icon = "▲",           -- Triangle for warnings
+        color = {255, 180, 0} -- Orange/Yellow
+    },
+    info = {
+        icon = "ℹ",           -- Info symbol
+        color = {80, 160, 255} -- Blue
+    },
+    hint = {
+        icon = "○",           -- Empty circle for hints
+        color = {160, 160, 160} -- Gray
+    }
+}
+
 -- Format a diagnostic for display
 local function format_diagnostic(diag, index, is_selected)
-    local severity_icon = {
-        error = "E",
-        warning = "W",
-        info = "I",
-        hint = "H"
-    }
-
-    local icon = severity_icon[diag.severity] or "?"
-    local marker = is_selected and ">" or " "
-    return string.format("%s [%s] %s:%d:%d: %s\n",
-        marker, icon, diag.file, diag.line, diag.column, diag.message)
+    local config = severity_config[diag.severity] or {icon = "?", color = {200, 200, 200}}
+    local icon = config.icon
+    -- ▶ is 3 bytes but displays as 1 char; " " is 1 byte and displays as 1 char
+    -- For visual alignment: "▶ " (2 chars) vs "  " (2 chars)
+    -- For byte alignment in overlays: 4 bytes vs 2 bytes - different, will cause offset issues
+    -- Prioritize visual alignment; recalculate offsets per line in apply_overlays
+    local marker = is_selected and "▶ " or "  "
+    local severity_text = string.format("%-7s", diag.severity)
+    return string.format("%s%s %s  %s:%d:%d: %s\n",
+        marker, icon, severity_text, diag.file, diag.line, diag.column, diag.message)
 end
 
 -- Build entries from diagnostics data
 local function build_entries()
     local entries = {}
-
-    -- Add header
-    table.insert(entries, {
-        text = "=== LSP Diagnostics ===\n\n",
-        properties = {}
-    })
 
     -- Add each diagnostic with embedded properties
     for i, diag in ipairs(panel_state.diagnostics) do
@@ -77,14 +90,69 @@ local function build_entries()
         })
     end
 
-    -- Add footer
+    -- Add footer with statistics
+    local error_count = 0
+    local warning_count = 0
+    local info_count = 0
+    local hint_count = 0
+    for _, diag in ipairs(panel_state.diagnostics) do
+        if diag.severity == "error" then error_count = error_count + 1
+        elseif diag.severity == "warning" then warning_count = warning_count + 1
+        elseif diag.severity == "info" then info_count = info_count + 1
+        elseif diag.severity == "hint" then hint_count = hint_count + 1
+        end
+    end
+
     table.insert(entries, {
-        text = string.format("\nTotal: %d diagnostics (selected: %d/%d)",
-            #panel_state.diagnostics, panel_state.current_index, #panel_state.diagnostics),
+        text = string.format("\n───────────────────────────────\n● %d errors  ▲ %d warnings  ℹ %d info  ○ %d hints\nSelected: %d/%d",
+            error_count, warning_count, info_count, hint_count,
+            panel_state.current_index, #panel_state.diagnostics),
         properties = {}
     })
 
     return entries
+end
+
+-- Apply colored overlays to the diagnostics panel
+local function apply_overlays()
+    if not panel_state.buffer_id then
+        debug("apply_overlays: no buffer_id set")
+        return
+    end
+
+    local target_buffer = panel_state.buffer_id
+
+    -- Clear existing overlays
+    editor.remove_overlays_by_prefix(target_buffer, "diag_")
+
+    -- Calculate byte offset for each diagnostic line
+    local offset = 0
+
+    -- Add overlays for each diagnostic line (full line foreground coloring)
+    for i, diag in ipairs(panel_state.diagnostics) do
+        local is_selected = (i == panel_state.current_index)
+        local config = severity_config[diag.severity] or {icon = "?", color = {200, 200, 200}}
+        local line_text = format_diagnostic(diag, i, is_selected)
+
+        -- Color the entire line text (excluding newline)
+        local line_start = offset
+        local line_end = offset + #line_text - 1  -- -1 to exclude \n
+
+        pcall(function()
+            editor.add_overlay(
+                target_buffer,
+                string.format("diag_%d_line", i),
+                line_start,
+                line_end,
+                config.color[1], config.color[2], config.color[3],
+                false
+            )
+        end)
+
+        offset = offset + #line_text
+    end
+
+    debug("Applied overlays to diagnostics panel")
 end
 
 -- Generate mock diagnostics (in a real implementation, these would come from LSP)
@@ -164,9 +232,11 @@ local function show_panel()
     })
 
     -- Track the buffer ID (the panel is focused after creation)
-    panel_state.buffer_id = editor.get_active_buffer_id()
+    -- NOTE: Commands are async, so get_active_buffer_id() may return stale data
+    -- We'll update buffer_id when we can confirm it
     panel_state.open = true
-    debug(string.format("Diagnostics panel buffer_id: %d", panel_state.buffer_id))
+    -- Don't apply overlays here - buffer may not exist yet due to async command processing
+    -- The unicode symbols and formatting still provide visual distinction
 
     editor.set_status(string.format("Diagnostics: %d items - use Up/Down to navigate, Enter to jump",
         #panel_state.diagnostics))
@@ -176,11 +246,13 @@ end
 function toggle_diagnostics_panel()
     debug("Toggling diagnostics panel")
 
-    -- If panel is already open and we're currently in it, do nothing
-    if panel_state.open and panel_state.buffer_id then
+    -- If panel is already open and we're in a virtual buffer, assume we're in the diagnostics panel
+    if panel_state.open then
         local current_buffer_id = editor.get_active_buffer_id()
-        if current_buffer_id == panel_state.buffer_id then
-            debug("Already in diagnostics panel, doing nothing")
+        local buffer_info = editor.get_buffer_info(current_buffer_id)
+        -- Virtual buffers have empty path
+        if buffer_info and buffer_info.path == "" then
+            debug("Already in diagnostics panel (virtual buffer), doing nothing")
             editor.set_status("Diagnostics panel already focused")
             return
         end
@@ -225,6 +297,7 @@ local function update_panel_display()
         show_line_numbers = false,  -- Keep line numbers hidden
         show_cursors = false        -- Keep cursor hidden
     })
+    -- NOTE: Don't apply overlays due to async command processing issues
 end
 
 -- Move to next diagnostic
@@ -244,8 +317,18 @@ function diagnostics_next()
         panel_state.current_index, #panel_state.diagnostics,
         diag.file, diag.line, diag.message))
 
+    -- Capture the buffer ID now that we know it exists
+    if not panel_state.buffer_id then
+        panel_state.buffer_id = editor.get_active_buffer_id()
+        debug(string.format("Captured buffer_id: %d", panel_state.buffer_id))
+    end
+
     -- Update the panel to show the new selection
     update_panel_display()
+
+    -- Apply overlays now that we know the buffer exists
+    apply_overlays()
+
     debug(string.format("Selected diagnostic %d", panel_state.current_index))
 end
 
@@ -266,8 +349,18 @@ function diagnostics_prev()
         panel_state.current_index, #panel_state.diagnostics,
         diag.file, diag.line, diag.message))
 
+    -- Capture the buffer ID now that we know it exists
+    if not panel_state.buffer_id then
+        panel_state.buffer_id = editor.get_active_buffer_id()
+        debug(string.format("Captured buffer_id: %d", panel_state.buffer_id))
+    end
+
     -- Update the panel to show the new selection
     update_panel_display()
+
+    -- Apply overlays now that we know the buffer exists
+    apply_overlays()
+
     debug(string.format("Selected diagnostic %d", panel_state.current_index))
 end
 
