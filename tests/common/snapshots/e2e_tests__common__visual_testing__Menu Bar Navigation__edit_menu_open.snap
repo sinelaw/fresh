@@ -3,19 +3,19 @@ source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   Help                                     
- [No Name]* ────────────────────────┐                                           
-    1 │ Hello, World!                                                          █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
+ [No Na┌────────────────────────────┐                                           
+    1 ││ Undo                 Ctrl+Z│                                          █
+       │ Redo                 Ctrl+Y│                                          █
+       │ ───────────────────────────│                                          █
+       │ Cut                  Ctrl+X│                                          █
+       │ Copy                 Ctrl+C│                                          █
+       │ Paste                Ctrl+V│                                          █
+       │ ───────────────────────────│                                          █
+       │ Select All           Ctrl+A│                                          █
+       │ ───────────────────────────│                                          █
+       │ Find...                    │                                          █
+       │ Replace...                 │                                          █
+       └────────────────────────────┘                                          █
                                                                                █
                                                                                █
                                                                                █

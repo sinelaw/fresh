@@ -4,10 +4,10 @@ expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   Help                                     
  [No Name]*                      ┌────────────────────────────────────┐         
-    1 │ Hello, World!                                                          █
-                                                                               █
-                                                                               █
-                                                                               █
+    1 │ Hello, World!            │ Go to Definition                   │        █
+                                 │ Go to Line...                      │        █
+                                 │ Command Palette...                 │        █
+                                 └────────────────────────────────────┘        █
                                                                                █
                                                                                █
                                                                                █
