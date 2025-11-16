@@ -13,6 +13,7 @@ use crate::marker::MarkerList;
 use crate::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::popup::{Popup, PopupContent, PopupListItem, PopupManager, PopupPosition};
 use crate::text_buffer::{Buffer, LineNumber};
+use crate::text_property::TextPropertyManager;
 use crate::viewport::Viewport;
 use anyhow::Result;
 use ratatui::style::{Color, Style};
@@ -53,6 +54,10 @@ pub struct EditorState {
 
     /// Current mode (for modal editing, if implemented)
     pub mode: String,
+
+    /// Text properties for virtual buffers (embedded metadata in text ranges)
+    /// Used by virtual buffers to store location info, severity, etc.
+    pub text_properties: TextPropertyManager,
 }
 
 impl EditorState {
@@ -78,6 +83,7 @@ impl EditorState {
             margins: MarginManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
+            text_properties: TextPropertyManager::new(),
         }
     }
 
@@ -124,6 +130,7 @@ impl EditorState {
             margins: MarginManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
+            text_properties: TextPropertyManager::new(),
         })
     }
 
