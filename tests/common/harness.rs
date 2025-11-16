@@ -721,6 +721,24 @@ impl EditorTestHarness {
         self.editor.active_state().viewport.top_byte
     }
 
+    /// Get the viewport height (number of content lines that can be displayed)
+    pub fn viewport_height(&self) -> usize {
+        self.editor.active_state().viewport.height as usize
+    }
+
+    /// Get the content area row range on screen (start_row, end_row inclusive)
+    /// This accounts for menu bar, tab bar, and status bar
+    pub fn content_area_rows(&self) -> (usize, usize) {
+        // Menu bar: row 0
+        // Tab bar: row 1
+        // Content: rows 2 to (terminal_height - 2)
+        // Status bar: row (terminal_height - 1)
+        let terminal_height = self.terminal.size().unwrap().height as usize;
+        let content_first_row = 2; // After menu bar and tab bar
+        let content_last_row = terminal_height.saturating_sub(2); // Before status bar
+        (content_first_row, content_last_row)
+    }
+
     /// Get the primary cursor's selection range, if any
     pub fn get_selection_range(&self) -> Option<std::ops::Range<usize>> {
         self.editor
