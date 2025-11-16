@@ -39,32 +39,6 @@ local function format_diagnostic(diag)
         icon, diag.file, diag.line, diag.column, diag.message)
 end
 
--- Create the diagnostic panel buffer
-local function create_panel()
-    if panel_buffer_id ~= nil then
-        -- Panel already exists, just show it
-        editor.show_buffer(panel_buffer_id)
-        return
-    end
-
-    -- Create the virtual buffer
-    editor.create_virtual_buffer({
-        name = "*Diagnostics*",
-        mode = "diagnostics-list",
-        read_only = true
-    })
-
-    debug("Created diagnostics panel buffer")
-
-    -- Note: We can't get the buffer ID back immediately because
-    -- create_virtual_buffer is async. For now, we'll use a workaround
-    -- by tracking all buffers. In a real implementation, we'd add a
-    -- callback or return value mechanism.
-
-    -- For this demo, we'll populate with mock data
-    update_panel_content()
-end
-
 -- Update the panel content with current diagnostics
 local function update_panel_content()
     -- Generate mock diagnostics for demonstration
@@ -146,6 +120,32 @@ local function update_panel_content()
     debug(string.format("Prepared %d diagnostic entries for display", #entries))
 
     editor.set_status(string.format("Diagnostics panel: %d items", #mock_diagnostics))
+end
+
+-- Create the diagnostic panel buffer
+local function create_panel()
+    if panel_buffer_id ~= nil then
+        -- Panel already exists, just show it
+        editor.show_buffer(panel_buffer_id)
+        return
+    end
+
+    -- Create the virtual buffer
+    editor.create_virtual_buffer({
+        name = "*Diagnostics*",
+        mode = "diagnostics-list",
+        read_only = true
+    })
+
+    debug("Created diagnostics panel buffer")
+
+    -- Note: We can't get the buffer ID back immediately because
+    -- create_virtual_buffer is async. For now, we'll use a workaround
+    -- by tracking all buffers. In a real implementation, we'd add a
+    -- callback or return value mechanism.
+
+    -- For this demo, we'll populate with mock data
+    update_panel_content()
 end
 
 -- Toggle the diagnostics panel

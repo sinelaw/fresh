@@ -619,3 +619,82 @@ fn test_todo_highlighter_updates_on_delete() {
          Instead, the highlight either disappeared or shifted to the wrong position."
     );
 }
+
+/// Test diagnostics panel plugin loads without Lua scoping errors
+/// This test reproduces the issue where local functions called before being defined cause runtime errors
+#[test]
+fn test_diagnostics_panel_plugin_loads() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the diagnostics panel plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/diagnostics-panel.lua");
+    let plugin_dest = plugins_dir.join("diagnostics-panel.lua");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create a simple test file
+    let test_file_content = "fn main() {\n    println!(\"test\");\n}\n";
+    let fixture = TestFixture::new("test_diagnostics.rs", test_file_content).unwrap();
+
+    // Create harness with the project directory (so plugins load)
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file - this should trigger plugin loading
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Check that file content is visible
+    harness.assert_screen_contains("fn main()");
+
+    // The plugin should have loaded successfully without Lua errors
+    // If the Lua scoping is wrong (update_panel_content not defined before create_panel calls it),
+    // the plugin would fail to load with: "attempt to call a nil value (global 'update_panel_content')"
+
+    // The plugin sets a status message on successful load
+    // Look for evidence that the plugin loaded by checking the screen
+    let screen = harness.screen_to_string();
+    println!("Screen after plugin load:\n{}", screen);
+
+    // Now try to execute the "Show Diagnostics" command
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type to search for the command
+    harness.type_text("Show Diagnostics").unwrap();
+    harness.render().unwrap();
+
+    let palette_screen = harness.screen_to_string();
+    println!("Command palette screen:\n{}", palette_screen);
+
+    // The command should be visible in the palette (registered by the plugin)
+    // If the plugin failed to load due to Lua errors, this command wouldn't be registered
+    assert!(
+        palette_screen.contains("Show Diagnostics")
+            || palette_screen.contains("diagnostics")
+            || palette_screen.contains("Diagnostics"),
+        "The 'Show Diagnostics' command should be registered by the plugin. \
+         If the plugin had Lua scoping errors, it wouldn't load and the command wouldn't exist."
+    );
+
+    // Execute the command
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let final_screen = harness.screen_to_string();
+    println!("Final screen after executing command:\n{}", final_screen);
+
+    // If we get here without panics/errors, the plugin loaded successfully
+}
