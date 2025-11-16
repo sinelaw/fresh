@@ -317,6 +317,17 @@ impl Popup {
 
     /// Render the popup to the frame
     pub fn render(&self, frame: &mut Frame, area: Rect, theme: &crate::theme::Theme) {
+        self.render_with_hover(frame, area, theme, None);
+    }
+
+    /// Render the popup to the frame with hover highlighting
+    pub fn render_with_hover(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        theme: &crate::theme::Theme,
+        hover_target: Option<&crate::editor::HoverTarget>,
+    ) {
         // Clear the area behind the popup first to hide underlying text
         frame.render_widget(Clear, area);
 
@@ -375,10 +386,20 @@ impl Popup {
                             ));
                         }
 
+                        // Check if this item is hovered
+                        let is_hovered = matches!(
+                            hover_target,
+                            Some(crate::editor::HoverTarget::PopupListItem(_, hovered_idx)) if *hovered_idx == idx
+                        );
+
                         let style = if idx == *selected {
                             Style::default()
                                 .bg(theme.popup_selection_bg)
                                 .add_modifier(Modifier::BOLD)
+                        } else if is_hovered {
+                            Style::default()
+                                .bg(theme.menu_hover_bg)
+                                .fg(theme.menu_hover_fg)
                         } else {
                             Style::default()
                         };
