@@ -4300,6 +4300,14 @@ impl Editor {
             Action::New => {
                 self.new_buffer();
             }
+            Action::Close => {
+                let buffer_id = self.active_buffer;
+                if let Err(e) = self.close_buffer(buffer_id) {
+                    self.set_status_message(format!("Cannot close buffer: {}", e));
+                } else {
+                    self.set_status_message("Buffer closed".to_string());
+                }
+            }
             Action::Copy => self.copy_selection(),
             Action::Cut => self.cut_selection(),
             Action::Paste => self.paste(),
