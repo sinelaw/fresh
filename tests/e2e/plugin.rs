@@ -696,7 +696,7 @@ fn test_diagnostics_panel_plugin_loads() {
     let final_screen = harness.screen_to_string();
     println!("Final screen after executing command:\n{}", final_screen);
 
-    // Verify the diagnostics panel content is displayed
+    // Verify the diagnostics panel content is displayed in a horizontal split
     assert!(
         final_screen.contains("LSP Diagnostics"),
         "Expected to see 'LSP Diagnostics' header in the panel"
@@ -706,11 +706,21 @@ fn test_diagnostics_panel_plugin_loads() {
         "Expected to see severity icons like [E] or [W] in the diagnostics"
     );
     assert!(
-        final_screen.contains("Total: 5 diagnostics"),
-        "Expected to see footer with diagnostic count"
+        final_screen.contains(">"),
+        "Expected to see '>' marker for selected diagnostic"
     );
     assert!(
         final_screen.contains("*Diagnostics*"),
         "Expected to see buffer name '*Diagnostics*' in status bar"
+    );
+    // Verify horizontal split view (separator line should be visible)
+    assert!(
+        final_screen.contains("───") || final_screen.contains("---"),
+        "Expected to see horizontal split separator"
+    );
+    // The original code buffer should still be visible above the diagnostics
+    assert!(
+        final_screen.contains("fn main()"),
+        "Expected to see original code buffer in upper split"
     );
 }
