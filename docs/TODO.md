@@ -136,12 +136,12 @@
     - **Impact:** Medium - helpful for function calls
     - **Effort:** Medium (4-6 hours)
 
-- [ ] **Diagnostics Panel** (new file: `diagnostics_panel.rs`)
-    - List view of all diagnostics in current file/workspace
-    - Filter by severity (errors, warnings, hints)
-    - Jump to diagnostic location on click
-    - **Impact:** Medium - better error overview
-    - **Effort:** Medium (6-8 hours)
+- [ ] **Diagnostics Panel** (See "Virtual Buffers & Diagnostic Panel" section below)
+    - Requires virtual buffer infrastructure (Phase 1)
+    - Plugin-implementable diagnostic list view
+    - Follows Emacs special buffer philosophy
+    - **Impact:** High - foundational for advanced plugin UIs
+    - **Effort:** High (16-24 hours total for foundation + panel)
 
 #### Phase 4: Developer Experience (P2 - Polish)
 
@@ -184,6 +184,509 @@
 ---
 
 **Next Steps:** Phase 1 is mostly complete (state machine ✅, deferred opens ✅). Focus on remaining P0 items (auto-restart, request cancellation) then move to Phase 3 user-facing features (hover, code actions, find references).
+
+---
+
+### Virtual Buffers & Diagnostic Panel (Emacs Philosophy)
+
+**Goal:** Implement a diagnostic panel using an architecture that enables plugins to create rich UIs (Magit-style git interface, grep results, undo tree visualization, etc.) following Emacs' special buffer philosophy.
+
+**Core Principle:** Everything is a buffer. Special buffers are regular buffers with specific modes that define keybindings and behavior.
+
+#### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Emacs-Style Special Buffer Architecture           │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│   Data Source (LSP Diagnostics, Git Status, Search Results, etc.)   │
+│              │                                                       │
+│              ▼                                                       │
+│   ┌─────────────────┐                                               │
+│   │  Virtual Buffer │  ← NOT backed by file                        │
+│   │  (Read-Only)    │  ← Custom major mode                         │
+│   │  *Diagnostics*  │  ← Text with embedded properties             │
+│   └────────┬────────┘                                               │
+│            │                                                         │
+│   ┌────────┴────────┐                                               │
+│   │ Buffer-Local    │  ← Mode-specific keybindings                 │
+│   │   Keybindings   │  ← RET: goto, g: refresh, q: quit            │
+│   └────────┬────────┘                                               │
+│            │                                                         │
+│            ▼                                                         │
+│   ┌─────────────────┐                                               │
+│   │  next-error     │  ← Global navigation (M-g n / M-g p)         │
+│   │   Integration   │  ← Jump to source location                   │
+│   └─────────────────┘                                               │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### Phase 1: Core Virtual Buffer Infrastructure
+
+**Files to modify/create:**
+- `src/buffer_kind.rs` - New buffer type enum
+- `src/buffer_mode.rs` - Mode-based keybindings
+- `src/text_property.rs` - Emacs-style text properties
+- `src/state.rs` - Extend EditorState for virtual buffers
+- `src/editor.rs` - Handle virtual buffer creation
+- `src/plugin_api.rs` - Expose APIs to Lua
+
+##### 1.1 Buffer Kind Distinction
+
+```rust
+// src/buffer_kind.rs
+pub enum BufferKind {
+    File {
+        path: PathBuf,
+        uri: Option<lsp_types::Uri>,
+    },
+    Virtual {
+        name: String,           // e.g., "*Diagnostics*"
+        mode: String,           // e.g., "diagnostics-list"
+        read_only: bool,        // Usually true for special buffers
+    },
+}
+```
+
+- [ ] Add `BufferKind` enum to distinguish file vs virtual buffers
+- [ ] Update `BufferMetadata` to use `BufferKind`
+- [ ] Virtual buffers skip file I/O, dirty-checking, LSP notifications
+- [ ] `*Name*` convention signals special buffer (Emacs style)
+
+##### 1.2 Buffer Mode System (Buffer-Local Keybindings)
+
+```rust
+// src/buffer_mode.rs
+pub struct BufferMode {
+    pub name: String,                           // "diagnostics-list"
+    pub parent: Option<String>,                 // "special" for inheritance
+    pub keybindings: HashMap<KeyEvent, String>, // Key → command name
+    pub read_only: bool,                        // Default read-only?
+}
+
+// Built-in "special" mode (base for all special buffers)
+fn special_mode() -> BufferMode {
+    BufferMode {
+        name: "special".into(),
+        parent: None,
+        keybindings: hashmap! {
+            key!('q') => "close-buffer".into(),
+            key!('g') => "revert-buffer".into(),
+        },
+        read_only: true,
+    }
+}
+```
+
+- [ ] Create `BufferMode` struct with keybindings and inheritance
+- [ ] Implement mode lookup with inheritance chain (child → parent → global)
+- [ ] Add built-in `special` mode (q=quit, g=refresh)
+- [ ] Mode registry: `HashMap<String, BufferMode>`
+- [ ] When dispatching keypress, check buffer's mode keybindings first
+
+##### 1.3 Text Properties (Metadata on Text Ranges)
+
+```rust
+// src/text_property.rs
+pub struct TextProperty {
+    pub start: usize,                           // Byte offset
+    pub end: usize,                             // Byte offset
+    pub properties: HashMap<String, serde_json::Value>,
+}
+
+// Example: diagnostic entry with location metadata
+TextProperty {
+    start: 0,
+    end: 45,  // "Error at src/main.rs:42:10: undefined var\n"
+    properties: hashmap! {
+        "location" => json!({
+            "file": "src/main.rs",
+            "line": 42,
+            "column": 10,
+        }),
+        "severity" => json!("error"),
+        "diagnostic_id" => json!("lsp-diagnostic-L42C10-abc123"),
+    },
+}
+```
+
+- [ ] Add `TextProperty` struct for embedding metadata in text
+- [ ] Store properties in `EditorState` for virtual buffers
+- [ ] Query properties at cursor position
+- [ ] Properties preserved during buffer content updates
+
+##### 1.4 Virtual Buffer Rendering
+
+- [ ] Virtual buffers render like file buffers (same rendering pipeline)
+- [ ] Read-only buffers block text insertion/deletion
+- [ ] Show `[RO]` indicator in status bar for read-only buffers
+- [ ] Optional: different background color for special buffers
+
+##### 1.5 Plugin API Extensions
+
+```lua
+-- Create virtual buffer (Emacs: get-buffer-create)
+local buf_id = editor.create_virtual_buffer("*Diagnostics*", {
+    mode = "diagnostics-list",
+    read_only = true,
+})
+
+-- Set buffer content with text properties
+editor.set_buffer_content(buf_id, {
+    {
+        text = "Error at src/main.rs:42:10: undefined variable 'foo'\n",
+        properties = {
+            location = { file = "src/main.rs", line = 42, column = 10 },
+            severity = "error",
+        }
+    },
+    {
+        text = "Warning at src/lib.rs:100:5: unused variable\n",
+        properties = {
+            location = { file = "src/lib.rs", line = 100, column = 5 },
+            severity = "warning",
+        }
+    },
+})
+
+-- Get properties at current cursor position
+local props = editor.get_text_properties_at_point()
+-- Returns: { location = {...}, severity = "error" }
+
+-- Define custom mode with keybindings
+editor.define_mode("diagnostics-list", {
+    parent = "special",  -- Inherits q=quit, g=refresh
+    bindings = {
+        ["Return"] = "diagnostics:goto",  -- Custom command
+        ["n"] = "next-line",              -- Standard movement
+        ["p"] = "previous-line",
+        ["e"] = "diagnostics:filter-errors",
+        ["w"] = "diagnostics:filter-warnings",
+    },
+})
+
+-- Show buffer in current split
+editor.show_buffer(buf_id)
+
+-- Switch to buffer without changing split layout
+editor.switch_to_buffer(buf_id)
+```
+
+- [ ] `editor.create_virtual_buffer(name, options)` - Create special buffer
+- [ ] `editor.set_buffer_content(buf_id, rich_text)` - Set content with properties
+- [ ] `editor.get_text_properties_at_point()` - Query properties at cursor
+- [ ] `editor.define_mode(name, config)` - Define buffer mode with keybindings
+- [ ] `editor.show_buffer(buf_id)` - Display buffer in current split
+- [ ] `editor.get_buffer_kind(buf_id)` - Check if file or virtual
+
+##### 1.6 Next-Error Navigation Pattern
+
+```rust
+// Global next-error state
+pub struct NextErrorState {
+    pub source_buffer: Option<BufferId>,  // Which buffer provides locations
+    pub current_index: usize,              // Current position in list
+}
+
+// Keybindings (global, not buffer-local)
+// M-g n → next-error
+// M-g p → previous-error
+// M-g M-g → first-error
+```
+
+```lua
+-- Plugin registers as next-error source
+editor.set_next_error_source(diagnostics_buffer, function(direction, reset)
+    -- direction: 1 for next, -1 for previous
+    -- reset: true to start from beginning
+    if reset then
+        editor.goto_line(diagnostics_buffer, 1)
+    else
+        local current_line = editor.get_cursor_line(diagnostics_buffer)
+        editor.goto_line(diagnostics_buffer, current_line + direction)
+    end
+
+    local props = editor.get_text_properties_at_point(diagnostics_buffer)
+    if props.location then
+        return props.location  -- {file, line, column}
+    end
+end)
+```
+
+- [ ] Add `NextErrorState` to Editor for global navigation
+- [ ] Implement `next-error` and `previous-error` commands
+- [ ] Plugin API: `editor.set_next_error_source(buf_id, callback)`
+- [ ] Navigation works from any buffer (jumps to source location)
+- [ ] Bind M-g n / M-g p globally
+
+##### 1.7 Revert Buffer Mechanism
+
+```lua
+-- Plugin defines how to refresh buffer content
+editor.set_revert_function(diagnostics_buffer, function()
+    -- Re-collect diagnostics and update buffer
+    local entries = collect_current_diagnostics()
+    editor.set_buffer_content(diagnostics_buffer, entries)
+end)
+```
+
+- [ ] `revert-buffer` command (g in special mode) calls buffer's revert function
+- [ ] Plugin API: `editor.set_revert_function(buf_id, callback)`
+- [ ] For virtual buffers: regenerate content (not re-read from disk)
+
+#### Phase 2: Diagnostic Panel Plugin
+
+With Phase 1 infrastructure, the diagnostic panel becomes a Lua plugin:
+
+**File:** `plugins/diagnostics-panel.lua`
+
+```lua
+-- plugins/diagnostics-panel.lua
+local diagnostics_buffer = nil
+local current_filter = "all"  -- "all", "errors", "warnings", "info"
+
+-- Register mode for diagnostic list
+editor.define_mode("diagnostics-list", {
+    parent = "special",
+    bindings = {
+        ["Return"] = "diagnostics:goto",
+        ["n"] = "next-line",
+        ["p"] = "previous-line",
+        ["g"] = "revert-buffer",
+        ["q"] = "close-buffer",
+        ["e"] = "diagnostics:filter-errors",
+        ["w"] = "diagnostics:filter-warnings",
+        ["a"] = "diagnostics:show-all",
+    },
+})
+
+-- Collect diagnostics from current buffer's overlays
+local function collect_diagnostics()
+    local entries = {}
+    local overlays = editor.get_overlays({ prefix = "lsp-diagnostic-" })
+
+    for _, overlay in ipairs(overlays) do
+        local severity = parse_severity(overlay.priority)
+        if matches_filter(severity, current_filter) then
+            table.insert(entries, {
+                text = format_diagnostic_line(overlay),
+                properties = {
+                    location = {
+                        file = editor.get_active_buffer_path(),
+                        line = overlay.line,
+                        column = overlay.column,
+                    },
+                    severity = severity,
+                    message = overlay.message,
+                }
+            })
+        end
+    end
+
+    -- Sort by severity (errors first), then by line number
+    table.sort(entries, function(a, b)
+        if a.properties.severity ~= b.properties.severity then
+            return severity_rank(a.properties.severity) < severity_rank(b.properties.severity)
+        end
+        return a.properties.location.line < b.properties.location.line
+    end)
+
+    return entries
+end
+
+local function format_diagnostic_line(overlay)
+    local icon = severity_icon(overlay.priority)
+    local file = editor.get_relative_path(overlay.file)
+    return string.format("%s %s:%d:%d: %s\n",
+                         icon, file, overlay.line, overlay.column, overlay.message)
+end
+
+-- Main command to show diagnostics panel
+editor.register_command("diagnostics:show", function()
+    if not diagnostics_buffer then
+        diagnostics_buffer = editor.create_virtual_buffer("*Diagnostics*", {
+            mode = "diagnostics-list",
+            read_only = true,
+        })
+
+        -- Set up revert (refresh) function
+        editor.set_revert_function(diagnostics_buffer, function()
+            local entries = collect_diagnostics()
+            if #entries == 0 then
+                editor.set_buffer_content(diagnostics_buffer, {
+                    { text = "No diagnostics.\n", properties = {} }
+                })
+            else
+                editor.set_buffer_content(diagnostics_buffer, entries)
+            end
+        end)
+
+        -- Register as next-error source
+        editor.set_next_error_source(diagnostics_buffer, function(direction, reset)
+            -- Navigate within diagnostics buffer
+            local line = editor.get_cursor_line(diagnostics_buffer)
+            if reset then
+                line = 1
+            else
+                line = line + direction
+            end
+            editor.goto_line(diagnostics_buffer, line)
+            return editor.get_text_properties_at_point(diagnostics_buffer).location
+        end)
+    end
+
+    -- Refresh and show
+    editor.revert_buffer(diagnostics_buffer)
+    editor.show_buffer(diagnostics_buffer)
+end)
+
+-- Jump to diagnostic location
+editor.register_command("diagnostics:goto", function()
+    local props = editor.get_text_properties_at_point()
+    if props and props.location then
+        editor.open_file(props.location.file, {
+            line = props.location.line,
+            column = props.location.column,
+        })
+    end
+end)
+
+-- Filter commands
+editor.register_command("diagnostics:filter-errors", function()
+    current_filter = "errors"
+    editor.revert_buffer(diagnostics_buffer)
+end)
+
+editor.register_command("diagnostics:filter-warnings", function()
+    current_filter = "warnings"
+    editor.revert_buffer(diagnostics_buffer)
+end)
+
+editor.register_command("diagnostics:show-all", function()
+    current_filter = "all"
+    editor.revert_buffer(diagnostics_buffer)
+end)
+
+-- Auto-refresh when diagnostics change
+editor.on_hook("diagnostics-published", function(args)
+    if diagnostics_buffer and editor.buffer_is_visible(diagnostics_buffer) then
+        editor.revert_buffer(diagnostics_buffer)
+    end
+end)
+
+-- Add menu item
+editor.add_menu_item("View", {
+    label = "Diagnostics Panel",
+    command = "diagnostics:show",
+    keybinding = "Ctrl+Shift+M",
+})
+```
+
+- [ ] Create `plugins/diagnostics-panel.lua` as reference implementation
+- [ ] Show diagnostics from current file with severity icons (✗, ⚠, ℹ, ●)
+- [ ] Filter by severity (errors only, warnings only, all)
+- [ ] Jump to location on RET
+- [ ] Refresh on 'g' or automatically on diagnostic updates
+- [ ] Integrate with next-error navigation
+- [ ] Add command palette entry and keybinding
+- [ ] Add to View menu
+
+#### Phase 3: Enhanced Features (Future)
+
+##### 3.1 Workspace-Wide Diagnostics
+- [ ] Collect diagnostics from ALL open buffers
+- [ ] Group by file or show flat list
+- [ ] Support LSP workspace diagnostics (not just open files)
+
+##### 3.2 Tabulated List Mode (Emacs-style)
+```lua
+-- Column-based display with sorting
+editor.set_tabulated_format(diagnostics_buffer, {
+    { name = "Sev", width = 3, sortable = true },
+    { name = "File", width = 30, sortable = true },
+    { name = "Line", width = 6, sortable = true },
+    { name = "Message", width = 0, sortable = false },  -- 0 = fill remaining
+})
+```
+- [ ] Column headers with clickable sorting
+- [ ] Automatic alignment
+- [ ] Consistent appearance across all list buffers
+
+##### 3.3 Interactive Elements
+- [ ] Clickable file paths (mouse support)
+- [ ] Expandable details (show full diagnostic message)
+- [ ] Quick-fix actions inline (if available)
+
+#### Benefits of This Architecture
+
+1. **Emacs-Aligned Philosophy**:
+   - Special buffers are regular buffers with modes
+   - Text as universal interface with embedded metadata
+   - next-error pattern for global navigation
+   - Composition over monolithic UIs
+
+2. **Plugin-First Design**:
+   - Core provides primitives (virtual buffers, modes, properties)
+   - Diagnostic panel is just one plugin using these primitives
+   - Same infrastructure enables: Magit, grep results, test results, undo tree
+
+3. **Minimal Core Changes**:
+   - BufferKind enum (file vs virtual)
+   - Mode-based keybindings (natural extension)
+   - Text properties (straightforward metadata)
+   - Reuses existing buffer rendering and management
+
+4. **Separation of Concerns**:
+   - **Data Source**: LSP diagnostics (existing overlay system)
+   - **Storage**: Virtual buffer with text properties (new infrastructure)
+   - **Presentation**: Plugin-controlled formatting (Lua code)
+   - **Navigation**: next-error pattern (global, reusable)
+
+5. **Future Extensibility**:
+   - Git Magit interface (same pattern: virtual buffer + custom mode)
+   - Grep/search results (virtual buffer with location properties)
+   - Undo tree visualizer (virtual buffer with tree data)
+   - Test runner results (virtual buffer with pass/fail markers)
+
+#### Files to Modify
+
+**New Files:**
+- `src/buffer_kind.rs` - BufferKind enum
+- `src/buffer_mode.rs` - BufferMode struct and registry
+- `src/text_property.rs` - TextProperty struct
+- `plugins/diagnostics-panel.lua` - Reference implementation
+
+**Modified Files:**
+- `src/state.rs` - Extend EditorState for virtual buffers, properties
+- `src/editor.rs` - Handle virtual buffer creation, mode switching
+- `src/keybindings.rs` - Check buffer mode keybindings before global
+- `src/plugin_api.rs` - New Lua API functions
+- `src/hooks.rs` - Add DiagnosticsPublished hook
+- `src/rendering.rs` - Handle read-only indicator in status bar
+- `src/lsp_diagnostics.rs` - Emit hook after applying diagnostics
+
+#### Estimated Effort
+
+- **Phase 1 (Core Infrastructure)**: 12-16 hours
+  - BufferKind enum: 2h
+  - BufferMode system: 4h
+  - TextProperty: 3h
+  - Plugin API extensions: 4h
+  - Next-error navigation: 3h
+
+- **Phase 2 (Diagnostic Panel Plugin)**: 4-8 hours
+  - Basic panel: 3h
+  - Filtering: 2h
+  - Auto-refresh: 1h
+  - Polish & testing: 2h
+
+- **Total**: 16-24 hours
+
+This investment pays dividends: the same infrastructure enables many advanced plugin UIs (Magit, Telescope, grep results, etc.) with no additional core work.
+
+---
 
 #### File Explorer Polish
 - [ ] Input dialog system for custom names
