@@ -4,10 +4,11 @@
 //! and dumps the screen state to stdout. This enables scripts (including LLMs) to interact
 //! with the editor programmatically and allows converting interactions to scriptable tests.
 
-use crate::{config::Config, editor::Editor};
+use crate::{config::Config, control_event::EventBroadcaster, editor::Editor};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{backend::TestBackend, Terminal};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{
     io::{self, BufRead, Write},
     path::PathBuf,
@@ -102,6 +103,45 @@ pub enum ScriptCommand {
         /// Name for the generated test
         test_name: String,
     },
+
+    /// Wait for a condition to be met (polls until condition is true or timeout)
+    WaitFor {
+        /// Condition to wait for
+        condition: WaitCondition,
+        /// Timeout in milliseconds (default: 5000)
+        #[serde(default = "default_wait_timeout")]
+        timeout_ms: u64,
+        /// Poll interval in milliseconds (default: 100)
+        #[serde(default = "default_poll_interval")]
+        poll_interval_ms: u64,
+    },
+}
+
+/// Conditions that can be waited for
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WaitCondition {
+    // Event-based: wait for event matching name pattern and optional data pattern
+    /// Wait for event matching pattern. Name supports wildcards: "lsp:*", "*:error"
+    Event {
+        /// Event name pattern (supports * wildcard)
+        name: String,
+        /// Optional JSON data pattern to match (null = any data)
+        #[serde(default)]
+        data: Value,
+    },
+
+    // State-based: poll current state (fallback for simple checks)
+    /// Wait for screen to contain a specific string
+    ScreenContains { text: String },
+    /// Wait for screen to NOT contain a specific string
+    ScreenNotContains { text: String },
+    /// Wait for buffer to contain specific text
+    BufferContains { text: String },
+    /// Wait for a popup to be visible
+    PopupVisible,
+    /// Wait for no popup to be visible
+    PopupHidden,
 }
 
 fn default_mouse_button() -> String {
@@ -110,6 +150,14 @@ fn default_mouse_button() -> String {
 
 fn default_scroll_amount() -> u16 {
     3
+}
+
+fn default_wait_timeout() -> u64 {
+    5000
+}
+
+fn default_poll_interval() -> u64 {
+    100
 }
 
 /// Response sent back to stdout
@@ -220,6 +268,11 @@ impl ScriptControlMode {
             interactions: Vec::new(),
             start_time: std::time::Instant::now(),
         })
+    }
+
+    /// Get a reference to the event broadcaster (from editor)
+    pub fn event_broadcaster(&self) -> &EventBroadcaster {
+        self.editor.event_broadcaster()
     }
 
     /// Open a file before running the control loop
@@ -333,6 +386,11 @@ impl ScriptControlMode {
             ScriptCommand::TypeText { text } => self.handle_type_text(&text),
             ScriptCommand::Quit => self.handle_quit(),
             ScriptCommand::ExportTest { test_name } => self.handle_export_test(&test_name),
+            ScriptCommand::WaitFor {
+                condition,
+                timeout_ms,
+                poll_interval_ms,
+            } => self.handle_wait_for(condition, timeout_ms, poll_interval_ms),
         }
     }
 
@@ -680,6 +738,76 @@ impl ScriptControlMode {
         Ok(ScriptResponse::TestCode { code })
     }
 
+    /// Handle wait_for command
+    fn handle_wait_for(
+        &mut self,
+        condition: WaitCondition,
+        timeout_ms: u64,
+        poll_interval_ms: u64,
+    ) -> io::Result<ScriptResponse> {
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        let poll_interval = std::time::Duration::from_millis(poll_interval_ms);
+
+        loop {
+            // Process any pending async messages
+            let _ = self.editor.process_async_messages();
+            self.render_to_terminal()?;
+
+            // Check if condition is met
+            if self.check_wait_condition(&condition)? {
+                return Ok(ScriptResponse::Ok {
+                    message: Some(format!("Condition met after {}ms", start.elapsed().as_millis())),
+                });
+            }
+
+            // Check timeout
+            if start.elapsed() >= timeout {
+                return Ok(ScriptResponse::Error {
+                    message: format!(
+                        "Timeout after {}ms waiting for condition: {:?}",
+                        timeout_ms, condition
+                    ),
+                });
+            }
+
+            // Sleep before next poll
+            std::thread::sleep(poll_interval);
+        }
+    }
+
+    /// Check if a wait condition is met
+    fn check_wait_condition(&mut self, condition: &WaitCondition) -> io::Result<bool> {
+        match condition {
+            // Event-based: check if matching event exists
+            WaitCondition::Event { name, data } => {
+                Ok(self.editor.event_broadcaster().has_match(name, data))
+            }
+
+            // State-based: poll current state
+            WaitCondition::ScreenContains { text } => {
+                let screen = self.screen_to_string();
+                Ok(screen.contains(text))
+            }
+            WaitCondition::ScreenNotContains { text } => {
+                let screen = self.screen_to_string();
+                Ok(!screen.contains(text))
+            }
+            WaitCondition::BufferContains { text } => {
+                let buffer = self.editor.active_state().buffer.to_string();
+                Ok(buffer.contains(text))
+            }
+            WaitCondition::PopupVisible => {
+                let state = self.editor.active_state();
+                Ok(state.popups.is_visible())
+            }
+            WaitCondition::PopupHidden => {
+                let state = self.editor.active_state();
+                Ok(!state.popups.is_visible())
+            }
+        }
+    }
+
     /// Generate Rust test code from recorded interactions
     fn generate_test_code(&self, test_name: &str) -> String {
         let mut code = String::new();
@@ -913,6 +1041,51 @@ pub fn get_command_schema() -> String {
                     "test_name": "Name for the generated test function"
                 },
                 "example": {"type": "export_test", "test_name": "test_basic_editing"}
+            },
+            {
+                "type": "wait_for",
+                "description": "Wait for a condition to be met (event-based or state polling)",
+                "parameters": {
+                    "condition": "Condition object to wait for",
+                    "timeout_ms": "Optional timeout in milliseconds (default: 5000)",
+                    "poll_interval_ms": "Optional poll interval in milliseconds (default: 100)"
+                },
+                "condition_types": {
+                    "event_based": {
+                        "type": "event",
+                        "description": "Wait for event matching name pattern (* = wildcard) and optional data",
+                        "examples": [
+                            {"type": "event", "name": "lsp:status_changed", "data": {"status": "running"}},
+                            {"type": "event", "name": "editor:file_saved"},
+                            {"type": "event", "name": "lsp:*"},
+                            {"type": "event", "name": "plugin:git:*", "data": {"branch": "main"}}
+                        ],
+                        "currently_emitted_events": crate::control_event::events::schema(),
+                        "pattern_syntax": {
+                            "*": "Matches any event",
+                            "prefix:*": "Matches events starting with prefix (e.g., 'lsp:*')",
+                            "*:suffix": "Matches events ending with suffix (e.g., '*:error')",
+                            "exact:name": "Exact match"
+                        },
+                        "data_matching": {
+                            "{}": "Matches any data",
+                            "{\"key\": \"value\"}": "Data must contain key with exact value",
+                            "{\"key\": null}": "Data must contain key (any value)"
+                        }
+                    },
+                    "state_based": [
+                        {"type": "screen_contains", "text": "Error"},
+                        {"type": "screen_not_contains", "text": "Loading"},
+                        {"type": "buffer_contains", "text": "fn main"},
+                        {"type": "popup_visible"},
+                        {"type": "popup_hidden"}
+                    ]
+                },
+                "examples": [
+                    {"type": "wait_for", "condition": {"type": "event", "name": "lsp:status_changed", "data": {"status": "running"}}},
+                    {"type": "wait_for", "condition": {"type": "screen_contains", "text": "Error"}, "timeout_ms": 10000},
+                    {"type": "wait_for", "condition": {"type": "popup_visible"}, "poll_interval_ms": 50}
+                ]
             }
         ]
     })

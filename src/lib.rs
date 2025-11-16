@@ -5,6 +5,7 @@ pub mod async_bridge;
 pub mod command_registry;
 pub mod commands;
 pub mod config;
+pub mod control_event;
 pub mod cursor;
 pub mod document_model;
 pub mod edit;

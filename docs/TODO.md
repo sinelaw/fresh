@@ -526,6 +526,218 @@ Go                      Help
 - [ ] Project-specific configuration
 - [ ] Multiple workspace folders
 
+### Priority 4.5: Unified Event System for Control & Observation
+
+**Goal**: Create a coherent event architecture that unifies hooks (plugin callbacks), control events (observable state changes), and script control mode waiting into a single elegant system.
+
+**Current State**:
+- **Hooks** (`HookArgs`) - Internal plugin callbacks that can intercept/cancel operations
+- **Edit Events** (`Event`) - Undo/redoable buffer changes
+- **Control Events** (`ControlEvent`) - Observable notifications for external systems (new)
+- **Script Control Mode** - External automation via JSON commands
+
+**Problem**: These systems have overlapping concerns but aren't unified:
+- Hooks fire for plugins but aren't observable externally
+- Control events exist but editor doesn't emit them yet
+- Script mode has hardcoded state polling instead of waiting for semantic events
+- Plugins can't emit custom events for other plugins to observe
+
+**Proposed Architecture**:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Event Flow Architecture                       │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│   User Action / Editor Operation                                     │
+│              │                                                       │
+│              ▼                                                       │
+│   ┌─────────────────┐                                               │
+│   │   Pre-Hooks     │  ← Plugins can intercept & cancel             │
+│   │ (Before* hooks) │                                               │
+│   └────────┬────────┘                                               │
+│            │ continue?                                               │
+│            ▼                                                         │
+│   ┌─────────────────┐                                               │
+│   │  Execute Action │  ← Core editor operation                      │
+│   └────────┬────────┘                                               │
+│            │                                                         │
+│            ▼                                                         │
+│   ┌─────────────────┐                                               │
+│   │   Post-Hooks    │  ← Plugins react to completion                │
+│   │ (After* hooks)  │                                               │
+│   └────────┬────────┘                                               │
+│            │                                                         │
+│            ▼                                                         │
+│   ┌─────────────────┐                                               │
+│   │  Emit Control   │  ← Observable by external systems             │
+│   │     Event       │    (Script Mode, other plugins)               │
+│   └────────┬────────┘                                               │
+│            │                                                         │
+│            ├─────────────────┬──────────────────┐                   │
+│            ▼                 ▼                  ▼                   │
+│   ┌──────────────┐  ┌──────────────┐  ┌───────────────┐            │
+│   │ Event Stream │  │   Plugin     │  │  Script Mode  │            │
+│   │  Subscribers │  │  Listeners   │  │   wait_for    │            │
+│   └──────────────┘  └──────────────┘  └───────────────┘            │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Implementation Tasks**:
+
+#### Phase 1: Editor Emits Control Events
+- [ ] Add `EventBroadcaster` to `Editor` struct
+- [ ] Emit `FileOpened` after `open_file()` succeeds
+- [ ] Emit `FileSaved` after `save_buffer()` succeeds
+- [ ] Emit `FileClosed` after buffer close
+- [ ] Emit `LspStatusChanged` when LSP server state changes
+- [ ] Emit `PopupShown`/`PopupHidden` when popups toggle
+- [ ] Emit `SearchCompleted` after find operations
+- [ ] Emit `CompletionReceived` when LSP completions arrive
+- [ ] Emit `DiagnosticsUpdated` when LSP diagnostics change
+
+#### Phase 2: Plugin Event API
+- [ ] Lua API: `editor.emit_event(event_type, data)` - Plugins emit custom events
+- [ ] Lua API: `editor.on_event(pattern, callback)` - Subscribe to events
+- [ ] Lua API: `editor.wait_for_event(pattern, timeout)` - Async wait for events
+- [ ] Event namespacing: `plugin:my_plugin:custom_event` to avoid collisions
+- [ ] Event filtering: Subscribe to specific patterns, not all events
+
+```lua
+-- Plugin A: Emits events
+local function on_git_status_ready(status)
+  editor.emit_event("plugin:git:status_changed", {
+    branch = status.branch,
+    modified = status.modified_count,
+    staged = status.staged_count
+  })
+end
+
+-- Plugin B: Listens for events
+editor.on_event("plugin:git:status_changed", function(data)
+  update_status_line(data.branch)
+end)
+
+-- Plugin C: Waits for event
+local event = editor.wait_for_event("plugin:lsp:ready", 5000)
+if event then
+  -- LSP is ready, do something
+end
+```
+
+#### Phase 3: Unify Hooks and Control Events
+- [ ] Hooks automatically emit corresponding ControlEvents after completion
+- [ ] `AfterFileOpen` hook → emits `FileOpened` control event
+- [ ] `AfterFileSave` hook → emits `FileSaved` control event
+- [ ] `PostCommand` hook → emits `CommandExecuted` control event
+- [ ] Single source of truth: hooks define what happens, events broadcast that it happened
+
+```rust
+// In editor.rs - after running hooks, emit control event
+fn save_file(&mut self) -> io::Result<()> {
+    let path = self.get_current_path();
+
+    // Pre-hook (can cancel)
+    if !self.hooks.run_hooks("before-file-save", &HookArgs::BeforeFileSave { ... }) {
+        return Ok(()); // Cancelled
+    }
+
+    // Do the actual save
+    self.write_to_disk()?;
+
+    // Post-hook (inform plugins)
+    self.hooks.run_hooks("after-file-save", &HookArgs::AfterFileSave { ... });
+
+    // Emit control event (broadcast to external observers)
+    self.event_broadcaster.emit(ControlEvent::FileSaved {
+        path: path.to_string()
+    });
+
+    Ok(())
+}
+```
+
+#### Phase 4: Script Mode Integration
+- [ ] Script mode subscribes to `EventBroadcaster`
+- [ ] `wait_for` uses event stream instead of polling (where applicable)
+- [ ] Event-based waiting is more reliable than screen scraping
+- [ ] Backwards compatible: state-based polling still available as fallback
+
+```json
+// Wait for LSP to be ready (event-based, clean)
+{"type": "wait_for", "condition": {
+  "type": "event_match",
+  "pattern": {"pattern": "lsp_status", "language": "rust", "status": "running"}
+}}
+
+// Wait for completion popup (event-based)
+{"type": "wait_for", "condition": {
+  "type": "event_match",
+  "pattern": {"pattern": "completion_received"}
+}}
+
+// Fallback: screen contains text (state-based polling)
+{"type": "wait_for", "condition": {
+  "type": "screen_contains",
+  "text": "Error"
+}}
+```
+
+#### Phase 5: Advanced Event Features
+- [ ] Event replay for debugging/testing
+- [ ] Event filtering/routing (some events only to certain subscribers)
+- [ ] Event history with timestamps for debugging
+- [ ] Event serialization for test generation
+- [ ] Rate limiting for high-frequency events (cursor moves, typing)
+
+**Benefits**:
+
+1. **Coherent Architecture**: Single event flow for all observation needs
+2. **Plugin Interoperability**: Plugins can communicate via events
+3. **External Automation**: Script mode waits for semantic events, not screen scraping
+4. **Debugging**: Event stream provides audit trail of what happened
+5. **Test Generation**: Record events to generate reproducible tests
+6. **Extensibility**: New event types don't require core changes
+
+**Design Principles**:
+
+- **Hooks are for interception**: Can cancel operations, synchronous, internal
+- **Events are for observation**: Cannot cancel, broadcast after completion, external
+- **Unidirectional flow**: Operations → Hooks → Events → Observers
+- **No hardcoded conditions**: Script mode uses event patterns, not string matching
+- **Namespace isolation**: Plugin events prefixed to avoid collisions
+
+**Example: Complete LSP Completion Flow**
+
+```
+User presses Ctrl+Space
+        │
+        ▼
+PreCommand hook (Action::LspCompletion)
+        │
+        ▼
+Editor requests completion from LSP
+        │
+        ▼
+LSP async handler receives items
+        │
+        ▼
+Emit ControlEvent::CompletionReceived { item_count: 15 }
+        │
+        ├──────────────────────┬────────────────────┐
+        ▼                      ▼                    ▼
+Script mode sees event   Plugin logs "15 items"   Status bar updates
+wait_for completes       received
+```
+
+**Files Involved**:
+- `src/control_event.rs` - ControlEvent enum and EventBroadcaster
+- `src/hooks.rs` - HookArgs and HookRegistry
+- `src/editor.rs` - Emit events after operations
+- `src/script_control.rs` - Wait for events
+- `src/plugin_api.rs` - Lua bindings for emit/subscribe
+
 ### Priority 5: Plugin System (Advanced APIs) ✅ **Git Refactoring Complete**
 
 **Completed:** Git grep and git find file converted to pure Lua plugins, removing ~465 lines of Rust code.

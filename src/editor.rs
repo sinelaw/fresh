@@ -294,6 +294,9 @@ pub struct Editor {
 
     /// LSP log messages (recent messages from window/logMessage)
     lsp_log_messages: Vec<LspMessageEntry>,
+
+    /// Event broadcaster for control events (observable by external systems)
+    event_broadcaster: crate::control_event::EventBroadcaster,
 }
 
 /// LSP progress information
@@ -536,7 +539,18 @@ impl Editor {
             lsp_server_statuses: std::collections::HashMap::new(),
             lsp_window_messages: Vec::new(),
             lsp_log_messages: Vec::new(),
+            event_broadcaster: crate::control_event::EventBroadcaster::default(),
         })
+    }
+
+    /// Get a reference to the event broadcaster
+    pub fn event_broadcaster(&self) -> &crate::control_event::EventBroadcaster {
+        &self.event_broadcaster
+    }
+
+    /// Emit a control event
+    pub fn emit_event(&self, name: impl Into<String>, data: serde_json::Value) {
+        self.event_broadcaster.emit_named(name, data);
     }
 
     /// Enable event log streaming to a file
@@ -699,6 +713,15 @@ impl Editor {
             .map(|m| m.display_name.clone())
             .unwrap_or_else(|| path.display().to_string());
         self.status_message = Some(format!("Opened {}", display_name));
+
+        // Emit control event
+        self.emit_event(
+            crate::control_event::events::FILE_OPENED.name,
+            serde_json::json!({
+                "path": path.display().to_string(),
+                "buffer_id": buffer_id.0
+            }),
+        );
 
         Ok(buffer_id)
     }
@@ -1882,11 +1905,22 @@ impl Editor {
 
     /// Save the active buffer
     pub fn save(&mut self) -> io::Result<()> {
+        let path = self.active_state().buffer.file_path().map(|p| p.to_path_buf());
         self.active_state_mut().buffer.save()?;
         self.status_message = Some("Saved".to_string());
 
         // Notify LSP of save
         self.notify_lsp_save();
+
+        // Emit control event
+        if let Some(p) = path {
+            self.emit_event(
+                crate::control_event::events::FILE_SAVED.name,
+                serde_json::json!({
+                    "path": p.display().to_string()
+                }),
+            );
+        }
 
         Ok(())
     }
@@ -2332,9 +2366,35 @@ impl Editor {
                     }
                 }
                 AsyncMessage::LspStatusUpdate { language, status } => {
+                    // Get old status for event
+                    let old_status = self.lsp_server_statuses.get(&language).cloned();
                     // Update server status
-                    self.lsp_server_statuses.insert(language.clone(), status);
+                    self.lsp_server_statuses.insert(language.clone(), status.clone());
                     self.update_lsp_status_from_server_statuses();
+
+                    // Emit control event
+                    let status_str = match status {
+                        crate::async_bridge::LspServerStatus::Starting => "starting",
+                        crate::async_bridge::LspServerStatus::Initializing => "initializing",
+                        crate::async_bridge::LspServerStatus::Running => "running",
+                        crate::async_bridge::LspServerStatus::Error => "error",
+                        crate::async_bridge::LspServerStatus::Shutdown => "shutdown",
+                    };
+                    let old_status_str = old_status.map(|s| match s {
+                        crate::async_bridge::LspServerStatus::Starting => "starting",
+                        crate::async_bridge::LspServerStatus::Initializing => "initializing",
+                        crate::async_bridge::LspServerStatus::Running => "running",
+                        crate::async_bridge::LspServerStatus::Error => "error",
+                        crate::async_bridge::LspServerStatus::Shutdown => "shutdown",
+                    }).unwrap_or("none");
+                    self.emit_event(
+                        crate::control_event::events::LSP_STATUS_CHANGED.name,
+                        serde_json::json!({
+                            "language": language,
+                            "old_status": old_status_str,
+                            "status": status_str
+                        }),
+                    );
                 }
             }
         }

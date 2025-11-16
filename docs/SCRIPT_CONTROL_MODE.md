@@ -178,6 +178,87 @@ Response:
 }
 ```
 
+### Waiting for Conditions
+
+#### `wait_for`
+Wait for a condition to be met. Supports two approaches:
+
+1. **Event-based** - Wait for specific ControlEvents (clean, event-driven)
+2. **State-based** - Poll current state (fallback for simple checks)
+
+```json
+{"type": "wait_for", "condition": {"type": "event", "name": "lsp:status_changed", "data": {"language": "rust", "status": "running"}}}
+{"type": "wait_for", "condition": {"type": "screen_contains", "text": "Error"}, "timeout_ms": 10000}
+{"type": "wait_for", "condition": {"type": "popup_visible"}, "poll_interval_ms": 50}
+```
+
+**Event-based conditions** (wait for ControlEvents):
+
+- `event` - Wait for event matching name pattern and optional data
+  ```json
+  {"type": "event", "name": "editor:file_saved", "data": {"path": "/tmp/test.rs"}}
+  {"type": "event", "name": "editor:*", "data": {}}
+  {"type": "event", "name": "lsp:status_changed", "data": {"status": "running"}}
+  {"type": "event", "name": "*:error", "data": {}}
+  ```
+
+**Event name patterns**:
+- Exact match: `"editor:file_opened"`, `"lsp:status_changed"`
+- Prefix wildcard: `"editor:*"` matches any editor event
+- Suffix wildcard: `"*:error"` matches any error event
+- Any event: `"*"` matches everything
+
+**Data pattern matching**:
+- Empty object `{}` matches any data
+- Partial match: `{"status": "running"}` matches if data contains that key/value
+- Null values mean "key exists": `{"path": null}` matches if path key exists
+
+**Currently emitted events**:
+- `editor:file_opened` - data: `{path, buffer_id}`
+- `editor:file_saved` - data: `{path}`
+- `lsp:status_changed` - data: `{language, old_status, status}`
+
+**State-based conditions** (polling fallback):
+
+- `screen_contains` - Wait for screen to contain specific text
+  ```json
+  {"type": "screen_contains", "text": "Error"}
+  ```
+
+- `screen_not_contains` - Wait for screen to NOT contain specific text
+  ```json
+  {"type": "screen_not_contains", "text": "Loading"}
+  ```
+
+- `buffer_contains` - Wait for buffer to contain specific text
+  ```json
+  {"type": "buffer_contains", "text": "fn main"}
+  ```
+
+- `popup_visible` - Wait for a popup to be visible
+  ```json
+  {"type": "popup_visible"}
+  ```
+
+- `popup_hidden` - Wait for popup to be hidden
+  ```json
+  {"type": "popup_hidden"}
+  ```
+
+**Parameters**:
+- `timeout_ms` - Timeout in milliseconds (default: 5000)
+- `poll_interval_ms` - Poll interval in milliseconds (default: 100)
+
+Response (success):
+```json
+{"type": "ok", "message": "Condition met after 150ms"}
+```
+
+Response (timeout):
+```json
+{"type": "error", "message": "Timeout after 5000ms waiting for condition: ..."}
+```
+
 ### Session Control
 
 #### `quit`
