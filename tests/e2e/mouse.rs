@@ -198,10 +198,13 @@ fn test_mouse_click_switches_split_focus() {
     harness.type_text("Left content").unwrap();
     let first_buffer_content = harness.get_buffer_content();
 
-    // Create vertical split (Alt+v)
+    // Create vertical split via command palette
     harness
-        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
     harness.render().unwrap();
 

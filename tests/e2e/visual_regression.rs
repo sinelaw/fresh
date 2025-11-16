@@ -186,10 +186,13 @@ fn visual_split_view() {
         .capture_visual_step(&mut flow, "single_file", "Single file open")
         .unwrap();
 
-    // Step 2: Split horizontally with Alt+H
+    // Step 2: Split horizontally via command palette
     harness
-        .send_key(KeyCode::Char('h'), KeyModifiers::ALT)
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split horiz").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     harness
         .capture_visual_step(&mut flow, "horizontal_split", "Editor split horizontally")
