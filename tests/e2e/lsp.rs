@@ -1054,6 +1054,16 @@ fn test_lsp_completion_canceled_on_text_edit() -> std::io::Result<()> {
 fn test_rust_analyzer_rename_content_modified() -> std::io::Result<()> {
     use std::io::Write;
     use std::process::Command;
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+    // Initialize tracing to see LSP debug messages
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer().with_writer(std::io::stderr))
+        .with(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("fresh=debug")),
+        )
+        .try_init();
 
     // Check if rust-analyzer is installed
     let rust_analyzer_check = Command::new("which").arg("rust-analyzer").output();
@@ -1064,11 +1074,15 @@ fn test_rust_analyzer_rename_content_modified() -> std::io::Result<()> {
 
     eprintln!("rust-analyzer found, running test...");
 
-    // Create a temporary directory with a proper Cargo project structure
-    let temp_dir = tempfile::tempdir()?;
+    // Create harness with temp project directory - this sets the LSP workspace root
+    let mut harness = EditorTestHarness::with_temp_project(200, 30)?;
+    let project_dir = harness.project_dir().expect("project dir should exist");
+
+    // Create a proper Cargo project structure in the project directory
+    // This ensures rust-analyzer can discover the workspace
 
     // Create Cargo.toml
-    let cargo_toml = temp_dir.path().join("Cargo.toml");
+    let cargo_toml = project_dir.join("Cargo.toml");
     std::fs::write(
         &cargo_toml,
         r#"[package]
@@ -1079,7 +1093,7 @@ edition = "2021"
     )?;
 
     // Create src directory
-    let src_dir = temp_dir.path().join("src");
+    let src_dir = project_dir.join("src");
     std::fs::create_dir(&src_dir)?;
 
     // Create lib.rs with our function - rust-analyzer will analyze this
@@ -1091,8 +1105,6 @@ edition = "2021"
     writeln!(file, "    result")?;
     writeln!(file, "}}")?;
     drop(file);
-
-    let mut harness = EditorTestHarness::new(200, 30)?;
 
     // Open the Rust file - this should trigger LSP initialization
     harness.open_file(&test_file)?;
@@ -1121,29 +1133,56 @@ edition = "2021"
         eprintln!("Warning: LSP did not initialize within timeout");
     }
 
-    // Wait for rust-analyzer to finish indexing by looking for stable status
-    // (no "Indexing" or other progress messages)
+    // Wait for rust-analyzer to finish indexing by checking for no active progress tasks
     println!("Waiting for rust-analyzer to finish indexing...");
-    for i in 0..30 {
+    let mut had_progress = false;
+    for i in 0..120 {
+        // Wait up to 12 seconds for indexing
         std::thread::sleep(std::time::Duration::from_millis(100));
-        let _ = harness.editor_mut().process_async_messages();
+        let processed = harness.editor_mut().process_async_messages();
+        if i < 10 && processed {
+            println!("  Processed async messages at {}ms", i * 100);
+        }
         harness.render()?;
 
-        let screen = harness.screen_to_string();
-        // Check if we see any progress indicators
-        if !screen.contains("Indexing") && !screen.contains("Loading") {
-            // Wait a bit more to ensure it's stable
-            if i >= 5 {
-                println!("rust-analyzer appears to have finished indexing");
-                break;
+        let has_progress = harness.editor().has_active_lsp_progress();
+        if has_progress {
+            had_progress = true;
+            let progress = harness.editor().get_lsp_progress();
+            if i % 10 == 0 {
+                // Log progress every second
+                for (_, title, msg) in &progress {
+                    println!("  LSP Progress: {} - {:?}", title, msg);
+                }
             }
+        } else if had_progress {
+            // Had progress before but now it's done
+            println!("rust-analyzer finished indexing after {}ms", i * 100);
+            break;
+        } else if i > 30 {
+            // If we've waited 3 seconds without seeing any progress, assume it's done
+            println!("No LSP progress seen, assuming indexing complete");
+            break;
         }
     }
 
+    // Extra safety: wait a bit after progress ends to ensure all state is updated
+    // rust-analyzer needs extra time after indexing to build its full semantic model
+    println!("Waiting for rust-analyzer semantic analysis...");
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render()?;
+    }
+    println!("Semantic analysis wait complete");
+
     // Position cursor on "value" parameter
-    // With "pub fn calculate(value...", 'value' starts at byte 17
+    // With "pub fn calculate(value...", 'value' starts at column 17 (0-indexed)
+    // We need to place cursor ON the word, not after it
     harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?; // Go to document start
-    for _ in 0..17 {
+    for _ in 0..18 {
+        // Move to middle of 'value' (the 'a')
         harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
     }
     harness.render()?;
@@ -1154,6 +1193,13 @@ edition = "2021"
     println!(
         "Cursor positioned at byte {}, character: '{}'",
         cursor_pos, char_at_cursor
+    );
+
+    // Verify cursor is on 'value'
+    assert!(
+        char_at_cursor == 'a' || char_at_cursor == 'l' || char_at_cursor == 'u' || char_at_cursor == 'e',
+        "Cursor should be on 'value', but got '{}'",
+        char_at_cursor
     );
 
     // Press F2 to enter rename mode
@@ -1192,6 +1238,7 @@ edition = "2021"
     println!("Pressed Enter to confirm rename");
 
     // Wait for LSP response (rust-analyzer can take several seconds)
+    let mut rename_succeeded = false;
     for i in 0..20 {
         std::thread::sleep(std::time::Duration::from_millis(500));
         let _ = harness.editor_mut().process_async_messages();
@@ -1201,6 +1248,14 @@ edition = "2021"
         let screen = harness.screen_to_string();
         if !screen.contains("LSP: rename...") {
             println!("LSP response received after {}ms", (i + 1) * 500);
+
+            // Check if rename was successful by examining buffer content
+            let buffer_after = harness.get_buffer_content();
+            if buffer_after.contains("fn calculate(amount: i32)")
+                && buffer_after.contains("println!(\"Value: {}\", amount)")
+            {
+                rename_succeeded = true;
+            }
             break;
         }
     }
@@ -1215,15 +1270,34 @@ edition = "2021"
         panic!("Still got 'content modified' error - fix didn't work!");
     }
 
-    // SUCCESS! The test passes if we got here without "content modified" error
-    // The main goal of this test was to ensure that typing in rename mode doesn't
-    // modify the buffer, which would cause "content modified" errors from LSP.
-    // We successfully avoided that error.
+    // Get final buffer content
+    let final_buffer = harness.get_buffer_content();
+    println!("Final buffer content:\n{final_buffer}");
+
+    // Verify the rename actually succeeded
+    assert!(
+        rename_succeeded,
+        "Rename operation should have succeeded and renamed 'value' to 'amount'"
+    );
+    assert!(
+        final_buffer.contains("fn calculate(amount: i32)"),
+        "Function parameter should be renamed to 'amount'"
+    );
+    assert!(
+        final_buffer.contains("println!(\"Value: {}\", amount)"),
+        "All references to 'value' should be renamed to 'amount'"
+    );
+    assert!(
+        !final_buffer.contains("value"),
+        "No references to 'value' should remain after successful rename"
+    );
 
     println!("\n========================================");
-    println!("SUCCESS: No 'content modified' error!");
-    println!("Buffer was NOT modified during rename mode typing");
-    println!("LSP rename request was sent (even if it failed for other reasons)");
+    println!("SUCCESS: LSP rename operation worked!");
+    println!("- No 'content modified' error");
+    println!("- Buffer was NOT modified during rename mode typing");
+    println!("- LSP rename request succeeded");
+    println!("- All references updated from 'value' to 'amount'");
     println!("========================================\n");
 
     Ok(())

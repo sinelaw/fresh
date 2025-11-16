@@ -558,6 +558,19 @@ impl Editor {
         self.keybindings.get_all_bindings()
     }
 
+    /// Check if LSP has any active progress tasks (e.g., indexing)
+    pub fn has_active_lsp_progress(&self) -> bool {
+        !self.lsp_progress.is_empty()
+    }
+
+    /// Get the current LSP progress info (if any)
+    pub fn get_lsp_progress(&self) -> Vec<(String, String, Option<String>)> {
+        self.lsp_progress
+            .iter()
+            .map(|(token, info)| (token.clone(), info.title.clone(), info.message.clone()))
+            .collect()
+    }
+
     /// Enable event log streaming to a file
     pub fn enable_event_streaming<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         // Enable streaming for all existing event logs

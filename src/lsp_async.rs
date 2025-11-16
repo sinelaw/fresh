@@ -25,7 +25,7 @@ use lsp_types::{
     DidSaveTextDocumentParams, InitializeParams, InitializeResult, InitializedParams,
     PublishDiagnosticsParams, ServerCapabilities, TextDocumentContentChangeEvent,
     TextDocumentIdentifier, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
-    WorkspaceFolder,
+    WindowClientCapabilities, WorkspaceFolder,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -167,6 +167,17 @@ impl LspClientState {
             LspClientState::Stopped => LspServerStatus::Shutdown,
             LspClientState::Error => LspServerStatus::Error,
         }
+    }
+}
+
+/// Create common LSP client capabilities with workDoneProgress support
+fn create_client_capabilities() -> ClientCapabilities {
+    ClientCapabilities {
+        window: Some(WindowClientCapabilities {
+            work_done_progress: Some(true),
+            ..Default::default()
+        }),
+        ..Default::default()
     }
 }
 
@@ -347,7 +358,7 @@ impl LspState {
 
         let params = InitializeParams {
             process_id: Some(std::process::id()),
-            capabilities: ClientCapabilities::default(),
+            capabilities: create_client_capabilities(),
             workspace_folders,
             ..Default::default()
         };
@@ -1112,7 +1123,7 @@ impl LspTask {
 
         let params = InitializeParams {
             process_id: Some(std::process::id()),
-            capabilities: ClientCapabilities::default(),
+            capabilities: create_client_capabilities(),
             workspace_folders,
             ..Default::default()
         };
