@@ -721,3 +721,63 @@ fn test_cursors_visible_in_all_splits() {
         "Should have at least one secondary cursor for inactive split"
     );
 }
+
+/// Test that cursor movement works after switching splits
+#[test]
+fn test_cursor_movement_after_split_switch() {
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+
+    // Type some text
+    harness.type_text("ABCDEFGHIJ").unwrap();
+    harness.render().unwrap();
+
+    // Cursor should be at end (position 10)
+    let initial_pos = harness.cursor_position();
+    assert_eq!(initial_pos, 10);
+
+    // Create vertical split
+    split_vertical(&mut harness);
+
+    // New split should have cursor at position 0
+    let second_split_pos = harness.cursor_position();
+    assert_eq!(second_split_pos, 0);
+
+    // Move cursor right in second split
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let after_right = harness.cursor_position();
+    assert_eq!(after_right, 1);
+
+    // Switch back to first split
+    prev_split(&mut harness);
+
+    // First split should have cursor at position 10 (where we left it)
+    let first_split_pos = harness.cursor_position();
+    assert_eq!(first_split_pos, 10);
+
+    // Move cursor left in first split
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let after_left = harness.cursor_position();
+    assert_eq!(after_left, 9, "Cursor should move left from 10 to 9");
+
+    // Get screen position to verify visual cursor moved
+    let (screen_x1, _screen_y1) = harness.screen_cursor_position();
+
+    // Move right to go back
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let after_right2 = harness.cursor_position();
+    assert_eq!(after_right2, 10);
+
+    let (screen_x2, _screen_y2) = harness.screen_cursor_position();
+
+    // Verify screen position changed
+    assert_ne!(screen_x1, screen_x2, "Screen cursor X should have moved");
+}

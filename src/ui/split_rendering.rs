@@ -135,16 +135,9 @@ impl SplitRenderer {
                     plugin_manager,
                 );
 
-                // Restore the original cursors and viewport after rendering
-                if let Some(cursors) = saved_cursors {
-                    state.cursors = cursors;
-                }
-                if let Some(viewport) = saved_viewport {
-                    state.viewport = viewport;
-                }
-
                 // For small files, count actual lines for accurate scrollbar
                 // For large files, we'll use a constant thumb size
+                // NOTE: Calculate scrollbar BEFORE restoring state to use this split's viewport
                 let buffer_len = state.buffer.len();
                 let (total_lines, top_line) = if buffer_len <= large_file_threshold_bytes as usize {
                     // Small file: count actual lines
@@ -169,6 +162,7 @@ impl SplitRenderer {
                 };
 
                 // Render scrollbar for this split and get thumb position
+                // NOTE: Render scrollbar BEFORE restoring state to use this split's viewport
                 let (thumb_start, thumb_end) = Self::render_scrollbar(
                     frame,
                     state,
@@ -179,6 +173,14 @@ impl SplitRenderer {
                     total_lines,
                     top_line,
                 );
+
+                // Restore the original cursors and viewport after rendering content and scrollbar
+                if let Some(cursors) = saved_cursors {
+                    state.cursors = cursors;
+                }
+                if let Some(viewport) = saved_viewport {
+                    state.viewport = viewport;
+                }
 
                 // Store the areas for mouse handling
                 split_areas.push((
