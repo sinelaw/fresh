@@ -179,6 +179,15 @@ impl SplitNode {
     /// Get all split separator lines (for rendering borders)
     /// Returns (direction, x, y, length) tuples
     pub fn get_separators(&self, rect: Rect) -> Vec<(SplitDirection, u16, u16, u16)> {
+        self.get_separators_with_ids(rect)
+            .into_iter()
+            .map(|(_, dir, x, y, len)| (dir, x, y, len))
+            .collect()
+    }
+
+    /// Get all split separator lines with their split IDs (for mouse hit testing)
+    /// Returns (split_id, direction, x, y, length) tuples
+    pub fn get_separators_with_ids(&self, rect: Rect) -> Vec<(SplitId, SplitDirection, u16, u16, u16)> {
         match self {
             SplitNode::Leaf { .. } => vec![],
             SplitNode::Split {
@@ -186,7 +195,7 @@ impl SplitNode {
                 first,
                 second,
                 ratio,
-                ..
+                split_id,
             } => {
                 let (first_rect, second_rect) = split_rect(rect, *direction, *ratio);
                 let mut separators = Vec::new();
@@ -197,6 +206,7 @@ impl SplitNode {
                         // Horizontal split: separator line is between first and second
                         // y position is at the end of first rect (the gap line)
                         separators.push((
+                            *split_id,
                             SplitDirection::Horizontal,
                             rect.x,
                             first_rect.y + first_rect.height,
@@ -207,6 +217,7 @@ impl SplitNode {
                         // Vertical split: separator line is between first and second
                         // x position is at the end of first rect (the gap column)
                         separators.push((
+                            *split_id,
                             SplitDirection::Vertical,
                             first_rect.x + first_rect.width,
                             rect.y,
@@ -216,8 +227,8 @@ impl SplitNode {
                 }
 
                 // Recursively get separators from children
-                separators.extend(first.get_separators(first_rect));
-                separators.extend(second.get_separators(second_rect));
+                separators.extend(first.get_separators_with_ids(first_rect));
+                separators.extend(second.get_separators_with_ids(second_rect));
                 separators
             }
         }
@@ -526,6 +537,39 @@ impl SplitManager {
     /// Returns (direction, x, y, length) tuples
     pub fn get_separators(&self, viewport_rect: Rect) -> Vec<(SplitDirection, u16, u16, u16)> {
         self.root.get_separators(viewport_rect)
+    }
+
+    /// Get all split separator positions with their split IDs (for mouse hit testing)
+    /// Returns (split_id, direction, x, y, length) tuples
+    pub fn get_separators_with_ids(&self, viewport_rect: Rect) -> Vec<(SplitId, SplitDirection, u16, u16, u16)> {
+        self.root.get_separators_with_ids(viewport_rect)
+    }
+
+    /// Get the current ratio of a split container
+    pub fn get_ratio(&self, split_id: SplitId) -> Option<f32> {
+        if let Some(node) = self.root.find(split_id) {
+            if let SplitNode::Split { ratio, .. } = node {
+                Some(*ratio)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Set the exact ratio of a split container
+    pub fn set_ratio(&mut self, split_id: SplitId, new_ratio: f32) -> Result<(), String> {
+        if let Some(node) = self.root.find_mut(split_id) {
+            if let SplitNode::Split { ratio, .. } = node {
+                *ratio = new_ratio.clamp(0.1, 0.9);
+                Ok(())
+            } else {
+                Err("Target is not a split container".to_string())
+            }
+        } else {
+            Err("Split not found".to_string())
+        }
     }
 
     /// Navigate to the next split (circular)
