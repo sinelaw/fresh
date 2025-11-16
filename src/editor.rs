@@ -2890,6 +2890,9 @@ impl Editor {
             // Update active buffer ID
             snapshot.active_buffer_id = self.active_buffer;
 
+            // Update active split ID
+            snapshot.active_split_id = self.split_manager.active_split().0;
+
             // Clear and update buffer info (buffer content is in a separate cache now)
             snapshot.buffers.clear();
 
@@ -3126,6 +3129,64 @@ impl Editor {
 
                     // Add the column offset to position within the line
                     // Column offset is byte offset from line start (matching git grep --column behavior)
+                    let final_position = target_byte + column_offset;
+
+                    // Ensure we don't go past the buffer end
+                    let buffer_len = state.buffer.len();
+                    state.cursors.primary_mut().position = final_position.min(buffer_len);
+                    state.cursors.primary_mut().anchor = None;
+
+                    // Ensure the position is visible
+                    state
+                        .viewport
+                        .ensure_visible(&mut state.buffer, state.cursors.primary());
+                }
+            }
+            PluginCommand::OpenFileInSplit {
+                split_id,
+                path,
+                line,
+                column,
+            } => {
+                // Switch to the target split first
+                let target_split_id = SplitId(split_id);
+                if !self.split_manager.set_active_split(target_split_id) {
+                    tracing::error!("Failed to switch to split {}", split_id);
+                    return Ok(());
+                }
+                self.restore_current_split_view_state();
+
+                // Open the file in the now-active split
+                if let Err(e) = self.open_file(&path) {
+                    tracing::error!("Failed to open file from plugin: {}", e);
+                    return Ok(());
+                }
+
+                // If line/column specified, jump to that location
+                if line.is_some() || column.is_some() {
+                    let state = self.active_state_mut();
+
+                    // Convert 1-indexed line/column to byte position
+                    let target_line = line.unwrap_or(1).saturating_sub(1); // Convert to 0-indexed
+                    let column_offset = column.unwrap_or(1).saturating_sub(1); // Convert to 0-indexed
+
+                    let mut iter = state.buffer.line_iterator(0, 80);
+                    let mut target_byte = 0;
+
+                    // Iterate through lines until we reach the target
+                    for current_line in 0..=target_line {
+                        if let Some((line_start, _)) = iter.next() {
+                            if current_line == target_line {
+                                target_byte = line_start;
+                                break;
+                            }
+                        } else {
+                            // Reached end of buffer before target line
+                            break;
+                        }
+                    }
+
+                    // Add the column offset to position within the line
                     let final_position = target_byte + column_offset;
 
                     // Ensure we don't go past the buffer end
@@ -3986,15 +4047,7 @@ impl Editor {
                                     description: "LSP Rename".to_string(),
                                 };
 
-                                // Add to event log and apply to state
-                                if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
-                                    event_log.append(batch.clone());
-                                }
-
-                                let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
-                                    io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
-                                })?;
-                                state.apply(&batch);
+                                self.apply_rename_batch_to_buffer(buffer_id, batch)?;
                             }
                         }
                     }
@@ -4136,15 +4189,7 @@ impl Editor {
                                     description: "LSP Rename".to_string(),
                                 };
 
-                                // Add to event log and apply to state
-                                if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
-                                    event_log.append(batch.clone());
-                                }
-
-                                let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
-                                    io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
-                                })?;
-                                state.apply(&batch);
+                                self.apply_rename_batch_to_buffer(buffer_id, batch)?;
                             }
                         }
                     }
@@ -4170,6 +4215,33 @@ impl Editor {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    /// Helper to apply a batch of rename events to a specific buffer and notify LSP
+    fn apply_rename_batch_to_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        batch: Event,
+    ) -> io::Result<()> {
+        // Add to event log
+        if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+            event_log.append(batch.clone());
+        }
+
+        // Apply to buffer state
+        let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
+        })?;
+        state.apply(&batch);
+
+        // Notify LSP about the changes
+        // Temporarily switch active buffer to use notify_lsp_change correctly
+        let original_active = self.active_buffer;
+        self.active_buffer = buffer_id;
+        self.notify_lsp_change(&batch);
+        self.active_buffer = original_active;
 
         Ok(())
     }
@@ -6826,6 +6898,19 @@ impl Editor {
                     Position::new(end_line as u32, end_char as u32),
                 );
                 (Some(lsp_range), String::new())
+            }
+            Event::Batch { events, .. } => {
+                // Recursively notify LSP of each event in the batch
+                // This ensures LSP is properly notified of all changes in operations
+                // like LSP rename that apply multiple edits atomically
+                tracing::debug!(
+                    "notify_lsp_change: processing Batch with {} events",
+                    events.len()
+                );
+                for sub_event in events {
+                    self.notify_lsp_change(sub_event);
+                }
+                return;
             }
             _ => return, // Ignore cursor movements and other events
         };

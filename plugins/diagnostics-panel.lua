@@ -12,6 +12,8 @@ local panel_state = {
     current_index = 1,  -- Currently selected diagnostic (1-indexed)
     diagnostics = {},   -- Current diagnostics data
     header_lines = 2,   -- Number of header lines before first diagnostic
+    buffer_id = nil,    -- Buffer ID for updating content
+    source_split_id = nil,  -- Split ID where the code buffer is (for opening files)
 }
 
 -- Initialize the diagnostics-list mode
@@ -20,13 +22,13 @@ local function setup_mode()
         name = "diagnostics-list",
         parent = "special",  -- Inherits 'q' to quit, 'g' to refresh
         bindings = {
-            ["RET"] = "diagnostics:goto",      -- Jump to diagnostic location
-            ["n"] = "diagnostics:next",        -- Move to next diagnostic
-            ["p"] = "diagnostics:prev",        -- Move to previous diagnostic
-            ["Down"] = "diagnostics:next",     -- Arrow key support
-            ["Up"] = "diagnostics:prev",       -- Arrow key support
-            ["j"] = "diagnostics:next",        -- Vim-style
-            ["k"] = "diagnostics:prev",        -- Vim-style
+            ["RET"] = "goto_diagnostic",       -- Jump to diagnostic location
+            ["n"] = "diagnostics_next",        -- Move to next diagnostic
+            ["p"] = "diagnostics_prev",        -- Move to previous diagnostic
+            ["Down"] = "diagnostics_next",     -- Arrow key support
+            ["Up"] = "diagnostics_prev",       -- Arrow key support
+            ["j"] = "diagnostics_next",        -- Vim-style
+            ["k"] = "diagnostics_prev",        -- Vim-style
         },
         read_only = true
     })
@@ -128,6 +130,11 @@ end
 
 -- Create or update the diagnostic panel
 local function show_panel()
+    -- Remember the current split ID (where the code buffer is)
+    -- This is where we'll open files when the user selects a diagnostic
+    panel_state.source_split_id = editor.get_active_split_id()
+    debug(string.format("Storing source split ID: %d", panel_state.source_split_id))
+
     -- Load diagnostics
     panel_state.diagnostics = get_diagnostics()
     panel_state.current_index = 1  -- Reset selection to first diagnostic
@@ -175,10 +182,30 @@ function goto_diagnostic()
 
     debug(string.format("Jumping to %s:%d:%d", diag.file, diag.line, diag.column))
 
-    -- Open the file at the diagnostic location
-    editor.open_file_at_location(diag.file, diag.line, diag.column)
+    -- Open the file at the diagnostic location in the source split (where code buffer is)
+    if panel_state.source_split_id then
+        editor.open_file_in_split(panel_state.source_split_id, diag.file, diag.line, diag.column)
+    else
+        -- Fallback to opening in current split if source_split_id not set
+        editor.open_file_at_location(diag.file, diag.line, diag.column)
+    end
     editor.set_status(string.format("Jumped to %s:%d:%d - %s",
         diag.file, diag.line, diag.column, diag.message))
+end
+
+-- Helper to update the panel display with current selection
+local function update_panel_display()
+    local entries = build_entries()
+    -- Recreate the panel with updated entries
+    -- panel_id makes this idempotent - content is updated without creating new split
+    editor.create_virtual_buffer_in_split({
+        name = "*Diagnostics*",
+        mode = "diagnostics-list",
+        read_only = true,
+        entries = entries,
+        ratio = 0.7,
+        panel_id = "diagnostics"
+    })
 end
 
 -- Move to next diagnostic
@@ -198,10 +225,8 @@ function diagnostics_next()
         panel_state.current_index, #panel_state.diagnostics,
         diag.file, diag.line, diag.message))
 
-    -- Rebuild the panel to show the new selection
-    local entries = build_entries()
-    -- Note: We can't update content of existing buffer yet,
-    -- so we recreate the panel (this is a limitation)
+    -- Update the panel to show the new selection
+    update_panel_display()
     debug(string.format("Selected diagnostic %d", panel_state.current_index))
 end
 
@@ -222,10 +247,8 @@ function diagnostics_prev()
         panel_state.current_index, #panel_state.diagnostics,
         diag.file, diag.line, diag.message))
 
-    -- Rebuild the panel to show the new selection
-    local entries = build_entries()
-    -- Note: We can't update content of existing buffer yet,
-    -- so we recreate the panel (this is a limitation)
+    -- Update the panel to show the new selection
+    update_panel_display()
     debug(string.format("Selected diagnostic %d", panel_state.current_index))
 end
 

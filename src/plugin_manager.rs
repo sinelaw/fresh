@@ -273,6 +273,20 @@ impl PluginManager {
         )?;
         editor.set("open_file_at_location", open_file_at_location)?;
 
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.open_file_in_split(split_id, path, line, column)
+        // Opens a file in a specific split and jumps to the specified line and column (1-indexed)
+        let open_file_in_split = lua.create_function(
+            move |_, (split_id, path, line, column): (usize, String, Option<usize>, Option<usize>)| {
+                api_clone
+                    .open_file_in_split(split_id, std::path::PathBuf::from(path), line, column)
+                    .map_err(|e| mlua::Error::RuntimeError(e))
+            },
+        )?;
+        editor.set("open_file_in_split", open_file_in_split)?;
+
         // editor.on(hook_name, callback)
         // We can't directly create a closure that captures Lua state across threads,
         // so we store the callback and invoke it later in run_hook()
@@ -308,6 +322,16 @@ impl PluginManager {
             Ok(buffer_id.0)
         })?;
         editor.set("get_active_buffer_id", get_active_buffer_id)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.get_active_split_id() - Get the ID of the currently active split
+        let get_active_split_id = lua.create_function(move |_, ()| {
+            let split_id = api_clone.get_active_split_id();
+            Ok(split_id)
+        })?;
+        editor.set("get_active_split_id", get_active_split_id)?;
 
         // Clone API for next closure
         let api_clone = api.clone();

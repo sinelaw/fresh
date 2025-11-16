@@ -53,6 +53,8 @@ pub struct ViewportInfo {
 pub struct EditorStateSnapshot {
     /// Currently active buffer ID
     pub active_buffer_id: BufferId,
+    /// Currently active split ID
+    pub active_split_id: usize,
     /// Information about all open buffers
     pub buffers: HashMap<BufferId, BufferInfo>,
     /// Primary cursor position for the active buffer
@@ -67,6 +69,7 @@ impl EditorStateSnapshot {
     pub fn new() -> Self {
         Self {
             active_buffer_id: BufferId(0),
+            active_split_id: 0,
             buffers: HashMap::new(),
             primary_cursor: None,
             all_cursors: Vec::new(),
@@ -151,6 +154,15 @@ pub enum PluginCommand {
     /// Open a file at a specific line and column
     /// Line and column are 1-indexed to match git grep output
     OpenFileAtLocation {
+        path: PathBuf,
+        line: Option<usize>,   // 1-indexed, None = go to start
+        column: Option<usize>, // 1-indexed, None = go to line start
+    },
+
+    /// Open a file in a specific split at a given line and column
+    /// Line and column are 1-indexed to match git grep output
+    OpenFileInSplit {
+        split_id: usize,
         path: PathBuf,
         line: Option<usize>,   // 1-indexed, None = go to start
         column: Option<usize>, // 1-indexed, None = go to line start
@@ -383,6 +395,25 @@ impl PluginApi {
         self.send_command(PluginCommand::OpenFileAtLocation { path, line, column })
     }
 
+    /// Open a file in a specific split at a line and column
+    ///
+    /// Similar to open_file_at_location but targets a specific split pane.
+    /// The split_id is the ID of the split pane to open the file in.
+    pub fn open_file_in_split(
+        &self,
+        split_id: usize,
+        path: PathBuf,
+        line: Option<usize>,
+        column: Option<usize>,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::OpenFileInSplit {
+            split_id,
+            path,
+            line,
+            column,
+        })
+    }
+
     /// Start a prompt (minibuffer) with a custom type identifier
     /// The prompt_type is used to filter hooks in plugin code
     pub fn start_prompt(&self, label: String, prompt_type: String) -> Result<(), String> {
@@ -552,6 +583,12 @@ impl PluginApi {
     pub fn get_active_buffer_id(&self) -> BufferId {
         let snapshot = self.state_snapshot.read().unwrap();
         snapshot.active_buffer_id
+    }
+
+    /// Get the currently active split ID
+    pub fn get_active_split_id(&self) -> usize {
+        let snapshot = self.state_snapshot.read().unwrap();
+        snapshot.active_split_id
     }
 
     /// Get information about a specific buffer
