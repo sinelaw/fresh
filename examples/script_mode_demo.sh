@@ -16,8 +16,28 @@ fi
 echo "1. Starting editor in script mode and typing some code..."
 echo
 
-# Send a series of commands to the editor
-cat << 'EOF' | cargo run --quiet -- --script-mode 2>/dev/null | while read -r line; do
+# Create a temporary file for commands
+COMMANDS=$(mktemp)
+trap "rm -f $COMMANDS" EXIT
+
+cat > "$COMMANDS" << 'EOF'
+{"type": "type_text", "text": "// Demo: Script Mode in Action"}
+{"type": "key", "code": "Enter"}
+{"type": "key", "code": "Enter"}
+{"type": "type_text", "text": "fn greet(name: &str) {"}
+{"type": "key", "code": "Enter"}
+{"type": "type_text", "text": "    println!(\"Hello, {}!\", name);"}
+{"type": "key", "code": "Enter"}
+{"type": "type_text", "text": "}"}
+{"type": "render"}
+{"type": "status"}
+{"type": "get_buffer"}
+{"type": "export_test", "test_name": "test_demo_session"}
+{"type": "quit"}
+EOF
+
+# Send commands to the editor and parse responses
+cat "$COMMANDS" | cargo run --quiet -- --script-mode 2>/dev/null | while read -r line; do
     # Parse the response type
     type=$(echo "$line" | python3 -c "import json, sys; print(json.loads(sys.stdin.read())['type'])")
 
@@ -51,22 +71,7 @@ cat << 'EOF' | cargo run --quiet -- --script-mode 2>/dev/null | while read -r li
             echo "✗ Error: $msg"
             ;;
     esac
-done << 'COMMANDS'
-{"type": "type_text", "text": "// Demo: Script Mode in Action"}
-{"type": "key", "code": "Enter"}
-{"type": "key", "code": "Enter"}
-{"type": "type_text", "text": "fn greet(name: &str) {"}
-{"type": "key", "code": "Enter"}
-{"type": "type_text", "text": "    println!(\"Hello, {}!\", name);"}
-{"type": "key", "code": "Enter"}
-{"type": "type_text", "text": "}"}
-{"type": "render"}
-{"type": "status"}
-{"type": "get_buffer"}
-{"type": "export_test", "test_name": "test_demo_session"}
-{"type": "quit"}
-COMMANDS
-EOF
+done
 
 echo
 echo "2. Demo complete!"
