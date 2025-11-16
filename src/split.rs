@@ -236,6 +236,18 @@ impl SplitNode {
         }
     }
 
+    /// Collect only leaf split IDs (visible buffer splits, not container nodes)
+    pub fn leaf_split_ids(&self) -> Vec<SplitId> {
+        match self {
+            SplitNode::Leaf { split_id, .. } => vec![*split_id],
+            SplitNode::Split { first, second, .. } => {
+                let mut ids = first.leaf_split_ids();
+                ids.extend(second.leaf_split_ids());
+                ids
+            }
+        }
+    }
+
     /// Count the number of leaf nodes (visible buffers)
     pub fn count_leaves(&self) -> usize {
         match self {
@@ -518,19 +530,19 @@ impl SplitManager {
 
     /// Navigate to the next split (circular)
     pub fn next_split(&mut self) {
-        let all_ids = self.root.all_split_ids();
-        if let Some(pos) = all_ids.iter().position(|id| *id == self.active_split) {
-            let next_pos = (pos + 1) % all_ids.len();
-            self.active_split = all_ids[next_pos];
+        let leaf_ids = self.root.leaf_split_ids();
+        if let Some(pos) = leaf_ids.iter().position(|id| *id == self.active_split) {
+            let next_pos = (pos + 1) % leaf_ids.len();
+            self.active_split = leaf_ids[next_pos];
         }
     }
 
     /// Navigate to the previous split (circular)
     pub fn prev_split(&mut self) {
-        let all_ids = self.root.all_split_ids();
-        if let Some(pos) = all_ids.iter().position(|id| *id == self.active_split) {
-            let prev_pos = if pos == 0 { all_ids.len() - 1 } else { pos - 1 };
-            self.active_split = all_ids[prev_pos];
+        let leaf_ids = self.root.leaf_split_ids();
+        if let Some(pos) = leaf_ids.iter().position(|id| *id == self.active_split) {
+            let prev_pos = if pos == 0 { leaf_ids.len() - 1 } else { pos - 1 };
+            self.active_split = leaf_ids[prev_pos];
         }
     }
 
