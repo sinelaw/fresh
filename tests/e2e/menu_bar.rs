@@ -159,3 +159,73 @@ fn test_menu_mnemonic_underline_rendering() {
     harness.assert_screen_contains("Edit");
     harness.assert_screen_contains("View");
 }
+
+/// Test that clicking on File menu opens it
+#[test]
+fn test_mouse_click_opens_file_menu() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Menu should not be open initially
+    harness.assert_screen_not_contains("New File");
+
+    // Click on "File" in menu bar (row 0, column ~1-4)
+    harness.mouse_click(2, 0).unwrap();
+    harness.render().unwrap();
+
+    // File menu dropdown should now be visible
+    harness.assert_screen_contains("New File");
+    harness.assert_screen_contains("Open");
+    harness.assert_screen_contains("Save");
+}
+
+/// Test that clicking on Edit menu opens it
+#[test]
+fn test_mouse_click_opens_edit_menu() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Click on "Edit" in menu bar (around column 8-11)
+    harness.mouse_click(9, 0).unwrap();
+    harness.render().unwrap();
+
+    // Edit menu dropdown should be visible
+    harness.assert_screen_contains("Undo");
+    harness.assert_screen_contains("Redo");
+}
+
+/// Test that clicking on open menu closes it
+#[test]
+fn test_mouse_click_toggles_menu() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Click to open File menu
+    harness.mouse_click(2, 0).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("New File");
+
+    // Click on File again to close it
+    harness.mouse_click(2, 0).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("New File");
+}
+
+/// Test that clicking outside menu labels closes menu
+#[test]
+fn test_mouse_click_empty_area_closes_menu() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Open a menu first
+    harness.mouse_click(2, 0).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("New File");
+
+    // Click on empty area of menu bar (far right)
+    harness.mouse_click(70, 0).unwrap();
+    harness.render().unwrap();
+
+    // Menu should be closed
+    harness.assert_screen_not_contains("New File");
+}

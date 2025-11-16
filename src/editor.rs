@@ -4571,6 +4571,28 @@ impl Editor {
 
     /// Handle mouse click (down event)
     fn handle_mouse_click(&mut self, col: u16, row: u16) -> std::io::Result<()> {
+        // Check if click is on menu bar (row 0)
+        if row == 0 {
+            let all_menus: Vec<crate::config::Menu> = self.config.menu.menus
+                .iter()
+                .chain(self.menu_state.plugin_menus.iter())
+                .cloned()
+                .collect();
+
+            if let Some(menu_idx) = self.menu_state.get_menu_at_position(&all_menus, col) {
+                // Toggle menu: if same menu is open, close it; otherwise open clicked menu
+                if self.menu_state.active_menu == Some(menu_idx) {
+                    self.menu_state.close_menu();
+                } else {
+                    self.menu_state.open_menu(menu_idx);
+                }
+            } else {
+                // Clicked on menu bar but not on a menu label - close any open menu
+                self.menu_state.close_menu();
+            }
+            return Ok(());
+        }
+
         // Check if click is on file explorer
         if let Some(explorer_area) = self.cached_layout.file_explorer_area {
             if col >= explorer_area.x
