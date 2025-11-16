@@ -49,6 +49,7 @@ impl SplitRenderer {
         estimated_line_length: usize,
         hook_registry: Option<&Arc<RwLock<HookRegistry>>>,
         plugin_manager: Option<&PluginManager>,
+        split_view_states: Option<&HashMap<crate::event::SplitId, crate::split::SplitViewState>>,
     ) -> Vec<(crate::event::SplitId, BufferId, Rect, Rect, usize, usize)> {
         let _span = tracing::trace_span!("render_content").entered();
 
@@ -83,6 +84,28 @@ impl SplitRenderer {
             let event_log_opt = event_logs.get_mut(&buffer_id);
 
             if let Some(state) = state_opt {
+                // For inactive splits, temporarily swap in the split's view state (cursors + viewport)
+                // This allows each split to show its own cursor position
+                let saved_cursors;
+                let saved_viewport;
+                if !is_active {
+                    if let Some(view_states) = split_view_states {
+                        if let Some(view_state) = view_states.get(&split_id) {
+                            saved_cursors = Some(std::mem::replace(&mut state.cursors, view_state.cursors.clone()));
+                            saved_viewport = Some(std::mem::replace(&mut state.viewport, view_state.viewport.clone()));
+                        } else {
+                            saved_cursors = None;
+                            saved_viewport = None;
+                        }
+                    } else {
+                        saved_cursors = None;
+                        saved_viewport = None;
+                    }
+                } else {
+                    saved_cursors = None;
+                    saved_viewport = None;
+                }
+
                 // Sync viewport size with actual render area
                 // This ensures the viewport matches the real available space,
                 // automatically accounting for menu bar, tabs, status bar, etc.
@@ -111,6 +134,14 @@ impl SplitRenderer {
                     hook_registry,
                     plugin_manager,
                 );
+
+                // Restore the original cursors and viewport after rendering
+                if let Some(cursors) = saved_cursors {
+                    state.cursors = cursors;
+                }
+                if let Some(viewport) = saved_viewport {
+                    state.viewport = viewport;
+                }
 
                 // For small files, count actual lines for accurate scrollbar
                 // For large files, we'll use a constant thumb size
@@ -661,12 +692,21 @@ impl SplitRenderer {
 
                     // Cursor styling - make secondary cursors visible with reversed colors
                     // Don't apply REVERSED to primary cursor to preserve terminal cursor visibility
+                    // For inactive splits, ALL cursors should be REVERSED (no hardware cursor)
                     let is_secondary_cursor = is_cursor && byte_pos != primary_cursor_position;
-                    if is_secondary_cursor && is_active {
+                    let should_reverse_cursor = if is_active {
+                        // In active split: only reverse secondary cursors (primary uses hardware cursor)
+                        is_secondary_cursor
+                    } else {
+                        // In inactive split: reverse all cursors including primary
+                        is_cursor
+                    };
+                    if should_reverse_cursor {
                         tracing::trace!(
-                            "Applying REVERSED modifier to secondary cursor at byte_pos={}, char={:?}",
+                            "Applying REVERSED modifier to cursor at byte_pos={}, char={:?}, is_active={}",
                             byte_pos,
-                            ch
+                            ch,
+                            is_active
                         );
                         style = style.add_modifier(Modifier::REVERSED);
                     }
@@ -700,16 +740,22 @@ impl SplitRenderer {
 
                     // If this is a cursor on a newline, we'll handle it after the char loop
                     // Only apply REVERSED for secondary cursors to preserve primary cursor visibility
-                    if is_cursor && is_active && ch == '\n' {
-                        if is_secondary_cursor {
-                            // Add a visible cursor indicator (space with REVERSED style) for secondary cursors
+                    // For inactive splits, always show the cursor with REVERSED
+                    if is_cursor && ch == '\n' {
+                        let should_add_indicator = if is_active {
+                            is_secondary_cursor // Only secondary cursors in active split
+                        } else {
+                            true // All cursors in inactive splits
+                        };
+                        if should_add_indicator {
+                            // Add a visible cursor indicator (space with REVERSED style)
                             let cursor_style = Style::default()
                                 .fg(theme.editor_fg)
                                 .bg(theme.editor_bg)
                                 .add_modifier(Modifier::REVERSED);
                             line_spans.push(Span::styled(" ", cursor_style));
                         }
-                        // Primary cursor on newline will be shown by terminal hardware cursor
+                        // Primary cursor on newline will be shown by terminal hardware cursor (active split only)
                     }
                 }
 
@@ -732,13 +778,21 @@ impl SplitRenderer {
                     is_active
                 );
 
-                if cursor_at_end && is_active {
+                if cursor_at_end {
                     // Only add REVERSED indicator for secondary cursors to preserve primary cursor visibility
+                    // For inactive splits, always show the cursor with REVERSED
                     let is_primary_at_end = line_end_pos == primary_cursor_position;
-                    if !is_primary_at_end {
-                        // Add a space character with REVERSED style to show secondary cursor at end of line
+                    let should_add_indicator = if is_active {
+                        !is_primary_at_end // Only secondary cursors in active split
+                    } else {
+                        true // All cursors in inactive splits
+                    };
+                    if should_add_indicator {
+                        // Add a space character with REVERSED style to show cursor at end of line
                         tracing::debug!(
-                            "Adding REVERSED cursor indicator at end of line for secondary cursor"
+                            "Adding REVERSED cursor indicator at end of line, is_active={}, is_primary={}",
+                            is_active,
+                            is_primary_at_end
                         );
                         let cursor_style = Style::default()
                             .fg(theme.editor_fg)
@@ -746,7 +800,7 @@ impl SplitRenderer {
                             .add_modifier(Modifier::REVERSED);
                         line_spans.push(Span::styled(" ", cursor_style));
                     }
-                    // Primary cursor at end of line will be shown by terminal hardware cursor
+                    // Primary cursor at end of line will be shown by terminal hardware cursor (active split only)
                 }
             }
 

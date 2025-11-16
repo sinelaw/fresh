@@ -668,3 +668,56 @@ fn test_cursor_adjustment_on_shared_buffer_edit() {
         adjusted_cursor
     );
 }
+
+/// Test that cursors in inactive splits are rendered (visible on screen)
+/// Each split should show its cursor position even when not focused
+#[test]
+fn test_cursors_visible_in_all_splits() {
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+
+    // Type some text
+    harness.type_text("ABCDEFGHIJ").unwrap();
+    harness.render().unwrap();
+
+    // Create vertical split
+    split_vertical(&mut harness);
+
+    // Move cursor to different position in second split
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Second split cursor at position 5 (after "ABCDE")
+    let second_split_cursor_pos = harness.cursor_position();
+    assert_eq!(second_split_cursor_pos, 5);
+
+    // Find all rendered cursors on screen
+    let cursors = harness.find_all_cursors();
+
+    // Should have at least 2 cursors visible (one for each split)
+    // The active split has the hardware cursor, inactive split should have REVERSED cursor
+    assert!(
+        cursors.len() >= 2,
+        "Should render cursors for both splits, found {} cursors: {:?}",
+        cursors.len(),
+        cursors
+    );
+
+    // Check that we have both a primary (hardware) cursor and a secondary (REVERSED) cursor
+    let primary_cursors: Vec<_> = cursors.iter().filter(|(_, _, _, is_primary)| *is_primary).collect();
+    let secondary_cursors: Vec<_> = cursors.iter().filter(|(_, _, _, is_primary)| !*is_primary).collect();
+
+    assert_eq!(
+        primary_cursors.len(),
+        1,
+        "Should have exactly one primary (hardware) cursor"
+    );
+    assert!(
+        !secondary_cursors.is_empty(),
+        "Should have at least one secondary cursor for inactive split"
+    );
+}

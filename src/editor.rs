@@ -5890,6 +5890,7 @@ impl Editor {
             self.config.editor.estimated_line_length,
             Some(&self.hook_registry),
             self.plugin_manager.as_ref(),
+            Some(&self.split_view_states),
         );
         self.cached_layout.split_areas = split_areas;
         self.cached_layout.editor_content_area = Some(editor_content_area);
