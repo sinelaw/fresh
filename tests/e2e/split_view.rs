@@ -11,10 +11,13 @@ fn test_split_horizontal() {
     harness.type_text("Buffer 1").unwrap();
     harness.assert_buffer_content("Buffer 1");
 
-    // Split horizontally (Alt+h)
+    // Split horizontally via command palette
     harness
-        .send_key(KeyCode::Char('h'), KeyModifiers::ALT)
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split horiz").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
     // Should see status message
     harness.render().unwrap();
@@ -33,10 +36,13 @@ fn test_split_vertical() {
     harness.type_text("Buffer 1").unwrap();
     harness.assert_buffer_content("Buffer 1");
 
-    // Split vertically (Alt+v)
+    // Split vertically via command palette
     harness
-        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
     // Should see status message
     harness.render().unwrap();
@@ -51,29 +57,39 @@ fn test_split_vertical() {
 fn test_split_navigation() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    // Create a vertical split
+    // Create a vertical split via command palette
     harness.type_text("First buffer").unwrap();
     harness
-        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
 
     // Now in second split, type different text
     harness.type_text("Second buffer").unwrap();
     harness.assert_buffer_content("Second buffer");
 
-    // Navigate to next split (Alt+o)
+    // Navigate to next split via command palette
     harness
-        .send_key(KeyCode::Char('o'), KeyModifiers::ALT)
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.render().unwrap();
+    harness.type_text("next split").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
     // Should see status message
     harness.render().unwrap();
     harness.assert_screen_contains("Switched to next split");
 
-    // Navigate to previous split (Alt+Shift+o)
+    // Navigate to previous split via command palette
     harness
-        .send_key(KeyCode::Char('o'), KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.render().unwrap();
+    harness.type_text("prev split").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
     // Should see status message
     harness.render().unwrap();
@@ -85,15 +101,22 @@ fn test_split_navigation() {
 fn test_close_split() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    // Create a split
+    // Create a split via command palette
     harness
-        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
 
-    // Close the split (Alt+x)
+    // Close the split via command palette
     harness
-        .send_key(KeyCode::Char('x'), KeyModifiers::ALT)
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.render().unwrap();
+    harness.type_text("close split").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
     // Should see status message
     harness.render().unwrap();
