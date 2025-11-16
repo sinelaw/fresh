@@ -1179,6 +1179,7 @@ pub fn action_to_events(
         | Action::MenuUp
         | Action::MenuDown
         | Action::MenuExecute
+        | Action::MenuOpen(_)
         | Action::PluginAction(_)
         | Action::None => return None,
 

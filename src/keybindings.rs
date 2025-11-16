@@ -304,6 +304,7 @@ pub enum Action {
     MenuUp,            // Navigate to previous item in menu
     MenuDown,          // Navigate to next item in menu
     MenuExecute,       // Execute selected menu item (Enter)
+    MenuOpen(String),  // Open a specific menu by name (e.g., "File", "Edit")
 
     // Plugin custom actions
     PluginAction(String),
@@ -474,6 +475,10 @@ impl Action {
             "menu_up" => Some(Action::MenuUp),
             "menu_down" => Some(Action::MenuDown),
             "menu_execute" => Some(Action::MenuExecute),
+            "menu_open" => {
+                let name = args.get("name")?.as_str()?;
+                Some(Action::MenuOpen(name.to_string()))
+            }
 
             _ => None,
         }
@@ -652,6 +657,36 @@ impl KeybindingResolver {
         None
     }
 
+    /// Find the mnemonic character for a menu (based on Alt+letter keybindings)
+    /// Returns the character that should be underlined in the menu label
+    pub fn find_menu_mnemonic(&self, menu_name: &str) -> Option<char> {
+        // Search in custom bindings first, then default bindings
+        let search_maps = vec![
+            self.bindings.get(&KeyContext::Normal),
+            self.bindings.get(&KeyContext::Global),
+            self.default_bindings.get(&KeyContext::Normal),
+            self.default_bindings.get(&KeyContext::Global),
+        ];
+
+        for map in search_maps.into_iter().flatten() {
+            for ((key_code, modifiers), action) in map {
+                // Check if this is an Alt+letter binding for MenuOpen with matching name
+                if let Action::MenuOpen(name) = action {
+                    if name.eq_ignore_ascii_case(menu_name)
+                        && *modifiers == KeyModifiers::ALT
+                    {
+                        // Return the character for Alt+letter bindings
+                        if let KeyCode::Char(c) = key_code {
+                            return Some(c.to_ascii_lowercase());
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     /// Format a keybinding for display (e.g., "Ctrl+S", "Alt+Enter", "F12")
     fn format_keybinding(key_code: KeyCode, modifiers: KeyModifiers) -> String {
         let mut parts = Vec::new();
@@ -756,6 +791,32 @@ impl KeybindingResolver {
         global_bindings.insert(
             (KeyCode::F(10), KeyModifiers::empty()),
             Action::MenuActivate,
+        );
+
+        // Alt+letter menu shortcuts (standard menu mnemonics)
+        global_bindings.insert(
+            (KeyCode::Char('f'), KeyModifiers::ALT),
+            Action::MenuOpen("File".to_string()),
+        );
+        global_bindings.insert(
+            (KeyCode::Char('e'), KeyModifiers::ALT),
+            Action::MenuOpen("Edit".to_string()),
+        );
+        global_bindings.insert(
+            (KeyCode::Char('v'), KeyModifiers::ALT),
+            Action::MenuOpen("View".to_string()),
+        );
+        global_bindings.insert(
+            (KeyCode::Char('s'), KeyModifiers::ALT),
+            Action::MenuOpen("Selection".to_string()),
+        );
+        global_bindings.insert(
+            (KeyCode::Char('g'), KeyModifiers::ALT),
+            Action::MenuOpen("Go".to_string()),
+        );
+        global_bindings.insert(
+            (KeyCode::Char('h'), KeyModifiers::ALT),
+            Action::MenuOpen("Help".to_string()),
         );
 
         all_bindings.insert(KeyContext::Global, global_bindings);
@@ -1410,6 +1471,7 @@ impl KeybindingResolver {
             Action::MenuUp => "Navigate to previous menu item".to_string(),
             Action::MenuDown => "Navigate to next menu item".to_string(),
             Action::MenuExecute => "Execute selected menu item".to_string(),
+            Action::MenuOpen(name) => format!("Open {} menu", name),
             Action::PluginAction(name) => format!("Plugin action: {}", name),
             Action::None => "No action".to_string(),
         }

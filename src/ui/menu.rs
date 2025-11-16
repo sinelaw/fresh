@@ -90,7 +90,48 @@ impl MenuState {
             _ => None,
         }
     }
+
+    /// Get the menu index at a given x position in the menu bar
+    /// Returns the menu index if the click is on a menu label
+    pub fn get_menu_at_position(&self, menus: &[Menu], x: u16) -> Option<usize> {
+        let mut current_x = 0u16;
+
+        for (idx, menu) in menus.iter().enumerate() {
+            let label_width = menu.label.len() as u16 + 2; // " Label "
+            let total_width = label_width + 1; // Plus trailing space
+
+            if x >= current_x && x < current_x + label_width {
+                return Some(idx);
+            }
+
+            current_x += total_width;
+        }
+
+        None
+    }
+
+    /// Get the item index at a given y position in the dropdown
+    /// y is relative to the menu bar (so y=1 is the first item in dropdown)
+    pub fn get_item_at_position(&self, menu: &Menu, y: u16) -> Option<usize> {
+        // y=0 is menu bar, y=1 is top border, y=2 is first item
+        if y < 2 {
+            return None;
+        }
+
+        let item_index = (y - 2) as usize;
+        if item_index < menu.items.len() {
+            // Don't return separator indices
+            if matches!(menu.items[item_index], MenuItem::Separator { .. }) {
+                None
+            } else {
+                Some(item_index)
+            }
+        } else {
+            None
+        }
+    }
 }
+
 
 /// Renders the menu bar
 pub struct MenuRenderer;
@@ -126,7 +167,7 @@ impl MenuRenderer {
         for (idx, menu) in all_menus.iter().enumerate() {
             let is_active = menu_state.active_menu == Some(idx);
 
-            let style = if is_active {
+            let base_style = if is_active {
                 Style::default()
                     .fg(theme.menu_active_fg)
                     .bg(theme.menu_active_bg)
@@ -137,7 +178,33 @@ impl MenuRenderer {
                     .bg(theme.menu_bg)
             };
 
-            spans.push(Span::styled(format!(" {} ", menu.label), style));
+            // Check for mnemonic character (Alt+letter keybinding)
+            let mnemonic = keybindings.find_menu_mnemonic(&menu.label);
+
+            // Build the label with underlined mnemonic
+            spans.push(Span::styled(" ", base_style));
+
+            if let Some(mnemonic_char) = mnemonic {
+                // Find the first occurrence of the mnemonic character in the label
+                let mut found = false;
+                for c in menu.label.chars() {
+                    if !found && c.to_ascii_lowercase() == mnemonic_char {
+                        // Underline this character
+                        spans.push(Span::styled(
+                            c.to_string(),
+                            base_style.add_modifier(Modifier::UNDERLINED),
+                        ));
+                        found = true;
+                    } else {
+                        spans.push(Span::styled(c.to_string(), base_style));
+                    }
+                }
+            } else {
+                // No mnemonic, just render the label normally
+                spans.push(Span::styled(menu.label.clone(), base_style));
+            }
+
+            spans.push(Span::styled(" ", base_style));
             spans.push(Span::raw(" "));
         }
 
@@ -276,3 +343,347 @@ impl MenuRenderer {
         frame.render_widget(paragraph, dropdown_area);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn create_test_menus() -> Vec<Menu> {
+        vec![
+            Menu {
+                label: "File".to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: "New".to_string(),
+                        action: "new_file".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: "Save".to_string(),
+                        action: "save".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Quit".to_string(),
+                        action: "quit".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                ],
+            },
+            Menu {
+                label: "Edit".to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: "Undo".to_string(),
+                        action: "undo".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                    MenuItem::Action {
+                        label: "Redo".to_string(),
+                        action: "redo".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                    },
+                ],
+            },
+            Menu {
+                label: "View".to_string(),
+                items: vec![MenuItem::Action {
+                    label: "Toggle Explorer".to_string(),
+                    action: "toggle_file_explorer".to_string(),
+                    args: HashMap::new(),
+                    when: None,
+                }],
+            },
+        ]
+    }
+
+    #[test]
+    fn test_menu_state_default() {
+        let state = MenuState::new();
+        assert_eq!(state.active_menu, None);
+        assert_eq!(state.highlighted_item, None);
+        assert!(state.plugin_menus.is_empty());
+    }
+
+    #[test]
+    fn test_menu_state_open_menu() {
+        let mut state = MenuState::new();
+        state.open_menu(2);
+        assert_eq!(state.active_menu, Some(2));
+        assert_eq!(state.highlighted_item, Some(0));
+    }
+
+    #[test]
+    fn test_menu_state_close_menu() {
+        let mut state = MenuState::new();
+        state.open_menu(1);
+        state.close_menu();
+        assert_eq!(state.active_menu, None);
+        assert_eq!(state.highlighted_item, None);
+    }
+
+    #[test]
+    fn test_menu_state_next_menu() {
+        let mut state = MenuState::new();
+        state.open_menu(0);
+
+        state.next_menu(3);
+        assert_eq!(state.active_menu, Some(1));
+
+        state.next_menu(3);
+        assert_eq!(state.active_menu, Some(2));
+
+        // Wrap around
+        state.next_menu(3);
+        assert_eq!(state.active_menu, Some(0));
+    }
+
+    #[test]
+    fn test_menu_state_prev_menu() {
+        let mut state = MenuState::new();
+        state.open_menu(0);
+
+        // Wrap around backwards
+        state.prev_menu(3);
+        assert_eq!(state.active_menu, Some(2));
+
+        state.prev_menu(3);
+        assert_eq!(state.active_menu, Some(1));
+
+        state.prev_menu(3);
+        assert_eq!(state.active_menu, Some(0));
+    }
+
+    #[test]
+    fn test_menu_state_next_item_skips_separator() {
+        let mut state = MenuState::new();
+        let menus = create_test_menus();
+        state.open_menu(0);
+
+        // highlighted_item starts at 0 (New)
+        assert_eq!(state.highlighted_item, Some(0));
+
+        // Next should skip separator and go to Save (index 2)
+        state.next_item(&menus[0]);
+        assert_eq!(state.highlighted_item, Some(2));
+
+        // Next goes to Quit (index 3)
+        state.next_item(&menus[0]);
+        assert_eq!(state.highlighted_item, Some(3));
+
+        // Wrap around to New (index 0)
+        state.next_item(&menus[0]);
+        assert_eq!(state.highlighted_item, Some(0));
+    }
+
+    #[test]
+    fn test_menu_state_prev_item_skips_separator() {
+        let mut state = MenuState::new();
+        let menus = create_test_menus();
+        state.open_menu(0);
+        state.highlighted_item = Some(2); // Start at Save
+
+        // Prev should skip separator and go to New (index 0)
+        state.prev_item(&menus[0]);
+        assert_eq!(state.highlighted_item, Some(0));
+
+        // Wrap around backwards to Quit (index 3)
+        state.prev_item(&menus[0]);
+        assert_eq!(state.highlighted_item, Some(3));
+    }
+
+    #[test]
+    fn test_get_highlighted_action() {
+        let mut state = MenuState::new();
+        let menus = create_test_menus();
+        state.open_menu(0);
+        state.highlighted_item = Some(2); // Save action
+
+        let action = state.get_highlighted_action(&menus);
+        assert!(action.is_some());
+        let (action_name, _args) = action.unwrap();
+        assert_eq!(action_name, "save");
+    }
+
+    #[test]
+    fn test_get_highlighted_action_none_when_closed() {
+        let state = MenuState::new();
+        let menus = create_test_menus();
+        assert!(state.get_highlighted_action(&menus).is_none());
+    }
+
+    #[test]
+    fn test_get_highlighted_action_none_for_separator() {
+        let mut state = MenuState::new();
+        let menus = create_test_menus();
+        state.open_menu(0);
+        state.highlighted_item = Some(1); // Separator
+
+        assert!(state.get_highlighted_action(&menus).is_none());
+    }
+
+    #[test]
+    fn test_get_menu_at_position() {
+        let state = MenuState::new();
+        let menus = create_test_menus();
+
+        // Menu positions: " File " (6 chars) + " " = 7, " Edit " (6 chars) + " " = 7, " View " (6 chars)
+        // File: x=0-5
+        assert_eq!(state.get_menu_at_position(&menus, 0), Some(0));
+        assert_eq!(state.get_menu_at_position(&menus, 3), Some(0));
+        assert_eq!(state.get_menu_at_position(&menus, 5), Some(0));
+
+        // Space between: x=6
+        assert_eq!(state.get_menu_at_position(&menus, 6), None);
+
+        // Edit: x=7-12
+        assert_eq!(state.get_menu_at_position(&menus, 7), Some(1));
+        assert_eq!(state.get_menu_at_position(&menus, 10), Some(1));
+        assert_eq!(state.get_menu_at_position(&menus, 12), Some(1));
+
+        // Space between: x=13
+        assert_eq!(state.get_menu_at_position(&menus, 13), None);
+
+        // View: x=14-19
+        assert_eq!(state.get_menu_at_position(&menus, 14), Some(2));
+        assert_eq!(state.get_menu_at_position(&menus, 17), Some(2));
+        assert_eq!(state.get_menu_at_position(&menus, 19), Some(2));
+
+        // After View
+        assert_eq!(state.get_menu_at_position(&menus, 20), None);
+        assert_eq!(state.get_menu_at_position(&menus, 100), None);
+    }
+
+    #[test]
+    fn test_get_item_at_position() {
+        let state = MenuState::new();
+        let menus = create_test_menus();
+
+        // File menu has: New (0), Separator (1), Save (2), Quit (3)
+        // y=0: menu bar
+        // y=1: top border
+        // y=2: first item (New)
+        // y=3: second item (Separator)
+        // y=4: third item (Save)
+        // y=5: fourth item (Quit)
+        // y=6: bottom border
+
+        // y < 2 returns None
+        assert_eq!(state.get_item_at_position(&menus[0], 0), None);
+        assert_eq!(state.get_item_at_position(&menus[0], 1), None);
+
+        // y=2: New (index 0)
+        assert_eq!(state.get_item_at_position(&menus[0], 2), Some(0));
+
+        // y=3: Separator returns None
+        assert_eq!(state.get_item_at_position(&menus[0], 3), None);
+
+        // y=4: Save (index 2)
+        assert_eq!(state.get_item_at_position(&menus[0], 4), Some(2));
+
+        // y=5: Quit (index 3)
+        assert_eq!(state.get_item_at_position(&menus[0], 5), Some(3));
+
+        // Beyond items
+        assert_eq!(state.get_item_at_position(&menus[0], 6), None);
+        assert_eq!(state.get_item_at_position(&menus[0], 100), None);
+    }
+
+    #[test]
+    fn test_menu_config_json_parsing() {
+        let json = r#"{
+            "menus": [
+                {
+                    "label": "File",
+                    "items": [
+                        { "label": "New", "action": "new_file" },
+                        { "separator": true },
+                        { "label": "Save", "action": "save" }
+                    ]
+                }
+            ]
+        }"#;
+
+        let config: MenuConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.menus.len(), 1);
+        assert_eq!(config.menus[0].label, "File");
+        assert_eq!(config.menus[0].items.len(), 3);
+
+        match &config.menus[0].items[0] {
+            MenuItem::Action { label, action, .. } => {
+                assert_eq!(label, "New");
+                assert_eq!(action, "new_file");
+            }
+            _ => panic!("Expected Action"),
+        }
+
+        assert!(matches!(config.menus[0].items[1], MenuItem::Separator { .. }));
+
+        match &config.menus[0].items[2] {
+            MenuItem::Action { label, action, .. } => {
+                assert_eq!(label, "Save");
+                assert_eq!(action, "save");
+            }
+            _ => panic!("Expected Action"),
+        }
+    }
+
+    #[test]
+    fn test_menu_item_with_args() {
+        let json = r#"{
+            "label": "Go to Line",
+            "action": "goto_line",
+            "args": { "line": 42 }
+        }"#;
+
+        let item: MenuItem = serde_json::from_str(json).unwrap();
+        match item {
+            MenuItem::Action { label, action, args, .. } => {
+                assert_eq!(label, "Go to Line");
+                assert_eq!(action, "goto_line");
+                assert_eq!(args.get("line").unwrap().as_i64(), Some(42));
+            }
+            _ => panic!("Expected Action with args"),
+        }
+    }
+
+    #[test]
+    fn test_empty_menu_config() {
+        let json = r#"{ "menus": [] }"#;
+        let config: MenuConfig = serde_json::from_str(json).unwrap();
+        assert!(config.menus.is_empty());
+    }
+
+    #[test]
+    fn test_menu_mnemonic_lookup() {
+        use crate::config::Config;
+        use crate::keybindings::KeybindingResolver;
+
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        // Check that default Alt+letter bindings are configured
+        assert_eq!(resolver.find_menu_mnemonic("File"), Some('f'));
+        assert_eq!(resolver.find_menu_mnemonic("Edit"), Some('e'));
+        assert_eq!(resolver.find_menu_mnemonic("View"), Some('v'));
+        assert_eq!(resolver.find_menu_mnemonic("Selection"), Some('s'));
+        assert_eq!(resolver.find_menu_mnemonic("Go"), Some('g'));
+        assert_eq!(resolver.find_menu_mnemonic("Help"), Some('h'));
+
+        // Case-insensitive matching
+        assert_eq!(resolver.find_menu_mnemonic("file"), Some('f'));
+        assert_eq!(resolver.find_menu_mnemonic("FILE"), Some('f'));
+
+        // Non-existent menu should return None
+        assert_eq!(resolver.find_menu_mnemonic("NonExistent"), None);
+    }
+}
+
+
