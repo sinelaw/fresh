@@ -23,7 +23,9 @@
 /// └────────────────────┘      └──────────┴─────────┘
 ///  (horizontal split)          (mixed splits)
 /// ```
+use crate::cursor::Cursors;
 use crate::event::{BufferId, SplitDirection, SplitId};
+use crate::viewport::Viewport;
 use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
 
@@ -51,6 +53,33 @@ pub enum SplitNode {
         /// Unique ID for this split container
         split_id: SplitId,
     },
+}
+
+/// Per-split view state (independent of buffer content)
+///
+/// Following the Emacs model where each window (split) has its own:
+/// - Point (cursor position) - independent per split
+/// - Window-start (scroll position) - independent per split
+///
+/// This allows multiple splits to display the same buffer at different positions
+/// with independent cursor and scroll positions.
+#[derive(Debug, Clone)]
+pub struct SplitViewState {
+    /// Independent cursor set for this split (supports multi-cursor)
+    pub cursors: Cursors,
+
+    /// Independent scroll position for this split
+    pub viewport: Viewport,
+}
+
+impl SplitViewState {
+    /// Create a new split view state with default cursor at position 0
+    pub fn new(width: u16, height: u16) -> Self {
+        Self {
+            cursors: Cursors::new(),
+            viewport: Viewport::new(width, height),
+        }
+    }
 }
 
 impl SplitNode {

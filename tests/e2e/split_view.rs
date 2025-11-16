@@ -23,8 +23,8 @@ fn test_split_horizontal() {
     harness.render().unwrap();
     harness.assert_screen_contains("Split pane horizontally");
 
-    // New split should be empty
-    harness.assert_buffer_content("");
+    // New split should show the same buffer content (Emacs-style)
+    harness.assert_buffer_content("Buffer 1");
 }
 
 /// Test basic split view creation (vertical)
@@ -48,8 +48,8 @@ fn test_split_vertical() {
     harness.render().unwrap();
     harness.assert_screen_contains("Split pane vertically");
 
-    // New split should be empty
-    harness.assert_buffer_content("");
+    // New split should show the same buffer content (Emacs-style)
+    harness.assert_buffer_content("Buffer 1");
 }
 
 /// Test navigation between splits
@@ -67,9 +67,14 @@ fn test_split_navigation() {
     harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Now in second split, type different text
-    harness.type_text("Second buffer").unwrap();
-    harness.assert_buffer_content("Second buffer");
+    // Now in second split - it shows the same buffer content (Emacs-style)
+    // The cursor in the new split starts at position 0
+    harness.assert_buffer_content("First buffer");
+
+    // Move cursor to end and type more text
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.type_text(" - extended").unwrap();
+    harness.assert_buffer_content("First buffer - extended");
 
     // Navigate to next split via command palette
     harness

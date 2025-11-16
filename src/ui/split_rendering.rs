@@ -937,7 +937,11 @@ impl SplitRenderer {
             // cursor_screen_x is the column in the text content (NOT including gutter)
             // The gutter offset is added later when setting the hardware cursor
             cursor_screen_x = 0;
-            cursor_screen_y = (lines_rendered - 1) as u16;
+            cursor_screen_y = if lines_rendered > 0 {
+                (lines_rendered - 1) as u16
+            } else {
+                0
+            };
         }
 
         // Clear the area first to prevent rendering artifacts when switching buffers

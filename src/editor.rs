@@ -18,7 +18,7 @@ use crate::plugin_api::PluginCommand;
 use crate::plugin_manager::PluginManager;
 use crate::position_history::PositionHistory;
 use crate::prompt::{Prompt, PromptType};
-use crate::split::SplitManager;
+use crate::split::{SplitManager, SplitViewState};
 use crate::state::EditorState;
 use crate::ui::{
     FileExplorerRenderer, HelpRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer,
@@ -217,6 +217,11 @@ pub struct Editor {
 
     /// Split view manager
     split_manager: SplitManager,
+
+    /// Per-split view state (cursors and viewport for each split)
+    /// This allows multiple splits showing the same buffer to have independent
+    /// cursor positions and scroll positions
+    split_view_states: HashMap<SplitId, SplitViewState>,
 
     /// File explorer view (optional, only when open)
     file_explorer: Option<FileTreeView>,
@@ -465,6 +470,13 @@ impl Editor {
         // Initialize split manager with the initial buffer
         let split_manager = SplitManager::new(buffer_id);
 
+        // Initialize per-split view state for the initial split
+        let mut split_view_states = HashMap::new();
+        let initial_split_id = split_manager.active_split();
+        let mut initial_view_state = SplitViewState::new(width, height);
+        initial_view_state.viewport.line_wrap_enabled = config.editor.line_wrap;
+        split_view_states.insert(initial_split_id, initial_view_state);
+
         // Initialize filesystem manager for file explorer
         // Use provided backend or create default LocalFsBackend
         let fs_backend = fs_backend.unwrap_or_else(|| Arc::new(LocalFsBackend::new()));
@@ -514,6 +526,7 @@ impl Editor {
             tokio_runtime,
             async_bridge: Some(async_bridge),
             split_manager,
+            split_view_states,
             file_explorer: None,
             fs_manager,
             file_explorer_visible: false,
@@ -964,35 +977,61 @@ impl Editor {
 
     /// Split the current pane horizontally
     pub fn split_pane_horizontal(&mut self) {
-        // Create a new buffer for the new split
-        let new_buffer_id = self.new_buffer();
+        // Save current split's view state before creating a new one
+        self.save_current_split_view_state();
+
+        // Share the current buffer with the new split (Emacs-style)
+        let current_buffer_id = self.active_buffer;
 
         // Split the pane
-        if let Err(e) = self.split_manager.split_active(
+        match self.split_manager.split_active(
             crate::event::SplitDirection::Horizontal,
-            new_buffer_id,
+            current_buffer_id,
             0.5,
         ) {
-            self.set_status_message(format!("Error splitting pane: {}", e));
-        } else {
-            self.set_status_message("Split pane horizontally".to_string());
+            Ok(new_split_id) => {
+                // Create independent view state for the new split
+                let mut view_state =
+                    SplitViewState::new(self.terminal_width, self.terminal_height);
+                view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+                self.split_view_states.insert(new_split_id, view_state);
+                // Restore the new split's view state to the buffer
+                self.restore_current_split_view_state();
+                self.set_status_message("Split pane horizontally".to_string());
+            }
+            Err(e) => {
+                self.set_status_message(format!("Error splitting pane: {}", e));
+            }
         }
     }
 
     /// Split the current pane vertically
     pub fn split_pane_vertical(&mut self) {
-        // Create a new buffer for the new split
-        let new_buffer_id = self.new_buffer();
+        // Save current split's view state before creating a new one
+        self.save_current_split_view_state();
+
+        // Share the current buffer with the new split (Emacs-style)
+        let current_buffer_id = self.active_buffer;
 
         // Split the pane
-        if let Err(e) = self.split_manager.split_active(
+        match self.split_manager.split_active(
             crate::event::SplitDirection::Vertical,
-            new_buffer_id,
+            current_buffer_id,
             0.5,
         ) {
-            self.set_status_message(format!("Error splitting pane: {}", e));
-        } else {
-            self.set_status_message("Split pane vertically".to_string());
+            Ok(new_split_id) => {
+                // Create independent view state for the new split
+                let mut view_state =
+                    SplitViewState::new(self.terminal_width, self.terminal_height);
+                view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+                self.split_view_states.insert(new_split_id, view_state);
+                // Restore the new split's view state to the buffer
+                self.restore_current_split_view_state();
+                self.set_status_message("Split pane vertically".to_string());
+            }
+            Err(e) => {
+                self.set_status_message(format!("Error splitting pane: {}", e));
+            }
         }
     }
 
@@ -1001,6 +1040,8 @@ impl Editor {
         let active_split = self.split_manager.active_split();
         match self.split_manager.close_split(active_split) {
             Ok(_) => {
+                // Clean up the view state for the closed split
+                self.split_view_states.remove(&active_split);
                 self.set_status_message("Closed split".to_string());
             }
             Err(e) => {
@@ -1011,14 +1052,45 @@ impl Editor {
 
     /// Switch to next split
     pub fn next_split(&mut self) {
+        self.save_current_split_view_state();
         self.split_manager.next_split();
+        self.restore_current_split_view_state();
         self.set_status_message("Switched to next split".to_string());
     }
 
     /// Switch to previous split
     pub fn prev_split(&mut self) {
+        self.save_current_split_view_state();
         self.split_manager.prev_split();
+        self.restore_current_split_view_state();
         self.set_status_message("Switched to previous split".to_string());
+    }
+
+    /// Save the current split's cursor and viewport state
+    fn save_current_split_view_state(&mut self) {
+        let split_id = self.split_manager.active_split();
+        if let Some(buffer_state) = self.buffers.get(&self.active_buffer) {
+            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                view_state.cursors = buffer_state.cursors.clone();
+                view_state.viewport = buffer_state.viewport.clone();
+            }
+        }
+    }
+
+    /// Restore the current split's cursor and viewport state
+    fn restore_current_split_view_state(&mut self) {
+        let split_id = self.split_manager.active_split();
+        // Update active_buffer based on the new split's buffer
+        if let Some(buffer_id) = self.split_manager.active_buffer_id() {
+            self.active_buffer = buffer_id;
+        }
+        // Restore cursor and viewport from split view state
+        if let Some(view_state) = self.split_view_states.get(&split_id) {
+            if let Some(buffer_state) = self.buffers.get_mut(&self.active_buffer) {
+                buffer_state.cursors = view_state.cursors.clone();
+                buffer_state.viewport = view_state.viewport.clone();
+            }
+        }
     }
 
     /// Adjust the size of the active split

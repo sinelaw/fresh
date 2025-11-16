@@ -3,8 +3,8 @@ source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   Help                                                                             
- file1.txt   [No Name]                                                                                                  
-    1 │                                                                                                                █
+ file1.txt                                                                                                              
+    1 │ Content of file 1                                                                                              █
                                                                                                                        █
                                                                                                                        █
                                                                                                                        █
@@ -18,7 +18,7 @@ expression: "&screen_text"
                                                                                                                        █
                                                                                                                        █
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-    1 │                                                                                                                █
+    1 │ Content of file 1                                                                                              █
                                                                                                                        █
                                                                                                                        █
                                                                                                                        █
@@ -31,4 +31,4 @@ expression: "&screen_text"
                                                                                                                        █
                                                                                                                        █
                                                                                                                        █
-[No Name] | Ln 0, Col 0 | Split pane horizontally                                                          Help: Ctrl+/
+file1.txt | Ln 0, Col 0 | Split pane horizontally                                                          Help: Ctrl+/

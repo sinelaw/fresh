@@ -112,6 +112,7 @@ impl Cursor {
 }
 
 /// Collection of cursors with multi-cursor support
+#[derive(Debug, Clone)]
 pub struct Cursors {
     /// Map from cursor ID to cursor
     cursors: HashMap<CursorId, Cursor>,
