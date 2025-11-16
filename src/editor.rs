@@ -553,6 +553,11 @@ impl Editor {
         self.event_broadcaster.emit_named(name, data);
     }
 
+    /// Get all keybindings as (key, action) pairs
+    pub fn get_all_keybindings(&self) -> Vec<(String, String)> {
+        self.keybindings.get_all_bindings()
+    }
+
     /// Enable event log streaming to a file
     pub fn enable_event_streaming<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         // Enable streaming for all existing event logs

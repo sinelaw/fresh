@@ -143,6 +143,29 @@ Response:
 }
 ```
 
+#### `get_keybindings`
+Get all keyboard bindings (key combinations mapped to actions).
+
+```json
+{"type": "get_keybindings"}
+```
+
+Response:
+```json
+{
+  "type": "keybindings",
+  "bindings": [
+    {"key": "Ctrl+S", "action": "Save file"},
+    {"key": "Ctrl+Q", "action": "Quit editor"},
+    {"key": "Ctrl+F", "action": "Search for text in buffer"},
+    {"key": "Esc", "action": "[fileExplorer] Focus editor"},
+    {"key": "Enter", "action": "[menu] Execute selected menu item"}
+  ]
+}
+```
+
+Actions with context prefixes like `[menu]` or `[fileExplorer]` indicate keybindings that are only active in that specific mode.
+
 ### File Operations
 
 #### `open_file`

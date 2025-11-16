@@ -115,6 +115,9 @@ pub enum ScriptCommand {
         #[serde(default = "default_poll_interval")]
         poll_interval_ms: u64,
     },
+
+    /// Get all keyboard bindings
+    GetKeybindings,
 }
 
 /// Conditions that can be waited for
@@ -216,6 +219,21 @@ pub enum ScriptResponse {
         /// The Rust test code
         code: String,
     },
+
+    /// Keyboard bindings map
+    Keybindings {
+        /// Map of key combinations to action descriptions
+        bindings: Vec<KeybindingEntry>,
+    },
+}
+
+/// A single keybinding entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingEntry {
+    /// Key combination (e.g., "Ctrl+S", "Alt+F")
+    pub key: String,
+    /// Action description (e.g., "Save file", "[menu] Open File menu")
+    pub action: String,
 }
 
 /// Tracks interactions for test generation
@@ -391,6 +409,7 @@ impl ScriptControlMode {
                 timeout_ms,
                 poll_interval_ms,
             } => self.handle_wait_for(condition, timeout_ms, poll_interval_ms),
+            ScriptCommand::GetKeybindings => self.handle_get_keybindings(),
         }
     }
 
@@ -738,6 +757,16 @@ impl ScriptControlMode {
         Ok(ScriptResponse::TestCode { code })
     }
 
+    /// Handle get_keybindings command
+    fn handle_get_keybindings(&self) -> io::Result<ScriptResponse> {
+        let raw_bindings = self.editor.get_all_keybindings();
+        let bindings: Vec<KeybindingEntry> = raw_bindings
+            .into_iter()
+            .map(|(key, action)| KeybindingEntry { key, action })
+            .collect();
+        Ok(ScriptResponse::Keybindings { bindings })
+    }
+
     /// Handle wait_for command
     fn handle_wait_for(
         &mut self,
@@ -1041,6 +1070,19 @@ pub fn get_command_schema() -> String {
                     "test_name": "Name for the generated test function"
                 },
                 "example": {"type": "export_test", "test_name": "test_basic_editing"}
+            },
+            {
+                "type": "get_keybindings",
+                "description": "Get all keyboard bindings (key combinations mapped to actions)",
+                "example": {"type": "get_keybindings"},
+                "response_format": {
+                    "type": "keybindings",
+                    "bindings": [
+                        {"key": "Ctrl+S", "action": "Save file"},
+                        {"key": "Ctrl+Q", "action": "Quit"},
+                        {"key": "Alt+F", "action": "[menu] Open File menu"}
+                    ]
+                }
             },
             {
                 "type": "wait_for",
