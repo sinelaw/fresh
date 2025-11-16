@@ -158,10 +158,16 @@ local function show_panel()
         read_only = true,
         entries = entries,
         ratio = 0.7,
-        panel_id = "diagnostics"  -- Unique ID for idempotent updates
+        panel_id = "diagnostics",  -- Unique ID for idempotent updates
+        show_line_numbers = false,  -- Hide line numbers in diagnostics panel
+        show_cursors = false        -- Hide cursor in diagnostics panel
     })
 
+    -- Track the buffer ID (the panel is focused after creation)
+    panel_state.buffer_id = editor.get_active_buffer_id()
     panel_state.open = true
+    debug(string.format("Diagnostics panel buffer_id: %d", panel_state.buffer_id))
+
     editor.set_status(string.format("Diagnostics: %d items - use Up/Down to navigate, Enter to jump",
         #panel_state.diagnostics))
 end
@@ -169,6 +175,17 @@ end
 -- Toggle the diagnostics panel
 function toggle_diagnostics_panel()
     debug("Toggling diagnostics panel")
+
+    -- If panel is already open and we're currently in it, do nothing
+    if panel_state.open and panel_state.buffer_id then
+        local current_buffer_id = editor.get_active_buffer_id()
+        if current_buffer_id == panel_state.buffer_id then
+            debug("Already in diagnostics panel, doing nothing")
+            editor.set_status("Diagnostics panel already focused")
+            return
+        end
+    end
+
     show_panel()
 end
 
@@ -204,7 +221,9 @@ local function update_panel_display()
         read_only = true,
         entries = entries,
         ratio = 0.7,
-        panel_id = "diagnostics"
+        panel_id = "diagnostics",
+        show_line_numbers = false,  -- Keep line numbers hidden
+        show_cursors = false        -- Keep cursor hidden
     })
 end
 

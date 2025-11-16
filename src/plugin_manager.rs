@@ -827,7 +827,7 @@ impl PluginManager {
         // Clone API for next closure
         let api_clone = api.clone();
 
-        // editor.create_virtual_buffer_in_split({name = "*Diagnostics*", mode = "diagnostics-list", read_only = true, entries = {...}, ratio = 0.7, panel_id = "diagnostics"})
+        // editor.create_virtual_buffer_in_split({name = "*Diagnostics*", mode = "diagnostics-list", read_only = true, entries = {...}, ratio = 0.7, panel_id = "diagnostics", show_line_numbers = false, show_cursors = false})
         // Creates a virtual buffer in a horizontal split below the current pane
         // If panel_id is provided and panel exists, updates content instead of creating new split
         let create_virtual_buffer_in_split = lua.create_function(move |_lua, args: mlua::Table| {
@@ -838,6 +838,8 @@ impl PluginManager {
             let read_only: bool = args.get("read_only").unwrap_or(true);
             let ratio: f32 = args.get("ratio").unwrap_or(0.7);
             let panel_id: Option<String> = args.get("panel_id").ok();
+            let show_line_numbers: bool = args.get("show_line_numbers").unwrap_or(true);
+            let show_cursors: bool = args.get("show_cursors").unwrap_or(true);
             let entries_table: mlua::Table = args.get("entries")?;
 
             let mut entries = Vec::new();
@@ -866,7 +868,7 @@ impl PluginManager {
             }
 
             api_clone
-                .create_virtual_buffer_in_split(name, mode, read_only, entries, ratio, panel_id)
+                .create_virtual_buffer_in_split(name, mode, read_only, entries, ratio, panel_id, show_line_numbers, show_cursors)
                 .map_err(|e| mlua::Error::RuntimeError(e))
         })?;
         editor.set("create_virtual_buffer_in_split", create_virtual_buffer_in_split)?;

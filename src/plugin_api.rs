@@ -244,6 +244,10 @@ pub enum PluginCommand {
         ratio: f32,
         /// Optional panel ID for idempotent operations (if panel exists, update content)
         panel_id: Option<String>,
+        /// Whether to show line numbers in the buffer (default true)
+        show_line_numbers: bool,
+        /// Whether to show cursors in the buffer (default true)
+        show_cursors: bool,
     },
 
     /// Set the content of a virtual buffer with text properties
@@ -524,6 +528,8 @@ impl PluginApi {
         entries: Vec<crate::text_property::TextPropertyEntry>,
         ratio: f32,
         panel_id: Option<String>,
+        show_line_numbers: bool,
+        show_cursors: bool,
     ) -> Result<(), String> {
         self.send_command(PluginCommand::CreateVirtualBufferInSplit {
             name,
@@ -532,6 +538,8 @@ impl PluginApi {
             entries,
             ratio,
             panel_id,
+            show_line_numbers,
+            show_cursors,
         })
     }
 

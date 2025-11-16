@@ -3460,6 +3460,8 @@ impl Editor {
                 entries,
                 ratio,
                 panel_id,
+                show_line_numbers,
+                show_cursors,
             } => {
                 // Check if this panel already exists (for idempotent operations)
                 if let Some(pid) = &panel_id {
@@ -3485,6 +3487,18 @@ impl Editor {
                     mode,
                     buffer_id
                 );
+
+                // Apply view options to the buffer
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    state.margins.set_line_numbers(show_line_numbers);
+                    state.show_cursors = show_cursors;
+                    tracing::debug!(
+                        "Set buffer {:?} view options: show_line_numbers={}, show_cursors={}",
+                        buffer_id,
+                        show_line_numbers,
+                        show_cursors
+                    );
+                }
 
                 // Store the panel ID mapping if provided
                 if let Some(pid) = panel_id {

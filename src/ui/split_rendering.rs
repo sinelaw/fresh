@@ -385,13 +385,19 @@ impl SplitRenderer {
             .collect();
 
         // Collect all cursor positions (to avoid highlighting the cursor itself)
-        let cursor_positions: Vec<usize> = state
-            .cursors
-            .iter()
-            .map(|(_, cursor)| cursor.position)
-            .collect();
+        // If show_cursors is false (e.g., for virtual buffers), use an empty list
+        let cursor_positions: Vec<usize> = if state.show_cursors {
+            state
+                .cursors
+                .iter()
+                .map(|(_, cursor)| cursor.position)
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         // Get primary cursor position - we won't apply REVERSED to it to preserve terminal cursor visibility
+        // Even if show_cursors is false, we need to know where the primary cursor would be for viewport positioning
         let primary_cursor_position = state.cursors.primary().position;
 
         tracing::trace!(
@@ -1008,7 +1014,8 @@ impl SplitRenderer {
         frame.render_widget(paragraph, area);
 
         // Render cursor and log state (only for active split)
-        if is_active {
+        // Only show hardware cursor if show_cursors is true for this buffer
+        if is_active && state.show_cursors {
             // Use cursor position calculated during rendering (no need to call cursor_screen_position)
             let (x, y) = (cursor_screen_x, cursor_screen_y);
 

@@ -58,6 +58,10 @@ pub struct EditorState {
     /// Text properties for virtual buffers (embedded metadata in text ranges)
     /// Used by virtual buffers to store location info, severity, etc.
     pub text_properties: TextPropertyManager,
+
+    /// Whether to show cursors in this buffer (default true)
+    /// Can be set to false for virtual buffers like diagnostics panels
+    pub show_cursors: bool,
 }
 
 impl EditorState {
@@ -84,6 +88,7 @@ impl EditorState {
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
             text_properties: TextPropertyManager::new(),
+            show_cursors: true,
         }
     }
 
@@ -131,6 +136,7 @@ impl EditorState {
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
             mode: "insert".to_string(),
             text_properties: TextPropertyManager::new(),
+            show_cursors: true,
         })
     }
 
