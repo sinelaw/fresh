@@ -8,7 +8,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
-use fresh::{config, editor::Editor, signal_handler};
+use fresh::{config, editor::Editor, script_control::ScriptControlMode, signal_handler};
 use ratatui::Terminal;
 use std::{
     io::{self, stdout},
@@ -29,11 +29,38 @@ struct Args {
     /// Enable event logging to the specified file
     #[arg(long, value_name = "LOG_FILE")]
     event_log: Option<PathBuf>,
+
+    /// Enable script control mode (accepts JSON commands via stdin, outputs to stdout)
+    #[arg(long)]
+    script_mode: bool,
+
+    /// Terminal width for script control mode (default: 80)
+    #[arg(long, default_value = "80")]
+    script_width: u16,
+
+    /// Terminal height for script control mode (default: 24)
+    #[arg(long, default_value = "24")]
+    script_height: u16,
+
+    /// Print script control mode command schema and exit
+    #[arg(long)]
+    script_schema: bool,
 }
 
 fn main() -> io::Result<()> {
     // Parse command-line arguments
     let args = Args::parse();
+
+    // Handle --script-schema flag
+    if args.script_schema {
+        println!("{}", fresh::script_control::get_command_schema());
+        return Ok(());
+    }
+
+    // Handle script control mode
+    if args.script_mode {
+        return run_script_control_mode(&args);
+    }
 
     // Initialize tracing - log to a file to avoid interfering with terminal UI
     let log_file = std::fs::File::create("/tmp/editor.log").expect("Failed to create log file");
@@ -128,6 +155,25 @@ fn main() -> io::Result<()> {
     stdout().execute(LeaveAlternateScreen)?;
 
     result
+}
+
+/// Run the editor in script control mode
+fn run_script_control_mode(args: &Args) -> io::Result<()> {
+    // Create script control mode instance
+    let mut control = if let Some(path) = &args.file {
+        if path.is_dir() {
+            ScriptControlMode::with_working_dir(args.script_width, args.script_height, path.clone())?
+        } else {
+            let mut ctrl = ScriptControlMode::new(args.script_width, args.script_height)?;
+            // Open the file if provided
+            ctrl.open_file(path)?;
+            ctrl
+        }
+    } else {
+        ScriptControlMode::new(args.script_width, args.script_height)?
+    };
+
+    control.run()
 }
 
 /// Main event loop
