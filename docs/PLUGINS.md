@@ -314,6 +314,145 @@ editor.spawn("git", {"status", "--short"}, function(stdout, stderr, exit_code)
 end)
 ```
 
+### Menu API
+
+Plugins can dynamically add menus and menu items to the editor's menu bar. This is useful for adding domain-specific features (like Git operations) to the UI.
+
+#### `editor.add_menu(label, items, position)`
+
+Adds a new top-level menu to the menu bar.
+
+-   `label` (string): The label of the menu (e.g., "Git", "Tools").
+-   `items` (table): An array of menu items. Each item is either:
+    -   A table with `label` and `action` fields for action items
+    -   The string `"separator"` for a separator line
+    -   A table with `{separator = true}` for a separator
+-   `position` (string): Where to insert the menu:
+    -   `"top"`: At the beginning of the menu bar
+    -   `"bottom"`: At the end of the menu bar
+    -   `"before:Label"`: Before the menu with the specified label
+    -   `"after:Label"`: After the menu with the specified label
+
+**Example:**
+```lua
+-- Add a Git menu after the Go menu
+editor.add_menu("Git", {
+    { label = "Git Grep", action = "start_git_grep" },
+    { label = "Git Find File", action = "start_git_find_file" },
+    "separator",
+    { label = "Git Status", action = "git_status" },
+    { label = "Git Commit", action = "git_commit" },
+}, "after:Go")
+```
+
+#### `editor.add_menu_item(menu_label, item, position)`
+
+Adds a menu item to an existing menu.
+
+-   `menu_label` (string): The label of the target menu (e.g., "File", "Git").
+-   `item` (table): The menu item to add:
+    -   `{label = "...", action = "..."}` for an action item
+    -   `{separator = true}` for a separator
+-   `position` (string): Where to insert the item:
+    -   `"top"`: At the beginning of the menu
+    -   `"bottom"`: At the end of the menu
+    -   `"before:Label"`: Before the item with the specified label
+    -   `"after:Label"`: After the item with the specified label
+
+**Example:**
+```lua
+-- Add a "Recent Files" item after "Open File..." in the File menu
+editor.add_menu_item("File", {
+    label = "Recent Files",
+    action = "show_recent_files"
+}, "after:Open File...")
+
+-- Add a separator and new item to the Git menu
+editor.add_menu_item("Git", {separator = true}, "bottom")
+editor.add_menu_item("Git", {
+    label = "Git Push",
+    action = "git_push"
+}, "bottom")
+```
+
+#### `editor.remove_menu_item(menu_label, item_label)`
+
+Removes a menu item from a menu.
+
+-   `menu_label` (string): The label of the menu containing the item.
+-   `item_label` (string): The label of the item to remove.
+
+**Example:**
+```lua
+editor.remove_menu_item("File", "Recent Files")
+```
+
+#### `editor.remove_menu(menu_label)`
+
+Removes a top-level menu from the menu bar.
+
+**Note:** Only plugin-added menus can be removed. Built-in menus (File, Edit, View, etc.) cannot be removed.
+
+-   `menu_label` (string): The label of the menu to remove.
+
+**Example:**
+```lua
+editor.remove_menu("Git")
+```
+
+### Menu API Usage Pattern
+
+A common pattern for plugins is to add their features to a dedicated menu. Here's how the git-grep plugin does it:
+
+```lua
+-- git-grep.lua
+
+-- Register the command
+editor.register_command({
+    name = "Git Grep",
+    description = "Search for text in git-tracked files",
+    action = "start_git_grep",
+    contexts = {"normal"}
+})
+
+-- Define the global function
+function start_git_grep()
+    -- ... implementation
+end
+
+-- Add a Git menu with the Git Grep item
+editor.add_menu("Git", {
+    { label = "Git Grep", action = "start_git_grep" },
+}, "after:Go")
+```
+
+And a complementary plugin can add items to the same menu:
+
+```lua
+-- git-find-file.lua
+
+-- Register the command
+editor.register_command({
+    name = "Git Find File",
+    description = "Find and open a git-tracked file",
+    action = "start_git_find_file",
+    contexts = {"normal"}
+})
+
+-- Define the global function
+function start_git_find_file()
+    -- ... implementation
+end
+
+-- Add to the existing Git menu (created by git-grep)
+editor.add_menu_item("Git", {
+    label = "Git Find File",
+    action = "start_git_find_file"
+}, "after:Git Grep")
+```
+
+This pattern allows plugins to collaborate on shared menus while maintaining independence.
+
 ## Advanced Topics
 
 ### Performance Best Practices for Overlay Plugins

@@ -2713,6 +2713,185 @@ impl Editor {
                     };
                 }
             }
+            PluginCommand::AddMenuItem {
+                menu_label,
+                item,
+                position,
+            } => {
+                use crate::plugin_api::MenuPosition;
+
+                // Find the target menu (first in config menus, then plugin menus)
+                let target_menu = self
+                    .config
+                    .menu
+                    .menus
+                    .iter_mut()
+                    .find(|m| m.label == menu_label)
+                    .or_else(|| {
+                        self.menu_state
+                            .plugin_menus
+                            .iter_mut()
+                            .find(|m| m.label == menu_label)
+                    });
+
+                if let Some(menu) = target_menu {
+                    // Insert at the specified position
+                    let insert_idx = match position {
+                        MenuPosition::Top => 0,
+                        MenuPosition::Bottom => menu.items.len(),
+                        MenuPosition::Before(label) => menu
+                            .items
+                            .iter()
+                            .position(|i| match i {
+                                crate::config::MenuItem::Action { label: l, .. }
+                                | crate::config::MenuItem::Submenu { label: l, .. } => l == &label,
+                                _ => false,
+                            })
+                            .unwrap_or(menu.items.len()),
+                        MenuPosition::After(label) => menu
+                            .items
+                            .iter()
+                            .position(|i| match i {
+                                crate::config::MenuItem::Action { label: l, .. }
+                                | crate::config::MenuItem::Submenu { label: l, .. } => l == &label,
+                                _ => false,
+                            })
+                            .map(|i| i + 1)
+                            .unwrap_or(menu.items.len()),
+                    };
+
+                    menu.items.insert(insert_idx, item);
+                    tracing::info!(
+                        "Added menu item to '{}' at position {}",
+                        menu_label,
+                        insert_idx
+                    );
+                } else {
+                    tracing::warn!("Menu '{}' not found for adding item", menu_label);
+                }
+            }
+            PluginCommand::AddMenu { menu, position } => {
+                use crate::plugin_api::MenuPosition;
+
+                // Calculate insert index based on position
+                let total_menus =
+                    self.config.menu.menus.len() + self.menu_state.plugin_menus.len();
+
+                let insert_idx = match position {
+                    MenuPosition::Top => 0,
+                    MenuPosition::Bottom => total_menus,
+                    MenuPosition::Before(label) => {
+                        // Find in config menus first
+                        self.config
+                            .menu
+                            .menus
+                            .iter()
+                            .position(|m| m.label == label)
+                            .or_else(|| {
+                                // Then in plugin menus (offset by config menus count)
+                                self.menu_state
+                                    .plugin_menus
+                                    .iter()
+                                    .position(|m| m.label == label)
+                                    .map(|i| self.config.menu.menus.len() + i)
+                            })
+                            .unwrap_or(total_menus)
+                    }
+                    MenuPosition::After(label) => {
+                        // Find in config menus first
+                        self.config
+                            .menu
+                            .menus
+                            .iter()
+                            .position(|m| m.label == label)
+                            .map(|i| i + 1)
+                            .or_else(|| {
+                                // Then in plugin menus (offset by config menus count)
+                                self.menu_state
+                                    .plugin_menus
+                                    .iter()
+                                    .position(|m| m.label == label)
+                                    .map(|i| self.config.menu.menus.len() + i + 1)
+                            })
+                            .unwrap_or(total_menus)
+                    }
+                };
+
+                // If inserting before config menus end, we can't actually insert into config menus
+                // So we always add to plugin_menus, but position it logically
+                // For now, just append to plugin_menus (they appear after config menus)
+                let plugin_idx = if insert_idx >= self.config.menu.menus.len() {
+                    insert_idx - self.config.menu.menus.len()
+                } else {
+                    // Can't insert before config menus, so put at start of plugin menus
+                    0
+                };
+
+                self.menu_state
+                    .plugin_menus
+                    .insert(plugin_idx.min(self.menu_state.plugin_menus.len()), menu);
+                tracing::info!(
+                    "Added plugin menu at index {} (total menus: {})",
+                    plugin_idx,
+                    self.config.menu.menus.len() + self.menu_state.plugin_menus.len()
+                );
+            }
+            PluginCommand::RemoveMenuItem {
+                menu_label,
+                item_label,
+            } => {
+                // Find the target menu (first in config menus, then plugin menus)
+                let target_menu = self
+                    .config
+                    .menu
+                    .menus
+                    .iter_mut()
+                    .find(|m| m.label == menu_label)
+                    .or_else(|| {
+                        self.menu_state
+                            .plugin_menus
+                            .iter_mut()
+                            .find(|m| m.label == menu_label)
+                    });
+
+                if let Some(menu) = target_menu {
+                    // Remove item with matching label
+                    let original_len = menu.items.len();
+                    menu.items.retain(|item| match item {
+                        crate::config::MenuItem::Action { label, .. }
+                        | crate::config::MenuItem::Submenu { label, .. } => label != &item_label,
+                        _ => true, // Keep separators
+                    });
+
+                    if menu.items.len() < original_len {
+                        tracing::info!("Removed menu item '{}' from '{}'", item_label, menu_label);
+                    } else {
+                        tracing::warn!(
+                            "Menu item '{}' not found in '{}'",
+                            item_label,
+                            menu_label
+                        );
+                    }
+                } else {
+                    tracing::warn!("Menu '{}' not found for removing item", menu_label);
+                }
+            }
+            PluginCommand::RemoveMenu { menu_label } => {
+                // Can only remove plugin menus, not config menus
+                let original_len = self.menu_state.plugin_menus.len();
+                self.menu_state
+                    .plugin_menus
+                    .retain(|m| m.label != menu_label);
+
+                if self.menu_state.plugin_menus.len() < original_len {
+                    tracing::info!("Removed plugin menu '{}'", menu_label);
+                } else {
+                    tracing::warn!(
+                        "Plugin menu '{}' not found (note: cannot remove config menus)",
+                        menu_label
+                    );
+                }
+            }
         }
         Ok(())
     }

@@ -75,6 +75,19 @@ impl EditorStateSnapshot {
     }
 }
 
+/// Position for inserting menu items or menus
+#[derive(Debug, Clone)]
+pub enum MenuPosition {
+    /// Add at the beginning
+    Top,
+    /// Add at the end
+    Bottom,
+    /// Add before a specific label
+    Before(String),
+    /// Add after a specific label
+    After(String),
+}
+
 /// Plugin command - allows plugins to send commands to the editor
 #[derive(Debug, Clone)]
 pub enum PluginCommand {
@@ -154,6 +167,30 @@ pub enum PluginCommand {
     /// Uses the editor's Suggestion type
     SetPromptSuggestions {
         suggestions: Vec<crate::commands::Suggestion>,
+    },
+
+    /// Add a menu item to an existing menu
+    AddMenuItem {
+        menu_label: String,
+        item: crate::config::MenuItem,
+        position: MenuPosition,
+    },
+
+    /// Add a new top-level menu
+    AddMenu {
+        menu: crate::config::Menu,
+        position: MenuPosition,
+    },
+
+    /// Remove a menu item from a menu
+    RemoveMenuItem {
+        menu_label: String,
+        item_label: String,
+    },
+
+    /// Remove a top-level menu
+    RemoveMenu {
+        menu_label: String,
     },
 }
 
@@ -293,6 +330,46 @@ impl PluginApi {
         suggestions: Vec<crate::commands::Suggestion>,
     ) -> Result<(), String> {
         self.send_command(PluginCommand::SetPromptSuggestions { suggestions })
+    }
+
+    /// Add a menu item to an existing menu
+    pub fn add_menu_item(
+        &self,
+        menu_label: String,
+        item: crate::config::MenuItem,
+        position: MenuPosition,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::AddMenuItem {
+            menu_label,
+            item,
+            position,
+        })
+    }
+
+    /// Add a new top-level menu
+    pub fn add_menu(
+        &self,
+        menu: crate::config::Menu,
+        position: MenuPosition,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::AddMenu { menu, position })
+    }
+
+    /// Remove a menu item from a menu
+    pub fn remove_menu_item(
+        &self,
+        menu_label: String,
+        item_label: String,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::RemoveMenuItem {
+            menu_label,
+            item_label,
+        })
+    }
+
+    /// Remove a top-level menu
+    pub fn remove_menu(&self, menu_label: String) -> Result<(), String> {
+        self.send_command(PluginCommand::RemoveMenu { menu_label })
     }
 
     // === Query Methods ===
