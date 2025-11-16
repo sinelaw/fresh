@@ -2,13 +2,13 @@
 
 ## Remaining Work
 
-### Priority 0: Menu Bar System (MOSTLY COMPLETE ✅)
+### Priority 0: Menu Bar System (COMPLETE ✅)
 
 #### Feature: Top-Level Menu Bar with Keybinding Integration
 
 **Goal**: Add a discoverable menu bar above tabs that helps new users find features via standard conventions (File, Edit, View, etc.)
 
-**Status**: Core implementation complete (Phases 1-4), Plugin API pending (Phase 5)
+**Status**: Core implementation complete (Phases 1-5), Testing & Polish remaining (Phase 6 partial)
 
 **Architecture Overview**:
 
@@ -259,11 +259,13 @@ Go                      Help
   - [x] Alt+letter mnemonics (underlined letters in menu labels, dynamically configured via keybindings)
   - [x] `MenuOpen(String)` action for opening specific menus by name
 
-- [ ] **Phase 5: Plugin API**
-  - [ ] Add `PluginCommand::AddMenuItem` and `AddMenu`
-  - [ ] Implement runtime menu modification in `Editor`
-  - [ ] Add Lua bindings (`editor.add_menu_item()`, `editor.add_menu()`)
-  - [ ] Document plugin menu API in `docs/PLUGINS.md`
+- [x] **Phase 5: Plugin API** ✅
+  - [x] Add `PluginCommand::AddMenuItem` and `AddMenu`
+  - [x] Implement runtime menu modification in `Editor`
+  - [x] Add Lua bindings (`editor.add_menu_item()`, `editor.add_menu()`)
+  - [x] Document plugin menu API in `docs/PLUGINS.md`
+  - [x] Updated git-grep plugin to create Git menu
+  - [x] Updated git-find-file plugin to add items to Git menu
 
 - [x] **Phase 6: Testing & Polish** (Partial) ✅
   - [x] Unit tests for menu configuration parsing (16 tests)

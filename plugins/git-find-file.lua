@@ -252,6 +252,14 @@ end)
 -- Load git files on plugin initialization
 load_git_files()
 
+-- Add "Git Find File" to the Git menu (assumes git-grep creates the Git menu first)
+-- If the menu doesn't exist, this will log a warning but won't fail
+editor.add_menu_item("Git", {
+    label = "Git Find File",
+    action = "start_git_find_file"
+}, "after:Git Grep")
+
 -- Log that plugin loaded successfully
 debug("Git Find File plugin loaded successfully")
 debug("Usage: Call start_git_find_file() or use command palette 'Git Find File'")
+debug("Added 'Git Find File' item to Git menu")

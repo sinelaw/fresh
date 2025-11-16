@@ -166,6 +166,13 @@ editor.on("prompt-cancelled", function(args)
     return true
 end)
 
+-- Add Git menu with Git Grep item
+-- This demonstrates the new Plugin Menu API
+editor.add_menu("Git", {
+    { label = "Git Grep", action = "start_git_grep" },
+}, "after:Go")
+
 -- Log that plugin loaded successfully
 debug("Git Grep plugin loaded successfully")
 debug("Usage: Call start_git_grep() or use command palette 'Git Grep'")
+debug("Added 'Git' menu with 'Git Grep' item")

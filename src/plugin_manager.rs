@@ -579,6 +579,151 @@ impl PluginManager {
             })?;
         editor.set("set_prompt_suggestions", set_prompt_suggestions)?;
 
+        // Clone API for menu functions
+        let api_clone = api.clone();
+
+        // editor.add_menu_item(menu_label, item_table, position)
+        // Add a menu item to an existing menu
+        // item_table: {label = "...", action = "..."} or {separator = true}
+        // position: "top", "bottom", "before:Label", "after:Label"
+        let add_menu_item = lua.create_function(
+            move |_lua, (menu_label, item_table, position): (String, mlua::Table, String)| {
+                use crate::config::MenuItem;
+                use crate::plugin_api::MenuPosition;
+
+                // Parse the menu item from Lua table
+                let item = if item_table.contains_key("separator")? {
+                    MenuItem::Separator { separator: true }
+                } else {
+                    let label: String = item_table.get("label")?;
+                    let action: String = item_table.get("action")?;
+                    let args: std::collections::HashMap<String, serde_json::Value> =
+                        std::collections::HashMap::new();
+                    let when: Option<String> = None;
+                    MenuItem::Action {
+                        label,
+                        action,
+                        args,
+                        when,
+                    }
+                };
+
+                // Parse position string
+                let menu_position = if position == "top" {
+                    MenuPosition::Top
+                } else if position == "bottom" {
+                    MenuPosition::Bottom
+                } else if let Some(label) = position.strip_prefix("before:") {
+                    MenuPosition::Before(label.to_string())
+                } else if let Some(label) = position.strip_prefix("after:") {
+                    MenuPosition::After(label.to_string())
+                } else {
+                    return Err(mlua::Error::RuntimeError(format!(
+                        "Invalid position '{}'. Use 'top', 'bottom', 'before:Label', or 'after:Label'",
+                        position
+                    )));
+                };
+
+                api_clone
+                    .add_menu_item(menu_label, item, menu_position)
+                    .map_err(|e| mlua::Error::RuntimeError(e))
+            },
+        )?;
+        editor.set("add_menu_item", add_menu_item)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.add_menu(label, items_table, position)
+        // Add a new top-level menu
+        // items_table: array of item tables [{label = "...", action = "..."}, {separator = true}, ...]
+        // position: "top", "bottom", "before:Label", "after:Label"
+        let add_menu = lua.create_function(
+            move |_lua, (label, items_table, position): (String, mlua::Table, String)| {
+                use crate::config::{Menu, MenuItem};
+                use crate::plugin_api::MenuPosition;
+
+                // Parse items from Lua table
+                let mut items = Vec::new();
+                for pair in items_table.pairs::<usize, mlua::Value>() {
+                    let (_, value) = pair?;
+
+                    if let mlua::Value::String(s) = value {
+                        // String "separator" becomes a separator item
+                        if s.to_str()? == "separator" {
+                            items.push(MenuItem::Separator { separator: true });
+                        }
+                    } else if let mlua::Value::Table(item_table) = value {
+                        // Parse item table
+                        let item = if item_table.contains_key("separator")? {
+                            MenuItem::Separator { separator: true }
+                        } else {
+                            let label: String = item_table.get("label")?;
+                            let action: String = item_table.get("action")?;
+                            let args: std::collections::HashMap<String, serde_json::Value> =
+                                std::collections::HashMap::new();
+                            let when: Option<String> = None;
+                            MenuItem::Action {
+                                label,
+                                action,
+                                args,
+                                when,
+                            }
+                        };
+                        items.push(item);
+                    }
+                }
+
+                let menu = Menu { label, items };
+
+                // Parse position string
+                let menu_position = if position == "top" {
+                    MenuPosition::Top
+                } else if position == "bottom" {
+                    MenuPosition::Bottom
+                } else if let Some(label) = position.strip_prefix("before:") {
+                    MenuPosition::Before(label.to_string())
+                } else if let Some(label) = position.strip_prefix("after:") {
+                    MenuPosition::After(label.to_string())
+                } else {
+                    return Err(mlua::Error::RuntimeError(format!(
+                        "Invalid position '{}'. Use 'top', 'bottom', 'before:Label', or 'after:Label'",
+                        position
+                    )));
+                };
+
+                api_clone
+                    .add_menu(menu, menu_position)
+                    .map_err(|e| mlua::Error::RuntimeError(e))
+            },
+        )?;
+        editor.set("add_menu", add_menu)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.remove_menu_item(menu_label, item_label)
+        // Remove a menu item from a menu
+        let remove_menu_item =
+            lua.create_function(move |_, (menu_label, item_label): (String, String)| {
+                api_clone
+                    .remove_menu_item(menu_label, item_label)
+                    .map_err(|e| mlua::Error::RuntimeError(e))
+            })?;
+        editor.set("remove_menu_item", remove_menu_item)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.remove_menu(menu_label)
+        // Remove a top-level menu
+        let remove_menu = lua.create_function(move |_, menu_label: String| {
+            api_clone
+                .remove_menu(menu_label)
+                .map_err(|e| mlua::Error::RuntimeError(e))
+        })?;
+        editor.set("remove_menu", remove_menu)?;
+
         // NOTE: We intentionally do NOT provide a get_buffer_content() API
         // because it would materialize the entire buffer into memory, which
         // defeats the editor's streaming architecture for huge files (GB+).
@@ -1522,4 +1667,242 @@ mod tests {
         assert!(result.is_ok());
         assert!(result.unwrap().contains("spawn_with_cwd_called"));
     }
+
+    #[test]
+    fn test_add_menu_from_lua() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let mut manager = PluginManager::new(hooks, commands).unwrap();
+
+        let lua_code = r#"
+            editor.add_menu("Git", {
+                { label = "Git Grep", action = "start_git_grep" },
+                "separator",
+                { label = "Git Find File", action = "start_git_find_file" },
+            }, "bottom")
+        "#;
+
+        let result = manager.eval(lua_code);
+        assert!(result.is_ok(), "Failed to add menu: {:?}", result);
+
+        // Check that command was sent
+        let plugin_commands = manager.process_commands();
+        assert_eq!(plugin_commands.len(), 1);
+
+        match &plugin_commands[0] {
+            PluginCommand::AddMenu { menu, position } => {
+                assert_eq!(menu.label, "Git");
+                assert_eq!(menu.items.len(), 3);
+
+                match &menu.items[0] {
+                    crate::config::MenuItem::Action { label, action, .. } => {
+                        assert_eq!(label, "Git Grep");
+                        assert_eq!(action, "start_git_grep");
+                    }
+                    _ => panic!("Expected Action item"),
+                }
+
+                assert!(matches!(
+                    menu.items[1],
+                    crate::config::MenuItem::Separator { .. }
+                ));
+
+                match &menu.items[2] {
+                    crate::config::MenuItem::Action { label, action, .. } => {
+                        assert_eq!(label, "Git Find File");
+                        assert_eq!(action, "start_git_find_file");
+                    }
+                    _ => panic!("Expected Action item"),
+                }
+
+                match position {
+                    crate::plugin_api::MenuPosition::Bottom => {}
+                    _ => panic!("Expected Bottom position"),
+                }
+            }
+            _ => panic!("Wrong command type"),
+        }
+    }
+
+    #[test]
+    fn test_add_menu_item_from_lua() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let mut manager = PluginManager::new(hooks, commands).unwrap();
+
+        let lua_code = r#"
+            editor.add_menu_item("File", {
+                label = "Recent Files",
+                action = "show_recent_files"
+            }, "after:Open File...")
+        "#;
+
+        let result = manager.eval(lua_code);
+        assert!(result.is_ok(), "Failed to add menu item: {:?}", result);
+
+        // Check that command was sent
+        let plugin_commands = manager.process_commands();
+        assert_eq!(plugin_commands.len(), 1);
+
+        match &plugin_commands[0] {
+            PluginCommand::AddMenuItem {
+                menu_label,
+                item,
+                position,
+            } => {
+                assert_eq!(menu_label, "File");
+
+                match item {
+                    crate::config::MenuItem::Action { label, action, .. } => {
+                        assert_eq!(label, "Recent Files");
+                        assert_eq!(action, "show_recent_files");
+                    }
+                    _ => panic!("Expected Action item"),
+                }
+
+                match position {
+                    crate::plugin_api::MenuPosition::After(label) => {
+                        assert_eq!(label, "Open File...");
+                    }
+                    _ => panic!("Expected After position"),
+                }
+            }
+            _ => panic!("Wrong command type"),
+        }
+    }
+
+    #[test]
+    fn test_remove_menu_item_from_lua() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let mut manager = PluginManager::new(hooks, commands).unwrap();
+
+        let lua_code = r#"
+            editor.remove_menu_item("File", "Recent Files")
+        "#;
+
+        let result = manager.eval(lua_code);
+        assert!(result.is_ok(), "Failed to remove menu item: {:?}", result);
+
+        // Check that command was sent
+        let plugin_commands = manager.process_commands();
+        assert_eq!(plugin_commands.len(), 1);
+
+        match &plugin_commands[0] {
+            PluginCommand::RemoveMenuItem {
+                menu_label,
+                item_label,
+            } => {
+                assert_eq!(menu_label, "File");
+                assert_eq!(item_label, "Recent Files");
+            }
+            _ => panic!("Wrong command type"),
+        }
+    }
+
+    #[test]
+    fn test_remove_menu_from_lua() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let mut manager = PluginManager::new(hooks, commands).unwrap();
+
+        let lua_code = r#"
+            editor.remove_menu("Git")
+        "#;
+
+        let result = manager.eval(lua_code);
+        assert!(result.is_ok(), "Failed to remove menu: {:?}", result);
+
+        // Check that command was sent
+        let plugin_commands = manager.process_commands();
+        assert_eq!(plugin_commands.len(), 1);
+
+        match &plugin_commands[0] {
+            PluginCommand::RemoveMenu { menu_label } => {
+                assert_eq!(menu_label, "Git");
+            }
+            _ => panic!("Wrong command type"),
+        }
+    }
+
+    #[test]
+    fn test_add_menu_with_separator_string_from_lua() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let mut manager = PluginManager::new(hooks, commands).unwrap();
+
+        // Test that "separator" string is correctly parsed into MenuItem::Separator
+        let lua_code = r#"
+            editor.add_menu("Tools", {
+                { label = "Build", action = "build" },
+                "separator",
+                { label = "Test", action = "test" },
+            }, "after:View")
+        "#;
+
+        let result = manager.eval(lua_code);
+        assert!(result.is_ok());
+
+        let plugin_commands = manager.process_commands();
+        assert_eq!(plugin_commands.len(), 1);
+
+        match &plugin_commands[0] {
+            PluginCommand::AddMenu { menu, position } => {
+                assert_eq!(menu.label, "Tools");
+                assert_eq!(menu.items.len(), 3);
+                assert!(matches!(
+                    menu.items[1],
+                    crate::config::MenuItem::Separator { .. }
+                ));
+                match position {
+                    crate::plugin_api::MenuPosition::After(label) => {
+                        assert_eq!(label, "View");
+                    }
+                    _ => panic!("Expected After position"),
+                }
+            }
+            _ => panic!("Wrong command type"),
+        }
+    }
+
+    #[test]
+    fn test_add_menu_position_variants_from_lua() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+        let mut manager = PluginManager::new(hooks, commands).unwrap();
+
+        // Test top position
+        let result = manager.eval(r#"
+            editor.add_menu("Top", {{ label = "Item", action = "action" }}, "top")
+        "#);
+        assert!(result.is_ok());
+
+        let commands = manager.process_commands();
+        match &commands[0] {
+            PluginCommand::AddMenu { position, .. } => {
+                assert!(matches!(position, crate::plugin_api::MenuPosition::Top));
+            }
+            _ => panic!("Wrong command type"),
+        }
+
+        // Test before position
+        let result = manager.eval(r#"
+            editor.add_menu("Before", {{ label = "Item", action = "action" }}, "before:Help")
+        "#);
+        assert!(result.is_ok());
+
+        let commands = manager.process_commands();
+        match &commands[0] {
+            PluginCommand::AddMenu { position, .. } => {
+                match position {
+                    crate::plugin_api::MenuPosition::Before(label) => {
+                        assert_eq!(label, "Help");
+                    }
+                    _ => panic!("Expected Before position"),
+                }
+            }
+            _ => panic!("Wrong command type"),
+        }
+    }
 }
+
