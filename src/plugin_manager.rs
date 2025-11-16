@@ -724,6 +724,103 @@ impl PluginManager {
         })?;
         editor.set("remove_menu", remove_menu)?;
 
+        // === Virtual Buffer API ===
+
+        // Clone API for virtual buffer functions
+        let api_clone = api.clone();
+
+        // editor.create_virtual_buffer({name = "*Diagnostics*", mode = "diagnostics-list", read_only = true})
+        // Creates a virtual buffer (not backed by a file) with a specific mode
+        let create_virtual_buffer = lua.create_function(move |_lua, args: mlua::Table| {
+            let name: String = args.get("name")?;
+            let mode: String = args.get("mode")?;
+            let read_only: bool = args.get("read_only").unwrap_or(true);
+
+            api_clone
+                .create_virtual_buffer(name, mode, read_only)
+                .map_err(|e| mlua::Error::RuntimeError(e))
+        })?;
+        editor.set("create_virtual_buffer", create_virtual_buffer)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.set_virtual_buffer_content(buffer_id, entries)
+        // where entries is an array of {text = "...", properties = {...}}
+        let set_virtual_buffer_content = lua.create_function(
+            move |_lua, (buffer_id, entries_table): (usize, mlua::Table)| {
+                use crate::text_property::TextPropertyEntry;
+
+                let mut entries = Vec::new();
+
+                // Iterate through the Lua table (1-indexed)
+                for pair in entries_table.pairs::<usize, mlua::Table>() {
+                    let (_, entry_table) = pair?;
+
+                    let text: String = entry_table.get("text")?;
+                    let properties_table: Option<mlua::Table> = entry_table.get("properties").ok();
+
+                    let mut properties = std::collections::HashMap::new();
+                    if let Some(props) = properties_table {
+                        // Convert Lua table to HashMap<String, serde_json::Value>
+                        for pair in props.pairs::<String, mlua::Value>() {
+                            let (key, value) = pair?;
+                            let json_value = lua_value_to_json(value)?;
+                            properties.insert(key, json_value);
+                        }
+                    }
+
+                    entries.push(TextPropertyEntry {
+                        text,
+                        properties,
+                    });
+                }
+
+                api_clone
+                    .set_virtual_buffer_content(BufferId(buffer_id), entries)
+                    .map_err(|e| mlua::Error::RuntimeError(e))
+            },
+        )?;
+        editor.set("set_virtual_buffer_content", set_virtual_buffer_content)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.define_mode({name = "diagnostics-list", parent = "special", bindings = {...}, read_only = true})
+        // Define a buffer mode with keybindings
+        let define_mode = lua.create_function(move |_lua, args: mlua::Table| {
+            let name: String = args.get("name")?;
+            let parent: Option<String> = args.get("parent").ok();
+            let bindings_table: Option<mlua::Table> = args.get("bindings").ok();
+            let read_only: bool = args.get("read_only").unwrap_or(false);
+
+            let mut bindings = Vec::new();
+            if let Some(bindings_tbl) = bindings_table {
+                // Format: {["RET"] = "command-name", ["n"] = "next-line", ...}
+                for pair in bindings_tbl.pairs::<String, String>() {
+                    let (key, command) = pair?;
+                    bindings.push((key, command));
+                }
+            }
+
+            api_clone
+                .define_mode(name, parent, bindings, read_only)
+                .map_err(|e| mlua::Error::RuntimeError(e))
+        })?;
+        editor.set("define_mode", define_mode)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.show_buffer(buffer_id)
+        // Switch the current split to display a buffer
+        let show_buffer = lua.create_function(move |_, buffer_id: usize| {
+            api_clone
+                .show_buffer(BufferId(buffer_id))
+                .map_err(|e| mlua::Error::RuntimeError(e))
+        })?;
+        editor.set("show_buffer", show_buffer)?;
+
         // NOTE: We intentionally do NOT provide a get_buffer_content() API
         // because it would materialize the entire buffer into memory, which
         // defeats the editor's streaming architecture for huge files (GB+).
@@ -1152,6 +1249,65 @@ impl PluginManager {
     /// Get access to the state snapshot for updating (used by Editor)
     pub fn state_snapshot_handle(&self) -> Arc<RwLock<EditorStateSnapshot>> {
         self.plugin_api.state_snapshot_handle()
+    }
+}
+
+/// Convert a Lua value to a serde_json::Value
+///
+/// This is used for passing arbitrary Lua tables to Rust code
+/// (e.g., text property metadata).
+fn lua_value_to_json(value: mlua::Value) -> Result<serde_json::Value, mlua::Error> {
+    match value {
+        mlua::Value::Nil => Ok(serde_json::Value::Null),
+        mlua::Value::Boolean(b) => Ok(serde_json::Value::Bool(b)),
+        mlua::Value::Integer(i) => Ok(serde_json::Value::Number(i.into())),
+        mlua::Value::Number(n) => {
+            if let Some(num) = serde_json::Number::from_f64(n) {
+                Ok(serde_json::Value::Number(num))
+            } else {
+                Ok(serde_json::Value::Null)
+            }
+        }
+        mlua::Value::String(s) => Ok(serde_json::Value::String(s.to_str()?.to_string())),
+        mlua::Value::Table(t) => {
+            // Check if it's an array (sequential integer keys starting from 1)
+            let is_array = {
+                let len = t.raw_len();
+                if len == 0 {
+                    // Could be empty array or empty object, treat as object
+                    false
+                } else {
+                    // Check if all keys from 1 to len exist
+                    let mut is_seq = true;
+                    for i in 1..=len {
+                        if t.raw_get::<mlua::Value>(i).is_err() {
+                            is_seq = false;
+                            break;
+                        }
+                    }
+                    is_seq
+                }
+            };
+
+            if is_array {
+                let mut arr = Vec::new();
+                for pair in t.pairs::<usize, mlua::Value>() {
+                    let (_, v) = pair?;
+                    arr.push(lua_value_to_json(v)?);
+                }
+                Ok(serde_json::Value::Array(arr))
+            } else {
+                let mut obj = serde_json::Map::new();
+                for pair in t.pairs::<String, mlua::Value>() {
+                    let (k, v) = pair?;
+                    obj.insert(k, lua_value_to_json(v)?);
+                }
+                Ok(serde_json::Value::Object(obj))
+            }
+        }
+        _ => Err(mlua::Error::RuntimeError(
+            "Unsupported Lua value type for JSON conversion".to_string(),
+        )),
     }
 }
 

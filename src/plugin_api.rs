@@ -192,6 +192,41 @@ pub enum PluginCommand {
     RemoveMenu {
         menu_label: String,
     },
+
+    /// Create a new virtual buffer (not backed by a file)
+    CreateVirtualBuffer {
+        /// Display name (e.g., "*Diagnostics*")
+        name: String,
+        /// Mode name for buffer-local keybindings (e.g., "diagnostics-list")
+        mode: String,
+        /// Whether the buffer is read-only
+        read_only: bool,
+    },
+
+    /// Set the content of a virtual buffer with text properties
+    SetVirtualBufferContent {
+        buffer_id: BufferId,
+        /// Entries with text and embedded properties
+        entries: Vec<crate::text_property::TextPropertyEntry>,
+    },
+
+    /// Get text properties at the cursor position in a buffer
+    GetTextPropertiesAtCursor {
+        buffer_id: BufferId,
+    },
+
+    /// Define a buffer mode with keybindings
+    DefineMode {
+        name: String,
+        parent: Option<String>,
+        bindings: Vec<(String, String)>, // (key_string, command_name)
+        read_only: bool,
+    },
+
+    /// Switch the current split to display a buffer
+    ShowBuffer {
+        buffer_id: BufferId,
+    },
 }
 
 /// Plugin API context - provides safe access to editor functionality
@@ -370,6 +405,67 @@ impl PluginApi {
     /// Remove a top-level menu
     pub fn remove_menu(&self, menu_label: String) -> Result<(), String> {
         self.send_command(PluginCommand::RemoveMenu { menu_label })
+    }
+
+    // === Virtual Buffer Methods ===
+
+    /// Create a new virtual buffer (not backed by a file)
+    ///
+    /// Virtual buffers are used for special displays like diagnostic lists,
+    /// search results, etc. They have their own mode for keybindings.
+    pub fn create_virtual_buffer(
+        &self,
+        name: String,
+        mode: String,
+        read_only: bool,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::CreateVirtualBuffer {
+            name,
+            mode,
+            read_only,
+        })
+    }
+
+    /// Set the content of a virtual buffer with text properties
+    ///
+    /// Each entry contains text and metadata properties (e.g., source location).
+    pub fn set_virtual_buffer_content(
+        &self,
+        buffer_id: BufferId,
+        entries: Vec<crate::text_property::TextPropertyEntry>,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::SetVirtualBufferContent { buffer_id, entries })
+    }
+
+    /// Get text properties at cursor position in a buffer
+    ///
+    /// This triggers a command that will make properties available to plugins.
+    pub fn get_text_properties_at_cursor(&self, buffer_id: BufferId) -> Result<(), String> {
+        self.send_command(PluginCommand::GetTextPropertiesAtCursor { buffer_id })
+    }
+
+    /// Define a buffer mode with keybindings
+    ///
+    /// Modes can inherit from parent modes (e.g., "diagnostics-list" inherits from "special").
+    /// Bindings are specified as (key_string, command_name) pairs.
+    pub fn define_mode(
+        &self,
+        name: String,
+        parent: Option<String>,
+        bindings: Vec<(String, String)>,
+        read_only: bool,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::DefineMode {
+            name,
+            parent,
+            bindings,
+            read_only,
+        })
+    }
+
+    /// Switch the current split to display a buffer
+    pub fn show_buffer(&self, buffer_id: BufferId) -> Result<(), String> {
+        self.send_command(PluginCommand::ShowBuffer { buffer_id })
     }
 
     // === Query Methods ===
