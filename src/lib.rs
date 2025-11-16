@@ -2,6 +2,7 @@
 
 pub mod actions;
 pub mod async_bridge;
+pub mod buffer_mode;
 pub mod command_registry;
 pub mod commands;
 pub mod config;
