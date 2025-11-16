@@ -203,6 +203,20 @@ pub enum PluginCommand {
         read_only: bool,
     },
 
+    /// Create a virtual buffer and set its content in one operation
+    /// This is preferred over CreateVirtualBuffer + SetVirtualBufferContent
+    /// because it doesn't require tracking the buffer ID
+    CreateVirtualBufferWithContent {
+        /// Display name (e.g., "*Diagnostics*")
+        name: String,
+        /// Mode name for buffer-local keybindings (e.g., "diagnostics-list")
+        mode: String,
+        /// Whether the buffer is read-only
+        read_only: bool,
+        /// Entries with text and embedded properties
+        entries: Vec<crate::text_property::TextPropertyEntry>,
+    },
+
     /// Set the content of a virtual buffer with text properties
     SetVirtualBufferContent {
         buffer_id: BufferId,
@@ -423,6 +437,26 @@ impl PluginApi {
             name,
             mode,
             read_only,
+        })
+    }
+
+    /// Create a virtual buffer and set its content in one operation
+    ///
+    /// This is the preferred way to create virtual buffers since it doesn't
+    /// require tracking the buffer ID. The buffer is created and populated
+    /// atomically.
+    pub fn create_virtual_buffer_with_content(
+        &self,
+        name: String,
+        mode: String,
+        read_only: bool,
+        entries: Vec<crate::text_property::TextPropertyEntry>,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::CreateVirtualBufferWithContent {
+            name,
+            mode,
+            read_only,
+            entries,
         })
     }
 

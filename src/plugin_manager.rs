@@ -745,6 +745,50 @@ impl PluginManager {
         // Clone API for next closure
         let api_clone = api.clone();
 
+        // editor.create_virtual_buffer_with_content({name = "*Diagnostics*", mode = "diagnostics-list", read_only = true, entries = {...}})
+        // Creates a virtual buffer AND sets its content in one operation (preferred API)
+        let create_virtual_buffer_with_content = lua.create_function(move |_lua, args: mlua::Table| {
+            use crate::text_property::TextPropertyEntry;
+
+            let name: String = args.get("name")?;
+            let mode: String = args.get("mode")?;
+            let read_only: bool = args.get("read_only").unwrap_or(true);
+            let entries_table: mlua::Table = args.get("entries")?;
+
+            let mut entries = Vec::new();
+
+            // Iterate through the Lua table (1-indexed)
+            for pair in entries_table.pairs::<usize, mlua::Table>() {
+                let (_, entry_table) = pair?;
+
+                let text: String = entry_table.get("text")?;
+                let properties_table: Option<mlua::Table> = entry_table.get("properties").ok();
+
+                let mut properties = std::collections::HashMap::new();
+                if let Some(props) = properties_table {
+                    // Convert Lua table to HashMap<String, serde_json::Value>
+                    for pair in props.pairs::<String, mlua::Value>() {
+                        let (key, value) = pair?;
+                        let json_value = lua_value_to_json(value)?;
+                        properties.insert(key, json_value);
+                    }
+                }
+
+                entries.push(TextPropertyEntry {
+                    text,
+                    properties,
+                });
+            }
+
+            api_clone
+                .create_virtual_buffer_with_content(name, mode, read_only, entries)
+                .map_err(|e| mlua::Error::RuntimeError(e))
+        })?;
+        editor.set("create_virtual_buffer_with_content", create_virtual_buffer_with_content)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
         // editor.set_virtual_buffer_content(buffer_id, entries)
         // where entries is an array of {text = "...", properties = {...}}
         let set_virtual_buffer_content = lua.create_function(
