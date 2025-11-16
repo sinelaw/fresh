@@ -231,6 +231,12 @@ enum LspCommand {
         new_name: String,
     },
 
+    /// Cancel a pending request
+    CancelRequest {
+        /// Editor's request ID to cancel
+        request_id: u64,
+    },
+
     /// Shutdown the server
     Shutdown,
 }
@@ -257,6 +263,10 @@ struct LspState {
 
     /// Language ID (for error reporting)
     language: String,
+
+    /// Mapping from editor request_id to LSP JSON-RPC id for cancellation
+    /// Key: editor request_id, Value: LSP JSON-RPC id
+    active_requests: HashMap<u64, i64>,
 }
 
 impl LspState {
@@ -305,8 +315,30 @@ impl LspState {
         params: Option<P>,
         pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
     ) -> Result<R, String> {
+        self.send_request_sequential_tracked(method, params, pending, None)
+            .await
+    }
+
+    /// Send request using shared pending map with optional editor request tracking
+    async fn send_request_sequential_tracked<P: Serialize, R: for<'de> Deserialize<'de>>(
+        &mut self,
+        method: &str,
+        params: Option<P>,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+        editor_request_id: Option<u64>,
+    ) -> Result<R, String> {
         let id = self.next_id;
         self.next_id += 1;
+
+        // Track the mapping if editor_request_id is provided
+        if let Some(editor_id) = editor_request_id {
+            self.active_requests.insert(editor_id, id);
+            tracing::debug!(
+                "Tracking request: editor_id={}, lsp_id={}",
+                editor_id,
+                id
+            );
+        }
 
         let request = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -328,6 +360,16 @@ impl LspState {
             .map_err(|_| "Response channel closed".to_string())??;
 
         tracing::debug!("Received LSP response for request id={}", id);
+
+        // Remove tracking after response received
+        if let Some(editor_id) = editor_request_id {
+            self.active_requests.remove(&editor_id);
+            tracing::debug!(
+                "Completed request: editor_id={}, lsp_id={}",
+                editor_id,
+                id
+            );
+        }
 
         serde_json::from_value(result).map_err(|e| format!("Failed to deserialize response: {}", e))
     }
@@ -484,9 +526,14 @@ impl LspState {
             context: None,
         };
 
-        // Send request and get response
+        // Send request and get response (tracked for cancellation)
         match self
-            .send_request_sequential::<_, Value>("textDocument/completion", Some(params), pending)
+            .send_request_sequential_tracked::<_, Value>(
+                "textDocument/completion",
+                Some(params),
+                pending,
+                Some(request_id),
+            )
             .await
         {
             Ok(result) => {
@@ -690,7 +737,39 @@ impl LspState {
 
         self.write_message(&exit).await
     }
+
+    /// Send a cancel request notification to the server
+    async fn send_cancel_request(&mut self, lsp_id: i64) -> Result<(), String> {
+        tracing::debug!("Sending $/cancelRequest for LSP id {}", lsp_id);
+
+        let notification = JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "$/cancelRequest".to_string(),
+            params: Some(serde_json::json!({ "id": lsp_id })),
+        };
+
+        self.write_message(&notification).await
+    }
+
+    /// Cancel a request by editor request_id
+    async fn handle_cancel_request(&mut self, request_id: u64) -> Result<(), String> {
+        if let Some(lsp_id) = self.active_requests.remove(&request_id) {
+            tracing::info!(
+                "Cancelling request: editor_id={}, lsp_id={}",
+                request_id,
+                lsp_id
+            );
+            self.send_cancel_request(lsp_id).await
+        } else {
+            tracing::debug!(
+                "Cancel request ignored: no active LSP request for editor_id={}",
+                request_id
+            );
+            Ok(())
+        }
+    }
 }
+
 
 /// Async LSP task that handles all I/O
 struct LspTask {
@@ -829,6 +908,7 @@ impl LspTask {
             initialized: self.initialized,
             async_tx: self.async_tx.clone(),
             language: self.language.clone(),
+            active_requests: HashMap::new(),
         };
 
         // Move stdout out, share pending
@@ -1079,6 +1159,13 @@ impl LspTask {
                                     result: Err("LSP not initialized".to_string()),
                                 });
                             }
+                        }
+                        LspCommand::CancelRequest { request_id } => {
+                            tracing::info!(
+                                "Processing CancelRequest for editor_id={}",
+                                request_id
+                            );
+                            let _ = state.handle_cancel_request(request_id).await;
                         }
                         LspCommand::Shutdown => {
                             tracing::info!("Processing Shutdown command");
@@ -2149,6 +2236,16 @@ impl LspHandle {
                 new_name,
             })
             .map_err(|_| "Failed to send rename command".to_string())
+    }
+
+    /// Cancel a pending request by its editor request_id
+    ///
+    /// This sends a $/cancelRequest notification to the LSP server.
+    /// If the request has already completed or doesn't exist, this is a no-op.
+    pub fn cancel_request(&self, request_id: u64) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::CancelRequest { request_id })
+            .map_err(|_| "Failed to send cancel_request command".to_string())
     }
 
     /// Shutdown the server
