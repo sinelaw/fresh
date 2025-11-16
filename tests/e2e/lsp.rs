@@ -1901,3 +1901,153 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Test that LSP progress notifications are displayed in the status bar
+///
+/// This test uses a fake LSP server that sends progress notifications (begin, report, end)
+/// and verifies that the status bar displays the progress information correctly.
+#[test]
+fn test_lsp_progress_status_display() -> std::io::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+
+    // Create a fake LSP server that sends progress notifications
+    let _fake_server = FakeLspServer::spawn_with_progress()?;
+
+    // Create temporary directory and test file
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {\n    println!(\"Hello\");\n}\n")?;
+
+    // Configure editor to use the progress fake LSP server
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::lsp::LspServerConfig {
+            command: FakeLspServer::progress_script_path()
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            process_limits: fresh::process_limits::ProcessLimits::default(),
+        },
+    );
+
+    // Create harness with config and working directory
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120, // Wider terminal to see full status
+        24,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    // Open the file (triggers LSP initialization)
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Track progress messages we've seen
+    let mut seen_begin = false;
+    let mut seen_report = false;
+    let mut seen_end = false;
+    let mut progress_titles = Vec::new();
+    let mut progress_messages = Vec::new();
+    let mut seen_status_bar_progress = false;
+
+    // Poll for progress notifications
+    for i in 0..30 {
+        // Wait up to 3 seconds
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Process async messages from LSP
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render()?;
+
+        // Check LSP progress state
+        let has_progress = harness.editor().has_active_lsp_progress();
+        let progress = harness.editor().get_lsp_progress();
+
+        if has_progress && !progress.is_empty() {
+            for (_token, title, message) in &progress {
+                if !progress_titles.contains(title) {
+                    progress_titles.push(title.clone());
+                    eprintln!("  [{:3}ms] Progress: {}", i * 100, title);
+                }
+                if let Some(msg) = message {
+                    if !progress_messages.contains(msg) {
+                        progress_messages.push(msg.clone());
+                        eprintln!("    Message: {}", msg);
+                    }
+                }
+            }
+            seen_begin = true;
+        } else if seen_begin {
+            // Progress ended
+            seen_end = true;
+            eprintln!("  [{:3}ms] Progress ended", i * 100);
+            break;
+        }
+
+        // Check the status bar for progress display
+        let screen = harness.screen_to_string();
+        if screen.contains("Indexing") || screen.contains("Loading") || screen.contains("Building")
+        {
+            seen_report = true;
+        }
+        // Check if status bar shows "LSP (rust):" which indicates progress is being rendered
+        if screen.contains("LSP (rust):") {
+            if !seen_status_bar_progress {
+                eprintln!("  [{:3}ms] Status bar shows LSP progress", i * 100);
+            }
+            seen_status_bar_progress = true;
+        }
+    }
+
+    // Verify we saw progress notifications
+    assert!(
+        seen_begin,
+        "Should have received progress begin notification"
+    );
+
+    // Verify we saw the expected progress titles
+    assert!(
+        progress_titles.contains(&"Indexing".to_string()),
+        "Should see 'Indexing' in progress titles. Got: {:?}",
+        progress_titles
+    );
+
+    // Verify we saw progress messages
+    assert!(
+        !progress_messages.is_empty(),
+        "Should have seen progress messages"
+    );
+    assert!(
+        progress_messages.iter().any(|m| m.contains("Loading")
+            || m.contains("Analyzing")
+            || m.contains("Building")
+            || m.contains("Finalizing")),
+        "Should see progress updates. Got: {:?}",
+        progress_messages
+    );
+
+    // Verify progress ended
+    assert!(seen_end, "Progress should have ended");
+
+    // After progress ends, there should be no active progress
+    let final_progress = harness.editor().has_active_lsp_progress();
+    assert!(
+        !final_progress,
+        "Should have no active progress after completion"
+    );
+
+    // Verify status bar rendering
+    assert!(
+        seen_status_bar_progress,
+        "Status bar should have displayed LSP progress (e.g., 'LSP (rust): Indexing')"
+    );
+
+    eprintln!("\n✅ SUCCESS: LSP progress notifications received and processed!");
+    eprintln!("   Titles: {:?}", progress_titles);
+    eprintln!("   Messages: {:?}", progress_messages);
+    eprintln!("   Status bar rendering: ✓");
+
+    Ok(())
+}

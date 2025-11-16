@@ -8,6 +8,7 @@ use crate::file_tree::{FileTree, FileTreeView};
 use crate::fs::{FsBackend, FsManager, LocalFsBackend};
 use crate::hooks::HookRegistry;
 use crate::keybindings::{Action, KeyContext, KeybindingResolver};
+use crate::lsp::{LspServerConfig};
 use crate::lsp_diagnostics;
 use crate::lsp_manager::{detect_language, LspManager};
 use crate::multi_cursor::{
@@ -569,6 +570,13 @@ impl Editor {
             .iter()
             .map(|(token, info)| (token.clone(), info.title.clone(), info.message.clone()))
             .collect()
+    }
+
+    /// Configure LSP server for a specific language
+    pub fn set_lsp_config(&mut self, language: String, config: LspServerConfig) {
+        if let Some(ref mut lsp) = self.lsp {
+            lsp.set_language_config(language, config);
+        }
     }
 
     /// Enable event log streaming to a file

@@ -342,6 +342,123 @@ done
         std::env::temp_dir().join("fake_lsp_server_many_diags.sh")
     }
 
+    /// Spawn a fake LSP server that sends progress notifications
+    ///
+    /// This version sends progress notifications (begin, report, end) after initialization.
+    /// This is useful for testing LSP progress display in the status bar.
+    pub fn spawn_with_progress() -> std::io::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        // Create a Bash script that sends progress notifications
+        let script = r#"#!/bin/bash
+
+# Function to read a message
+read_message() {
+    # Read headers
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        # Empty line marks end of headers
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+
+    # Read content
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+# Function to send a message
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+
+# Main loop
+while true; do
+    # Read incoming message
+    msg=$(read_message)
+
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    # Extract method from JSON
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+    case "$method" in
+        "initialize")
+            # Send initialize response with workDoneProgress support
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"textDocumentSync":1}}}'
+            ;;
+        "initialized")
+            # After initialized notification, send progress notifications
+            # Send progress begin
+            send_message '{"jsonrpc":"2.0","method":"$/progress","params":{"token":"indexing-1","value":{"kind":"begin","title":"Indexing","message":"Loading workspace","percentage":0}}}'
+
+            # Small delay to simulate work
+            sleep 0.1
+
+            # Send progress report (25%)
+            send_message '{"jsonrpc":"2.0","method":"$/progress","params":{"token":"indexing-1","value":{"kind":"report","message":"Analyzing dependencies","percentage":25}}}'
+
+            sleep 0.1
+
+            # Send progress report (50%)
+            send_message '{"jsonrpc":"2.0","method":"$/progress","params":{"token":"indexing-1","value":{"kind":"report","message":"Building index","percentage":50}}}'
+
+            sleep 0.1
+
+            # Send progress report (75%)
+            send_message '{"jsonrpc":"2.0","method":"$/progress","params":{"token":"indexing-1","value":{"kind":"report","message":"Finalizing","percentage":75}}}'
+
+            sleep 0.1
+
+            # Send progress end
+            send_message '{"jsonrpc":"2.0","method":"$/progress","params":{"token":"indexing-1","value":{"kind":"end","message":"Done"}}}'
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+            break
+            ;;
+    esac
+done
+"#;
+
+        // Write script to a temporary file
+        let script_path = std::env::temp_dir().join("fake_lsp_server_progress.sh");
+        std::fs::write(&script_path, script)?;
+
+        // Make it executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            // Wait for stop signal
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Get the path to the progress fake LSP server script
+    pub fn progress_script_path() -> std::path::PathBuf {
+        std::env::temp_dir().join("fake_lsp_server_progress.sh")
+    }
+
     /// Stop the server
     pub fn stop(&mut self) {
         let _ = self.stop_tx.send(());
