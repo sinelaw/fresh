@@ -4,13 +4,13 @@ expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   Help                                     
  [No Name]*   ┌──────────────────────────────────────┐                          
-    1 │ Hello, World!                                                          █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
+    1 │ Hello,│ Toggle File Explorer           Ctrl+B│                         █
+              │ ─────────────────────────────────────│                         █
+              │ Split Horizontal                Alt+H│                         █
+              │ Split Vertical                  Alt+V│                         █
+              │ Close Split                     Alt+X│                         █
+              │ Focus Next Split                     │                         █
+              └──────────────────────────────────────┘                         █
                                                                                █
                                                                                █
                                                                                █

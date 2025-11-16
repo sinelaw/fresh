@@ -5278,16 +5278,6 @@ impl Editor {
             editor_content_area = vertical_chunks[1];
         }
 
-        // Render menu bar
-        crate::ui::MenuRenderer::render(
-            frame,
-            menu_bar_area,
-            &self.config.menu,
-            &self.menu_state,
-            &self.keybindings,
-            &self.theme,
-        );
-
         // Render tabs (same for both layouts)
         TabsRenderer::render(
             frame,
@@ -5368,6 +5358,16 @@ impl Editor {
                 popup.render(frame, popup_area, &theme_clone);
             }
         }
+
+        // Render menu bar last so dropdown appears on top of all other content
+        crate::ui::MenuRenderer::render(
+            frame,
+            menu_bar_area,
+            &self.config.menu,
+            &self.menu_state,
+            &self.keybindings,
+            &self.theme,
+        );
     }
 
     // === Overlay Management (Event-Driven) ===

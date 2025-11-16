@@ -3,16 +3,16 @@ source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   Help                                     
- [No Name]* ───────────────────┐                                                
-    1 │ Hello, World!                                                          █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
+┌──────────────────────────────┐                                                
+│ New File                     │                                               █
+│ Open File...                 │                                               █
+│ ─────────────────────────────│                                               █
+│ Save                   Ctrl+S│                                               █
+│ Save As...                   │                                               █
+│ ─────────────────────────────│                                               █
+│ Close Buffer                 │                                               █
+│ Quit                   Ctrl+Q│                                               █
+└──────────────────────────────┘                                               █
                                                                                █
                                                                                █
                                                                                █
