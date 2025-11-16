@@ -25,6 +25,7 @@ use crate::ui::{
     FileExplorerRenderer, HelpRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer,
     TabsRenderer,
 };
+use crossterm::event::{KeyCode, KeyModifiers};
 use lsp_types::{Position, Range as LspRange, TextDocumentContentChangeEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
@@ -627,6 +628,50 @@ impl Editor {
     /// Get all keybindings as (key, action) pairs
     pub fn get_all_keybindings(&self) -> Vec<(String, String)> {
         self.keybindings.get_all_bindings()
+    }
+
+    /// Get mutable access to the mode registry
+    pub fn mode_registry_mut(&mut self) -> &mut ModeRegistry {
+        &mut self.mode_registry
+    }
+
+    /// Get immutable access to the mode registry
+    pub fn mode_registry(&self) -> &ModeRegistry {
+        &self.mode_registry
+    }
+
+    /// Get the mode name for the active buffer (if it's a virtual buffer)
+    pub fn active_buffer_mode(&self) -> Option<&str> {
+        self.buffer_metadata
+            .get(&self.active_buffer)
+            .and_then(|meta| meta.virtual_mode())
+    }
+
+    /// Check if the active buffer is read-only
+    pub fn is_active_buffer_read_only(&self) -> bool {
+        if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer) {
+            if metadata.read_only {
+                return true;
+            }
+            // Also check if the mode is read-only
+            if let Some(mode_name) = metadata.virtual_mode() {
+                return self.mode_registry.is_read_only(mode_name);
+            }
+        }
+        false
+    }
+
+    /// Resolve a keybinding for the active buffer's mode
+    ///
+    /// If the active buffer has a mode (virtual buffer), check if that mode
+    /// has a keybinding for the given key. Returns the command name if found.
+    pub fn resolve_mode_keybinding(
+        &self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Option<String> {
+        let mode_name = self.active_buffer_mode()?;
+        self.mode_registry.resolve_keybinding(mode_name, code, modifiers)
     }
 
     /// Check if LSP has any active progress tasks (e.g., indexing)
