@@ -4513,8 +4513,12 @@ impl Editor {
                     self.menu_state.close_menu();
 
                     // Parse and execute the action
+                    // First try built-in actions, then fall back to plugin actions
                     if let Some(action) = Action::from_str(&action_name, &args) {
                         return self.handle_action(action);
+                    } else {
+                        // Treat as a plugin action (global Lua function)
+                        return self.handle_action(Action::PluginAction(action_name));
                     }
                 }
             }
