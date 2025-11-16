@@ -50,6 +50,9 @@ fn test_screen_cursor_position() {
     // Render and check cursor position
     harness.render().unwrap();
 
+    // Get content area bounds from harness (accounts for menu bar, tab bar, status bar)
+    let (content_first_row, _content_last_row) = harness.content_area_rows();
+
     // Get the actual screen cursor position from the terminal
     let cursor_pos = harness.screen_cursor_position();
 
@@ -61,14 +64,14 @@ fn test_screen_cursor_position() {
     // Then "abc" = 3 chars
     // Total: 1 + 4 + 3 + 3 = 11
     // So cursor X should be at column 11 (0-indexed)
-    // And cursor Y should be at row 1 (0-indexed, because row 0 is the tab bar)
+    // And cursor Y should be at content_first_row (after menu bar and tab bar)
 
     println!("Cursor position after typing 'abc': {{cursor_pos:?}}");
-    println!("Expected: x=11 (1 + 4 + 3 + 3), y=1");
+    println!("Expected: x=11 (1 + 4 + 3 + 3), y={content_first_row}");
 
     assert_eq!(
-        cursor_pos.1, 1,
-        "Cursor Y should be at row 1 (below tab bar)"
+        cursor_pos.1, content_first_row as u16,
+        "Cursor Y should be at row {content_first_row} (content area start)"
     );
     assert_eq!(
         cursor_pos.0, 11,
@@ -83,6 +86,10 @@ fn test_cursor_x_position_advances() {
 
     // Start with empty buffer
     harness.render().unwrap();
+
+    // Get content area bounds from harness (accounts for menu bar, tab bar, status bar)
+    let (content_first_row, _content_last_row) = harness.content_area_rows();
+
     let pos0 = harness.screen_cursor_position();
     println!("Initial cursor position: {{pos0:?}}");
 
@@ -104,11 +111,12 @@ fn test_cursor_x_position_advances() {
     let pos3 = harness.screen_cursor_position();
     println!("After 'abc': {{pos3:?}}");
 
-    // Y position should stay constant (row 1)
-    assert_eq!(pos0.1, 1, "Initial Y should be 1");
-    assert_eq!(pos1.1, 1, "Y should stay at 1 after 'a'");
-    assert_eq!(pos2.1, 1, "Y should stay at 1 after 'ab'");
-    assert_eq!(pos3.1, 1, "Y should stay at 1 after 'abc'");
+    // Y position should stay constant (at content_first_row)
+    let expected_y = content_first_row as u16;
+    assert_eq!(pos0.1, expected_y, "Initial Y should be {expected_y}");
+    assert_eq!(pos1.1, expected_y, "Y should stay at {expected_y} after 'a'");
+    assert_eq!(pos2.1, expected_y, "Y should stay at {expected_y} after 'ab'");
+    assert_eq!(pos3.1, expected_y, "Y should stay at {expected_y} after 'abc'");
 
     // X position should advance by 1 each time
     assert_eq!(pos1.0, pos0.0 + 1, "X should advance by 1 after 'a'");

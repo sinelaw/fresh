@@ -189,6 +189,9 @@ fn test_cursor_position_with_margin() {
     harness.type_text("abc").unwrap();
     harness.render().unwrap();
 
+    // Get content area bounds from harness (accounts for menu bar, tab bar, status bar)
+    let (content_first_row, _content_last_row) = harness.content_area_rows();
+
     let cursor_pos = harness.screen_cursor_position();
     println!("Cursor position: {cursor_pos:?}");
 
@@ -198,7 +201,10 @@ fn test_cursor_position_with_margin() {
         cursor_pos.0, 11,
         "Cursor X position should account for margin width"
     );
-    assert_eq!(cursor_pos.1, 1, "Cursor Y position should be on first line");
+    assert_eq!(
+        cursor_pos.1, content_first_row as u16,
+        "Cursor Y position should be on first line (row {content_first_row})"
+    );
 }
 
 /// Test that margins work with horizontal scrolling

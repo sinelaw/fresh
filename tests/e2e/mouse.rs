@@ -703,14 +703,17 @@ fn test_scrollbar_drag_to_absolute_bottom() {
     println!("Initial top line: {initial_top_line}");
     assert!(initial_top_line <= 1, "Should be at top of document");
 
-    // Terminal is 24 rows: row 0 = tab bar, rows 1-22 = content area (22 rows), row 23 = status bar
-    // Scrollbar occupies rows 1-22 (22 rows total)
-    let scrollbar_bottom_row = 22;
+    // Get content area bounds from harness (accounts for menu bar, tab bar, status bar)
+    let (content_first_row, content_last_row) = harness.content_area_rows();
+    let viewport_height = harness.viewport_height();
 
-    // Drag scrollbar from top (row 1) to absolute bottom (row 22)
-    println!("\nDragging scrollbar from row 1 to row {scrollbar_bottom_row}");
+    // Scrollbar occupies the content area rows
+    let scrollbar_bottom_row = content_last_row;
+
+    // Drag scrollbar from top to absolute bottom
+    println!("\nDragging scrollbar from row {content_first_row} to row {scrollbar_bottom_row}");
     harness
-        .mouse_drag(79, 1, 79, scrollbar_bottom_row as u16)
+        .mouse_drag(79, content_first_row as u16, 79, scrollbar_bottom_row as u16)
         .unwrap();
     harness.render().unwrap();
 
@@ -727,8 +730,9 @@ fn test_scrollbar_drag_to_absolute_bottom() {
     println!("  Scrollbar bottom row: {scrollbar_bottom_row}");
     println!("  Top line number: {top_line_after_drag}");
     println!("  Total lines in file: 100");
-    println!("  Viewport height: 22 rows");
-    println!("  Expected max top line: {} (100 - 22)", 100 - 22);
+    println!("  Viewport height: {viewport_height} rows");
+    let expected_max_top_line = 100 - viewport_height;
+    println!("  Expected max top line: {expected_max_top_line} (100 - {viewport_height})");
 
     // INVARIANT: When scrolled to EOF, thumb bottom should be at scrollbar bottom
     println!("\nChecking invariant: thumb_end ({thumb_end}) should equal scrollbar_bottom_row ({scrollbar_bottom_row})");
@@ -738,7 +742,7 @@ fn test_scrollbar_drag_to_absolute_bottom() {
     println!("Cursor position: {cursor_pos} bytes");
     println!("Buffer length: {buffer_len} bytes");
 
-    // VERIFY FIX: Scrollbar should reach absolute bottom when dragged to row 22
+    // VERIFY FIX: Scrollbar should reach absolute bottom when dragged to bottom
     assert_eq!(
         thumb_end, scrollbar_bottom_row,
         "Scrollbar thumb should reach absolute bottom (row {scrollbar_bottom_row}) when dragged to bottom, but ended at row {thumb_end}"
@@ -746,8 +750,8 @@ fn test_scrollbar_drag_to_absolute_bottom() {
 
     // VERIFY FIX: Viewport should be scrolled to maximum position
     assert_eq!(
-        top_line_after_drag, 78,
-        "Viewport should be scrolled to line 78 (100 - 22), but is at line {top_line_after_drag}"
+        top_line_after_drag, expected_max_top_line,
+        "Viewport should be scrolled to line {expected_max_top_line} (100 - {viewport_height}), but is at line {top_line_after_drag}"
     );
 
     assert!(

@@ -13,16 +13,18 @@ fn test_scrollbar_fills_height_when_no_scrolling_needed() {
     let _fixture = harness.load_buffer_from_text(content).unwrap();
     harness.render().unwrap();
 
+    // Get content area bounds from harness (accounts for menu bar, tab bar, status bar)
+    let (content_first_row, content_last_row) = harness.content_area_rows();
+
     // The scrollbar is in the rightmost column (column 79 for 80-width terminal)
     // For a buffer that fits entirely in the viewport, the thumb should fill
-    // the entire scrollbar height (all 24 rows minus 1 for tab bar)
+    // the entire scrollbar height
     let scrollbar_col = 79;
 
     // Check that every row in the scrollbar column shows the thumb character (█)
     // not the track character (│).
-    // Row 0 is tab bar, Row 23 is status bar, so check rows 1-22 (content area)
-    for row in 1..23 {
-        let cell_content = harness.get_cell(scrollbar_col, row);
+    for row in content_first_row..=content_last_row {
+        let cell_content = harness.get_cell(scrollbar_col, row as u16);
         assert_eq!(
             cell_content.as_deref(),
             Some("█"),
@@ -115,12 +117,16 @@ fn test_cursor_visible_after_enter_at_end_of_file() {
         "Cursor rendered at (0,0) - this is the bug! Expected cursor on line 4"
     );
 
-    // Cursor should be on the 4th content line (row 4 accounting for tab bar at row 0)
-    // Row 0: tab bar, Row 1: line1, Row 2: line2, Row 3: line3, Row 4: new empty line
+    // Get content area bounds from harness (accounts for menu bar, tab bar, status bar)
+    let (content_first_row, _content_last_row) = harness.content_area_rows();
+
+    // Cursor should be on the 4th content line (3 lines after content_first_row)
+    // content_first_row: empty/line1, +1: line2, +2: line3, +3: new empty line
+    let expected_row = (content_first_row + 3) as u16;
     assert_eq!(
-        screen_y, 4,
-        "Cursor should be on row 4 (new line after line3), got row {}",
-        screen_y
+        screen_y, expected_row,
+        "Cursor should be on row {} (new line after line3), got row {}",
+        expected_row, screen_y
     );
 
     // Type a character to verify cursor is in the correct logical position

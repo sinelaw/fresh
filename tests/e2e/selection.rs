@@ -54,8 +54,12 @@ fn test_selection_visual_rendering() {
     let theme = harness.editor().theme();
     let selection_bg = theme.selection_bg;
 
-    // Check first character 'H' at position (8, 1) - should have selection background
-    let h_pos = buffer.index_of(8, 1);
+    // Get content area bounds from harness (accounts for menu bar, tab bar, status bar)
+    let (content_first_row, _content_last_row) = harness.content_area_rows();
+    let first_line_row = content_first_row as u16;
+
+    // Check first character 'H' at position (8, first_line_row) - should have selection background
+    let h_pos = buffer.index_of(8, first_line_row);
     let h_cell = &buffer.content[h_pos];
     assert_eq!(h_cell.symbol(), "H");
     assert_eq!(
@@ -63,8 +67,8 @@ fn test_selection_visual_rendering() {
         "Selected character 'H' should have selection background"
     );
 
-    // Check fourth character 'l' at position (11, 1) - should have selection background
-    let l_pos = buffer.index_of(11, 1);
+    // Check fourth character 'l' at position (11, first_line_row) - should have selection background
+    let l_pos = buffer.index_of(11, first_line_row);
     let l_cell = &buffer.content[l_pos];
     assert_eq!(l_cell.symbol(), "l");
     assert_eq!(
@@ -72,8 +76,8 @@ fn test_selection_visual_rendering() {
         "Selected character 'l' should have selection background"
     );
 
-    // Check fifth character 'o' at position (12, 1) - byte position 4, IN selection
-    let o_pos = buffer.index_of(12, 1);
+    // Check fifth character 'o' at position (12, first_line_row) - byte position 4, IN selection
+    let o_pos = buffer.index_of(12, first_line_row);
     let o_cell = &buffer.content[o_pos];
     assert_eq!(o_cell.symbol(), "o");
     // This 'o' is at byte position 4, which is in the selection range 0..5
@@ -83,8 +87,8 @@ fn test_selection_visual_rendering() {
         "Selected character 'o' (byte 4) should have selection background"
     );
 
-    // Check character ' ' (space) at position (13, 1) - byte position 5, cursor position
-    let space_pos = buffer.index_of(13, 1);
+    // Check character ' ' (space) at position (13, first_line_row) - byte position 5, cursor position
+    let space_pos = buffer.index_of(13, first_line_row);
     let space_cell = &buffer.content[space_pos];
     assert_eq!(space_cell.symbol(), " ");
     // This space is at byte position 5, which is the cursor position

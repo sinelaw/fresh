@@ -85,12 +85,12 @@ fn test_theme_renders_with_correct_tab_colors() {
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.render().unwrap();
 
-    // Check that tab bar (first row) uses theme colors
+    // Check that tab bar uses theme colors
     // The active tab should have the theme's tab_active colors
     let theme = harness.editor().theme();
 
-    // Get style of a cell in the tab bar area (row 0)
-    if let Some(style) = harness.get_cell_style(1, 0) {
+    // Get style of a cell in the tab bar area (row 1, after menu bar at row 0)
+    if let Some(style) = harness.get_cell_style(1, 1) {
         // For dark theme, active tab has yellow fg and blue bg
         assert_eq!(style.fg, Some(theme.tab_active_fg));
         assert_eq!(style.bg, Some(theme.tab_active_bg));
@@ -129,9 +129,9 @@ fn test_light_theme_renders_differently_than_dark() {
     dark_harness.render().unwrap();
     light_harness.render().unwrap();
 
-    // Get tab bar styles from both themes
-    let dark_style = dark_harness.get_cell_style(1, 0);
-    let light_style = light_harness.get_cell_style(1, 0);
+    // Get tab bar styles from both themes (row 1, after menu bar at row 0)
+    let dark_style = dark_harness.get_cell_style(1, 1);
+    let light_style = light_harness.get_cell_style(1, 1);
 
     // The colors should be different
     assert_ne!(

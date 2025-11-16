@@ -966,9 +966,9 @@ fn test_scroll_allows_cursor_to_top() {
     println!("Initial screen:\n{}", initial_screen);
 
     // Get the viewport height (number of visible rows in file explorer)
-    // Terminal height is 10, status bar is 1, main area is 9
-    // File explorer has borders (2), so content area is 7 rows
-    let viewport_height = 7;
+    // Terminal height is 10, menu bar is 1, status bar is 1, main area is 8
+    // File explorer has borders (2), so content area is 6 rows
+    let viewport_height = 6;
 
     // Navigate down to the bottom of the list
     // This will cause the explorer to scroll down

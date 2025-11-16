@@ -305,8 +305,12 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
             ch, i + 1, chars_to_type.len(), expected_screen_x, screen_pos.0, expected_buffer
         );
 
-        // Screen cursor Y should remain on line 1 (row 1, 0-indexed)
-        assert_eq!(screen_pos.1, 1, "Screen cursor Y should stay at row 1");
+        // Screen cursor Y should remain on first content row
+        let (content_first_row, _) = harness.content_area_rows();
+        assert_eq!(
+            screen_pos.1, content_first_row as u16,
+            "Screen cursor Y should stay at row {content_first_row}"
+        );
     }
 
     // Final verification
@@ -314,13 +318,14 @@ fn test_rapid_typing_middle_of_line_cursor_sync() {
     assert_eq!(harness.cursor_position(), 16); // After "Hello ABCDEFGHIJ"
 
     let final_screen_pos = harness.screen_cursor_position();
+    let (content_first_row, _) = harness.content_area_rows();
     assert_eq!(
         final_screen_pos.0, 24,
         "Final screen cursor X should be at column 24"
     );
     assert_eq!(
-        final_screen_pos.1, 1,
-        "Final screen cursor Y should be at row 1"
+        final_screen_pos.1, content_first_row as u16,
+        "Final screen cursor Y should be at row {content_first_row}"
     );
 }
 

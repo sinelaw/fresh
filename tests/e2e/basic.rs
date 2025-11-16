@@ -143,22 +143,26 @@ fn test_open_file_viewport_dimensions() {
 
     // Create editor with 131x31 terminal (matching user's scenario)
     let mut harness = EditorTestHarness::new(131, 31).unwrap();
+    harness.render().unwrap();
+
+    // Get expected viewport height from harness (accounts for menu bar, tab bar, status bar)
+    let expected_viewport_height = harness.viewport_height();
 
     // Initially, the default buffer has correct viewport dimensions
-    let initial_viewport_height = harness.editor().active_state().viewport.height;
+    let initial_viewport_height = harness.editor().active_state().viewport.height as usize;
     assert_eq!(
-        initial_viewport_height, 29,
-        "Initial viewport should be 29 (31 - 2)"
+        initial_viewport_height, expected_viewport_height,
+        "Initial viewport should be {expected_viewport_height} (31 - 3 for menu bar, tab bar, status bar)"
     );
 
     // Open a file
     harness.open_file(&file_path).unwrap();
 
     // After opening file, viewport height should still match terminal dimensions
-    let viewport_height_after_open = harness.editor().active_state().viewport.height;
+    let viewport_height_after_open = harness.editor().active_state().viewport.height as usize;
     assert_eq!(
-        viewport_height_after_open, 29,
-        "After opening file, viewport height should be 29 (31 - 2), but got {viewport_height_after_open}. \\
+        viewport_height_after_open, expected_viewport_height,
+        "After opening file, viewport height should be {expected_viewport_height}, but got {viewport_height_after_open}. \\
          This indicates the file was opened with hardcoded dimensions instead of actual terminal size."
     );
 
@@ -172,8 +176,8 @@ fn test_open_file_viewport_dimensions() {
         .visible_line_count();
 
     assert_eq!(
-        visible_count, 29,
-        "Visible range should be 29 lines, but got {visible_count}"
+        visible_count, expected_viewport_height,
+        "Visible range should be {expected_viewport_height} lines, but got {visible_count}"
     );
 }
 

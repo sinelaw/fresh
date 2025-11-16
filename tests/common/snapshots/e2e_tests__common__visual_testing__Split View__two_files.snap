@@ -2,6 +2,7 @@
 source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
+ File   Edit   View   Selection   Go   Help                                                                             
  file1.txt   file2.txt                                                                                                  
     1 │ Content of file 2                                                                                              █
                                                                                                                        █
@@ -17,8 +18,7 @@ expression: "&screen_text"
                                                                                                                        █
                                                                                                                        █
                                                                                                                        █
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-    1 │ Content of file 2                                                                                              █
+                                                                                                                       █
                                                                                                                        █
                                                                                                                        █
                                                                                                                        █
