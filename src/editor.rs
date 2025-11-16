@@ -4339,6 +4339,21 @@ impl Editor {
                     }
                 }
             }
+            Action::MenuOpen(menu_name) => {
+                // Find the menu by name and open it
+                let all_menus: Vec<crate::config::Menu> = self.config.menu.menus
+                    .iter()
+                    .chain(self.menu_state.plugin_menus.iter())
+                    .cloned()
+                    .collect();
+
+                for (idx, menu) in all_menus.iter().enumerate() {
+                    if menu.label.eq_ignore_ascii_case(&menu_name) {
+                        self.menu_state.open_menu(idx);
+                        break;
+                    }
+                }
+            }
 
             Action::None => {}
             Action::DeleteBackward => {

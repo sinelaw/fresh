@@ -10,6 +10,7 @@ pub mod lifecycle;
 pub mod line_wrapping;
 pub mod lsp;
 pub mod margin;
+pub mod menu_bar;
 pub mod mouse;
 pub mod movement;
 pub mod multicursor;
