@@ -4,8 +4,8 @@
 -- This plugin demonstrates the virtual buffer infrastructure by creating
 -- a special buffer that lists diagnostics with embedded source locations.
 
--- Store the diagnostic panel buffer ID
-local panel_buffer_id = nil
+-- Track if panel is open
+local panel_open = false
 
 -- Store current diagnostics data
 local diagnostics_data = {}
@@ -39,8 +39,43 @@ local function format_diagnostic(diag)
         icon, diag.file, diag.line, diag.column, diag.message)
 end
 
--- Update the panel content with current diagnostics
-local function update_panel_content()
+-- Build entries from diagnostics data
+local function build_entries(mock_diagnostics)
+    local entries = {}
+
+    -- Add header
+    table.insert(entries, {
+        text = "=== LSP Diagnostics ===\n\n",
+        properties = {}
+    })
+
+    -- Add each diagnostic with embedded properties
+    for i, diag in ipairs(mock_diagnostics) do
+        local text = format_diagnostic(diag)
+        table.insert(entries, {
+            text = text,
+            properties = {
+                diagnostic_index = i,
+                file = diag.file,
+                line = diag.line,
+                column = diag.column,
+                severity = diag.severity,
+                message = diag.message
+            }
+        })
+    end
+
+    -- Add footer
+    table.insert(entries, {
+        text = string.format("\nTotal: %d diagnostics", #mock_diagnostics),
+        properties = {}
+    })
+
+    return entries
+end
+
+-- Create the diagnostic panel with content
+local function create_panel()
     -- Generate mock diagnostics for demonstration
     -- In a real implementation, these would come from LSP
     local mock_diagnostics = {
@@ -84,75 +119,26 @@ local function update_panel_content()
     diagnostics_data = mock_diagnostics
 
     -- Build entries with text properties
-    local entries = {}
+    local entries = build_entries(mock_diagnostics)
 
-    -- Add header
-    table.insert(entries, {
-        text = "=== LSP Diagnostics ===\n\n",
-        properties = {}
-    })
+    debug(string.format("Creating diagnostics panel with %d entries", #entries))
 
-    -- Add each diagnostic with embedded properties
-    for i, diag in ipairs(mock_diagnostics) do
-        local text = format_diagnostic(diag)
-        table.insert(entries, {
-            text = text,
-            properties = {
-                diagnostic_index = i,
-                file = diag.file,
-                line = diag.line,
-                column = diag.column,
-                severity = diag.severity,
-                message = diag.message
-            }
-        })
-    end
-
-    -- Add footer
-    table.insert(entries, {
-        text = string.format("\nTotal: %d diagnostics", #mock_diagnostics),
-        properties = {}
-    })
-
-    -- Set the content
-    -- Note: We need the buffer ID. For now this is a placeholder.
-    -- In production, we'd track the created buffer's ID.
-    debug(string.format("Prepared %d diagnostic entries for display", #entries))
-
-    editor.set_status(string.format("Diagnostics panel: %d items", #mock_diagnostics))
-end
-
--- Create the diagnostic panel buffer
-local function create_panel()
-    if panel_buffer_id ~= nil then
-        -- Panel already exists, just show it
-        editor.show_buffer(panel_buffer_id)
-        return
-    end
-
-    -- Create the virtual buffer
-    editor.create_virtual_buffer({
+    -- Create the virtual buffer with content in one shot
+    editor.create_virtual_buffer_with_content({
         name = "*Diagnostics*",
         mode = "diagnostics-list",
-        read_only = true
+        read_only = true,
+        entries = entries
     })
 
-    debug("Created diagnostics panel buffer")
-
-    -- Note: We can't get the buffer ID back immediately because
-    -- create_virtual_buffer is async. For now, we'll use a workaround
-    -- by tracking all buffers. In a real implementation, we'd add a
-    -- callback or return value mechanism.
-
-    -- For this demo, we'll populate with mock data
-    update_panel_content()
+    panel_open = true
+    editor.set_status(string.format("Diagnostics panel: %d items", #mock_diagnostics))
 end
 
 -- Toggle the diagnostics panel
 function toggle_diagnostics_panel()
     debug("Toggling diagnostics panel")
     create_panel()
-    update_panel_content()
 end
 
 -- Jump to the diagnostic at cursor

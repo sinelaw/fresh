@@ -3313,6 +3313,32 @@ impl Editor {
                 );
                 // TODO: Return buffer_id to plugin via callback or hook
             }
+            PluginCommand::CreateVirtualBufferWithContent {
+                name,
+                mode,
+                read_only,
+                entries,
+            } => {
+                let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+                tracing::info!(
+                    "Created virtual buffer '{}' with mode '{}' (id={:?})",
+                    name,
+                    mode,
+                    buffer_id
+                );
+                // Now set the content
+                match self.set_virtual_buffer_content(buffer_id, entries) {
+                    Ok(()) => {
+                        tracing::debug!("Set virtual buffer content for {:?}", buffer_id);
+                        // Switch to the new buffer to display it
+                        self.set_active_buffer(buffer_id);
+                        tracing::debug!("Switched to virtual buffer {:?}", buffer_id);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to set virtual buffer content: {}", e);
+                    }
+                }
+            }
             PluginCommand::SetVirtualBufferContent { buffer_id, entries } => {
                 match self.set_virtual_buffer_content(buffer_id, entries) {
                     Ok(()) => {

@@ -696,5 +696,21 @@ fn test_diagnostics_panel_plugin_loads() {
     let final_screen = harness.screen_to_string();
     println!("Final screen after executing command:\n{}", final_screen);
 
-    // If we get here without panics/errors, the plugin loaded successfully
+    // Verify the diagnostics panel content is displayed
+    assert!(
+        final_screen.contains("LSP Diagnostics"),
+        "Expected to see 'LSP Diagnostics' header in the panel"
+    );
+    assert!(
+        final_screen.contains("[E]") || final_screen.contains("[W]"),
+        "Expected to see severity icons like [E] or [W] in the diagnostics"
+    );
+    assert!(
+        final_screen.contains("Total: 5 diagnostics"),
+        "Expected to see footer with diagnostic count"
+    );
+    assert!(
+        final_screen.contains("*Diagnostics*"),
+        "Expected to see buffer name '*Diagnostics*' in status bar"
+    );
 }
