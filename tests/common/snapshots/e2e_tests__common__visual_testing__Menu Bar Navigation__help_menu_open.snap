@@ -6,7 +6,7 @@ expression: "&screen_text"
  [No Name]*                      ┌────────────────────────────────────┐         
     1 │ Hello, World!            │ Go to Definition                   │        █
                                  │ Go to Line...                      │        █
-                                 │ Command Palette...                 │        █
+                                 │ Command Palette...           Ctrl+P│        █
                                  └────────────────────────────────────┘        █
                                                                                █
                                                                                █

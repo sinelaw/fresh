@@ -22,6 +22,8 @@ pub enum PromptType {
     QueryReplace { search: String },
     /// Execute a command by name (M-x)
     Command,
+    /// Go to a specific line number
+    GotoLine,
     /// Plugin-controlled prompt with custom type identifier
     /// The string identifier is used to filter hooks in plugin code
     Plugin { custom_type: String },

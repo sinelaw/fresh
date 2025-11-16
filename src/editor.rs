@@ -3796,6 +3796,62 @@ impl Editor {
                                 self.set_status_message(format!("Unknown command: {input}"));
                             }
                         }
+                        PromptType::GotoLine => {
+                            // Parse the line number and jump to it
+                            match input.trim().parse::<usize>() {
+                                Ok(line_num) if line_num > 0 => {
+                                    // Convert to 0-indexed line number
+                                    let target_line = line_num.saturating_sub(1);
+                                    let buffer_id = self.active_buffer;
+
+                                    if let Some(state) = self.buffers.get(&buffer_id) {
+                                        let max_line = state.buffer.line_count().unwrap_or(1).saturating_sub(1);
+                                        let actual_line = target_line.min(max_line);
+
+                                        // Calculate position at start of target line
+                                        let position = state.buffer.line_col_to_position(actual_line, 0);
+
+                                        // Get current cursor info
+                                        let cursor_id = state.cursors.primary_id();
+                                        let old_position = state.cursors.primary().position;
+                                        let old_anchor = state.cursors.primary().anchor;
+                                        let old_sticky_column = state.cursors.primary().sticky_column;
+
+                                        // Create move cursor event
+                                        let event = crate::event::Event::MoveCursor {
+                                            cursor_id,
+                                            old_position,
+                                            new_position: position,
+                                            old_anchor,
+                                            new_anchor: None,
+                                            old_sticky_column,
+                                            new_sticky_column: 0,
+                                        };
+
+                                        // Apply the event
+                                        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                                            state.apply(&event);
+                                        }
+
+                                        if target_line > max_line {
+                                            self.set_status_message(format!(
+                                                "Line {} doesn't exist, jumped to line {}",
+                                                line_num,
+                                                actual_line + 1
+                                            ));
+                                        } else {
+                                            self.set_status_message(format!("Jumped to line {}", line_num));
+                                        }
+                                    }
+                                }
+                                Ok(_) => {
+                                    self.set_status_message("Line number must be positive".to_string());
+                                }
+                                Err(_) => {
+                                    self.set_status_message(format!("Invalid line number: {}", input));
+                                }
+                            }
+                        }
                         PromptType::Plugin { custom_type } => {
                             // Fire plugin hook for prompt confirmation
                             if let Some(plugin_manager) = &mut self.plugin_manager {
@@ -4238,6 +4294,9 @@ impl Editor {
             Action::Quit => self.quit(),
             Action::Save => self.save()?,
             Action::Open => self.start_prompt("Find file: ".to_string(), PromptType::OpenFile),
+            Action::GotoLine => {
+                self.start_prompt("Go to line: ".to_string(), PromptType::GotoLine)
+            }
             Action::New => {
                 self.new_buffer();
             }

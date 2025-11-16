@@ -1081,6 +1081,7 @@ pub fn action_to_events(
         | Action::Open
         | Action::New
         | Action::Close
+        | Action::GotoLine
         | Action::NextBuffer
         | Action::PrevBuffer
         | Action::NavigateBack

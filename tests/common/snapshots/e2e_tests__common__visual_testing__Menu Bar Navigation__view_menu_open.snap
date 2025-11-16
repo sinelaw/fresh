@@ -9,7 +9,7 @@ expression: "&screen_text"
               │ Split Horizontal                Alt+H│                         █
               │ Split Vertical                  Alt+V│                         █
               │ Close Split                     Alt+X│                         █
-              │ Focus Next Split                     │                         █
+              │ Focus Next Split                Alt+O│                         █
               └──────────────────────────────────────┘                         █
                                                                                █
                                                                                █

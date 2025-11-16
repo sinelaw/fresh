@@ -742,13 +742,13 @@ impl Config {
                 items: vec![
                     MenuItem::Action {
                         label: "New File".to_string(),
-                        action: "new_file".to_string(),
+                        action: "new".to_string(),
                         args: HashMap::new(),
                         when: None,
                     },
                     MenuItem::Action {
                         label: "Open File...".to_string(),
-                        action: "prompt_open_file".to_string(),
+                        action: "open".to_string(),
                         args: HashMap::new(),
                         when: None,
                     },
@@ -768,7 +768,7 @@ impl Config {
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
                         label: "Close Buffer".to_string(),
-                        action: "close_buffer".to_string(),
+                        action: "close".to_string(),
                         args: HashMap::new(),
                         when: None,
                     },
@@ -825,13 +825,13 @@ impl Config {
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
                         label: "Find...".to_string(),
-                        action: "start_search".to_string(),
+                        action: "search".to_string(),
                         args: HashMap::new(),
                         when: None,
                     },
                     MenuItem::Action {
                         label: "Replace...".to_string(),
-                        action: "start_replace".to_string(),
+                        action: "query_replace".to_string(),
                         args: HashMap::new(),
                         when: None,
                     },
@@ -868,7 +868,7 @@ impl Config {
                     },
                     MenuItem::Action {
                         label: "Focus Next Split".to_string(),
-                        action: "focus_next_split".to_string(),
+                        action: "next_split".to_string(),
                         args: HashMap::new(),
                         when: None,
                     },
@@ -929,13 +929,13 @@ impl Config {
                     },
                     MenuItem::Action {
                         label: "Go to Line...".to_string(),
-                        action: "prompt_goto_line".to_string(),
+                        action: "goto_line".to_string(),
                         args: HashMap::new(),
                         when: None,
                     },
                     MenuItem::Action {
                         label: "Command Palette...".to_string(),
-                        action: "start_command_palette".to_string(),
+                        action: "command_palette".to_string(),
                         args: HashMap::new(),
                         when: None,
                     },

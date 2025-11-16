@@ -183,6 +183,9 @@ pub enum Action {
     Close,
     Quit,
 
+    // Navigation
+    GotoLine,
+
     // Undo/redo
     Undo,
     Redo,
@@ -378,6 +381,7 @@ impl Action {
             "new" => Some(Action::New),
             "close" => Some(Action::Close),
             "quit" => Some(Action::Quit),
+            "goto_line" => Some(Action::GotoLine),
 
             "undo" => Some(Action::Undo),
             "redo" => Some(Action::Redo),
@@ -1375,6 +1379,7 @@ impl KeybindingResolver {
             Action::New => "New file".to_string(),
             Action::Close => "Close file".to_string(),
             Action::Quit => "Quit editor".to_string(),
+            Action::GotoLine => "Go to line number".to_string(),
             Action::Undo => "Undo".to_string(),
             Action::Redo => "Redo".to_string(),
             Action::ScrollUp => "Scroll up".to_string(),

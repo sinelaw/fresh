@@ -4,8 +4,8 @@ expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   Help                                     
 ┌──────────────────────────────┐                                                
-│ New File                     │                                               █
-│ Open File...                 │                                               █
+│ New File               Ctrl+N│                                               █
+│ Open File...           Ctrl+O│                                               █
 │ ─────────────────────────────│                                               █
 │ Save                   Ctrl+S│                                               █
 │ Save As...                   │                                               █

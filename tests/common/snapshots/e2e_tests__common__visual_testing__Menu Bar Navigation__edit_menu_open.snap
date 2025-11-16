@@ -13,8 +13,8 @@ expression: "&screen_text"
        │ ───────────────────────────│                                          █
        │ Select All           Ctrl+A│                                          █
        │ ───────────────────────────│                                          █
-       │ Find...                    │                                          █
-       │ Replace...                 │                                          █
+       │ Find...              Ctrl+F│                                          █
+       │ Replace...       Ctrl+Alt+R│                                          █
        └────────────────────────────┘                                          █
                                                                                █
                                                                                █

@@ -209,11 +209,17 @@
   <rect x="207" y="36" width="9" height="18" fill="#4682b4"/>
   <rect x="216" y="36" width="9" height="18" fill="#4682b4"/>
   <rect x="225" y="36" width="9" height="18" fill="#4682b4"/>
+  <text x="226" y="50" fill="#ffffff" class="terminal" style="">C</text>
   <rect x="234" y="36" width="9" height="18" fill="#4682b4"/>
+  <text x="235" y="50" fill="#ffffff" class="terminal" style="">t</text>
   <rect x="243" y="36" width="9" height="18" fill="#4682b4"/>
+  <text x="244" y="50" fill="#ffffff" class="terminal" style="">r</text>
   <rect x="252" y="36" width="9" height="18" fill="#4682b4"/>
+  <text x="253" y="50" fill="#ffffff" class="terminal" style="">l</text>
   <rect x="261" y="36" width="9" height="18" fill="#4682b4"/>
+  <text x="262" y="50" fill="#ffffff" class="terminal" style="">+</text>
   <rect x="270" y="36" width="9" height="18" fill="#4682b4"/>
+  <text x="271" y="50" fill="#ffffff" class="terminal" style="">N</text>
   <rect x="279" y="36" width="9" height="18" fill="#323232"/>
   <text x="280" y="50" fill="#646464" class="terminal" style="">│</text>
   <text x="712" y="50" fill="#6272a4" class="terminal" style="">█</text>
@@ -255,11 +261,17 @@
   <rect x="207" y="54" width="9" height="18" fill="#323232"/>
   <rect x="216" y="54" width="9" height="18" fill="#323232"/>
   <rect x="225" y="54" width="9" height="18" fill="#323232"/>
+  <text x="226" y="68" fill="#dcdcdc" class="terminal" style="">C</text>
   <rect x="234" y="54" width="9" height="18" fill="#323232"/>
+  <text x="235" y="68" fill="#dcdcdc" class="terminal" style="">t</text>
   <rect x="243" y="54" width="9" height="18" fill="#323232"/>
+  <text x="244" y="68" fill="#dcdcdc" class="terminal" style="">r</text>
   <rect x="252" y="54" width="9" height="18" fill="#323232"/>
+  <text x="253" y="68" fill="#dcdcdc" class="terminal" style="">l</text>
   <rect x="261" y="54" width="9" height="18" fill="#323232"/>
+  <text x="262" y="68" fill="#dcdcdc" class="terminal" style="">+</text>
   <rect x="270" y="54" width="9" height="18" fill="#323232"/>
+  <text x="271" y="68" fill="#dcdcdc" class="terminal" style="">O</text>
   <rect x="279" y="54" width="9" height="18" fill="#323232"/>
   <text x="280" y="68" fill="#646464" class="terminal" style="">│</text>
   <text x="712" y="68" fill="#6272a4" class="terminal" style="">█</text>
