@@ -650,15 +650,65 @@ impl KeybindingResolver {
         ];
 
         for map in search_maps.into_iter().flatten() {
-            for ((key_code, modifiers), action) in map {
-                // Compare actions using discriminant (ignores associated data)
-                if std::mem::discriminant(action) == std::mem::discriminant(&target_action) {
-                    return Some(Self::format_keybinding(*key_code, *modifiers));
-                }
+            // Collect all matching keybindings for deterministic selection
+            let mut matches: Vec<(KeyCode, KeyModifiers)> = map
+                .iter()
+                .filter(|(_, action)| {
+                    std::mem::discriminant(*action) == std::mem::discriminant(&target_action)
+                })
+                .map(|((key_code, modifiers), _)| (*key_code, *modifiers))
+                .collect();
+
+            if !matches.is_empty() {
+                // Sort to get deterministic order: prefer fewer modifiers, then by key
+                matches.sort_by(|(key_a, mod_a), (key_b, mod_b)| {
+                    // Compare by number of modifiers first (prefer simpler bindings)
+                    let mod_count_a = mod_a.bits().count_ones();
+                    let mod_count_b = mod_b.bits().count_ones();
+                    match mod_count_a.cmp(&mod_count_b) {
+                        std::cmp::Ordering::Equal => {
+                            // Then by modifier bits (for consistent ordering)
+                            match mod_a.bits().cmp(&mod_b.bits()) {
+                                std::cmp::Ordering::Equal => {
+                                    // Finally by key code
+                                    Self::key_code_sort_key(key_a)
+                                        .cmp(&Self::key_code_sort_key(key_b))
+                                }
+                                other => other,
+                            }
+                        }
+                        other => other,
+                    }
+                });
+
+                let (key_code, modifiers) = matches[0];
+                return Some(Self::format_keybinding(key_code, modifiers));
             }
         }
 
         None
+    }
+
+    /// Generate a sort key for KeyCode to ensure deterministic ordering
+    fn key_code_sort_key(key_code: &KeyCode) -> (u8, u32) {
+        match key_code {
+            KeyCode::Char(c) => (0, *c as u32),
+            KeyCode::F(n) => (1, *n as u32),
+            KeyCode::Enter => (2, 0),
+            KeyCode::Tab => (2, 1),
+            KeyCode::Backspace => (2, 2),
+            KeyCode::Delete => (2, 3),
+            KeyCode::Esc => (2, 4),
+            KeyCode::Left => (3, 0),
+            KeyCode::Right => (3, 1),
+            KeyCode::Up => (3, 2),
+            KeyCode::Down => (3, 3),
+            KeyCode::Home => (3, 4),
+            KeyCode::End => (3, 5),
+            KeyCode::PageUp => (3, 6),
+            KeyCode::PageDown => (3, 7),
+            _ => (255, 0),
+        }
     }
 
     /// Find the mnemonic character for a menu (based on Alt+letter keybindings)
