@@ -4191,6 +4191,31 @@ impl Editor {
             modifiers
         );
 
+        // Check buffer mode keybindings first (for virtual buffers with custom modes)
+        if let Some(command_name) = self.resolve_mode_keybinding(code, modifiers) {
+            tracing::debug!("Mode keybinding resolved to command: {}", command_name);
+            // Execute the command via the command registry
+            let commands = self.command_registry.read().unwrap().get_all();
+            if let Some(cmd) = commands.iter().find(|c| c.name == command_name) {
+                let action = cmd.action.clone();
+                drop(commands);
+                return self.handle_action(action);
+            } else if command_name == "close-buffer" {
+                // Handle built-in mode commands
+                let buffer_id = self.active_buffer;
+                return self.close_buffer(buffer_id);
+            } else if command_name == "revert-buffer" {
+                // Refresh the buffer (for virtual buffers, this would re-query data)
+                self.set_status_message("Refreshing buffer...".to_string());
+                return Ok(());
+            } else {
+                // Try as a plugin action
+                let action = Action::PluginAction(command_name.clone());
+                drop(commands);
+                return self.handle_action(action);
+            }
+        }
+
         // Determine the current context
         let context = self.get_key_context();
 
