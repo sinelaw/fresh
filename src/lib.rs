@@ -44,6 +44,7 @@ pub mod signal_handler;
 pub mod split;
 pub mod state;
 pub mod text_buffer;
+pub mod text_property;
 pub mod theme;
 pub mod ui;
 pub mod viewport;
