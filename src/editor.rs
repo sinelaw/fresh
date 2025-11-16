@@ -3956,6 +3956,7 @@ impl Editor {
         _request_id: u64,
         result: Result<lsp_types::WorkspaceEdit, String>,
     ) -> io::Result<()> {
+        let total_start = std::time::Instant::now();
         self.lsp_status.clear();
 
         match result {
@@ -3973,6 +3974,10 @@ impl Editor {
 
                 // Apply the workspace edit
                 let mut total_changes = 0;
+                let mut timing_open_file = std::time::Duration::ZERO;
+                let mut timing_position_conversion = std::time::Duration::ZERO;
+                let mut timing_event_creation = std::time::Duration::ZERO;
+                let mut timing_batch_apply = std::time::Duration::ZERO;
 
                 // Handle changes (map of URI -> Vec<TextEdit>)
                 if let Some(changes) = workspace_edit.changes {
@@ -4093,7 +4098,9 @@ impl Editor {
 
                         if let Ok(path) = uri_to_path(&uri) {
                             // Open the file if not already open
+                            let open_start = std::time::Instant::now();
                             let buffer_id = self.open_file(&path)?;
+                            timing_open_file += open_start.elapsed();
 
                             // Extract TextEdit from OneOf<TextEdit, AnnotatedTextEdit>
                             let edits: Vec<lsp_types::TextEdit> = text_doc_edit
@@ -4149,9 +4156,11 @@ impl Editor {
                                 let end_line = edit.range.end.line as usize;
                                 let end_char = edit.range.end.character as usize;
 
+                                let conv_start = std::time::Instant::now();
                                 let start_pos =
                                     state.buffer.lsp_position_to_byte(start_line, start_char);
                                 let end_pos = state.buffer.lsp_position_to_byte(end_line, end_char);
+                                timing_position_conversion += conv_start.elapsed();
                                 let buffer_len = state.buffer.len();
 
                                 // Log the conversion for debugging
@@ -4168,6 +4177,7 @@ impl Editor {
                                     start_pos, end_pos, old_text, edit.new_text);
 
                                 // Delete old text
+                                let event_start = std::time::Instant::now();
                                 if start_pos < end_pos {
                                     let deleted_text = state.get_text_range(start_pos, end_pos);
                                     let cursor_id = state.cursors.primary_id();
@@ -4192,6 +4202,7 @@ impl Editor {
                                     };
                                     batch_events.push(insert_event);
                                 }
+                                timing_event_creation += event_start.elapsed();
 
                                 total_changes += 1;
                             }
@@ -4203,11 +4214,23 @@ impl Editor {
                                     description: "LSP Rename".to_string(),
                                 };
 
+                                let apply_start = std::time::Instant::now();
                                 self.apply_rename_batch_to_buffer(buffer_id, batch)?;
+                                timing_batch_apply += apply_start.elapsed();
                             }
                         }
                     }
                 }
+
+                // Log timing breakdown
+                tracing::info!(
+                    "LSP Rename timing breakdown: open_file={:?}, position_conversion={:?}, event_creation={:?}, batch_apply={:?}, total={:?}",
+                    timing_open_file,
+                    timing_position_conversion,
+                    timing_event_creation,
+                    timing_batch_apply,
+                    total_start.elapsed()
+                );
 
                 self.status_message =
                     Some(format!("Renamed successfully ({} changes)", total_changes));
@@ -4239,23 +4262,39 @@ impl Editor {
         buffer_id: BufferId,
         batch: Event,
     ) -> io::Result<()> {
+        let start = std::time::Instant::now();
+
         // Add to event log
+        let log_start = std::time::Instant::now();
         if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
             event_log.append(batch.clone());
         }
+        let log_time = log_start.elapsed();
 
         // Apply to buffer state
+        let apply_start = std::time::Instant::now();
         let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
         })?;
         state.apply(&batch);
+        let apply_time = apply_start.elapsed();
 
         // Notify LSP about the changes
         // Temporarily switch active buffer to use notify_lsp_change correctly
+        let notify_start = std::time::Instant::now();
         let original_active = self.active_buffer;
         self.active_buffer = buffer_id;
         self.notify_lsp_change(&batch);
         self.active_buffer = original_active;
+        let notify_time = notify_start.elapsed();
+
+        tracing::info!(
+            "apply_rename_batch_to_buffer: event_log={:?}, apply={:?}, notify_lsp={:?}, total={:?}",
+            log_time,
+            apply_time,
+            notify_time,
+            start.elapsed()
+        );
 
         Ok(())
     }
@@ -6889,54 +6928,11 @@ impl Editor {
 
     /// Notify LSP of a text change event
     fn notify_lsp_change(&mut self, event: &Event) {
-        // Calculate the incremental change from the event
-        let (range, text) = match event {
-            Event::Insert { position, text, .. } => {
-                tracing::debug!(
-                    "notify_lsp_change: processing Insert at position {}",
-                    position
-                );
-                // For insert: create a zero-width range at the insertion point
-                let (line, character) = self
-                    .active_state()
-                    .buffer
-                    .position_to_lsp_position(*position);
-                let lsp_pos = Position::new(line as u32, character as u32);
-                let lsp_range = LspRange::new(lsp_pos, lsp_pos);
-                (Some(lsp_range), text.clone())
-            }
-            Event::Delete { range, .. } => {
-                tracing::debug!("notify_lsp_change: processing Delete range {:?}", range);
-                // For delete: create a range from start to end, send empty string
-                let (start_line, start_char) = self
-                    .active_state()
-                    .buffer
-                    .position_to_lsp_position(range.start);
-                let (end_line, end_char) = self
-                    .active_state()
-                    .buffer
-                    .position_to_lsp_position(range.end);
-                let lsp_range = LspRange::new(
-                    Position::new(start_line as u32, start_char as u32),
-                    Position::new(end_line as u32, end_char as u32),
-                );
-                (Some(lsp_range), String::new())
-            }
-            Event::Batch { events, .. } => {
-                // Recursively notify LSP of each event in the batch
-                // This ensures LSP is properly notified of all changes in operations
-                // like LSP rename that apply multiple edits atomically
-                tracing::debug!(
-                    "notify_lsp_change: processing Batch with {} events",
-                    events.len()
-                );
-                for sub_event in events {
-                    self.notify_lsp_change(sub_event);
-                }
-                return;
-            }
-            _ => return, // Ignore cursor movements and other events
-        };
+        // Collect all changes from the event (handles batches efficiently)
+        let changes = self.collect_lsp_changes(event);
+        if changes.is_empty() {
+            return;
+        }
 
         // Check if LSP is enabled for this buffer
         let metadata = match self.buffer_metadata.get(&self.active_buffer) {
@@ -6985,26 +6981,19 @@ impl Editor {
         };
 
         tracing::debug!(
-            "notify_lsp_change: sending incremental didChange to {} (range: {:?}, text length: {} bytes)",
-            uri.as_str(),
-            range,
-            text.len()
+            "notify_lsp_change: sending {} changes to {} in single didChange notification",
+            changes.len(),
+            uri.as_str()
         );
 
         if let Some(lsp) = &mut self.lsp {
             if let Some(client) = lsp.get_or_spawn(&language) {
-                // Use incremental sync (send only the changed text with range)
-                // This is more efficient than full document sync, especially for large files
-                let change = TextDocumentContentChangeEvent {
-                    range,
-                    range_length: None,
-                    text,
-                };
-
-                if let Err(e) = client.did_change(uri, vec![change]) {
+                // Send all changes in a single didChange notification
+                // This is much more efficient for batch operations like LSP rename
+                if let Err(e) = client.did_change(uri, changes) {
                     tracing::warn!("Failed to send didChange to LSP: {}", e);
                 } else {
-                    tracing::info!("Successfully sent incremental didChange to LSP");
+                    tracing::info!("Successfully sent batched didChange to LSP");
                 }
             } else {
                 tracing::warn!(
@@ -7014,6 +7003,65 @@ impl Editor {
             }
         } else {
             tracing::debug!("notify_lsp_change: no LSP manager available");
+        }
+    }
+
+    /// Collect all LSP text document changes from an event (recursively for batches)
+    fn collect_lsp_changes(&self, event: &Event) -> Vec<TextDocumentContentChangeEvent> {
+        match event {
+            Event::Insert { position, text, .. } => {
+                tracing::debug!(
+                    "collect_lsp_changes: processing Insert at position {}",
+                    position
+                );
+                // For insert: create a zero-width range at the insertion point
+                let (line, character) = self
+                    .active_state()
+                    .buffer
+                    .position_to_lsp_position(*position);
+                let lsp_pos = Position::new(line as u32, character as u32);
+                let lsp_range = LspRange::new(lsp_pos, lsp_pos);
+                vec![TextDocumentContentChangeEvent {
+                    range: Some(lsp_range),
+                    range_length: None,
+                    text: text.clone(),
+                }]
+            }
+            Event::Delete { range, .. } => {
+                tracing::debug!("collect_lsp_changes: processing Delete range {:?}", range);
+                // For delete: create a range from start to end, send empty string
+                let (start_line, start_char) = self
+                    .active_state()
+                    .buffer
+                    .position_to_lsp_position(range.start);
+                let (end_line, end_char) = self
+                    .active_state()
+                    .buffer
+                    .position_to_lsp_position(range.end);
+                let lsp_range = LspRange::new(
+                    Position::new(start_line as u32, start_char as u32),
+                    Position::new(end_line as u32, end_char as u32),
+                );
+                vec![TextDocumentContentChangeEvent {
+                    range: Some(lsp_range),
+                    range_length: None,
+                    text: String::new(),
+                }]
+            }
+            Event::Batch { events, .. } => {
+                // Collect all changes from sub-events into a single vector
+                // This allows sending all changes in one didChange notification
+                tracing::debug!(
+                    "collect_lsp_changes: processing Batch with {} events",
+                    events.len()
+                );
+                let mut all_changes = Vec::new();
+                for sub_event in events {
+                    all_changes.extend(self.collect_lsp_changes(sub_event));
+                }
+                all_changes
+            }
+            _ => Vec::new(), // Ignore cursor movements and other events
         }
     }
 
