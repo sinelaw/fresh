@@ -21,6 +21,7 @@ pub mod keybindings;
 pub mod line_iterator;
 pub mod line_wrapping;
 pub mod lsp;
+pub mod script_control;
 pub mod lsp_async;
 pub mod lsp_diagnostics;
 pub mod lsp_manager;
