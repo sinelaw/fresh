@@ -146,6 +146,7 @@ impl MenuRenderer {
     /// * `menu_state` - Current menu state (which menu/item is active)
     /// * `keybindings` - Keybinding resolver for displaying shortcuts
     /// * `theme` - The active theme for colors
+    /// * `hover_target` - The currently hovered UI element (if any)
     pub fn render(
         frame: &mut Frame,
         area: Rect,
@@ -153,6 +154,7 @@ impl MenuRenderer {
         menu_state: &MenuState,
         keybindings: &crate::keybindings::KeybindingResolver,
         theme: &Theme,
+        hover_target: Option<&crate::editor::HoverTarget>,
     ) {
         // Combine config menus with plugin menus
         let all_menus: Vec<&Menu> = menu_config
@@ -166,12 +168,17 @@ impl MenuRenderer {
 
         for (idx, menu) in all_menus.iter().enumerate() {
             let is_active = menu_state.active_menu == Some(idx);
+            let is_hovered = matches!(hover_target, Some(crate::editor::HoverTarget::MenuBarItem(i)) if *i == idx);
 
             let base_style = if is_active {
                 Style::default()
                     .fg(theme.menu_active_fg)
                     .bg(theme.menu_active_bg)
                     .add_modifier(Modifier::BOLD)
+            } else if is_hovered {
+                Style::default()
+                    .fg(theme.menu_hover_fg)
+                    .bg(theme.menu_hover_bg)
             } else {
                 Style::default()
                     .fg(theme.menu_fg)
@@ -224,6 +231,7 @@ impl MenuRenderer {
                     &all_menus,
                     keybindings,
                     theme,
+                    hover_target,
                 );
             }
         }
@@ -239,6 +247,7 @@ impl MenuRenderer {
         all_menus: &[&Menu],
         keybindings: &crate::keybindings::KeybindingResolver,
         theme: &Theme,
+        hover_target: Option<&crate::editor::HoverTarget>,
     ) {
         // Calculate the x position of the dropdown based on menu index
         let mut x_offset = 0;
@@ -276,6 +285,10 @@ impl MenuRenderer {
         let mut lines = Vec::new();
         for (idx, item) in menu.items.iter().enumerate() {
             let is_highlighted = highlighted_item == Some(idx);
+            let is_hovered = matches!(
+                hover_target,
+                Some(crate::editor::HoverTarget::MenuDropdownItem(mi, ii)) if *mi == menu_index && *ii == idx
+            );
 
             let line = match item {
                 MenuItem::Action { label, action, .. } => {
@@ -283,6 +296,10 @@ impl MenuRenderer {
                         Style::default()
                             .fg(theme.menu_highlight_fg)
                             .bg(theme.menu_highlight_bg)
+                    } else if is_hovered {
+                        Style::default()
+                            .fg(theme.menu_hover_fg)
+                            .bg(theme.menu_hover_bg)
                     } else {
                         Style::default()
                             .fg(theme.menu_dropdown_fg)
@@ -318,6 +335,10 @@ impl MenuRenderer {
                         Style::default()
                             .fg(theme.menu_highlight_fg)
                             .bg(theme.menu_highlight_bg)
+                    } else if is_hovered {
+                        Style::default()
+                            .fg(theme.menu_hover_fg)
+                            .bg(theme.menu_hover_bg)
                     } else {
                         Style::default()
                             .fg(theme.menu_dropdown_fg)

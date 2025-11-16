@@ -88,6 +88,10 @@ struct UiColors {
     menu_border_fg: ColorDef,
     #[serde(default = "default_menu_separator_fg")]
     menu_separator_fg: ColorDef,
+    #[serde(default = "default_menu_hover_bg")]
+    menu_hover_bg: ColorDef,
+    #[serde(default = "default_menu_hover_fg")]
+    menu_hover_fg: ColorDef,
     status_bar_fg: ColorDef,
     status_bar_bg: ColorDef,
     prompt_fg: ColorDef,
@@ -107,6 +111,16 @@ struct UiColors {
     help_indicator_fg: ColorDef,
     help_indicator_bg: ColorDef,
     split_separator_fg: ColorDef,
+    #[serde(default = "default_split_separator_hover_fg")]
+    split_separator_hover_fg: ColorDef,
+    #[serde(default = "default_scrollbar_track_fg")]
+    scrollbar_track_fg: ColorDef,
+    #[serde(default = "default_scrollbar_thumb_fg")]
+    scrollbar_thumb_fg: ColorDef,
+    #[serde(default = "default_scrollbar_track_hover_fg")]
+    scrollbar_track_hover_fg: ColorDef,
+    #[serde(default = "default_scrollbar_thumb_hover_fg")]
+    scrollbar_thumb_hover_fg: ColorDef,
 }
 
 // Default menu colors (for backward compatibility with existing themes)
@@ -139,6 +153,27 @@ fn default_menu_border_fg() -> ColorDef {
 }
 fn default_menu_separator_fg() -> ColorDef {
     ColorDef::Rgb(80, 80, 80)
+}
+fn default_menu_hover_bg() -> ColorDef {
+    ColorDef::Rgb(55, 55, 55)
+}
+fn default_menu_hover_fg() -> ColorDef {
+    ColorDef::Rgb(255, 255, 255)
+}
+fn default_split_separator_hover_fg() -> ColorDef {
+    ColorDef::Rgb(100, 149, 237) // Cornflower blue for visibility
+}
+fn default_scrollbar_track_fg() -> ColorDef {
+    ColorDef::Named("DarkGray".to_string())
+}
+fn default_scrollbar_thumb_fg() -> ColorDef {
+    ColorDef::Named("Gray".to_string())
+}
+fn default_scrollbar_track_hover_fg() -> ColorDef {
+    ColorDef::Named("Gray".to_string())
+}
+fn default_scrollbar_thumb_hover_fg() -> ColorDef {
+    ColorDef::Named("White".to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,6 +240,8 @@ pub struct Theme {
     pub menu_highlight_fg: Color,
     pub menu_border_fg: Color,
     pub menu_separator_fg: Color,
+    pub menu_hover_bg: Color,
+    pub menu_hover_fg: Color,
 
     pub status_bar_fg: Color,
     pub status_bar_bg: Color,
@@ -230,6 +267,13 @@ pub struct Theme {
     pub help_indicator_bg: Color,
 
     pub split_separator_fg: Color,
+    pub split_separator_hover_fg: Color,
+
+    // Scrollbar colors
+    pub scrollbar_track_fg: Color,
+    pub scrollbar_thumb_fg: Color,
+    pub scrollbar_track_hover_fg: Color,
+    pub scrollbar_thumb_hover_fg: Color,
 
     // Search colors
     pub search_match_bg: Color,
@@ -282,6 +326,8 @@ impl From<ThemeFile> for Theme {
             menu_highlight_fg: file.ui.menu_highlight_fg.into(),
             menu_border_fg: file.ui.menu_border_fg.into(),
             menu_separator_fg: file.ui.menu_separator_fg.into(),
+            menu_hover_bg: file.ui.menu_hover_bg.into(),
+            menu_hover_fg: file.ui.menu_hover_fg.into(),
             status_bar_fg: file.ui.status_bar_fg.into(),
             status_bar_bg: file.ui.status_bar_bg.into(),
             prompt_fg: file.ui.prompt_fg.into(),
@@ -301,6 +347,11 @@ impl From<ThemeFile> for Theme {
             help_indicator_fg: file.ui.help_indicator_fg.into(),
             help_indicator_bg: file.ui.help_indicator_bg.into(),
             split_separator_fg: file.ui.split_separator_fg.into(),
+            split_separator_hover_fg: file.ui.split_separator_hover_fg.into(),
+            scrollbar_track_fg: file.ui.scrollbar_track_fg.into(),
+            scrollbar_thumb_fg: file.ui.scrollbar_thumb_fg.into(),
+            scrollbar_track_hover_fg: file.ui.scrollbar_track_hover_fg.into(),
+            scrollbar_thumb_hover_fg: file.ui.scrollbar_thumb_hover_fg.into(),
             search_match_bg: file.search.match_bg.into(),
             search_match_fg: file.search.match_fg.into(),
             diagnostic_error_fg: file.diagnostic.error_fg.into(),
@@ -384,6 +435,8 @@ impl Theme {
             menu_highlight_fg: Color::Rgb(255, 255, 255),
             menu_border_fg: Color::Rgb(100, 100, 100),
             menu_separator_fg: Color::Rgb(80, 80, 80),
+            menu_hover_bg: Color::Rgb(55, 55, 55),
+            menu_hover_fg: Color::Rgb(255, 255, 255),
 
             status_bar_fg: Color::Black,
             status_bar_bg: Color::White,
@@ -409,6 +462,13 @@ impl Theme {
             help_indicator_bg: Color::Black,
 
             split_separator_fg: Color::DarkGray,
+            split_separator_hover_fg: Color::Rgb(100, 149, 237), // Cornflower blue
+
+            // Scrollbar colors
+            scrollbar_track_fg: Color::DarkGray,
+            scrollbar_thumb_fg: Color::Gray,
+            scrollbar_track_hover_fg: Color::Gray,
+            scrollbar_thumb_hover_fg: Color::White,
 
             // Search colors
             search_match_bg: Color::Rgb(100, 100, 20), // Yellow-brown highlight
@@ -468,6 +528,8 @@ impl Theme {
             menu_highlight_fg: Color::Rgb(255, 255, 255),
             menu_border_fg: Color::Rgb(150, 150, 150),
             menu_separator_fg: Color::Rgb(200, 200, 200),
+            menu_hover_bg: Color::Rgb(220, 220, 220),
+            menu_hover_fg: Color::Rgb(0, 0, 0),
 
             status_bar_fg: Color::White,
             status_bar_bg: Color::Blue,
@@ -493,6 +555,13 @@ impl Theme {
             help_indicator_bg: Color::White,
 
             split_separator_fg: Color::Gray,
+            split_separator_hover_fg: Color::Rgb(70, 130, 180), // Steel blue
+
+            // Scrollbar colors
+            scrollbar_track_fg: Color::Gray,
+            scrollbar_thumb_fg: Color::DarkGray,
+            scrollbar_track_hover_fg: Color::DarkGray,
+            scrollbar_thumb_hover_fg: Color::Black,
 
             // Search colors
             search_match_bg: Color::Rgb(255, 255, 150), // Light yellow highlight
@@ -552,6 +621,8 @@ impl Theme {
             menu_highlight_fg: Color::White,
             menu_border_fg: Color::Yellow,
             menu_separator_fg: Color::White,
+            menu_hover_bg: Color::Rgb(50, 50, 50),
+            menu_hover_fg: Color::Yellow,
 
             status_bar_fg: Color::Black,
             status_bar_bg: Color::Yellow,
@@ -577,6 +648,13 @@ impl Theme {
             help_indicator_bg: Color::Black,
 
             split_separator_fg: Color::White,
+            split_separator_hover_fg: Color::Yellow,
+
+            // Scrollbar colors
+            scrollbar_track_fg: Color::White,
+            scrollbar_thumb_fg: Color::Yellow,
+            scrollbar_track_hover_fg: Color::Yellow,
+            scrollbar_thumb_hover_fg: Color::Cyan,
 
             // Search colors
             search_match_bg: Color::Yellow,
