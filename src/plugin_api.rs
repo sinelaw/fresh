@@ -217,6 +217,23 @@ pub enum PluginCommand {
         entries: Vec<crate::text_property::TextPropertyEntry>,
     },
 
+    /// Create a virtual buffer in a horizontal split
+    /// Opens the buffer in a new pane below the current one
+    CreateVirtualBufferInSplit {
+        /// Display name (e.g., "*Diagnostics*")
+        name: String,
+        /// Mode name for buffer-local keybindings (e.g., "diagnostics-list")
+        mode: String,
+        /// Whether the buffer is read-only
+        read_only: bool,
+        /// Entries with text and embedded properties
+        entries: Vec<crate::text_property::TextPropertyEntry>,
+        /// Split ratio (0.0 to 1.0, where 0.5 = equal split)
+        ratio: f32,
+        /// Optional panel ID for idempotent operations (if panel exists, update content)
+        panel_id: Option<String>,
+    },
+
     /// Set the content of a virtual buffer with text properties
     SetVirtualBufferContent {
         buffer_id: BufferId,
@@ -457,6 +474,33 @@ impl PluginApi {
             mode,
             read_only,
             entries,
+        })
+    }
+
+    /// Create a virtual buffer in a horizontal split below the current pane
+    ///
+    /// This creates a new split with the virtual buffer, keeping the original
+    /// buffer visible above it. The ratio controls how much space the original
+    /// pane gets (0.7 = original takes 70%, new buffer takes 30%).
+    ///
+    /// If panel_id is provided and a buffer with that ID already exists,
+    /// the content will be updated instead of creating a new split.
+    pub fn create_virtual_buffer_in_split(
+        &self,
+        name: String,
+        mode: String,
+        read_only: bool,
+        entries: Vec<crate::text_property::TextPropertyEntry>,
+        ratio: f32,
+        panel_id: Option<String>,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::CreateVirtualBufferInSplit {
+            name,
+            mode,
+            read_only,
+            entries,
+            ratio,
+            panel_id,
         })
     }
 

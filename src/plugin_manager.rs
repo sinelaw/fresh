@@ -259,6 +259,20 @@ impl PluginManager {
         })?;
         editor.set("set_status", set_status)?;
 
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.open_file_at_location(path, line, column)
+        // Opens a file and jumps to the specified line and column (1-indexed)
+        let open_file_at_location = lua.create_function(
+            move |_, (path, line, column): (String, Option<usize>, Option<usize>)| {
+                api_clone
+                    .open_file_at_location(std::path::PathBuf::from(path), line, column)
+                    .map_err(|e| mlua::Error::RuntimeError(e))
+            },
+        )?;
+        editor.set("open_file_at_location", open_file_at_location)?;
+
         // editor.on(hook_name, callback)
         // We can't directly create a closure that captures Lua state across threads,
         // so we store the callback and invoke it later in run_hook()
@@ -785,6 +799,53 @@ impl PluginManager {
                 .map_err(|e| mlua::Error::RuntimeError(e))
         })?;
         editor.set("create_virtual_buffer_with_content", create_virtual_buffer_with_content)?;
+
+        // Clone API for next closure
+        let api_clone = api.clone();
+
+        // editor.create_virtual_buffer_in_split({name = "*Diagnostics*", mode = "diagnostics-list", read_only = true, entries = {...}, ratio = 0.7, panel_id = "diagnostics"})
+        // Creates a virtual buffer in a horizontal split below the current pane
+        // If panel_id is provided and panel exists, updates content instead of creating new split
+        let create_virtual_buffer_in_split = lua.create_function(move |_lua, args: mlua::Table| {
+            use crate::text_property::TextPropertyEntry;
+
+            let name: String = args.get("name")?;
+            let mode: String = args.get("mode")?;
+            let read_only: bool = args.get("read_only").unwrap_or(true);
+            let ratio: f32 = args.get("ratio").unwrap_or(0.7);
+            let panel_id: Option<String> = args.get("panel_id").ok();
+            let entries_table: mlua::Table = args.get("entries")?;
+
+            let mut entries = Vec::new();
+
+            // Iterate through the Lua table (1-indexed)
+            for pair in entries_table.pairs::<usize, mlua::Table>() {
+                let (_, entry_table) = pair?;
+
+                let text: String = entry_table.get("text")?;
+                let properties_table: Option<mlua::Table> = entry_table.get("properties").ok();
+
+                let mut properties = std::collections::HashMap::new();
+                if let Some(props) = properties_table {
+                    // Convert Lua table to HashMap<String, serde_json::Value>
+                    for pair in props.pairs::<String, mlua::Value>() {
+                        let (key, value) = pair?;
+                        let json_value = lua_value_to_json(value)?;
+                        properties.insert(key, json_value);
+                    }
+                }
+
+                entries.push(TextPropertyEntry {
+                    text,
+                    properties,
+                });
+            }
+
+            api_clone
+                .create_virtual_buffer_in_split(name, mode, read_only, entries, ratio, panel_id)
+                .map_err(|e| mlua::Error::RuntimeError(e))
+        })?;
+        editor.set("create_virtual_buffer_in_split", create_virtual_buffer_in_split)?;
 
         // Clone API for next closure
         let api_clone = api.clone();

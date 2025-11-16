@@ -341,6 +341,10 @@ pub struct Editor {
     /// Plugin manager
     plugin_manager: Option<PluginManager>,
 
+    /// Named panel IDs mapping (for idempotent panel operations)
+    /// Maps panel ID (e.g., "diagnostics") to buffer ID
+    panel_ids: HashMap<String, BufferId>,
+
     /// Search history (for search and find operations)
     search_history: crate::input_history::InputHistory,
 
@@ -605,6 +609,7 @@ impl Editor {
             hook_registry,
             command_registry,
             plugin_manager,
+            panel_ids: HashMap::new(),
             search_history: crate::input_history::InputHistory::new(),
             replace_history: crate::input_history::InputHistory::new(),
             lsp_progress: std::collections::HashMap::new(),
@@ -3336,6 +3341,82 @@ impl Editor {
                     }
                     Err(e) => {
                         tracing::error!("Failed to set virtual buffer content: {}", e);
+                    }
+                }
+            }
+            PluginCommand::CreateVirtualBufferInSplit {
+                name,
+                mode,
+                read_only,
+                entries,
+                ratio,
+                panel_id,
+            } => {
+                // Check if this panel already exists (for idempotent operations)
+                if let Some(pid) = &panel_id {
+                    if let Some(&existing_buffer_id) = self.panel_ids.get(pid) {
+                        // Panel exists, just update its content
+                        if let Err(e) = self.set_virtual_buffer_content(existing_buffer_id, entries)
+                        {
+                            tracing::error!("Failed to update panel content: {}", e);
+                        } else {
+                            tracing::info!("Updated existing panel '{}' content", pid);
+                            // Focus the existing panel's split
+                            self.set_active_buffer(existing_buffer_id);
+                        }
+                        return Ok(());
+                    }
+                }
+
+                // Create the virtual buffer first
+                let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+                tracing::info!(
+                    "Created virtual buffer '{}' with mode '{}' in split (id={:?})",
+                    name,
+                    mode,
+                    buffer_id
+                );
+
+                // Store the panel ID mapping if provided
+                if let Some(pid) = panel_id {
+                    self.panel_ids.insert(pid, buffer_id);
+                }
+
+                // Set the content
+                if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
+                    tracing::error!("Failed to set virtual buffer content: {}", e);
+                    return Ok(());
+                }
+
+                // Save current split's view state
+                self.save_current_split_view_state();
+
+                // Create a horizontal split with the new buffer
+                match self.split_manager.split_active(
+                    crate::event::SplitDirection::Horizontal,
+                    buffer_id,
+                    ratio,
+                ) {
+                    Ok(new_split_id) => {
+                        // Create independent view state for the new split
+                        let mut view_state =
+                            SplitViewState::new(self.terminal_width, self.terminal_height);
+                        view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+                        self.split_view_states.insert(new_split_id, view_state);
+
+                        // Focus the new split (the diagnostics panel)
+                        self.split_manager.set_active_split(new_split_id);
+                        self.active_buffer = buffer_id;
+
+                        tracing::info!(
+                            "Created horizontal split with virtual buffer {:?}",
+                            buffer_id
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to create split: {}", e);
+                        // Fall back to just switching to the buffer
+                        self.set_active_buffer(buffer_id);
                     }
                 }
             }
