@@ -3316,15 +3316,44 @@ impl Editor {
     /// This should be called when the user performs an action that would make
     /// the pending request's results stale (e.g., cursor movement, text editing)
     fn cancel_pending_lsp_requests(&mut self) {
-        if self.pending_completion_request.is_some() {
-            tracing::debug!("Canceling pending LSP completion request");
-            self.pending_completion_request = None;
+        if let Some(request_id) = self.pending_completion_request.take() {
+            tracing::debug!("Canceling pending LSP completion request {}", request_id);
+            // Send cancellation to the LSP server
+            self.send_lsp_cancel_request(request_id);
             self.lsp_status.clear();
         }
-        if self.pending_goto_definition_request.is_some() {
-            tracing::debug!("Canceling pending LSP goto-definition request");
-            self.pending_goto_definition_request = None;
+        if let Some(request_id) = self.pending_goto_definition_request.take() {
+            tracing::debug!(
+                "Canceling pending LSP goto-definition request {}",
+                request_id
+            );
+            // Send cancellation to the LSP server
+            self.send_lsp_cancel_request(request_id);
             self.lsp_status.clear();
+        }
+    }
+
+    /// Send a cancel request to the LSP server for a specific request ID
+    fn send_lsp_cancel_request(&mut self, request_id: u64) {
+        // Get the current file path to determine language
+        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let file_path = metadata.and_then(|meta| meta.file_path.as_ref());
+
+        if let Some(path) = file_path {
+            if let Some(language) = crate::lsp_manager::detect_language(path) {
+                if let Some(lsp) = self.lsp.as_mut() {
+                    if let Some(handle) = lsp.get_or_spawn(&language) {
+                        if let Err(e) = handle.cancel_request(request_id) {
+                            tracing::warn!("Failed to send LSP cancel request: {}", e);
+                        } else {
+                            tracing::debug!(
+                                "Sent $/cancelRequest for request_id={}",
+                                request_id
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -4893,6 +4922,9 @@ impl Editor {
                     self.update_prompt_suggestions();
                 } else {
                     // Normal mode character insertion
+                    // Cancel any pending LSP requests since the text is changing
+                    self.cancel_pending_lsp_requests();
+
                     if let Some(events) = self.action_to_events(Action::InsertChar(c)) {
                         // Wrap multiple events (multi-cursor) in a Batch for atomic undo
                         if events.len() > 1 {

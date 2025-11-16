@@ -67,13 +67,13 @@
     - **Impact:** High - resilient to transient server failures
     - **Effort:** Medium (4-6 hours)
 
-- [ ] **Request Cancellation** (`lsp_async.rs`)
-    - Add `CancellationToken` to completion/hover requests
+- [x] **Request Cancellation** (`lsp_async.rs`) ✅
+    - Added `CancelRequest` command and request tracking (`active_requests` HashMap)
     - Cancel stale completions when user types more characters
-    - Send `$/cancelRequest` notification to server
-    - Reduces server load, prevents outdated UI results
-    - **Impact:** High - better UX and performance
-    - **Effort:** Medium (4-6 hours)
+    - Send `$/cancelRequest` notification to server via `handle_cancel_request()`
+    - LspHandle exposes `cancel_request()` for editor to call
+    - Editor cancels pending requests on text changes
+    - **Completed:** Full request cancellation with tracking and server notification
 
 - [x] **Deferred Document Open** (`lsp_async.rs:LspHandle`) ✅
     - Queue pending DidOpen/DidChange/DidSave commands until initialization completes
@@ -172,6 +172,7 @@
 - [x] Client state machine with validated transitions (Initial→Starting→Initializing→Running→Stopping→Stopped→Error)
 - [x] workDoneProgress capability enabled
 - [x] CPU optimization (eliminated 46% busy-wait loop)
+- [x] Request cancellation with $/cancelRequest notifications and request tracking
 
 #### Deferred (Lower Priority)
 
