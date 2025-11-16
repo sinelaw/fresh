@@ -1,5 +1,6 @@
 use crate::actions::action_to_events as convert_action_to_events;
 use crate::async_bridge::{AsyncBridge, AsyncMessage};
+use crate::buffer_mode::ModeRegistry;
 use crate::command_registry::CommandRegistry;
 use crate::commands::Suggestion;
 use crate::config::Config;
@@ -70,34 +71,86 @@ struct InteractiveReplaceState {
     replacements_made: usize,
 }
 
+/// The kind of buffer (file-backed or virtual)
+#[derive(Debug, Clone, PartialEq)]
+pub enum BufferKind {
+    /// A buffer backed by a file on disk
+    File {
+        /// Path to the file
+        path: PathBuf,
+        /// LSP URI for the file
+        uri: Option<lsp_types::Uri>,
+    },
+    /// A virtual buffer (not backed by a file)
+    /// Used for special buffers like *Diagnostics*, *Grep*, etc.
+    Virtual {
+        /// The buffer's mode (e.g., "diagnostics-list", "grep-results")
+        mode: String,
+    },
+}
+
 /// Metadata associated with a buffer
 #[derive(Debug, Clone)]
 pub struct BufferMetadata {
-    /// File path (if the buffer is associated with a file)
-    pub file_path: Option<PathBuf>,
+    /// The kind of buffer (file or virtual)
+    pub kind: BufferKind,
 
-    /// File URI for LSP (computed once from absolute path)
-    pub file_uri: Option<lsp_types::Uri>,
-
-    /// Display name for the buffer (project-relative path or filename)
+    /// Display name for the buffer (project-relative path or filename or *BufferName*)
     pub display_name: String,
 
-    /// Whether LSP is enabled for this buffer
+    /// Whether LSP is enabled for this buffer (always false for virtual buffers)
     pub lsp_enabled: bool,
 
     /// Reason LSP is disabled (if applicable)
     pub lsp_disabled_reason: Option<String>,
+
+    /// Whether the buffer is read-only (typically true for virtual buffers)
+    pub read_only: bool,
 }
 
 impl BufferMetadata {
-    /// Create new metadata for a buffer
+    /// Get the file path if this is a file-backed buffer
+    pub fn file_path(&self) -> Option<&PathBuf> {
+        match &self.kind {
+            BufferKind::File { path, .. } => Some(path),
+            BufferKind::Virtual { .. } => None,
+        }
+    }
+
+    /// Get the file URI if this is a file-backed buffer
+    pub fn file_uri(&self) -> Option<&lsp_types::Uri> {
+        match &self.kind {
+            BufferKind::File { uri, .. } => uri.as_ref(),
+            BufferKind::Virtual { .. } => None,
+        }
+    }
+
+    /// Check if this is a virtual buffer
+    pub fn is_virtual(&self) -> bool {
+        matches!(self.kind, BufferKind::Virtual { .. })
+    }
+
+    /// Get the mode name for virtual buffers
+    pub fn virtual_mode(&self) -> Option<&str> {
+        match &self.kind {
+            BufferKind::Virtual { mode } => Some(mode),
+            BufferKind::File { .. } => None,
+        }
+    }
+}
+
+impl BufferMetadata {
+    /// Create new metadata for a buffer (unnamed, file-backed)
     pub fn new() -> Self {
         Self {
-            file_path: None,
-            file_uri: None,
+            kind: BufferKind::File {
+                path: PathBuf::new(),
+                uri: None,
+            },
             display_name: "[No Name]".to_string(),
             lsp_enabled: true,
             lsp_disabled_reason: None,
+            read_only: false,
         }
     }
 
@@ -122,11 +175,30 @@ impl BufferMetadata {
             .unwrap_or_else(|| "[Unknown]".to_string());
 
         Self {
-            file_path: Some(path),
-            file_uri,
+            kind: BufferKind::File {
+                path,
+                uri: file_uri,
+            },
             display_name,
             lsp_enabled: true,
             lsp_disabled_reason: None,
+            read_only: false,
+        }
+    }
+
+    /// Create metadata for a virtual buffer (not backed by a file)
+    ///
+    /// # Arguments
+    /// * `name` - Display name (e.g., "*Diagnostics*")
+    /// * `mode` - Buffer mode for keybindings (e.g., "diagnostics-list")
+    /// * `read_only` - Whether the buffer should be read-only
+    pub fn virtual_buffer(name: String, mode: String, read_only: bool) -> Self {
+        Self {
+            kind: BufferKind::Virtual { mode },
+            display_name: name,
+            lsp_enabled: false, // Virtual buffers don't use LSP
+            lsp_disabled_reason: Some("Virtual buffer".to_string()),
+            read_only,
         }
     }
 
@@ -193,6 +265,9 @@ pub struct Editor {
 
     /// Metadata for each buffer (file paths, LSP status, etc.)
     buffer_metadata: HashMap<BufferId, BufferMetadata>,
+
+    /// Buffer mode registry (for buffer-local keybindings)
+    mode_registry: ModeRegistry,
 
     /// Tokio runtime for async I/O tasks
     tokio_runtime: Option<tokio::runtime::Runtime>,
@@ -505,6 +580,7 @@ impl Editor {
             terminal_height: height,
             lsp: Some(lsp),
             buffer_metadata,
+            mode_registry: ModeRegistry::new(),
             tokio_runtime,
             async_bridge: Some(async_bridge),
             split_manager,
@@ -655,7 +731,7 @@ impl Editor {
                 );
 
                 // Use the URI from metadata (already computed in with_file)
-                if let Some(uri) = &metadata.file_uri {
+                if let Some(uri) = metadata.file_uri() {
                     tracing::debug!("Using URI from metadata: {}", uri.as_str());
                     // Get file size to decide whether to send full content
                     let file_size = std::fs::metadata(path).ok().map(|m| m.len()).unwrap_or(0);
@@ -1208,7 +1284,7 @@ impl Editor {
 
         // Get the currently active file path
         if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer) {
-            if let Some(file_path) = &metadata.file_path {
+            if let Some(file_path) = metadata.file_path() {
                 // Clone the file path to avoid borrow checker issues
                 let target_path = file_path.clone();
                 let working_dir = self.working_dir.clone();
@@ -2299,7 +2375,7 @@ impl Editor {
                         if let Some((buffer_id, _)) = self
                             .buffer_metadata
                             .iter()
-                            .find(|(_, m)| m.file_uri.as_ref() == Some(&diagnostic_url))
+                            .find(|(_, m)| m.file_uri() == Some(&diagnostic_url))
                         {
                             // Convert diagnostics to overlays
                             if let Some(state) = self.buffers.get_mut(buffer_id) {
@@ -3325,7 +3401,7 @@ impl Editor {
     fn send_lsp_cancel_request(&mut self, request_id: u64) {
         // Get the current file path to determine language
         let metadata = self.buffer_metadata.get(&self.active_buffer);
-        let file_path = metadata.and_then(|meta| meta.file_path.as_ref());
+        let file_path = metadata.and_then(|meta| meta.file_path());
 
         if let Some(path) = file_path {
             if let Some(language) = crate::lsp_manager::detect_language(path) {
@@ -3357,7 +3433,7 @@ impl Editor {
         // Get the current file URI and path
         let metadata = self.buffer_metadata.get(&self.active_buffer);
         let (uri, file_path) = if let Some(meta) = metadata {
-            (meta.file_uri.as_ref(), meta.file_path.as_ref())
+            (meta.file_uri(), meta.file_path())
         } else {
             (None, None)
         };
@@ -3405,7 +3481,7 @@ impl Editor {
         // Get the current file URI and path
         let metadata = self.buffer_metadata.get(&self.active_buffer);
         let (uri, file_path) = if let Some(meta) = metadata {
-            (meta.file_uri.as_ref(), meta.file_path.as_ref())
+            (meta.file_uri(), meta.file_path())
         } else {
             (None, None)
         };
@@ -3836,7 +3912,7 @@ impl Editor {
         // Get the current file URI and path
         let metadata = self.buffer_metadata.get(&self.active_buffer);
         let (uri, file_path) = if let Some(meta) = metadata {
-            (meta.file_uri.as_ref(), meta.file_path.as_ref())
+            (meta.file_uri(), meta.file_path())
         } else {
             (None, None)
         };
@@ -5713,7 +5789,7 @@ impl Editor {
                 for (buffer_id, state) in &self.buffers {
                     if state.buffer.is_modified() {
                         if let Some(metadata) = self.buffer_metadata.get(buffer_id) {
-                            if let Some(file_path) = &metadata.file_path {
+                            if let Some(file_path) = metadata.file_path() {
                                 files_with_unsaved_changes.insert(file_path.clone());
                             }
                         }
@@ -6011,7 +6087,7 @@ impl Editor {
         }
 
         // Get the URI (computed once in with_file)
-        let uri = match &metadata.file_uri {
+        let uri = match metadata.file_uri() {
             Some(u) => u.clone(),
             None => {
                 tracing::debug!(
@@ -6022,7 +6098,7 @@ impl Editor {
         };
 
         // Get the file path for language detection
-        let path = match &metadata.file_path {
+        let path = match metadata.file_path() {
             Some(p) => p,
             None => {
                 tracing::debug!("notify_lsp_change: no file path for buffer");
@@ -6091,7 +6167,7 @@ impl Editor {
         }
 
         // Get the URI
-        let uri = match &metadata.file_uri {
+        let uri = match metadata.file_uri() {
             Some(u) => u.clone(),
             None => {
                 tracing::debug!("notify_lsp_save: no URI for buffer");
@@ -6100,7 +6176,7 @@ impl Editor {
         };
 
         // Get the file path for language detection
-        let path = match &metadata.file_path {
+        let path = match metadata.file_path() {
             Some(p) => p,
             None => {
                 tracing::debug!("notify_lsp_save: no file path for buffer");
