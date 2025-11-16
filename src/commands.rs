@@ -375,6 +375,31 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::QueryReplace,
             contexts: vec![KeyContext::Normal],
         },
+        // Navigation
+        Command {
+            name: "Go to Line".to_string(),
+            description: "Jump to a specific line number".to_string(),
+            action: Action::GotoLine,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Go to Definition".to_string(),
+            description: "Jump to the definition of the symbol under cursor".to_string(),
+            action: Action::LspGotoDefinition,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Navigate Back".to_string(),
+            description: "Go back in navigation history".to_string(),
+            action: Action::NavigateBack,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Navigate Forward".to_string(),
+            description: "Go forward in navigation history".to_string(),
+            action: Action::NavigateForward,
+            contexts: vec![KeyContext::Normal],
+        },
     ]
 }
 
