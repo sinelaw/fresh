@@ -3956,7 +3956,6 @@ impl Editor {
         _request_id: u64,
         result: Result<lsp_types::WorkspaceEdit, String>,
     ) -> io::Result<()> {
-        let total_start = std::time::Instant::now();
         self.lsp_status.clear();
 
         match result {
@@ -3974,10 +3973,6 @@ impl Editor {
 
                 // Apply the workspace edit
                 let mut total_changes = 0;
-                let mut timing_open_file = std::time::Duration::ZERO;
-                let mut timing_position_conversion = std::time::Duration::ZERO;
-                let mut timing_event_creation = std::time::Duration::ZERO;
-                let mut timing_batch_apply = std::time::Duration::ZERO;
 
                 // Handle changes (map of URI -> Vec<TextEdit>)
                 if let Some(changes) = workspace_edit.changes {
@@ -4098,9 +4093,7 @@ impl Editor {
 
                         if let Ok(path) = uri_to_path(&uri) {
                             // Open the file if not already open
-                            let open_start = std::time::Instant::now();
                             let buffer_id = self.open_file(&path)?;
-                            timing_open_file += open_start.elapsed();
 
                             // Extract TextEdit from OneOf<TextEdit, AnnotatedTextEdit>
                             let edits: Vec<lsp_types::TextEdit> = text_doc_edit
@@ -4156,11 +4149,9 @@ impl Editor {
                                 let end_line = edit.range.end.line as usize;
                                 let end_char = edit.range.end.character as usize;
 
-                                let conv_start = std::time::Instant::now();
                                 let start_pos =
                                     state.buffer.lsp_position_to_byte(start_line, start_char);
                                 let end_pos = state.buffer.lsp_position_to_byte(end_line, end_char);
-                                timing_position_conversion += conv_start.elapsed();
                                 let buffer_len = state.buffer.len();
 
                                 // Log the conversion for debugging
@@ -4177,7 +4168,6 @@ impl Editor {
                                     start_pos, end_pos, old_text, edit.new_text);
 
                                 // Delete old text
-                                let event_start = std::time::Instant::now();
                                 if start_pos < end_pos {
                                     let deleted_text = state.get_text_range(start_pos, end_pos);
                                     let cursor_id = state.cursors.primary_id();
@@ -4202,7 +4192,6 @@ impl Editor {
                                     };
                                     batch_events.push(insert_event);
                                 }
-                                timing_event_creation += event_start.elapsed();
 
                                 total_changes += 1;
                             }
@@ -4214,23 +4203,11 @@ impl Editor {
                                     description: "LSP Rename".to_string(),
                                 };
 
-                                let apply_start = std::time::Instant::now();
                                 self.apply_rename_batch_to_buffer(buffer_id, batch)?;
-                                timing_batch_apply += apply_start.elapsed();
                             }
                         }
                     }
                 }
-
-                // Log timing breakdown
-                tracing::info!(
-                    "LSP Rename timing breakdown: open_file={:?}, position_conversion={:?}, event_creation={:?}, batch_apply={:?}, total={:?}",
-                    timing_open_file,
-                    timing_position_conversion,
-                    timing_event_creation,
-                    timing_batch_apply,
-                    total_start.elapsed()
-                );
 
                 self.status_message =
                     Some(format!("Renamed successfully ({} changes)", total_changes));
@@ -4262,39 +4239,23 @@ impl Editor {
         buffer_id: BufferId,
         batch: Event,
     ) -> io::Result<()> {
-        let start = std::time::Instant::now();
-
         // Add to event log
-        let log_start = std::time::Instant::now();
         if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
             event_log.append(batch.clone());
         }
-        let log_time = log_start.elapsed();
 
         // Apply to buffer state
-        let apply_start = std::time::Instant::now();
         let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
         })?;
         state.apply(&batch);
-        let apply_time = apply_start.elapsed();
 
         // Notify LSP about the changes
         // Temporarily switch active buffer to use notify_lsp_change correctly
-        let notify_start = std::time::Instant::now();
         let original_active = self.active_buffer;
         self.active_buffer = buffer_id;
         self.notify_lsp_change(&batch);
         self.active_buffer = original_active;
-        let notify_time = notify_start.elapsed();
-
-        tracing::info!(
-            "apply_rename_batch_to_buffer: event_log={:?}, apply={:?}, notify_lsp={:?}, total={:?}",
-            log_time,
-            apply_time,
-            notify_time,
-            start.elapsed()
-        );
 
         Ok(())
     }
