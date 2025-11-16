@@ -229,3 +229,57 @@ fn test_mouse_click_empty_area_closes_menu() {
     // Menu should be closed
     harness.assert_screen_not_contains("New File");
 }
+
+/// Test that clicking on a menu item executes its action
+#[test]
+fn test_mouse_click_menu_item_executes_action() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    // Open Help menu via Alt+H
+    harness
+        .send_key(KeyCode::Char('h'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Show Help");
+
+    // The Help menu dropdown appears at row 1 (below menu bar)
+    // Help is the 6th menu, so x position = " File " (7) + " Edit " (7) + " View " (7) + " Selection " (12) + " Go " (5) = 38
+    // Click on "Show Help" item - it should be the first/only item
+    // Menu items are rendered with border, so first item starts at row 2
+    harness.mouse_click(40, 2).unwrap();
+    harness.render().unwrap();
+
+    // After clicking, the help panel should open
+    // The menu should close after executing
+    harness.assert_screen_not_contains("Show Help");
+    // Help panel shows keybinding information (look for actual keybinding entries)
+    harness.assert_screen_contains("Ctrl+");
+}
+
+/// Test clicking on Edit menu's Undo item
+#[test]
+fn test_mouse_click_undo_menu_item() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Type some text first
+    harness.type_text("Hello World").unwrap();
+    harness.render().unwrap();
+    harness.assert_buffer_content("Hello World");
+
+    // Open Edit menu (around column 8)
+    harness.mouse_click(9, 0).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Undo");
+
+    // Click on Undo item (first item in Edit menu, row 2 after border)
+    // Edit menu starts at column 7 (after " File " + space)
+    harness.mouse_click(10, 2).unwrap();
+    harness.render().unwrap();
+
+    // Undo should have reversed the last text insertion
+    // Menu should be closed
+    harness.assert_screen_not_contains("Undo");
+    // The last character should be undone (type_text inserts char by char)
+    harness.assert_buffer_content("Hello Worl");
+}

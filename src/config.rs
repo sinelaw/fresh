@@ -947,7 +947,7 @@ impl Config {
                 items: vec![
                     MenuItem::Action {
                         label: "Show Help".to_string(),
-                        action: "toggle_help".to_string(),
+                        action: "show_help".to_string(),
                         args: HashMap::new(),
                         when: None,
                     },

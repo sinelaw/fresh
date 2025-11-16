@@ -4593,6 +4593,63 @@ impl Editor {
             return Ok(());
         }
 
+        // Check if click is on an open menu dropdown
+        if let Some(active_idx) = self.menu_state.active_menu {
+            let all_menus: Vec<crate::config::Menu> = self.config.menu.menus
+                .iter()
+                .chain(self.menu_state.plugin_menus.iter())
+                .cloned()
+                .collect();
+
+            if let Some(menu) = all_menus.get(active_idx) {
+                // Calculate menu dropdown bounds
+                // Menu position: sum of widths of all menus before this one
+                let mut menu_x = 0u16;
+                for m in all_menus.iter().take(active_idx) {
+                    menu_x += m.label.len() as u16 + 3; // " Label " + trailing space
+                }
+
+                // Find the widest item to determine dropdown width
+                let max_label_len = menu.items.iter().map(|item| match item {
+                    crate::config::MenuItem::Action { label, .. } => label.len(),
+                    crate::config::MenuItem::Separator { .. } => 0,
+                    crate::config::MenuItem::Submenu { label, .. } => label.len(),
+                }).max().unwrap_or(0);
+                let dropdown_width = max_label_len + 30; // Label + padding + keybinding space
+
+                // Dropdown starts at row 1 (below menu bar), with border at row 1
+                // Items start at row 2, and there's a border at the bottom
+                let dropdown_height = menu.items.len() as u16 + 2; // items + top/bottom border
+
+                // Check if click is inside dropdown bounds
+                if col >= menu_x && col < menu_x + dropdown_width as u16
+                    && row >= 1 && row < 1 + dropdown_height
+                {
+                    // Check if click is on an item (not border)
+                    if let Some(item_idx) = self.menu_state.get_item_at_position(menu, row) {
+                        // Execute the menu item action
+                        if let Some(crate::config::MenuItem::Action { action, args, .. }) = menu.items.get(item_idx) {
+                            let action_name = action.clone();
+                            let action_args = args.clone();
+
+                            // Close the menu first
+                            self.menu_state.close_menu();
+
+                            // Parse and execute the action
+                            if let Some(action) = Action::from_str(&action_name, &action_args) {
+                                return self.handle_action(action);
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+
+            // Click outside the dropdown - close the menu
+            self.menu_state.close_menu();
+            return Ok(());
+        }
+
         // Check if click is on file explorer
         if let Some(explorer_area) = self.cached_layout.file_explorer_area {
             if col >= explorer_area.x
