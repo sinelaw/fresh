@@ -399,6 +399,10 @@ pub enum HoverTarget {
     MenuBarItem(usize),
     /// Hovering over a menu dropdown item (menu_index, item_index)
     MenuDropdownItem(usize, usize),
+    /// Hovering over a popup list item (popup_index in stack, item_index)
+    PopupListItem(usize, usize),
+    /// Hovering over a suggestion item (item_index)
+    SuggestionItem(usize),
 }
 
 /// Mouse state tracking
@@ -444,6 +448,12 @@ struct CachedLayout {
     /// Split separator positions for drag resize
     /// (split_id, direction, x, y, length)
     separator_areas: Vec<(SplitId, SplitDirection, u16, u16, u16)>,
+    /// Popup areas for mouse hit testing
+    /// (popup_index, rect, inner_rect, scroll_offset, num_items)
+    popup_areas: Vec<(usize, ratatui::layout::Rect, ratatui::layout::Rect, usize, usize)>,
+    /// Suggestions area for mouse hit testing
+    /// (inner_rect, scroll_start_idx, visible_count, total_count)
+    suggestions_area: Option<(ratatui::layout::Rect, usize, usize, usize)>,
 }
 
 impl Editor {
@@ -4326,8 +4336,6 @@ impl Editor {
     ) -> std::io::Result<()> {
         use crate::keybindings::Action;
 
-        use std::path::Path;
-
         let _t_total = std::time::Instant::now();
 
         tracing::debug!(
@@ -4401,155 +4409,9 @@ impl Editor {
                 self.help_renderer.scroll(10, &self.keybindings);
             }
 
-            // Prompt mode actions
+            // Prompt mode actions - delegate to handle_action
             Action::PromptConfirm => {
-                if let Some((input, prompt_type, selected_index)) = self.confirm_prompt() {
-                    match prompt_type {
-                        PromptType::OpenFile => {
-                            let path = Path::new(&input);
-                            if let Err(e) = self.open_file(path) {
-                                self.set_status_message(format!("Error opening file: {e}"));
-                            } else {
-                                self.set_status_message(format!("Opened: {input}"));
-                            }
-                        }
-                        PromptType::SaveFileAs => {
-                            self.set_status_message(format!(
-                                "Save-as not yet implemented: {input}"
-                            ));
-                        }
-                        PromptType::Search => {
-                            // Perform search with the given query
-                            self.perform_search(&input);
-                        }
-                        PromptType::ReplaceSearch => {
-                            // User entered search query for replace, now prompt for replacement text
-                            // First perform the search to highlight matches
-                            self.perform_search(&input);
-                            // Then open the replacement prompt
-                            self.start_prompt(
-                                format!("Replace '{}' with: ", input),
-                                PromptType::Replace {
-                                    search: input.clone(),
-                                },
-                            );
-                        }
-                        PromptType::Replace { search } => {
-                            // Perform replace of search term with input
-                            self.perform_replace(&search, &input);
-                        }
-                        PromptType::QueryReplaceSearch => {
-                            // User entered search query for query-replace, now prompt for replacement text
-                            // First perform the search to highlight matches
-                            self.perform_search(&input);
-                            // Then open the replacement prompt
-                            self.start_prompt(
-                                format!("Query replace '{}' with: ", input),
-                                PromptType::QueryReplace {
-                                    search: input.clone(),
-                                },
-                            );
-                        }
-                        PromptType::QueryReplace { search } => {
-                            // Start interactive replace mode
-                            self.start_interactive_replace(&search, &input);
-                        }
-                        PromptType::Command => {
-                            let commands = self.command_registry.read().unwrap().get_all();
-
-                            // input now contains the selected command name (from confirm_prompt)
-                            if let Some(cmd) = commands.iter().find(|c| c.name == input) {
-                                let action = cmd.action.clone();
-                                self.set_status_message(format!("Executing: {}", cmd.name));
-                                // Recursively handle the command action
-                                return self.handle_action(action);
-                            } else {
-                                self.set_status_message(format!("Unknown command: {input}"));
-                            }
-                        }
-                        PromptType::GotoLine => {
-                            // Parse the line number and jump to it
-                            match input.trim().parse::<usize>() {
-                                Ok(line_num) if line_num > 0 => {
-                                    // Convert to 0-indexed line number
-                                    let target_line = line_num.saturating_sub(1);
-                                    let buffer_id = self.active_buffer;
-
-                                    if let Some(state) = self.buffers.get(&buffer_id) {
-                                        let max_line = state.buffer.line_count().unwrap_or(1).saturating_sub(1);
-                                        let actual_line = target_line.min(max_line);
-
-                                        // Calculate position at start of target line
-                                        let position = state.buffer.line_col_to_position(actual_line, 0);
-
-                                        // Get current cursor info
-                                        let cursor_id = state.cursors.primary_id();
-                                        let old_position = state.cursors.primary().position;
-                                        let old_anchor = state.cursors.primary().anchor;
-                                        let old_sticky_column = state.cursors.primary().sticky_column;
-
-                                        // Create move cursor event
-                                        let event = crate::event::Event::MoveCursor {
-                                            cursor_id,
-                                            old_position,
-                                            new_position: position,
-                                            old_anchor,
-                                            new_anchor: None,
-                                            old_sticky_column,
-                                            new_sticky_column: 0,
-                                        };
-
-                                        // Apply the event
-                                        if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                                            state.apply(&event);
-                                        }
-
-                                        if target_line > max_line {
-                                            self.set_status_message(format!(
-                                                "Line {} doesn't exist, jumped to line {}",
-                                                line_num,
-                                                actual_line + 1
-                                            ));
-                                        } else {
-                                            self.set_status_message(format!("Jumped to line {}", line_num));
-                                        }
-                                    }
-                                }
-                                Ok(_) => {
-                                    self.set_status_message("Line number must be positive".to_string());
-                                }
-                                Err(_) => {
-                                    self.set_status_message(format!("Invalid line number: {}", input));
-                                }
-                            }
-                        }
-                        PromptType::Plugin { custom_type } => {
-                            // Fire plugin hook for prompt confirmation
-                            if let Some(plugin_manager) = &mut self.plugin_manager {
-                                use crate::hooks::HookArgs;
-
-                                // selected_index is already captured from confirm_prompt()
-                                let _ = plugin_manager.run_hook(
-                                    "prompt-confirmed",
-                                    &HookArgs::PromptConfirmed {
-                                        prompt_type: custom_type,
-                                        input,
-                                        selected_index,
-                                    },
-                                );
-                            }
-                        }
-                        PromptType::LspRename {
-                            original_text,
-                            start_pos,
-                            end_pos: _,
-                            overlay_id,
-                        } => {
-                            // Perform LSP rename with the new name from the prompt input
-                            self.perform_lsp_rename(input, original_text, start_pos, overlay_id);
-                        }
-                    }
-                }
+                return self.handle_action(action);
             }
             Action::PromptCancel => {
                 self.cancel_prompt();
@@ -4871,90 +4733,10 @@ impl Editor {
                 self.popup_page_down();
             }
             Action::PopupConfirm => {
-                // If it's a completion popup, insert the selected item
-                // Clone the completion text first to avoid borrow checker issues
-                let completion_text = if let Some(popup) = self.active_state().popups.top() {
-                    if let Some(title) = &popup.title {
-                        if title == "Completion" {
-                            if let Some(item) = popup.selected_item() {
-                                item.data.clone()
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                // Now perform the completion if we have text
-                if let Some(text) = completion_text {
-                    use crate::word_navigation::find_completion_word_start;
-
-                    let (cursor_id, cursor_pos, word_start) = {
-                        let state = self.active_state();
-                        let cursor_id = state.cursors.primary_id();
-                        let cursor_pos = state.cursors.primary().position;
-
-                        // Find the start of the current completion word (stops at delimiters like '.')
-                        let word_start = find_completion_word_start(&state.buffer, cursor_pos);
-
-                        (cursor_id, cursor_pos, word_start)
-                    };
-
-                    // Get the text being deleted (if any) before we mutate
-                    let deleted_text = if word_start < cursor_pos {
-                        self.active_state_mut()
-                            .get_text_range(word_start, cursor_pos)
-                    } else {
-                        String::new()
-                    };
-
-                    // Now we can mutate - delete the partial word and insert completion
-                    if word_start < cursor_pos {
-                        // Delete the partial word
-                        let delete_event = crate::event::Event::Delete {
-                            range: word_start..cursor_pos,
-                            deleted_text,
-                            cursor_id,
-                        };
-
-                        self.active_event_log_mut().append(delete_event.clone());
-                        self.apply_event_to_active_buffer(&delete_event);
-
-                        // After deletion, ensure insert position is valid
-                        let buffer_len = self.active_state().buffer.len();
-                        let insert_pos = word_start.min(buffer_len);
-
-                        let insert_event = crate::event::Event::Insert {
-                            position: insert_pos,
-                            text,
-                            cursor_id,
-                        };
-
-                        self.active_event_log_mut().append(insert_event.clone());
-                        self.apply_event_to_active_buffer(&insert_event);
-                    } else {
-                        // No partial word to delete, just insert
-                        let insert_event = crate::event::Event::Insert {
-                            position: cursor_pos,
-                            text,
-                            cursor_id,
-                        };
-
-                        self.active_event_log_mut().append(insert_event.clone());
-                        self.apply_event_to_active_buffer(&insert_event);
-                    }
-                }
-
-                self.hide_popup();
+                return self.handle_action(action);
             }
             Action::PopupCancel => {
-                self.hide_popup();
+                return self.handle_action(action);
             }
 
             // Normal mode actions - delegate to handle_action
@@ -5238,6 +5020,207 @@ impl Editor {
                     self.set_status_message("Plugin manager not available".to_string());
                 }
             }
+            Action::PromptConfirm => {
+                // Handle prompt confirmation (same logic as in handle_key)
+                if let Some((input, prompt_type, selected_index)) = self.confirm_prompt() {
+                    use std::path::Path;
+                    match prompt_type {
+                        PromptType::OpenFile => {
+                            let path = Path::new(&input);
+                            if let Err(e) = self.open_file(path) {
+                                self.set_status_message(format!("Error opening file: {e}"));
+                            } else {
+                                self.set_status_message(format!("Opened: {input}"));
+                            }
+                        }
+                        PromptType::SaveFileAs => {
+                            self.set_status_message(format!(
+                                "Save-as not yet implemented: {input}"
+                            ));
+                        }
+                        PromptType::Search => {
+                            self.perform_search(&input);
+                        }
+                        PromptType::ReplaceSearch => {
+                            self.perform_search(&input);
+                            self.start_prompt(
+                                format!("Replace '{}' with: ", input),
+                                PromptType::Replace {
+                                    search: input.clone(),
+                                },
+                            );
+                        }
+                        PromptType::Replace { search } => {
+                            self.perform_replace(&search, &input);
+                        }
+                        PromptType::QueryReplaceSearch => {
+                            self.perform_search(&input);
+                            self.start_prompt(
+                                format!("Query replace '{}' with: ", input),
+                                PromptType::QueryReplace {
+                                    search: input.clone(),
+                                },
+                            );
+                        }
+                        PromptType::QueryReplace { search } => {
+                            self.start_interactive_replace(&search, &input);
+                        }
+                        PromptType::Command => {
+                            let commands = self.command_registry.read().unwrap().get_all();
+                            if let Some(cmd) = commands.iter().find(|c| c.name == input) {
+                                let action = cmd.action.clone();
+                                self.set_status_message(format!("Executing: {}", cmd.name));
+                                return self.handle_action(action);
+                            } else {
+                                self.set_status_message(format!("Unknown command: {input}"));
+                            }
+                        }
+                        PromptType::GotoLine => {
+                            match input.trim().parse::<usize>() {
+                                Ok(line_num) if line_num > 0 => {
+                                    let target_line = line_num.saturating_sub(1);
+                                    let buffer_id = self.active_buffer;
+                                    if let Some(state) = self.buffers.get(&buffer_id) {
+                                        let max_line = state.buffer.line_count().unwrap_or(1).saturating_sub(1);
+                                        let actual_line = target_line.min(max_line);
+                                        let position = state.buffer.line_col_to_position(actual_line, 0);
+                                        let cursor_id = state.cursors.primary_id();
+                                        let old_position = state.cursors.primary().position;
+                                        let old_anchor = state.cursors.primary().anchor;
+                                        let old_sticky_column = state.cursors.primary().sticky_column;
+                                        let event = crate::event::Event::MoveCursor {
+                                            cursor_id,
+                                            old_position,
+                                            new_position: position,
+                                            old_anchor,
+                                            new_anchor: None,
+                                            old_sticky_column,
+                                            new_sticky_column: 0,
+                                        };
+                                        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                                            state.apply(&event);
+                                        }
+                                        if target_line > max_line {
+                                            self.set_status_message(format!(
+                                                "Line {} doesn't exist, jumped to line {}",
+                                                line_num,
+                                                actual_line + 1
+                                            ));
+                                        } else {
+                                            self.set_status_message(format!("Jumped to line {}", line_num));
+                                        }
+                                    }
+                                }
+                                Ok(_) => {
+                                    self.set_status_message("Line number must be positive".to_string());
+                                }
+                                Err(_) => {
+                                    self.set_status_message(format!("Invalid line number: {}", input));
+                                }
+                            }
+                        }
+                        PromptType::Plugin { custom_type } => {
+                            if let Some(plugin_manager) = &mut self.plugin_manager {
+                                use crate::hooks::HookArgs;
+                                let _ = plugin_manager.run_hook(
+                                    "prompt-confirmed",
+                                    &HookArgs::PromptConfirmed {
+                                        prompt_type: custom_type,
+                                        input,
+                                        selected_index,
+                                    },
+                                );
+                            }
+                        }
+                        PromptType::LspRename {
+                            original_text,
+                            start_pos,
+                            end_pos: _,
+                            overlay_id,
+                        } => {
+                            // Perform LSP rename with the new name from the prompt input
+                            self.perform_lsp_rename(input, original_text, start_pos, overlay_id);
+                        }
+                    }
+                }
+            }
+            Action::PopupConfirm => {
+                // If it's a completion popup, insert the selected item
+                let completion_text = if let Some(popup) = self.active_state().popups.top() {
+                    if let Some(title) = &popup.title {
+                        if title == "Completion" {
+                            if let Some(item) = popup.selected_item() {
+                                item.data.clone()
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Now perform the completion if we have text
+                if let Some(text) = completion_text {
+                    use crate::word_navigation::find_completion_word_start;
+
+                    let (cursor_id, cursor_pos, word_start) = {
+                        let state = self.active_state();
+                        let cursor_id = state.cursors.primary_id();
+                        let cursor_pos = state.cursors.primary().position;
+                        let word_start = find_completion_word_start(&state.buffer, cursor_pos);
+                        (cursor_id, cursor_pos, word_start)
+                    };
+
+                    let deleted_text = if word_start < cursor_pos {
+                        self.active_state_mut()
+                            .get_text_range(word_start, cursor_pos)
+                    } else {
+                        String::new()
+                    };
+
+                    if word_start < cursor_pos {
+                        let delete_event = crate::event::Event::Delete {
+                            range: word_start..cursor_pos,
+                            deleted_text,
+                            cursor_id,
+                        };
+
+                        self.active_event_log_mut().append(delete_event.clone());
+                        self.apply_event_to_active_buffer(&delete_event);
+
+                        let buffer_len = self.active_state().buffer.len();
+                        let insert_pos = word_start.min(buffer_len);
+
+                        let insert_event = crate::event::Event::Insert {
+                            position: insert_pos,
+                            text,
+                            cursor_id,
+                        };
+
+                        self.active_event_log_mut().append(insert_event.clone());
+                        self.apply_event_to_active_buffer(&insert_event);
+                    } else {
+                        let insert_event = crate::event::Event::Insert {
+                            position: cursor_pos,
+                            text,
+                            cursor_id,
+                        };
+
+                        self.active_event_log_mut().append(insert_event.clone());
+                        self.apply_event_to_active_buffer(&insert_event);
+                    }
+                }
+
+                self.hide_popup();
+            }
+            Action::PopupCancel => {
+                self.hide_popup();
+            }
             Action::InsertChar(c) => {
                 // Handle character insertion in interactive replace mode
                 if self.interactive_replace_state.is_some() {
@@ -5401,6 +5384,48 @@ impl Editor {
 
     /// Update the current hover target based on mouse position
     fn update_hover_target(&mut self, col: u16, row: u16) {
+        // Check suggestions area first (command palette, autocomplete)
+        if let Some((inner_rect, start_idx, _visible_count, total_count)) =
+            &self.cached_layout.suggestions_area
+        {
+            if col >= inner_rect.x
+                && col < inner_rect.x + inner_rect.width
+                && row >= inner_rect.y
+                && row < inner_rect.y + inner_rect.height
+            {
+                let relative_row = (row - inner_rect.y) as usize;
+                let item_idx = start_idx + relative_row;
+
+                if item_idx < *total_count {
+                    self.mouse_state.hover_target = Some(HoverTarget::SuggestionItem(item_idx));
+                    return;
+                }
+            }
+        }
+
+        // Check popups (they're rendered on top)
+        // Check from top to bottom (reverse order since last popup is on top)
+        for (popup_idx, _popup_rect, inner_rect, scroll_offset, num_items) in
+            self.cached_layout.popup_areas.iter().rev()
+        {
+            if col >= inner_rect.x
+                && col < inner_rect.x + inner_rect.width
+                && row >= inner_rect.y
+                && row < inner_rect.y + inner_rect.height
+                && *num_items > 0
+            {
+                // Calculate which item is being hovered
+                let relative_row = (row - inner_rect.y) as usize;
+                let item_idx = scroll_offset + relative_row;
+
+                if item_idx < *num_items {
+                    self.mouse_state.hover_target =
+                        Some(HoverTarget::PopupListItem(*popup_idx, item_idx));
+                    return;
+                }
+            }
+        }
+
         // Check menu bar (row 0)
         if row == 0 {
             let all_menus: Vec<crate::config::Menu> = self.config.menu.menus
@@ -5475,6 +5500,59 @@ impl Editor {
 
     /// Handle mouse click (down event)
     fn handle_mouse_click(&mut self, col: u16, row: u16) -> std::io::Result<()> {
+        // Check if click is on suggestions (command palette, autocomplete)
+        if let Some((inner_rect, start_idx, _visible_count, total_count)) =
+            &self.cached_layout.suggestions_area.clone()
+        {
+            if col >= inner_rect.x
+                && col < inner_rect.x + inner_rect.width
+                && row >= inner_rect.y
+                && row < inner_rect.y + inner_rect.height
+            {
+                let relative_row = (row - inner_rect.y) as usize;
+                let item_idx = start_idx + relative_row;
+
+                if item_idx < *total_count {
+                    // Select and execute the clicked suggestion
+                    if let Some(prompt) = &mut self.prompt {
+                        prompt.selected_suggestion = Some(item_idx);
+                    }
+                    // Execute the suggestion (same as pressing Enter)
+                    return self.handle_action(Action::PromptConfirm);
+                }
+            }
+        }
+
+        // Check if click is on a popup (they're rendered on top)
+        for (_popup_idx, _popup_rect, inner_rect, scroll_offset, num_items) in
+            self.cached_layout.popup_areas.iter().rev()
+        {
+            if col >= inner_rect.x
+                && col < inner_rect.x + inner_rect.width
+                && row >= inner_rect.y
+                && row < inner_rect.y + inner_rect.height
+                && *num_items > 0
+            {
+                // Calculate which item was clicked
+                let relative_row = (row - inner_rect.y) as usize;
+                let item_idx = scroll_offset + relative_row;
+
+                if item_idx < *num_items {
+                    // Select and execute the clicked item
+                    let state = self.active_state_mut();
+                    if let Some(popup) = state.popups.top_mut() {
+                        if let crate::popup::PopupContent::List { items: _, selected } =
+                            &mut popup.content
+                        {
+                            *selected = item_idx;
+                        }
+                    }
+                    // Execute the popup selection (same as pressing Enter)
+                    return self.handle_action(Action::PopupConfirm);
+                }
+            }
+        }
+
         // Check if click is on menu bar (row 0)
         if row == 0 {
             let all_menus: Vec<crate::config::Menu> = self.config.menu.menus
@@ -6391,9 +6469,16 @@ impl Editor {
         self.render_hover_highlights(frame);
 
         // Render suggestions if present (same for both layouts)
+        self.cached_layout.suggestions_area = None;
         if let Some(idx) = suggestions_idx {
             if let Some(prompt) = &self.prompt {
-                SuggestionsRenderer::render(frame, main_chunks[idx], prompt, &self.theme);
+                self.cached_layout.suggestions_area = SuggestionsRenderer::render_with_hover(
+                    frame,
+                    main_chunks[idx],
+                    prompt,
+                    &self.theme,
+                    self.mouse_state.hover_target.as_ref(),
+                );
             }
         }
 
@@ -6423,21 +6508,68 @@ impl Editor {
         // Render popups from the active buffer state
         // Clone theme to avoid borrow checker issues with active_state_mut()
         let theme_clone = self.theme.clone();
+        let hover_target = self.mouse_state.hover_target.clone();
+
+        // Clear popup areas and recalculate
+        self.cached_layout.popup_areas.clear();
+
+        // Collect popup information without holding a mutable borrow
+        let popup_info: Vec<_> = {
+            let state = self.active_state_mut();
+            if state.popups.is_visible() {
+                // Get the primary cursor position for popup positioning
+                let primary_cursor = state.cursors.primary();
+                let cursor_screen_pos = state
+                    .viewport
+                    .cursor_screen_position(&mut state.buffer, primary_cursor);
+
+                // Adjust cursor position to account for tab bar (1 line offset)
+                let cursor_screen_pos = (cursor_screen_pos.0, cursor_screen_pos.1 + 1);
+
+                // Collect popup data
+                state
+                    .popups
+                    .all()
+                    .iter()
+                    .enumerate()
+                    .map(|(popup_idx, popup)| {
+                        let popup_area = popup.calculate_area(size, Some(cursor_screen_pos));
+
+                        // Track popup area for mouse hit testing
+                        let inner_area = if popup.bordered {
+                            ratatui::layout::Rect {
+                                x: popup_area.x + 1,
+                                y: popup_area.y + 1,
+                                width: popup_area.width.saturating_sub(2),
+                                height: popup_area.height.saturating_sub(2),
+                            }
+                        } else {
+                            popup_area
+                        };
+
+                        let num_items = match &popup.content {
+                            crate::popup::PopupContent::List { items, .. } => items.len(),
+                            _ => 0,
+                        };
+
+                        (popup_idx, popup_area, inner_area, popup.scroll_offset, num_items)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        };
+
+        // Store popup areas for mouse hit testing
+        self.cached_layout.popup_areas = popup_info.clone();
+
+        // Now render popups
         let state = self.active_state_mut();
         if state.popups.is_visible() {
-            // Get the primary cursor position for popup positioning
-            let primary_cursor = state.cursors.primary();
-            let cursor_screen_pos = state
-                .viewport
-                .cursor_screen_position(&mut state.buffer, primary_cursor);
-
-            // Adjust cursor position to account for tab bar (1 line offset)
-            let cursor_screen_pos = (cursor_screen_pos.0, cursor_screen_pos.1 + 1);
-
-            // Render all popups (bottom to top)
-            for popup in state.popups.all() {
-                let popup_area = popup.calculate_area(size, Some(cursor_screen_pos));
-                popup.render(frame, popup_area, &theme_clone);
+            for (popup_idx, popup) in state.popups.all().iter().enumerate() {
+                if let Some((_, popup_area, _, _, _)) = popup_info.get(popup_idx) {
+                    popup.render_with_hover(frame, *popup_area, &theme_clone, hover_target.as_ref());
+                }
             }
         }
 

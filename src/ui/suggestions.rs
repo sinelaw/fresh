@@ -20,9 +20,31 @@ impl SuggestionsRenderer {
     /// * `area` - The rectangular area to render in
     /// * `prompt` - The active prompt containing suggestions
     /// * `theme` - The active theme for colors
-    pub fn render(frame: &mut Frame, area: Rect, prompt: &Prompt, theme: &crate::theme::Theme) {
+    ///
+    /// # Returns
+    /// * Optional tuple of (inner_rect, scroll_start_idx, visible_count, total_count) for mouse hit testing
+    pub fn render(
+        frame: &mut Frame,
+        area: Rect,
+        prompt: &Prompt,
+        theme: &crate::theme::Theme,
+    ) -> Option<(Rect, usize, usize, usize)> {
+        Self::render_with_hover(frame, area, prompt, theme, None)
+    }
+
+    /// Render the suggestions popup with hover highlighting
+    ///
+    /// # Returns
+    /// * Optional tuple of (inner_rect, scroll_start_idx, visible_count, total_count) for mouse hit testing
+    pub fn render_with_hover(
+        frame: &mut Frame,
+        area: Rect,
+        prompt: &Prompt,
+        theme: &crate::theme::Theme,
+        hover_target: Option<&crate::editor::HoverTarget>,
+    ) -> Option<(Rect, usize, usize, usize)> {
         if prompt.suggestions.is_empty() {
-            return;
+            return None;
         }
 
         // Create a block with a border and background
@@ -78,6 +100,10 @@ impl SuggestionsRenderer {
         for (idx, suggestion) in visible_suggestions.iter().enumerate() {
             let actual_idx = start_idx + idx;
             let is_selected = prompt.selected_suggestion == Some(actual_idx);
+            let is_hovered = matches!(
+                hover_target,
+                Some(crate::editor::HoverTarget::SuggestionItem(hovered_idx)) if *hovered_idx == actual_idx
+            );
 
             let base_style = if suggestion.disabled {
                 // Greyed out disabled commands
@@ -97,6 +123,11 @@ impl SuggestionsRenderer {
                 Style::default()
                     .fg(theme.popup_text_fg)
                     .bg(theme.suggestion_selected_bg)
+            } else if is_hovered {
+                // Hover highlight
+                Style::default()
+                    .fg(theme.menu_hover_fg)
+                    .bg(theme.menu_hover_bg)
             } else {
                 // Normal suggestion with theme colors
                 Style::default()
@@ -192,5 +223,8 @@ impl SuggestionsRenderer {
 
         let paragraph = Paragraph::new(lines).block(block);
         frame.render_widget(paragraph, area);
+
+        // Return area info for mouse hit testing
+        Some((inner_area, start_idx, visible_count, prompt.suggestions.len()))
     }
 }
