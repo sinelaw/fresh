@@ -615,7 +615,6 @@ fn test_clipboard_shared_across_splits() {
 /// This is an advanced feature that requires tracking cursor positions across splits
 /// and adjusting them when the shared buffer is modified.
 #[test]
-#[ignore = "Cursor adjustment on shared buffer edits not yet implemented"]
 fn test_cursor_adjustment_on_shared_buffer_edit() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 

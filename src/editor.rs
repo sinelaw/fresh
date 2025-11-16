@@ -1093,6 +1093,55 @@ impl Editor {
         }
     }
 
+    /// Adjust cursors in other splits that share the same buffer after an edit
+    fn adjust_other_split_cursors_for_event(&mut self, event: &Event) {
+        // Find the edit parameters from the event
+        let adjustments = match event {
+            Event::Insert { position, text, .. } => {
+                vec![(*position, 0, text.len())]
+            }
+            Event::Delete { range, .. } => {
+                vec![(range.start, range.len(), 0)]
+            }
+            Event::Batch { events, .. } => {
+                // Collect all edits from the batch
+                events
+                    .iter()
+                    .filter_map(|e| match e {
+                        Event::Insert { position, text, .. } => Some((*position, 0, text.len())),
+                        Event::Delete { range, .. } => Some((range.start, range.len(), 0)),
+                        _ => None,
+                    })
+                    .collect()
+            }
+            _ => vec![],
+        };
+
+        if adjustments.is_empty() {
+            return;
+        }
+
+        // Get the current buffer and split
+        let current_buffer_id = self.active_buffer;
+        let current_split_id = self.split_manager.active_split();
+
+        // Find all other splits that share the same buffer
+        let splits_for_buffer = self.split_manager.splits_for_buffer(current_buffer_id);
+
+        // Adjust cursors in each other split's view state
+        for split_id in splits_for_buffer {
+            if split_id == current_split_id {
+                continue; // Skip the current split (already adjusted by BufferState::apply)
+            }
+
+            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                for (edit_pos, old_len, new_len) in &adjustments {
+                    view_state.cursors.adjust_for_edit(*edit_pos, *old_len, *new_len);
+                }
+            }
+        }
+    }
+
     /// Adjust the size of the active split
     pub fn adjust_split_size(&mut self, delta: f32) {
         let active_split = self.split_manager.active_split();
@@ -1738,7 +1787,10 @@ impl Editor {
         // 1. Apply the event to the buffer
         self.active_state_mut().apply(event);
 
-        // 2. Clear search highlights on edit (Insert/Delete events)
+        // 2. Adjust cursors in other splits that share the same buffer
+        self.adjust_other_split_cursors_for_event(event);
+
+        // 3. Clear search highlights on edit (Insert/Delete events)
         // This preserves highlights while navigating but clears them when modifying text
         // EXCEPT during interactive replace where we want to keep highlights visible
         let in_interactive_replace = self.interactive_replace_state.is_some();

@@ -533,6 +533,21 @@ impl SplitManager {
             self.active_split = all_ids[prev_pos];
         }
     }
+
+    /// Get all split IDs that display a specific buffer
+    pub fn splits_for_buffer(&self, target_buffer_id: BufferId) -> Vec<SplitId> {
+        self.root
+            .get_leaves_with_rects(Rect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            })
+            .into_iter()
+            .filter(|(_, buffer_id, _)| *buffer_id == target_buffer_id)
+            .map(|(split_id, _, _)| split_id)
+            .collect()
+    }
 }
 
 #[cfg(test)]
