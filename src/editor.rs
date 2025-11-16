@@ -4,7 +4,7 @@ use crate::buffer_mode::ModeRegistry;
 use crate::command_registry::CommandRegistry;
 use crate::commands::Suggestion;
 use crate::config::Config;
-use crate::event::{CursorId, Event, EventLog, SplitId};
+use crate::event::{CursorId, Event, EventLog, SplitDirection, SplitId};
 use crate::file_tree::{FileTree, FileTreeView};
 use crate::fs::{FsBackend, FsManager, LocalFsBackend};
 use crate::hooks::HookRegistry;
@@ -398,6 +398,13 @@ struct MouseState {
     drag_start_row: Option<u16>,
     /// Initial viewport top_byte when starting to drag the scrollbar thumb
     drag_start_top_byte: Option<usize>,
+    /// Whether we're currently dragging a split separator
+    /// Stores (split_id, direction) for the separator being dragged
+    dragging_separator: Option<(SplitId, SplitDirection)>,
+    /// Initial mouse position when starting to drag a separator
+    drag_start_position: Option<(u16, u16)>,
+    /// Initial split ratio when starting to drag a separator
+    drag_start_ratio: Option<f32>,
 }
 
 /// Cached layout information for mouse hit testing
@@ -417,6 +424,9 @@ struct CachedLayout {
         usize,
         usize,
     )>,
+    /// Split separator positions for drag resize
+    /// (split_id, direction, x, y, length)
+    separator_areas: Vec<(SplitId, SplitDirection, u16, u16, u16)>,
 }
 
 impl Editor {
@@ -1345,6 +1355,17 @@ impl Editor {
         } else {
             self.set_status_message(format!("Adjusted split size by {:.0}%", delta * 100.0));
         }
+    }
+
+    /// Get cached separator areas for testing
+    /// Returns (split_id, direction, x, y, length) tuples
+    pub fn get_separator_areas(&self) -> &[(SplitId, SplitDirection, u16, u16, u16)] {
+        &self.cached_layout.separator_areas
+    }
+
+    /// Get the ratio of a specific split (for testing)
+    pub fn get_split_ratio(&self, split_id: SplitId) -> Option<f32> {
+        self.split_manager.get_ratio(split_id)
     }
 
     /// Check if file explorer is visible
@@ -5339,6 +5360,9 @@ impl Editor {
                 self.mouse_state.dragging_scrollbar = None;
                 self.mouse_state.drag_start_row = None;
                 self.mouse_state.drag_start_top_byte = None;
+                self.mouse_state.dragging_separator = None;
+                self.mouse_state.drag_start_position = None;
+                self.mouse_state.drag_start_ratio = None;
             }
             MouseEventKind::ScrollUp => {
                 self.handle_mouse_scroll(col, row, -3)?;
@@ -5480,6 +5504,31 @@ impl Editor {
             }
         }
 
+        // Check if click is on a split separator (for drag resizing)
+        for (split_id, direction, sep_x, sep_y, sep_length) in &self.cached_layout.separator_areas {
+            let is_on_separator = match direction {
+                SplitDirection::Horizontal => {
+                    // Horizontal separator: spans full width at a specific y
+                    row == *sep_y && col >= *sep_x && col < sep_x + sep_length
+                }
+                SplitDirection::Vertical => {
+                    // Vertical separator: spans full height at a specific x
+                    col == *sep_x && row >= *sep_y && row < sep_y + sep_length
+                }
+            };
+
+            if is_on_separator {
+                // Start separator drag
+                self.mouse_state.dragging_separator = Some((*split_id, *direction));
+                self.mouse_state.drag_start_position = Some((col, row));
+                // Store the initial ratio
+                if let Some(ratio) = self.split_manager.get_ratio(*split_id) {
+                    self.mouse_state.drag_start_ratio = Some(ratio);
+                }
+                return Ok(());
+            }
+        }
+
         // Check if click is in editor content area
         for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
             &self.cached_layout.split_areas
@@ -5519,6 +5568,60 @@ impl Editor {
                 }
             }
         }
+
+        // If dragging separator, update split ratio
+        if let Some((split_id, direction)) = self.mouse_state.dragging_separator {
+            self.handle_separator_drag(col, row, split_id, direction)?;
+            return Ok(());
+        }
+
+        Ok(())
+    }
+
+    /// Handle separator drag for split resizing
+    fn handle_separator_drag(
+        &mut self,
+        col: u16,
+        row: u16,
+        split_id: SplitId,
+        direction: SplitDirection,
+    ) -> std::io::Result<()> {
+        let Some((start_col, start_row)) = self.mouse_state.drag_start_position else {
+            return Ok(());
+        };
+        let Some(start_ratio) = self.mouse_state.drag_start_ratio else {
+            return Ok(());
+        };
+        let Some(editor_area) = self.cached_layout.editor_content_area else {
+            return Ok(());
+        };
+
+        // Calculate the delta in screen space
+        let (delta, total_size) = match direction {
+            SplitDirection::Horizontal => {
+                // For horizontal splits, we move the separator up/down (row changes)
+                let delta = row as i32 - start_row as i32;
+                let total = editor_area.height as i32;
+                (delta, total)
+            }
+            SplitDirection::Vertical => {
+                // For vertical splits, we move the separator left/right (col changes)
+                let delta = col as i32 - start_col as i32;
+                let total = editor_area.width as i32;
+                (delta, total)
+            }
+        };
+
+        // Convert screen delta to ratio delta
+        // The ratio represents the fraction of space the first split gets
+        if total_size > 0 {
+            let ratio_delta = delta as f32 / total_size as f32;
+            let new_ratio = (start_ratio + ratio_delta).clamp(0.1, 0.9);
+
+            // Update the split ratio
+            let _ = self.split_manager.set_ratio(split_id, new_ratio);
+        }
+
         Ok(())
     }
 
@@ -6187,6 +6290,7 @@ impl Editor {
             Some(&self.split_view_states),
         );
         self.cached_layout.split_areas = split_areas;
+        self.cached_layout.separator_areas = self.split_manager.get_separators_with_ids(editor_content_area);
         self.cached_layout.editor_content_area = Some(editor_content_area);
 
         // Render suggestions if present (same for both layouts)

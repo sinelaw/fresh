@@ -762,3 +762,202 @@ fn test_scrollbar_drag_to_absolute_bottom() {
         "Cursor should not be beyond buffer end. Cursor at {cursor_pos}, buffer length {buffer_len}"
     );
 }
+
+/// Test mouse drag on horizontal split separator to resize
+#[test]
+fn test_horizontal_split_separator_drag_resize() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create horizontal split via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split horiz").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Get the separator info - should have exactly one separator for horizontal split
+    let separators = harness.editor().get_separator_areas().to_vec();
+    assert_eq!(
+        separators.len(),
+        1,
+        "Should have exactly one separator after creating horizontal split"
+    );
+
+    let (split_id, direction, sep_x, sep_y, sep_length) = separators[0];
+    assert_eq!(
+        direction,
+        fresh::event::SplitDirection::Horizontal,
+        "Should be a horizontal split"
+    );
+
+    // Get initial ratio
+    let initial_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    assert!(
+        (initial_ratio - 0.5).abs() < 0.1,
+        "Initial ratio should be close to 0.5, got {initial_ratio}"
+    );
+
+    // Drag the separator down (increases top split size)
+    // Start from the middle of the separator
+    let start_col = sep_x + sep_length / 2;
+    let start_row = sep_y;
+    let end_row = sep_y + 3; // Drag down by 3 rows
+
+    harness
+        .mouse_drag(start_col, start_row, start_col, end_row)
+        .unwrap();
+
+    // Check that the ratio increased (top split got bigger)
+    let new_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    assert!(
+        new_ratio > initial_ratio,
+        "Ratio should increase after dragging separator down. Was {initial_ratio}, now {new_ratio}"
+    );
+
+    // Drag the separator up (decreases top split size)
+    let separators_after = harness.editor().get_separator_areas().to_vec();
+    let (_, _, sep_x_new, sep_y_new, sep_length_new) = separators_after[0];
+
+    let start_col = sep_x_new + sep_length_new / 2;
+    let start_row = sep_y_new;
+    let end_row = sep_y_new.saturating_sub(5); // Drag up by 5 rows
+
+    harness
+        .mouse_drag(start_col, start_row, start_col, end_row)
+        .unwrap();
+
+    // Check that the ratio decreased (top split got smaller)
+    let final_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    assert!(
+        final_ratio < new_ratio,
+        "Ratio should decrease after dragging separator up. Was {new_ratio}, now {final_ratio}"
+    );
+}
+
+/// Test mouse drag on vertical split separator to resize
+#[test]
+fn test_vertical_split_separator_drag_resize() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create vertical split via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Get the separator info - should have exactly one separator for vertical split
+    let separators = harness.editor().get_separator_areas().to_vec();
+    assert_eq!(
+        separators.len(),
+        1,
+        "Should have exactly one separator after creating vertical split"
+    );
+
+    let (split_id, direction, sep_x, sep_y, sep_length) = separators[0];
+    assert_eq!(
+        direction,
+        fresh::event::SplitDirection::Vertical,
+        "Should be a vertical split"
+    );
+
+    // Get initial ratio
+    let initial_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    assert!(
+        (initial_ratio - 0.5).abs() < 0.1,
+        "Initial ratio should be close to 0.5, got {initial_ratio}"
+    );
+
+    // Drag the separator right (increases left split size)
+    let start_col = sep_x;
+    let start_row = sep_y + sep_length / 2;
+    let end_col = sep_x + 10; // Drag right by 10 columns
+
+    harness
+        .mouse_drag(start_col, start_row, end_col, start_row)
+        .unwrap();
+
+    // Check that the ratio increased (left split got bigger)
+    let new_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    assert!(
+        new_ratio > initial_ratio,
+        "Ratio should increase after dragging separator right. Was {initial_ratio}, now {new_ratio}"
+    );
+
+    // Drag the separator left (decreases left split size)
+    let separators_after = harness.editor().get_separator_areas().to_vec();
+    let (_, _, sep_x_new, sep_y_new, sep_length_new) = separators_after[0];
+
+    let start_col = sep_x_new;
+    let start_row = sep_y_new + sep_length_new / 2;
+    let end_col = sep_x_new.saturating_sub(15); // Drag left by 15 columns
+
+    harness
+        .mouse_drag(start_col, start_row, end_col, start_row)
+        .unwrap();
+
+    // Check that the ratio decreased (left split got smaller)
+    let final_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    assert!(
+        final_ratio < new_ratio,
+        "Ratio should decrease after dragging separator left. Was {new_ratio}, now {final_ratio}"
+    );
+}
+
+/// Test that separator drag respects minimum and maximum ratios
+#[test]
+fn test_split_separator_drag_respects_limits() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create horizontal split
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split horiz").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let separators = harness.editor().get_separator_areas().to_vec();
+    let (split_id, _, sep_x, sep_y, sep_length) = separators[0];
+
+    // Try to drag separator way beyond reasonable limits
+    let start_col = sep_x + sep_length / 2;
+
+    // Drag extremely far down (should clamp to max 0.9)
+    harness
+        .mouse_drag(start_col, sep_y, start_col, sep_y + 100)
+        .unwrap();
+
+    let max_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    assert!(
+        max_ratio <= 0.9,
+        "Ratio should not exceed 0.9, got {max_ratio}"
+    );
+    assert!(
+        max_ratio >= 0.8,
+        "Ratio should be close to maximum after extreme drag down, got {max_ratio}"
+    );
+
+    // Drag extremely far up (should clamp to min 0.1)
+    let separators_after = harness.editor().get_separator_areas().to_vec();
+    let (_, _, _, sep_y_after, _) = separators_after[0];
+
+    harness
+        .mouse_drag(start_col, sep_y_after, start_col, 0)
+        .unwrap();
+
+    let min_ratio = harness.editor().get_split_ratio(split_id).unwrap();
+    assert!(
+        min_ratio >= 0.1,
+        "Ratio should not be less than 0.1, got {min_ratio}"
+    );
+    assert!(
+        min_ratio <= 0.2,
+        "Ratio should be close to minimum after extreme drag up, got {min_ratio}"
+    );
+}
