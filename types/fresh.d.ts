@@ -101,6 +101,37 @@ interface PromptSuggestion {
 }
 
 /**
+ * Text property entry for virtual buffers
+ * Each entry contains text and associated metadata properties
+ */
+interface TextPropertyEntry {
+  text: string;
+  properties: Record<string, unknown>;
+}
+
+/**
+ * Options for creating a virtual buffer in a split
+ */
+interface CreateVirtualBufferOptions {
+  /** Display name (e.g., "*Diagnostics*") */
+  name: string;
+  /** Mode name for buffer-local keybindings (e.g., "diagnostics-list") */
+  mode: string;
+  /** Whether the buffer is read-only */
+  read_only: boolean;
+  /** Entries with text and embedded properties */
+  entries: TextPropertyEntry[];
+  /** Split ratio (0.0 to 1.0, where 0.7 = original takes 70%, new buffer takes 30%) */
+  ratio: number;
+  /** Optional panel ID for idempotent operations (if panel exists, update content) */
+  panel_id?: string;
+  /** Whether to show line numbers in the buffer (default true) */
+  show_line_numbers?: boolean;
+  /** Whether to show cursors in the buffer (default true) */
+  show_cursors?: boolean;
+}
+
+/**
  * Main editor API interface
  */
 interface EditorAPI {
@@ -306,6 +337,77 @@ interface EditorAPI {
    * @returns Array of handler function names
    */
   getHandlers(eventName: string): string[];
+
+  // === Virtual Buffer Operations ===
+
+  /**
+   * Create a virtual buffer in a horizontal split below the current pane
+   * This is the key operation for creating diagnostic panels, search results, etc.
+   * @param options - Configuration for the virtual buffer
+   * @returns true if buffer creation was initiated successfully
+   * @example
+   * editor.createVirtualBufferInSplit({
+   *   name: "*Diagnostics*",
+   *   mode: "diagnostics-list",
+   *   read_only: true,
+   *   entries: [
+   *     { text: "Error at line 42\n", properties: { severity: "error", line: 42 } },
+   *     { text: "Warning at line 100\n", properties: { severity: "warning", line: 100 } }
+   *   ],
+   *   ratio: 0.7, // Original pane takes 70%, new buffer takes 30%
+   *   panel_id: "diagnostics",
+   *   show_line_numbers: false,
+   *   show_cursors: false
+   * });
+   */
+  createVirtualBufferInSplit(options: CreateVirtualBufferOptions): boolean;
+
+  /**
+   * Define a buffer mode with keybindings
+   * Modes can inherit from parent modes (e.g., "diagnostics-list" inherits from "special")
+   * @param name - Mode name (e.g., "diagnostics-list")
+   * @param parent - Parent mode name for inheritance (e.g., "special"), or null
+   * @param bindings - Array of [key_string, command_name] pairs
+   * @param readOnly - Whether buffers in this mode are read-only (default false)
+   * @returns true if mode was defined successfully
+   * @example
+   * editor.defineMode("diagnostics-list", "special", [
+   *   ["Return", "diagnostics_goto"],
+   *   ["n", "diagnostics_next"],
+   *   ["p", "diagnostics_prev"],
+   *   ["q", "close_buffer"]
+   * ], true);
+   */
+  defineMode(name: string, parent: string | null, bindings: [string, string][], readOnly?: boolean): boolean;
+
+  /**
+   * Switch the current split to display a buffer
+   * @param bufferId - ID of the buffer to show
+   * @returns true if buffer was shown successfully
+   */
+  showBuffer(bufferId: number): boolean;
+
+  /**
+   * Get text properties at the cursor position in a buffer
+   * Returns all properties for text ranges that contain the cursor position
+   * @param bufferId - ID of the buffer to query
+   * @returns Array of property objects (key-value maps)
+   * @example
+   * const props = editor.getTextPropertiesAtCursor(bufferId);
+   * if (props.length > 0 && props[0].location) {
+   *   editor.openFile(props[0].location.file, props[0].location.line, 0);
+   * }
+   */
+  getTextPropertiesAtCursor(bufferId: number): Record<string, unknown>[];
+
+  /**
+   * Set the content of a virtual buffer with text properties
+   * Replaces all content in the buffer
+   * @param bufferId - ID of the virtual buffer
+   * @param entries - Array of text entries with properties
+   * @returns true if content was set successfully
+   */
+  setVirtualBufferContent(bufferId: number, entries: TextPropertyEntry[]): boolean;
 }
 
 // Export for module compatibility
