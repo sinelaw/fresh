@@ -32,8 +32,8 @@
 - Native async/await working (Promise-based ops)
 - State sharing via Arc<RwLock<EditorStateSnapshot>>
 - Commands sent via mpsc channel (PluginCommand enum)
-- 20 passing tests covering runtime, ops, state, actions, and async ops
-- Auto-generated TypeScript types from Rust code (22 ops)
+- 26 passing tests covering runtime, ops, state, actions, async ops, and file I/O
+- Auto-generated TypeScript types from Rust code (31 ops)
 - Sample TypeScript plugins created (hello_world.ts, bookmarks.ts, git_grep.ts)
 - Command registration working (PluginAction for global functions)
 - File opening with line/column positioning
@@ -64,6 +64,7 @@
 7. `62be068` - feat: Add async spawn_process op with native Promise support (20 tests total)
 8. `2fe73c0` - feat: Add git-grep plugin and cursor/buffer query ops (22 ops total)
 9. `fad87c6` - feat: Add file system, environment, and path ops (31 ops total)
+10. `b6b1052` - test: Add comprehensive tests for file system and path ops (26 tests total)
 
 ---
 
