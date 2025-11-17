@@ -1211,6 +1211,8 @@ pub fn action_to_events(
         | Action::Undo
         | Action::Redo
         | Action::GoToMatchingBracket
+        | Action::JumpToNextError
+        | Action::JumpToPreviousError
         | Action::SmartHome
         | Action::IndentSelection
         | Action::DedentSelection

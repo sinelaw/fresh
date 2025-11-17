@@ -5123,6 +5123,12 @@ impl Editor {
             Action::GoToMatchingBracket => {
                 self.goto_matching_bracket();
             }
+            Action::JumpToNextError => {
+                self.jump_to_next_error();
+            }
+            Action::JumpToPreviousError => {
+                self.jump_to_previous_error();
+            }
             Action::SetBookmark(key) => {
                 self.set_bookmark(key);
             }
@@ -8423,6 +8429,161 @@ impl Editor {
             self.apply_event_to_active_buffer(&event);
         } else {
             self.set_status_message("No matching bracket found".to_string());
+        }
+    }
+
+    /// Jump to next error/diagnostic
+    fn jump_to_next_error(&mut self) {
+        let state = self.active_state_mut();
+        let cursor_pos = state.cursors.primary().position;
+        let cursor_id = state.cursors.primary_id();
+        let cursor = state.cursors.primary().clone();
+
+        // Get all diagnostic overlay positions
+        let mut diagnostic_positions: Vec<usize> = state
+            .overlays
+            .all()
+            .iter()
+            .filter_map(|overlay| {
+                // Only consider LSP diagnostics
+                if overlay
+                    .id
+                    .as_ref()
+                    .map(|id| id.starts_with("lsp-diagnostic-"))
+                    .unwrap_or(false)
+                {
+                    Some(overlay.range(&state.marker_list).start)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if diagnostic_positions.is_empty() {
+            self.set_status_message("No diagnostics in current buffer".to_string());
+            return;
+        }
+
+        // Sort positions
+        diagnostic_positions.sort_unstable();
+        diagnostic_positions.dedup();
+
+        // Find next diagnostic after cursor position
+        let next_pos = diagnostic_positions
+            .iter()
+            .find(|&&pos| pos > cursor_pos)
+            .or_else(|| diagnostic_positions.first()) // Wrap around
+            .copied();
+
+        if let Some(new_pos) = next_pos {
+            let event = Event::MoveCursor {
+                cursor_id,
+                old_position: cursor.position,
+                new_position: new_pos,
+                old_anchor: cursor.anchor,
+                new_anchor: None,
+                old_sticky_column: cursor.sticky_column,
+                new_sticky_column: 0,
+            };
+            self.active_event_log_mut().append(event.clone());
+            self.apply_event_to_active_buffer(&event);
+
+            // Show diagnostic message in status bar
+            let state = self.active_state();
+            if let Some(msg) = state.overlays.all().iter().find_map(|overlay| {
+                let range = overlay.range(&state.marker_list);
+                if range.start == new_pos
+                    && overlay
+                        .id
+                        .as_ref()
+                        .map(|id| id.starts_with("lsp-diagnostic-"))
+                        .unwrap_or(false)
+                {
+                    overlay.message.clone()
+                } else {
+                    None
+                }
+            }) {
+                self.set_status_message(msg);
+            }
+        }
+    }
+
+    /// Jump to previous error/diagnostic
+    fn jump_to_previous_error(&mut self) {
+        let state = self.active_state_mut();
+        let cursor_pos = state.cursors.primary().position;
+        let cursor_id = state.cursors.primary_id();
+        let cursor = state.cursors.primary().clone();
+
+        // Get all diagnostic overlay positions
+        let mut diagnostic_positions: Vec<usize> = state
+            .overlays
+            .all()
+            .iter()
+            .filter_map(|overlay| {
+                // Only consider LSP diagnostics
+                if overlay
+                    .id
+                    .as_ref()
+                    .map(|id| id.starts_with("lsp-diagnostic-"))
+                    .unwrap_or(false)
+                {
+                    Some(overlay.range(&state.marker_list).start)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if diagnostic_positions.is_empty() {
+            self.set_status_message("No diagnostics in current buffer".to_string());
+            return;
+        }
+
+        // Sort positions
+        diagnostic_positions.sort_unstable();
+        diagnostic_positions.dedup();
+
+        // Find previous diagnostic before cursor position
+        let prev_pos = diagnostic_positions
+            .iter()
+            .rev()
+            .find(|&&pos| pos < cursor_pos)
+            .or_else(|| diagnostic_positions.last()) // Wrap around
+            .copied();
+
+        if let Some(new_pos) = prev_pos {
+            let event = Event::MoveCursor {
+                cursor_id,
+                old_position: cursor.position,
+                new_position: new_pos,
+                old_anchor: cursor.anchor,
+                new_anchor: None,
+                old_sticky_column: cursor.sticky_column,
+                new_sticky_column: 0,
+            };
+            self.active_event_log_mut().append(event.clone());
+            self.apply_event_to_active_buffer(&event);
+
+            // Show diagnostic message in status bar
+            let state = self.active_state();
+            if let Some(msg) = state.overlays.all().iter().find_map(|overlay| {
+                let range = overlay.range(&state.marker_list);
+                if range.start == new_pos
+                    && overlay
+                        .id
+                        .as_ref()
+                        .map(|id| id.starts_with("lsp-diagnostic-"))
+                        .unwrap_or(false)
+                {
+                    overlay.message.clone()
+                } else {
+                    None
+                }
+            }) {
+                self.set_status_message(msg);
+            }
         }
     }
 

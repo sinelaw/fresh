@@ -22,7 +22,7 @@
 #### Navigation
 - [x] Go to line number (Ctrl+G) ✅
 - [x] Go to matching bracket (Ctrl+]) ✅
-- [ ] Jump to next/previous error (F8/Shift+F8)
+- [x] Jump to next/previous error (F8/Shift+F8) ✅
 - [x] Bookmark system (Ctrl+Shift+0-9 to set, Alt+0-9 to jump) ✅
 
 #### Selection & Editing
@@ -441,6 +441,6 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 
 1. **High Priority**: LSP advanced features (hover, code actions, find references)
 2. **High Priority**: Macros (record, play, persistence)
-3. **Medium Priority**: Jump to next/previous error (F8/Shift+F8)
-4. **Medium Priority**: Complete virtual buffer infrastructure (BufferKind, TypeScript ops)
+3. **Medium Priority**: Complete virtual buffer infrastructure (BufferKind, TypeScript ops)
+4. **Medium Priority**: Rectangular/block selection
 5. **Lower Priority**: Search enhancements (persist history, multi-file search)
