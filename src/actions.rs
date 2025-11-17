@@ -1104,6 +1104,17 @@ pub fn action_to_events(
         | Action::DecreaseSplitSize
         | Action::Undo
         | Action::Redo
+        | Action::GoToMatchingBracket
+        | Action::SmartHome
+        | Action::IndentSelection
+        | Action::DedentSelection
+        | Action::ToggleComment
+        | Action::SetBookmark(_)
+        | Action::JumpToBookmark(_)
+        | Action::ClearBookmark(_)
+        | Action::ListBookmarks
+        | Action::ToggleSearchCaseSensitive
+        | Action::ToggleSearchWholeWord
         | Action::HelpToggle
         | Action::HelpScrollUp
         | Action::HelpScrollDown
