@@ -2501,6 +2501,53 @@ mod tests {
             "Line count mismatch after insert"
         );
     }
+
+    #[test]
+    fn test_position_to_lsp_position_after_modification() {
+        // This test demonstrates a bug in the piece tree's offset_to_position
+        // where column calculation is incorrect after buffer modifications.
+        // The position_to_lsp_position function works around this by using
+        // line_start_offset to calculate the column correctly.
+
+        // Initial content: "fn foo(val: i32) {\n    val + 1\n}\n"
+        let initial = b"fn foo(val: i32) {\n    val + 1\n}\n";
+        let mut buffer = TextBuffer::from_bytes(initial.to_vec());
+
+        // Verify initial positions work correctly
+        // Position 23 is 'v' of second "val" on line 1
+        let (line, char) = buffer.position_to_lsp_position(23);
+        assert_eq!(line, 1, "Initial: position 23 should be on line 1");
+        assert_eq!(char, 4, "Initial: position 23 should be at char 4");
+
+        // Simulate rename: delete "val" at position 23 (line 1, char 4) and insert "value"
+        // Position 23 = line 1, char 4; Position 26 = line 1, char 7
+        buffer.delete_range(Position { line: 1, column: 4 }, Position { line: 1, column: 7 });
+        buffer.insert_bytes(23, b"value".to_vec());  // Insert "value"
+
+        // Also rename the first occurrence
+        // Position 7 = line 0, char 7; Position 10 = line 0, char 10
+        buffer.delete_range(Position { line: 0, column: 7 }, Position { line: 0, column: 10 });
+        buffer.insert_bytes(7, b"value".to_vec());  // Insert "value"
+
+        // Buffer is now: "fn foo(value: i32) {\n    value + 1\n}\n"
+        let content = String::from_utf8_lossy(&buffer.get_all_text()).to_string();
+        assert_eq!(content, "fn foo(value: i32) {\n    value + 1\n}\n");
+
+        // Position 25 is now 'v' of second "value" on line 1
+        // Line 0: "fn foo(value: i32) {\n" = 21 chars (positions 0-20)
+        // Line 1: "    value + 1\n" starts at position 21
+        // Position 25 = 21 + 4 = line 1, char 4
+
+        // The workaround in position_to_lsp_position should give correct result
+        let (line, char) = buffer.position_to_lsp_position(25);
+        assert_eq!(line, 1, "After modification: position 25 should be on line 1");
+        assert_eq!(char, 4, "After modification: position 25 should be at char 4");
+
+        // Also verify position 21 (start of line 1) works
+        let (line, char) = buffer.position_to_lsp_position(21);
+        assert_eq!(line, 1, "Position 21 should be on line 1");
+        assert_eq!(char, 0, "Position 21 should be at char 0 (start of line)");
+    }
 }
 
 #[cfg(test)]
