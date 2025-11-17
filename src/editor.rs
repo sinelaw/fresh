@@ -2545,6 +2545,11 @@ impl Editor {
         self.status_message = Some(message);
     }
 
+    /// Get the current status message
+    pub fn get_status_message(&self) -> Option<&String> {
+        self.status_message.as_ref()
+    }
+
     /// Update prompt suggestions based on current input
     pub fn update_prompt_suggestions(&mut self) {
         // Extract prompt type and input to avoid borrow checker issues
