@@ -34,6 +34,17 @@ interface SpawnResult {
 }
 
 /**
+ * File stat information
+ */
+interface FileStat {
+  exists: boolean;
+  is_file: boolean;
+  is_dir: boolean;
+  size: number;
+  readonly: boolean;
+}
+
+/**
  * Main editor API interface
  */
 interface EditorAPI {
@@ -75,6 +86,79 @@ interface EditorAPI {
   removeOverlay(buffer_id: number, overlay_id: string): boolean;
   removeOverlaysByPrefix(buffer_id: number, prefix: string): boolean;
   clearAllOverlays(buffer_id: number): boolean;
+
+  // === File System Operations ===
+  /**
+   * Read a file's contents asynchronously
+   * @param path - Absolute or relative path to the file
+   * @returns Promise resolving to file contents as string
+   */
+  readFile(path: string): Promise<string>;
+
+  /**
+   * Write content to a file asynchronously
+   * @param path - Absolute or relative path to the file
+   * @param content - String content to write
+   * @returns Promise resolving when write completes
+   */
+  writeFile(path: string, content: string): Promise<void>;
+
+  /**
+   * Check if a file or directory exists
+   * @param path - Path to check
+   * @returns true if path exists, false otherwise
+   */
+  fileExists(path: string): boolean;
+
+  /**
+   * Get file/directory metadata
+   * @param path - Path to stat
+   * @returns FileStat object with existence, type, size, and permissions info
+   */
+  fileStat(path: string): FileStat;
+
+  // === Environment Operations ===
+  /**
+   * Get an environment variable
+   * @param name - Name of environment variable
+   * @returns Value if set, null if not set
+   */
+  getEnv(name: string): string | null;
+
+  /**
+   * Get the current working directory
+   * @returns Absolute path to cwd
+   */
+  getCwd(): string;
+
+  // === Path Operations ===
+  /**
+   * Join path components
+   * @param parts - Path components to join
+   * @returns Joined path string
+   */
+  pathJoin(...parts: string[]): string;
+
+  /**
+   * Get the directory name of a path
+   * @param path - Path to process
+   * @returns Parent directory path
+   */
+  pathDirname(path: string): string;
+
+  /**
+   * Get the base name of a path
+   * @param path - Path to process
+   * @returns File or directory name without parent path
+   */
+  pathBasename(path: string): string;
+
+  /**
+   * Get the file extension
+   * @param path - Path to process
+   * @returns Extension including dot (e.g., ".ts"), or empty string
+   */
+  pathExtname(path: string): string;
 }
 
 // Export for module compatibility
