@@ -338,6 +338,97 @@ fn op_fresh_open_file_in_split(
     false
 }
 
+/// Result of spawning a process
+#[derive(serde::Serialize)]
+struct SpawnResult {
+    stdout: String,
+    stderr: String,
+    exit_code: i32,
+}
+
+/// Async op for spawning external processes
+/// This is the key async op that enables TypeScript plugins to run shell commands
+#[op2(async)]
+#[serde]
+async fn op_fresh_spawn_process(
+    #[string] command: String,
+    #[serde] args: Vec<String>,
+    #[string] cwd: Option<String>,
+) -> Result<SpawnResult, deno_core::error::AnyError> {
+    use std::process::Stdio;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
+
+    // Build the command
+    let mut cmd = Command::new(&command);
+    cmd.args(&args);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    // Set working directory if provided
+    if let Some(ref dir) = cwd {
+        cmd.current_dir(dir);
+    }
+
+    // Spawn the process
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| deno_core::error::generic_error(format!("Failed to spawn process: {}", e)))?;
+
+    // Capture stdout and stderr
+    let stdout_handle = child.stdout.take();
+    let stderr_handle = child.stderr.take();
+
+    // Read stdout
+    let stdout_future = async {
+        if let Some(stdout) = stdout_handle {
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            let mut output = String::new();
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                output.push_str(&line);
+                output.push('\n');
+            }
+            output
+        } else {
+            String::new()
+        }
+    };
+
+    // Read stderr
+    let stderr_future = async {
+        if let Some(stderr) = stderr_handle {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            let mut output = String::new();
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                output.push_str(&line);
+                output.push('\n');
+            }
+            output
+        } else {
+            String::new()
+        }
+    };
+
+    // Wait for both outputs concurrently
+    let (stdout, stderr) = tokio::join!(stdout_future, stderr_future);
+
+    // Wait for process to complete
+    let exit_code = match child.wait().await {
+        Ok(status) => status.code().unwrap_or(-1),
+        Err(_) => -1,
+    };
+
+    Ok(SpawnResult {
+        stdout,
+        stderr,
+        exit_code,
+    })
+}
+
 // Define the extension with our ops
 extension!(
     fresh_runtime,
@@ -360,6 +451,7 @@ extension!(
         op_fresh_open_file,
         op_fresh_get_active_split_id,
         op_fresh_open_file_in_split,
+        op_fresh_spawn_process,
     ],
 );
 
@@ -473,6 +565,11 @@ impl TypeScriptRuntime {
                     },
                     openFileInSplit(splitId, path, line = 0, column = 0) {
                         return core.ops.op_fresh_open_file_in_split(splitId, path, line, column);
+                    },
+
+                    // Async operations
+                    spawnProcess(command, args = [], cwd = null) {
+                        return core.ops.op_fresh_spawn_process(command, args, cwd);
                     },
                 };
 
@@ -1174,6 +1271,99 @@ mod tests {
             _ => panic!("Expected RegisterCommand"),
         }
     }
+
+    #[tokio::test]
+    async fn test_spawn_process_simple() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        // Test spawning a simple echo command
+        let result = runtime
+            .execute_script(
+                "<test_spawn>",
+                r#"
+                (async () => {
+                    const result = await editor.spawnProcess("echo", ["hello", "world"]);
+                    if (!result.stdout.includes("hello world")) {
+                        throw new Error(`Expected 'hello world' in stdout, got: ${result.stdout}`);
+                    }
+                    if (result.exit_code !== 0) {
+                        throw new Error(`Expected exit code 0, got: ${result.exit_code}`);
+                    }
+                    console.log("Spawn process test passed!");
+                })()
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "Spawn process test failed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_process_with_stderr() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        // Test spawning a command that writes to stderr
+        let result = runtime
+            .execute_script(
+                "<test_spawn_stderr>",
+                r#"
+                (async () => {
+                    const result = await editor.spawnProcess("sh", ["-c", "echo error >&2"]);
+                    if (!result.stderr.includes("error")) {
+                        throw new Error(`Expected 'error' in stderr, got: ${result.stderr}`);
+                    }
+                    console.log("Spawn stderr test passed!");
+                })()
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "Spawn stderr test failed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_process_nonzero_exit() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        // Test spawning a command that exits with non-zero
+        let result = runtime
+            .execute_script(
+                "<test_spawn_exit>",
+                r#"
+                (async () => {
+                    const result = await editor.spawnProcess("sh", ["-c", "exit 42"]);
+                    if (result.exit_code !== 42) {
+                        throw new Error(`Expected exit code 42, got: ${result.exit_code}`);
+                    }
+                    console.log("Non-zero exit test passed!");
+                })()
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "Non-zero exit test failed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_process_git_example() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        // Test a realistic example: git version
+        let result = runtime
+            .execute_script(
+                "<test_git>",
+                r#"
+                (async () => {
+                    const result = await editor.spawnProcess("git", ["--version"]);
+                    if (!result.stdout.includes("git version")) {
+                        throw new Error(`Expected 'git version' in output, got: ${result.stdout}`);
+                    }
+                    editor.setStatus(`Git version: ${result.stdout.trim()}`);
+                    console.log("Git version test passed!");
+                })()
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "Git example test failed: {:?}", result);
+    }
 }
+
 
 
