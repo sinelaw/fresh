@@ -12,6 +12,7 @@ use crate::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPositi
 use crate::marker::MarkerList;
 use crate::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::popup::{Popup, PopupContent, PopupListItem, PopupManager, PopupPosition};
+use crate::semantic_highlight::SemanticHighlighter;
 use crate::text_buffer::{Buffer, LineNumber};
 use crate::text_property::TextPropertyManager;
 use crate::viewport::Viewport;
@@ -62,6 +63,9 @@ pub struct EditorState {
     /// Whether to show cursors in this buffer (default true)
     /// Can be set to false for virtual buffers like diagnostics panels
     pub show_cursors: bool,
+
+    /// Semantic highlighter for word occurrence highlighting
+    pub semantic_highlighter: SemanticHighlighter,
 }
 
 impl EditorState {
@@ -89,6 +93,7 @@ impl EditorState {
             mode: "insert".to_string(),
             text_properties: TextPropertyManager::new(),
             show_cursors: true,
+            semantic_highlighter: SemanticHighlighter::new(),
         }
     }
 
@@ -137,6 +142,7 @@ impl EditorState {
             mode: "insert".to_string(),
             text_properties: TextPropertyManager::new(),
             show_cursors: true,
+            semantic_highlighter: SemanticHighlighter::new(),
         })
     }
 

@@ -465,6 +465,14 @@ impl SplitRenderer {
             Vec::new()
         };
 
+        // Compute semantic highlights for word occurrences under cursor
+        let semantic_spans = state.semantic_highlighter.highlight_occurrences(
+            &state.buffer,
+            primary_cursor_position,
+            viewport_start,
+            viewport_end,
+        );
+
         // Query overlays once for the entire viewport using interval tree
         // This is O(log N + k) instead of O(N * M) for per-character queries
         let viewport_overlays =
@@ -640,7 +648,7 @@ impl SplitRenderer {
                         .map(|(overlay, _)| *overlay)
                         .collect();
 
-                    // Build style by layering: base -> syntax -> overlays -> selection
+                    // Build style by layering: base -> syntax -> semantic -> overlays -> selection
                     let mut style = if let Some(color) = highlight_color {
                         // Apply syntax highlighting
                         Style::default().fg(color)
@@ -648,6 +656,16 @@ impl SplitRenderer {
                         // Default color from theme
                         Style::default().fg(theme.editor_fg)
                     };
+
+                    // Apply semantic highlighting (word occurrences under cursor)
+                    // This gives a subtle background to all instances of the word
+                    if let Some(semantic_span) = semantic_spans
+                        .iter()
+                        .find(|span| span.range.contains(&byte_pos))
+                    {
+                        // Use the color from semantic highlight as background
+                        style = style.bg(semantic_span.color);
+                    }
 
                     // Apply overlay styles (in priority order, so higher priority overlays override)
                     use crate::overlay::OverlayFace;
