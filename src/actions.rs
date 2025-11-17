@@ -49,6 +49,21 @@ pub fn action_to_events(
             // Check if this is a closing delimiter that should trigger auto-dedent
             let is_closing_delimiter = matches!(ch, '}' | ')' | ']');
 
+            // Check if this is an opening bracket that should auto-close
+            let auto_close_char = if auto_indent {
+                match ch {
+                    '(' => Some(')'),
+                    '[' => Some(']'),
+                    '{' => Some('}'),
+                    '"' => Some('"'),
+                    '\'' => Some('\''),
+                    '`' => Some('`'),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+
             // First collect all deletions (for selections)
             let deletions: Vec<_> = cursor_vec
                 .iter()
@@ -79,7 +94,18 @@ pub fn action_to_events(
                     let line_before_cursor = state.buffer.slice_bytes(line_start..insert_position);
                     let only_spaces = line_before_cursor.iter().all(|&b| b == b' ' || b == b'\t');
 
-                    (*cursor_id, insert_position, line_start, only_spaces)
+                    // Check character after cursor for smart quote insertion
+                    let char_after = if insert_position < state.buffer.len() {
+                        state
+                            .buffer
+                            .slice_bytes(insert_position..insert_position + 1)
+                            .first()
+                            .copied()
+                    } else {
+                        None
+                    };
+
+                    (*cursor_id, insert_position, line_start, only_spaces, char_after)
                 })
                 .collect();
 
@@ -94,7 +120,8 @@ pub fn action_to_events(
             }
 
             // Now process insertions
-            for (cursor_id, insert_position, line_start, only_spaces) in insertion_data {
+            for (cursor_id, insert_position, line_start, only_spaces, char_after) in insertion_data
+            {
                 // Auto-dedent logic for closing delimiters
                 if is_closing_delimiter
                     && auto_indent
@@ -139,6 +166,52 @@ pub fn action_to_events(
                         cursor_id,
                     });
                     continue;
+                }
+
+                // Auto-close bracket logic
+                if let Some(close_char) = auto_close_char {
+                    // For quotes, only auto-close if:
+                    // - Not typing after an alphanumeric character (could be closing a string)
+                    // - The character after cursor is not alphanumeric (would be in middle of word)
+                    let should_auto_close = if matches!(ch, '"' | '\'' | '`') {
+                        // Don't auto-close if we're likely closing a string or in middle of word
+                        let is_alphanumeric_after = char_after
+                            .map(|b| b.is_ascii_alphanumeric() || b == b'_')
+                            .unwrap_or(false);
+                        !is_alphanumeric_after
+                    } else {
+                        // For brackets, always auto-close unless char after is alphanumeric
+                        let is_alphanumeric_after = char_after
+                            .map(|b| b.is_ascii_alphanumeric() || b == b'_')
+                            .unwrap_or(false);
+                        !is_alphanumeric_after
+                    };
+
+                    if should_auto_close {
+                        // Insert opening + closing character
+                        let text = format!("{}{}", ch, close_char);
+                        events.push(Event::Insert {
+                            position: insert_position,
+                            text,
+                            cursor_id,
+                        });
+                        // Move cursor back between the brackets (cursor will be after the insert,
+                        // so we need to move it back by 1 to be between opening and closing)
+                        // This is handled by the cursor position update after insert
+                        // The insert event will position cursor after the inserted text,
+                        // but we want it between, so we add a MoveCursor event
+                        let new_cursor_pos = insert_position + 1; // After opening bracket
+                        events.push(Event::MoveCursor {
+                            cursor_id,
+                            old_position: insert_position + 2, // After both chars
+                            new_position: new_cursor_pos,
+                            old_anchor: None,
+                            new_anchor: None,
+                            old_sticky_column: 0,
+                            new_sticky_column: 0,
+                        });
+                        continue;
+                    }
                 }
 
                 // Normal character insertion
@@ -899,7 +972,7 @@ pub fn action_to_events(
             let mut cursor_vec: Vec<_> = state.cursors.iter().collect();
             cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
 
-            // Collect all deletions first
+            // Collect all deletions first, checking for auto-pair deletion
             let deletions: Vec<_> = cursor_vec
                 .iter()
                 .filter_map(|(cursor_id, cursor)| {
@@ -907,7 +980,40 @@ pub fn action_to_events(
                         Some((*cursor_id, range))
                     } else if cursor.position > 0 {
                         let delete_from = cursor.position.saturating_sub(1);
-                        Some((*cursor_id, delete_from..cursor.position))
+
+                        // Check for auto-pair deletion when auto_indent is enabled
+                        if auto_indent && cursor.position < state.buffer.len() {
+                            let char_before = state
+                                .buffer
+                                .slice_bytes(delete_from..cursor.position)
+                                .first()
+                                .copied();
+                            let char_after = state
+                                .buffer
+                                .slice_bytes(cursor.position..cursor.position + 1)
+                                .first()
+                                .copied();
+
+                            // Check if we're between matching brackets/quotes
+                            let is_matching_pair = match (char_before, char_after) {
+                                (Some(b'('), Some(b')')) => true,
+                                (Some(b'['), Some(b']')) => true,
+                                (Some(b'{'), Some(b'}')) => true,
+                                (Some(b'"'), Some(b'"')) => true,
+                                (Some(b'\''), Some(b'\'')) => true,
+                                (Some(b'`'), Some(b'`')) => true,
+                                _ => false,
+                            };
+
+                            if is_matching_pair {
+                                // Delete both opening and closing characters
+                                Some((*cursor_id, delete_from..cursor.position + 1))
+                            } else {
+                                Some((*cursor_id, delete_from..cursor.position))
+                            }
+                        } else {
+                            Some((*cursor_id, delete_from..cursor.position))
+                        }
                     } else {
                         None
                     }
@@ -2069,5 +2175,402 @@ mod tests {
             13,
             "Cursor should be at join point"
         );
+    }
+
+    #[test]
+    fn test_bracket_auto_close_parenthesis() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Cursor is at position 0 initially
+        assert_eq!(state.cursors.primary().position, 0);
+
+        // Insert opening parenthesis with auto_indent=true
+        let events = action_to_events(&mut state, Action::InsertChar('('), 4, true, 80).unwrap();
+        println!("Events: {:?}", events);
+
+        // Should have Insert event for "()" and MoveCursor to position between them
+        assert_eq!(
+            events.len(),
+            2,
+            "Should have Insert and MoveCursor events"
+        );
+
+        // Apply events
+        for event in events {
+            state.apply(&event);
+        }
+
+        assert_eq!(state.buffer.to_string(), "()");
+        assert_eq!(
+            state.cursors.primary().position,
+            1,
+            "Cursor should be between brackets"
+        );
+    }
+
+    #[test]
+    fn test_bracket_auto_close_curly_brace() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert opening curly brace with auto_indent=true
+        let events = action_to_events(&mut state, Action::InsertChar('{'), 4, true, 80).unwrap();
+
+        for event in events {
+            state.apply(&event);
+        }
+
+        assert_eq!(state.buffer.to_string(), "{}");
+        assert_eq!(
+            state.cursors.primary().position,
+            1,
+            "Cursor should be between braces"
+        );
+    }
+
+    #[test]
+    fn test_bracket_auto_close_square_bracket() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert opening square bracket
+        let events = action_to_events(&mut state, Action::InsertChar('['), 4, true, 80).unwrap();
+
+        for event in events {
+            state.apply(&event);
+        }
+
+        assert_eq!(state.buffer.to_string(), "[]");
+        assert_eq!(state.cursors.primary().position, 1);
+    }
+
+    #[test]
+    fn test_bracket_auto_close_double_quote() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert double quote
+        let events = action_to_events(&mut state, Action::InsertChar('"'), 4, true, 80).unwrap();
+
+        for event in events {
+            state.apply(&event);
+        }
+
+        assert_eq!(state.buffer.to_string(), "\"\"");
+        assert_eq!(state.cursors.primary().position, 1);
+    }
+
+    #[test]
+    fn test_bracket_auto_close_disabled_when_auto_indent_false() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert opening parenthesis with auto_indent=false
+        let events = action_to_events(&mut state, Action::InsertChar('('), 4, false, 80).unwrap();
+
+        for event in events {
+            state.apply(&event);
+        }
+
+        // Should only insert the opening character, no auto-close
+        assert_eq!(state.buffer.to_string(), "(");
+        assert_eq!(state.cursors.primary().position, 1);
+    }
+
+    #[test]
+    fn test_bracket_auto_close_not_before_alphanumeric() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert "abc"
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "abc".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Move cursor to start
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 3,
+            new_position: 0,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Insert opening parenthesis before 'abc'
+        let events = action_to_events(&mut state, Action::InsertChar('('), 4, true, 80).unwrap();
+
+        for event in events {
+            state.apply(&event);
+        }
+
+        // Should NOT auto-close because 'a' is alphanumeric
+        assert_eq!(state.buffer.to_string(), "(abc");
+        assert_eq!(state.cursors.primary().position, 1);
+    }
+
+    #[test]
+    fn test_bracket_auto_close_multiple_cursors() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert some text
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "foo\nbar".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Add a second cursor
+        state.apply(&Event::AddCursor {
+            position: 0,
+            cursor_id: CursorId(1),
+            anchor: None,
+        });
+
+        // Move both cursors to end of their respective lines
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 7,
+            new_position: 7, // end of "bar"
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(1),
+            old_position: 0,
+            new_position: 3, // end of "foo"
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Insert opening parenthesis at both cursors
+        let events = action_to_events(&mut state, Action::InsertChar('('), 4, true, 80).unwrap();
+
+        for event in events {
+            state.apply(&event);
+        }
+
+        // Both cursors should have auto-closed brackets
+        assert_eq!(state.buffer.to_string(), "foo()\nbar()");
+    }
+
+    #[test]
+    fn test_auto_pair_deletion_parenthesis() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert "()"
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "()".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Move cursor between the brackets
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 2,
+            new_position: 1,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        assert_eq!(state.buffer.to_string(), "()");
+        assert_eq!(state.cursors.primary().position, 1);
+
+        // Delete backward with auto_indent=true - should delete both characters
+        let events =
+            action_to_events(&mut state, Action::DeleteBackward, 4, true, 80).unwrap();
+
+        for event in events {
+            state.apply(&event);
+        }
+
+        assert_eq!(state.buffer.to_string(), "");
+        assert_eq!(state.cursors.primary().position, 0);
+    }
+
+    #[test]
+    fn test_auto_pair_deletion_curly_brace() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert "{}"
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "{}".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Move cursor between the braces
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 2,
+            new_position: 1,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Delete backward - should delete both
+        let events =
+            action_to_events(&mut state, Action::DeleteBackward, 4, true, 80).unwrap();
+
+        for event in events {
+            state.apply(&event);
+        }
+
+        assert_eq!(state.buffer.to_string(), "");
+    }
+
+    #[test]
+    fn test_auto_pair_deletion_double_quote() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert empty string literal
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "\"\"".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Move cursor between the quotes
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 2,
+            new_position: 1,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Delete backward - should delete both quotes
+        let events =
+            action_to_events(&mut state, Action::DeleteBackward, 4, true, 80).unwrap();
+
+        for event in events {
+            state.apply(&event);
+        }
+
+        assert_eq!(state.buffer.to_string(), "");
+    }
+
+    #[test]
+    fn test_auto_pair_deletion_disabled_when_auto_indent_false() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert "()"
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "()".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Move cursor between the brackets
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 2,
+            new_position: 1,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Delete backward with auto_indent=false - should only delete opening bracket
+        let events =
+            action_to_events(&mut state, Action::DeleteBackward, 4, false, 80).unwrap();
+
+        for event in events {
+            state.apply(&event);
+        }
+
+        assert_eq!(state.buffer.to_string(), ")");
+        assert_eq!(state.cursors.primary().position, 0);
+    }
+
+    #[test]
+    fn test_auto_pair_deletion_not_matching() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert "(]" - not a matching pair
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "(]".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Move cursor between
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 2,
+            new_position: 1,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Delete backward - should only delete opening bracket since they don't match
+        let events =
+            action_to_events(&mut state, Action::DeleteBackward, 4, true, 80).unwrap();
+
+        for event in events {
+            state.apply(&event);
+        }
+
+        assert_eq!(state.buffer.to_string(), "]");
+        assert_eq!(state.cursors.primary().position, 0);
+    }
+
+    #[test]
+    fn test_auto_pair_deletion_with_content() {
+        let mut state =
+            EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+
+        // Insert "(abc)" - has content between brackets
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "(abc)".to_string(),
+            cursor_id: CursorId(0),
+        });
+
+        // Move cursor after 'a'
+        state.apply(&Event::MoveCursor {
+            cursor_id: CursorId(0),
+            old_position: 5,
+            new_position: 2,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Delete backward - should only delete 'a', not both brackets
+        let events =
+            action_to_events(&mut state, Action::DeleteBackward, 4, true, 80).unwrap();
+
+        for event in events {
+            state.apply(&event);
+        }
+
+        assert_eq!(state.buffer.to_string(), "(bc)");
     }
 }
