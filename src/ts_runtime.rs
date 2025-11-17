@@ -183,6 +183,51 @@ fn op_fresh_remove_overlay(
     false
 }
 
+#[op2(fast)]
+fn op_fresh_remove_overlays_by_prefix(
+    state: &mut OpState,
+    buffer_id: u32,
+    #[string] prefix: String,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::RemoveOverlaysByPrefix {
+                buffer_id: BufferId(buffer_id as usize),
+                prefix,
+            });
+        return result.is_ok();
+    }
+    false
+}
+
+#[op2(fast)]
+fn op_fresh_clear_all_overlays(state: &mut OpState, buffer_id: u32) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::ClearAllOverlays {
+                buffer_id: BufferId(buffer_id as usize),
+            });
+        return result.is_ok();
+    }
+    false
+}
+
+#[op2(fast)]
+fn op_fresh_insert_at_cursor(state: &mut OpState, #[string] text: String) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::InsertAtCursor { text });
+        return result.is_ok();
+    }
+    false
+}
+
 // Define the extension with our ops
 extension!(
     fresh_runtime,
@@ -198,6 +243,9 @@ extension!(
         op_fresh_delete_range,
         op_fresh_add_overlay,
         op_fresh_remove_overlay,
+        op_fresh_remove_overlays_by_prefix,
+        op_fresh_clear_all_overlays,
+        op_fresh_insert_at_cursor,
     ],
 );
 
@@ -282,6 +330,17 @@ impl TypeScriptRuntime {
                     },
                     removeOverlay(bufferId, overlayId) {
                         return core.ops.op_fresh_remove_overlay(bufferId, overlayId);
+                    },
+                    removeOverlaysByPrefix(bufferId, prefix) {
+                        return core.ops.op_fresh_remove_overlays_by_prefix(bufferId, prefix);
+                    },
+                    clearAllOverlays(bufferId) {
+                        return core.ops.op_fresh_clear_all_overlays(bufferId);
+                    },
+
+                    // Convenience
+                    insertAtCursor(text) {
+                        return core.ops.op_fresh_insert_at_cursor(text);
                     },
                 };
 
