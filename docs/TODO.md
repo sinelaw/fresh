@@ -357,9 +357,7 @@ Full migration from Lua to TypeScript as the sole plugin runtime:
 - Production plugins (git-grep, git-find-file, todo-highlighter, etc.)
 - Complete removal of mlua and all Lua code
 
-### Plugin Thread Architecture (CRITICAL - Required for Async Ops)
-
-**Problem**: Current `run_hook_blocking()` creates a new tokio runtime for each hook call. When plugins call async ops (like `spawnProcess`), the runtime is destroyed after the hook returns, orphaning pending async work and causing hangs.
+### Plugin Thread Architecture ✅ COMPLETED
 
 **Solution**: Dedicated thread for TypeScript plugin execution with message passing.
 
@@ -367,8 +365,8 @@ Full migration from Lua to TypeScript as the sole plugin runtime:
 ```
 Main Thread (UI)                    Plugin Thread
      │                                    │
-     ├─────── HookRequest ──────────────>│
-     │        (hook_name, args)           │
+     ├─────── PluginRequest ─────────────>│
+     │        (RunHook, LoadPlugin, etc.) │
      │                                    ├── JsRuntime lives here (not Send/Sync)
      │                                    ├── Persistent tokio runtime
      │                                    ├── Executes JS/TS code
@@ -380,45 +378,50 @@ Main Thread (UI)                    Plugin Thread
      │                                    │
 ```
 
-**Implementation Plan**:
-- [ ] Phase 1: Create PluginThread struct
-  - Owns JsRuntime and tokio Runtime
-  - Spawned on dedicated thread at editor startup
-  - Event loop: receive requests, execute, send results
+**Implementation** (src/plugin_thread.rs):
+- [x] Phase 1: Created PluginThreadHandle with dedicated thread
+  - JsRuntime and tokio Runtime owned by plugin thread
+  - Spawned at editor startup via PluginThreadHandle::spawn()
+  - Event loop receives requests and executes JS/TS code
 
-- [ ] Phase 2: Define message types
-  - `HookRequest { hook_name, args, response_channel }`
-  - `ActionRequest { action_name, response_channel }`
-  - `LoadPluginRequest { path }`
-  - `ShutdownRequest`
+- [x] Phase 2: Defined PluginRequest message types
+  - `RunHook { hook_name, args }` - fire-and-forget
+  - `ExecuteAction { action_name, response }` - oneshot channel response
+  - `LoadPlugin { path, response }` - blocking load
+  - `LoadPluginsFromDir { dir, response }` - load all plugins
+  - `ProcessCommands { response }` - retrieve pending commands
+  - `Shutdown` - clean termination
 
-- [ ] Phase 3: Refactor TypeScriptPluginManager
-  - Remove `run_hook_blocking()` and other `*_blocking()` methods
-  - Replace with async message sending to plugin thread
-  - `run_hook()` becomes fire-and-forget (results via PluginCommand channel)
+- [x] Phase 3: Refactored TypeScriptPluginManager
+  - Replaced with PluginThreadHandle in Editor
+  - `run_hook()` is non-blocking (fire-and-forget via channel)
+  - `execute_action()` blocks with oneshot channel response
+  - `load_plugins_from_dir()` blocks during startup only
 
-- [ ] Phase 4: Update Editor integration
-  - Editor calls `ts_manager.send_hook(name, args)` (non-blocking)
-  - Plugin thread executes hook asynchronously
-  - Results come back via existing `PluginCommand` channel
-  - `process_async_messages()` already handles these
+- [x] Phase 4: Updated Editor integration
+  - Editor uses `ts_manager.run_hook(name, args)` (non-blocking)
+  - Removed all `run_hook_blocking()` calls
+  - Results come via PluginCommand channel (setPromptSuggestions, etc.)
 
-- [ ] Phase 5: Handle plugin loading
-  - `load_plugin()` sends request to plugin thread
-  - Blocks on response (only during startup)
-  - Or: make plugin loading fully async
+- [x] Phase 5: Plugin loading via message passing
+  - `load_plugin()` sends request and blocks on response
+  - `load_plugins_from_dir()` blocks during startup
+  - Unload/reload supported via messages
 
-**Benefits**:
-- Complete isolation: Plugins can't block UI thread
-- Stable async runtime: Single tokio runtime for all async ops
-- Natural async model: Plugins use async/await without restrictions
-- No race conditions: Sequential execution within plugin thread
-- Matches industry standard: Similar to VSCode's Extension Host
+**Additional cleanup completed**:
+- Removed HookRegistry from Editor (TypeScript uses its own event system)
+- Removed Lua plugin manager module
+- Removed render-line hook system (can be reimplemented if needed)
+- Simplified SplitRenderer (no hook parameters)
 
-**Files to modify**:
-- `src/ts_runtime.rs`: Extract runtime into PluginThread, add message passing
-- `src/editor.rs`: Update hook calls to be non-blocking
-- `src/plugin_api.rs`: May need adjustments for thread safety
+**Benefits achieved**:
+- ✅ Complete isolation: Plugins can't block UI thread
+- ✅ Stable async runtime: Single tokio runtime for all async ops
+- ✅ Natural async model: Plugins use async/await without restrictions
+- ✅ No race conditions: Sequential execution within plugin thread
+- ✅ Matches industry standard: Similar to VSCode's Extension Host
+
+**Limitation**: Hooks are now non-blocking, so plugins cannot intercept/cancel operations (e.g., before-insert to reject input). This could be addressed by adding a blocking hook variant with timeout for critical hooks if needed.
 
 ### Menu Bar System
 Full keyboard/mouse navigation with F10 toggle, arrow key navigation, Alt+letter mnemonics, keybinding display in dropdowns, JSON configuration.
@@ -466,3 +469,4 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 - ✅ Block selection rendering (Alt+Shift+arrows highlight rectangular regions)
 - ✅ Block selection E2E tests (5 tests covering all directions)
 - ✅ Search history persistence (save/load to ~/.local/share/fresh/ with Drop impl)
+- ✅ **Plugin Thread Architecture** (PluginThreadHandle with dedicated thread, non-blocking hooks, removed Lua/HookRegistry)
