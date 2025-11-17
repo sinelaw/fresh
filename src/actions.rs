@@ -1223,6 +1223,10 @@ pub fn action_to_events(
         | Action::ListBookmarks
         | Action::ToggleSearchCaseSensitive
         | Action::ToggleSearchWholeWord
+        | Action::StartMacroRecording
+        | Action::StopMacroRecording
+        | Action::PlayMacro(_)
+        | Action::ToggleMacroRecording(_)
         | Action::HelpToggle
         | Action::HelpScrollUp
         | Action::HelpScrollDown
