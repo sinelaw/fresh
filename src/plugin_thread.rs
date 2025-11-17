@@ -1,0 +1,778 @@
+//! Plugin Thread: Dedicated thread for TypeScript plugin execution
+//!
+//! This module implements a dedicated thread architecture for plugin execution,
+//! solving the problem of creating new tokio runtimes for each hook call.
+//!
+//! Architecture:
+//! - Main thread (UI) sends requests to plugin thread via channel
+//! - Plugin thread owns JsRuntime and persistent tokio runtime
+//! - Results are sent back via the existing PluginCommand channel
+//! - Async operations complete naturally without runtime destruction
+
+use crate::command_registry::CommandRegistry;
+use crate::hooks::HookArgs;
+use crate::plugin_api::{EditorStateSnapshot, PluginCommand};
+use crate::ts_runtime::{TsPluginInfo, TypeScriptRuntime};
+use anyhow::{anyhow, Result};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+use std::thread::{self, JoinHandle};
+
+/// Request messages sent to the plugin thread
+#[derive(Debug)]
+pub enum PluginRequest {
+    /// Load a plugin from a file
+    LoadPlugin {
+        path: PathBuf,
+        response: oneshot::Sender<Result<()>>,
+    },
+
+    /// Load all plugins from a directory
+    LoadPluginsFromDir {
+        dir: PathBuf,
+        response: oneshot::Sender<Vec<String>>,
+    },
+
+    /// Unload a plugin by name
+    UnloadPlugin {
+        name: String,
+        response: oneshot::Sender<Result<()>>,
+    },
+
+    /// Reload a plugin by name
+    ReloadPlugin {
+        name: String,
+        response: oneshot::Sender<Result<()>>,
+    },
+
+    /// Execute a plugin action
+    ExecuteAction {
+        action_name: String,
+        response: oneshot::Sender<Result<()>>,
+    },
+
+    /// Run a hook (fire-and-forget, no response needed)
+    RunHook { hook_name: String, args: HookArgs },
+
+    /// Check if any handlers are registered for a hook
+    HasHookHandlers {
+        hook_name: String,
+        response: oneshot::Sender<bool>,
+    },
+
+    /// List all loaded plugins
+    ListPlugins {
+        response: oneshot::Sender<Vec<TsPluginInfo>>,
+    },
+
+    /// Process pending commands (returns commands for editor)
+    ProcessCommands {
+        response: oneshot::Sender<Vec<PluginCommand>>,
+    },
+
+    /// Shutdown the plugin thread
+    Shutdown,
+}
+
+/// Simple oneshot channel implementation
+pub mod oneshot {
+    use std::fmt;
+    use std::sync::mpsc;
+
+    pub struct Sender<T>(mpsc::SyncSender<T>);
+    pub struct Receiver<T>(mpsc::Receiver<T>);
+
+    impl<T> fmt::Debug for Sender<T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_tuple("Sender").finish()
+        }
+    }
+
+    impl<T> fmt::Debug for Receiver<T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_tuple("Receiver").finish()
+        }
+    }
+
+    impl<T> Sender<T> {
+        pub fn send(self, value: T) -> Result<(), T> {
+            self.0.send(value).map_err(|e| e.0)
+        }
+    }
+
+    impl<T> Receiver<T> {
+        pub fn recv(self) -> Result<T, mpsc::RecvError> {
+            self.0.recv()
+        }
+
+        pub fn recv_timeout(
+            self,
+            timeout: std::time::Duration,
+        ) -> Result<T, mpsc::RecvTimeoutError> {
+            self.0.recv_timeout(timeout)
+        }
+    }
+
+    pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
+        let (tx, rx) = mpsc::sync_channel(1);
+        (Sender(tx), Receiver(rx))
+    }
+}
+
+/// Handle to the plugin thread for sending requests
+pub struct PluginThreadHandle {
+    /// Channel to send requests to the plugin thread
+    request_sender: std::sync::mpsc::Sender<PluginRequest>,
+
+    /// Thread join handle
+    thread_handle: Option<JoinHandle<()>>,
+
+    /// State snapshot handle for editor to update
+    state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
+
+    /// Command registry (shared with editor)
+    commands: Arc<RwLock<CommandRegistry>>,
+}
+
+impl PluginThreadHandle {
+    /// Create a new plugin thread and return its handle
+    pub fn spawn(commands: Arc<RwLock<CommandRegistry>>) -> Result<Self> {
+        // Create channel for plugin commands
+        let (command_sender, command_receiver) = std::sync::mpsc::channel();
+
+        // Create editor state snapshot for query API
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
+        // Create channel for requests
+        let (request_sender, request_receiver) = std::sync::mpsc::channel();
+
+        // Clone state snapshot for the thread
+        let thread_state_snapshot = Arc::clone(&state_snapshot);
+        let thread_commands = Arc::clone(&commands);
+
+        // Spawn the plugin thread
+        let thread_handle = thread::spawn(move || {
+            // Create tokio runtime for the plugin thread
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!("Failed to create plugin thread runtime: {}", e);
+                    return;
+                }
+            };
+
+            // Create TypeScript runtime with state
+            let runtime = match TypeScriptRuntime::with_state(
+                Arc::clone(&thread_state_snapshot),
+                command_sender,
+            ) {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!("Failed to create TypeScript runtime: {}", e);
+                    return;
+                }
+            };
+
+            // Create internal manager state
+            let mut plugins: HashMap<String, TsPluginInfo> = HashMap::new();
+
+            // Run the event loop
+            rt.block_on(async {
+                let mut runtime = runtime;
+                plugin_thread_loop(
+                    &mut runtime,
+                    &mut plugins,
+                    &thread_commands,
+                    command_receiver,
+                    request_receiver,
+                )
+                .await;
+            });
+
+            tracing::info!("Plugin thread shutting down");
+        });
+
+        tracing::info!("Plugin thread spawned");
+
+        Ok(Self {
+            request_sender,
+            thread_handle: Some(thread_handle),
+            state_snapshot,
+            commands,
+        })
+    }
+
+    /// Load a plugin from a file (blocking)
+    pub fn load_plugin(&self, path: &Path) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.request_sender
+            .send(PluginRequest::LoadPlugin {
+                path: path.to_path_buf(),
+                response: tx,
+            })
+            .map_err(|_| anyhow!("Plugin thread not responding"))?;
+
+        rx.recv()
+            .map_err(|_| anyhow!("Plugin thread closed"))?
+    }
+
+    /// Load all plugins from a directory (blocking)
+    pub fn load_plugins_from_dir(&self, dir: &Path) -> Vec<String> {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .request_sender
+            .send(PluginRequest::LoadPluginsFromDir {
+                dir: dir.to_path_buf(),
+                response: tx,
+            })
+            .is_err()
+        {
+            return vec!["Plugin thread not responding".to_string()];
+        }
+
+        rx.recv()
+            .unwrap_or_else(|_| vec!["Plugin thread closed".to_string()])
+    }
+
+    /// Unload a plugin (blocking)
+    pub fn unload_plugin(&self, name: &str) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.request_sender
+            .send(PluginRequest::UnloadPlugin {
+                name: name.to_string(),
+                response: tx,
+            })
+            .map_err(|_| anyhow!("Plugin thread not responding"))?;
+
+        rx.recv()
+            .map_err(|_| anyhow!("Plugin thread closed"))?
+    }
+
+    /// Reload a plugin (blocking)
+    pub fn reload_plugin(&self, name: &str) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.request_sender
+            .send(PluginRequest::ReloadPlugin {
+                name: name.to_string(),
+                response: tx,
+            })
+            .map_err(|_| anyhow!("Plugin thread not responding"))?;
+
+        rx.recv()
+            .map_err(|_| anyhow!("Plugin thread closed"))?
+    }
+
+    /// Execute a plugin action (blocking)
+    pub fn execute_action(&self, action_name: &str) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.request_sender
+            .send(PluginRequest::ExecuteAction {
+                action_name: action_name.to_string(),
+                response: tx,
+            })
+            .map_err(|_| anyhow!("Plugin thread not responding"))?;
+
+        rx.recv()
+            .map_err(|_| anyhow!("Plugin thread closed"))?
+    }
+
+    /// Run a hook (non-blocking, fire-and-forget)
+    ///
+    /// This is the key improvement: hooks are now non-blocking.
+    /// The plugin thread will execute them asynchronously and
+    /// any results will come back via the PluginCommand channel.
+    pub fn run_hook(&self, hook_name: &str, args: HookArgs) {
+        let _ = self.request_sender.send(PluginRequest::RunHook {
+            hook_name: hook_name.to_string(),
+            args,
+        });
+    }
+
+    /// Check if any handlers are registered for a hook (blocking)
+    pub fn has_hook_handlers(&self, hook_name: &str) -> bool {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .request_sender
+            .send(PluginRequest::HasHookHandlers {
+                hook_name: hook_name.to_string(),
+                response: tx,
+            })
+            .is_err()
+        {
+            return false;
+        }
+
+        rx.recv().unwrap_or(false)
+    }
+
+    /// List all loaded plugins (blocking)
+    pub fn list_plugins(&self) -> Vec<TsPluginInfo> {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .request_sender
+            .send(PluginRequest::ListPlugins { response: tx })
+            .is_err()
+        {
+            return vec![];
+        }
+
+        rx.recv().unwrap_or_default()
+    }
+
+    /// Process pending plugin commands (blocking)
+    pub fn process_commands(&self) -> Vec<PluginCommand> {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .request_sender
+            .send(PluginRequest::ProcessCommands { response: tx })
+            .is_err()
+        {
+            return vec![];
+        }
+
+        rx.recv().unwrap_or_default()
+    }
+
+    /// Get the state snapshot handle for editor to update
+    pub fn state_snapshot_handle(&self) -> Arc<RwLock<EditorStateSnapshot>> {
+        Arc::clone(&self.state_snapshot)
+    }
+
+    /// Get the command registry
+    #[allow(dead_code)]
+    pub fn command_registry(&self) -> Arc<RwLock<CommandRegistry>> {
+        Arc::clone(&self.commands)
+    }
+
+    /// Shutdown the plugin thread
+    pub fn shutdown(&mut self) {
+        let _ = self.request_sender.send(PluginRequest::Shutdown);
+
+        if let Some(handle) = self.thread_handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for PluginThreadHandle {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+/// Main loop for the plugin thread
+async fn plugin_thread_loop(
+    runtime: &mut TypeScriptRuntime,
+    plugins: &mut HashMap<String, TsPluginInfo>,
+    commands: &Arc<RwLock<CommandRegistry>>,
+    command_receiver: std::sync::mpsc::Receiver<PluginCommand>,
+    request_receiver: std::sync::mpsc::Receiver<PluginRequest>,
+) {
+    tracing::info!("Plugin thread event loop started");
+
+    loop {
+        // Process any pending requests (non-blocking check)
+        match request_receiver.try_recv() {
+            Ok(request) => {
+                let should_shutdown = handle_request(
+                    request,
+                    runtime,
+                    plugins,
+                    commands,
+                    &command_receiver,
+                )
+                .await;
+
+                if should_shutdown {
+                    break;
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // No requests, wait a bit before checking again
+                // This prevents busy-waiting
+                tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                tracing::info!("Plugin thread request channel closed");
+                break;
+            }
+        }
+    }
+}
+
+/// Handle a single request in the plugin thread
+async fn handle_request(
+    request: PluginRequest,
+    runtime: &mut TypeScriptRuntime,
+    plugins: &mut HashMap<String, TsPluginInfo>,
+    commands: &Arc<RwLock<CommandRegistry>>,
+    command_receiver: &std::sync::mpsc::Receiver<PluginCommand>,
+) -> bool {
+    match request {
+        PluginRequest::LoadPlugin { path, response } => {
+            let result = load_plugin_internal(runtime, plugins, &path).await;
+            let _ = response.send(result);
+        }
+
+        PluginRequest::LoadPluginsFromDir { dir, response } => {
+            let errors = load_plugins_from_dir_internal(runtime, plugins, &dir).await;
+            let _ = response.send(errors);
+        }
+
+        PluginRequest::UnloadPlugin { name, response } => {
+            let result = unload_plugin_internal(plugins, commands, &name);
+            let _ = response.send(result);
+        }
+
+        PluginRequest::ReloadPlugin { name, response } => {
+            let result = reload_plugin_internal(runtime, plugins, commands, &name).await;
+            let _ = response.send(result);
+        }
+
+        PluginRequest::ExecuteAction {
+            action_name,
+            response,
+        } => {
+            tracing::info!("Executing TypeScript plugin action: {}", action_name);
+            let result = runtime.execute_action(&action_name).await;
+            let _ = response.send(result);
+        }
+
+        PluginRequest::RunHook { hook_name, args } => {
+            // Fire-and-forget hook execution
+            if let Err(e) = run_hook_internal(runtime, &hook_name, &args).await {
+                tracing::error!("Error running hook '{}': {}", hook_name, e);
+            }
+        }
+
+        PluginRequest::HasHookHandlers {
+            hook_name,
+            response,
+        } => {
+            let has_handlers = runtime.has_handlers(&hook_name);
+            let _ = response.send(has_handlers);
+        }
+
+        PluginRequest::ListPlugins { response } => {
+            let plugin_list: Vec<TsPluginInfo> = plugins.values().cloned().collect();
+            let _ = response.send(plugin_list);
+        }
+
+        PluginRequest::ProcessCommands { response } => {
+            let mut cmds = Vec::new();
+            while let Ok(cmd) = command_receiver.try_recv() {
+                cmds.push(cmd);
+            }
+            let _ = response.send(cmds);
+        }
+
+        PluginRequest::Shutdown => {
+            tracing::info!("Plugin thread received shutdown request");
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Load a plugin from a file
+async fn load_plugin_internal(
+    runtime: &mut TypeScriptRuntime,
+    plugins: &mut HashMap<String, TsPluginInfo>,
+    path: &Path,
+) -> Result<()> {
+    let plugin_name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| anyhow!("Invalid plugin filename"))?
+        .to_string();
+
+    tracing::info!("Loading TypeScript plugin: {} from {:?}", plugin_name, path);
+
+    // Load and execute the module
+    let path_str = path
+        .to_str()
+        .ok_or_else(|| anyhow!("Invalid path encoding"))?;
+
+    runtime.load_module(path_str).await?;
+
+    // Store plugin info
+    plugins.insert(
+        plugin_name.clone(),
+        TsPluginInfo {
+            name: plugin_name,
+            path: path.to_path_buf(),
+            enabled: true,
+        },
+    );
+
+    Ok(())
+}
+
+/// Load all plugins from a directory
+async fn load_plugins_from_dir_internal(
+    runtime: &mut TypeScriptRuntime,
+    plugins: &mut HashMap<String, TsPluginInfo>,
+    dir: &Path,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+
+    if !dir.exists() {
+        tracing::warn!("Plugin directory does not exist: {:?}", dir);
+        return errors;
+    }
+
+    // Scan directory for .ts and .js files
+    match std::fs::read_dir(dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let ext = path.extension().and_then(|s| s.to_str());
+                if ext == Some("ts") || ext == Some("js") {
+                    if let Err(e) = load_plugin_internal(runtime, plugins, &path).await {
+                        let err = format!("Failed to load {:?}: {}", path, e);
+                        tracing::error!("{}", err);
+                        errors.push(err);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            let err = format!("Failed to read plugin directory: {}", e);
+            tracing::error!("{}", err);
+            errors.push(err);
+        }
+    }
+
+    errors
+}
+
+/// Unload a plugin
+fn unload_plugin_internal(
+    plugins: &mut HashMap<String, TsPluginInfo>,
+    commands: &Arc<RwLock<CommandRegistry>>,
+    name: &str,
+) -> Result<()> {
+    if plugins.remove(name).is_some() {
+        tracing::info!("Unloading TypeScript plugin: {}", name);
+
+        // Remove plugin's commands (assuming they're prefixed with plugin name)
+        let prefix = format!("{}:", name);
+        commands.read().unwrap().unregister_by_prefix(&prefix);
+
+        Ok(())
+    } else {
+        Err(anyhow!("Plugin '{}' not found", name))
+    }
+}
+
+/// Reload a plugin
+async fn reload_plugin_internal(
+    runtime: &mut TypeScriptRuntime,
+    plugins: &mut HashMap<String, TsPluginInfo>,
+    commands: &Arc<RwLock<CommandRegistry>>,
+    name: &str,
+) -> Result<()> {
+    let path = plugins
+        .get(name)
+        .ok_or_else(|| anyhow!("Plugin '{}' not found", name))?
+        .path
+        .clone();
+
+    unload_plugin_internal(plugins, commands, name)?;
+    load_plugin_internal(runtime, plugins, &path).await?;
+
+    Ok(())
+}
+
+/// Run a hook
+async fn run_hook_internal(
+    runtime: &mut TypeScriptRuntime,
+    hook_name: &str,
+    args: &HookArgs,
+) -> Result<()> {
+    // Convert HookArgs to JSON
+    let json_data = hook_args_to_json(args)?;
+
+    // Emit to TypeScript handlers
+    runtime.emit(hook_name, &json_data).await?;
+
+    Ok(())
+}
+
+/// Convert HookArgs to JSON string
+fn hook_args_to_json(args: &HookArgs) -> Result<String> {
+    let json_value = match args {
+        HookArgs::RenderLine {
+            buffer_id,
+            line_number,
+            byte_start,
+            byte_end,
+            content,
+        } => {
+            serde_json::json!({
+                "buffer_id": buffer_id.0,
+                "line_number": line_number,
+                "byte_start": byte_start,
+                "byte_end": byte_end,
+                "content": content,
+            })
+        }
+        HookArgs::BufferActivated { buffer_id } => {
+            serde_json::json!({ "buffer_id": buffer_id.0 })
+        }
+        HookArgs::BufferDeactivated { buffer_id } => {
+            serde_json::json!({ "buffer_id": buffer_id.0 })
+        }
+        HookArgs::BufferClosed { buffer_id } => {
+            serde_json::json!({ "buffer_id": buffer_id.0 })
+        }
+        HookArgs::CursorMoved {
+            buffer_id,
+            cursor_id,
+            old_position,
+            new_position,
+        } => {
+            serde_json::json!({
+                "buffer_id": buffer_id.0,
+                "cursor_id": cursor_id.0,
+                "old_position": old_position,
+                "new_position": new_position,
+            })
+        }
+        HookArgs::BeforeInsert {
+            buffer_id,
+            position,
+            text,
+        } => {
+            serde_json::json!({
+                "buffer_id": buffer_id.0,
+                "position": position,
+                "text": text,
+            })
+        }
+        HookArgs::AfterInsert {
+            buffer_id,
+            position,
+            text,
+        } => {
+            serde_json::json!({
+                "buffer_id": buffer_id.0,
+                "position": position,
+                "text": text,
+            })
+        }
+        HookArgs::BeforeDelete { buffer_id, range } => {
+            serde_json::json!({
+                "buffer_id": buffer_id.0,
+                "start": range.start,
+                "end": range.end,
+            })
+        }
+        HookArgs::AfterDelete {
+            buffer_id,
+            range,
+            deleted_text,
+        } => {
+            serde_json::json!({
+                "buffer_id": buffer_id.0,
+                "start": range.start,
+                "end": range.end,
+                "deleted_text": deleted_text,
+            })
+        }
+        HookArgs::BeforeFileOpen { path } => {
+            serde_json::json!({ "path": path.to_string_lossy() })
+        }
+        HookArgs::AfterFileOpen { path, buffer_id } => {
+            serde_json::json!({
+                "path": path.to_string_lossy(),
+                "buffer_id": buffer_id.0,
+            })
+        }
+        HookArgs::BeforeFileSave { path, buffer_id } => {
+            serde_json::json!({
+                "path": path.to_string_lossy(),
+                "buffer_id": buffer_id.0,
+            })
+        }
+        HookArgs::AfterFileSave { path, buffer_id } => {
+            serde_json::json!({
+                "path": path.to_string_lossy(),
+                "buffer_id": buffer_id.0,
+            })
+        }
+        HookArgs::PreCommand { action } => {
+            serde_json::json!({ "action": format!("{:?}", action) })
+        }
+        HookArgs::PostCommand { action } => {
+            serde_json::json!({ "action": format!("{:?}", action) })
+        }
+        HookArgs::Idle { milliseconds } => {
+            serde_json::json!({ "milliseconds": milliseconds })
+        }
+        HookArgs::EditorInitialized => {
+            serde_json::json!({})
+        }
+        HookArgs::PromptChanged { prompt_type, input } => {
+            serde_json::json!({
+                "prompt_type": prompt_type,
+                "input": input,
+            })
+        }
+        HookArgs::PromptConfirmed {
+            prompt_type,
+            input,
+            selected_index,
+        } => {
+            serde_json::json!({
+                "prompt_type": prompt_type,
+                "input": input,
+                "selected_index": selected_index,
+            })
+        }
+        HookArgs::PromptCancelled { prompt_type, input } => {
+            serde_json::json!({
+                "prompt_type": prompt_type,
+                "input": input,
+            })
+        }
+    };
+
+    serde_json::to_string(&json_value).map_err(|e| anyhow!("Failed to serialize hook args: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_oneshot_channel() {
+        let (tx, rx) = oneshot::channel::<i32>();
+        assert!(tx.send(42).is_ok());
+        assert_eq!(rx.recv().unwrap(), 42);
+    }
+
+    #[test]
+    fn test_hook_args_to_json_editor_initialized() {
+        let args = HookArgs::EditorInitialized;
+        let json = hook_args_to_json(&args).unwrap();
+        assert_eq!(json, "{}");
+    }
+
+    #[test]
+    fn test_hook_args_to_json_prompt_changed() {
+        let args = HookArgs::PromptChanged {
+            prompt_type: "search".to_string(),
+            input: "test".to_string(),
+        };
+        let json = hook_args_to_json(&args).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["prompt_type"], "search");
+        assert_eq!(parsed["input"], "test");
+    }
+}
