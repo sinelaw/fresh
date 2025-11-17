@@ -514,7 +514,7 @@ async fn op_fresh_read_file(
 /// Write content to a file asynchronously
 /// Useful for plugins that need to save data or generate files
 #[op2(async)]
-fn op_fresh_write_file(
+async fn op_fresh_write_file(
     #[string] path: String,
     #[string] content: String,
 ) -> Result<(), deno_core::error::AnyError> {
