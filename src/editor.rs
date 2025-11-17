@@ -385,6 +385,21 @@ pub struct Editor {
     /// Global search options (persist across searches)
     search_case_sensitive: bool,
     search_whole_word: bool,
+
+    /// Macro storage (key -> list of recorded actions)
+    macros: HashMap<char, Vec<Action>>,
+
+    /// Macro recording state (Some(key) if recording, None otherwise)
+    macro_recording: Option<MacroRecordingState>,
+}
+
+/// State for macro recording
+#[derive(Debug, Clone)]
+struct MacroRecordingState {
+    /// The register key for this macro
+    key: char,
+    /// Actions recorded so far
+    actions: Vec<Action>,
 }
 
 /// LSP progress information
@@ -697,6 +712,8 @@ impl Editor {
             bookmarks: HashMap::new(),
             search_case_sensitive: true,
             search_whole_word: false,
+            macros: HashMap::new(),
+            macro_recording: None,
         })
     }
 
@@ -4877,6 +4894,9 @@ impl Editor {
     fn handle_action(&mut self, action: Action) -> std::io::Result<()> {
         use crate::keybindings::Action;
 
+        // Record action to macro if recording
+        self.record_macro_action(&action);
+
         match action {
             Action::Quit => self.quit(),
             Action::Save => self.save()?,
@@ -5168,6 +5188,21 @@ impl Editor {
                     let query = search_state.query.clone();
                     self.perform_search(&query);
                 }
+            }
+            Action::StartMacroRecording => {
+                // This is a no-op; use ToggleMacroRecording instead
+                self.set_status_message(
+                    "Use Ctrl+Shift+R to start recording (will prompt for register)".to_string(),
+                );
+            }
+            Action::StopMacroRecording => {
+                self.stop_macro_recording();
+            }
+            Action::PlayMacro(key) => {
+                self.play_macro(key);
+            }
+            Action::ToggleMacroRecording(key) => {
+                self.toggle_macro_recording(key);
             }
             Action::None => {}
             Action::DeleteBackward => {
@@ -8583,6 +8618,87 @@ impl Editor {
                 }
             }) {
                 self.set_status_message(msg);
+            }
+        }
+    }
+
+    /// Toggle macro recording for the given register
+    fn toggle_macro_recording(&mut self, key: char) {
+        if let Some(state) = &self.macro_recording {
+            if state.key == key {
+                // Stop recording
+                self.stop_macro_recording();
+            } else {
+                // Recording to a different key, stop current and start new
+                self.stop_macro_recording();
+                self.start_macro_recording(key);
+            }
+        } else {
+            // Start recording
+            self.start_macro_recording(key);
+        }
+    }
+
+    /// Start recording a macro
+    fn start_macro_recording(&mut self, key: char) {
+        self.macro_recording = Some(MacroRecordingState {
+            key,
+            actions: Vec::new(),
+        });
+        self.set_status_message(format!("Recording macro '{}' (press Ctrl+Shift+R {} to stop)", key, key));
+    }
+
+    /// Stop recording and save the macro
+    fn stop_macro_recording(&mut self) {
+        if let Some(state) = self.macro_recording.take() {
+            let action_count = state.actions.len();
+            self.macros.insert(state.key, state.actions);
+            self.set_status_message(format!(
+                "Macro '{}' saved ({} actions)",
+                state.key, action_count
+            ));
+        } else {
+            self.set_status_message("Not recording a macro".to_string());
+        }
+    }
+
+    /// Play back a recorded macro
+    fn play_macro(&mut self, key: char) {
+        if let Some(actions) = self.macros.get(&key).cloned() {
+            if actions.is_empty() {
+                self.set_status_message(format!("Macro '{}' is empty", key));
+                return;
+            }
+
+            // Temporarily disable recording to avoid recording the playback
+            let was_recording = self.macro_recording.take();
+
+            let action_count = actions.len();
+            for action in actions {
+                let _ = self.handle_action(action);
+            }
+
+            // Restore recording state
+            self.macro_recording = was_recording;
+
+            self.set_status_message(format!("Played macro '{}' ({} actions)", key, action_count));
+        } else {
+            self.set_status_message(format!("No macro recorded for '{}'", key));
+        }
+    }
+
+    /// Record an action to the current macro (if recording)
+    fn record_macro_action(&mut self, action: &Action) {
+        if let Some(state) = &mut self.macro_recording {
+            // Don't record macro control actions themselves
+            match action {
+                Action::StartMacroRecording
+                | Action::StopMacroRecording
+                | Action::PlayMacro(_)
+                | Action::ToggleMacroRecording(_) => {}
+                _ => {
+                    state.actions.push(action.clone());
+                }
             }
         }
     }

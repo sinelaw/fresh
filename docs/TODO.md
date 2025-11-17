@@ -30,9 +30,9 @@
 - [ ] Expand selection to scope (by AST nodes)
 
 #### Macros
-- [ ] Record macro (q + key)
-- [ ] Play macro (@ + key)
-- [ ] Macro persistence
+- [x] Record macro (Alt+Shift+0-9 to toggle recording, F5 to stop) ✅
+- [x] Play macro (Ctrl+Alt+0-9 to play) ✅
+- [ ] Macro persistence (save/load across sessions)
 
 ---
 

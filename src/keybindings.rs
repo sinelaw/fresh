@@ -199,6 +199,12 @@ pub enum Action {
     ToggleSearchCaseSensitive,
     ToggleSearchWholeWord,
 
+    // Macros
+    StartMacroRecording,
+    StopMacroRecording,
+    PlayMacro(char),
+    ToggleMacroRecording(char),
+
     // Undo/redo
     Undo,
     Redo,
@@ -421,6 +427,23 @@ impl Action {
 
             "toggle_search_case_sensitive" => Some(Action::ToggleSearchCaseSensitive),
             "toggle_search_whole_word" => Some(Action::ToggleSearchWholeWord),
+
+            "start_macro_recording" => Some(Action::StartMacroRecording),
+            "stop_macro_recording" => Some(Action::StopMacroRecording),
+            "play_macro" => {
+                if let Some(serde_json::Value::String(c)) = args.get("char") {
+                    c.chars().next().map(Action::PlayMacro)
+                } else {
+                    None
+                }
+            }
+            "toggle_macro_recording" => {
+                if let Some(serde_json::Value::String(c)) = args.get("char") {
+                    c.chars().next().map(Action::ToggleMacroRecording)
+                } else {
+                    None
+                }
+            }
 
             "undo" => Some(Action::Undo),
             "redo" => Some(Action::Redo),
@@ -1082,6 +1105,29 @@ impl KeybindingResolver {
         // Ctrl+G for Go to line
         bindings.insert((KeyCode::Char('g'), KeyModifiers::CONTROL), Action::GotoLine);
 
+        // Macros (F5 to stop recording, Alt+Shift+number to toggle record, Ctrl+Alt+number to play)
+        bindings.insert(
+            (KeyCode::F(5), KeyModifiers::empty()),
+            Action::StopMacroRecording,
+        );
+        // Common macro registers: 0-9
+        for i in '0'..='9' {
+            bindings.insert(
+                (
+                    KeyCode::Char(i),
+                    KeyModifiers::ALT | KeyModifiers::SHIFT,
+                ),
+                Action::ToggleMacroRecording(i),
+            );
+            bindings.insert(
+                (
+                    KeyCode::Char(i),
+                    KeyModifiers::CONTROL | KeyModifiers::ALT,
+                ),
+                Action::PlayMacro(i),
+            );
+        }
+
         // Bookmarks (Ctrl+Shift+number to set, Ctrl+number to jump)
         // Common bookmark slots: 0-9
         for i in '0'..='9' {
@@ -1457,6 +1503,10 @@ impl KeybindingResolver {
             Action::ListBookmarks => "List all bookmarks".to_string(),
             Action::ToggleSearchCaseSensitive => "Toggle search case sensitivity".to_string(),
             Action::ToggleSearchWholeWord => "Toggle search whole word matching".to_string(),
+            Action::StartMacroRecording => "Start macro recording".to_string(),
+            Action::StopMacroRecording => "Stop macro recording".to_string(),
+            Action::PlayMacro(c) => format!("Play macro '{}'", c),
+            Action::ToggleMacroRecording(c) => format!("Toggle macro recording for '{}'", c),
             Action::Undo => "Undo".to_string(),
             Action::Redo => "Redo".to_string(),
             Action::ScrollUp => "Scroll up".to_string(),
