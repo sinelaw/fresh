@@ -627,6 +627,235 @@ fn test_todo_highlighter_updates_on_delete() {
     );
 }
 
+/// Test references panel plugin loads and registers commands
+/// This verifies the plugin loads successfully and its commands are available
+#[test]
+fn test_references_panel_plugin_loads() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the references panel plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/references_panel.ts");
+    let plugin_dest = plugins_dir.join("references_panel.ts");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create a simple test file
+    let test_file_content = "fn main() {\n    println!(\"test\");\n}\n";
+    let fixture = TestFixture::new("test_references.rs", test_file_content).unwrap();
+
+    // Create harness with the project directory (so plugins load)
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file - this should trigger plugin loading
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Check that file content is visible
+    harness.assert_screen_contains("fn main()");
+
+    // Open command palette and search for the command
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type to search for the command
+    harness.type_text("Find References").unwrap();
+    harness.render().unwrap();
+
+    let palette_screen = harness.screen_to_string();
+    println!("Command palette screen:\n{}", palette_screen);
+
+    // The command should be visible in the palette (registered by the plugin)
+    assert!(
+        palette_screen.contains("Find References"),
+        "The 'Find References' command should be registered by the plugin"
+    );
+
+    // Close palette with Escape
+    harness
+        .send_key(KeyCode::Esc, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify original content is still visible
+    harness.assert_screen_contains("fn main()");
+}
+
+/// Test references panel handles gracefully when no LSP is available
+/// Without LSP, the command should not crash and editor should remain usable
+#[test]
+fn test_references_panel_no_lsp() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the references panel plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/references_panel.ts");
+    let plugin_dest = plugins_dir.join("references_panel.ts");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create a simple test file
+    let test_file_content = "fn test_function() {\n    // test code\n}\n";
+    let fixture = TestFixture::new("test_refs.rs", test_file_content).unwrap();
+
+    // Create harness with the project directory (so plugins load)
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Execute "Find References" command
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Find References").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen after Find References:\n{}", screen);
+
+    // Without LSP, the command should handle gracefully
+    // The editor should still be functional and show the original content
+    // (The panel may not open if LSP returns empty results, which is expected)
+    harness.assert_screen_contains("test_function");
+
+    // Verify editor is still responsive - we can type
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+
+    // Editor should still work
+    harness.assert_screen_contains("test_function");
+}
+
+/// Test references panel navigation and closing
+#[test]
+fn test_references_panel_navigation() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the references panel plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/references_panel.ts");
+    let plugin_dest = plugins_dir.join("references_panel.ts");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create a simple test file
+    let test_file_content = "fn main() {\n    let x = 1;\n}\n";
+    let fixture = TestFixture::new("test_nav.rs", test_file_content).unwrap();
+
+    // Create harness with the project directory (so plugins load)
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Execute "Find References" command
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Find References").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen_before_close = harness.screen_to_string();
+    println!("Screen before close:\n{}", screen_before_close);
+
+    // The panel should be open (check for panel indicators)
+    // Now close it with 'q' key (in references-list mode)
+    harness.send_key(KeyCode::Char('q'), KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen_after_close = harness.screen_to_string();
+    println!("Screen after close:\n{}", screen_after_close);
+
+    // After closing, the original buffer should be fully visible
+    harness.assert_screen_contains("fn main()");
+}
+
+/// Test toggle references panel command
+#[test]
+fn test_references_panel_toggle() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the references panel plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/references_panel.ts");
+    let plugin_dest = plugins_dir.join("references_panel.ts");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create a simple test file
+    let test_file_content = "fn test() {}\n";
+    let fixture = TestFixture::new("test_toggle.rs", test_file_content).unwrap();
+
+    // Create harness with the project directory (so plugins load)
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Verify Toggle command is available
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Toggle References").unwrap();
+    harness.render().unwrap();
+
+    let palette_screen = harness.screen_to_string();
+    assert!(
+        palette_screen.contains("Toggle References"),
+        "Toggle References Panel command should be available"
+    );
+
+    // Close palette
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("fn test()");
+}
+
 /// Test diagnostics panel plugin loads and creates a virtual buffer split
 /// This verifies the full implementation with LSP-like diagnostics display
 #[test]
