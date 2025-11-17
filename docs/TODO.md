@@ -26,7 +26,8 @@
 - [x] Bookmark system (Ctrl+Shift+0-9 to set, Alt+0-9 to jump) ✅
 
 #### Selection & Editing
-- [ ] Rectangular/block selection (Alt+drag or Ctrl+Alt+arrows)
+- [x] Rectangular/block selection data structures and keybindings (Ctrl+Alt+arrows) ✅
+- [ ] Rectangular/block selection rendering and operations (insert/delete/copy)
 - [ ] Expand selection to scope (by AST nodes)
 
 #### Macros
@@ -449,3 +450,5 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 - ✅ Bracket auto-close and auto-pair deletion
 - ✅ Jump to next/previous error (F8/Shift+F8)
 - ✅ Macro recording and playback system (Alt+Shift+0-9 / Ctrl+Alt+0-9)
+- ✅ Comprehensive E2E tests for smart editing features (25 tests)
+- ✅ Block selection infrastructure (SelectionMode, Position2D, keybindings)

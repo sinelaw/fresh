@@ -1301,6 +1301,10 @@ pub fn action_to_events(
         | Action::MenuExecute
         | Action::MenuOpen(_)
         | Action::PluginAction(_)
+        | Action::BlockSelectLeft
+        | Action::BlockSelectRight
+        | Action::BlockSelectUp
+        | Action::BlockSelectDown
         | Action::None => return None,
 
         Action::SelectLine => {
