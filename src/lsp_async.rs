@@ -172,9 +172,34 @@ impl LspClientState {
 
 /// Create common LSP client capabilities with workDoneProgress support
 fn create_client_capabilities() -> ClientCapabilities {
+    use lsp_types::{
+        GeneralClientCapabilities, RenameClientCapabilities,
+        TextDocumentClientCapabilities, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
+    };
+
     ClientCapabilities {
         window: Some(WindowClientCapabilities {
             work_done_progress: Some(true),
+            ..Default::default()
+        }),
+        workspace: Some(WorkspaceClientCapabilities {
+            apply_edit: Some(true),
+            workspace_edit: Some(WorkspaceEditClientCapabilities {
+                document_changes: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        text_document: Some(TextDocumentClientCapabilities {
+            rename: Some(RenameClientCapabilities {
+                dynamic_registration: Some(true),
+                prepare_support: Some(true),
+                honors_change_annotations: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        general: Some(GeneralClientCapabilities {
             ..Default::default()
         }),
         ..Default::default()
@@ -918,6 +943,10 @@ impl LspTask {
         let async_tx = state.async_tx.clone();
         let language_clone = state.language.clone();
 
+        // Create channel for server-to-client request responses
+        // The reader task will send responses through this channel
+        let (server_response_tx, mut server_response_rx) = mpsc::channel::<JsonRpcResponse>(100);
+
         // Spawn stdout reader task - continuously reads and dispatches messages
         let pending_clone = pending.clone();
         let async_tx_reader = async_tx.clone();
@@ -936,6 +965,7 @@ impl LspTask {
                             &pending_clone,
                             &async_tx_reader,
                             &language_clone_reader,
+                            &server_response_tx,
                         )
                         .await
                         {
@@ -962,11 +992,19 @@ impl LspTask {
             );
         });
 
-        // Sequential command processing loop
+        // Sequential command processing loop with server response handling
         let mut pending_commands = Vec::new();
         loop {
-            match command_rx.recv().await {
-                Some(cmd) => {
+            tokio::select! {
+                // Handle server-to-client responses (high priority)
+                Some(response) = server_response_rx.recv() => {
+                    tracing::debug!("Sending response to server request id={}", response.id);
+                    if let Err(e) = state.write_message(&response).await {
+                        tracing::error!("Failed to send response to server: {}", e);
+                    }
+                }
+                // Handle commands from the editor
+                Some(cmd) = command_rx.recv() => {
                     tracing::debug!("LspTask received command: {:?}", cmd);
                     match cmd {
                         LspCommand::Initialize { root_uri, response } => {
@@ -1174,7 +1212,8 @@ impl LspTask {
                         }
                     }
                 }
-                None => {
+                // Handle channel closure
+                else => {
                     tracing::info!("Command channel closed");
                     break;
                 }
@@ -1754,6 +1793,7 @@ async fn handle_message_dispatch(
     pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
     async_tx: &std_mpsc::Sender<AsyncMessage>,
     language: &str,
+    server_response_tx: &mpsc::Sender<JsonRpcResponse>,
 ) -> Result<(), String> {
     match message {
         JsonRpcMessage::Response(response) => {
@@ -1787,8 +1827,56 @@ async fn handle_message_dispatch(
             tracing::debug!("Received LSP notification: {}", notification.method);
             handle_notification_dispatch(notification, async_tx, language).await?;
         }
-        JsonRpcMessage::Request(_) => {
-            tracing::warn!("Received request from server, ignoring");
+        JsonRpcMessage::Request(request) => {
+            // Handle server-to-client requests - MUST respond to avoid timeouts
+            tracing::debug!("Received request from server: {}", request.method);
+            let response = match request.method.as_str() {
+                "window/workDoneProgress/create" => {
+                    // Server wants to create a progress token - acknowledge it
+                    tracing::debug!("Acknowledging workDoneProgress/create (id={})", request.id);
+                    JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id,
+                        result: Some(Value::Null),
+                        error: None,
+                    }
+                }
+                "workspace/configuration" => {
+                    // Return empty configuration - rust-analyzer will use defaults
+                    tracing::debug!("Responding to workspace/configuration with empty config");
+                    JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id,
+                        result: Some(Value::Array(vec![])),
+                        error: None,
+                    }
+                }
+                "client/registerCapability" => {
+                    // Server wants to register a capability dynamically - acknowledge
+                    tracing::debug!("Acknowledging client/registerCapability (id={})", request.id);
+                    JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id,
+                        result: Some(Value::Null),
+                        error: None,
+                    }
+                }
+                _ => {
+                    // For unknown methods, return null to acknowledge receipt
+                    tracing::warn!("Unhandled server request: {}", request.method);
+                    JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id,
+                        result: Some(Value::Null),
+                        error: None,
+                    }
+                }
+            };
+
+            // Send response through channel to be written to stdin
+            if let Err(e) = server_response_tx.send(response).await {
+                tracing::error!("Failed to queue server response: {}", e);
+            }
         }
     }
     Ok(())
