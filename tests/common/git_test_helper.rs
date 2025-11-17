@@ -251,7 +251,7 @@ A sample project for testing.
     }
 
     /// Set up git plugins by copying them from the project's plugins directory
-    /// This is needed for testing git functionality which has been moved to Lua plugins
+    /// This is needed for testing git functionality which has been moved to TypeScript plugins
     pub fn setup_git_plugins(&self) {
         // Create plugins directory in the test repo
         let plugins_dir = self.path.join("plugins");
@@ -263,19 +263,19 @@ A sample project for testing.
             .map(PathBuf::from)
             .expect("CARGO_MANIFEST_DIR not set");
 
-        // Copy git-grep.lua plugin
-        let git_grep_src = project_root.join("plugins/git-grep.lua");
-        let git_grep_dst = plugins_dir.join("git-grep.lua");
+        // Copy git_grep.ts plugin
+        let git_grep_src = project_root.join("plugins/git_grep.ts");
+        let git_grep_dst = plugins_dir.join("git_grep.ts");
         fs::copy(&git_grep_src, &git_grep_dst).unwrap_or_else(|e| {
-            panic!("Failed to copy git-grep.lua from {:?}: {}", git_grep_src, e)
+            panic!("Failed to copy git_grep.ts from {:?}: {}", git_grep_src, e)
         });
 
-        // Copy git-find-file.lua plugin
-        let git_find_file_src = project_root.join("plugins/git-find-file.lua");
-        let git_find_file_dst = plugins_dir.join("git-find-file.lua");
+        // Copy git_find_file.ts plugin
+        let git_find_file_src = project_root.join("plugins/git_find_file.ts");
+        let git_find_file_dst = plugins_dir.join("git_find_file.ts");
         fs::copy(&git_find_file_src, &git_find_file_dst).unwrap_or_else(|e| {
             panic!(
-                "Failed to copy git-find-file.lua from {:?}: {}",
+                "Failed to copy git_find_file.ts from {:?}: {}",
                 git_find_file_src, e
             )
         });

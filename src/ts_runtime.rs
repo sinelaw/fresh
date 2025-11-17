@@ -8,11 +8,97 @@ use crate::commands::Suggestion;
 use crate::event::BufferId;
 use crate::plugin_api::{EditorStateSnapshot, PluginCommand};
 use anyhow::{anyhow, Result};
-use deno_core::{extension, op2, OpState, FastString, JsRuntime, RuntimeOptions};
+use deno_core::{
+    extension, op2, FastString, JsRuntime, ModuleLoadResponse, ModuleSource,
+    ModuleSourceCode, ModuleSpecifier, ModuleType, OpState, RequestedModuleType,
+    ResolutionKind, RuntimeOptions,
+};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
+
+/// Custom module loader that transpiles TypeScript to JavaScript
+struct TypeScriptModuleLoader;
+
+impl deno_core::ModuleLoader for TypeScriptModuleLoader {
+    fn resolve(
+        &self,
+        specifier: &str,
+        referrer: &str,
+        _kind: ResolutionKind,
+    ) -> Result<ModuleSpecifier, deno_core::error::AnyError> {
+        deno_core::resolve_import(specifier, referrer).map_err(Into::into)
+    }
+
+    fn load(
+        &self,
+        module_specifier: &ModuleSpecifier,
+        _maybe_referrer: Option<&ModuleSpecifier>,
+        _is_dyn_import: bool,
+        _requested_module_type: RequestedModuleType,
+    ) -> ModuleLoadResponse {
+        let specifier = module_specifier.clone();
+        let module_load = async move {
+            let path = specifier
+                .to_file_path()
+                .map_err(|_| anyhow!("Invalid file URL: {}", specifier))?;
+
+            let code = std::fs::read_to_string(&path)
+                .map_err(|e| anyhow!("Failed to read {}: {}", path.display(), e))?;
+
+            // Check if we need to transpile TypeScript
+            let (code, module_type) = if path.extension().and_then(|s| s.to_str()) == Some("ts") {
+                // Transpile TypeScript to JavaScript
+                let transpiled = transpile_typescript(&code, &specifier)?;
+                (transpiled, ModuleType::JavaScript)
+            } else {
+                (code, ModuleType::JavaScript)
+            };
+
+            let module_source = ModuleSource::new(
+                module_type,
+                ModuleSourceCode::String(code.into()),
+                &specifier,
+                None,
+            );
+
+            Ok(module_source)
+        };
+
+        ModuleLoadResponse::Async(Box::pin(module_load))
+    }
+}
+
+/// Transpile TypeScript to JavaScript using deno_ast
+fn transpile_typescript(
+    source: &str,
+    specifier: &ModuleSpecifier,
+) -> Result<String, deno_core::error::AnyError> {
+    use deno_ast::{EmitOptions, MediaType, ParseParams, TranspileOptions};
+
+    let parsed = deno_ast::parse_module(ParseParams {
+        specifier: specifier.clone(),
+        text: source.into(),
+        media_type: MediaType::TypeScript,
+        capture_tokens: false,
+        scope_analysis: false,
+        maybe_syntax: None,
+    })
+    .map_err(|e| anyhow!("TypeScript parse error: {}", e))?;
+
+    let transpiled = parsed
+        .transpile(
+            &TranspileOptions::default(),
+            &Default::default(),
+            &EmitOptions::default(),
+        )
+        .map_err(|e| anyhow!("TypeScript transpile error: {}", e))?;
+
+    Ok(transpiled.into_source().text.to_string())
+}
+
+
 
 /// Shared state accessible from ops
 struct TsRuntimeState {
@@ -422,6 +508,13 @@ async fn op_fresh_spawn_process(
     use std::process::Stdio;
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::process::Command;
+
+    // Check if we're in a tokio runtime context
+    if tokio::runtime::Handle::try_current().is_err() {
+        return Err(deno_core::error::generic_error(
+            "spawnProcess requires an async runtime context (tokio)",
+        ));
+    }
 
     // Build the command
     let mut cmd = Command::new(&command);
@@ -1129,7 +1222,7 @@ impl TypeScriptRuntime {
         }));
 
         let mut js_runtime = JsRuntime::new(RuntimeOptions {
-            module_loader: Some(Rc::new(deno_core::FsModuleLoader)),
+            module_loader: Some(Rc::new(TypeScriptModuleLoader)),
             extensions: vec![fresh_runtime::init_ops()],
             ..Default::default()
         });
@@ -1359,15 +1452,16 @@ impl TypeScriptRuntime {
 
     /// Load and execute a TypeScript/JavaScript module file
     pub async fn load_module(&mut self, path: &str) -> Result<()> {
-        let main_module = deno_core::resolve_path(
+        let module_specifier = deno_core::resolve_path(
             path,
             &std::env::current_dir().map_err(|e| anyhow!("Failed to get cwd: {}", e))?,
         )
         .map_err(|e| anyhow!("Failed to resolve module path '{}': {}", path, e))?;
 
+        // Use load_side_es_module for plugins (allows multiple modules to be loaded)
         let mod_id = self
             .js_runtime
-            .load_main_es_module(&main_module)
+            .load_side_es_module(&module_specifier)
             .await
             .map_err(|e| anyhow!("Failed to load module '{}': {}", path, e))?;
 

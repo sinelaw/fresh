@@ -280,7 +280,7 @@ mod tests {
         // With our config: 60 - 1 (scrollbar) - 8 (gutter) = 51 chars per line
 
         // Create text that wraps such that continuation starts with space
-        let text = "A".repeat(51) + " " + &"B".repeat(50);
+        let text = format!("{} {}", "A".repeat(51), "B".repeat(50));
         let segments = wrap_line(&text, &config);
 
         println!("segments: {:?}", segments);

@@ -295,8 +295,8 @@ editor.registerCommand(
 
 editor.registerCommand("Git Find File: Count", "Show number of indexed git files", "git_file_count", "normal");
 
-// Load git files on plugin initialization
-loadGitFiles();
+// Note: We don't load git files on plugin init because spawning processes requires async context
+// Files will be loaded lazily on first use
 
 editor.debug("Git Find File plugin loaded successfully (TypeScript)");
 editor.debug("Usage: Call start_git_find_file() or use command palette 'Git Find File'");

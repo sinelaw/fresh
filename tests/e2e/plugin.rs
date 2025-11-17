@@ -17,52 +17,54 @@ fn test_render_line_hook_with_args() {
 
     // Create a simple plugin that captures render-line hook args
     let test_plugin = r#"
--- Test plugin to verify render-line hook receives args
-local line_count = 0
-local found_marker = false
+// Test plugin to verify render-line hook receives args
+let line_count = 0;
+let found_marker = false;
 
-editor.on("render-line", function(args)
-    debug("render-line hook called!")
-    -- Verify args are present
-    if args and args.buffer_id and args.line_number and args.content then
-        line_count = line_count + 1
-        debug(string.format("Line %d: %s", args.line_number, args.content))
+globalThis.onRenderLine = function(args: {
+    buffer_id: number;
+    line_number: number;
+    byte_start: number;
+    byte_end: number;
+    content: string;
+}): boolean {
+    editor.debug("render-line hook called!");
+    // Verify args are present
+    if (args && args.buffer_id !== undefined && args.line_number !== undefined && args.content !== undefined) {
+        line_count = line_count + 1;
+        editor.debug(`Line ${args.line_number}: ${args.content}`);
 
-        -- Look for "TEST_MARKER" in the content
-        if args.content:find("TEST_MARKER") then
-            found_marker = true
-            debug("Found TEST_MARKER!")
-            editor.set_status(string.format("Found TEST_MARKER on line %d at byte %d",
-                args.line_number, args.byte_start))
-        end
-    else
-        debug("ERROR: args is nil or missing fields!")
-        if not args then
-            debug("args is nil")
-        else
-            debug(string.format("args fields: buffer_id=%s line_number=%s content=%s",
-                tostring(args.buffer_id), tostring(args.line_number), tostring(args.content)))
-        end
-    end
-    return true
-end)
+        // Look for "TEST_MARKER" in the content
+        if (args.content.includes("TEST_MARKER")) {
+            found_marker = true;
+            editor.debug("Found TEST_MARKER!");
+            editor.setStatus(`Found TEST_MARKER on line ${args.line_number} at byte ${args.byte_start}`);
+        }
+    } else {
+        editor.debug("ERROR: args is nil or missing fields!");
+    }
+    return true;
+};
 
-editor.register_command({
-    name = "Test: Show Line Count",
-    description = "Show how many lines were rendered",
-    action = "test_show_count",
-    contexts = {"normal"},
-    callback = function()
-        editor.set_status(string.format("Rendered %d lines, found=%s", line_count, tostring(found_marker)))
-        line_count = 0  -- Reset counter
-        found_marker = false
-    end
-})
+editor.on("render_line", "onRenderLine");
 
-editor.set_status("Test plugin loaded!")
+globalThis.test_show_count = function(): void {
+    editor.setStatus(`Rendered ${line_count} lines, found=${found_marker}`);
+    line_count = 0;  // Reset counter
+    found_marker = false;
+};
+
+editor.registerCommand(
+    "Test: Show Line Count",
+    "Show how many lines were rendered",
+    "test_show_count",
+    "normal"
+);
+
+editor.setStatus("Test plugin loaded!");
 "#;
 
-    let test_plugin_path = plugins_dir.join("test_render_hook.lua");
+    let test_plugin_path = plugins_dir.join("test_render_hook.ts");
     fs::write(&test_plugin_path, test_plugin).unwrap();
 
     // Create test file with marker
@@ -112,8 +114,8 @@ fn test_todo_highlighter_plugin() {
 
     let plugin_source = std::env::current_dir()
         .unwrap()
-        .join("plugins/todo_highlighter.lua");
-    let plugin_dest = plugins_dir.join("todo_highlighter.lua");
+        .join("plugins/todo_highlighter.ts");
+    let plugin_dest = plugins_dir.join("todo_highlighter.ts");
     fs::copy(&plugin_source, &plugin_dest).unwrap();
 
     // Create test file with TODO comments
@@ -216,8 +218,8 @@ fn test_todo_highlighter_disable() {
 
     let plugin_source = std::env::current_dir()
         .unwrap()
-        .join("plugins/todo_highlighter.lua");
-    let plugin_dest = plugins_dir.join("todo_highlighter.lua");
+        .join("plugins/todo_highlighter.ts");
+    let plugin_dest = plugins_dir.join("todo_highlighter.ts");
     fs::copy(&plugin_source, &plugin_dest).unwrap();
 
     // Create test file with TODO comments
@@ -275,8 +277,8 @@ fn test_todo_highlighter_toggle() {
 
     let plugin_source = std::env::current_dir()
         .unwrap()
-        .join("plugins/todo_highlighter.lua");
-    let plugin_dest = plugins_dir.join("todo_highlighter.lua");
+        .join("plugins/todo_highlighter.ts");
+    let plugin_dest = plugins_dir.join("todo_highlighter.ts");
     fs::copy(&plugin_source, &plugin_dest).unwrap();
 
     // Create test file with TODO comments
@@ -365,8 +367,8 @@ fn test_todo_highlighter_updates_on_edit() {
 
     let plugin_source = std::env::current_dir()
         .unwrap()
-        .join("plugins/todo_highlighter.lua");
-    let plugin_dest = plugins_dir.join("todo_highlighter.lua");
+        .join("plugins/todo_highlighter.ts");
+    let plugin_dest = plugins_dir.join("todo_highlighter.ts");
     fs::copy(&plugin_source, &plugin_dest).unwrap();
 
     // Create test file with TODO comment at the start
@@ -500,8 +502,8 @@ fn test_todo_highlighter_updates_on_delete() {
 
     let plugin_source = std::env::current_dir()
         .unwrap()
-        .join("plugins/todo_highlighter.lua");
-    let plugin_dest = plugins_dir.join("todo_highlighter.lua");
+        .join("plugins/todo_highlighter.ts");
+    let plugin_dest = plugins_dir.join("todo_highlighter.ts");
     fs::copy(&plugin_source, &plugin_dest).unwrap();
 
     // Create test file with TODO on second line
@@ -635,8 +637,8 @@ fn test_diagnostics_panel_plugin_loads() {
 
     let plugin_source = std::env::current_dir()
         .unwrap()
-        .join("plugins/diagnostics-panel.lua");
-    let plugin_dest = plugins_dir.join("diagnostics-panel.lua");
+        .join("plugins/diagnostics_panel.ts");
+    let plugin_dest = plugins_dir.join("diagnostics_panel.ts");
     fs::copy(&plugin_source, &plugin_dest).unwrap();
 
     // Create a simple test file
