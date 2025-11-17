@@ -35,8 +35,9 @@ Features are categorized as:
 - [x] Bookmark system (Ctrl+Shift+0-9 to set, Alt+0-9 to jump) ✅
 
 #### Selection & Editing
-- [x] Rectangular/block selection data structures and keybindings (Ctrl+Alt+arrows) ✅
-- [ ] Rectangular/block selection rendering and operations - **🦀 Core** (rendering, multi-cursor ops)
+- [x] Rectangular/block selection data structures and keybindings (Alt+Shift+arrows) ✅
+- [x] Rectangular/block selection rendering (visual rectangle highlighting) ✅
+- [ ] Block selection operations (insert, delete, copy on rectangle) - **🦀 Core** (multi-cursor ops)
 - [ ] Expand selection to scope (by AST nodes) - **🦀 Core** (tree-sitter integration)
 
 #### Macros
@@ -450,7 +451,7 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 ## Next Steps
 
 1. **High Priority**: LSP advanced features (hover, code actions, find references) - **🦀 Core**
-2. **High Priority**: Rectangular/block selection rendering - **🦀 Core**
+2. **High Priority**: Block selection operations (insert/delete/copy) - **🦀 Core**
 3. **Medium Priority**: Complete virtual buffer infrastructure - **🔧 Infrastructure**
 4. **Medium Priority**: Macro persistence (save/load) - **🦀 Core**
 5. **Lower Priority**: Git integration plugins - **📦 Plugin**
@@ -462,3 +463,5 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 - ✅ Comprehensive E2E tests for smart editing features (25 tests)
 - ✅ Block selection infrastructure (SelectionMode, Position2D, keybindings)
 - ✅ Feature categorization (Core vs Plugin analysis)
+- ✅ Block selection rendering (Alt+Shift+arrows highlight rectangular regions)
+- ✅ Block selection E2E tests (5 tests covering all directions)
