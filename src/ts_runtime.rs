@@ -228,6 +228,116 @@ fn op_fresh_insert_at_cursor(state: &mut OpState, #[string] text: String) -> boo
     false
 }
 
+#[op2(fast)]
+fn op_fresh_register_command(
+    state: &mut OpState,
+    #[string] name: String,
+    #[string] description: String,
+    #[string] action: String,
+    #[string] contexts: String,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+
+        // Parse contexts string (comma-separated, e.g., "normal,prompt,popup")
+        let context_list: Vec<crate::keybindings::KeyContext> = if contexts.trim().is_empty() {
+            vec![] // Empty = available in all contexts
+        } else {
+            contexts
+                .split(',')
+                .filter_map(|s| match s.trim().to_lowercase().as_str() {
+                    "global" => Some(crate::keybindings::KeyContext::Global),
+                    "normal" => Some(crate::keybindings::KeyContext::Normal),
+                    "help" => Some(crate::keybindings::KeyContext::Help),
+                    "prompt" => Some(crate::keybindings::KeyContext::Prompt),
+                    "popup" => Some(crate::keybindings::KeyContext::Popup),
+                    "fileexplorer" | "file_explorer" => {
+                        Some(crate::keybindings::KeyContext::FileExplorer)
+                    }
+                    "menu" => Some(crate::keybindings::KeyContext::Menu),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        let command = crate::commands::Command {
+            name: name.clone(),
+            description,
+            action: crate::keybindings::Action::PluginAction(action),
+            contexts: context_list,
+        };
+
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::RegisterCommand { command });
+        return result.is_ok();
+    }
+    false
+}
+
+#[op2(fast)]
+fn op_fresh_open_file(
+    state: &mut OpState,
+    #[string] path: String,
+    line: u32,
+    column: u32,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::OpenFileAtLocation {
+                path: std::path::PathBuf::from(path),
+                line: if line == 0 { None } else { Some(line as usize) },
+                column: if column == 0 {
+                    None
+                } else {
+                    Some(column as usize)
+                },
+            });
+        return result.is_ok();
+    }
+    false
+}
+
+#[op2(fast)]
+fn op_fresh_get_active_split_id(state: &mut OpState) -> u32 {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+            return snapshot.active_split_id as u32;
+        };
+    }
+    0
+}
+
+#[op2(fast)]
+fn op_fresh_open_file_in_split(
+    state: &mut OpState,
+    split_id: u32,
+    #[string] path: String,
+    line: u32,
+    column: u32,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::OpenFileInSplit {
+                split_id: split_id as usize,
+                path: std::path::PathBuf::from(path),
+                line: if line == 0 { None } else { Some(line as usize) },
+                column: if column == 0 {
+                    None
+                } else {
+                    Some(column as usize)
+                },
+            });
+        return result.is_ok();
+    }
+    false
+}
+
 // Define the extension with our ops
 extension!(
     fresh_runtime,
@@ -246,6 +356,10 @@ extension!(
         op_fresh_remove_overlays_by_prefix,
         op_fresh_clear_all_overlays,
         op_fresh_insert_at_cursor,
+        op_fresh_register_command,
+        op_fresh_open_file,
+        op_fresh_get_active_split_id,
+        op_fresh_open_file_in_split,
     ],
 );
 
@@ -341,6 +455,24 @@ impl TypeScriptRuntime {
                     // Convenience
                     insertAtCursor(text) {
                         return core.ops.op_fresh_insert_at_cursor(text);
+                    },
+
+                    // Command registration
+                    registerCommand(name, description, action, contexts = "") {
+                        return core.ops.op_fresh_register_command(name, description, action, contexts);
+                    },
+
+                    // File operations
+                    openFile(path, line = 0, column = 0) {
+                        return core.ops.op_fresh_open_file(path, line, column);
+                    },
+
+                    // Split operations
+                    getActiveSplitId() {
+                        return core.ops.op_fresh_get_active_split_id();
+                    },
+                    openFileInSplit(splitId, path, line = 0, column = 0) {
+                        return core.ops.op_fresh_open_file_in_split(splitId, path, line, column);
                     },
                 };
 
@@ -717,6 +849,111 @@ mod tests {
             )
             .await;
         assert!(result.is_ok(), "API accessibility test failed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_new_ops() {
+        use std::path::PathBuf;
+
+        // Create shared state
+        let (tx, rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
+        // Populate state with test data including split ID
+        {
+            let mut snapshot = state_snapshot.write().unwrap();
+            snapshot.active_buffer_id = BufferId(1);
+            snapshot.active_split_id = 5;
+        }
+
+        // Create runtime with state
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot.clone(), tx).unwrap();
+
+        // Test new ops from TypeScript
+        let result = runtime
+            .execute_script(
+                "<test_new_ops>",
+                r#"
+                // Test getActiveSplitId
+                const splitId = editor.getActiveSplitId();
+                if (splitId !== 5) {
+                    throw new Error(`Expected split ID 5, got ${splitId}`);
+                }
+
+                // Test registerCommand
+                const regSuccess = editor.registerCommand(
+                    "My Plugin Command",
+                    "A test command from TypeScript",
+                    "my_plugin_action",
+                    "normal,prompt"
+                );
+                if (!regSuccess) {
+                    throw new Error("Register command failed");
+                }
+
+                // Test openFile
+                const openSuccess = editor.openFile("/test/file.rs", 42, 10);
+                if (!openSuccess) {
+                    throw new Error("Open file failed");
+                }
+
+                // Test openFileInSplit
+                const splitOpenSuccess = editor.openFileInSplit(3, "/test/other.rs", 100, 5);
+                if (!splitOpenSuccess) {
+                    throw new Error("Open file in split failed");
+                }
+
+                console.log("All new ops work correctly!");
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "New ops test failed: {:?}", result);
+
+        // Verify commands were received
+        let commands: Vec<_> = rx.try_iter().collect();
+        assert_eq!(commands.len(), 3, "Expected 3 commands");
+
+        // Check RegisterCommand
+        match &commands[0] {
+            PluginCommand::RegisterCommand { command } => {
+                assert_eq!(command.name, "My Plugin Command");
+                assert_eq!(command.description, "A test command from TypeScript");
+                match &command.action {
+                    crate::keybindings::Action::PluginAction(name) => {
+                        assert_eq!(name, "my_plugin_action");
+                    }
+                    _ => panic!("Expected PluginAction"),
+                }
+                assert_eq!(command.contexts.len(), 2);
+            }
+            _ => panic!("Expected RegisterCommand"),
+        }
+
+        // Check OpenFileAtLocation
+        match &commands[1] {
+            PluginCommand::OpenFileAtLocation { path, line, column } => {
+                assert_eq!(path, &PathBuf::from("/test/file.rs"));
+                assert_eq!(*line, Some(42));
+                assert_eq!(*column, Some(10));
+            }
+            _ => panic!("Expected OpenFileAtLocation"),
+        }
+
+        // Check OpenFileInSplit
+        match &commands[2] {
+            PluginCommand::OpenFileInSplit {
+                split_id,
+                path,
+                line,
+                column,
+            } => {
+                assert_eq!(*split_id, 3);
+                assert_eq!(path, &PathBuf::from("/test/other.rs"));
+                assert_eq!(*line, Some(100));
+                assert_eq!(*column, Some(5));
+            }
+            _ => panic!("Expected OpenFileInSplit"),
+        }
     }
 }
 

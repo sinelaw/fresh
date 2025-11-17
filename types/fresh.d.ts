@@ -38,11 +38,15 @@ interface EditorAPI {
   getBufferPath(buffer_id: number): string;
   getBufferLength(buffer_id: number): number;
   isBufferModified(buffer_id: number): boolean;
+  getActiveSplitId(): number;
 
   // === Buffer Mutations ===
   insertText(buffer_id: number, position: number, text: string): boolean;
   deleteRange(buffer_id: number, start: number, end: number): boolean;
   insertAtCursor(text: string): boolean;
+  registerCommand(name: string, description: string, action: string, contexts: string): boolean;
+  openFile(path: string, line: number, column: number): boolean;
+  openFileInSplit(split_id: number, path: string, line: number, column: number): boolean;
 
   // === Overlay Operations ===
   addOverlay(buffer_id: number, overlay_id: string, start: number, end: number, r: number, g: number, b: number, underline: boolean): boolean;

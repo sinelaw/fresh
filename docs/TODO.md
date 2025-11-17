@@ -21,10 +21,10 @@
 
 #### 🚀 Progress Summary (as of latest commits)
 
-**Phase 1 Status: ~70% Complete**
+**Phase 1 Status: ~85% Complete**
 - ✅ **1.1 Deno Core Dependency** - DONE (deno_core 0.272.0 integrated)
 - ✅ **1.2 TypeScript Runtime** - DONE (TypeScriptRuntime struct with JsRuntime wrapper)
-- ✅ **1.3 Editor Ops** - 14/20 ops implemented (buffer queries, mutations, overlays)
+- ✅ **1.3 Editor Ops** - 18/20+ ops implemented (buffer queries, mutations, overlays, commands, file ops, splits)
 - ✅ **1.4 Type Definitions** - DONE (auto-generated via build.rs codegen)
 
 **Key Achievements:**
@@ -32,21 +32,23 @@
 - Native async/await working (Promise-based ops)
 - State sharing via Arc<RwLock<EditorStateSnapshot>>
 - Commands sent via mpsc channel (PluginCommand enum)
-- 8 passing tests covering runtime, ops, state, and actions
-- Auto-generated TypeScript types from Rust code
+- 9 passing tests covering runtime, ops, state, actions, and new ops
+- Auto-generated TypeScript types from Rust code (18 ops)
 - Sample TypeScript plugin created
+- Command registration working (PluginAction for global functions)
+- File opening with line/column positioning
+- Split view operations (get active split, open file in split)
 
 **Remaining Phase 1 Work:**
-- Hook registration ops (on, off, emit)
-- Command registration ops
-- Mode definition ops
-- File opening ops
-- Split view ops
+- Hook registration ops (on, off, emit) - complex, requires JS→Rust callback mechanism
+- Mode definition ops (optional for Phase 1)
+- Async ops (spawn_process, create_virtual_buffer_in_split)
 
 **Commits:**
 1. `1eae5c8` - feat: Add TypeScript plugin runtime with deno_core
 2. `80cb50b` - feat: Add comprehensive editor ops to TypeScript runtime
 3. `d535dfa` - feat: Add auto-generated TypeScript types and additional editor ops
+4. (pending) - feat: Add command registration, file opening, and split view ops
 
 ---
 
@@ -113,7 +115,7 @@ fn op_fresh_add_overlay(
 ```
 
 - [x] Define ops inline in `src/ts_runtime.rs` (no separate module)
-- [x] Implement synchronous ops (14 total):
+- [x] Implement synchronous ops (18 total):
   - `op_fresh_get_active_buffer_id` → returns current buffer ID ✅
   - `op_fresh_get_cursor_position` → returns cursor position ✅
   - `op_fresh_get_buffer_path` → returns buffer file path ✅
@@ -128,11 +130,11 @@ fn op_fresh_add_overlay(
   - `op_fresh_remove_overlay` → removes overlay ✅
   - `op_fresh_remove_overlays_by_prefix` → batch remove ✅
   - `op_fresh_clear_all_overlays` → clear all overlays ✅
-  - `op_register_command` → registers command (TODO)
-  - `op_define_mode` → defines buffer mode (TODO)
-  - `op_open_file` → opens file at location (TODO)
-  - `op_get_active_split_id` → returns split ID (TODO)
-  - `op_open_file_in_split` → opens file in specific split (TODO)
+  - `op_fresh_register_command` → registers command with PluginAction ✅
+  - `op_fresh_open_file` → opens file at location (line/column) ✅
+  - `op_fresh_get_active_split_id` → returns split ID ✅
+  - `op_fresh_open_file_in_split` → opens file in specific split ✅
+  - `op_define_mode` → defines buffer mode (TODO - optional for Phase 1)
 - [ ] Implement async ops (for I/O operations):
   - `op_spawn_process` → spawns external command (TODO)
   - `op_create_virtual_buffer_in_split` → creates buffer (TODO)
