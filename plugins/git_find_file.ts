@@ -3,16 +3,13 @@
 /**
  * Git Find File Plugin
  *
- * Provides git file finding functionality with fuzzy search.
- *
- * NOTE: This is a simplified version that uses the available TypeScript API.
- * The full interactive prompt UI (set_prompt_suggestions, etc.) is not yet
- * available in the TypeScript runtime. This version loads files and provides
- * basic search commands.
+ * Provides interactive file finding functionality with fuzzy search
+ * for git-tracked files. Uses the prompt API for interactive selection.
  */
 
 // State management
 let allFiles: string[] = [];
+let filteredFiles: string[] = [];
 let isLoading = false;
 
 // Simple fuzzy filter function
@@ -37,24 +34,79 @@ function fuzzyMatch(str: string, pattern: string): boolean {
   return patIdx >= pattern.length;
 }
 
-// Filter files by query using fuzzy matching
+// Score a fuzzy match (higher is better)
+function fuzzyScore(str: string, pattern: string): number {
+  if (pattern === "") return 0;
+
+  str = str.toLowerCase();
+  pattern = pattern.toLowerCase();
+
+  let score = 0;
+  let strIdx = 0;
+  let patIdx = 0;
+  let consecutiveMatches = 0;
+  let lastMatchIdx = -1;
+
+  while (strIdx < str.length && patIdx < pattern.length) {
+    if (str[strIdx] === pattern[patIdx]) {
+      // Bonus for consecutive matches
+      if (lastMatchIdx === strIdx - 1) {
+        consecutiveMatches++;
+        score += consecutiveMatches * 10;
+      } else {
+        consecutiveMatches = 1;
+        score += 1;
+      }
+
+      // Bonus for matching at start of path segments
+      if (strIdx === 0 || str[strIdx - 1] === "/" || str[strIdx - 1] === "_" || str[strIdx - 1] === "-") {
+        score += 15;
+      }
+
+      // Bonus for matching filename (after last /)
+      const lastSlash = str.lastIndexOf("/");
+      if (strIdx > lastSlash) {
+        score += 5;
+      }
+
+      lastMatchIdx = strIdx;
+      patIdx++;
+    }
+    strIdx++;
+  }
+
+  // Penalty for longer paths
+  score -= str.length * 0.1;
+
+  return patIdx >= pattern.length ? score : -1;
+}
+
+// Filter and sort files by query using fuzzy matching
 function filterFiles(files: string[], query: string): string[] {
   if (query === "" || query.trim() === "") {
     // Return first 100 files for empty query
     return files.slice(0, 100);
   }
 
-  const results: string[] = [];
+  const scored: Array<{ file: string; score: number }> = [];
+
   for (const file of files) {
-    if (fuzzyMatch(file, query)) {
-      results.push(file);
-      if (results.length >= 100) {
-        break;
-      }
+    const score = fuzzyScore(file, query);
+    if (score > 0) {
+      scored.push({ file, score });
+    }
+
+    // Stop early if we have enough high-quality matches
+    if (scored.length >= 500) {
+      break;
     }
   }
 
-  return results;
+  // Sort by score descending
+  scored.sort((a, b) => b.score - a.score);
+
+  // Return top 100 results
+  return scored.slice(0, 100).map((s) => s.file);
 }
 
 // Load git-tracked files asynchronously
@@ -70,9 +122,7 @@ async function loadGitFiles(): Promise<void> {
     const result = await editor.spawnProcess("git", ["ls-files"]);
 
     if (result.exit_code === 0) {
-      allFiles = result.stdout
-        .split("\n")
-        .filter(line => line.trim() !== "");
+      allFiles = result.stdout.split("\n").filter((line) => line.trim() !== "");
 
       editor.debug(`Loaded ${allFiles.length} git-tracked files`);
       editor.setStatus(`Git Find File: ${allFiles.length} files indexed`);
@@ -90,8 +140,26 @@ async function loadGitFiles(): Promise<void> {
   }
 }
 
-// Open a git-tracked file by partial name match
-globalThis.git_find_file_open = async function(): Promise<void> {
+// Convert filtered files to prompt suggestions
+function filesToSuggestions(files: string[]): PromptSuggestion[] {
+  return files.map((file) => {
+    // Extract filename for description
+    const parts = file.split("/");
+    const filename = parts[parts.length - 1];
+    const dir = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
+
+    return {
+      text: file,
+      description: dir ? `${filename} in ${dir}` : filename,
+      value: file,
+      disabled: false,
+    };
+  });
+}
+
+// Global function to start file finder
+globalThis.start_git_find_file = async function (): Promise<void> {
+  // Load files if not already loaded
   if (allFiles.length === 0 && !isLoading) {
     await loadGitFiles();
   }
@@ -101,66 +169,122 @@ globalThis.git_find_file_open = async function(): Promise<void> {
     return;
   }
 
-  // For now, just show the first 10 files in status
-  // Full prompt API not yet available
-  const preview = allFiles.slice(0, 10).join(", ");
-  editor.setStatus(`Files available: ${preview}...`);
-  editor.debug("Full prompt UI not yet available in TypeScript runtime");
+  // Clear previous results
+  filteredFiles = [];
+
+  // Start the prompt
+  editor.startPrompt("Find file: ", "git-find-file");
+
+  // Show initial suggestions (first 100 files)
+  const initial = filterFiles(allFiles, "");
+  filteredFiles = initial;
+  editor.setPromptSuggestions(filesToSuggestions(initial));
+  editor.setStatus(`${allFiles.length} files available - type to filter`);
 };
 
-// Quick open: directly open a file if exact match exists
-globalThis.git_quick_open = async function(pattern: string): Promise<void> {
-  if (allFiles.length === 0 && !isLoading) {
-    await loadGitFiles();
+// React to prompt input changes
+globalThis.onGitFindFilePromptChanged = function (args: { prompt_type: string; input: string }): boolean {
+  if (args.prompt_type !== "git-find-file") {
+    return true; // Not our prompt
   }
 
-  if (allFiles.length === 0) {
-    editor.setStatus("No git-tracked files found");
-    return;
-  }
+  const query = args.input;
 
-  const matches = filterFiles(allFiles, pattern);
+  // Filter files based on query
+  const matches = filterFiles(allFiles, query);
+  filteredFiles = matches;
 
-  if (matches.length === 0) {
-    editor.setStatus(`No files matching '${pattern}'`);
-  } else if (matches.length === 1) {
-    const file = matches[0];
-    editor.openFile(file, 1, 1);
-    editor.setStatus(`Opened ${file}`);
+  // Update suggestions
+  editor.setPromptSuggestions(filesToSuggestions(matches));
+
+  // Update status
+  if (matches.length > 0) {
+    if (query.trim() === "") {
+      editor.setStatus(`Showing first ${matches.length} of ${allFiles.length} files`);
+    } else {
+      editor.setStatus(`Found ${matches.length} files matching "${query}"`);
+    }
   } else {
-    editor.setStatus(`Found ${matches.length} matches: ${matches.slice(0, 5).join(", ")}...`);
+    editor.setStatus(`No files matching "${query}"`);
   }
+
+  return true;
 };
 
-// Show file count
-globalThis.git_file_count = function(): void {
+// Handle prompt confirmation (user pressed Enter)
+globalThis.onGitFindFilePromptConfirmed = function (args: {
+  prompt_type: string;
+  selected_index: number | null;
+  input: string;
+}): boolean {
+  if (args.prompt_type !== "git-find-file") {
+    return true; // Not our prompt
+  }
+
+  editor.debug(`git-find-file confirmed: selected_index=${args.selected_index}, input=${args.input}`);
+
+  // Check if user selected a suggestion
+  if (args.selected_index !== null && filteredFiles[args.selected_index]) {
+    const selectedFile = filteredFiles[args.selected_index];
+
+    editor.debug(`Opening file: ${selectedFile}`);
+
+    // Open the file at line 1
+    editor.openFile(selectedFile, 1, 1);
+    editor.setStatus(`Opened ${selectedFile}`);
+  } else if (args.input.trim() !== "") {
+    // Try to open input directly if it's a valid file path
+    const inputFile = args.input.trim();
+
+    // Check if the exact input matches any file
+    if (allFiles.includes(inputFile)) {
+      editor.openFile(inputFile, 1, 1);
+      editor.setStatus(`Opened ${inputFile}`);
+    } else {
+      editor.setStatus(`File not found: ${inputFile}`);
+    }
+  } else {
+    editor.setStatus("No file selected");
+  }
+
+  return true;
+};
+
+// Handle prompt cancellation (user pressed Escape)
+globalThis.onGitFindFilePromptCancelled = function (args: { prompt_type: string }): boolean {
+  if (args.prompt_type !== "git-find-file") {
+    return true; // Not our prompt
+  }
+
+  // Clear results
+  filteredFiles = [];
+  editor.setStatus("File finder cancelled");
+
+  return true;
+};
+
+// Register event handlers
+editor.on("prompt_changed", "onGitFindFilePromptChanged");
+editor.on("prompt_confirmed", "onGitFindFilePromptConfirmed");
+editor.on("prompt_cancelled", "onGitFindFilePromptCancelled");
+
+// Reload git files command
+globalThis.git_reload_files = async function (): Promise<void> {
+  allFiles = [];
+  await loadGitFiles();
+};
+
+// Show file count command
+globalThis.git_file_count = function (): void {
   if (allFiles.length === 0) {
-    editor.setStatus("No git files loaded. Run 'Git Find File: Reload' first.");
+    editor.setStatus("No git files loaded. Use 'Git Find File: Reload' to index files.");
   } else {
     editor.setStatus(`${allFiles.length} git-tracked files indexed`);
   }
 };
 
-// Reload git files
-globalThis.git_reload_files = async function(): Promise<void> {
-  allFiles = [];
-  await loadGitFiles();
-};
-
 // Register commands
-editor.registerCommand(
-  "Git Find File: Open",
-  "Find and open a git-tracked file (limited UI)",
-  "git_find_file_open",
-  "normal"
-);
-
-editor.registerCommand(
-  "Git Find File: Count",
-  "Show number of indexed git files",
-  "git_file_count",
-  "normal"
-);
+editor.registerCommand("Git Find File", "Find and open a git-tracked file", "start_git_find_file", "normal");
 
 editor.registerCommand(
   "Git Find File: Reload",
@@ -169,9 +293,11 @@ editor.registerCommand(
   "normal"
 );
 
+editor.registerCommand("Git Find File: Count", "Show number of indexed git files", "git_file_count", "normal");
+
 // Load git files on plugin initialization
 loadGitFiles();
 
-editor.debug("Git Find File plugin loaded (TypeScript version)");
-editor.debug("Note: Full interactive prompt UI not yet available");
-editor.debug("Use git_quick_open('pattern') for direct file opening");
+editor.debug("Git Find File plugin loaded successfully (TypeScript)");
+editor.debug("Usage: Call start_git_find_file() or use command palette 'Git Find File'");
+editor.setStatus("Git Find File plugin ready");

@@ -44,19 +44,38 @@ function getCurrentLocation(): {
   return { path, position, splitId };
 }
 
-// Helper: Convert byte position to line/column (simplified)
-// In a real implementation, this would use buffer content
-function positionToLineCol(position: number): { line: number; column: number } {
-  // Simplified: assume ~80 chars per line
-  const line = Math.floor(position / 80) + 1;
-  const column = (position % 80) + 1;
-  return { line, column };
+// Helper: Get actual line number using the API
+function getCurrentLineCol(): { line: number; column: number } {
+  // Use the actual getCursorLine API for accurate line number
+  const lineNumber = editor.getCursorLine();
+
+  // Get cursor position within the line by reading buffer content
+  const bufferId = editor.getActiveBufferId();
+  const cursorPos = editor.getCursorPosition();
+  const bufferInfo = editor.getBufferInfo(bufferId);
+
+  // Calculate column by finding start of current line
+  let column = 1;
+  if (bufferInfo && cursorPos > 0) {
+    // Read a small chunk before cursor to find line start
+    const readStart = Math.max(0, cursorPos - 1000);
+    const textBefore = editor.getBufferText(bufferId, readStart, cursorPos);
+    const lastNewline = textBefore.lastIndexOf("\n");
+    if (lastNewline !== -1) {
+      column = cursorPos - (readStart + lastNewline);
+    } else {
+      // No newline found, column is position from readStart
+      column = cursorPos - readStart + 1;
+    }
+  }
+
+  return { line: lineNumber, column };
 }
 
 // Action: Add bookmark at current position
 globalThis.bookmark_add = function (): void {
   const { path, position, splitId } = getCurrentLocation();
-  const { line, column } = positionToLineCol(position);
+  const { line, column } = getCurrentLineCol();
 
   if (!path) {
     editor.setStatus("Cannot bookmark: buffer has no file path");
@@ -187,6 +206,74 @@ globalThis.show_split_info = function (): void {
   editor.setStatus(`Split ${splitId} | Buffer ${bufferId} | ${path || "[untitled]"}`);
 };
 
+// Interactive bookmark selection using prompt API
+let bookmarkSuggestionIds: number[] = [];
+
+globalThis.bookmark_select = function (): void {
+  if (bookmarks.size === 0) {
+    editor.setStatus("No bookmarks to select");
+    return;
+  }
+
+  // Create suggestions from bookmarks
+  const suggestions: PromptSuggestion[] = [];
+  bookmarkSuggestionIds = [];
+
+  bookmarks.forEach((bm) => {
+    const filename = bm.path.split("/").pop() || bm.path;
+    suggestions.push({
+      text: `${bm.name}: ${bm.path}:${bm.line}:${bm.column}`,
+      description: `${filename} at line ${bm.line}`,
+      value: String(bm.id),
+      disabled: false,
+    });
+    bookmarkSuggestionIds.push(bm.id);
+  });
+
+  editor.startPrompt("Select bookmark: ", "bookmark-select");
+  editor.setPromptSuggestions(suggestions);
+  editor.setStatus(`${bookmarks.size} bookmark(s) available`);
+};
+
+// Handle bookmark selection confirmation
+globalThis.onBookmarkSelectConfirmed = function (args: {
+  prompt_type: string;
+  selected_index: number | null;
+  input: string;
+}): boolean {
+  if (args.prompt_type !== "bookmark-select") {
+    return true;
+  }
+
+  if (args.selected_index !== null && bookmarkSuggestionIds[args.selected_index] !== undefined) {
+    const bookmarkId = bookmarkSuggestionIds[args.selected_index];
+    const bookmark = bookmarks.get(bookmarkId);
+
+    if (bookmark) {
+      editor.openFile(bookmark.path, bookmark.line, bookmark.column);
+      editor.setStatus(`Jumped to ${bookmark.name}: ${bookmark.path}:${bookmark.line}`);
+    }
+  } else {
+    editor.setStatus("No bookmark selected");
+  }
+
+  return true;
+};
+
+// Handle bookmark selection cancellation
+globalThis.onBookmarkSelectCancelled = function (args: { prompt_type: string }): boolean {
+  if (args.prompt_type !== "bookmark-select") {
+    return true;
+  }
+
+  editor.setStatus("Bookmark selection cancelled");
+  return true;
+};
+
+// Register bookmark event handlers
+editor.on("prompt_confirmed", "onBookmarkSelectConfirmed");
+editor.on("prompt_cancelled", "onBookmarkSelectCancelled");
+
 // Register commands on plugin load
 editor.registerCommand(
   "Add Bookmark",
@@ -230,6 +317,13 @@ editor.registerCommand(
   "" // Available in all contexts
 );
 
+editor.registerCommand(
+  "Select Bookmark",
+  "Interactively select and jump to a bookmark",
+  "bookmark_select",
+  "normal"
+);
+
 // Plugin initialized
-editor.setStatus("Bookmarks plugin loaded - 6 commands registered");
-editor.debug("Bookmarks plugin initialized with command registration");
+editor.setStatus("Bookmarks plugin loaded - 7 commands registered");
+editor.debug("Bookmarks plugin initialized with command registration and prompt API support");
