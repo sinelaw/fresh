@@ -256,6 +256,14 @@ enum LspCommand {
         new_name: String,
     },
 
+    /// Request hover documentation
+    Hover {
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+    },
+
     /// Cancel a pending request
     CancelRequest {
         /// Editor's request ID to cancel
@@ -742,6 +750,104 @@ impl LspState {
         }
     }
 
+    /// Handle hover documentation request
+    async fn handle_hover(
+        &mut self,
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{
+            HoverParams, Position, TextDocumentIdentifier, TextDocumentPositionParams,
+            WorkDoneProgressParams,
+        };
+
+        tracing::debug!(
+            "LSP: hover request at {}:{}:{}",
+            uri.as_str(),
+            line,
+            character
+        );
+
+        let params = HoverParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line, character },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+
+        // Send request and get response
+        match self
+            .send_request_sequential::<_, Value>("textDocument/hover", Some(params), pending)
+            .await
+        {
+            Ok(result) => {
+                // Parse the hover response
+                let contents = if result.is_null() {
+                    // No hover information available
+                    vec![]
+                } else {
+                    match serde_json::from_value::<lsp_types::Hover>(result) {
+                        Ok(hover) => {
+                            // Extract text from hover contents
+                            Self::extract_hover_contents(&hover.contents)
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to parse hover response: {}", e);
+                            vec![]
+                        }
+                    }
+                };
+
+                // Send to main loop
+                let _ = self.async_tx.send(AsyncMessage::LspHover {
+                    request_id,
+                    contents,
+                });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Hover request failed: {}", e);
+                // Send empty result on error (no hover available)
+                let _ = self.async_tx.send(AsyncMessage::LspHover {
+                    request_id,
+                    contents: vec![],
+                });
+                Err(e)
+            }
+        }
+    }
+
+    /// Extract text from hover contents (handles both MarkedString and MarkupContent)
+    fn extract_hover_contents(contents: &lsp_types::HoverContents) -> Vec<String> {
+        use lsp_types::{HoverContents, MarkedString, MarkupContent};
+
+        match contents {
+            HoverContents::Scalar(marked) => match marked {
+                MarkedString::String(s) => vec![s.clone()],
+                MarkedString::LanguageString(ls) => {
+                    vec![format!("```{}\n{}\n```", ls.language, ls.value)]
+                }
+            },
+            HoverContents::Array(arr) => arr
+                .iter()
+                .map(|marked| match marked {
+                    MarkedString::String(s) => s.clone(),
+                    MarkedString::LanguageString(ls) => {
+                        format!("```{}\n{}\n```", ls.language, ls.value)
+                    }
+                })
+                .collect(),
+            HoverContents::Markup(MarkupContent { value, .. }) => {
+                // Split by double newlines to get paragraphs
+                value.lines().map(|s| s.to_string()).collect()
+            }
+        }
+    }
+
     /// Handle shutdown command
     async fn handle_shutdown(&mut self) -> Result<(), String> {
         tracing::info!("Shutting down async LSP server");
@@ -1195,6 +1301,25 @@ impl LspTask {
                                 let _ = state.async_tx.send(AsyncMessage::LspRename {
                                     request_id,
                                     result: Err("LSP not initialized".to_string()),
+                                });
+                            }
+                        }
+                        LspCommand::Hover {
+                            request_id,
+                            uri,
+                            line,
+                            character,
+                        } => {
+                            if state.initialized {
+                                tracing::info!("Processing Hover request for {}", uri.as_str());
+                                let _ = state
+                                    .handle_hover(request_id, uri, line, character, &pending)
+                                    .await;
+                            } else {
+                                tracing::debug!("LSP not initialized, cannot get hover");
+                                let _ = state.async_tx.send(AsyncMessage::LspHover {
+                                    request_id,
+                                    contents: vec![],
                                 });
                             }
                         }
@@ -2324,6 +2449,24 @@ impl LspHandle {
                 new_name,
             })
             .map_err(|_| "Failed to send rename command".to_string())
+    }
+
+    /// Request hover documentation
+    pub fn hover(
+        &self,
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::Hover {
+                request_id,
+                uri,
+                line,
+                character,
+            })
+            .map_err(|_| "Failed to send hover command".to_string())
     }
 
     /// Cancel a pending request by its editor request_id

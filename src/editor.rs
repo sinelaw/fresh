@@ -329,6 +329,9 @@ pub struct Editor {
     /// Pending LSP go-to-definition request ID (if any)
     pending_goto_definition_request: Option<u64>,
 
+    /// Pending LSP hover request ID (if any)
+    pending_hover_request: Option<u64>,
+
     /// Search state (if search is active)
     search_state: Option<SearchState>,
 
@@ -685,6 +688,7 @@ impl Editor {
             next_lsp_request_id: 0,
             pending_completion_request: None,
             pending_goto_definition_request: None,
+            pending_hover_request: None,
             search_state: None,
             interactive_replace_state: None,
             lsp_status: String::new(),
@@ -2671,6 +2675,12 @@ impl Editor {
                         tracing::error!("Error handling rename response: {}", e);
                     }
                 }
+                AsyncMessage::LspHover {
+                    request_id,
+                    contents,
+                } => {
+                    self.handle_hover_response(request_id, contents);
+                }
                 AsyncMessage::FileChanged { path } => {
                     tracing::info!("File changed externally: {}", path);
                     // TODO: Handle external file changes
@@ -4000,6 +4010,93 @@ impl Editor {
         Ok(())
     }
 
+    /// Request LSP hover documentation at current cursor position
+    fn request_hover(&mut self) -> io::Result<()> {
+        // Get the current buffer and cursor position
+        let state = self.active_state();
+        let cursor_pos = state.cursors.primary().position;
+
+        // Convert byte position to LSP position (line, UTF-16 code units)
+        let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
+
+        // Get the current file URI and path
+        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let (uri, file_path) = if let Some(meta) = metadata {
+            (meta.file_uri(), meta.file_path())
+        } else {
+            (None, None)
+        };
+
+        if let (Some(uri), Some(path)) = (uri, file_path) {
+            // Detect language from file extension
+            if let Some(language) = crate::lsp_manager::detect_language(path) {
+                // Get LSP handle
+                if let Some(lsp) = self.lsp.as_mut() {
+                    if let Some(handle) = lsp.get_or_spawn(&language) {
+                        let request_id = self.next_lsp_request_id;
+                        self.next_lsp_request_id += 1;
+                        self.pending_hover_request = Some(request_id);
+                        self.lsp_status = "LSP: hover...".to_string();
+
+                        let _ = handle.hover(
+                            request_id,
+                            uri.clone(),
+                            line as u32,
+                            character as u32,
+                        );
+                        tracing::info!(
+                            "Requested hover at {}:{}:{}",
+                            uri.as_str(),
+                            line,
+                            character
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle hover response from LSP
+    fn handle_hover_response(&mut self, request_id: u64, contents: Vec<String>) {
+        // Check if this response is for the current pending request
+        if self.pending_hover_request != Some(request_id) {
+            tracing::debug!("Ignoring stale hover response: {}", request_id);
+            return;
+        }
+
+        self.pending_hover_request = None;
+        self.lsp_status.clear();
+
+        if contents.is_empty() {
+            self.set_status_message("No hover information available".to_string());
+            return;
+        }
+
+        // Create a popup with the hover contents
+        use crate::popup::{Popup, PopupContent, PopupPosition};
+        use ratatui::style::Style;
+
+        let popup = Popup {
+            title: Some("Hover".to_string()),
+            content: PopupContent::Text(contents),
+            position: PopupPosition::BelowCursor,
+            width: 80,
+            max_height: 20,
+            bordered: true,
+            border_style: Style::default().fg(self.theme.popup_border_fg),
+            background_style: Style::default().bg(self.theme.popup_bg),
+            scroll_offset: 0,
+        };
+
+        // Show the popup
+        if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+            state.popups.show(popup);
+            tracing::info!("Showing hover popup");
+        }
+    }
+
     /// Handle rename response from LSP
     pub fn handle_rename_response(
         &mut self,
@@ -4526,7 +4623,10 @@ impl Editor {
         // Cancel pending LSP requests on user actions (except LSP actions themselves)
         // This ensures stale completions don't show up after the user has moved on
         match action {
-            Action::LspCompletion | Action::LspGotoDefinition | Action::None => {
+            Action::LspCompletion
+            | Action::LspGotoDefinition
+            | Action::LspHover
+            | Action::None => {
                 // Don't cancel for LSP actions or no-op
             }
             _ => {
@@ -4980,6 +5080,9 @@ impl Editor {
             }
             Action::LspRename => {
                 self.start_rename()?;
+            }
+            Action::LspHover => {
+                self.request_hover()?;
             }
             Action::Search => {
                 // Start search prompt

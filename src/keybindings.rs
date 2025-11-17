@@ -310,6 +310,7 @@ pub enum Action {
     LspCompletion,
     LspGotoDefinition,
     LspRename,
+    LspHover,
 
     // Search and replace
     Search,
@@ -536,6 +537,7 @@ impl Action {
             "lsp_completion" => Some(Action::LspCompletion),
             "lsp_goto_definition" => Some(Action::LspGotoDefinition),
             "lsp_rename" => Some(Action::LspRename),
+            "lsp_hover" => Some(Action::LspHover),
 
             "search" => Some(Action::Search),
             "find_next" => Some(Action::FindNext),
@@ -1626,6 +1628,7 @@ impl KeybindingResolver {
             Action::LspCompletion => "LSP: Show completion suggestions".to_string(),
             Action::LspGotoDefinition => "LSP: Go to definition".to_string(),
             Action::LspRename => "LSP: Rename symbol".to_string(),
+            Action::LspHover => "LSP: Show hover documentation".to_string(),
             Action::Search => "Search for text in buffer".to_string(),
             Action::FindNext => "Find next search match".to_string(),
             Action::FindPrevious => "Find previous search match".to_string(),

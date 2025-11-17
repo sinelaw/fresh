@@ -1428,6 +1428,7 @@ pub fn action_to_events(
         | Action::LspCompletion
         | Action::LspGotoDefinition
         | Action::LspRename
+        | Action::LspHover
         | Action::Search
         | Action::FindNext
         | Action::FindPrevious

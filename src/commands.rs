@@ -389,6 +389,12 @@ pub fn get_all_commands() -> Vec<Command> {
             contexts: vec![KeyContext::Normal],
         },
         Command {
+            name: "Show Hover Info".to_string(),
+            description: "Show documentation for the symbol under cursor".to_string(),
+            action: Action::LspHover,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
             name: "Navigate Back".to_string(),
             description: "Go back in navigation history".to_string(),
             action: Action::NavigateBack,

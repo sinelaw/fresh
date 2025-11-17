@@ -464,6 +464,13 @@ impl Config {
                 args: HashMap::new(),
                 when: None,
             },
+            Keybinding {
+                key: "k".to_string(),
+                modifiers: vec!["ctrl".to_string(), "shift".to_string()],
+                action: "lsp_hover".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
             // File Explorer - Toggle and focus
             Keybinding {
                 key: "b".to_string(),
