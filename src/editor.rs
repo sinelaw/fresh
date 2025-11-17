@@ -2414,7 +2414,7 @@ impl Editor {
                     };
 
                     if let Some(ref mut ts_manager) = self.ts_plugin_manager {
-                        let _ = ts_manager.run_hook_blocking("prompt-cancelled", &hook_args);
+                        let _ = ts_manager.run_hook_blocking("prompt_cancelled", &hook_args);
                     }
                 }
                 PromptType::LspRename { overlay_id, .. } => {
@@ -2543,7 +2543,7 @@ impl Editor {
                 };
 
                 if let Some(ref mut ts_manager) = self.ts_plugin_manager {
-                    let _ = ts_manager.run_hook_blocking("prompt-changed", &hook_args);
+                    let _ = ts_manager.run_hook_blocking("prompt_changed", &hook_args);
                 }
             }
             _ => {}
@@ -3218,7 +3218,7 @@ impl Editor {
                     },
                 ));
 
-                // Fire the prompt-changed hook immediately with empty input
+                // Fire the prompt_changed hook immediately with empty input
                 // This allows plugins to initialize the prompt state
                 use crate::hooks::HookArgs;
                 let hook_args = HookArgs::PromptChanged {
@@ -3227,7 +3227,7 @@ impl Editor {
                 };
 
                 if let Some(ref mut ts_manager) = self.ts_plugin_manager {
-                    let _ = ts_manager.run_hook_blocking("prompt-changed", &hook_args);
+                    let _ = ts_manager.run_hook_blocking("prompt_changed", &hook_args);
                 }
             }
             PluginCommand::SetPromptSuggestions { suggestions } => {
@@ -5230,7 +5230,7 @@ impl Editor {
                             };
 
                             if let Some(ref mut ts_manager) = self.ts_plugin_manager {
-                                let _ = ts_manager.run_hook_blocking("prompt-confirmed", &hook_args);
+                                let _ = ts_manager.run_hook_blocking("prompt_confirmed", &hook_args);
                             }
                         }
                         PromptType::LspRename {

@@ -24,6 +24,9 @@ pub struct EditorTestHarness {
     /// Optional metrics for slow filesystem backend
     fs_metrics: Option<Arc<tokio::sync::Mutex<BackendMetrics>>>,
 
+    /// Tokio runtime for async operations (needed for TypeScript plugins)
+    _tokio_runtime: Option<tokio::runtime::Runtime>,
+
     /// Shadow string that mirrors editor operations for validation
     /// This helps catch discrepancies between piece tree and simple string operations
     shadow_string: String,
@@ -56,6 +59,7 @@ impl EditorTestHarness {
             terminal,
             _temp_dir: Some(temp_dir),
             fs_metrics: None,
+            _tokio_runtime: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -78,6 +82,7 @@ impl EditorTestHarness {
             terminal,
             _temp_dir: Some(temp_dir),
             fs_metrics: None,
+            _tokio_runtime: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -109,6 +114,7 @@ impl EditorTestHarness {
             terminal,
             _temp_dir: Some(temp_dir),
             fs_metrics: None,
+            _tokio_runtime: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -125,6 +131,8 @@ impl EditorTestHarness {
     ) -> io::Result<Self> {
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
+
+        // Create editor - it will create its own tokio runtime for async operations
         let mut editor = Editor::with_working_dir(config, width, height, Some(working_dir))?;
 
         // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
@@ -135,6 +143,7 @@ impl EditorTestHarness {
             terminal,
             _temp_dir: None,
             fs_metrics: None,
+            _tokio_runtime: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
@@ -174,6 +183,7 @@ impl EditorTestHarness {
             terminal,
             _temp_dir: Some(temp_dir),
             fs_metrics: Some(metrics_arc),
+            _tokio_runtime: None,
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
