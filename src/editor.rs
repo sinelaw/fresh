@@ -2724,9 +2724,10 @@ impl Editor {
                 AsyncMessage::LspHover {
                     request_id,
                     contents,
+                    is_markdown,
                     range,
                 } => {
-                    self.handle_hover_response(request_id, contents, range);
+                    self.handle_hover_response(request_id, contents, is_markdown, range);
                 }
                 AsyncMessage::FileChanged { path } => {
                     tracing::info!("File changed externally: {}", path);
@@ -4277,7 +4278,8 @@ impl Editor {
     fn handle_hover_response(
         &mut self,
         request_id: u64,
-        contents: Vec<String>,
+        contents: String,
+        is_markdown: bool,
         range: Option<((u32, u32), (u32, u32))>,
     ) {
         // Check if this response is for the current pending request
@@ -4332,25 +4334,30 @@ impl Editor {
         }
 
         // Create a popup with the hover contents
-        use crate::popup::{Popup, PopupContent, PopupPosition};
+        use crate::popup::{Popup, PopupPosition};
         use ratatui::style::Style;
 
-        let popup = Popup {
-            title: Some("Hover".to_string()),
-            content: PopupContent::Text(contents),
-            position: PopupPosition::BelowCursor,
-            width: 80,
-            max_height: 20,
-            bordered: true,
-            border_style: Style::default().fg(self.theme.popup_border_fg),
-            background_style: Style::default().bg(self.theme.popup_bg),
-            scroll_offset: 0,
+        // Use markdown rendering if the content is markdown
+        let mut popup = if is_markdown {
+            Popup::markdown(&contents, &self.theme)
+        } else {
+            // Plain text - split by lines
+            let lines: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
+            Popup::text(lines, &self.theme)
         };
+
+        // Configure popup properties
+        popup.title = Some("Hover".to_string());
+        popup.position = PopupPosition::BelowCursor;
+        popup.width = 80;
+        popup.max_height = 20;
+        popup.border_style = Style::default().fg(self.theme.popup_border_fg);
+        popup.background_style = Style::default().bg(self.theme.popup_bg);
 
         // Show the popup
         if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
             state.popups.show(popup);
-            tracing::info!("Showing hover popup");
+            tracing::info!("Showing hover popup (markdown={})", is_markdown);
         }
     }
 
