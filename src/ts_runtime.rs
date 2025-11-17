@@ -955,5 +955,225 @@ mod tests {
             _ => panic!("Expected OpenFileInSplit"),
         }
     }
+
+    #[tokio::test]
+    async fn test_register_command_empty_contexts() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+
+        // Register command with empty contexts (available everywhere)
+        let result = runtime
+            .execute_script(
+                "<test_empty_contexts>",
+                r#"
+                editor.registerCommand("Global Command", "Available everywhere", "global_action", "");
+                "#,
+            )
+            .await;
+        assert!(result.is_ok());
+
+        let commands: Vec<_> = rx.try_iter().collect();
+        assert_eq!(commands.len(), 1);
+
+        match &commands[0] {
+            PluginCommand::RegisterCommand { command } => {
+                assert_eq!(command.name, "Global Command");
+                assert!(command.contexts.is_empty(), "Empty string should result in empty contexts");
+            }
+            _ => panic!("Expected RegisterCommand"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_register_command_all_contexts() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+
+        // Test all valid context types
+        let result = runtime
+            .execute_script(
+                "<test_all_contexts>",
+                r#"
+                editor.registerCommand(
+                    "All Contexts",
+                    "Test all context types",
+                    "test_action",
+                    "global, normal, help, prompt, popup, fileexplorer, menu"
+                );
+                "#,
+            )
+            .await;
+        assert!(result.is_ok());
+
+        let commands: Vec<_> = rx.try_iter().collect();
+        match &commands[0] {
+            PluginCommand::RegisterCommand { command } => {
+                assert_eq!(command.contexts.len(), 7);
+                assert!(command.contexts.contains(&crate::keybindings::KeyContext::Global));
+                assert!(command.contexts.contains(&crate::keybindings::KeyContext::Normal));
+                assert!(command.contexts.contains(&crate::keybindings::KeyContext::Help));
+                assert!(command.contexts.contains(&crate::keybindings::KeyContext::Prompt));
+                assert!(command.contexts.contains(&crate::keybindings::KeyContext::Popup));
+                assert!(command.contexts.contains(&crate::keybindings::KeyContext::FileExplorer));
+                assert!(command.contexts.contains(&crate::keybindings::KeyContext::Menu));
+            }
+            _ => panic!("Expected RegisterCommand"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_register_command_invalid_contexts_ignored() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+
+        // Invalid contexts should be silently ignored
+        let result = runtime
+            .execute_script(
+                "<test_invalid_contexts>",
+                r#"
+                editor.registerCommand(
+                    "Partial Contexts",
+                    "Some invalid",
+                    "test_action",
+                    "normal, invalid_context, popup, unknown"
+                );
+                "#,
+            )
+            .await;
+        assert!(result.is_ok());
+
+        let commands: Vec<_> = rx.try_iter().collect();
+        match &commands[0] {
+            PluginCommand::RegisterCommand { command } => {
+                // Only normal and popup should be recognized
+                assert_eq!(command.contexts.len(), 2);
+                assert!(command.contexts.contains(&crate::keybindings::KeyContext::Normal));
+                assert!(command.contexts.contains(&crate::keybindings::KeyContext::Popup));
+            }
+            _ => panic!("Expected RegisterCommand"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_open_file_with_zero_values() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+
+        // Zero values should translate to None (file opening without positioning)
+        let result = runtime
+            .execute_script(
+                "<test_zero_values>",
+                r#"
+                editor.openFile("/test/file.txt", 0, 0);
+                "#,
+            )
+            .await;
+        assert!(result.is_ok());
+
+        let commands: Vec<_> = rx.try_iter().collect();
+        match &commands[0] {
+            PluginCommand::OpenFileAtLocation { path, line, column } => {
+                assert_eq!(path.to_str().unwrap(), "/test/file.txt");
+                assert_eq!(*line, None, "0 should translate to None");
+                assert_eq!(*column, None, "0 should translate to None");
+            }
+            _ => panic!("Expected OpenFileAtLocation"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_open_file_with_default_params() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+
+        // Test that JavaScript default parameters work
+        let result = runtime
+            .execute_script(
+                "<test_default_params>",
+                r#"
+                // Call with just path (line and column default to 0)
+                editor.openFile("/test/file.txt");
+                "#,
+            )
+            .await;
+        assert!(result.is_ok());
+
+        let commands: Vec<_> = rx.try_iter().collect();
+        match &commands[0] {
+            PluginCommand::OpenFileAtLocation { path, line, column } => {
+                assert_eq!(path.to_str().unwrap(), "/test/file.txt");
+                assert_eq!(*line, None);
+                assert_eq!(*column, None);
+            }
+            _ => panic!("Expected OpenFileAtLocation"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_open_file_with_line_only() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+
+        // Open file at specific line but no column
+        let result = runtime
+            .execute_script(
+                "<test_line_only>",
+                r#"
+                editor.openFile("/test/file.txt", 50);
+                "#,
+            )
+            .await;
+        assert!(result.is_ok());
+
+        let commands: Vec<_> = rx.try_iter().collect();
+        match &commands[0] {
+            PluginCommand::OpenFileAtLocation { line, column, .. } => {
+                assert_eq!(*line, Some(50));
+                assert_eq!(*column, None, "Column should be None when not specified");
+            }
+            _ => panic!("Expected OpenFileAtLocation"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_register_command_case_insensitive_contexts() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        let mut runtime = TypeScriptRuntime::with_state(state_snapshot, tx).unwrap();
+
+        // Context names should be case-insensitive
+        let result = runtime
+            .execute_script(
+                "<test_case_insensitive>",
+                r#"
+                editor.registerCommand(
+                    "Case Test",
+                    "Test case insensitivity",
+                    "test_action",
+                    "NORMAL, Popup, FileExplorer"
+                );
+                "#,
+            )
+            .await;
+        assert!(result.is_ok());
+
+        let commands: Vec<_> = rx.try_iter().collect();
+        match &commands[0] {
+            PluginCommand::RegisterCommand { command } => {
+                assert_eq!(command.contexts.len(), 3);
+                assert!(command.contexts.contains(&crate::keybindings::KeyContext::Normal));
+                assert!(command.contexts.contains(&crate::keybindings::KeyContext::Popup));
+                assert!(command.contexts.contains(&crate::keybindings::KeyContext::FileExplorer));
+            }
+            _ => panic!("Expected RegisterCommand"),
+        }
+    }
 }
+
 
