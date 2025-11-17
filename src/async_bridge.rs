@@ -52,6 +52,9 @@ pub enum AsyncMessage {
         request_id: u64,
         /// Hover contents as markdown or plaintext strings
         contents: Vec<String>,
+        /// Optional range of the symbol that was hovered over (LSP line/character positions)
+        /// Used to highlight the hovered symbol
+        range: Option<((u32, u32), (u32, u32))>,
     },
 
     /// File changed externally (future: file watching)

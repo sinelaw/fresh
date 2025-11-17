@@ -786,18 +786,26 @@ impl LspState {
         {
             Ok(result) => {
                 // Parse the hover response
-                let contents = if result.is_null() {
+                let (contents, range) = if result.is_null() {
                     // No hover information available
-                    vec![]
+                    (vec![], None)
                 } else {
                     match serde_json::from_value::<lsp_types::Hover>(result) {
                         Ok(hover) => {
                             // Extract text from hover contents
-                            Self::extract_hover_contents(&hover.contents)
+                            let contents = Self::extract_hover_contents(&hover.contents);
+                            // Extract the range if provided (tells us which symbol was hovered)
+                            let range = hover.range.map(|r| {
+                                (
+                                    (r.start.line, r.start.character),
+                                    (r.end.line, r.end.character),
+                                )
+                            });
+                            (contents, range)
                         }
                         Err(e) => {
                             tracing::error!("Failed to parse hover response: {}", e);
-                            vec![]
+                            (vec![], None)
                         }
                     }
                 };
@@ -806,6 +814,7 @@ impl LspState {
                 let _ = self.async_tx.send(AsyncMessage::LspHover {
                     request_id,
                     contents,
+                    range,
                 });
                 Ok(())
             }
@@ -815,6 +824,7 @@ impl LspState {
                 let _ = self.async_tx.send(AsyncMessage::LspHover {
                     request_id,
                     contents: vec![],
+                    range: None,
                 });
                 Err(e)
             }
@@ -1320,6 +1330,7 @@ impl LspTask {
                                 let _ = state.async_tx.send(AsyncMessage::LspHover {
                                     request_id,
                                     contents: vec![],
+                                    range: None,
                                 });
                             }
                         }
