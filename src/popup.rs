@@ -266,13 +266,13 @@ impl Popup {
                 let y = match self.position {
                     PopupPosition::AtCursor => cursor_y,
                     PopupPosition::BelowCursor => {
-                        if cursor_y + 1 + height > terminal_area.height {
+                        if cursor_y + 2 + height > terminal_area.height {
                             // Not enough space below, put above cursor
                             // Position so bottom of popup ends one line above cursor
                             cursor_y.saturating_sub(height + 1)
                         } else {
-                            // One line below cursor
-                            cursor_y + 1
+                            // Two lines below cursor (leaves one line gap to show symbol)
+                            cursor_y + 2
                         }
                     }
                     PopupPosition::AboveCursor => {
