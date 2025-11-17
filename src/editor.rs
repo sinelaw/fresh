@@ -16,7 +16,6 @@ use crate::multi_cursor::{
     add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult,
 };
 use crate::plugin_api::PluginCommand;
-use crate::plugin_manager::PluginManager;
 use crate::ts_runtime::TypeScriptPluginManager;
 use crate::position_history::PositionHistory;
 use crate::prompt::{Prompt, PromptType};
@@ -339,9 +338,6 @@ pub struct Editor {
     /// Command registry for dynamic commands
     command_registry: Arc<RwLock<CommandRegistry>>,
 
-    /// Plugin manager
-    plugin_manager: Option<PluginManager>,
-
     /// TypeScript plugin manager
     ts_plugin_manager: Option<TypeScriptPluginManager>,
 
@@ -589,46 +585,17 @@ impl Editor {
         let hook_registry = Arc::new(RwLock::new(HookRegistry::new()));
         let command_registry = Arc::new(RwLock::new(CommandRegistry::new()));
 
-        let mut plugin_manager =
-            PluginManager::new(Arc::clone(&hook_registry), Arc::clone(&command_registry)).ok();
-
-        if let Some(ref mut manager) = plugin_manager {
-            // Set async bridge sender for spawn support
-            manager.set_async_sender(async_bridge.sender());
-
-            // Try to load plugins from the plugins directory
-            let plugin_dir = working_dir.join("plugins");
-            if plugin_dir.exists() {
-                tracing::info!("Loading plugins from: {:?}", plugin_dir);
-                let errors = manager.load_plugins_from_dir(&plugin_dir);
-                if !errors.is_empty() {
-                    for err in errors {
-                        tracing::warn!("Plugin load error: {}", err);
-                    }
-                }
-            }
-        }
-
         // Initialize TypeScript plugin manager
         let ts_plugin_manager =
             TypeScriptPluginManager::new(Arc::clone(&hook_registry), Arc::clone(&command_registry))
                 .ok();
 
-        if let Some(ref _manager) = ts_plugin_manager.as_ref() {
-            // Try to load TypeScript plugins from the plugins directory
-            let plugin_dir = working_dir.join("plugins");
-            if plugin_dir.exists() {
-                tracing::info!("Loading TypeScript plugins from: {:?}", plugin_dir);
-                // Note: This is currently a no-op since load_plugins_from_dir_blocking
-                // requires mutable access. We'll load plugins separately.
-            }
-        }
-
-        // Load TypeScript plugins (need mutable borrow)
+        // Load TypeScript plugins from plugins directory
         let mut ts_plugin_manager = ts_plugin_manager;
         if let Some(ref mut manager) = ts_plugin_manager {
             let plugin_dir = working_dir.join("plugins");
             if plugin_dir.exists() {
+                tracing::info!("Loading TypeScript plugins from: {:?}", plugin_dir);
                 let errors = manager.load_plugins_from_dir_blocking(&plugin_dir);
                 if !errors.is_empty() {
                     for err in errors {
@@ -678,7 +645,6 @@ impl Editor {
             cached_layout: CachedLayout::default(),
             hook_registry,
             command_registry,
-            plugin_manager,
             ts_plugin_manager,
             panel_ids: HashMap::new(),
             search_history: crate::input_history::InputHistory::new(),
@@ -2102,7 +2068,7 @@ impl Editor {
         use crate::event_hooks::EventHooks;
         use crate::hooks::HookArgs;
 
-        if self.plugin_manager.is_some() {
+        if self.ts_plugin_manager.is_some() {
             // Update plugin state snapshot BEFORE calling hooks
             // so plugins can query current state
             self.update_plugin_state_snapshot();
@@ -2116,9 +2082,10 @@ impl Editor {
                 };
 
                 if !hook_name.is_empty() {
-                    if let Some(plugin_manager) = &self.plugin_manager {
-                        if let Err(e) = plugin_manager.run_hook(hook_name, &hook_args) {
-                            tracing::warn!("Plugin hook '{}' error: {}", hook_name, e);
+                    // TypeScript plugin hooks
+                    if let Some(ref mut ts_manager) = self.ts_plugin_manager {
+                        if let Err(e) = ts_manager.run_hook_blocking(hook_name, &hook_args) {
+                            tracing::warn!("TypeScript plugin hook '{}' error: {}", hook_name, e);
                         }
                     }
                 }
@@ -2420,15 +2387,14 @@ impl Editor {
                 }
                 PromptType::Plugin { custom_type } => {
                     // Fire plugin hook for prompt cancellation
-                    if let Some(plugin_manager) = &mut self.plugin_manager {
-                        use crate::hooks::HookArgs;
-                        let _ = plugin_manager.run_hook(
-                            "prompt-cancelled",
-                            &HookArgs::PromptCancelled {
-                                prompt_type: custom_type.clone(),
-                                input: prompt.input.clone(),
-                            },
-                        );
+                    use crate::hooks::HookArgs;
+                    let hook_args = HookArgs::PromptCancelled {
+                        prompt_type: custom_type.clone(),
+                        input: prompt.input.clone(),
+                    };
+
+                    if let Some(ref mut ts_manager) = self.ts_plugin_manager {
+                        let _ = ts_manager.run_hook_blocking("prompt-cancelled", &hook_args);
                     }
                 }
                 PromptType::LspRename { overlay_id, .. } => {
@@ -2550,15 +2516,14 @@ impl Editor {
             }
             PromptType::Plugin { custom_type } => {
                 // Fire plugin hook for prompt input change
-                if let Some(plugin_manager) = &mut self.plugin_manager {
-                    use crate::hooks::HookArgs;
-                    let _ = plugin_manager.run_hook(
-                        "prompt-changed",
-                        &HookArgs::PromptChanged {
-                            prompt_type: custom_type,
-                            input,
-                        },
-                    );
+                use crate::hooks::HookArgs;
+                let hook_args = HookArgs::PromptChanged {
+                    prompt_type: custom_type,
+                    input,
+                };
+
+                if let Some(ref mut ts_manager) = self.ts_plugin_manager {
+                    let _ = ts_manager.run_hook_blocking("prompt-changed", &hook_args);
                 }
             }
             _ => {}
@@ -2697,14 +2662,14 @@ impl Editor {
                     stderr,
                     exit_code,
                 } => {
-                    // Plugin process completed - execute callback
-                    if let Some(ref mut manager) = self.plugin_manager {
-                        if let Err(e) =
-                            manager.execute_process_callback(process_id, stdout, stderr, exit_code)
-                        {
-                            tracing::error!("Error executing process callback: {}", e);
-                        }
-                    }
+                    // Plugin process completed - TypeScript uses native async/await, no callback needed
+                    tracing::debug!(
+                        "Process {} completed: exit_code={}, stdout_len={}, stderr_len={}",
+                        process_id,
+                        exit_code,
+                        stdout.len(),
+                        stderr.len()
+                    );
                 }
                 AsyncMessage::LspProgress {
                     language,
@@ -2833,21 +2798,8 @@ impl Editor {
             }
         }
 
-        // Process plugin commands and update snapshot only if commands were processed
+        // Process TypeScript plugin commands and update snapshot only if commands were processed
         let mut processed_any_commands = false;
-        if let Some(ref mut manager) = self.plugin_manager {
-            let commands = manager.process_commands();
-            if !commands.is_empty() {
-                processed_any_commands = true;
-                for command in commands {
-                    if let Err(e) = self.handle_plugin_command(command) {
-                        tracing::error!("Error handling plugin command: {}", e);
-                    }
-                }
-            }
-        }
-
-        // Process TypeScript plugin commands
         if let Some(ref mut manager) = self.ts_plugin_manager {
             let commands = manager.process_commands();
             if !commands.is_empty() {
@@ -2928,79 +2880,7 @@ impl Editor {
 
     /// Update the plugin state snapshot with current editor state
     fn update_plugin_state_snapshot(&mut self) {
-        if let Some(ref manager) = self.plugin_manager {
-            use crate::plugin_api::{BufferInfo, CursorInfo, ViewportInfo};
-
-            let snapshot_handle = manager.state_snapshot_handle();
-            let mut snapshot = snapshot_handle.write().unwrap();
-
-            // Update active buffer ID
-            snapshot.active_buffer_id = self.active_buffer;
-
-            // Update active split ID
-            snapshot.active_split_id = self.split_manager.active_split().0;
-
-            // Clear and update buffer info (buffer content is in a separate cache now)
-            snapshot.buffers.clear();
-
-            for (buffer_id, state) in &self.buffers {
-                let buffer_info = BufferInfo {
-                    id: *buffer_id,
-                    path: state.buffer.file_path().map(|p| p.to_path_buf()),
-                    modified: state.buffer.is_modified(),
-                    length: state.buffer.len(),
-                };
-                snapshot.buffers.insert(*buffer_id, buffer_info);
-            }
-
-            // TODO: Buffer content cache was removed due to fundamental performance issues.
-            //
-            // The previous implementation called buffer.to_string() on every update, which:
-            // - Copies the entire buffer (expensive for large files - 61MB took 3.9 seconds!)
-            // - Happened multiple times per keystroke (once per event, once in process_async_messages)
-            //
-            // If we ever need a buffer cache for plugins, it MUST update incrementally:
-            // - Listen to Insert/Delete/Batch events and apply them to the cached string
-            // - Avoid calling buffer.to_string() except on initial cache population
-            // - This way, text insertion propagates as events to both the buffer AND the cache
-            //
-            // For now, plugins can call get_buffer_content() which will fetch on-demand.
-            // This is acceptable since plugins typically don't need full buffer content often.
-
-            // Update cursor information for active buffer
-            if let Some(active_state) = self.buffers.get(&self.active_buffer) {
-                // Primary cursor
-                let primary = active_state.cursors.primary();
-                snapshot.primary_cursor = Some(CursorInfo {
-                    position: primary.position,
-                    selection: primary.selection_range(),
-                });
-
-                // All cursors
-                snapshot.all_cursors = active_state
-                    .cursors
-                    .iter()
-                    .map(|(_, cursor)| CursorInfo {
-                        position: cursor.position,
-                        selection: cursor.selection_range(),
-                    })
-                    .collect();
-
-                // Viewport
-                snapshot.viewport = Some(ViewportInfo {
-                    top_byte: active_state.viewport.top_byte,
-                    left_column: active_state.viewport.left_column,
-                    width: active_state.viewport.width,
-                    height: active_state.viewport.height,
-                });
-            } else {
-                snapshot.primary_cursor = None;
-                snapshot.all_cursors.clear();
-                snapshot.viewport = None;
-            }
-        }
-
-        // Also update TypeScript plugin manager state
+        // Update TypeScript plugin manager state
         if let Some(ref manager) = self.ts_plugin_manager {
             use crate::plugin_api::{BufferInfo, CursorInfo, ViewportInfo};
 
@@ -3171,14 +3051,16 @@ impl Editor {
                 command,
                 args,
                 cwd,
-                callback_id,
+                callback_id: _,
             } => {
-                // Spawn async process via plugin manager
-                if let Some(ref mut manager) = self.plugin_manager {
-                    if let Err(e) = manager.spawn_process(command, args, cwd, callback_id) {
-                        tracing::error!("Failed to spawn process: {}", e);
-                    }
-                }
+                // TypeScript plugins use native async spawn_process op, not callbacks
+                // This path is deprecated and should not be used
+                tracing::warn!(
+                    "SpawnProcess command with callback is deprecated. TypeScript plugins use native async. Command: {}",
+                    command
+                );
+                let _ = args;
+                let _ = cwd;
             }
             PluginCommand::ClearAllOverlays { buffer_id } => {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
@@ -3318,15 +3200,14 @@ impl Editor {
 
                 // Fire the prompt-changed hook immediately with empty input
                 // This allows plugins to initialize the prompt state
-                if let Some(plugin_manager) = &mut self.plugin_manager {
-                    use crate::hooks::HookArgs;
-                    let _ = plugin_manager.run_hook(
-                        "prompt-changed",
-                        &HookArgs::PromptChanged {
-                            prompt_type: prompt_type.clone(),
-                            input: String::new(),
-                        },
-                    );
+                use crate::hooks::HookArgs;
+                let hook_args = HookArgs::PromptChanged {
+                    prompt_type: prompt_type.clone(),
+                    input: String::new(),
+                };
+
+                if let Some(ref mut ts_manager) = self.ts_plugin_manager {
+                    let _ = ts_manager.run_hook_blocking("prompt-changed", &hook_args);
                 }
             }
             PluginCommand::SetPromptSuggestions { suggestions } => {
@@ -5206,40 +5087,18 @@ impl Editor {
                 }
             }
             Action::PluginAction(action_name) => {
-                // Execute the plugin callback
-                // Try Lua plugin manager first, then TypeScript
-                let mut executed = false;
-
-                if let Some(ref manager) = self.plugin_manager {
-                    match manager.execute_action(&action_name) {
+                // Execute the plugin callback via TypeScript plugin manager
+                if let Some(ref mut manager) = self.ts_plugin_manager {
+                    match manager.execute_action_blocking(&action_name) {
                         Ok(()) => {
-                            tracing::info!("Plugin action '{}' executed successfully (Lua)", action_name);
-                            executed = true;
+                            tracing::info!("Plugin action '{}' executed successfully", action_name);
                         }
                         Err(e) => {
-                            // Not found in Lua, try TypeScript
-                            tracing::debug!("Lua plugin action '{}' not found: {}", action_name, e);
+                            self.set_status_message(format!("Plugin error: {}", e));
+                            tracing::error!("Plugin action error: {}", e);
                         }
                     }
-                }
-
-                // Try TypeScript plugin manager if not found in Lua
-                if !executed {
-                    if let Some(ref mut manager) = self.ts_plugin_manager {
-                        match manager.execute_action_blocking(&action_name) {
-                            Ok(()) => {
-                                tracing::info!("Plugin action '{}' executed successfully (TypeScript)", action_name);
-                                executed = true;
-                            }
-                            Err(e) => {
-                                self.set_status_message(format!("Plugin error: {}", e));
-                                tracing::error!("Plugin action error: {}", e);
-                            }
-                        }
-                    }
-                }
-
-                if !executed && self.plugin_manager.is_none() && self.ts_plugin_manager.is_none() {
+                } else {
                     self.set_status_message("Plugin manager not available".to_string());
                 }
             }
@@ -5343,16 +5202,15 @@ impl Editor {
                             }
                         }
                         PromptType::Plugin { custom_type } => {
-                            if let Some(plugin_manager) = &mut self.plugin_manager {
-                                use crate::hooks::HookArgs;
-                                let _ = plugin_manager.run_hook(
-                                    "prompt-confirmed",
-                                    &HookArgs::PromptConfirmed {
-                                        prompt_type: custom_type,
-                                        input,
-                                        selected_index,
-                                    },
-                                );
+                            use crate::hooks::HookArgs;
+                            let hook_args = HookArgs::PromptConfirmed {
+                                prompt_type: custom_type,
+                                input,
+                                selected_index,
+                            };
+
+                            if let Some(ref mut ts_manager) = self.ts_plugin_manager {
+                                let _ = ts_manager.run_hook_blocking("prompt-confirmed", &hook_args);
                             }
                         }
                         PromptType::LspRename {
@@ -6681,7 +6539,7 @@ impl Editor {
             self.config.editor.line_wrap,
             self.config.editor.estimated_line_length,
             Some(&self.hook_registry),
-            self.plugin_manager.as_ref(),
+            None, // TypeScript plugin render hooks not yet supported (require async)
             Some(&self.split_view_states),
         );
         self.cached_layout.split_areas = split_areas;
