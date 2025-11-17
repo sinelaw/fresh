@@ -50,8 +50,10 @@ pub enum AsyncMessage {
     /// LSP hover response
     LspHover {
         request_id: u64,
-        /// Hover contents as markdown or plaintext strings
-        contents: Vec<String>,
+        /// Hover contents as a single string (joined if multiple parts)
+        contents: String,
+        /// Whether the content is markdown (true) or plaintext (false)
+        is_markdown: bool,
         /// Optional range of the symbol that was hovered over (LSP line/character positions)
         /// Used to highlight the hovered symbol
         range: Option<((u32, u32), (u32, u32))>,

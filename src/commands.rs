@@ -406,6 +406,64 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::NavigateForward,
             contexts: vec![KeyContext::Normal],
         },
+        // Smart editing
+        Command {
+            name: "Toggle Comment".to_string(),
+            description: "Comment or uncomment the current line or selection".to_string(),
+            action: Action::ToggleComment,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Indent Selection".to_string(),
+            description: "Increase indentation of selected lines".to_string(),
+            action: Action::IndentSelection,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Dedent Selection".to_string(),
+            description: "Decrease indentation of selected lines".to_string(),
+            action: Action::DedentSelection,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Go to Matching Bracket".to_string(),
+            description: "Jump to the matching bracket, parenthesis, or brace".to_string(),
+            action: Action::GoToMatchingBracket,
+            contexts: vec![KeyContext::Normal],
+        },
+        // Error navigation
+        Command {
+            name: "Jump to Next Error".to_string(),
+            description: "Navigate to the next diagnostic error or warning".to_string(),
+            action: Action::JumpToNextError,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Jump to Previous Error".to_string(),
+            description: "Navigate to the previous diagnostic error or warning".to_string(),
+            action: Action::JumpToPreviousError,
+            contexts: vec![KeyContext::Normal],
+        },
+        // LSP
+        Command {
+            name: "Rename Symbol".to_string(),
+            description: "Rename the symbol under cursor across the project".to_string(),
+            action: Action::LspRename,
+            contexts: vec![KeyContext::Normal],
+        },
+        // Bookmarks and Macros
+        Command {
+            name: "List Bookmarks".to_string(),
+            description: "Show all defined bookmarks".to_string(),
+            action: Action::ListBookmarks,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "List Macros".to_string(),
+            description: "Show all recorded macros".to_string(),
+            action: Action::ListMacros,
+            contexts: vec![KeyContext::Normal],
+        },
     ]
 }
 

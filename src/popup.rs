@@ -1,10 +1,12 @@
 use ratatui::{
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
     Frame,
 };
+
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 /// Position of a popup relative to a point in the buffer
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,11 +23,42 @@ pub enum PopupPosition {
     Centered,
 }
 
+/// A styled span for markdown rendering
+#[derive(Debug, Clone, PartialEq)]
+pub struct StyledSpan {
+    pub text: String,
+    pub style: Style,
+}
+
+/// A line of styled spans for markdown rendering
+#[derive(Debug, Clone, PartialEq)]
+pub struct StyledLine {
+    pub spans: Vec<StyledSpan>,
+}
+
+impl StyledLine {
+    pub fn new() -> Self {
+        Self { spans: Vec::new() }
+    }
+
+    pub fn push(&mut self, text: String, style: Style) {
+        self.spans.push(StyledSpan { text, style });
+    }
+}
+
+impl Default for StyledLine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Content of a popup window
 #[derive(Debug, Clone, PartialEq)]
 pub enum PopupContent {
     /// Simple text content
     Text(Vec<String>),
+    /// Markdown content with styling
+    Markdown(Vec<StyledLine>),
     /// List of selectable items
     List {
         items: Vec<PopupListItem>,
@@ -33,6 +66,147 @@ pub enum PopupContent {
     },
     /// Custom rendered content (just store strings for now)
     Custom(Vec<String>),
+}
+
+/// Parse markdown text into styled lines for terminal rendering
+pub fn parse_markdown(text: &str, theme: &crate::theme::Theme) -> Vec<StyledLine> {
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+
+    let parser = Parser::new_ext(text, options);
+    let mut lines: Vec<StyledLine> = vec![StyledLine::new()];
+
+    // Style stack for nested formatting
+    let mut style_stack: Vec<Style> = vec![Style::default()];
+    let mut in_code_block = false;
+    let mut code_block_lang = String::new();
+
+    for event in parser {
+        match event {
+            Event::Start(tag) => {
+                match tag {
+                    Tag::Strong => {
+                        let current = *style_stack.last().unwrap_or(&Style::default());
+                        style_stack.push(current.add_modifier(Modifier::BOLD));
+                    }
+                    Tag::Emphasis => {
+                        let current = *style_stack.last().unwrap_or(&Style::default());
+                        style_stack.push(current.add_modifier(Modifier::ITALIC));
+                    }
+                    Tag::Strikethrough => {
+                        let current = *style_stack.last().unwrap_or(&Style::default());
+                        style_stack.push(current.add_modifier(Modifier::CROSSED_OUT));
+                    }
+                    Tag::CodeBlock(kind) => {
+                        in_code_block = true;
+                        code_block_lang = match kind {
+                            pulldown_cmark::CodeBlockKind::Fenced(lang) => lang.to_string(),
+                            pulldown_cmark::CodeBlockKind::Indented => String::new(),
+                        };
+                        // Start new line for code block
+                        if !lines.last().map(|l| l.spans.is_empty()).unwrap_or(true) {
+                            lines.push(StyledLine::new());
+                        }
+                    }
+                    Tag::Heading { .. } => {
+                        let current = *style_stack.last().unwrap_or(&Style::default());
+                        style_stack.push(current.add_modifier(Modifier::BOLD).fg(theme.help_key_fg));
+                    }
+                    Tag::Link { .. } | Tag::Image { .. } => {
+                        let current = *style_stack.last().unwrap_or(&Style::default());
+                        style_stack.push(current.add_modifier(Modifier::UNDERLINED).fg(Color::Cyan));
+                    }
+                    Tag::List(_) | Tag::Item => {
+                        // Start list items on new line
+                        if !lines.last().map(|l| l.spans.is_empty()).unwrap_or(true) {
+                            lines.push(StyledLine::new());
+                        }
+                    }
+                    Tag::Paragraph => {
+                        // Start paragraphs on new line if we have content
+                        if !lines.last().map(|l| l.spans.is_empty()).unwrap_or(true) {
+                            lines.push(StyledLine::new());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Event::End(tag_end) => {
+                match tag_end {
+                    TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough
+                    | TagEnd::Heading(_) | TagEnd::Link | TagEnd::Image => {
+                        style_stack.pop();
+                    }
+                    TagEnd::CodeBlock => {
+                        in_code_block = false;
+                        code_block_lang.clear();
+                        // End code block with new line
+                        lines.push(StyledLine::new());
+                    }
+                    TagEnd::Paragraph => {
+                        // Add blank line after paragraph
+                        lines.push(StyledLine::new());
+                    }
+                    TagEnd::Item => {
+                        // Items end naturally
+                    }
+                    _ => {}
+                }
+            }
+            Event::Text(text) => {
+                let current_style = if in_code_block {
+                    Style::default().fg(theme.help_key_fg).bg(Color::DarkGray)
+                } else {
+                    *style_stack.last().unwrap_or(&Style::default())
+                };
+
+                // Split text by newlines and add to lines
+                for (i, part) in text.split('\n').enumerate() {
+                    if i > 0 {
+                        lines.push(StyledLine::new());
+                    }
+                    if !part.is_empty() {
+                        if let Some(line) = lines.last_mut() {
+                            line.push(part.to_string(), current_style);
+                        }
+                    }
+                }
+            }
+            Event::Code(code) => {
+                // Inline code
+                let style = Style::default().fg(theme.help_key_fg).bg(Color::DarkGray);
+                if let Some(line) = lines.last_mut() {
+                    line.push(format!("`{}`", code), style);
+                }
+            }
+            Event::SoftBreak => {
+                // Soft break - add space
+                if let Some(line) = lines.last_mut() {
+                    line.push(" ".to_string(), Style::default());
+                }
+            }
+            Event::HardBreak => {
+                // Hard break - new line
+                lines.push(StyledLine::new());
+            }
+            Event::Rule => {
+                // Horizontal rule
+                lines.push(StyledLine::new());
+                if let Some(line) = lines.last_mut() {
+                    line.push("─".repeat(40), Style::default().fg(Color::DarkGray));
+                }
+                lines.push(StyledLine::new());
+            }
+            _ => {}
+        }
+    }
+
+    // Remove trailing empty lines
+    while lines.last().map(|l| l.spans.is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+
+    lines
 }
 
 /// A single item in a popup list
@@ -121,6 +295,22 @@ impl Popup {
             position: PopupPosition::AtCursor,
             width: 50,
             max_height: 15,
+            bordered: true,
+            border_style: Style::default().fg(theme.popup_border_fg),
+            background_style: Style::default().bg(theme.popup_bg),
+            scroll_offset: 0,
+        }
+    }
+
+    /// Create a new popup with markdown content using theme colors
+    pub fn markdown(markdown_text: &str, theme: &crate::theme::Theme) -> Self {
+        let styled_lines = parse_markdown(markdown_text, theme);
+        Self {
+            title: None,
+            content: PopupContent::Markdown(styled_lines),
+            position: PopupPosition::AtCursor,
+            width: 60,  // Wider for markdown content
+            max_height: 20, // Taller for documentation
             bordered: true,
             border_style: Style::default().fg(theme.popup_border_fg),
             background_style: Style::default().bg(theme.popup_bg),
@@ -233,6 +423,7 @@ impl Popup {
     fn content_height(&self) -> u16 {
         let content_lines = match &self.content {
             PopupContent::Text(lines) => lines.len() as u16,
+            PopupContent::Markdown(lines) => lines.len() as u16,
             PopupContent::List { items, .. } => items.len() as u16,
             PopupContent::Custom(lines) => lines.len() as u16,
         };
@@ -361,6 +552,24 @@ impl Popup {
                     .skip(self.scroll_offset)
                     .take(inner_area.height as usize)
                     .map(|line| Line::from(line.as_str()))
+                    .collect();
+
+                let paragraph = Paragraph::new(visible_lines);
+                frame.render_widget(paragraph, inner_area);
+            }
+            PopupContent::Markdown(styled_lines) => {
+                let visible_lines: Vec<Line> = styled_lines
+                    .iter()
+                    .skip(self.scroll_offset)
+                    .take(inner_area.height as usize)
+                    .map(|styled_line| {
+                        let spans: Vec<Span> = styled_line
+                            .spans
+                            .iter()
+                            .map(|s| Span::styled(s.text.clone(), s.style))
+                            .collect();
+                        Line::from(spans)
+                    })
                     .collect();
 
                 let paragraph = Paragraph::new(visible_lines);

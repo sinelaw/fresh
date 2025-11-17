@@ -786,14 +786,14 @@ impl LspState {
         {
             Ok(result) => {
                 // Parse the hover response
-                let (contents, range) = if result.is_null() {
+                let (contents, is_markdown, range) = if result.is_null() {
                     // No hover information available
-                    (vec![], None)
+                    (String::new(), false, None)
                 } else {
                     match serde_json::from_value::<lsp_types::Hover>(result) {
                         Ok(hover) => {
                             // Extract text from hover contents
-                            let contents = Self::extract_hover_contents(&hover.contents);
+                            let (contents, is_markdown) = Self::extract_hover_contents(&hover.contents);
                             // Extract the range if provided (tells us which symbol was hovered)
                             let range = hover.range.map(|r| {
                                 (
@@ -801,11 +801,11 @@ impl LspState {
                                     (r.end.line, r.end.character),
                                 )
                             });
-                            (contents, range)
+                            (contents, is_markdown, range)
                         }
                         Err(e) => {
                             tracing::error!("Failed to parse hover response: {}", e);
-                            (vec![], None)
+                            (String::new(), false, None)
                         }
                     }
                 };
@@ -814,6 +814,7 @@ impl LspState {
                 let _ = self.async_tx.send(AsyncMessage::LspHover {
                     request_id,
                     contents,
+                    is_markdown,
                     range,
                 });
                 Ok(())
@@ -823,7 +824,8 @@ impl LspState {
                 // Send empty result on error (no hover available)
                 let _ = self.async_tx.send(AsyncMessage::LspHover {
                     request_id,
-                    contents: vec![],
+                    contents: String::new(),
+                    is_markdown: false,
                     range: None,
                 });
                 Err(e)
@@ -832,28 +834,36 @@ impl LspState {
     }
 
     /// Extract text from hover contents (handles both MarkedString and MarkupContent)
-    fn extract_hover_contents(contents: &lsp_types::HoverContents) -> Vec<String> {
-        use lsp_types::{HoverContents, MarkedString, MarkupContent};
+    /// Returns (content_string, is_markdown)
+    fn extract_hover_contents(contents: &lsp_types::HoverContents) -> (String, bool) {
+        use lsp_types::{HoverContents, MarkedString, MarkupContent, MarkupKind};
 
         match contents {
             HoverContents::Scalar(marked) => match marked {
-                MarkedString::String(s) => vec![s.clone()],
+                MarkedString::String(s) => (s.clone(), false),
                 MarkedString::LanguageString(ls) => {
-                    vec![format!("```{}\n{}\n```", ls.language, ls.value)]
+                    // Language strings are formatted as markdown code blocks
+                    (format!("```{}\n{}\n```", ls.language, ls.value), true)
                 }
             },
-            HoverContents::Array(arr) => arr
-                .iter()
-                .map(|marked| match marked {
-                    MarkedString::String(s) => s.clone(),
-                    MarkedString::LanguageString(ls) => {
-                        format!("```{}\n{}\n```", ls.language, ls.value)
-                    }
-                })
-                .collect(),
-            HoverContents::Markup(MarkupContent { value, .. }) => {
-                // Split by double newlines to get paragraphs
-                value.lines().map(|s| s.to_string()).collect()
+            HoverContents::Array(arr) => {
+                // Array of marked strings - format as markdown
+                let content = arr
+                    .iter()
+                    .map(|marked| match marked {
+                        MarkedString::String(s) => s.clone(),
+                        MarkedString::LanguageString(ls) => {
+                            format!("```{}\n{}\n```", ls.language, ls.value)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                (content, true)
+            },
+            HoverContents::Markup(MarkupContent { kind, value }) => {
+                // Check if it's markdown or plaintext
+                let is_markdown = matches!(kind, MarkupKind::Markdown);
+                (value.clone(), is_markdown)
             }
         }
     }
@@ -1329,7 +1339,8 @@ impl LspTask {
                                 tracing::debug!("LSP not initialized, cannot get hover");
                                 let _ = state.async_tx.send(AsyncMessage::LspHover {
                                     request_id,
-                                    contents: vec![],
+                                    contents: String::new(),
+                                    is_markdown: false,
                                     range: None,
                                 });
                             }
