@@ -48,7 +48,9 @@
 1. `1eae5c8` - feat: Add TypeScript plugin runtime with deno_core
 2. `80cb50b` - feat: Add comprehensive editor ops to TypeScript runtime
 3. `d535dfa` - feat: Add auto-generated TypeScript types and additional editor ops
-4. (pending) - feat: Add command registration, file opening, and split view ops
+4. `2549fa5` - feat: Add command registration, file opening, and split view ops
+5. `c610f9e` - test: Add focused unit tests for TypeScript runtime ops (16 tests total)
+6. (pending) - feat: Add comprehensive bookmarks plugin example using new ops
 
 ---
 
