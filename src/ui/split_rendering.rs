@@ -1,5 +1,6 @@
 //! Split pane layout and buffer rendering
 
+use crate::cursor::SelectionMode;
 use crate::event::{BufferId, EventLog, SplitDirection};
 use crate::hooks::{HookArgs, HookRegistry};
 use crate::line_wrapping::{char_position_to_segment, wrap_line, WrapConfig};
@@ -384,6 +385,35 @@ impl SplitRenderer {
             .filter_map(|(_, cursor)| cursor.selection_range())
             .collect();
 
+        // Collect block selections as 2D rectangles (start_line, start_col, end_line, end_col)
+        let block_selections: Vec<(usize, usize, usize, usize)> = state
+            .cursors
+            .iter()
+            .filter_map(|(_, cursor)| {
+                if cursor.selection_mode == SelectionMode::Block {
+                    if let Some(anchor) = cursor.block_anchor {
+                        // Convert cursor position to 2D coords
+                        let cur_line = state.buffer.get_line_number(cursor.position);
+                        let cur_line_start =
+                            state.buffer.line_start_offset(cur_line).unwrap_or(0);
+                        let cur_col = cursor.position.saturating_sub(cur_line_start);
+
+                        // Return normalized rectangle (min values first)
+                        Some((
+                            anchor.line.min(cur_line),
+                            anchor.column.min(cur_col),
+                            anchor.line.max(cur_line),
+                            anchor.column.max(cur_col),
+                        ))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         // Collect all cursor positions (to avoid highlighting the cursor itself)
         // If show_cursors is false (e.g., for virtual buffers), use an empty list
         let cursor_positions: Vec<usize> = if state.show_cursors {
@@ -614,10 +644,21 @@ impl SplitRenderer {
                     }
 
                     // Check if this character is in any selection range (but not at cursor position)
+                    // Also check for block/rectangular selections
+                    let is_in_block_selection = block_selections.iter().any(
+                        |(start_line, start_col, end_line, end_col)| {
+                            current_line_num >= *start_line
+                                && current_line_num <= *end_line
+                                && char_index >= *start_col
+                                && char_index <= *end_col
+                        },
+                    );
+
                     let is_selected = !is_cursor
-                        && selection_ranges
+                        && (selection_ranges
                             .iter()
-                            .any(|range| range.contains(&byte_pos));
+                            .any(|range| range.contains(&byte_pos))
+                            || is_in_block_selection);
 
                     // Find syntax highlight color for this position
                     let highlight_color = highlight_spans

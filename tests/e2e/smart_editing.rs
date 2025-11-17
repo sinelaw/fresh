@@ -896,3 +896,205 @@ fn test_jump_through_multiple_errors() {
         pos3
     );
 }
+
+// =============================================================================
+// Block/Rectangular Selection Tests
+// =============================================================================
+
+/// Test that block selection starts with Alt+Shift+Right
+#[test]
+fn test_block_selection_start() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "abc\ndef\nghi").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Cursor starts at position 0
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+
+    // Start block selection with Alt+Shift+Right
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Check that selection mode is Block
+    let cursor = harness.editor().active_state().cursors.primary();
+    assert_eq!(
+        cursor.selection_mode,
+        fresh::cursor::SelectionMode::Block,
+        "Selection mode should be Block"
+    );
+
+    // Block anchor should be set
+    assert!(
+        cursor.block_anchor.is_some(),
+        "Block anchor should be set"
+    );
+
+    let anchor = cursor.block_anchor.unwrap();
+    assert_eq!(anchor.line, 0, "Block anchor line should be 0");
+    assert_eq!(anchor.column, 0, "Block anchor column should be 0");
+
+    // Cursor should have moved right
+    assert_eq!(
+        cursor.position, 1,
+        "Cursor position should be 1 after moving right"
+    );
+}
+
+/// Test that block selection extends vertically
+#[test]
+fn test_block_selection_vertical() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "abc\ndef\nghi").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Position cursor at column 1 (after 'a')
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+
+    // Start block selection with Alt+Shift+Down
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let anchor = cursor.block_anchor.unwrap();
+
+    // Anchor should be at line 0, column 1
+    assert_eq!(anchor.line, 0);
+    assert_eq!(anchor.column, 1);
+
+    // Cursor should now be on line 1 (after moving down)
+    let cur_line = harness
+        .editor()
+        .active_state()
+        .buffer
+        .get_line_number(cursor.position);
+    assert_eq!(cur_line, 1, "Cursor should be on line 1 after moving down");
+}
+
+/// Test that block selection extends in multiple directions
+#[test]
+fn test_block_selection_rectangle() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "abcde\nfghij\nklmno").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor to position 1 (after 'a')
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+
+    // Extend block selection right twice (columns 1-3)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+
+    // Extend block selection down once (lines 0-1)
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let anchor = cursor.block_anchor.unwrap();
+
+    // Block should be: anchor at (0, 1), cursor at line 1
+    assert_eq!(anchor.line, 0);
+    assert_eq!(anchor.column, 1);
+
+    // Get cursor's 2D position
+    let cur_line = harness
+        .editor()
+        .active_state()
+        .buffer
+        .get_line_number(cursor.position);
+    let line_start = harness
+        .editor()
+        .active_state()
+        .buffer
+        .line_start_offset(cur_line)
+        .unwrap_or(0);
+    let cur_col = cursor.position - line_start;
+
+    // Cursor should be at line 1, column 3 (after moving right twice then down)
+    assert_eq!(cur_line, 1, "Cursor should be on line 1");
+    assert_eq!(cur_col, 3, "Cursor should be at column 3");
+}
+
+/// Test that block selection left works
+#[test]
+fn test_block_selection_left() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "abcde").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor to position 3
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+
+    // Start block selection with Alt+Shift+Left
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let anchor = cursor.block_anchor.unwrap();
+
+    // Anchor should be at column 3
+    assert_eq!(anchor.column, 3);
+
+    // Cursor should now be at column 2 (after moving left)
+    assert_eq!(cursor.position, 2, "Cursor should be at position 2");
+}
+
+/// Test that block selection up works
+#[test]
+fn test_block_selection_up() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "abc\ndef\nghi").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move to line 2
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+
+    // Start block selection with Alt+Shift+Up
+    harness
+        .send_key(KeyCode::Up, KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    let cursor = harness.editor().active_state().cursors.primary();
+    let anchor = cursor.block_anchor.unwrap();
+
+    // Anchor should be at line 2
+    assert_eq!(anchor.line, 2);
+
+    // Cursor should now be on line 1 (after moving up)
+    let cur_line = harness
+        .editor()
+        .active_state()
+        .buffer
+        .get_line_number(cursor.position);
+    assert_eq!(cur_line, 1, "Cursor should be on line 1 after moving up");
+}

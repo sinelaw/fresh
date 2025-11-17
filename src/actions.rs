@@ -1,5 +1,6 @@
 //! Action to event conversion - translates high-level actions into buffer events
 
+use crate::cursor::{Position2D, SelectionMode};
 use crate::event::Event;
 use crate::keybindings::Action;
 use crate::state::EditorState;
@@ -7,6 +8,146 @@ use crate::text_buffer::Buffer;
 use crate::word_navigation::{
     find_word_end, find_word_start, find_word_start_left, find_word_start_right,
 };
+
+/// Direction for block selection movement
+#[derive(Debug, Clone, Copy)]
+enum BlockDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// Convert byte offset to 2D position (line, column)
+fn byte_to_2d(buffer: &Buffer, byte_pos: usize) -> Position2D {
+    let line = buffer.get_line_number(byte_pos);
+    let line_start = buffer.line_start_offset(line).unwrap_or(0);
+    let column = byte_pos.saturating_sub(line_start);
+    Position2D { line, column }
+}
+
+/// Convert 2D position to byte offset
+fn pos_2d_to_byte(buffer: &Buffer, pos: Position2D) -> usize {
+    let line_start = buffer.line_start_offset(pos.line).unwrap_or(0);
+    // Get line content to check bounds
+    let line_content = buffer.get_line(pos.line).unwrap_or_default();
+    // Clamp column to line length (excluding newline)
+    let line_len = if line_content.last() == Some(&b'\n') {
+        line_content.len().saturating_sub(1)
+    } else {
+        line_content.len()
+    };
+    let clamped_col = pos.column.min(line_len);
+    line_start + clamped_col
+}
+
+/// Handle block selection movement
+fn block_select_action(state: &mut EditorState, events: &mut Vec<Event>, direction: BlockDirection) {
+    // Get line count for bounds checking
+    let total_lines = {
+        let len = state.buffer.len();
+        if len == 0 {
+            1
+        } else {
+            state.buffer.get_line_number(len.saturating_sub(1)) + 1
+        }
+    };
+
+    for (cursor_id, cursor) in state.cursors.iter() {
+        let current_2d = byte_to_2d(&state.buffer, cursor.position);
+
+        // If not in block mode, start block selection
+        let block_anchor = if cursor.selection_mode != SelectionMode::Block
+            || cursor.block_anchor.is_none()
+        {
+            current_2d
+        } else {
+            cursor.block_anchor.unwrap()
+        };
+
+        // Calculate new 2D position based on direction
+        let new_2d = match direction {
+            BlockDirection::Left => Position2D {
+                line: current_2d.line,
+                column: current_2d.column.saturating_sub(1),
+            },
+            BlockDirection::Right => {
+                // Get current line length to bound the column
+                let line_content = state.buffer.get_line(current_2d.line).unwrap_or_default();
+                let line_len = if line_content.last() == Some(&b'\n') {
+                    line_content.len().saturating_sub(1)
+                } else {
+                    line_content.len()
+                };
+                Position2D {
+                    line: current_2d.line,
+                    column: (current_2d.column + 1).min(line_len),
+                }
+            }
+            BlockDirection::Up => {
+                if current_2d.line > 0 {
+                    Position2D {
+                        line: current_2d.line - 1,
+                        column: current_2d.column,
+                    }
+                } else {
+                    current_2d
+                }
+            }
+            BlockDirection::Down => {
+                if current_2d.line + 1 < total_lines {
+                    Position2D {
+                        line: current_2d.line + 1,
+                        column: current_2d.column,
+                    }
+                } else {
+                    current_2d
+                }
+            }
+        };
+
+        // Convert new 2D position back to byte offset
+        let new_byte_pos = pos_2d_to_byte(&state.buffer, new_2d);
+
+        // Store the byte anchor for the event system (for undo/redo compatibility)
+        let byte_anchor = pos_2d_to_byte(&state.buffer, block_anchor);
+
+        events.push(Event::MoveCursor {
+            cursor_id,
+            old_position: cursor.position,
+            new_position: new_byte_pos,
+            old_anchor: cursor.anchor,
+            new_anchor: Some(byte_anchor),
+            old_sticky_column: cursor.sticky_column,
+            new_sticky_column: new_2d.column,
+        });
+
+        // Note: We need to set block selection mode after the event is processed
+        // This will be done in a separate step
+    }
+
+    // Update selection mode for all cursors to Block mode
+    // We need to do this directly since Event::MoveCursor doesn't support selection mode changes
+    // Note: We update the cursors here to set block_anchor BEFORE the events are applied
+    // This way the events will move the cursor, but the anchor remains fixed
+    let buffer_ref = &state.buffer;
+    state.cursors.map(|cursor| {
+        if cursor.selection_mode != SelectionMode::Block || cursor.block_anchor.is_none() {
+            let current_2d = byte_to_2d(buffer_ref, cursor.position);
+            cursor.start_block_selection(current_2d.line, current_2d.column);
+        }
+    });
+}
+
+/// Clear block selection when performing normal operations
+/// This should be called when the user performs a non-block action
+pub fn clear_block_selection_if_active(state: &mut EditorState) {
+    state.cursors.map(|cursor| {
+        if cursor.selection_mode == SelectionMode::Block {
+            cursor.clear_block_selection();
+        }
+    });
+}
 
 /// Calculate the maximum valid cursor position in the buffer.
 /// This is the end of the last line (excluding trailing newline).
@@ -1301,11 +1442,24 @@ pub fn action_to_events(
         | Action::MenuExecute
         | Action::MenuOpen(_)
         | Action::PluginAction(_)
-        | Action::BlockSelectLeft
-        | Action::BlockSelectRight
-        | Action::BlockSelectUp
-        | Action::BlockSelectDown
         | Action::None => return None,
+
+        // Block/rectangular selection actions
+        Action::BlockSelectLeft => {
+            block_select_action(state, &mut events, BlockDirection::Left);
+        }
+
+        Action::BlockSelectRight => {
+            block_select_action(state, &mut events, BlockDirection::Right);
+        }
+
+        Action::BlockSelectUp => {
+            block_select_action(state, &mut events, BlockDirection::Up);
+        }
+
+        Action::BlockSelectDown => {
+            block_select_action(state, &mut events, BlockDirection::Down);
+        }
 
         Action::SelectLine => {
             // Select the entire line for each cursor

@@ -1001,20 +1001,21 @@ impl KeybindingResolver {
         );
 
         // Block/rectangular selection (Ctrl+Alt+arrows)
+        // Block/rectangular selection uses Alt+Shift to avoid conflict with AddCursorAbove/Below
         bindings.insert(
-            (KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            (KeyCode::Left, KeyModifiers::ALT | KeyModifiers::SHIFT),
             Action::BlockSelectLeft,
         );
         bindings.insert(
-            (KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            (KeyCode::Right, KeyModifiers::ALT | KeyModifiers::SHIFT),
             Action::BlockSelectRight,
         );
         bindings.insert(
-            (KeyCode::Up, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            (KeyCode::Up, KeyModifiers::ALT | KeyModifiers::SHIFT),
             Action::BlockSelectUp,
         );
         bindings.insert(
-            (KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            (KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT),
             Action::BlockSelectDown,
         );
 
