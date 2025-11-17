@@ -309,6 +309,7 @@ pub enum Action {
     // LSP operations
     LspCompletion,
     LspGotoDefinition,
+    LspFindReferences,
     LspRename,
     LspHover,
 
@@ -1627,6 +1628,7 @@ impl KeybindingResolver {
             }
             Action::LspCompletion => "LSP: Show completion suggestions".to_string(),
             Action::LspGotoDefinition => "LSP: Go to definition".to_string(),
+            Action::LspFindReferences => "LSP: Find all references".to_string(),
             Action::LspRename => "LSP: Rename symbol".to_string(),
             Action::LspHover => "LSP: Show hover documentation".to_string(),
             Action::Search => "Search for text in buffer".to_string(),

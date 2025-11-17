@@ -91,10 +91,11 @@ Features are categorized as:
   - Apply `WorkspaceEdit` changes
   - **Effort:** 6-8 hours
 
-- [ ] **Find References**
+- [x] **Find References** ✅
   - Request `textDocument/references`
-  - Display results in quickfix/location list
-  - Jump to reference on selection
+  - Display results in virtual buffer panel (references_panel.ts plugin)
+  - Jump to reference on selection (RET), navigate with j/k/n/p
+  - **Architecture:** Plugin LSP infrastructure - plugins can make async LSP requests
   - **Effort:** 4-6 hours
 
 - [ ] **Signature Help**
@@ -557,6 +558,63 @@ Main Thread (UI)                    Plugin Thread
 
 **Limitation**: Hooks are now non-blocking, so plugins cannot intercept/cancel operations (e.g., before-insert to reject input). This could be addressed by adding a blocking hook variant with timeout for critical hooks if needed.
 
+### Plugin LSP Infrastructure ✅ COMPLETED
+
+**Goal**: Enable TypeScript plugins to make async LSP requests (find references, signature help, code actions).
+
+**Architecture**:
+```
+Plugin Thread                      Main Thread (Editor)              LSP Task
+     │                                     │                            │
+     ├─── op_fresh_find_references ───────>│                            │
+     │    (async op with oneshot tx)       │                            │
+     │                                     ├── PluginLspRequest ────────>│
+     │                                     │   (via mpsc channel)        │
+     │                                     │                             │
+     │                                     │<──── LspCommand ────────────┤
+     │                                     │                             │
+     │                                     │ (stores oneshot tx)         │
+     │                                     │                             │
+     │                                     │<──── AsyncMessage ─────────┤
+     │                                     │      (LspReferences)       │
+     │<────── oneshot response ────────────┤                            │
+     │        (Vec<Location>)              │                            │
+```
+
+**Implementation**:
+- [x] **PluginLspRequest enum** (plugin_thread.rs)
+  - FindReferences { uri, line, character, include_declaration, response: oneshot::Sender }
+  - Extensible for SignatureHelp, CodeActions, etc.
+
+- [x] **LSP request channel** in PluginThreadHandle
+  - `lsp_request_sender` passed to TypeScriptRuntime
+  - `try_recv_lsp_requests()` polled by editor main loop
+
+- [x] **Async op** (ts_runtime.rs)
+  - `op_fresh_find_references` sends request, blocks on oneshot response
+  - JavaScript binding: `editor.findReferences(uri, line, character, includeDeclaration)`
+
+- [x] **Editor processing** (editor.rs)
+  - `process_plugin_lsp_requests()` called from `process_async_messages()`
+  - Stores oneshot sender in `pending_plugin_references` HashMap
+  - Routes LSP response back to plugin via stored sender
+
+- [x] **LspHandle method** (lsp_async.rs)
+  - `find_references()` sends LspCommand::FindReferences
+  - Handler calls handle_find_references() and sends AsyncMessage::LspReferences
+
+**Benefits**:
+- ✅ Plugins can use async/await for LSP operations
+- ✅ Non-blocking - main UI loop stays responsive
+- ✅ Proper error handling (empty response on failures)
+- ✅ Type-safe via TsLocation struct serialization
+
+**Example Plugin Usage** (references_panel.ts):
+```typescript
+const locations = await editor.findReferences(uri, line, character, true);
+// Returns: { uri, line, character, end_line, end_character }[]
+```
+
 ### Menu Bar System
 Full keyboard/mouse navigation with F10 toggle, arrow key navigation, Alt+letter mnemonics, keybinding display in dropdowns, JSON configuration.
 
@@ -609,3 +667,7 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 - ✅ Hover popup positioning (2 lines below cursor to avoid obscuring symbol)
 - ✅ TypeScript syntax highlighting improvements (full JavaScript support)
 - ✅ Plugin API gap analysis documentation (Fresh vs VSCode comparison)
+- ✅ **Markdown rendering in hover popups** (pulldown-cmark for proper styled terminal output)
+- ✅ **Plugin LSP Infrastructure** (async ops for LSP requests from TypeScript plugins)
+- ✅ **Find References via plugin** (references_panel.ts with virtual buffer split view)
+- ✅ 10 new command palette commands (Toggle Comment, Indent/Dedent, Error Navigation, etc.)

@@ -1424,6 +1424,36 @@ impl LspTask {
                                 });
                             }
                         }
+                        LspCommand::FindReferences {
+                            request_id,
+                            uri,
+                            line,
+                            character,
+                            include_declaration,
+                        } => {
+                            if state.initialized {
+                                tracing::info!(
+                                    "Processing FindReferences request for {}",
+                                    uri.as_str()
+                                );
+                                let _ = state
+                                    .handle_find_references(
+                                        request_id,
+                                        uri,
+                                        line,
+                                        character,
+                                        include_declaration,
+                                        &pending,
+                                    )
+                                    .await;
+                            } else {
+                                tracing::debug!("LSP not initialized, cannot find references");
+                                let _ = state.async_tx.send(AsyncMessage::LspReferences {
+                                    request_id,
+                                    locations: vec![],
+                                });
+                            }
+                        }
                         LspCommand::CancelRequest { request_id } => {
                             tracing::info!(
                                 "Processing CancelRequest for editor_id={}",
@@ -2568,6 +2598,26 @@ impl LspHandle {
                 character,
             })
             .map_err(|_| "Failed to send hover command".to_string())
+    }
+
+    /// Request find all references
+    pub fn find_references(
+        &self,
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+        include_declaration: bool,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::FindReferences {
+                request_id,
+                uri,
+                line,
+                character,
+                include_declaration,
+            })
+            .map_err(|_| "Failed to send find_references command".to_string())
     }
 
     /// Cancel a pending request by its editor request_id

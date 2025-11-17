@@ -336,6 +336,10 @@ pub struct Editor {
     /// Format: (start_byte_offset, end_byte_offset)
     hover_symbol_range: Option<(usize, usize)>,
 
+    /// Pending plugin LSP references requests
+    /// Maps request_id to oneshot sender for responding to plugin
+    pending_plugin_references: HashMap<u64, crate::plugin_thread::oneshot::Sender<Vec<lsp_types::Location>>>,
+
     /// Search state (if search is active)
     search_state: Option<SearchState>,
 
@@ -694,6 +698,7 @@ impl Editor {
             pending_goto_definition_request: None,
             pending_hover_request: None,
             hover_symbol_range: None,
+            pending_plugin_references: HashMap::new(),
             search_state: None,
             interactive_replace_state: None,
             lsp_status: String::new(),
@@ -2894,6 +2899,25 @@ impl Editor {
                         }),
                     );
                 }
+                AsyncMessage::LspReferences {
+                    request_id,
+                    locations,
+                } => {
+                    // Check if this is a plugin request
+                    if let Some(sender) = self.pending_plugin_references.remove(&request_id) {
+                        // Send response back to plugin
+                        if sender.send(locations).is_err() {
+                            tracing::warn!("Failed to send references response to plugin");
+                        }
+                    } else {
+                        // Not a plugin request - could be a direct UI request in the future
+                        tracing::debug!(
+                            "Received {} references for request {} (no plugin handler)",
+                            locations.len(),
+                            request_id
+                        );
+                    }
+                }
             }
         }
 
@@ -2916,7 +2940,93 @@ impl Editor {
             self.update_plugin_state_snapshot();
         }
 
+        // Process plugin LSP requests
+        self.process_plugin_lsp_requests();
+
         needs_render
+    }
+
+    /// Process LSP requests from plugins
+    fn process_plugin_lsp_requests(&mut self) {
+        let Some(ref manager) = self.ts_plugin_manager else {
+            return;
+        };
+
+        let requests = manager.try_recv_lsp_requests();
+        for request in requests {
+            match request {
+                crate::plugin_thread::PluginLspRequest::FindReferences {
+                    uri,
+                    line,
+                    character,
+                    include_declaration,
+                    response,
+                } => {
+                    // Generate request ID
+                    let request_id = self.next_lsp_request_id;
+                    self.next_lsp_request_id += 1;
+
+                    // Store the response channel
+                    self.pending_plugin_references.insert(request_id, response);
+
+                    // Parse URI and convert to path for language detection
+                    let parsed_uri = match uri.parse::<lsp_types::Uri>() {
+                        Ok(u) => u,
+                        Err(e) => {
+                            tracing::error!("Failed to parse URI '{}': {}", uri, e);
+                            if let Some(sender) = self.pending_plugin_references.remove(&request_id) {
+                                let _ = sender.send(vec![]);
+                            }
+                            continue;
+                        }
+                    };
+
+                    // Convert URI to path for language detection
+                    let path_str = parsed_uri.path().as_str();
+                    let path = std::path::PathBuf::from(path_str);
+
+                    // Detect language from file extension
+                    let language = match detect_language(&path) {
+                        Some(l) => l,
+                        None => {
+                            tracing::warn!("Could not detect language for: {:?}", path);
+                            if let Some(sender) = self.pending_plugin_references.remove(&request_id) {
+                                let _ = sender.send(vec![]);
+                            }
+                            continue;
+                        }
+                    };
+
+                    // Get LSP handle and send request
+                    if let Some(lsp) = self.lsp.as_mut() {
+                        if let Some(handle) = lsp.get_or_spawn(&language) {
+                            if let Err(e) = handle.find_references(
+                                request_id,
+                                parsed_uri,
+                                line,
+                                character,
+                                include_declaration,
+                            ) {
+                                tracing::error!("Failed to send find_references request: {}", e);
+                                if let Some(sender) = self.pending_plugin_references.remove(&request_id) {
+                                    let _ = sender.send(vec![]);
+                                }
+                            }
+                        } else {
+                            tracing::warn!("Failed to get LSP handle for language: {}", language);
+                            if let Some(sender) = self.pending_plugin_references.remove(&request_id) {
+                                let _ = sender.send(vec![]);
+                            }
+                        }
+                    } else {
+                        tracing::warn!("No LSP manager available");
+                        if let Some(sender) = self.pending_plugin_references.remove(&request_id) {
+                            let _ = sender.send(vec![]);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Update LSP status bar string from active progress operations

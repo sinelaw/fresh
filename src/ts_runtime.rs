@@ -106,6 +106,8 @@ struct TsRuntimeState {
     state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
     /// Command sender for write operations
     command_sender: std::sync::mpsc::Sender<PluginCommand>,
+    /// LSP request sender for making LSP requests
+    lsp_request_sender: std::sync::mpsc::Sender<crate::plugin_thread::PluginLspRequest>,
     /// Event handlers: event_name -> list of global JS function names
     event_handlers: Rc<RefCell<HashMap<String, Vec<String>>>>,
 }
@@ -584,6 +586,77 @@ async fn op_fresh_spawn_process(
         stderr,
         exit_code,
     })
+}
+
+/// Location result for LSP operations
+#[derive(serde::Serialize)]
+struct TsLocation {
+    uri: String,
+    line: u32,
+    character: u32,
+    end_line: u32,
+    end_character: u32,
+}
+
+/// Find all references to symbol at position
+/// This is an async op that sends a request to the editor and waits for the response
+#[op2(async)]
+#[serde]
+async fn op_fresh_find_references(
+    state: Rc<RefCell<OpState>>,
+    #[string] uri: String,
+    line: u32,
+    character: u32,
+    include_declaration: bool,
+) -> Result<Vec<TsLocation>, deno_core::error::AnyError> {
+    use crate::plugin_thread::{oneshot, PluginLspRequest};
+
+    // Get the LSP request sender from state
+    let lsp_sender = {
+        let state = state.borrow();
+        if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+            let runtime_state = runtime_state.borrow();
+            runtime_state.lsp_request_sender.clone()
+        } else {
+            return Err(deno_core::error::generic_error("Runtime state not available"));
+        }
+    };
+
+    // Create oneshot channel for response
+    let (tx, rx) = oneshot::channel();
+
+    // Send request to editor
+    lsp_sender
+        .send(PluginLspRequest::FindReferences {
+            uri,
+            line,
+            character,
+            include_declaration,
+            response: tx,
+        })
+        .map_err(|_| deno_core::error::generic_error("Failed to send LSP request"))?;
+
+    // Wait for response (blocking in async context - spawned on tokio)
+    let locations = tokio::task::spawn_blocking(move || {
+        rx.recv()
+            .map_err(|_| deno_core::error::generic_error("LSP request cancelled"))
+    })
+    .await
+    .map_err(|e| deno_core::error::generic_error(format!("Task join error: {}", e)))??;
+
+    // Convert to TypeScript-friendly format
+    let result = locations
+        .into_iter()
+        .map(|loc| TsLocation {
+            uri: loc.uri.to_string(),
+            line: loc.range.start.line,
+            character: loc.range.start.character,
+            end_line: loc.range.end.line,
+            end_character: loc.range.end.character,
+        })
+        .collect();
+
+    Ok(result)
 }
 
 /// Register an event handler
@@ -1190,6 +1263,8 @@ extension!(
         op_fresh_show_buffer,
         op_fresh_get_text_properties_at_cursor,
         op_fresh_set_virtual_buffer_content,
+        // LSP operations
+        op_fresh_find_references,
     ],
 );
 
@@ -1205,19 +1280,22 @@ impl TypeScriptRuntime {
     pub fn new() -> Result<Self> {
         // Create dummy state for standalone testing
         let (tx, _rx) = std::sync::mpsc::channel();
+        let (lsp_tx, _lsp_rx) = std::sync::mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        Self::with_state(state_snapshot, tx)
+        Self::with_state(state_snapshot, tx, lsp_tx)
     }
 
     /// Create a new TypeScript runtime with editor state
     pub fn with_state(
         state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
         command_sender: std::sync::mpsc::Sender<PluginCommand>,
+        lsp_request_sender: std::sync::mpsc::Sender<crate::plugin_thread::PluginLspRequest>,
     ) -> Result<Self> {
         let event_handlers = Rc::new(RefCell::new(HashMap::new()));
         let runtime_state = Rc::new(RefCell::new(TsRuntimeState {
             state_snapshot,
             command_sender,
+            lsp_request_sender,
             event_handlers: event_handlers.clone(),
         }));
 
@@ -1420,6 +1498,11 @@ impl TypeScriptRuntime {
                     },
                     setVirtualBufferContent(bufferId, entries) {
                         return core.ops.op_fresh_set_virtual_buffer_content(bufferId, entries);
+                    },
+
+                    // LSP operations (async)
+                    async findReferences(uri, line, character, includeDeclaration = true) {
+                        return await core.ops.op_fresh_find_references(uri, line, character, includeDeclaration);
                     },
                 };
 
@@ -1644,6 +1727,9 @@ impl TypeScriptPluginManager {
         // Create channel for plugin commands
         let (command_sender, command_receiver) = std::sync::mpsc::channel();
 
+        // Create dummy LSP request channel (not used in this deprecated manager)
+        let (lsp_request_sender, _lsp_request_receiver) = std::sync::mpsc::channel();
+
         // Create editor state snapshot for query API
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
 
@@ -1651,6 +1737,7 @@ impl TypeScriptPluginManager {
         let runtime = TypeScriptRuntime::with_state(
             Arc::clone(&state_snapshot),
             command_sender,
+            lsp_request_sender,
         )?;
 
         tracing::info!("TypeScript plugin manager initialized");

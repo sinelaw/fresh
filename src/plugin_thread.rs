@@ -14,10 +14,29 @@ use crate::hooks::HookArgs;
 use crate::plugin_api::{EditorStateSnapshot, PluginCommand};
 use crate::ts_runtime::{TsPluginInfo, TypeScriptRuntime};
 use anyhow::{anyhow, Result};
+use lsp_types::Location;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
+
+/// LSP request from plugin to editor
+#[derive(Debug)]
+pub enum PluginLspRequest {
+    /// Find all references to symbol at position
+    FindReferences {
+        /// File URI
+        uri: String,
+        /// Line number (0-indexed)
+        line: u32,
+        /// Character position (0-indexed)
+        character: u32,
+        /// Include the declaration in results
+        include_declaration: bool,
+        /// Channel to send response back
+        response: oneshot::Sender<Vec<Location>>,
+    },
+}
 
 /// Request messages sent to the plugin thread
 #[derive(Debug)]
@@ -133,6 +152,9 @@ pub struct PluginThreadHandle {
 
     /// Command registry (shared with editor)
     commands: Arc<RwLock<CommandRegistry>>,
+
+    /// Receiver for LSP requests from plugins (editor polls this)
+    lsp_request_receiver: std::sync::mpsc::Receiver<PluginLspRequest>,
 }
 
 impl PluginThreadHandle {
@@ -146,6 +168,9 @@ impl PluginThreadHandle {
 
         // Create channel for requests
         let (request_sender, request_receiver) = std::sync::mpsc::channel();
+
+        // Create channel for LSP requests from plugins to editor
+        let (lsp_request_sender, lsp_request_receiver) = std::sync::mpsc::channel();
 
         // Clone state snapshot for the thread
         let thread_state_snapshot = Arc::clone(&state_snapshot);
@@ -169,6 +194,7 @@ impl PluginThreadHandle {
             let runtime = match TypeScriptRuntime::with_state(
                 Arc::clone(&thread_state_snapshot),
                 command_sender,
+                lsp_request_sender,
             ) {
                 Ok(rt) => rt,
                 Err(e) => {
@@ -203,7 +229,17 @@ impl PluginThreadHandle {
             thread_handle: Some(thread_handle),
             state_snapshot,
             commands,
+            lsp_request_receiver,
         })
+    }
+
+    /// Try to receive pending LSP requests from plugins (non-blocking)
+    pub fn try_recv_lsp_requests(&self) -> Vec<PluginLspRequest> {
+        let mut requests = Vec::new();
+        while let Ok(req) = self.lsp_request_receiver.try_recv() {
+            requests.push(req);
+        }
+        requests
     }
 
     /// Load a plugin from a file (blocking)
