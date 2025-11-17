@@ -1605,7 +1605,191 @@ mod tests {
             .await;
         assert!(result.is_ok(), "Git example test failed: {:?}", result);
     }
+
+    #[tokio::test]
+    async fn test_file_exists() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        let result = runtime
+            .execute_script(
+                "<test_file_exists>",
+                r#"
+                // Test existing file
+                const cargoExists = editor.fileExists("Cargo.toml");
+                if (!cargoExists) {
+                    throw new Error("Cargo.toml should exist");
+                }
+
+                // Test non-existing file
+                const fakeExists = editor.fileExists("this_file_does_not_exist_12345.txt");
+                if (fakeExists) {
+                    throw new Error("Non-existent file should return false");
+                }
+
+                console.log("File exists test passed!");
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "File exists test failed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_file_stat() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        let result = runtime
+            .execute_script(
+                "<test_file_stat>",
+                r#"
+                // Test stat on existing file
+                const stat = editor.fileStat("Cargo.toml");
+                if (!stat.exists) {
+                    throw new Error("Cargo.toml should exist");
+                }
+                if (!stat.is_file) {
+                    throw new Error("Cargo.toml should be a file");
+                }
+                if (stat.is_dir) {
+                    throw new Error("Cargo.toml should not be a directory");
+                }
+                if (stat.size === 0) {
+                    throw new Error("Cargo.toml should have non-zero size");
+                }
+
+                // Test stat on non-existing file
+                const noStat = editor.fileStat("nonexistent_12345.txt");
+                if (noStat.exists) {
+                    throw new Error("Non-existent file should have exists=false");
+                }
+
+                console.log("File stat test passed!");
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "File stat test failed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_read_file() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        let result = runtime
+            .execute_script(
+                "<test_read_file>",
+                r#"
+                (async () => {
+                    // Read Cargo.toml which should exist
+                    const content = await editor.readFile("Cargo.toml");
+                    if (!content.includes("[package]")) {
+                        throw new Error("Cargo.toml should contain [package] section");
+                    }
+                    if (!content.includes("name")) {
+                        throw new Error("Cargo.toml should contain name field");
+                    }
+                    console.log("Read file test passed!");
+                })()
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "Read file test failed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_path_operations() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        let result = runtime
+            .execute_script(
+                "<test_path_ops>",
+                r#"
+                // Test pathJoin
+                const joined = editor.pathJoin("src", "ts_runtime.rs");
+                if (!joined.includes("src") || !joined.includes("ts_runtime.rs")) {
+                    throw new Error(`pathJoin failed: ${joined}`);
+                }
+
+                // Test pathDirname
+                const dir = editor.pathDirname("/home/user/file.txt");
+                if (dir !== "/home/user") {
+                    throw new Error(`pathDirname failed: ${dir}`);
+                }
+
+                // Test pathBasename
+                const base = editor.pathBasename("/home/user/file.txt");
+                if (base !== "file.txt") {
+                    throw new Error(`pathBasename failed: ${base}`);
+                }
+
+                // Test pathExtname
+                const ext = editor.pathExtname("/home/user/file.txt");
+                if (ext !== ".txt") {
+                    throw new Error(`pathExtname failed: ${ext}`);
+                }
+
+                // Test empty extension
+                const noExt = editor.pathExtname("/home/user/Makefile");
+                if (noExt !== "") {
+                    throw new Error(`pathExtname for no extension failed: ${noExt}`);
+                }
+
+                console.log("Path operations test passed!");
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "Path operations test failed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_get_env() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        let result = runtime
+            .execute_script(
+                "<test_get_env>",
+                r#"
+                // PATH should always be set
+                const path = editor.getEnv("PATH");
+                if (path === null || path === undefined) {
+                    throw new Error("PATH environment variable should be set");
+                }
+                if (path.length === 0) {
+                    throw new Error("PATH should not be empty");
+                }
+
+                // Non-existent env var should return null
+                const fake = editor.getEnv("THIS_ENV_VAR_DOES_NOT_EXIST_12345");
+                if (fake !== null && fake !== undefined) {
+                    throw new Error("Non-existent env var should return null/undefined");
+                }
+
+                console.log("Get env test passed!");
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "Get env test failed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_get_cwd() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        let result = runtime
+            .execute_script(
+                "<test_get_cwd>",
+                r#"
+                const cwd = editor.getCwd();
+                if (!cwd || cwd.length === 0) {
+                    throw new Error("getCwd should return non-empty string");
+                }
+                // cwd should be an absolute path
+                if (!cwd.startsWith("/")) {
+                    throw new Error(`getCwd should return absolute path, got: ${cwd}`);
+                }
+                console.log(`Current working directory: ${cwd}`);
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "Get cwd test failed: {:?}", result);
+    }
 }
-
-
 
