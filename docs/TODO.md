@@ -1,5 +1,14 @@
 # TODO
 
+## Implementation Guidelines
+
+Features are categorized as:
+- **🦀 Core (Rust)** - Performance-critical, deep integration, fundamental editor operations
+- **📦 Plugin (TypeScript)** - UI/UX features, domain-specific, built on existing APIs
+- **🔧 Infrastructure (Rust)** - Enables plugins, provides APIs for plugin features
+
+---
+
 ## Remaining Work
 
 ### Priority 1: Critical Editor Features
@@ -7,9 +16,9 @@
 #### Search & Replace Enhancements
 - [x] Case-sensitive/insensitive toggle ✅
 - [x] Whole word matching ✅
-- [ ] Persist search history across sessions
-- [ ] Multi-file search/replace (integrate with git grep)
-- [ ] Progress bar for replace_all on huge files
+- [ ] Persist search history across sessions - **🦀 Core** (file I/O, startup/shutdown)
+- [ ] Multi-file search/replace (integrate with git grep) - **📦 Plugin** (uses existing search APIs)
+- [ ] Progress bar for replace_all on huge files - **🦀 Core** (rendering pipeline)
 
 #### Smart Editing
 - [x] Smart home key (toggle between line start and first non-whitespace) ✅
@@ -27,19 +36,19 @@
 
 #### Selection & Editing
 - [x] Rectangular/block selection data structures and keybindings (Ctrl+Alt+arrows) ✅
-- [ ] Rectangular/block selection rendering and operations (insert/delete/copy)
-- [ ] Expand selection to scope (by AST nodes)
+- [ ] Rectangular/block selection rendering and operations - **🦀 Core** (rendering, multi-cursor ops)
+- [ ] Expand selection to scope (by AST nodes) - **🦀 Core** (tree-sitter integration)
 
 #### Macros
 - [x] Record macro (Alt+Shift+0-9 to toggle recording, F5 to stop) ✅
 - [x] Play macro (Ctrl+Alt+0-9 to play) ✅
-- [ ] Macro persistence (save/load across sessions)
+- [ ] Macro persistence (save/load across sessions) - **🦀 Core** (file I/O, startup)
 
 ---
 
 ### Priority 2: LSP & Developer Tools
 
-#### LSP Core Robustness (P0)
+#### LSP Core Robustness (P0) - **🦀 Core**
 
 - [ ] **Auto-Restart on Crash**
   - Detect server process death, track restart attempts
@@ -48,7 +57,7 @@
   - Notify user on crash with option to manually restart
   - **Effort:** 4-6 hours
 
-#### LSP Architecture Improvements (P1)
+#### LSP Architecture Improvements (P1) - **🦀 Core**
 
 - [ ] **Feature Registration System**
   - Abstract features: `trait LspFeature { initialize(), clear() }`
@@ -66,7 +75,7 @@
   - Send `workspace/didChangeWorkspaceFolders` on add/remove
   - **Effort:** 4-6 hours
 
-#### LSP Core UX Features (P1)
+#### LSP Core UX Features (P1) - **🦀 Core**
 
 - [ ] **Hover Documentation**
   - Request `textDocument/hover` on Ctrl+K or hover
@@ -92,7 +101,7 @@
   - Highlight active parameter
   - **Effort:** 4-6 hours
 
-#### LSP Developer Experience (P2)
+#### LSP Developer Experience (P2) - **🦀 Core**
 
 - [ ] **Middleware System**
   - Intercept requests/notifications for logging, metrics
@@ -105,18 +114,18 @@
 
 #### Deferred (Lower Priority)
 
-- Semantic Tokens - Advanced highlighting
-- Inlay Hints - Type annotations
-- Call/Type Hierarchy - Advanced navigation
-- Log Viewer Panel - UI polish
+- Semantic Tokens - **🦀 Core** (highlighting integration)
+- Inlay Hints - **🦀 Core** (rendering pipeline)
+- Call/Type Hierarchy - **🦀 Core** (LSP protocol)
+- Log Viewer Panel - **📦 Plugin** (UI display)
 
 #### File Explorer Polish
-- [ ] Input dialog system for custom names
-- [ ] Rename with custom name
-- [ ] Copy/move operations (Ctrl+C/X/V in explorer)
-- [ ] File watching for auto-refresh
-- [ ] Search/filter within explorer
-- [ ] Sort options (name, date, size, type)
+- [ ] Input dialog system for custom names - **🦀 Core** (UI primitive)
+- [ ] Rename with custom name - **🦀 Core** (uses dialog system)
+- [ ] Copy/move operations (Ctrl+C/X/V in explorer) - **🦀 Core** (file operations)
+- [ ] File watching for auto-refresh - **🦀 Core** (OS integration)
+- [ ] Search/filter within explorer - **📦 Plugin** (filter UI)
+- [ ] Sort options (name, date, size, type) - **📦 Plugin** (sort logic)
 
 ---
 
@@ -131,7 +140,7 @@
 - ❌ BufferKind enum not yet implemented (file vs virtual distinction)
 - ❌ TypeScript ops for virtual buffers not exposed
 
-#### Remaining Infrastructure Tasks
+#### Remaining Infrastructure Tasks - **🔧 Infrastructure**
 
 - [ ] **BufferKind Enum**
   - Add `BufferKind::File { path }` vs `BufferKind::Virtual { name, mode }`
@@ -154,7 +163,7 @@
   - `revert-buffer` command (g in special mode) calls buffer's revert function
   - Plugin API: `editor.set_revert_function(buf_id, callback)`
 
-#### Example Plugin: Diagnostics Panel (TypeScript) ✅ IMPLEMENTED
+#### Example Plugin: Diagnostics Panel (TypeScript) ✅ IMPLEMENTED - **📦 Plugin**
 
 Fully functional diagnostics panel with virtual buffer split view:
 - [x] Show diagnostics with severity icons ([E], [W], [I], [H])
@@ -166,7 +175,7 @@ Fully functional diagnostics panel with virtual buffer split view:
 - [ ] Auto-refresh on diagnostic updates
 - [ ] Integrate with next-error navigation
 
-#### Future Plugin Examples
+#### Future Plugin Examples - **📦 Plugin**
 - Magit-style git interface
 - Telescope-style fuzzy finder
 - Undo tree visualizer
@@ -178,66 +187,66 @@ Fully functional diagnostics panel with virtual buffer split view:
 ### Priority 4: Visual Enhancements & UX
 
 #### Visual Improvements
-- [ ] Indent guides
-- [ ] Current line highlighting
-- [ ] Whitespace visualization
-- [ ] Color column (vertical ruler)
-- [ ] Git gutter (show added/modified/deleted lines)
-- [ ] Minimap (optional)
+- [ ] Indent guides - **🦀 Core** (rendering pipeline)
+- [ ] Current line highlighting - **🦀 Core** (rendering)
+- [ ] Whitespace visualization - **🦀 Core** (rendering)
+- [ ] Color column (vertical ruler) - **🦀 Core** (rendering)
+- [ ] Git gutter (show added/modified/deleted lines) - **📦 Plugin** (git diff parsing)
+- [ ] Minimap (optional) - **🦀 Core** (separate rendering view)
 
 #### Themes & Appearance
-- [ ] More built-in themes (Solarized, Monokai, Dracula, Nord)
-- [ ] Theme customization UI
-- [ ] Font configuration (size, family)
-- [ ] Ligature support
+- [ ] More built-in themes (Solarized, Monokai, Dracula, Nord) - **📦 Plugin** (JSON configs)
+- [ ] Theme customization UI - **📦 Plugin** (settings editor)
+- [ ] Font configuration (size, family) - **🦀 Core** (terminal setup)
+- [ ] Ligature support - **🦀 Core** (rendering)
 
 #### Command Palette Improvements
-- [ ] Fuzzy matching (currently substring)
-- [ ] Command history
-- [ ] Recently used commands at top
+- [ ] Fuzzy matching (currently substring) - **🦀 Core** (search algorithm)
+- [ ] Command history - **🦀 Core** (persistence)
+- [ ] Recently used commands at top - **🦀 Core** (sorting logic)
 
 #### Snippets & Templates
-- [ ] Snippet system with Tab expansion
-- [ ] Tabstops and placeholders
-- [ ] Snippet variables ($1, $2, $TM_FILENAME, etc.)
-- [ ] Language-specific snippets
+- [ ] Snippet system with Tab expansion - **📦 Plugin** (can use existing insert APIs)
+- [ ] Tabstops and placeholders - **📦 Plugin** (cursor management via API)
+- [ ] Snippet variables ($1, $2, $TM_FILENAME, etc.) - **📦 Plugin** (variable expansion)
+- [ ] Language-specific snippets - **📦 Plugin** (JSON configs)
 
 #### User Experience
-- [ ] Welcome screen & onboarding
-- [ ] Configuration UI (settings editor)
-- [ ] Better error messages
-- [ ] Crash recovery (restore unsaved files)
-- [ ] Session persistence (restore open files)
+- [ ] Welcome screen & onboarding - **📦 Plugin** (virtual buffer UI)
+- [ ] Configuration UI (settings editor) - **📦 Plugin** (virtual buffer UI)
+- [ ] Better error messages - **🦀 Core** (error handling)
+- [ ] Crash recovery (restore unsaved files) - **🦀 Core** (file I/O, startup)
+- [ ] Session persistence (restore open files) - **🦀 Core** (file I/O, startup)
 
 ---
 
 ### Priority 5: Advanced Features
 
 #### Git Integration
-- [ ] Git status in file explorer
-- [ ] Git blame
-- [ ] Git diff view (side-by-side or unified)
-- [ ] Stage/unstage hunks
-- [ ] Commit UI / Branch switching
-- [ ] Git log viewer
-- [ ] Merge conflict resolution UI
-- [ ] Magit-style interface (via plugin)
+- [ ] Git status in file explorer - **📦 Plugin** (git commands)
+- [ ] Git blame - **📦 Plugin** (git blame parsing, virtual buffer)
+- [ ] Git diff view (side-by-side or unified) - **📦 Plugin** (virtual buffer UI)
+- [ ] Stage/unstage hunks - **📦 Plugin** (git commands)
+- [ ] Commit UI / Branch switching - **📦 Plugin** (git commands, prompts)
+- [ ] Git log viewer - **📦 Plugin** (git log parsing, virtual buffer)
+- [ ] Merge conflict resolution UI - **📦 Plugin** (virtual buffer, markers)
+- [ ] Magit-style interface (via plugin) - **📦 Plugin** (virtual buffer UI)
 
 #### Terminal & Debugger
-- [ ] Embedded terminal (Ctrl+`)
-- [ ] Multiple terminals / split terminal
-- [ ] Debug adapter protocol (DAP) support
-- [ ] Breakpoints (toggle, conditional)
-- [ ] Debug toolbar / Variables view / Call stack
+- [ ] Embedded terminal (Ctrl+`) - **🦀 Core** (PTY integration, rendering)
+- [ ] Multiple terminals / split terminal - **🦀 Core** (split view management)
+- [ ] Debug adapter protocol (DAP) support - **🦀 Core** (protocol implementation)
+- [ ] Breakpoints (toggle, conditional) - **🦀 Core** (margin markers, persistence)
+- [ ] Debug toolbar / Variables view / Call stack - **📦 Plugin** (virtual buffer UIs)
 
 #### Project Management
-- [ ] Project/workspace concept
-- [ ] Project-specific configuration
-- [ ] Multiple workspace folders
+- [ ] Project/workspace concept - **🦀 Core** (multi-root workspace)
+- [ ] Project-specific configuration - **🦀 Core** (config loading)
+- [ ] Multiple workspace folders - **🦀 Core** (LSP multi-root)
 
 ---
 
-### Priority 6: Unified Event System
+### Priority 6: Unified Event System - **🔧 Infrastructure**
 
 **Goal**: Create a coherent event architecture unifying hooks, control events, and script control mode.
 
@@ -265,34 +274,34 @@ Fully functional diagnostics panel with virtual buffer split view:
 
 ### Priority 7: Future Enhancements
 
-#### Performance & Optimization
+#### Performance & Optimization - **🦀 Core**
 - [ ] Syntax highlighting cache
 - [ ] Lazy plugin loading
 - [ ] Memory usage profiling
 
 #### Dialogs & Progress
-- [ ] Confirmation dialogs
-- [ ] Progress indicators
-- [ ] Toast notifications
+- [ ] Confirmation dialogs - **🦀 Core** (UI primitive)
+- [ ] Progress indicators - **🦀 Core** (rendering)
+- [ ] Toast notifications - **🦀 Core** (transient UI)
 
-#### Accessibility
+#### Accessibility - **🦀 Core**
 - [ ] Screen reader support
 - [ ] Configurable UI scale
-- [ ] Color-blind friendly themes
+- [ ] Color-blind friendly themes - **📦 Plugin** (theme configs)
 
 #### Advanced/Future Features
-- [ ] Remote editing (SSH/SFTP)
-- [ ] Collaborative editing (CRDT-based)
-- [ ] Plugin marketplace
-- [ ] Diff editor (compare files)
-- [ ] Markdown preview
-- [ ] Vi/Vim emulation mode
+- [ ] Remote editing (SSH/SFTP) - **🦀 Core** (network I/O)
+- [ ] Collaborative editing (CRDT-based) - **🦀 Core** (data structures)
+- [ ] Plugin marketplace - **📦 Plugin** (package management UI)
+- [ ] Diff editor (compare files) - **📦 Plugin** (virtual buffer, diff parsing)
+- [ ] Markdown preview - **📦 Plugin** (markdown rendering, virtual buffer)
+- [ ] Vi/Vim emulation mode - **📦 Plugin** (keybinding modes, state machine)
 
 ---
 
 ## Technical Debt & Refactoring
 
-### Unified Line Cache Architecture (High Priority)
+### Unified Line Cache Architecture (High Priority) - **🦀 Core**
 
 **Problem**: Line number ↔ byte offset conversions are a major performance bottleneck.
 
@@ -307,17 +316,17 @@ Fully functional diagnostics panel with virtual buffer split view:
 - [ ] Phase 6: Implement viewport-based line population strategy
 - [ ] Phase 7: Benchmark with large files (1GB+) and many diagnostics (10k+)
 
-### Line Wrapping Refactoring
+### Line Wrapping Refactoring - **🦀 Core**
 - [ ] Unify wrapping and no-wrapping code paths
 - [ ] Move cursor position calculation into rendering traversal
 - [ ] Fix style preservation during wrapping
 
-### Code Organization
+### Code Organization - **🦀 Core**
 - [ ] Create BufferView abstraction
 - [ ] Extract multi-cursor operations
 - [ ] Split large modules (editor.rs)
 
-### Split View Improvements
+### Split View Improvements - **🦀 Core**
 
 **Current Status**: Basic split view implemented with Emacs-style shared buffers. Each split has independent cursors and viewports, edits are synchronized.
 
@@ -328,11 +337,11 @@ Fully functional diagnostics panel with virtual buffer split view:
 - [ ] Resizing terminal window redistributes space proportionally
 
 ### Test Infrastructure
-- [ ] TypeScript plugin testing infrastructure (unit tests, mocking, test helpers)
-- [ ] Fix async file loading in test harness
-- [ ] Fix BIG.txt generation timing for scrolling tests
-- [ ] Add more E2E tests for complex workflows
-- [ ] Performance regression tests
+- [ ] TypeScript plugin testing infrastructure (unit tests, mocking, test helpers) - **🔧 Infrastructure**
+- [ ] Fix async file loading in test harness - **🦀 Core**
+- [ ] Fix BIG.txt generation timing for scrolling tests - **🦀 Core**
+- [ ] Add more E2E tests for complex workflows - **🦀 Core**
+- [ ] Performance regression tests - **🦀 Core**
 
 ---
 
@@ -377,11 +386,11 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 
 ## Next Steps
 
-1. **High Priority**: LSP advanced features (hover, code actions, find references)
-2. **High Priority**: Rectangular/block selection (core editor feature)
-3. **Medium Priority**: Complete virtual buffer infrastructure (BufferKind, TypeScript ops)
-4. **Medium Priority**: Macro persistence (save/load across sessions)
-5. **Lower Priority**: Search enhancements (persist history, multi-file search)
+1. **High Priority**: LSP advanced features (hover, code actions, find references) - **🦀 Core**
+2. **High Priority**: Rectangular/block selection rendering - **🦀 Core**
+3. **Medium Priority**: Complete virtual buffer infrastructure - **🔧 Infrastructure**
+4. **Medium Priority**: Macro persistence (save/load) - **🦀 Core**
+5. **Lower Priority**: Git integration plugins - **📦 Plugin**
 
 ### Recent Completions (This Session)
 - ✅ Bracket auto-close and auto-pair deletion
@@ -389,3 +398,4 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 - ✅ Macro recording and playback system (Alt+Shift+0-9 / Ctrl+Alt+0-9)
 - ✅ Comprehensive E2E tests for smart editing features (25 tests)
 - ✅ Block selection infrastructure (SelectionMode, Position2D, keybindings)
+- ✅ Feature categorization (Core vs Plugin analysis)
