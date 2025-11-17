@@ -1,5 +1,6 @@
 use clap::Parser;
 use crossterm::{
+    cursor::SetCursorStyle,
     event::{
         poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent,
         KeyboardEnhancementFlags, MouseEvent, PopKeyboardEnhancementFlags,
@@ -85,6 +86,7 @@ fn main() -> io::Result<()> {
     // Set up panic hook to restore terminal
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
+        let _ = stdout().execute(SetCursorStyle::DefaultUserShape);
         let _ = stdout().execute(PopKeyboardEnhancementFlags);
         let _ = disable_raw_mode();
         let _ = stdout().execute(LeaveAlternateScreen);
@@ -108,6 +110,10 @@ fn main() -> io::Result<()> {
     // Enable mouse support
     let _ = crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture);
     tracing::info!("Enabled mouse capture");
+
+    // Enable blinking block cursor for the primary cursor in active split
+    let _ = stdout().execute(SetCursorStyle::BlinkingBlock);
+    tracing::info!("Enabled blinking block cursor");
 
     let backend = ratatui::backend::CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -156,6 +162,7 @@ fn main() -> io::Result<()> {
 
     // Clean up terminal
     let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
+    let _ = stdout().execute(SetCursorStyle::DefaultUserShape);
     let _ = stdout().execute(PopKeyboardEnhancementFlags);
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;

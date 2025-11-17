@@ -55,10 +55,16 @@ struct EditorColors {
     bg: ColorDef,
     fg: ColorDef,
     cursor: ColorDef,
+    #[serde(default = "default_inactive_cursor")]
+    inactive_cursor: ColorDef,
     selection_bg: ColorDef,
     current_line_bg: ColorDef,
     line_number_fg: ColorDef,
     line_number_bg: ColorDef,
+}
+
+fn default_inactive_cursor() -> ColorDef {
+    ColorDef::Named("DarkGray".to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -217,6 +223,7 @@ pub struct Theme {
     pub editor_bg: Color,
     pub editor_fg: Color,
     pub cursor: Color,
+    pub inactive_cursor: Color,
     pub selection_bg: Color,
     pub current_line_bg: Color,
     pub line_number_fg: Color,
@@ -307,6 +314,7 @@ impl From<ThemeFile> for Theme {
             editor_bg: file.editor.bg.into(),
             editor_fg: file.editor.fg.into(),
             cursor: file.editor.cursor.into(),
+            inactive_cursor: file.editor.inactive_cursor.into(),
             selection_bg: file.editor.selection_bg.into(),
             current_line_bg: file.editor.current_line_bg.into(),
             line_number_fg: file.editor.line_number_fg.into(),
@@ -412,6 +420,7 @@ impl Theme {
             editor_bg: Color::Rgb(30, 30, 30),
             editor_fg: Color::Rgb(212, 212, 212),
             cursor: Color::Rgb(82, 139, 255),
+            inactive_cursor: Color::Rgb(100, 100, 100),
             selection_bg: Color::Rgb(38, 79, 120),
             current_line_bg: Color::Rgb(40, 40, 40),
             line_number_fg: Color::Rgb(133, 133, 133),
@@ -505,6 +514,7 @@ impl Theme {
             editor_bg: Color::Rgb(255, 255, 255),
             editor_fg: Color::Rgb(0, 0, 0),
             cursor: Color::Rgb(0, 0, 255),
+            inactive_cursor: Color::Rgb(180, 180, 180),
             selection_bg: Color::Rgb(173, 214, 255),
             current_line_bg: Color::Rgb(245, 245, 245),
             line_number_fg: Color::Rgb(133, 133, 133),
@@ -598,6 +608,7 @@ impl Theme {
             editor_bg: Color::Black,
             editor_fg: Color::White,
             cursor: Color::Yellow,
+            inactive_cursor: Color::DarkGray,
             selection_bg: Color::Rgb(0, 100, 200),
             current_line_bg: Color::Rgb(20, 20, 20),
             line_number_fg: Color::Yellow,

@@ -725,23 +725,26 @@ impl SplitRenderer {
 
                     // Cursor styling - make secondary cursors visible with reversed colors
                     // Don't apply REVERSED to primary cursor to preserve terminal cursor visibility
-                    // For inactive splits, ALL cursors should be REVERSED (no hardware cursor)
+                    // For inactive splits, ALL cursors use a less pronounced color (no hardware cursor)
                     let is_secondary_cursor = is_cursor && byte_pos != primary_cursor_position;
-                    let should_reverse_cursor = if is_active {
+                    if is_active {
                         // In active split: only reverse secondary cursors (primary uses hardware cursor)
-                        is_secondary_cursor
-                    } else {
-                        // In inactive split: reverse all cursors including primary
-                        is_cursor
-                    };
-                    if should_reverse_cursor {
+                        if is_secondary_cursor {
+                            tracing::trace!(
+                                "Applying REVERSED modifier to secondary cursor at byte_pos={}, char={:?}",
+                                byte_pos,
+                                ch
+                            );
+                            style = style.add_modifier(Modifier::REVERSED);
+                        }
+                    } else if is_cursor {
+                        // In inactive split: use less pronounced color for all cursors
                         tracing::trace!(
-                            "Applying REVERSED modifier to cursor at byte_pos={}, char={:?}, is_active={}",
+                            "Applying inactive cursor color at byte_pos={}, char={:?}",
                             byte_pos,
-                            ch,
-                            is_active
+                            ch
                         );
-                        style = style.add_modifier(Modifier::REVERSED);
+                        style = style.fg(theme.editor_fg).bg(theme.inactive_cursor);
                     }
 
                     // Determine what character to display
@@ -773,7 +776,7 @@ impl SplitRenderer {
 
                     // If this is a cursor on a newline, we'll handle it after the char loop
                     // Only apply REVERSED for secondary cursors to preserve primary cursor visibility
-                    // For inactive splits, always show the cursor with REVERSED
+                    // For inactive splits, use less pronounced color
                     if is_cursor && ch == '\n' {
                         let should_add_indicator = if is_active {
                             is_secondary_cursor // Only secondary cursors in active split
@@ -781,11 +784,19 @@ impl SplitRenderer {
                             true // All cursors in inactive splits
                         };
                         if should_add_indicator {
-                            // Add a visible cursor indicator (space with REVERSED style)
-                            let cursor_style = Style::default()
-                                .fg(theme.editor_fg)
-                                .bg(theme.editor_bg)
-                                .add_modifier(Modifier::REVERSED);
+                            // Add a visible cursor indicator (space with appropriate style)
+                            let cursor_style = if is_active {
+                                // Active split: use REVERSED for secondary cursors
+                                Style::default()
+                                    .fg(theme.editor_fg)
+                                    .bg(theme.editor_bg)
+                                    .add_modifier(Modifier::REVERSED)
+                            } else {
+                                // Inactive split: use less pronounced color
+                                Style::default()
+                                    .fg(theme.editor_fg)
+                                    .bg(theme.inactive_cursor)
+                            };
                             line_spans.push(Span::styled(" ", cursor_style));
                         }
                         // Primary cursor on newline will be shown by terminal hardware cursor (active split only)
@@ -812,8 +823,8 @@ impl SplitRenderer {
                 );
 
                 if cursor_at_end {
-                    // Only add REVERSED indicator for secondary cursors to preserve primary cursor visibility
-                    // For inactive splits, always show the cursor with REVERSED
+                    // Only add indicator for secondary cursors to preserve primary cursor visibility
+                    // For inactive splits, use less pronounced color
                     let is_primary_at_end = line_end_pos == primary_cursor_position;
                     let should_add_indicator = if is_active {
                         !is_primary_at_end // Only secondary cursors in active split
@@ -821,16 +832,24 @@ impl SplitRenderer {
                         true // All cursors in inactive splits
                     };
                     if should_add_indicator {
-                        // Add a space character with REVERSED style to show cursor at end of line
+                        // Add a space character with appropriate style to show cursor at end of line
                         tracing::debug!(
-                            "Adding REVERSED cursor indicator at end of line, is_active={}, is_primary={}",
+                            "Adding cursor indicator at end of line, is_active={}, is_primary={}",
                             is_active,
                             is_primary_at_end
                         );
-                        let cursor_style = Style::default()
-                            .fg(theme.editor_fg)
-                            .bg(theme.editor_bg)
-                            .add_modifier(Modifier::REVERSED);
+                        let cursor_style = if is_active {
+                            // Active split: use REVERSED for secondary cursors
+                            Style::default()
+                                .fg(theme.editor_fg)
+                                .bg(theme.editor_bg)
+                                .add_modifier(Modifier::REVERSED)
+                        } else {
+                            // Inactive split: use less pronounced color
+                            Style::default()
+                                .fg(theme.editor_fg)
+                                .bg(theme.inactive_cursor)
+                        };
                         line_spans.push(Span::styled(" ", cursor_style));
                     }
                     // Primary cursor at end of line will be shown by terminal hardware cursor (active split only)
