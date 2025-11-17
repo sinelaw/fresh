@@ -4465,20 +4465,107 @@ impl Editor {
             event_log.append(batch.clone());
         }
 
+        // IMPORTANT: Calculate LSP changes BEFORE applying to buffer!
+        // The byte positions in the events are relative to the ORIGINAL buffer,
+        // so we must convert them to LSP positions before modifying the buffer.
+        // Otherwise, the LSP server will receive incorrect position information.
+        let original_active = self.active_buffer;
+        self.active_buffer = buffer_id;
+        let lsp_changes = self.collect_lsp_changes(&batch);
+        self.active_buffer = original_active;
+
         // Apply to buffer state
         let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
         })?;
         state.apply(&batch);
 
-        // Notify LSP about the changes
-        // Temporarily switch active buffer to use notify_lsp_change correctly
-        let original_active = self.active_buffer;
-        self.active_buffer = buffer_id;
-        self.notify_lsp_change(&batch);
-        self.active_buffer = original_active;
+        // Notify LSP about the changes using pre-calculated positions
+        self.send_lsp_changes_for_buffer(buffer_id, lsp_changes);
 
         Ok(())
+    }
+
+    /// Send pre-calculated LSP changes for a specific buffer
+    fn send_lsp_changes_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
+    ) {
+        if changes.is_empty() {
+            return;
+        }
+
+        // Check if LSP is enabled for this buffer
+        let metadata = match self.buffer_metadata.get(&buffer_id) {
+            Some(m) => m,
+            None => {
+                tracing::debug!(
+                    "send_lsp_changes_for_buffer: no metadata for buffer {:?}",
+                    buffer_id
+                );
+                return;
+            }
+        };
+
+        if !metadata.lsp_enabled {
+            tracing::debug!("send_lsp_changes_for_buffer: LSP disabled for this buffer");
+            return;
+        }
+
+        // Get the URI
+        let uri = match metadata.file_uri() {
+            Some(u) => u.clone(),
+            None => {
+                tracing::debug!(
+                    "send_lsp_changes_for_buffer: no URI for buffer (not a file or URI creation failed)"
+                );
+                return;
+            }
+        };
+
+        // Get the file path for language detection
+        let path = match metadata.file_path() {
+            Some(p) => p,
+            None => {
+                tracing::debug!("send_lsp_changes_for_buffer: no file path for buffer");
+                return;
+            }
+        };
+
+        let language = match detect_language(path) {
+            Some(l) => l,
+            None => {
+                tracing::debug!(
+                    "send_lsp_changes_for_buffer: no language detected for {:?}",
+                    path
+                );
+                return;
+            }
+        };
+
+        tracing::debug!(
+            "send_lsp_changes_for_buffer: sending {} changes to {} in single didChange notification",
+            changes.len(),
+            uri.as_str()
+        );
+
+        if let Some(lsp) = &mut self.lsp {
+            if let Some(client) = lsp.get_or_spawn(&language) {
+                if let Err(e) = client.did_change(uri, changes) {
+                    tracing::warn!("Failed to send didChange to LSP: {}", e);
+                } else {
+                    tracing::info!("Successfully sent batched didChange to LSP");
+                }
+            } else {
+                tracing::warn!(
+                    "send_lsp_changes_for_buffer: failed to get or spawn LSP client for {}",
+                    language
+                );
+            }
+        } else {
+            tracing::debug!("send_lsp_changes_for_buffer: no LSP manager available");
+        }
     }
 
     /// Start rename mode - select the symbol at cursor and allow inline editing
