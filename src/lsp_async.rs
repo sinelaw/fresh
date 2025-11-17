@@ -264,6 +264,15 @@ enum LspCommand {
         character: u32,
     },
 
+    /// Request find references
+    FindReferences {
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+        include_declaration: bool,
+    },
+
     /// Cancel a pending request
     CancelRequest {
         /// Editor's request ID to cancel
@@ -864,6 +873,76 @@ impl LspState {
                 // Check if it's markdown or plaintext
                 let is_markdown = matches!(kind, MarkupKind::Markdown);
                 (value.clone(), is_markdown)
+            }
+        }
+    }
+
+    /// Handle find references request
+    async fn handle_find_references(
+        &mut self,
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+        include_declaration: bool,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{
+            PartialResultParams, Position, ReferenceContext, ReferenceParams,
+            TextDocumentIdentifier, TextDocumentPositionParams, WorkDoneProgressParams,
+        };
+
+        tracing::debug!(
+            "LSP: find references request at {}:{}:{}",
+            uri.as_str(),
+            line,
+            character
+        );
+
+        let params = ReferenceParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line, character },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: ReferenceContext {
+                include_declaration,
+            },
+        };
+
+        // Send request and get response
+        match self
+            .send_request_sequential::<_, Value>("textDocument/references", Some(params), pending)
+            .await
+        {
+            Ok(result) => {
+                // Parse the references response (Vec<Location>)
+                let locations = if result.is_null() {
+                    vec![]
+                } else if let Ok(locs) =
+                    serde_json::from_value::<Vec<lsp_types::Location>>(result)
+                {
+                    locs
+                } else {
+                    vec![]
+                };
+
+                // Send to main loop
+                let _ = self.async_tx.send(AsyncMessage::LspReferences {
+                    request_id,
+                    locations,
+                });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Find references request failed: {}", e);
+                // Send empty locations on error
+                let _ = self.async_tx.send(AsyncMessage::LspReferences {
+                    request_id,
+                    locations: vec![],
+                });
+                Err(e)
             }
         }
     }
