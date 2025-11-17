@@ -5,7 +5,7 @@ use crate::state::EditorState;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 use std::collections::HashMap;
 
@@ -64,14 +64,15 @@ impl TabsRenderer {
 
             spans.push(Span::styled(tab_text, style));
 
-            // Add a small separator between tabs (single space with no background)
+            // Add a small separator between tabs
             if idx < buffers.len() - 1 {
-                spans.push(Span::raw(" "));
+                spans.push(Span::styled(" ", Style::default().bg(theme.tab_separator_bg)));
             }
         }
 
         let line = Line::from(spans);
-        let paragraph = Paragraph::new(line).style(Style::default().bg(theme.tab_separator_bg));
+        let block = Block::default().style(Style::default().bg(theme.tab_separator_bg));
+        let paragraph = Paragraph::new(line).block(block);
         frame.render_widget(paragraph, area);
     }
 }

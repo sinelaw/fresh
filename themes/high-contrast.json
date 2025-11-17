@@ -10,11 +10,12 @@
     "line_number_bg": [0, 0, 0]
   },
   "ui": {
-    "tab_active_fg": "Black",
-    "tab_active_bg": "Yellow",
-    "tab_inactive_fg": "White",
+    "tab_active_fg": [0, 0, 0],
+    "tab_active_bg": [100, 149, 237],
+    "tab_inactive_fg": [70, 110, 180],
     "tab_inactive_bg": "Black",
-    "tab_separator_bg": "Black",
+    "tab_separator_bg": [30, 45, 90],
+    "menu_bg": [100, 100, 110],
     "status_bar_fg": "Black",
     "status_bar_bg": "Yellow",
     "prompt_fg": "Black",

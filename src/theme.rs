@@ -125,7 +125,7 @@ struct UiColors {
 
 // Default menu colors (for backward compatibility with existing themes)
 fn default_menu_bg() -> ColorDef {
-    ColorDef::Rgb(40, 40, 40)
+    ColorDef::Rgb(60, 60, 65)
 }
 fn default_menu_fg() -> ColorDef {
     ColorDef::Rgb(220, 220, 220)
@@ -422,10 +422,10 @@ impl Theme {
             tab_active_bg: Color::Blue,
             tab_inactive_fg: Color::White,
             tab_inactive_bg: Color::DarkGray,
-            tab_separator_bg: Color::Black,
+            tab_separator_bg: Color::Rgb(45, 45, 48),
 
             // Menu bar colors
-            menu_bg: Color::Rgb(40, 40, 40),
+            menu_bg: Color::Rgb(60, 60, 65),
             menu_fg: Color::Rgb(220, 220, 220),
             menu_active_bg: Color::Rgb(60, 60, 60),
             menu_active_fg: Color::Rgb(255, 255, 255),
@@ -608,10 +608,10 @@ impl Theme {
             tab_active_bg: Color::Yellow,
             tab_inactive_fg: Color::White,
             tab_inactive_bg: Color::Black,
-            tab_separator_bg: Color::Black,
+            tab_separator_bg: Color::Rgb(30, 30, 35),
 
             // Menu bar colors
-            menu_bg: Color::Black,
+            menu_bg: Color::Rgb(50, 50, 55),
             menu_fg: Color::White,
             menu_active_bg: Color::Yellow,
             menu_active_fg: Color::Black,
