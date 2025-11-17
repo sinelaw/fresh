@@ -5204,6 +5204,12 @@ impl Editor {
             Action::ToggleMacroRecording(key) => {
                 self.toggle_macro_recording(key);
             }
+            Action::ShowMacro(key) => {
+                self.show_macro_in_buffer(key);
+            }
+            Action::ListMacros => {
+                self.list_macros_in_buffer();
+            }
             Action::None => {}
             Action::DeleteBackward => {
                 // Normal backspace handling
@@ -8695,12 +8701,148 @@ impl Editor {
                 Action::StartMacroRecording
                 | Action::StopMacroRecording
                 | Action::PlayMacro(_)
-                | Action::ToggleMacroRecording(_) => {}
+                | Action::ToggleMacroRecording(_)
+                | Action::ShowMacro(_)
+                | Action::ListMacros => {}
                 _ => {
                     state.actions.push(action.clone());
                 }
             }
         }
+    }
+
+    /// Show a macro in a buffer as JSON
+    fn show_macro_in_buffer(&mut self, key: char) {
+        if let Some(actions) = self.macros.get(&key) {
+            // Serialize the macro to JSON
+            let json = match serde_json::to_string_pretty(actions) {
+                Ok(json) => json,
+                Err(e) => {
+                    self.set_status_message(format!("Failed to serialize macro: {}", e));
+                    return;
+                }
+            };
+
+            // Create header with macro info
+            let content = format!(
+                "// Macro '{}' ({} actions)\n// This buffer can be saved as a .json file for persistence\n\n{}",
+                key,
+                actions.len(),
+                json
+            );
+
+            // Create a new buffer for the macro
+            let buffer_id = BufferId(self.next_buffer_id);
+            self.next_buffer_id += 1;
+
+            let state = EditorState::new(
+                self.terminal_width.into(),
+                self.terminal_height.into(),
+                self.config.editor.large_file_threshold_bytes as usize,
+            );
+
+            self.buffers.insert(buffer_id, state);
+            self.event_logs.insert(buffer_id, EventLog::new());
+
+            // Set buffer content
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                state.buffer = crate::text_buffer::Buffer::from_str(
+                    &content,
+                    self.config.editor.large_file_threshold_bytes as usize,
+                );
+            }
+
+            // Set metadata
+            let metadata = BufferMetadata {
+                kind: BufferKind::Virtual {
+                    mode: "macro-view".to_string(),
+                },
+                display_name: format!("*Macro {}*", key),
+                lsp_enabled: false,
+                lsp_disabled_reason: Some("Virtual macro buffer".to_string()),
+                read_only: false, // Allow editing for saving
+            };
+            self.buffer_metadata.insert(buffer_id, metadata);
+
+            // Switch to the new buffer
+            self.active_buffer = buffer_id;
+            self.set_status_message(format!(
+                "Macro '{}' shown in buffer ({} actions) - save as .json for persistence",
+                key,
+                actions.len()
+            ));
+        } else {
+            self.set_status_message(format!("No macro recorded for '{}'", key));
+        }
+    }
+
+    /// List all recorded macros in a buffer
+    fn list_macros_in_buffer(&mut self) {
+        if self.macros.is_empty() {
+            self.set_status_message("No macros recorded".to_string());
+            return;
+        }
+
+        // Build a summary of all macros
+        let mut content = String::from("// Recorded Macros\n// Use ShowMacro(key) to see details\n\n");
+
+        let mut keys: Vec<char> = self.macros.keys().copied().collect();
+        keys.sort();
+
+        for key in keys {
+            if let Some(actions) = self.macros.get(&key) {
+                content.push_str(&format!("Macro '{}': {} actions\n", key, actions.len()));
+
+                // Show first few actions as preview
+                for (i, action) in actions.iter().take(5).enumerate() {
+                    content.push_str(&format!("  {}. {:?}\n", i + 1, action));
+                }
+                if actions.len() > 5 {
+                    content.push_str(&format!("  ... and {} more actions\n", actions.len() - 5));
+                }
+                content.push('\n');
+            }
+        }
+
+        // Create a new buffer for the macro list
+        let buffer_id = BufferId(self.next_buffer_id);
+        self.next_buffer_id += 1;
+
+        let state = EditorState::new(
+            self.terminal_width.into(),
+            self.terminal_height.into(),
+            self.config.editor.large_file_threshold_bytes as usize,
+        );
+
+        self.buffers.insert(buffer_id, state);
+        self.event_logs.insert(buffer_id, EventLog::new());
+
+        // Set buffer content
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.buffer = crate::text_buffer::Buffer::from_str(
+                &content,
+                self.config.editor.large_file_threshold_bytes as usize,
+            );
+        }
+
+        // Set metadata
+        let metadata = BufferMetadata {
+            kind: BufferKind::Virtual {
+                mode: "macro-list".to_string(),
+            },
+            display_name: "*Macros*".to_string(),
+            lsp_enabled: false,
+            lsp_disabled_reason: Some("Virtual macro list buffer".to_string()),
+            read_only: true,
+        };
+        self.buffer_metadata.insert(buffer_id, metadata);
+
+        // Switch to the new buffer
+        self.active_buffer = buffer_id;
+        self.set_status_message(format!(
+            "Showing {} recorded macro(s)",
+            self.macros.len()
+        ));
     }
 
     /// Set a bookmark at the current position
