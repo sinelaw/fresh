@@ -267,13 +267,18 @@ impl Popup {
                     PopupPosition::AtCursor => cursor_y,
                     PopupPosition::BelowCursor => {
                         if cursor_y + 1 + height > terminal_area.height {
-                            // Not enough space below, put above
-                            cursor_y.saturating_sub(height)
+                            // Not enough space below, put above cursor
+                            // Position so bottom of popup ends one line above cursor
+                            cursor_y.saturating_sub(height + 1)
                         } else {
+                            // One line below cursor
                             cursor_y + 1
                         }
                     }
-                    PopupPosition::AboveCursor => cursor_y.saturating_sub(height),
+                    PopupPosition::AboveCursor => {
+                        // Position so bottom of popup ends one line above cursor
+                        cursor_y.saturating_sub(height + 1)
+                    }
                     _ => cursor_y,
                 };
 
