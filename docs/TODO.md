@@ -290,13 +290,9 @@ Once infrastructure is complete:
 
 ### Unified Line Cache Architecture (High Priority)
 
-**Problem**: Line number ↔ byte offset conversions are a major performance bottleneck (61.95% of diagnostic processing time).
+**Problem**: Line number ↔ byte offset conversions are a major performance bottleneck.
 
 **Solution**: Unify line tracking into the existing IntervalTree marker system. Lines are intervals between newlines, reusing lazy delta propagation for O(log N) edits.
-
-**Expected Performance Gain**:
-- LSP diagnostic processing: 61.95% reduction
-- Edit performance: 10-100x faster for files with large caches
 
 **Implementation Plan**:
 - [ ] Phase 1: Extend IntervalTree with `MarkerType` enum and line marker methods
@@ -313,9 +309,9 @@ Once infrastructure is complete:
 - [ ] Fix style preservation during wrapping
 
 ### Code Organization
-- [ ] Create BufferView abstraction (~500 lines)
-- [ ] Extract multi-cursor operations (~200 lines)
-- [ ] Split large modules (editor.rs is ~3000 lines)
+- [ ] Create BufferView abstraction
+- [ ] Extract multi-cursor operations
+- [ ] Split large modules (editor.rs)
 
 ### Split View Improvements
 
@@ -329,8 +325,8 @@ Once infrastructure is complete:
 
 ### Test Infrastructure
 - [ ] TypeScript plugin testing infrastructure (unit tests, mocking, test helpers)
-- [ ] Fix async file loading in test harness (6 tests ignored)
-- [ ] Fix BIG.txt generation timing (2 scrolling tests fail)
+- [ ] Fix async file loading in test harness
+- [ ] Fix BIG.txt generation timing for scrolling tests
 - [ ] Add more E2E tests for complex workflows
 - [ ] Performance regression tests
 
@@ -338,25 +334,25 @@ Once infrastructure is complete:
 
 ## Completed Work (Summary)
 
-### TypeScript Plugin System Migration (Nov 2024)
+### TypeScript Plugin System Migration
 Full migration from Lua to TypeScript as the sole plugin runtime:
-- Embedded Deno Core (V8 engine) with 44 native ops
+- Embedded Deno Core (V8 engine) with native ops
 - Async/await support via native Promises
 - TypeScriptPluginManager with load/unload/reload/hot-reload
 - Event/hook system (editor.on/off with emit infrastructure)
-- 9 production TypeScript plugins (git-grep, git-find-file, todo-highlighter, etc.)
+- Production plugins (git-grep, git-find-file, todo-highlighter, etc.)
 - Complete removal of mlua and all Lua code
 
 ### Menu Bar System
 Full keyboard/mouse navigation with F10 toggle, arrow key navigation, Alt+letter mnemonics, keybinding display in dropdowns, JSON configuration.
 
 ### Core LSP Features
-- Client state machine (Initial→Starting→Initializing→Running→Stopping→Stopped→Error)
+- Client state machine with validated transitions
 - Request cancellation with $/cancelRequest notifications
 - Deferred document open (queue commands until init completes)
 - Diagnostics, completion, go-to-definition, rename refactoring
 - Progress notifications, window messages, UTF-16 position encoding
-- CPU optimization (eliminated 46% busy-wait loop)
+- CPU optimization (eliminated busy-wait loop)
 
 ### Search & Replace
 Streaming search on GB+ files, regex support, interactive query-replace, search in selection, search history.
@@ -365,7 +361,7 @@ Streaming search on GB+ files, regex support, interactive query-replace, search 
 BufferMode system (keybindings with inheritance), TextProperty system (metadata embedding), hook-based prompt API, command registration, async process spawning.
 
 ### Performance Optimizations
-ChunkTree (38x speedup), IntervalTree marker system (O(log n)), viewport-based rendering (O(viewport_height)), eliminated expensive buffer.to_string() calls.
+ChunkTree, IntervalTree marker system (O(log n)), viewport-based rendering, eliminated expensive buffer.to_string() calls.
 
 ### UI & Layout
 Split views (horizontal/vertical with shared buffers), file explorer (lazy loading, gitignore, create/delete), command palette, themes, scrollbars, tab bar.
