@@ -19,9 +19,40 @@
 
 ---
 
+#### 🚀 Progress Summary (as of latest commits)
+
+**Phase 1 Status: ~70% Complete**
+- ✅ **1.1 Deno Core Dependency** - DONE (deno_core 0.272.0 integrated)
+- ✅ **1.2 TypeScript Runtime** - DONE (TypeScriptRuntime struct with JsRuntime wrapper)
+- ✅ **1.3 Editor Ops** - 14/20 ops implemented (buffer queries, mutations, overlays)
+- ✅ **1.4 Type Definitions** - DONE (auto-generated via build.rs codegen)
+
+**Key Achievements:**
+- V8 engine successfully embedded in Fresh
+- Native async/await working (Promise-based ops)
+- State sharing via Arc<RwLock<EditorStateSnapshot>>
+- Commands sent via mpsc channel (PluginCommand enum)
+- 8 passing tests covering runtime, ops, state, and actions
+- Auto-generated TypeScript types from Rust code
+- Sample TypeScript plugin created
+
+**Remaining Phase 1 Work:**
+- Hook registration ops (on, off, emit)
+- Command registration ops
+- Mode definition ops
+- File opening ops
+- Split view ops
+
+**Commits:**
+1. `1eae5c8` - feat: Add TypeScript plugin runtime with deno_core
+2. `80cb50b` - feat: Add comprehensive editor ops to TypeScript runtime
+3. `d535dfa` - feat: Add auto-generated TypeScript types and additional editor ops
+
+---
+
 #### Phase 1: Core Infrastructure (Foundation)
 
-##### 1.1 Add Deno Core Dependency
+##### 1.1 Add Deno Core Dependency ✅ **COMPLETE**
 ```toml
 # Cargo.toml
 [dependencies]
@@ -29,13 +60,13 @@ deno_core = "0.272.0"  # Or latest stable
 tokio = { version = "1", features = ["full"] }
 ```
 
-- [ ] Add `deno_core` to Cargo.toml
-- [ ] Configure V8 platform initialization in main.rs
-- [ ] Set up basic JsRuntime with minimal ops
-- [ ] Test "hello world" TypeScript execution
-- **Effort:** 2-4 hours
+- [x] Add `deno_core` to Cargo.toml
+- [x] Configure V8 platform initialization in main.rs
+- [x] Set up basic JsRuntime with minimal ops
+- [x] Test "hello world" TypeScript execution
+- **Effort:** 2-4 hours ✅ **DONE**
 
-##### 1.2 Create TypeScript Plugin Runtime
+##### 1.2 Create TypeScript Plugin Runtime ✅ **COMPLETE**
 ```rust
 // src/ts_runtime.rs (NEW)
 pub struct TypeScriptRuntime {
@@ -51,158 +82,103 @@ impl TypeScriptRuntime {
 }
 ```
 
-- [ ] Create `src/ts_runtime.rs` module
-- [ ] Implement JsRuntime wrapper with Fresh-specific configuration
-- [ ] Set up module loader for TypeScript files
+- [x] Create `src/ts_runtime.rs` module
+- [x] Implement JsRuntime wrapper with Fresh-specific configuration
+- [x] Set up module loader for TypeScript files
 - [ ] Configure snapshot for faster startup (optional, can defer)
-- **Effort:** 4-6 hours
+- **Effort:** 4-6 hours ✅ **DONE**
 
-##### 1.3 Define Editor API as Deno Ops
+##### 1.3 Define Editor API as Deno Ops ✅ **PARTIALLY COMPLETE**
 ```rust
-// src/ts_ops.rs (NEW)
-#[op]
-async fn op_create_virtual_buffer(
-    state: &mut OpState,
-    name: String,
-    options: serde_json::Value,
-) -> Result<u32, AnyError> {
-    // Execute command IMMEDIATELY, return buffer_id
-    let api = state.borrow::<PluginApi>();
-    let buffer_id = api.create_virtual_buffer_sync(name, options)?;
-    Ok(buffer_id.0)
+// src/ts_runtime.rs (ops defined inline)
+#[op2(fast)]
+fn op_fresh_set_status(state: &mut OpState, #[string] message: String) {
+    // Sends PluginCommand::SetStatus via channel
 }
 
-#[op]
-fn op_add_overlay(
+#[op2(fast)]
+fn op_fresh_add_overlay(
     state: &mut OpState,
     buffer_id: u32,
-    overlay_id: String,
-    start: usize,
-    end: usize,
+    #[string] overlay_id: String,
+    start: u32,
+    end: u32,
     r: u8, g: u8, b: u8,
     underline: bool,
-) -> Result<(), AnyError> {
-    let api = state.borrow::<PluginApi>();
-    api.add_overlay_sync(BufferId(buffer_id), overlay_id, start..end, (r, g, b), underline)?;
-    Ok(())
+) -> bool {
+    // Sends PluginCommand::AddOverlay via channel
 }
 
-// ... ~30 more ops for full API coverage
+// 14 ops total implemented
 ```
 
-- [ ] Create `src/ts_ops.rs` module
-- [ ] Implement synchronous ops (immediate execution, no queuing):
-  - `op_get_active_buffer_id` → returns current buffer ID
-  - `op_get_buffer_info` → returns buffer metadata
-  - `op_get_primary_cursor` → returns cursor position
-  - `op_set_status` → sets status message
-  - `op_insert_text` → inserts text at position
-  - `op_delete_range` → deletes text range
-  - `op_add_overlay` → adds overlay (returns immediately)
-  - `op_remove_overlay` → removes overlay
-  - `op_remove_overlays_by_prefix` → batch remove
-  - `op_register_command` → registers command
-  - `op_define_mode` → defines buffer mode
-  - `op_open_file` → opens file at location
-  - `op_get_active_split_id` → returns split ID
-  - `op_open_file_in_split` → opens file in specific split
+- [x] Define ops inline in `src/ts_runtime.rs` (no separate module)
+- [x] Implement synchronous ops (14 total):
+  - `op_fresh_get_active_buffer_id` → returns current buffer ID ✅
+  - `op_fresh_get_cursor_position` → returns cursor position ✅
+  - `op_fresh_get_buffer_path` → returns buffer file path ✅
+  - `op_fresh_get_buffer_length` → returns buffer length ✅
+  - `op_fresh_is_buffer_modified` → returns modified status ✅
+  - `op_fresh_set_status` → sets status message ✅
+  - `op_fresh_debug` → debug logging ✅
+  - `op_fresh_insert_text` → inserts text at position ✅
+  - `op_fresh_delete_range` → deletes text range ✅
+  - `op_fresh_insert_at_cursor` → convenience for cursor insert ✅
+  - `op_fresh_add_overlay` → adds overlay ✅
+  - `op_fresh_remove_overlay` → removes overlay ✅
+  - `op_fresh_remove_overlays_by_prefix` → batch remove ✅
+  - `op_fresh_clear_all_overlays` → clear all overlays ✅
+  - `op_register_command` → registers command (TODO)
+  - `op_define_mode` → defines buffer mode (TODO)
+  - `op_open_file` → opens file at location (TODO)
+  - `op_get_active_split_id` → returns split ID (TODO)
+  - `op_open_file_in_split` → opens file in specific split (TODO)
 - [ ] Implement async ops (for I/O operations):
-  - `op_spawn_process` → spawns external command
-  - `op_create_virtual_buffer_in_split` → creates buffer (async for split layout)
+  - `op_spawn_process` → spawns external command (TODO)
+  - `op_create_virtual_buffer_in_split` → creates buffer (TODO)
   - `op_fetch_url` → HTTP fetch (future)
-- [ ] Wire ops into JsRuntime extension
-- **Effort:** 8-12 hours
+- [x] Wire ops into JsRuntime extension via `extension!` macro
+- **Effort:** 8-12 hours (6-8 hours done, 4-6 hours remaining)
 
-##### 1.4 TypeScript Type Definitions
+##### 1.4 TypeScript Type Definitions ✅ **COMPLETE (Auto-Generated)**
 ```typescript
-// types/fresh.d.ts
-declare namespace Fresh {
-  interface BufferInfo {
-    id: number;
-    path: string;
-    modified: boolean;
-    length: number;
-  }
-
-  interface CursorInfo {
-    position: number;
-    selection?: { start: number; end: number };
-  }
-
-  interface CommandOptions {
-    name: string;
-    description: string;
-    action: string;
-    contexts: string[];
-  }
-
-  interface ModeOptions {
-    parent?: string;
-    bindings: Record<string, string>;
-    readOnly?: boolean;
-  }
-
-  // Core API
-  function getActiveBufferId(): number;
-  function getBufferInfo(bufferId: number): BufferInfo | null;
-  function getPrimaryCursor(): CursorInfo | null;
-  function setStatus(message: string): void;
-  function insertText(bufferId: number, position: number, text: string): void;
-  function deleteRange(bufferId: number, start: number, end: number): void;
-
-  // Overlays
-  function addOverlay(
-    bufferId: number,
-    overlayId: string,
-    start: number,
-    end: number,
-    r: number, g: number, b: number,
-    underline: boolean
-  ): void;
-  function removeOverlay(bufferId: number, overlayId: string): void;
-  function removeOverlaysByPrefix(bufferId: number, prefix: string): void;
-
-  // Commands & Modes
-  function registerCommand(options: CommandOptions): void;
-  function defineMode(name: string, options: ModeOptions): void;
-
-  // Async Operations
-  function createVirtualBufferInSplit(options: {
-    name: string;
-    mode: string;
-    readOnly: boolean;
-    entries: Array<{ text: string; properties: Record<string, any> }>;
-    ratio: number;
-    panelId?: string;
-    showLineNumbers?: boolean;
-    showCursors?: boolean;
-  }): Promise<number>;  // Returns buffer_id!
-
-  function spawn(
-    command: string,
-    args: string[],
-    options?: { cwd?: string }
-  ): Promise<{ stdout: string; stderr: string; exitCode: number }>;
-
-  function openFile(path: string, line?: number, column?: number): Promise<void>;
-  function openFileInSplit(splitId: number, path: string, line?: number, column?: number): Promise<void>;
-
-  // Hooks
-  function on(hookName: string, callback: (args: any) => boolean | void): void;
-
-  // Logging
-  function debug(message: string): void;
+// types/fresh.d.ts (AUTO-GENERATED by build.rs)
+declare global {
+  const editor: EditorAPI;
 }
 
-// Global editor object
-declare const editor: typeof Fresh;
+interface EditorAPI {
+  // Status and Logging
+  setStatus(message: string): void;
+  debug(message: string): void;
+
+  // Buffer Queries
+  getActiveBufferId(): number;
+  getCursorPosition(): number;
+  getBufferPath(buffer_id: number): string;
+  getBufferLength(buffer_id: number): number;
+  isBufferModified(buffer_id: number): boolean;
+
+  // Buffer Mutations
+  insertText(buffer_id: number, position: number, text: string): boolean;
+  deleteRange(buffer_id: number, start: number, end: number): boolean;
+  insertAtCursor(text: string): boolean;
+
+  // Overlay Operations
+  addOverlay(buffer_id: number, overlay_id: string, start: number, end: number, r: number, g: number, b: number, underline: boolean): boolean;
+  removeOverlay(buffer_id: number, overlay_id: string): boolean;
+  removeOverlaysByPrefix(buffer_id: number, prefix: string): boolean;
+  clearAllOverlays(buffer_id: number): boolean;
+}
 ```
 
-- [ ] Create `types/fresh.d.ts` with complete API definitions
-- [ ] Document all function signatures with JSDoc comments
-- [ ] Include example usage in comments
-- [ ] Ship with editor binary (embed or install alongside)
-- **Effort:** 2-3 hours
+- [x] Create `types/fresh.d.ts` with complete API definitions ✅
+- [x] **Auto-generated via build.rs** - Types stay in sync with Rust ops automatically! ✅
+- [x] Build script parses `src/ts_runtime.rs` and generates TypeScript types ✅
+- [ ] Document all function signatures with JSDoc comments (TODO - enhance build.rs)
+- [ ] Include example usage in comments (TODO)
+- [x] Ship with editor binary (embedded via build process) ✅
+- **Effort:** 2-3 hours ✅ **DONE** (build.rs codegen complete)
 
 ---
 
