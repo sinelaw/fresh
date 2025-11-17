@@ -1902,6 +1902,398 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Test that consecutive LSP renames work correctly
+///
+/// This test reproduces a bug where the second rename fails because the LSP
+/// is not properly notified of buffer changes from the first rename.
+#[test]
+fn test_lsp_rename_consecutive_same_position() -> std::io::Result<()> {
+    use lsp_types::{
+        DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Position, Range,
+        TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 30)?;
+
+    // Create a temporary file with some Rust code
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(
+        &test_file,
+        "fn calculate(value: i32) -> i32 {\n    let result = value * 2;\n    result\n}\n",
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    let initial_content = harness.get_buffer_content();
+    assert!(initial_content.contains("fn calculate(value: i32)"));
+
+    // FIRST RENAME: value -> amount
+    let uri = url::Url::from_file_path(&test_file)
+        .unwrap()
+        .as_str()
+        .parse::<Uri>()
+        .unwrap();
+
+    let first_rename_edit = WorkspaceEdit {
+        changes: None,
+        document_changes: Some(DocumentChanges::Edits(vec![TextDocumentEdit {
+            text_document: OptionalVersionedTextDocumentIdentifier {
+                uri: uri.clone(),
+                version: Some(1),
+            },
+            edits: vec![
+                OneOf::Left(TextEdit {
+                    range: Range {
+                        start: Position { line: 0, character: 13 },
+                        end: Position { line: 0, character: 18 },
+                    },
+                    new_text: "amount".to_string(),
+                }),
+                OneOf::Left(TextEdit {
+                    range: Range {
+                        start: Position { line: 1, character: 17 },
+                        end: Position { line: 1, character: 22 },
+                    },
+                    new_text: "amount".to_string(),
+                }),
+            ],
+        }])),
+        change_annotations: None,
+    };
+
+    harness
+        .editor_mut()
+        .handle_rename_response(1, Ok(first_rename_edit))?;
+    harness.render()?;
+
+    let after_first = harness.get_buffer_content();
+    assert!(
+        after_first.contains("fn calculate(amount: i32)"),
+        "First rename failed. Got:\n{after_first}"
+    );
+    assert!(
+        after_first.contains("let result = amount * 2"),
+        "First rename failed. Got:\n{after_first}"
+    );
+
+    // SECOND RENAME: amount -> total (same position)
+    let second_rename_edit = WorkspaceEdit {
+        changes: None,
+        document_changes: Some(DocumentChanges::Edits(vec![TextDocumentEdit {
+            text_document: OptionalVersionedTextDocumentIdentifier {
+                uri: uri.clone(),
+                version: Some(2),
+            },
+            edits: vec![
+                OneOf::Left(TextEdit {
+                    range: Range {
+                        start: Position { line: 0, character: 13 },
+                        end: Position { line: 0, character: 19 }, // "amount" is 6 chars
+                    },
+                    new_text: "total".to_string(),
+                }),
+                OneOf::Left(TextEdit {
+                    range: Range {
+                        start: Position { line: 1, character: 17 },
+                        end: Position { line: 1, character: 23 },
+                    },
+                    new_text: "total".to_string(),
+                }),
+            ],
+        }])),
+        change_annotations: None,
+    };
+
+    harness
+        .editor_mut()
+        .handle_rename_response(2, Ok(second_rename_edit))?;
+    harness.render()?;
+
+    let after_second = harness.get_buffer_content();
+    assert!(
+        after_second.contains("fn calculate(total: i32)"),
+        "Second rename failed. Got:\n{after_second}"
+    );
+    assert!(
+        after_second.contains("let result = total * 2"),
+        "Second rename failed. Got:\n{after_second}"
+    );
+    assert!(!after_second.contains("value"));
+    assert!(!after_second.contains("amount"));
+
+    Ok(())
+}
+
+/// Test that consecutive renames with real rust-analyzer work correctly
+///
+/// This test reproduces the bug where the second rename fails because LSP
+/// is notified with incorrect positions after the first rename.
+///
+/// Uses the same interaction as user:
+/// 1. Move cursor to symbol's first letter
+/// 2. Open command palette (Ctrl+P), type "rename", select lsp_rename command
+/// 3. Type new name and approve with Enter
+/// 4. Move cursor back to first letter
+/// 5. Repeat rename command with another new name
+#[test]
+#[ignore] // Run with: cargo test test_lsp_rename_twice_with_rust_analyzer -- --ignored --nocapture
+fn test_lsp_rename_twice_with_rust_analyzer() -> std::io::Result<()> {
+    use std::io::Write;
+    use std::process::Command;
+
+    // Check if rust-analyzer is installed
+    let rust_analyzer_check = Command::new("which").arg("rust-analyzer").output();
+    if rust_analyzer_check.is_err() || !rust_analyzer_check.unwrap().status.success() {
+        eprintln!("Skipping test: rust-analyzer not found in PATH");
+        return Ok(());
+    }
+
+    // Create harness with temp project directory
+    let mut harness = EditorTestHarness::with_temp_project(200, 30)?;
+    let project_dir = harness.project_dir().expect("project dir should exist");
+
+    // Create Cargo.toml
+    let cargo_toml = project_dir.join("Cargo.toml");
+    std::fs::write(
+        &cargo_toml,
+        r#"[package]
+name = "test-rename"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+
+    // Create src directory
+    let src_dir = project_dir.join("src");
+    std::fs::create_dir(&src_dir)?;
+
+    // Create lib.rs with a function to rename
+    let test_file = src_dir.join("lib.rs");
+    let mut file = std::fs::File::create(&test_file)?;
+    writeln!(file, "pub fn foo(val: i32) -> i32 {{")?;
+    writeln!(file, "    val * 2")?;
+    writeln!(file, "}}")?;
+    drop(file);
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for LSP to initialize by checking the actual server status
+    eprintln!("Waiting for rust-analyzer to initialize...");
+    let mut lsp_ready = false;
+    for i in 0..240 {
+        // Up to 24 seconds
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render()?;
+
+        // Check actual LSP server status
+        if harness.editor().is_lsp_server_ready("rust") {
+            eprintln!(
+                "✓ rust-analyzer ready (iteration {}, {}ms)",
+                i,
+                i * 100
+            );
+            lsp_ready = true;
+            break;
+        }
+
+        // Also print status periodically
+        if i % 50 == 0 && i > 0 {
+            let lsp_status = harness.editor().get_lsp_status();
+            eprintln!("  [{}ms] LSP status: {}", i * 100, lsp_status);
+        }
+    }
+
+    if !lsp_ready {
+        let lsp_status = harness.editor().get_lsp_status();
+        eprintln!("⚠ Warning: LSP may not have initialized fully. Status: {}", lsp_status);
+        eprintln!("Continuing test anyway...");
+    }
+
+    // Wait for indexing to complete (rust-analyzer sends progress notifications)
+    eprintln!("Waiting for indexing...");
+    let mut had_progress = false;
+    for i in 0..120 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render()?;
+
+        let has_progress = harness.editor().has_active_lsp_progress();
+        if has_progress {
+            had_progress = true;
+            if i % 20 == 0 {
+                // Log progress every 2 seconds
+                let progress = harness.editor().get_lsp_progress();
+                for (_, title, msg) in &progress {
+                    eprintln!("  [{}ms] Progress: {} - {:?}", i * 100, title, msg);
+                }
+            }
+        } else if had_progress {
+            eprintln!("✓ Indexing complete (iteration {}, {}ms)", i, i * 100);
+            break;
+        } else if i > 30 && !had_progress && lsp_ready {
+            // If LSP is ready but no progress seen in 3 seconds, it might be a small project
+            eprintln!("No LSP progress seen (small project), assuming ready");
+            break;
+        }
+    }
+
+    // Extra wait for semantic analysis (rust-analyzer needs this)
+    eprintln!("Waiting for semantic analysis...");
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render()?;
+    }
+    eprintln!("✓ Semantic analysis complete");
+
+    let initial = harness.get_buffer_content();
+    eprintln!("Initial buffer:\n{}", initial);
+    assert!(initial.contains("fn foo(val: i32)"));
+
+    // FIRST RENAME: val -> value
+    eprintln!("\n=== FIRST RENAME: val -> value ===");
+
+    // Step 1: Move cursor to first letter of "val" (after "pub fn foo(")
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?;
+    for _ in 0..12 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    }
+    harness.render()?;
+    let cursor_pos = harness.cursor_position();
+    let char_at_cursor = initial.chars().nth(cursor_pos).unwrap_or('?');
+    eprintln!("Cursor positioned at byte {}, char '{}'", cursor_pos, char_at_cursor);
+
+    // Step 2: Start rename with F2 (direct action, not command palette)
+    eprintln!("Pressing F2 to start rename...");
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Step 3: Type new name (clear and type "value")
+    // The prompt should be pre-filled with "val"
+    eprintln!("Clearing current name...");
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE)?;
+    }
+    harness.type_text("value")?;
+    harness.render()?;
+    eprintln!("Typed new name 'value'");
+
+    // Step 4: Approve with Enter
+    eprintln!("Pressing Enter to confirm rename...");
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Wait for LSP response
+    eprintln!("Waiting for first rename response...");
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render()?;
+
+        let screen = harness.screen_to_string();
+        if !screen.contains("LSP: rename...") {
+            break;
+        }
+    }
+
+    let after_first = harness.get_buffer_content();
+    eprintln!("After first rename:\n{}", after_first);
+
+    let first_rename_ok =
+        after_first.contains("fn foo(value: i32)") && after_first.contains("value * 2");
+
+    if !first_rename_ok {
+        eprintln!("❌ First rename FAILED!");
+        let screen = harness.screen_to_string();
+        if screen.contains("content modified") {
+            eprintln!("Got 'content modified' error on FIRST rename");
+        }
+        panic!("First rename failed. Got:\n{}", after_first);
+    }
+    eprintln!("✓ First rename succeeded");
+
+    // SECOND RENAME: value -> data (same position)
+    eprintln!("\n=== SECOND RENAME: value -> data ===");
+
+    // Step 1: Move cursor back to first letter of "value" (same position)
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?;
+    for _ in 0..12 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    }
+    harness.render()?;
+    let cursor_pos2 = harness.cursor_position();
+    let after_first_content = harness.get_buffer_content();
+    let char_at_cursor2 = after_first_content.chars().nth(cursor_pos2).unwrap_or('?');
+    eprintln!(
+        "Cursor positioned at byte {}, char '{}'",
+        cursor_pos2, char_at_cursor2
+    );
+
+    // Step 2: Start rename with F2 (direct action)
+    eprintln!("Pressing F2 to start rename...");
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Step 3: Type new name (clear and type "data")
+    // The prompt should be pre-filled with "value"
+    eprintln!("Clearing current name...");
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Backspace, KeyModifiers::NONE)?;
+    }
+    harness.type_text("data")?;
+    harness.render()?;
+    eprintln!("Typed new name 'data'");
+
+    // Step 4: Approve with Enter
+    eprintln!("Pressing Enter to confirm rename...");
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Wait for LSP response
+    eprintln!("Waiting for second rename response...");
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render()?;
+
+        let screen = harness.screen_to_string();
+        if !screen.contains("LSP: rename...") {
+            break;
+        }
+    }
+
+    let after_second = harness.get_buffer_content();
+    let screen = harness.screen_to_string();
+    eprintln!("After second rename:\n{}", after_second);
+    eprintln!("Screen:\n{}", screen);
+
+    // Check for the bug
+    if screen.contains("content modified") || screen.contains("modified") {
+        eprintln!("\n🐛 BUG REPRODUCED! 🐛");
+        eprintln!("Second rename got 'content modified' error.");
+        eprintln!("This happens because LSP was notified with wrong positions after first rename.");
+        panic!("BUG: Second rename failed with content modified error");
+    }
+
+    let second_rename_ok =
+        after_second.contains("fn foo(data: i32)") && after_second.contains("data * 2");
+
+    if !second_rename_ok {
+        eprintln!("❌ Second rename FAILED!");
+        panic!("Second rename failed. Got:\n{}", after_second);
+    }
+
+    eprintln!("✓ Second rename succeeded");
+    eprintln!("\n✅ Both consecutive renames work correctly!");
+
+    Ok(())
+}
+
 /// Test that LSP progress notifications are displayed in the status bar
 ///
 /// This test uses a fake LSP server that sends progress notifications (begin, report, end)
