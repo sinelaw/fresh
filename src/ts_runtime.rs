@@ -489,6 +489,126 @@ async fn op_fresh_spawn_process(
     })
 }
 
+/// File stat information
+#[derive(serde::Serialize)]
+struct FileStat {
+    exists: bool,
+    is_file: bool,
+    is_dir: bool,
+    size: u64,
+    readonly: bool,
+}
+
+/// Read a file's contents asynchronously
+/// Useful for plugins that need to read configuration or data files
+#[op2(async)]
+#[string]
+async fn op_fresh_read_file(
+    #[string] path: String,
+) -> Result<String, deno_core::error::AnyError> {
+    tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| deno_core::error::generic_error(format!("Failed to read file {}: {}", path, e)))
+}
+
+/// Write content to a file asynchronously
+/// Useful for plugins that need to save data or generate files
+#[op2(async)]
+fn op_fresh_write_file(
+    #[string] path: String,
+    #[string] content: String,
+) -> Result<(), deno_core::error::AnyError> {
+    tokio::fs::write(&path, content)
+        .await
+        .map_err(|e| deno_core::error::generic_error(format!("Failed to write file {}: {}", path, e)))
+}
+
+/// Check if a file or directory exists
+#[op2(fast)]
+fn op_fresh_file_exists(#[string] path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}
+
+/// Get file/directory metadata
+#[op2]
+#[serde]
+fn op_fresh_file_stat(#[string] path: String) -> FileStat {
+    let path = std::path::Path::new(&path);
+    match std::fs::metadata(path) {
+        Ok(metadata) => FileStat {
+            exists: true,
+            is_file: metadata.is_file(),
+            is_dir: metadata.is_dir(),
+            size: metadata.len(),
+            readonly: metadata.permissions().readonly(),
+        },
+        Err(_) => FileStat {
+            exists: false,
+            is_file: false,
+            is_dir: false,
+            size: 0,
+            readonly: false,
+        },
+    }
+}
+
+/// Get an environment variable
+#[op2]
+#[string]
+fn op_fresh_get_env(#[string] name: String) -> Option<String> {
+    std::env::var(&name).ok()
+}
+
+/// Get the current working directory
+#[op2]
+#[string]
+fn op_fresh_get_cwd() -> Result<String, deno_core::error::AnyError> {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| deno_core::error::generic_error(format!("Failed to get cwd: {}", e)))
+}
+
+/// Join path components
+#[op2]
+#[string]
+fn op_fresh_path_join(#[serde] parts: Vec<String>) -> String {
+    let mut path = std::path::PathBuf::new();
+    for part in parts {
+        path.push(part);
+    }
+    path.to_string_lossy().to_string()
+}
+
+/// Get the directory name of a path
+#[op2]
+#[string]
+fn op_fresh_path_dirname(#[string] path: String) -> String {
+    std::path::Path::new(&path)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default()
+}
+
+/// Get the base name of a path
+#[op2]
+#[string]
+fn op_fresh_path_basename(#[string] path: String) -> String {
+    std::path::Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default()
+}
+
+/// Get the file extension
+#[op2]
+#[string]
+fn op_fresh_path_extname(#[string] path: String) -> String {
+    std::path::Path::new(&path)
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default()
+}
+
 // Define the extension with our ops
 extension!(
     fresh_runtime,
@@ -515,6 +635,16 @@ extension!(
         op_fresh_get_cursor_line,
         op_fresh_get_all_cursor_positions,
         op_fresh_spawn_process,
+        op_fresh_read_file,
+        op_fresh_write_file,
+        op_fresh_file_exists,
+        op_fresh_file_stat,
+        op_fresh_get_env,
+        op_fresh_get_cwd,
+        op_fresh_path_join,
+        op_fresh_path_dirname,
+        op_fresh_path_basename,
+        op_fresh_path_extname,
     ],
 );
 
@@ -646,6 +776,42 @@ impl TypeScriptRuntime {
                     // Async operations
                     spawnProcess(command, args = [], cwd = null) {
                         return core.ops.op_fresh_spawn_process(command, args, cwd);
+                    },
+
+                    // File system operations
+                    readFile(path) {
+                        return core.ops.op_fresh_read_file(path);
+                    },
+                    writeFile(path, content) {
+                        return core.ops.op_fresh_write_file(path, content);
+                    },
+                    fileExists(path) {
+                        return core.ops.op_fresh_file_exists(path);
+                    },
+                    fileStat(path) {
+                        return core.ops.op_fresh_file_stat(path);
+                    },
+
+                    // Environment operations
+                    getEnv(name) {
+                        return core.ops.op_fresh_get_env(name);
+                    },
+                    getCwd() {
+                        return core.ops.op_fresh_get_cwd();
+                    },
+
+                    // Path operations
+                    pathJoin(...parts) {
+                        return core.ops.op_fresh_path_join(parts);
+                    },
+                    pathDirname(path) {
+                        return core.ops.op_fresh_path_dirname(path);
+                    },
+                    pathBasename(path) {
+                        return core.ops.op_fresh_path_basename(path);
+                    },
+                    pathExtname(path) {
+                        return core.ops.op_fresh_path_extname(path);
                     },
                 };
 
