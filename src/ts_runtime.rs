@@ -609,6 +609,48 @@ fn op_fresh_path_extname(#[string] path: String) -> String {
         .unwrap_or_default()
 }
 
+/// Check if a path is absolute
+#[op2(fast)]
+fn op_fresh_path_is_absolute(#[string] path: String) -> bool {
+    std::path::Path::new(&path).is_absolute()
+}
+
+/// Directory entry information
+#[derive(serde::Serialize)]
+struct DirEntry {
+    name: String,
+    is_file: bool,
+    is_dir: bool,
+}
+
+/// Read directory contents
+/// Returns a list of entries with name and type information
+#[op2]
+#[serde]
+fn op_fresh_read_dir(#[string] path: String) -> Result<Vec<DirEntry>, deno_core::error::AnyError> {
+    let entries = std::fs::read_dir(&path)
+        .map_err(|e| deno_core::error::generic_error(format!("Failed to read directory {}: {}", path, e)))?;
+
+    let mut result = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            deno_core::error::generic_error(format!("Failed to read directory entry: {}", e))
+        })?;
+
+        let metadata = entry.metadata().map_err(|e| {
+            deno_core::error::generic_error(format!("Failed to get entry metadata: {}", e))
+        })?;
+
+        result.push(DirEntry {
+            name: entry.file_name().to_string_lossy().to_string(),
+            is_file: metadata.is_file(),
+            is_dir: metadata.is_dir(),
+        });
+    }
+
+    Ok(result)
+}
+
 // Define the extension with our ops
 extension!(
     fresh_runtime,
@@ -645,6 +687,8 @@ extension!(
         op_fresh_path_dirname,
         op_fresh_path_basename,
         op_fresh_path_extname,
+        op_fresh_path_is_absolute,
+        op_fresh_read_dir,
     ],
 );
 
@@ -812,6 +856,12 @@ impl TypeScriptRuntime {
                     },
                     pathExtname(path) {
                         return core.ops.op_fresh_path_extname(path);
+                    },
+                    pathIsAbsolute(path) {
+                        return core.ops.op_fresh_path_is_absolute(path);
+                    },
+                    readDir(path) {
+                        return core.ops.op_fresh_read_dir(path);
                     },
                 };
 
@@ -1790,6 +1840,134 @@ mod tests {
             )
             .await;
         assert!(result.is_ok(), "Get cwd test failed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_write_file() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        let result = runtime
+            .execute_script(
+                "<test_write_file>",
+                r#"
+                (async () => {
+                    const testFile = "/tmp/fresh_ts_runtime_test_write.txt";
+                    const testContent = "Hello from TypeScript plugin!\nLine 2\n";
+
+                    // Write the file
+                    await editor.writeFile(testFile, testContent);
+
+                    // Verify it was written by reading it back
+                    const readBack = await editor.readFile(testFile);
+                    if (readBack !== testContent) {
+                        throw new Error(`Write/read mismatch. Expected: ${testContent}, Got: ${readBack}`);
+                    }
+
+                    // Verify file stats
+                    const stat = editor.fileStat(testFile);
+                    if (!stat.exists) {
+                        throw new Error("Written file should exist");
+                    }
+                    if (!stat.is_file) {
+                        throw new Error("Written path should be a file");
+                    }
+                    if (stat.size !== testContent.length) {
+                        throw new Error(`File size mismatch. Expected: ${testContent.length}, Got: ${stat.size}`);
+                    }
+
+                    console.log("Write file test passed!");
+                })()
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "Write file test failed: {:?}", result);
+
+        // Clean up test file
+        let _ = std::fs::remove_file("/tmp/fresh_ts_runtime_test_write.txt");
+    }
+
+    #[tokio::test]
+    async fn test_read_dir() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        let result = runtime
+            .execute_script(
+                "<test_read_dir>",
+                r#"
+                // Read current directory (should have Cargo.toml, src/, etc.)
+                const entries = editor.readDir(".");
+
+                // Should have entries
+                if (!Array.isArray(entries) || entries.length === 0) {
+                    throw new Error("readDir should return non-empty array");
+                }
+
+                // Look for known files/dirs
+                const hasCargoToml = entries.some(e => e.name === "Cargo.toml" && e.is_file);
+                const hasSrc = entries.some(e => e.name === "src" && e.is_dir);
+
+                if (!hasCargoToml) {
+                    throw new Error("Should find Cargo.toml in current directory");
+                }
+                if (!hasSrc) {
+                    throw new Error("Should find src/ directory");
+                }
+
+                // Verify entry structure
+                const firstEntry = entries[0];
+                if (typeof firstEntry.name !== "string") {
+                    throw new Error("Entry should have string name");
+                }
+                if (typeof firstEntry.is_file !== "boolean") {
+                    throw new Error("Entry should have boolean is_file");
+                }
+                if (typeof firstEntry.is_dir !== "boolean") {
+                    throw new Error("Entry should have boolean is_dir");
+                }
+
+                console.log(`Read directory test passed! Found ${entries.length} entries`);
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "Read directory test failed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_path_is_absolute() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        let result = runtime
+            .execute_script(
+                "<test_path_is_absolute>",
+                r#"
+                // Test absolute paths
+                if (!editor.pathIsAbsolute("/home/user")) {
+                    throw new Error("/home/user should be absolute");
+                }
+                if (!editor.pathIsAbsolute("/")) {
+                    throw new Error("/ should be absolute");
+                }
+
+                // Test relative paths
+                if (editor.pathIsAbsolute("src/main.rs")) {
+                    throw new Error("src/main.rs should not be absolute");
+                }
+                if (editor.pathIsAbsolute(".")) {
+                    throw new Error(". should not be absolute");
+                }
+                if (editor.pathIsAbsolute("..")) {
+                    throw new Error(".. should not be absolute");
+                }
+
+                console.log("Path is absolute test passed!");
+                "#,
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "Path is absolute test failed: {:?}",
+            result
+        );
     }
 }
 
