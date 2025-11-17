@@ -586,9 +586,20 @@ impl Editor {
         let command_registry = Arc::new(RwLock::new(CommandRegistry::new()));
 
         // Initialize TypeScript plugin manager
-        let ts_plugin_manager =
-            TypeScriptPluginManager::new(Arc::clone(&hook_registry), Arc::clone(&command_registry))
-                .ok();
+        let ts_plugin_manager = match TypeScriptPluginManager::new(
+            Arc::clone(&hook_registry),
+            Arc::clone(&command_registry),
+        ) {
+            Ok(manager) => Some(manager),
+            Err(e) => {
+                tracing::error!("Failed to create TypeScript plugin manager: {}", e);
+                // In debug/test builds, panic to surface the error
+                #[cfg(debug_assertions)]
+                panic!("TypeScript plugin manager creation failed: {}", e);
+                #[cfg(not(debug_assertions))]
+                None
+            }
+        };
 
         // Load TypeScript plugins from plugins directory
         let mut ts_plugin_manager = ts_plugin_manager;
@@ -598,10 +609,19 @@ impl Editor {
                 tracing::info!("Loading TypeScript plugins from: {:?}", plugin_dir);
                 let errors = manager.load_plugins_from_dir_blocking(&plugin_dir);
                 if !errors.is_empty() {
-                    for err in errors {
-                        tracing::warn!("TypeScript plugin load error: {}", err);
+                    for err in &errors {
+                        tracing::error!("TypeScript plugin load error: {}", err);
                     }
+                    // In debug/test builds, panic to surface plugin loading errors
+                    #[cfg(debug_assertions)]
+                    panic!(
+                        "TypeScript plugin loading failed with {} error(s): {}",
+                        errors.len(),
+                        errors.join("; ")
+                    );
                 }
+            } else {
+                tracing::debug!("No plugins directory found at: {:?}", plugin_dir);
             }
         }
 

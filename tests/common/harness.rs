@@ -125,7 +125,10 @@ impl EditorTestHarness {
     ) -> io::Result<Self> {
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
-        let editor = Editor::with_working_dir(config, width, height, Some(working_dir))?;
+        let mut editor = Editor::with_working_dir(config, width, height, Some(working_dir))?;
+
+        // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
+        editor.process_async_messages();
 
         Ok(EditorTestHarness {
             editor,
