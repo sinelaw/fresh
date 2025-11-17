@@ -25,6 +25,7 @@ pub mod rendering;
 pub mod scrolling;
 pub mod search;
 pub mod selection;
+pub mod smart_editing;
 pub mod slow_filesystem;
 pub mod split_view;
 pub mod split_view_expectations;
