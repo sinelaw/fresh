@@ -2,7 +2,560 @@
 
 ## Remaining Work
 
-### Priority 0: Menu Bar System (COMPLETE ✅)
+### Priority 0: TypeScript Plugin System Migration 🔥
+
+**Goal:** Replace Lua plugin system with TypeScript/Deno for native async/await support, solving the fundamental async command execution problem.
+
+**Why TypeScript over Lua:**
+- Native async/await (no coroutine hacks)
+- Massive ecosystem (npm packages)
+- Type safety at compile time
+- Better developer familiarity
+- Solves the async command problem elegantly
+
+**Binary Size Impact:** +10-20MB (V8 engine)
+**Memory Impact:** +10-50MB runtime
+**Startup Impact:** +50-100ms
+
+---
+
+#### Phase 1: Core Infrastructure (Foundation)
+
+##### 1.1 Add Deno Core Dependency
+```toml
+# Cargo.toml
+[dependencies]
+deno_core = "0.272.0"  # Or latest stable
+tokio = { version = "1", features = ["full"] }
+```
+
+- [ ] Add `deno_core` to Cargo.toml
+- [ ] Configure V8 platform initialization in main.rs
+- [ ] Set up basic JsRuntime with minimal ops
+- [ ] Test "hello world" TypeScript execution
+- **Effort:** 2-4 hours
+
+##### 1.2 Create TypeScript Plugin Runtime
+```rust
+// src/ts_runtime.rs (NEW)
+pub struct TypeScriptRuntime {
+    js_runtime: JsRuntime,
+    command_sender: mpsc::Sender<PluginCommand>,
+    state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
+}
+
+impl TypeScriptRuntime {
+    pub fn new(...) -> Self { ... }
+    pub async fn load_plugin(&mut self, path: &Path) -> Result<()> { ... }
+    pub async fn execute_action(&mut self, name: &str) -> Result<()> { ... }
+}
+```
+
+- [ ] Create `src/ts_runtime.rs` module
+- [ ] Implement JsRuntime wrapper with Fresh-specific configuration
+- [ ] Set up module loader for TypeScript files
+- [ ] Configure snapshot for faster startup (optional, can defer)
+- **Effort:** 4-6 hours
+
+##### 1.3 Define Editor API as Deno Ops
+```rust
+// src/ts_ops.rs (NEW)
+#[op]
+async fn op_create_virtual_buffer(
+    state: &mut OpState,
+    name: String,
+    options: serde_json::Value,
+) -> Result<u32, AnyError> {
+    // Execute command IMMEDIATELY, return buffer_id
+    let api = state.borrow::<PluginApi>();
+    let buffer_id = api.create_virtual_buffer_sync(name, options)?;
+    Ok(buffer_id.0)
+}
+
+#[op]
+fn op_add_overlay(
+    state: &mut OpState,
+    buffer_id: u32,
+    overlay_id: String,
+    start: usize,
+    end: usize,
+    r: u8, g: u8, b: u8,
+    underline: bool,
+) -> Result<(), AnyError> {
+    let api = state.borrow::<PluginApi>();
+    api.add_overlay_sync(BufferId(buffer_id), overlay_id, start..end, (r, g, b), underline)?;
+    Ok(())
+}
+
+// ... ~30 more ops for full API coverage
+```
+
+- [ ] Create `src/ts_ops.rs` module
+- [ ] Implement synchronous ops (immediate execution, no queuing):
+  - `op_get_active_buffer_id` → returns current buffer ID
+  - `op_get_buffer_info` → returns buffer metadata
+  - `op_get_primary_cursor` → returns cursor position
+  - `op_set_status` → sets status message
+  - `op_insert_text` → inserts text at position
+  - `op_delete_range` → deletes text range
+  - `op_add_overlay` → adds overlay (returns immediately)
+  - `op_remove_overlay` → removes overlay
+  - `op_remove_overlays_by_prefix` → batch remove
+  - `op_register_command` → registers command
+  - `op_define_mode` → defines buffer mode
+  - `op_open_file` → opens file at location
+  - `op_get_active_split_id` → returns split ID
+  - `op_open_file_in_split` → opens file in specific split
+- [ ] Implement async ops (for I/O operations):
+  - `op_spawn_process` → spawns external command
+  - `op_create_virtual_buffer_in_split` → creates buffer (async for split layout)
+  - `op_fetch_url` → HTTP fetch (future)
+- [ ] Wire ops into JsRuntime extension
+- **Effort:** 8-12 hours
+
+##### 1.4 TypeScript Type Definitions
+```typescript
+// types/fresh.d.ts
+declare namespace Fresh {
+  interface BufferInfo {
+    id: number;
+    path: string;
+    modified: boolean;
+    length: number;
+  }
+
+  interface CursorInfo {
+    position: number;
+    selection?: { start: number; end: number };
+  }
+
+  interface CommandOptions {
+    name: string;
+    description: string;
+    action: string;
+    contexts: string[];
+  }
+
+  interface ModeOptions {
+    parent?: string;
+    bindings: Record<string, string>;
+    readOnly?: boolean;
+  }
+
+  // Core API
+  function getActiveBufferId(): number;
+  function getBufferInfo(bufferId: number): BufferInfo | null;
+  function getPrimaryCursor(): CursorInfo | null;
+  function setStatus(message: string): void;
+  function insertText(bufferId: number, position: number, text: string): void;
+  function deleteRange(bufferId: number, start: number, end: number): void;
+
+  // Overlays
+  function addOverlay(
+    bufferId: number,
+    overlayId: string,
+    start: number,
+    end: number,
+    r: number, g: number, b: number,
+    underline: boolean
+  ): void;
+  function removeOverlay(bufferId: number, overlayId: string): void;
+  function removeOverlaysByPrefix(bufferId: number, prefix: string): void;
+
+  // Commands & Modes
+  function registerCommand(options: CommandOptions): void;
+  function defineMode(name: string, options: ModeOptions): void;
+
+  // Async Operations
+  function createVirtualBufferInSplit(options: {
+    name: string;
+    mode: string;
+    readOnly: boolean;
+    entries: Array<{ text: string; properties: Record<string, any> }>;
+    ratio: number;
+    panelId?: string;
+    showLineNumbers?: boolean;
+    showCursors?: boolean;
+  }): Promise<number>;  // Returns buffer_id!
+
+  function spawn(
+    command: string,
+    args: string[],
+    options?: { cwd?: string }
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }>;
+
+  function openFile(path: string, line?: number, column?: number): Promise<void>;
+  function openFileInSplit(splitId: number, path: string, line?: number, column?: number): Promise<void>;
+
+  // Hooks
+  function on(hookName: string, callback: (args: any) => boolean | void): void;
+
+  // Logging
+  function debug(message: string): void;
+}
+
+// Global editor object
+declare const editor: typeof Fresh;
+```
+
+- [ ] Create `types/fresh.d.ts` with complete API definitions
+- [ ] Document all function signatures with JSDoc comments
+- [ ] Include example usage in comments
+- [ ] Ship with editor binary (embed or install alongside)
+- **Effort:** 2-3 hours
+
+---
+
+#### Phase 2: Plugin Manager Rewrite
+
+##### 2.1 Replace PluginManager
+```rust
+// src/plugin_manager.rs (REWRITE)
+pub struct PluginManager {
+    runtime: TypeScriptRuntime,
+    plugins: HashMap<String, PluginInfo>,
+    // REMOVED: lua: Lua
+    // REMOVED: command_receiver: mpsc::Receiver<PluginCommand>
+}
+
+impl PluginManager {
+    pub fn new(api: PluginApi) -> Result<Self> {
+        let runtime = TypeScriptRuntime::new(api)?;
+        Ok(Self { runtime, plugins: HashMap::new() })
+    }
+
+    pub async fn load_plugin(&mut self, path: &Path) -> Result<()> {
+        self.runtime.load_plugin(path).await
+    }
+
+    pub async fn execute_action(&mut self, action: &str) -> Result<()> {
+        self.runtime.execute_action(action).await
+    }
+
+    // NO MORE process_commands() - commands execute immediately!
+}
+```
+
+- [ ] Rewrite `src/plugin_manager.rs` to use TypeScriptRuntime
+- [ ] Remove all mlua dependencies
+- [ ] Remove command queue/receiver (commands are synchronous now!)
+- [ ] Update plugin loading to handle `.ts` files
+- [ ] Implement action execution via TypeScript runtime
+- **Effort:** 6-8 hours
+
+##### 2.2 Update Editor Integration
+```rust
+// src/editor.rs changes
+impl Editor {
+    pub async fn run_plugin_action(&mut self, action: &str) -> Result<()> {
+        // Execute TypeScript action (may be async)
+        self.plugin_manager.execute_action(action).await?;
+        // State is already updated - no need to process command queue!
+        Ok(())
+    }
+
+    // REMOVE: process_plugin_commands() - no longer needed
+}
+```
+
+- [ ] Update `Editor` to use async plugin execution
+- [ ] Remove `process_commands()` call from main loop
+- [ ] Ensure plugin state snapshot is updated in real-time
+- [ ] Handle async plugin actions in event loop (tokio integration)
+- **Effort:** 4-6 hours
+
+##### 2.3 Hook System Migration
+```typescript
+// TypeScript hook registration
+editor.on("after-file-save", (args) => {
+  editor.setStatus(`Saved: ${args.path}`);
+  return true;
+});
+
+editor.on("render-line", (args) => {
+  // Process line for highlighting
+  return true;
+});
+```
+
+- [ ] Implement hook registration in TypeScript ops
+- [ ] Store hook callbacks in JsRuntime state
+- [ ] Call TypeScript hooks from Rust (cross-language invocation)
+- [ ] Ensure hook return values are properly handled
+- **Effort:** 4-6 hours
+
+---
+
+#### Phase 3: Rewrite All Plugins in TypeScript
+
+##### 3.1 Diagnostics Panel Plugin
+```typescript
+// plugins/diagnostics-panel.ts
+const panelState = {
+  open: false,
+  currentIndex: 1,
+  diagnostics: [] as Diagnostic[],
+  bufferId: null as number | null,
+  sourceSplitId: null as number | null,
+};
+
+// Define mode with keybindings
+editor.defineMode("diagnostics-list", {
+  parent: "special",
+  bindings: {
+    "RET": "goto_diagnostic",
+    "n": "diagnostics_next",
+    "p": "diagnostics_prev",
+    "Down": "diagnostics_next",
+    "Up": "diagnostics_prev",
+  },
+  readOnly: true,
+});
+
+// Show panel - ASYNC with proper buffer_id return!
+async function showPanel() {
+  panelState.sourceSplitId = editor.getActiveSplitId();
+  panelState.diagnostics = getDiagnostics();
+  panelState.currentIndex = 1;
+
+  const entries = buildEntries();
+
+  // THIS IS THE KEY: await returns buffer_id immediately!
+  const bufferId = await editor.createVirtualBufferInSplit({
+    name: "*Diagnostics*",
+    mode: "diagnostics-list",
+    readOnly: true,
+    entries,
+    ratio: 0.7,
+    panelId: "diagnostics",
+    showLineNumbers: false,
+    showCursors: false,
+  });
+
+  // Now we have the correct buffer_id!
+  panelState.bufferId = bufferId;
+  panelState.open = true;
+
+  // Apply overlays with correct buffer_id
+  applyOverlays();
+
+  editor.setStatus(`Diagnostics: ${panelState.diagnostics.length} items`);
+}
+
+function applyOverlays() {
+  if (!panelState.bufferId) return;
+
+  editor.removeOverlaysByPrefix(panelState.bufferId, "diag_");
+
+  let offset = 0;
+  for (let i = 0; i < panelState.diagnostics.length; i++) {
+    const diag = panelState.diagnostics[i];
+    const config = severityConfig[diag.severity];
+    const lineText = formatDiagnostic(diag, i, i === panelState.currentIndex - 1);
+
+    editor.addOverlay(
+      panelState.bufferId,
+      `diag_${i}_line`,
+      offset,
+      offset + lineText.length - 1,
+      config.color[0], config.color[1], config.color[2],
+      false
+    );
+
+    offset += lineText.length;
+  }
+}
+
+// Register command
+editor.registerCommand({
+  name: "Show Diagnostics",
+  description: "Show LSP diagnostics in a panel",
+  action: "toggle_diagnostics_panel",
+  contexts: ["normal"],
+});
+
+// Global function for action
+globalThis.toggle_diagnostics_panel = async () => {
+  if (panelState.open) {
+    editor.setStatus("Diagnostics panel already open");
+    return;
+  }
+  await showPanel();
+};
+```
+
+- [ ] Rewrite `plugins/diagnostics-panel.lua` → `plugins/diagnostics-panel.ts`
+- [ ] Use async/await for buffer creation
+- [ ] Apply overlays immediately after buffer creation
+- [ ] Test that colors render on first open (the original problem!)
+- **Effort:** 3-4 hours
+
+##### 3.2 Git Grep Plugin
+```typescript
+// plugins/git-grep.ts
+editor.registerCommand({
+  name: "Git Grep",
+  description: "Search for text in git-tracked files",
+  action: "start_git_grep",
+  contexts: ["normal"],
+});
+
+globalThis.start_git_grep = async () => {
+  // Use prompt API (needs to be implemented)
+  const query = await editor.prompt("Git grep: ");
+  if (!query) return;
+
+  const result = await editor.spawn("git", ["grep", "-n", query]);
+  if (result.exitCode !== 0) {
+    editor.setStatus(`Git grep failed: ${result.stderr}`);
+    return;
+  }
+
+  // Parse results and display
+  const lines = result.stdout.split("\n").filter(Boolean);
+  editor.setStatus(`Found ${lines.length} matches`);
+  // ... show results in virtual buffer
+};
+```
+
+- [ ] Rewrite `plugins/git-grep.lua` → `plugins/git-grep.ts`
+- [ ] Rewrite `plugins/git-find-file.lua` → `plugins/git-find-file.ts`
+- [ ] Rewrite `plugins/welcome.lua` → `plugins/welcome.ts`
+- [ ] Rewrite `plugins/todo_highlighter.lua` → `plugins/todo_highlighter.ts`
+- **Effort:** 4-6 hours total
+
+##### 3.3 Remove Lua Infrastructure
+- [ ] Remove `mlua` from Cargo.toml
+- [ ] Delete old Lua plugin files (`.lua`)
+- [ ] Remove Lua-specific code from plugin_api.rs
+- [ ] Update documentation to reference TypeScript
+- [ ] Remove Lua syntax highlighting configs (if any)
+- **Effort:** 2-3 hours
+
+---
+
+#### Phase 4: Async Event Loop Integration
+
+##### 4.1 Tokio Integration in Main Loop
+```rust
+// src/main.rs
+#[tokio::main]
+async fn main() {
+    let mut editor = Editor::new().await?;
+
+    loop {
+        // Handle terminal events
+        if let Some(event) = poll_event() {
+            editor.handle_event(event).await?;
+        }
+
+        // Process async plugin tasks
+        editor.plugin_manager.poll_pending().await?;
+
+        // Render
+        editor.render()?;
+
+        // Sleep
+        tokio::time::sleep(Duration::from_millis(16)).await;
+    }
+}
+```
+
+- [ ] Convert main.rs to use `#[tokio::main]`
+- [ ] Make Editor methods async where needed
+- [ ] Ensure TypeScript async ops integrate with tokio runtime
+- [ ] Handle plugin Promise resolution in event loop
+- **Effort:** 4-6 hours
+
+##### 4.2 Command Execution Model
+```rust
+// NEW: Commands execute synchronously within ops
+// No more command queue!
+
+// Old (Lua):
+// 1. Plugin calls editor.create_virtual_buffer()
+// 2. Command queued
+// 3. Plugin calls editor.add_overlay() with WRONG buffer_id
+// 4. Commands processed LATER
+
+// New (TypeScript):
+// 1. Plugin calls await editor.createVirtualBufferInSplit()
+// 2. Op executes IMMEDIATELY, creates buffer
+// 3. Op returns buffer_id to TypeScript
+// 4. Plugin calls editor.addOverlay() with CORRECT buffer_id
+// 5. Op executes IMMEDIATELY
+```
+
+- [ ] Ensure all ops execute immediately (no queuing)
+- [ ] Update EditorStateSnapshot in real-time after each op
+- [ ] Verify buffer_id is returned correctly from async ops
+- [ ] Test end-to-end: create buffer → add overlay → colors appear immediately
+- **Effort:** 2-3 hours (mostly testing)
+
+---
+
+#### Phase 5: Testing & Documentation
+
+##### 5.1 Test Suite
+- [ ] Unit tests for TypeScript ops (Rust side)
+- [ ] Integration tests for plugin loading
+- [ ] E2E tests for diagnostics panel with colors
+- [ ] Performance benchmarks (startup time, memory usage)
+- [ ] Verify no memory leaks in JsRuntime
+- **Effort:** 6-8 hours
+
+##### 5.2 Documentation Updates
+- [ ] Update `docs/PLUGINS.md` for TypeScript API
+- [ ] Update `docs/ARCHITECTURE.md` to reflect new runtime
+- [ ] Create `docs/TYPESCRIPT_MIGRATION.md` explaining the change
+- [ ] Update README.md with new plugin development instructions
+- [ ] Add TypeScript plugin examples
+- **Effort:** 4-6 hours
+
+##### 5.3 Developer Experience
+- [ ] Ship `types/fresh.d.ts` with editor binary
+- [ ] Add `tsconfig.json` template for plugins
+- [ ] Provide plugin starter template
+- [ ] Consider bundling TypeScript compiler or requiring pre-compilation
+- **Effort:** 2-3 hours
+
+---
+
+#### Summary
+
+**Total Estimated Effort:** 60-80 hours (2-3 weeks full-time)
+
+**Key Benefits:**
+1. ✅ Native async/await solves command timing problem
+2. ✅ `await createVirtualBuffer()` returns buffer_id immediately
+3. ✅ No more stale snapshot issues
+4. ✅ Massive ecosystem (npm packages)
+5. ✅ Type safety catches errors at compile time
+6. ✅ Better developer familiarity
+
+**Key Costs:**
+1. ❌ +10-20MB binary size (V8 engine)
+2. ❌ +10-50MB memory usage
+3. ❌ +50-100ms startup time
+4. ❌ More complex embedding (Deno ops vs mlua)
+5. ❌ Rewrite all existing plugins
+6. ❌ Lose Lua ecosystem (small but specialized)
+
+**Critical Path:**
+1. Phase 1.3 (Deno Ops) - Most complex, core of new system
+2. Phase 2.1 (PluginManager Rewrite) - Replaces old architecture
+3. Phase 3.1 (Diagnostics Plugin) - Validates the solution works
+4. Phase 4.1 (Tokio Integration) - Makes async actually work
+
+**Risk Mitigation:**
+- Start with Phase 1.1-1.2 to validate Deno embedding works
+- Build minimal proof-of-concept before full rewrite
+- Keep old Lua code in git history (can revert if needed)
+- Consider phased rollout with feature flag (but adds complexity)
+
+---
+
+### Priority 0.5: Menu Bar System (COMPLETE ✅)
 
 **Completed**: Full menu bar implementation with F10/keyboard navigation, mouse interaction, Alt+letter mnemonics, keybinding display in dropdowns, JSON configuration, and Lua plugin API for runtime menu modification.
 
