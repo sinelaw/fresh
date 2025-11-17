@@ -159,28 +159,49 @@ impl Language {
                 Ok(config)
             }
             Language::TypeScript => {
+                // TypeScript extends JavaScript, so we need to combine queries
+                // TypeScript-specific highlights come first (higher priority),
+                // followed by JavaScript base highlights
+                let combined_highlights = format!(
+                    "{}\n{}",
+                    tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                    tree_sitter_javascript::HIGHLIGHT_QUERY
+                );
+
                 let mut config = HighlightConfiguration::new(
                     tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
                     "typescript",
-                    tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                    &combined_highlights,
                     "", // injections query
-                    "", // locals query
+                    tree_sitter_typescript::LOCALS_QUERY, // locals query for proper scoping
                 )
                 .map_err(|e| format!("Failed to create TypeScript highlight config: {e}"))?;
 
-                // Configure highlight names
+                // Configure highlight names - must include all captures from both JS and TS queries
                 config.configure(&[
                     "attribute",
                     "comment",
                     "constant",
+                    "constant.builtin",
+                    "constructor",
+                    "embedded",
                     "function",
+                    "function.builtin",
+                    "function.method",
                     "keyword",
                     "number",
                     "operator",
                     "property",
+                    "punctuation.bracket",
+                    "punctuation.delimiter",
+                    "punctuation.special",
                     "string",
+                    "string.special",
                     "type",
+                    "type.builtin",
                     "variable",
+                    "variable.builtin",
+                    "variable.parameter",
                 ]);
 
                 Ok(config)
@@ -536,7 +557,7 @@ impl Language {
                 10 => Color::White,   // variable
                 _ => Color::White,    // default
             },
-            Language::JavaScript | Language::TypeScript => match index {
+            Language::JavaScript => match index {
                 0 => Color::Cyan,     // attribute
                 1 => Color::DarkGray, // comment
                 2 => Color::Magenta,  // constant
@@ -549,6 +570,33 @@ impl Language {
                 9 => Color::Blue,     // type
                 10 => Color::White,   // variable
                 _ => Color::White,    // default
+            },
+            Language::TypeScript => match index {
+                // Maps to the configure() order in highlight_config
+                0 => Color::Cyan,      // attribute
+                1 => Color::DarkGray,  // comment
+                2 => Color::Magenta,   // constant
+                3 => Color::Magenta,   // constant.builtin (null, undefined, true, false)
+                4 => Color::Blue,      // constructor
+                5 => Color::Green,     // embedded (template substitutions)
+                6 => Color::Yellow,    // function
+                7 => Color::Yellow,    // function.builtin (require)
+                8 => Color::Yellow,    // function.method
+                9 => Color::Red,       // keyword
+                10 => Color::Magenta,  // number
+                11 => Color::White,    // operator
+                12 => Color::Cyan,     // property
+                13 => Color::White,    // punctuation.bracket
+                14 => Color::White,    // punctuation.delimiter
+                15 => Color::Cyan,     // punctuation.special (template ${})
+                16 => Color::Green,    // string
+                17 => Color::Green,    // string.special (regex)
+                18 => Color::Blue,     // type
+                19 => Color::Blue,     // type.builtin
+                20 => Color::White,    // variable
+                21 => Color::Magenta,  // variable.builtin (this, super, arguments)
+                22 => Color::LightCyan, // variable.parameter
+                _ => Color::White,     // default
             },
             Language::HTML | Language::CSS => match index {
                 0 => Color::Cyan,     // attribute
