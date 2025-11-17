@@ -5,25 +5,25 @@
 ### Priority 1: Critical Editor Features
 
 #### Search & Replace Enhancements
-- [ ] Case-sensitive/insensitive toggle
-- [ ] Whole word matching
+- [x] Case-sensitive/insensitive toggle ✅
+- [x] Whole word matching ✅
 - [ ] Persist search history across sessions
 - [ ] Multi-file search/replace (integrate with git grep)
 - [ ] Progress bar for replace_all on huge files
 
 #### Smart Editing
-- [ ] Smart home key (toggle between line start and first non-whitespace)
-- [ ] Bracket matching & auto-close
-- [ ] Auto-pair deletion (delete both opening and closing)
-- [ ] Electric indent (auto-adjust indentation)
-- [ ] Toggle comment (Ctrl+/, language-aware)
-- [ ] Indent/dedent selection (Tab/Shift+Tab)
+- [x] Smart home key (toggle between line start and first non-whitespace) ✅
+- [x] Bracket matching & auto-close (auto-inserts closing bracket/quote) ✅
+- [x] Auto-pair deletion (delete both opening and closing when between pairs) ✅
+- [x] Electric indent (auto-adjust indentation for closing delimiters) ✅
+- [x] Toggle comment (Ctrl+/, language-aware) ✅
+- [x] Indent/dedent selection (Tab/Shift+Tab) ✅
 
 #### Navigation
-- [ ] Go to line number (Ctrl+G)
-- [ ] Go to matching bracket
+- [x] Go to line number (Ctrl+G) ✅
+- [x] Go to matching bracket (Ctrl+]) ✅
 - [ ] Jump to next/previous error (F8/Shift+F8)
-- [ ] Bookmark system (set/clear/jump)
+- [x] Bookmark system (Ctrl+Shift+0-9 to set, Alt+0-9 to jump) ✅
 
 #### Selection & Editing
 - [ ] Rectangular/block selection (Alt+drag or Ctrl+Alt+arrows)
@@ -153,14 +153,17 @@
   - `revert-buffer` command (g in special mode) calls buffer's revert function
   - Plugin API: `editor.set_revert_function(buf_id, callback)`
 
-#### Example Plugin: Diagnostics Panel (TypeScript)
+#### Example Plugin: Diagnostics Panel (TypeScript) ✅ IMPLEMENTED
 
-Once infrastructure is complete:
-- Show diagnostics from current file with severity icons
-- Filter by severity (errors only, warnings only, all)
-- Jump to location on RET
-- Auto-refresh on diagnostic updates
-- Integrate with next-error navigation
+Fully functional diagnostics panel with virtual buffer split view:
+- [x] Show diagnostics with severity icons ([E], [W], [I], [H])
+- [x] Horizontal split view with 70/30 ratio
+- [x] Navigation keybindings (j/k/n/p, RET to jump, q to close)
+- [x] Selection marker for current diagnostic
+- [x] Summary footer with error/warning counts
+- [ ] Filter by severity (errors only, warnings only, all)
+- [ ] Auto-refresh on diagnostic updates
+- [ ] Integrate with next-error navigation
 
 #### Future Plugin Examples
 - Magit-style git interface
@@ -437,5 +440,7 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 ## Next Steps
 
 1. **High Priority**: LSP advanced features (hover, code actions, find references)
-2. **Medium Priority**: Smart editing (bracket matching, toggle comment)
-3. **Medium Priority**: Complete virtual buffer TypeScript ops for advanced plugin UIs
+2. **High Priority**: Macros (record, play, persistence)
+3. **Medium Priority**: Jump to next/previous error (F8/Shift+F8)
+4. **Medium Priority**: Complete virtual buffer infrastructure (BufferKind, TypeScript ops)
+5. **Lower Priority**: Search enhancements (persist history, multi-file search)
