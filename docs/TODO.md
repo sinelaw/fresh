@@ -21,29 +21,32 @@
 
 #### 🚀 Progress Summary (as of latest commits)
 
-**Phase 1 Status: ~95% Complete**
+**Phase 1 Status: ~98% Complete**
 - ✅ **1.1 Deno Core Dependency** - DONE (deno_core 0.272.0 integrated)
 - ✅ **1.2 TypeScript Runtime** - DONE (TypeScriptRuntime struct with JsRuntime wrapper)
-- ✅ **1.3 Editor Ops** - 32 ops implemented (29 sync + 3 async: spawn_process, readFile, writeFile)
+- ✅ **1.3 Editor Ops** - 37 ops implemented (34 sync + 3 async)
 - ✅ **1.4 Type Definitions** - DONE (manually maintained for accuracy)
+- ✅ **1.5 Hook Registration** - DONE (on/off/getHandlers + emit() method)
 
 **Key Achievements:**
 - V8 engine successfully embedded in Fresh
 - Native async/await working (Promise-based ops)
 - State sharing via Arc<RwLock<EditorStateSnapshot>>
 - Commands sent via mpsc channel (PluginCommand enum)
-- 26 passing tests covering runtime, ops, state, actions, async ops, and file I/O
-- Manually maintained TypeScript types (32 ops with full async/interface support)
+- 33 passing tests covering runtime, ops, state, actions, async ops, file I/O, and hooks
+- Manually maintained TypeScript types (37 ops with full async/interface support)
 - Sample TypeScript plugins created (hello_world.ts, bookmarks.ts, git_grep.ts)
 - Command registration working (PluginAction for global functions)
 - File opening with line/column positioning
 - Split view operations (get active split, open file in split)
 - **Async process spawning via native Promise** (spawn_process op)
 - **Git integration plugin** - Real-world async usage with git grep/status/branch/log
+- **Event/Hook registration system** - editor.on()/off() for event subscriptions
+- **Emit infrastructure** - TypeScriptRuntime.emit() for Rust→JS event dispatch
 
 **Remaining Phase 1 Work:**
-- Hook registration ops (on, off, emit) - complex, requires JS→Rust callback mechanism
 - Mode definition ops (optional for Phase 1)
+- Integration with editor main loop (calling emit() from editor events)
 
 **Important Security Consideration:**
 - ⚠️ **Plugin Sandboxing** - Current implementation lacks isolation between plugins
@@ -67,6 +70,8 @@
 10. `b6b1052` - test: Add comprehensive tests for file system and path ops (26 tests total)
 11. `ad13a54` - fix: Add missing async keyword to op_fresh_write_file
 12. `8551a63` - chore: Disable TypeScript type auto-generation (preserve manual types)
+13. `849fad8` - feat: Add directory listing and path absolute check ops (34 ops total)
+14. `89aeec9` - feat: Add event/hook registration system (37 ops, 33 tests)
 
 ---
 
