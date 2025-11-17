@@ -899,6 +899,150 @@ fn op_fresh_read_dir(#[string] path: String) -> Result<Vec<DirEntry>, deno_core:
     Ok(result)
 }
 
+// === Virtual Buffer Operations ===
+
+/// Text property entry for TypeScript
+#[derive(serde::Deserialize)]
+struct TsTextPropertyEntry {
+    text: String,
+    properties: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// Options for creating a virtual buffer in a split
+#[derive(serde::Deserialize)]
+struct CreateVirtualBufferOptions {
+    name: String,
+    mode: String,
+    read_only: bool,
+    entries: Vec<TsTextPropertyEntry>,
+    ratio: f32,
+    panel_id: Option<String>,
+    show_line_numbers: Option<bool>,
+    show_cursors: Option<bool>,
+}
+
+/// Create a virtual buffer in a horizontal split
+/// This is the key operation for creating diagnostic panels, search results, etc.
+#[op2]
+fn op_fresh_create_virtual_buffer_in_split(
+    state: &mut OpState,
+    #[serde] options: CreateVirtualBufferOptions,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+
+        // Convert TypeScript entries to Rust TextPropertyEntry
+        let entries: Vec<crate::text_property::TextPropertyEntry> = options
+            .entries
+            .into_iter()
+            .map(|e| crate::text_property::TextPropertyEntry {
+                text: e.text,
+                properties: e.properties,
+            })
+            .collect();
+
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::CreateVirtualBufferInSplit {
+                name: options.name,
+                mode: options.mode,
+                read_only: options.read_only,
+                entries,
+                ratio: options.ratio,
+                panel_id: options.panel_id,
+                show_line_numbers: options.show_line_numbers.unwrap_or(true),
+                show_cursors: options.show_cursors.unwrap_or(true),
+            });
+        return result.is_ok();
+    }
+    false
+}
+
+/// Define a buffer mode with keybindings
+#[op2]
+fn op_fresh_define_mode(
+    state: &mut OpState,
+    #[string] name: String,
+    #[string] parent: Option<String>,
+    #[serde] bindings: Vec<(String, String)>,
+    read_only: bool,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state.command_sender.send(PluginCommand::DefineMode {
+            name,
+            parent,
+            bindings,
+            read_only,
+        });
+        return result.is_ok();
+    }
+    false
+}
+
+/// Show a buffer in the current split
+#[op2(fast)]
+fn op_fresh_show_buffer(state: &mut OpState, buffer_id: u32) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state.command_sender.send(PluginCommand::ShowBuffer {
+            buffer_id: BufferId(buffer_id as usize),
+        });
+        return result.is_ok();
+    }
+    false
+}
+
+/// Get text properties at cursor position
+/// Returns an array of property maps for all properties at the current cursor position
+#[op2]
+#[serde]
+fn op_fresh_get_text_properties_at_cursor(state: &mut OpState, buffer_id: u32) -> Vec<std::collections::HashMap<String, serde_json::Value>> {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+            // Get cursor position
+            if let Some(ref cursor) = snapshot.primary_cursor {
+                // For now, return empty - actual implementation requires buffer access
+                // which would need to be added to the snapshot
+                let _ = (buffer_id, cursor.position);
+                return vec![];
+            }
+        };
+    }
+    vec![]
+}
+
+/// Set the content of a virtual buffer with text properties
+#[op2]
+fn op_fresh_set_virtual_buffer_content(
+    state: &mut OpState,
+    buffer_id: u32,
+    #[serde] entries: Vec<TsTextPropertyEntry>,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+
+        // Convert TypeScript entries to Rust TextPropertyEntry
+        let rust_entries: Vec<crate::text_property::TextPropertyEntry> = entries
+            .into_iter()
+            .map(|e| crate::text_property::TextPropertyEntry {
+                text: e.text,
+                properties: e.properties,
+            })
+            .collect();
+
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::SetVirtualBufferContent {
+                buffer_id: BufferId(buffer_id as usize),
+                entries: rust_entries,
+            });
+        return result.is_ok();
+    }
+    false
+}
+
 // Define the extension with our ops
 extension!(
     fresh_runtime,
@@ -947,6 +1091,12 @@ extension!(
         op_fresh_on,
         op_fresh_off,
         op_fresh_get_handlers,
+        // Virtual buffer operations
+        op_fresh_create_virtual_buffer_in_split,
+        op_fresh_define_mode,
+        op_fresh_show_buffer,
+        op_fresh_get_text_properties_at_cursor,
+        op_fresh_set_virtual_buffer_content,
     ],
 );
 
@@ -1160,6 +1310,23 @@ impl TypeScriptRuntime {
                     },
                     getHandlers(eventName) {
                         return core.ops.op_fresh_get_handlers(eventName);
+                    },
+
+                    // Virtual buffer operations
+                    createVirtualBufferInSplit(options) {
+                        return core.ops.op_fresh_create_virtual_buffer_in_split(options);
+                    },
+                    defineMode(name, parent, bindings, readOnly = false) {
+                        return core.ops.op_fresh_define_mode(name, parent, bindings, readOnly);
+                    },
+                    showBuffer(bufferId) {
+                        return core.ops.op_fresh_show_buffer(bufferId);
+                    },
+                    getTextPropertiesAtCursor(bufferId) {
+                        return core.ops.op_fresh_get_text_properties_at_cursor(bufferId);
+                    },
+                    setVirtualBufferContent(bufferId, entries) {
+                        return core.ops.op_fresh_set_virtual_buffer_content(bufferId, entries);
                     },
                 };
 
