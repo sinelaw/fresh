@@ -180,6 +180,8 @@ pub enum Action {
     // Navigation
     GotoLine,
     GoToMatchingBracket,
+    JumpToNextError,
+    JumpToPreviousError,
 
     // Smart editing
     SmartHome,
@@ -386,6 +388,8 @@ impl Action {
             "quit" => Some(Action::Quit),
             "goto_line" => Some(Action::GotoLine),
             "goto_matching_bracket" => Some(Action::GoToMatchingBracket),
+            "jump_to_next_error" => Some(Action::JumpToNextError),
+            "jump_to_previous_error" => Some(Action::JumpToPreviousError),
 
             "smart_home" => Some(Action::SmartHome),
             "indent_selection" => Some(Action::IndentSelection),
@@ -1055,6 +1059,13 @@ impl KeybindingResolver {
         bindings.insert((KeyCode::F(3), KeyModifiers::empty()), Action::FindNext);
         bindings.insert((KeyCode::F(3), KeyModifiers::SHIFT), Action::FindPrevious);
 
+        // Error/diagnostic navigation
+        bindings.insert((KeyCode::F(8), KeyModifiers::empty()), Action::JumpToNextError);
+        bindings.insert(
+            (KeyCode::F(8), KeyModifiers::SHIFT),
+            Action::JumpToPreviousError,
+        );
+
         // Smart editing
         bindings.insert(
             (KeyCode::Char('/'), KeyModifiers::CONTROL),
@@ -1434,6 +1445,8 @@ impl KeybindingResolver {
             Action::Quit => "Quit editor".to_string(),
             Action::GotoLine => "Go to line number".to_string(),
             Action::GoToMatchingBracket => "Go to matching bracket".to_string(),
+            Action::JumpToNextError => "Jump to next error/diagnostic".to_string(),
+            Action::JumpToPreviousError => "Jump to previous error/diagnostic".to_string(),
             Action::SmartHome => "Smart home (toggle line start / first non-whitespace)".to_string(),
             Action::IndentSelection => "Indent selection".to_string(),
             Action::DedentSelection => "Dedent selection".to_string(),
