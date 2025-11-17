@@ -52,7 +52,7 @@
 4. `2549fa5` - feat: Add command registration, file opening, and split view ops
 5. `c610f9e` - test: Add focused unit tests for TypeScript runtime ops (16 tests total)
 6. `f0b825c` - feat: Add comprehensive bookmarks plugin example using new ops
-7. (pending) - feat: Add async spawn_process op with native Promise support
+7. `62be068` - feat: Add async spawn_process op with native Promise support (20 tests total)
 
 ---
 
