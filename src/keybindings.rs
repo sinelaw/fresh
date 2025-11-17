@@ -112,7 +112,7 @@ impl KeyContext {
 }
 
 /// High-level actions that can be performed in the editor
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Action {
     // Character input
     InsertChar(char),
@@ -204,6 +204,8 @@ pub enum Action {
     StopMacroRecording,
     PlayMacro(char),
     ToggleMacroRecording(char),
+    ShowMacro(char),
+    ListMacros,
 
     // Undo/redo
     Undo,
@@ -444,6 +446,14 @@ impl Action {
                     None
                 }
             }
+            "show_macro" => {
+                if let Some(serde_json::Value::String(c)) = args.get("char") {
+                    c.chars().next().map(Action::ShowMacro)
+                } else {
+                    None
+                }
+            }
+            "list_macros" => Some(Action::ListMacros),
 
             "undo" => Some(Action::Undo),
             "redo" => Some(Action::Redo),
@@ -1507,6 +1517,8 @@ impl KeybindingResolver {
             Action::StopMacroRecording => "Stop macro recording".to_string(),
             Action::PlayMacro(c) => format!("Play macro '{}'", c),
             Action::ToggleMacroRecording(c) => format!("Toggle macro recording for '{}'", c),
+            Action::ShowMacro(c) => format!("Show macro '{}' in buffer", c),
+            Action::ListMacros => "List all recorded macros".to_string(),
             Action::Undo => "Undo".to_string(),
             Action::Redo => "Redo".to_string(),
             Action::ScrollUp => "Scroll up".to_string(),

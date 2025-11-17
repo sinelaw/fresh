@@ -1227,6 +1227,8 @@ pub fn action_to_events(
         | Action::StopMacroRecording
         | Action::PlayMacro(_)
         | Action::ToggleMacroRecording(_)
+        | Action::ShowMacro(_)
+        | Action::ListMacros
         | Action::HelpToggle
         | Action::HelpScrollUp
         | Action::HelpScrollDown
