@@ -50,7 +50,7 @@
 3. `d535dfa` - feat: Add auto-generated TypeScript types and additional editor ops
 4. `2549fa5` - feat: Add command registration, file opening, and split view ops
 5. `c610f9e` - test: Add focused unit tests for TypeScript runtime ops (16 tests total)
-6. (pending) - feat: Add comprehensive bookmarks plugin example using new ops
+6. `f0b825c` - feat: Add comprehensive bookmarks plugin example using new ops
 
 ---
 
