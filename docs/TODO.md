@@ -24,8 +24,8 @@
 **Phase 1 Status: ~95% Complete**
 - ✅ **1.1 Deno Core Dependency** - DONE (deno_core 0.272.0 integrated)
 - ✅ **1.2 TypeScript Runtime** - DONE (TypeScriptRuntime struct with JsRuntime wrapper)
-- ✅ **1.3 Editor Ops** - 31 ops implemented (including async spawn_process, file I/O, path ops!)
-- ✅ **1.4 Type Definitions** - DONE (auto-generated + manual async types)
+- ✅ **1.3 Editor Ops** - 32 ops implemented (29 sync + 3 async: spawn_process, readFile, writeFile)
+- ✅ **1.4 Type Definitions** - DONE (manually maintained for accuracy)
 
 **Key Achievements:**
 - V8 engine successfully embedded in Fresh
@@ -33,7 +33,7 @@
 - State sharing via Arc<RwLock<EditorStateSnapshot>>
 - Commands sent via mpsc channel (PluginCommand enum)
 - 26 passing tests covering runtime, ops, state, actions, async ops, and file I/O
-- Auto-generated TypeScript types from Rust code (31 ops)
+- Manually maintained TypeScript types (32 ops with full async/interface support)
 - Sample TypeScript plugins created (hello_world.ts, bookmarks.ts, git_grep.ts)
 - Command registration working (PluginAction for global functions)
 - File opening with line/column positioning
@@ -65,6 +65,8 @@
 8. `2fe73c0` - feat: Add git-grep plugin and cursor/buffer query ops (22 ops total)
 9. `fad87c6` - feat: Add file system, environment, and path ops (31 ops total)
 10. `b6b1052` - test: Add comprehensive tests for file system and path ops (26 tests total)
+11. `ad13a54` - fix: Add missing async keyword to op_fresh_write_file
+12. `8551a63` - chore: Disable TypeScript type auto-generation (preserve manual types)
 
 ---
 
