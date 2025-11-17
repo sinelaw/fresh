@@ -332,6 +332,10 @@ pub struct Editor {
     /// Pending LSP hover request ID (if any)
     pending_hover_request: Option<u64>,
 
+    /// Hover symbol range (byte offsets) - for highlighting the symbol under hover
+    /// Format: (start_byte_offset, end_byte_offset)
+    hover_symbol_range: Option<(usize, usize)>,
+
     /// Search state (if search is active)
     search_state: Option<SearchState>,
 
@@ -689,6 +693,7 @@ impl Editor {
             pending_completion_request: None,
             pending_goto_definition_request: None,
             pending_hover_request: None,
+            hover_symbol_range: None,
             search_state: None,
             interactive_replace_state: None,
             lsp_status: String::new(),
@@ -2678,8 +2683,9 @@ impl Editor {
                 AsyncMessage::LspHover {
                     request_id,
                     contents,
+                    range,
                 } => {
-                    self.handle_hover_response(request_id, contents);
+                    self.handle_hover_response(request_id, contents, range);
                 }
                 AsyncMessage::FileChanged { path } => {
                     tracing::info!("File changed externally: {}", path);
@@ -4019,6 +4025,17 @@ impl Editor {
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
 
+        // Debug: Log the position conversion details
+        if let Some(pos) = state.buffer.offset_to_position(cursor_pos) {
+            tracing::debug!(
+                "Hover request: cursor_byte={}, line={}, byte_col={}, utf16_col={}",
+                cursor_pos,
+                pos.line,
+                pos.column,
+                character
+            );
+        }
+
         // Get the current file URI and path
         let metadata = self.buffer_metadata.get(&self.active_buffer);
         let (uri, file_path) = if let Some(meta) = metadata {
@@ -4045,10 +4062,11 @@ impl Editor {
                             character as u32,
                         );
                         tracing::info!(
-                            "Requested hover at {}:{}:{}",
+                            "Requested hover at {}:{}:{} (byte_pos={})",
                             uri.as_str(),
                             line,
-                            character
+                            character,
+                            cursor_pos
                         );
                     }
                 }
@@ -4059,7 +4077,12 @@ impl Editor {
     }
 
     /// Handle hover response from LSP
-    fn handle_hover_response(&mut self, request_id: u64, contents: Vec<String>) {
+    fn handle_hover_response(
+        &mut self,
+        request_id: u64,
+        contents: Vec<String>,
+        range: Option<((u32, u32), (u32, u32))>,
+    ) {
         // Check if this response is for the current pending request
         if self.pending_hover_request != Some(request_id) {
             tracing::debug!("Ignoring stale hover response: {}", request_id);
@@ -4071,7 +4094,44 @@ impl Editor {
 
         if contents.is_empty() {
             self.set_status_message("No hover information available".to_string());
+            self.hover_symbol_range = None;
             return;
+        }
+
+        // Convert LSP range to byte offsets for highlighting
+        if let Some(((start_line, start_char), (end_line, end_char))) = range {
+            let state = self.active_state();
+            let start_byte = state
+                .buffer
+                .lsp_position_to_byte(start_line as usize, start_char as usize);
+            let end_byte = state
+                .buffer
+                .lsp_position_to_byte(end_line as usize, end_char as usize);
+            self.hover_symbol_range = Some((start_byte, end_byte));
+            tracing::debug!(
+                "Hover symbol range: {}..{} (LSP {}:{}..{}:{})",
+                start_byte,
+                end_byte,
+                start_line,
+                start_char,
+                end_line,
+                end_char
+            );
+
+            // Add overlay to highlight the hovered symbol
+            let event = crate::event::Event::AddOverlay {
+                overlay_id: "hover_symbol".to_string(),
+                range: start_byte..end_byte,
+                face: crate::event::OverlayFace::Background {
+                    color: (80, 80, 120), // Subtle highlight for hovered symbol
+                },
+                priority: 90, // Below rename (100) but above syntax (lower)
+                message: None,
+            };
+            self.apply_event_to_active_buffer(&event);
+        } else {
+            // No range provided by LSP, clear any previous highlight
+            self.hover_symbol_range = None;
         }
 
         // Create a popup with the hover contents
@@ -4578,7 +4638,26 @@ impl Editor {
         );
 
         // Determine the current context first
-        let context = self.get_key_context();
+        let mut context = self.get_key_context();
+
+        // Special case: Hover popups should be dismissed on any key press
+        if matches!(context, crate::keybindings::KeyContext::Popup) {
+            // Check if the current popup is a hover popup (identified by title)
+            let is_hover_popup = self
+                .active_state()
+                .popups
+                .top()
+                .and_then(|p| p.title.as_ref())
+                .is_some_and(|title| title == "Hover");
+
+            if is_hover_popup {
+                // Dismiss the hover popup on any key press
+                self.hide_popup();
+                tracing::debug!("Dismissed hover popup on key press");
+                // Recalculate context now that popup is gone
+                context = self.get_key_context();
+            }
+        }
 
         // Only check buffer mode keybindings if we're not in a higher-priority context
         // (Help, Menu, Prompt, Popup should take precedence over mode bindings)
@@ -7064,6 +7143,15 @@ impl Editor {
         let event = Event::HidePopup;
         self.active_event_log_mut().append(event.clone());
         self.apply_event_to_active_buffer(&event);
+
+        // Clear hover symbol highlight if present
+        if self.hover_symbol_range.is_some() {
+            self.hover_symbol_range = None;
+            let remove_overlay_event = crate::event::Event::RemoveOverlay {
+                overlay_id: "hover_symbol".to_string(),
+            };
+            self.apply_event_to_active_buffer(&remove_overlay_event);
+        }
     }
 
     /// Clear all popups
