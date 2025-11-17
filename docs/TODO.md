@@ -21,28 +21,29 @@
 
 #### 🚀 Progress Summary (as of latest commits)
 
-**Phase 1 Status: ~85% Complete**
+**Phase 1 Status: ~90% Complete**
 - ✅ **1.1 Deno Core Dependency** - DONE (deno_core 0.272.0 integrated)
 - ✅ **1.2 TypeScript Runtime** - DONE (TypeScriptRuntime struct with JsRuntime wrapper)
-- ✅ **1.3 Editor Ops** - 18/20+ ops implemented (buffer queries, mutations, overlays, commands, file ops, splits)
-- ✅ **1.4 Type Definitions** - DONE (auto-generated via build.rs codegen)
+- ✅ **1.3 Editor Ops** - 19 ops implemented (including async spawn_process!)
+- ✅ **1.4 Type Definitions** - DONE (auto-generated + manual async types)
 
 **Key Achievements:**
 - V8 engine successfully embedded in Fresh
 - Native async/await working (Promise-based ops)
 - State sharing via Arc<RwLock<EditorStateSnapshot>>
 - Commands sent via mpsc channel (PluginCommand enum)
-- 9 passing tests covering runtime, ops, state, actions, and new ops
-- Auto-generated TypeScript types from Rust code (18 ops)
-- Sample TypeScript plugin created
+- 20 passing tests covering runtime, ops, state, actions, and async ops
+- Auto-generated TypeScript types from Rust code (19 ops)
+- Sample TypeScript plugins created (hello_world.ts, bookmarks.ts)
 - Command registration working (PluginAction for global functions)
 - File opening with line/column positioning
 - Split view operations (get active split, open file in split)
+- **Async process spawning via native Promise** (spawn_process op)
 
 **Remaining Phase 1 Work:**
 - Hook registration ops (on, off, emit) - complex, requires JS→Rust callback mechanism
 - Mode definition ops (optional for Phase 1)
-- Async ops (spawn_process, create_virtual_buffer_in_split)
+- Async ops (create_virtual_buffer_in_split) - spawn_process DONE!
 
 **Commits:**
 1. `1eae5c8` - feat: Add TypeScript plugin runtime with deno_core
@@ -51,6 +52,7 @@
 4. `2549fa5` - feat: Add command registration, file opening, and split view ops
 5. `c610f9e` - test: Add focused unit tests for TypeScript runtime ops (16 tests total)
 6. `f0b825c` - feat: Add comprehensive bookmarks plugin example using new ops
+7. (pending) - feat: Add async spawn_process op with native Promise support
 
 ---
 
@@ -137,12 +139,12 @@ fn op_fresh_add_overlay(
   - `op_fresh_get_active_split_id` → returns split ID ✅
   - `op_fresh_open_file_in_split` → opens file in specific split ✅
   - `op_define_mode` → defines buffer mode (TODO - optional for Phase 1)
-- [ ] Implement async ops (for I/O operations):
-  - `op_spawn_process` → spawns external command (TODO)
+- [x] Implement async ops (for I/O operations):
+  - `op_fresh_spawn_process` → spawns external command with Promise ✅
   - `op_create_virtual_buffer_in_split` → creates buffer (TODO)
   - `op_fetch_url` → HTTP fetch (future)
 - [x] Wire ops into JsRuntime extension via `extension!` macro
-- **Effort:** 8-12 hours (6-8 hours done, 4-6 hours remaining)
+- **Effort:** 8-12 hours (8-10 hours done, 2-4 hours remaining)
 
 ##### 1.4 TypeScript Type Definitions ✅ **COMPLETE (Auto-Generated)**
 ```typescript

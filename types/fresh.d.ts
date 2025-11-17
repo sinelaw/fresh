@@ -25,6 +25,15 @@ declare global {
 type BufferId = number;
 
 /**
+ * Result of spawning an external process
+ */
+interface SpawnResult {
+  stdout: string;
+  stderr: string;
+  exit_code: number;
+}
+
+/**
  * Main editor API interface
  */
 interface EditorAPI {
@@ -47,6 +56,16 @@ interface EditorAPI {
   registerCommand(name: string, description: string, action: string, contexts: string): boolean;
   openFile(path: string, line: number, column: number): boolean;
   openFileInSplit(split_id: number, path: string, line: number, column: number): boolean;
+
+  // === Async Operations ===
+  /**
+   * Spawn an external process asynchronously
+   * @param command - Command to execute (e.g., "git", "npm")
+   * @param args - Array of command arguments (default: [])
+   * @param cwd - Optional working directory (default: null)
+   * @returns Promise with stdout, stderr, and exit_code
+   */
+  spawnProcess(command: string, args?: string[], cwd?: string | null): Promise<SpawnResult>;
 
   // === Overlay Operations ===
   addOverlay(buffer_id: number, overlay_id: string, start: number, end: number, r: number, g: number, b: number, underline: boolean): boolean;
