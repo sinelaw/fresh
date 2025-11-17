@@ -46,6 +46,7 @@ pub mod state;
 pub mod text_buffer;
 pub mod text_property;
 pub mod theme;
+pub mod ts_runtime;
 pub mod ui;
 pub mod viewport;
 pub mod word_navigation;
