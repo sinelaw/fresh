@@ -53,7 +53,7 @@
 5. `c610f9e` - test: Add focused unit tests for TypeScript runtime ops (16 tests total)
 6. `f0b825c` - feat: Add comprehensive bookmarks plugin example using new ops
 7. `62be068` - feat: Add async spawn_process op with native Promise support (20 tests total)
-8. (pending) - feat: Add git-grep plugin and cursor/buffer query ops (22 ops total)
+8. `2fe73c0` - feat: Add git-grep plugin and cursor/buffer query ops (22 ops total)
 
 ---
 
