@@ -53,6 +53,19 @@ struct SearchState {
     wrap_search: bool,
     /// Optional search range (for search in selection)
     search_range: Option<Range<usize>>,
+    /// Whether search is case-sensitive (default: true)
+    case_sensitive: bool,
+    /// Whether to match whole words only (default: false)
+    whole_word: bool,
+}
+
+/// A bookmark in the editor (position in a specific buffer)
+#[derive(Debug, Clone)]
+struct Bookmark {
+    /// Buffer ID where the bookmark is set
+    buffer_id: BufferId,
+    /// Byte offset position in the buffer
+    position: usize,
 }
 
 /// State for interactive replace (query-replace)
@@ -365,6 +378,13 @@ pub struct Editor {
 
     /// Event broadcaster for control events (observable by external systems)
     event_broadcaster: crate::control_event::EventBroadcaster,
+
+    /// Bookmarks (character key -> bookmark)
+    bookmarks: HashMap<char, Bookmark>,
+
+    /// Global search options (persist across searches)
+    search_case_sensitive: bool,
+    search_whole_word: bool,
 }
 
 /// LSP progress information
@@ -674,6 +694,9 @@ impl Editor {
             lsp_window_messages: Vec::new(),
             lsp_log_messages: Vec::new(),
             event_broadcaster: crate::control_event::EventBroadcaster::default(),
+            bookmarks: HashMap::new(),
+            search_case_sensitive: true,
+            search_whole_word: false,
         })
     }
 
@@ -5085,6 +5108,61 @@ impl Editor {
                 }
             }
 
+            Action::SmartHome => {
+                self.smart_home();
+            }
+            Action::IndentSelection => {
+                self.indent_selection();
+            }
+            Action::DedentSelection => {
+                self.dedent_selection();
+            }
+            Action::ToggleComment => {
+                self.toggle_comment();
+            }
+            Action::GoToMatchingBracket => {
+                self.goto_matching_bracket();
+            }
+            Action::SetBookmark(key) => {
+                self.set_bookmark(key);
+            }
+            Action::JumpToBookmark(key) => {
+                self.jump_to_bookmark(key);
+            }
+            Action::ClearBookmark(key) => {
+                self.clear_bookmark(key);
+            }
+            Action::ListBookmarks => {
+                self.list_bookmarks();
+            }
+            Action::ToggleSearchCaseSensitive => {
+                self.search_case_sensitive = !self.search_case_sensitive;
+                let state = if self.search_case_sensitive {
+                    "enabled"
+                } else {
+                    "disabled"
+                };
+                self.set_status_message(format!("Case-sensitive search {}", state));
+                // Re-run search if active
+                if let Some(search_state) = &self.search_state {
+                    let query = search_state.query.clone();
+                    self.perform_search(&query);
+                }
+            }
+            Action::ToggleSearchWholeWord => {
+                self.search_whole_word = !self.search_whole_word;
+                let state = if self.search_whole_word {
+                    "enabled"
+                } else {
+                    "disabled"
+                };
+                self.set_status_message(format!("Whole word search {}", state));
+                // Re-run search if active
+                if let Some(search_state) = &self.search_state {
+                    let query = search_state.query.clone();
+                    self.perform_search(&query);
+                }
+            }
             Action::None => {}
             Action::DeleteBackward => {
                 // Normal backspace handling
@@ -7258,11 +7336,12 @@ impl Editor {
             state.buffer.to_string()
         };
 
-        // Find all matches (case-insensitive for now)
-        let query_lower = query.to_lowercase();
-        let mut matches = Vec::new();
+        // Get search settings
+        let case_sensitive = self.search_case_sensitive;
+        let whole_word = self.search_whole_word;
 
-        let buffer_lower = buffer_content.to_lowercase();
+        // Find all matches
+        let mut matches = Vec::new();
 
         // Determine search boundaries
         let (search_start, search_end) = if let Some(ref range) = search_range {
@@ -7271,12 +7350,36 @@ impl Editor {
             (0, buffer_content.len())
         };
 
+        // Prepare search strings based on case sensitivity
+        let (search_buffer, search_query) = if case_sensitive {
+            (buffer_content.clone(), query.to_string())
+        } else {
+            (buffer_content.to_lowercase(), query.to_lowercase())
+        };
+
+        // Helper function to check if position is a word boundary
+        let is_word_boundary = |pos: usize, at_start: bool| -> bool {
+            if !whole_word {
+                return true;
+            }
+            if at_start {
+                pos == 0 || !buffer_content.chars().nth(pos.saturating_sub(1)).map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false)
+            } else {
+                pos >= buffer_content.len() || !buffer_content.chars().nth(pos).map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false)
+            }
+        };
+
         // Find all matches within the search range
         let mut start = search_start;
         while start < search_end {
-            if let Some(pos) = buffer_lower[start..search_end].find(&query_lower) {
+            if let Some(pos) = search_buffer[start..search_end].find(&search_query) {
                 let absolute_pos = start + pos;
-                matches.push(absolute_pos);
+                let end_pos = absolute_pos + query.len();
+
+                // Check word boundaries if whole word matching is enabled
+                if is_word_boundary(absolute_pos, true) && is_word_boundary(end_pos, false) {
+                    matches.push(absolute_pos);
+                }
                 start = absolute_pos + 1;
             } else {
                 break;
@@ -7324,6 +7427,8 @@ impl Editor {
             current_match_index: Some(current_match_index),
             wrap_search: search_range.is_none(), // Only wrap if not searching in selection
             search_range,
+            case_sensitive: self.search_case_sensitive,
+            whole_word: self.search_whole_word,
         });
 
         let msg = if self.search_state.as_ref().unwrap().search_range.is_some() {
@@ -7888,6 +7993,518 @@ impl Editor {
             replacements_made,
             if replacements_made == 1 { "" } else { "s" }
         ));
+    }
+
+    /// Smart home: toggle between line start and first non-whitespace character
+    fn smart_home(&mut self) {
+        let estimated_line_length = self.config.editor.estimated_line_length;
+        let state = self.active_state_mut();
+        let cursor = state.cursors.primary().clone();
+        let cursor_id = state.cursors.primary_id();
+
+        // Get line information
+        let mut iter = state
+            .buffer
+            .line_iterator(cursor.position, estimated_line_length);
+        if let Some((line_start, line_content)) = iter.next() {
+            // Find first non-whitespace character
+            let first_non_ws = line_content
+                .chars()
+                .take_while(|c| *c != '\n')
+                .position(|c| !c.is_whitespace())
+                .map(|offset| line_start + offset)
+                .unwrap_or(line_start);
+
+            // Toggle: if at first non-ws, go to line start; otherwise go to first non-ws
+            let new_pos = if cursor.position == first_non_ws {
+                line_start
+            } else {
+                first_non_ws
+            };
+
+            let event = Event::MoveCursor {
+                cursor_id,
+                old_position: cursor.position,
+                new_position: new_pos,
+                old_anchor: cursor.anchor,
+                new_anchor: None,
+                old_sticky_column: cursor.sticky_column,
+                new_sticky_column: 0,
+            };
+
+            self.active_event_log_mut().append(event.clone());
+            self.apply_event_to_active_buffer(&event);
+        }
+    }
+
+    /// Indent the selection or current line
+    fn indent_selection(&mut self) {
+        let tab_size = self.config.editor.tab_size;
+        let estimated_line_length = self.config.editor.estimated_line_length;
+        let indent_str = " ".repeat(tab_size);
+
+        let state = self.active_state_mut();
+        // Collect lines to indent
+        let cursor = state.cursors.primary().clone();
+        let cursor_id = state.cursors.primary_id();
+
+        let (start_pos, end_pos) = if let Some(range) = cursor.selection_range() {
+            (range.start, range.end)
+        } else {
+            // No selection - indent current line
+            let iter = state
+                .buffer
+                .line_iterator(cursor.position, estimated_line_length);
+            let line_start = iter.current_position();
+            (line_start, cursor.position)
+        };
+
+        // Find all line starts in the range
+        let buffer_len = state.buffer.len();
+        let mut line_starts = Vec::new();
+        let mut iter = state
+            .buffer
+            .line_iterator(start_pos, estimated_line_length);
+        let mut current_pos = iter.current_position();
+        line_starts.push(current_pos);
+
+        // Collect all line starts by iterating through lines
+        loop {
+            if let Some((_, content)) = iter.next() {
+                current_pos += content.len();
+                if current_pos > end_pos || current_pos > buffer_len {
+                    break;
+                }
+                let next_iter = state.buffer.line_iterator(current_pos, estimated_line_length);
+                let next_start = next_iter.current_position();
+                if next_start != *line_starts.last().unwrap() {
+                    line_starts.push(next_start);
+                }
+                iter = state.buffer.line_iterator(current_pos, estimated_line_length);
+            } else {
+                break;
+            }
+        }
+
+        if line_starts.is_empty() {
+            return;
+        }
+
+        // Create insert events for each line start (in reverse order)
+        let mut events = Vec::new();
+        for &line_start in line_starts.iter().rev() {
+            events.push(Event::Insert {
+                position: line_start,
+                text: indent_str.clone(),
+                cursor_id,
+            });
+        }
+
+        let batch = Event::Batch {
+            events,
+            description: "Indent selection".to_string(),
+        };
+
+        self.active_event_log_mut().append(batch.clone());
+        self.apply_event_to_active_buffer(&batch);
+        self.set_status_message(format!("Indented {} line(s)", line_starts.len()));
+    }
+
+    /// Dedent the selection or current line
+    fn dedent_selection(&mut self) {
+        let tab_size = self.config.editor.tab_size;
+        let estimated_line_length = self.config.editor.estimated_line_length;
+
+        let state = self.active_state_mut();
+        // Collect lines to dedent
+        let cursor = state.cursors.primary().clone();
+        let cursor_id = state.cursors.primary_id();
+
+        let (start_pos, end_pos) = if let Some(range) = cursor.selection_range() {
+            (range.start, range.end)
+        } else {
+            // No selection - dedent current line
+            let iter = state
+                .buffer
+                .line_iterator(cursor.position, estimated_line_length);
+            let line_start = iter.current_position();
+            (line_start, cursor.position)
+        };
+
+        // Find all line starts in the range (same logic as indent)
+        let buffer_len = state.buffer.len();
+        let mut line_starts = Vec::new();
+        let mut iter = state
+            .buffer
+            .line_iterator(start_pos, estimated_line_length);
+        let mut current_pos = iter.current_position();
+        line_starts.push(current_pos);
+
+        loop {
+            if let Some((_, content)) = iter.next() {
+                current_pos += content.len();
+                if current_pos > end_pos || current_pos > buffer_len {
+                    break;
+                }
+                let next_iter = state.buffer.line_iterator(current_pos, estimated_line_length);
+                let next_start = next_iter.current_position();
+                if next_start != *line_starts.last().unwrap() {
+                    line_starts.push(next_start);
+                }
+                iter = state.buffer.line_iterator(current_pos, estimated_line_length);
+            } else {
+                break;
+            }
+        }
+
+        if line_starts.is_empty() {
+            return;
+        }
+
+        // Create delete events for leading spaces (in reverse order)
+        let mut events = Vec::new();
+        let mut lines_dedented = 0;
+
+        for &line_start in line_starts.iter().rev() {
+            // Check how many leading spaces the line has
+            let line_bytes = state.buffer.slice_bytes(line_start..buffer_len.min(line_start + tab_size + 1));
+            let spaces_to_remove = line_bytes
+                .iter()
+                .take(tab_size)
+                .take_while(|&&b| b == b' ')
+                .count();
+
+            if spaces_to_remove > 0 {
+                let deleted_text = " ".repeat(spaces_to_remove);
+                events.push(Event::Delete {
+                    range: line_start..line_start + spaces_to_remove,
+                    deleted_text,
+                    cursor_id,
+                });
+                lines_dedented += 1;
+            }
+        }
+
+        if events.is_empty() {
+            self.set_status_message("No indentation to remove".to_string());
+            return;
+        }
+
+        let batch = Event::Batch {
+            events,
+            description: "Dedent selection".to_string(),
+        };
+
+        self.active_event_log_mut().append(batch.clone());
+        self.apply_event_to_active_buffer(&batch);
+        self.set_status_message(format!("Dedented {} line(s)", lines_dedented));
+    }
+
+    /// Toggle comment on the current line or selection
+    fn toggle_comment(&mut self) {
+        // Determine comment prefix based on file extension
+        let comment_prefix = if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer) {
+            if let Some(path) = metadata.file_path() {
+                match path.extension().and_then(|e| e.to_str()) {
+                    Some("rs") | Some("c") | Some("cpp") | Some("h") | Some("hpp") |
+                    Some("js") | Some("ts") | Some("jsx") | Some("tsx") | Some("java") |
+                    Some("go") | Some("swift") | Some("kt") | Some("scala") => "// ",
+                    Some("py") | Some("rb") | Some("sh") | Some("bash") | Some("zsh") |
+                    Some("pl") | Some("r") | Some("yml") | Some("yaml") | Some("toml") => "# ",
+                    Some("lua") | Some("sql") => "-- ",
+                    Some("html") | Some("xml") => "<!-- ",
+                    Some("css") | Some("scss") | Some("sass") => "/* ",
+                    Some("vim") => "\" ",
+                    Some("lisp") | Some("el") | Some("clj") => ";; ",
+                    _ => "// "
+                }
+            } else {
+                "// "
+            }
+        } else {
+            "// "
+        };
+
+        let estimated_line_length = self.config.editor.estimated_line_length;
+
+        let state = self.active_state_mut();
+        let cursor = state.cursors.primary().clone();
+        let cursor_id = state.cursors.primary_id();
+
+        let (start_pos, end_pos) = if let Some(range) = cursor.selection_range() {
+            (range.start, range.end)
+        } else {
+            let iter = state
+                .buffer
+                .line_iterator(cursor.position, estimated_line_length);
+            let line_start = iter.current_position();
+            (line_start, cursor.position)
+        };
+
+        // Find all line starts in the range
+        let buffer_len = state.buffer.len();
+        let mut line_starts = Vec::new();
+        let mut iter = state
+            .buffer
+            .line_iterator(start_pos, estimated_line_length);
+        let mut current_pos = iter.current_position();
+        line_starts.push(current_pos);
+
+        loop {
+            if let Some((_, content)) = iter.next() {
+                current_pos += content.len();
+                if current_pos > end_pos || current_pos > buffer_len {
+                    break;
+                }
+                let next_iter = state.buffer.line_iterator(current_pos, estimated_line_length);
+                let next_start = next_iter.current_position();
+                if next_start != *line_starts.last().unwrap() {
+                    line_starts.push(next_start);
+                }
+                iter = state.buffer.line_iterator(current_pos, estimated_line_length);
+            } else {
+                break;
+            }
+        }
+
+        // Determine if we should comment or uncomment
+        // If all lines are commented, uncomment; otherwise comment
+        let all_commented = line_starts.iter().all(|&line_start| {
+            let line_bytes = state.buffer.slice_bytes(line_start..buffer_len.min(line_start + comment_prefix.len() + 10));
+            let line_str = String::from_utf8_lossy(&line_bytes);
+            let trimmed = line_str.trim_start();
+            trimmed.starts_with(comment_prefix.trim())
+        });
+
+        let mut events = Vec::new();
+
+        if all_commented {
+            // Uncomment: remove comment prefix from each line
+            for &line_start in line_starts.iter().rev() {
+                let line_bytes = state.buffer.slice_bytes(line_start..buffer_len.min(line_start + 100));
+                let line_str = String::from_utf8_lossy(&line_bytes);
+
+                // Find where the comment prefix starts (after leading whitespace)
+                let leading_ws: usize = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n').map(|c| c.len_utf8()).sum();
+                let rest = &line_str[leading_ws..];
+
+                if rest.starts_with(comment_prefix.trim()) {
+                    let remove_len = if rest.starts_with(comment_prefix) {
+                        comment_prefix.len()
+                    } else {
+                        comment_prefix.trim().len()
+                    };
+                    let deleted_text = String::from_utf8_lossy(&state.buffer.slice_bytes(line_start + leading_ws..line_start + leading_ws + remove_len)).to_string();
+                    events.push(Event::Delete {
+                        range: (line_start + leading_ws)..(line_start + leading_ws + remove_len),
+                        deleted_text,
+                        cursor_id,
+                    });
+                }
+            }
+        } else {
+            // Comment: add comment prefix to each line
+            for &line_start in line_starts.iter().rev() {
+                events.push(Event::Insert {
+                    position: line_start,
+                    text: comment_prefix.to_string(),
+                    cursor_id,
+                });
+            }
+        }
+
+        if events.is_empty() {
+            return;
+        }
+
+        let action_desc = if all_commented { "Uncomment" } else { "Comment" };
+        let batch = Event::Batch {
+            events,
+            description: format!("{} lines", action_desc),
+        };
+
+        self.active_event_log_mut().append(batch.clone());
+        self.apply_event_to_active_buffer(&batch);
+        self.set_status_message(format!("{}ed {} line(s)", action_desc, line_starts.len()));
+    }
+
+    /// Go to matching bracket
+    fn goto_matching_bracket(&mut self) {
+        let state = self.active_state_mut();
+        let cursor = state.cursors.primary().clone();
+        let cursor_id = state.cursors.primary_id();
+
+        let pos = cursor.position;
+        if pos >= state.buffer.len() {
+            self.set_status_message("No bracket at cursor".to_string());
+            return;
+        }
+
+        let bytes = state.buffer.slice_bytes(pos..pos + 1);
+        if bytes.is_empty() {
+            self.set_status_message("No bracket at cursor".to_string());
+            return;
+        }
+
+        let ch = bytes[0] as char;
+        let (opening, closing, forward) = match ch {
+            '(' => ('(', ')', true),
+            ')' => ('(', ')', false),
+            '[' => ('[', ']', true),
+            ']' => ('[', ']', false),
+            '{' => ('{', '}', true),
+            '}' => ('{', '}', false),
+            '<' => ('<', '>', true),
+            '>' => ('<', '>', false),
+            _ => {
+                self.set_status_message("No bracket at cursor".to_string());
+                return;
+            }
+        };
+
+        // Find matching bracket
+        let buffer_len = state.buffer.len();
+        let mut depth = 1;
+        let matching_pos = if forward {
+            let mut search_pos = pos + 1;
+            let mut found = None;
+            while search_pos < buffer_len && depth > 0 {
+                let b = state.buffer.slice_bytes(search_pos..search_pos + 1);
+                if !b.is_empty() {
+                    let c = b[0] as char;
+                    if c == opening {
+                        depth += 1;
+                    } else if c == closing {
+                        depth -= 1;
+                        if depth == 0 {
+                            found = Some(search_pos);
+                        }
+                    }
+                }
+                search_pos += 1;
+            }
+            found
+        } else {
+            let mut search_pos = pos.saturating_sub(1);
+            let mut found = None;
+            loop {
+                let b = state.buffer.slice_bytes(search_pos..search_pos + 1);
+                if !b.is_empty() {
+                    let c = b[0] as char;
+                    if c == closing {
+                        depth += 1;
+                    } else if c == opening {
+                        depth -= 1;
+                        if depth == 0 {
+                            found = Some(search_pos);
+                            break;
+                        }
+                    }
+                }
+                if search_pos == 0 {
+                    break;
+                }
+                search_pos -= 1;
+            }
+            found
+        };
+
+        if let Some(new_pos) = matching_pos {
+            let event = Event::MoveCursor {
+                cursor_id,
+                old_position: cursor.position,
+                new_position: new_pos,
+                old_anchor: cursor.anchor,
+                new_anchor: None,
+                old_sticky_column: cursor.sticky_column,
+                new_sticky_column: 0,
+            };
+            self.active_event_log_mut().append(event.clone());
+            self.apply_event_to_active_buffer(&event);
+        } else {
+            self.set_status_message("No matching bracket found".to_string());
+        }
+    }
+
+    /// Set a bookmark at the current position
+    fn set_bookmark(&mut self, key: char) {
+        let buffer_id = self.active_buffer;
+        let position = self.active_state().cursors.primary().position;
+        self.bookmarks.insert(key, Bookmark { buffer_id, position });
+        self.set_status_message(format!("Bookmark '{}' set", key));
+    }
+
+    /// Jump to a bookmark
+    fn jump_to_bookmark(&mut self, key: char) {
+        if let Some(bookmark) = self.bookmarks.get(&key).cloned() {
+            // Switch to the buffer if needed
+            if bookmark.buffer_id != self.active_buffer {
+                if self.buffers.contains_key(&bookmark.buffer_id) {
+                    self.active_buffer = bookmark.buffer_id;
+                } else {
+                    self.set_status_message(format!("Bookmark '{}': buffer no longer exists", key));
+                    self.bookmarks.remove(&key);
+                    return;
+                }
+            }
+
+            // Move cursor to bookmark position
+            let state = self.active_state_mut();
+            let cursor_id = state.cursors.primary_id();
+            let old_pos = state.cursors.primary().position;
+            let new_pos = bookmark.position.min(state.buffer.len());
+
+            let event = Event::MoveCursor {
+                cursor_id,
+                old_position: old_pos,
+                new_position: new_pos,
+                old_anchor: state.cursors.primary().anchor,
+                new_anchor: None,
+                old_sticky_column: state.cursors.primary().sticky_column,
+                new_sticky_column: 0,
+            };
+
+            self.active_event_log_mut().append(event.clone());
+            self.apply_event_to_active_buffer(&event);
+            self.set_status_message(format!("Jumped to bookmark '{}'", key));
+        } else {
+            self.set_status_message(format!("Bookmark '{}' not set", key));
+        }
+    }
+
+    /// Clear a bookmark
+    fn clear_bookmark(&mut self, key: char) {
+        if self.bookmarks.remove(&key).is_some() {
+            self.set_status_message(format!("Bookmark '{}' cleared", key));
+        } else {
+            self.set_status_message(format!("Bookmark '{}' not set", key));
+        }
+    }
+
+    /// List all bookmarks
+    fn list_bookmarks(&mut self) {
+        if self.bookmarks.is_empty() {
+            self.set_status_message("No bookmarks set".to_string());
+            return;
+        }
+
+        let mut bookmark_list: Vec<_> = self.bookmarks.iter().collect();
+        bookmark_list.sort_by_key(|(k, _)| *k);
+
+        let list_str: String = bookmark_list
+            .iter()
+            .map(|(k, bm)| {
+                let buffer_name = self
+                    .buffer_metadata
+                    .get(&bm.buffer_id)
+                    .map(|m| m.display_name.as_str())
+                    .unwrap_or("unknown");
+                format!("'{}': {} @ {}", k, buffer_name, bm.position)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        self.set_status_message(format!("Bookmarks: {}", list_str));
     }
 }
 

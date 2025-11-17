@@ -179,6 +179,23 @@ pub enum Action {
 
     // Navigation
     GotoLine,
+    GoToMatchingBracket,
+
+    // Smart editing
+    SmartHome,
+    IndentSelection,
+    DedentSelection,
+    ToggleComment,
+
+    // Bookmarks
+    SetBookmark(char),
+    JumpToBookmark(char),
+    ClearBookmark(char),
+    ListBookmarks,
+
+    // Search options
+    ToggleSearchCaseSensitive,
+    ToggleSearchWholeWord,
 
     // Undo/redo
     Undo,
@@ -368,6 +385,38 @@ impl Action {
             "close" => Some(Action::Close),
             "quit" => Some(Action::Quit),
             "goto_line" => Some(Action::GotoLine),
+            "goto_matching_bracket" => Some(Action::GoToMatchingBracket),
+
+            "smart_home" => Some(Action::SmartHome),
+            "indent_selection" => Some(Action::IndentSelection),
+            "dedent_selection" => Some(Action::DedentSelection),
+            "toggle_comment" => Some(Action::ToggleComment),
+
+            "set_bookmark" => {
+                if let Some(serde_json::Value::String(c)) = args.get("char") {
+                    c.chars().next().map(Action::SetBookmark)
+                } else {
+                    None
+                }
+            }
+            "jump_to_bookmark" => {
+                if let Some(serde_json::Value::String(c)) = args.get("char") {
+                    c.chars().next().map(Action::JumpToBookmark)
+                } else {
+                    None
+                }
+            }
+            "clear_bookmark" => {
+                if let Some(serde_json::Value::String(c)) = args.get("char") {
+                    c.chars().next().map(Action::ClearBookmark)
+                } else {
+                    None
+                }
+            }
+            "list_bookmarks" => Some(Action::ListBookmarks),
+
+            "toggle_search_case_sensitive" => Some(Action::ToggleSearchCaseSensitive),
+            "toggle_search_whole_word" => Some(Action::ToggleSearchWholeWord),
 
             "undo" => Some(Action::Undo),
             "redo" => Some(Action::Redo),
@@ -804,19 +853,10 @@ impl KeybindingResolver {
         // Global context bindings (work in all contexts, checked first with highest priority)
         let mut global_bindings = HashMap::new();
 
-        // Command palette (Ctrl+P, Ctrl+/)
+        // Command palette (Ctrl+P)
         // These bindings work everywhere and provide a consistent way to access commands
         global_bindings.insert(
             (KeyCode::Char('p'), KeyModifiers::CONTROL),
-            Action::CommandPalette,
-        );
-        global_bindings.insert(
-            (KeyCode::Char('/'), KeyModifiers::CONTROL),
-            Action::CommandPalette,
-        );
-        // Some terminals send Ctrl+7 for Ctrl+/ (since / is Shift+7 on many keyboards)
-        global_bindings.insert(
-            (KeyCode::Char('7'), KeyModifiers::CONTROL),
             Action::CommandPalette,
         );
 
@@ -1014,6 +1054,35 @@ impl KeybindingResolver {
         );
         bindings.insert((KeyCode::F(3), KeyModifiers::empty()), Action::FindNext);
         bindings.insert((KeyCode::F(3), KeyModifiers::SHIFT), Action::FindPrevious);
+
+        // Smart editing
+        bindings.insert(
+            (KeyCode::Char('/'), KeyModifiers::CONTROL),
+            Action::ToggleComment,
+        );
+        bindings.insert(
+            (KeyCode::Tab, KeyModifiers::SHIFT),
+            Action::DedentSelection,
+        );
+        bindings.insert(
+            (KeyCode::Char(']'), KeyModifiers::CONTROL),
+            Action::GoToMatchingBracket,
+        );
+        // Ctrl+G for Go to line
+        bindings.insert((KeyCode::Char('g'), KeyModifiers::CONTROL), Action::GotoLine);
+
+        // Bookmarks (Ctrl+Shift+number to set, Ctrl+number to jump)
+        // Common bookmark slots: 0-9
+        for i in '0'..='9' {
+            bindings.insert(
+                (KeyCode::Char(i), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+                Action::SetBookmark(i),
+            );
+            bindings.insert(
+                (KeyCode::Char(i), KeyModifiers::ALT),
+                Action::JumpToBookmark(i),
+            );
+        }
 
         // Buffer navigation (Ctrl+PageUp/PageDown - standard in terminals and browsers)
         bindings.insert((KeyCode::PageUp, KeyModifiers::CONTROL), Action::PrevBuffer);
@@ -1364,6 +1433,17 @@ impl KeybindingResolver {
             Action::Close => "Close file".to_string(),
             Action::Quit => "Quit editor".to_string(),
             Action::GotoLine => "Go to line number".to_string(),
+            Action::GoToMatchingBracket => "Go to matching bracket".to_string(),
+            Action::SmartHome => "Smart home (toggle line start / first non-whitespace)".to_string(),
+            Action::IndentSelection => "Indent selection".to_string(),
+            Action::DedentSelection => "Dedent selection".to_string(),
+            Action::ToggleComment => "Toggle comment".to_string(),
+            Action::SetBookmark(c) => format!("Set bookmark '{}'", c),
+            Action::JumpToBookmark(c) => format!("Jump to bookmark '{}'", c),
+            Action::ClearBookmark(c) => format!("Clear bookmark '{}'", c),
+            Action::ListBookmarks => "List all bookmarks".to_string(),
+            Action::ToggleSearchCaseSensitive => "Toggle search case sensitivity".to_string(),
+            Action::ToggleSearchWholeWord => "Toggle search whole word matching".to_string(),
             Action::Undo => "Undo".to_string(),
             Action::Redo => "Redo".to_string(),
             Action::ScrollUp => "Scroll up".to_string(),
