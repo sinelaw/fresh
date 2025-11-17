@@ -440,7 +440,12 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 ## Next Steps
 
 1. **High Priority**: LSP advanced features (hover, code actions, find references)
-2. **High Priority**: Macros (record, play, persistence)
+2. **High Priority**: Rectangular/block selection (core editor feature)
 3. **Medium Priority**: Complete virtual buffer infrastructure (BufferKind, TypeScript ops)
-4. **Medium Priority**: Rectangular/block selection
+4. **Medium Priority**: Macro persistence (save/load across sessions)
 5. **Lower Priority**: Search enhancements (persist history, multi-file search)
+
+### Recent Completions (This Session)
+- ✅ Bracket auto-close and auto-pair deletion
+- ✅ Jump to next/previous error (F8/Shift+F8)
+- ✅ Macro recording and playback system (Alt+Shift+0-9 / Ctrl+Alt+0-9)
