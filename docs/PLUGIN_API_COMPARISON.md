@@ -447,15 +447,21 @@ VSCode provides **hundreds of methods** across 15+ namespaces including `window`
 
 Despite the gaps, Fresh has some advantages:
 
-1. **Render Line Hook** - Direct access to line rendering for syntax highlighting
-2. **Pre/Post Command Hooks** - Intercept any command execution
-3. **Idle Event** - React to editor inactivity
-4. **Virtual Buffers with Properties** - Rich metadata attached to text
-5. **Mode Definition** - Custom keybinding modes per plugin
-6. **Overlay Prefix Management** - Bulk overlay operations
-7. **Simpler API** - Single object vs 15+ namespaces
-8. **Native Async/Await** - Modern JavaScript patterns
-9. **Deno Runtime** - TypeScript transpilation built-in
+1. **Pre/Post Command Hooks** - Observe command execution (note: non-blocking, cannot intercept)
+2. **Idle Event** - React to editor inactivity
+3. **Virtual Buffers with Properties** - Rich metadata attached to text
+4. **Mode Definition** - Custom keybinding modes per plugin
+5. **Overlay Prefix Management** - Bulk overlay operations
+6. **Simpler API** - Single object vs 15+ namespaces
+7. **Native Async/Await** - Modern JavaScript patterns
+8. **Deno Runtime** - TypeScript transpilation built-in
+9. **Dedicated Plugin Thread** - Non-blocking execution model (similar to VSCode Extension Host)
+
+**Important Architectural Note (as of latest changes):**
+- Hooks are now **non-blocking** (fire-and-forget). Plugins cannot intercept or cancel operations.
+- The `render_line` hook has been removed (may be reimplemented later).
+- LSP features (hover, completions) are implemented in Rust core, not as plugin providers.
+- This means Fresh has a **hybrid architecture**: Core features in Rust with plugin-driven UI/workflows.
 
 ---
 

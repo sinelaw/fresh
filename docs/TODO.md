@@ -346,6 +346,139 @@ Fully functional diagnostics panel with virtual buffer split view:
 
 ---
 
+## Plugin API Gap Analysis: Fresh vs VSCode
+
+> **Full comparison:** See [PLUGIN_API_COMPARISON.md](./PLUGIN_API_COMPARISON.md) for detailed method-by-method analysis.
+
+### Executive Summary
+
+**Overall Parity: ~25-30%** of VSCode's core extension capabilities.
+
+- Fresh provides **~60 methods** via single `editor` API object
+- VSCode provides **hundreds of methods** across 15+ namespaces
+- Fresh's strength: Hybrid architecture (Rust core + TypeScript plugins for UI/workflows)
+- Fresh's gap: No plugin-based language services (IntelliSense is not extensible by plugins)
+
+### Architecture Difference
+
+Fresh uses a **different model** than VSCode:
+- **VSCode**: Everything extensible via plugins (language services, debuggers, SCM, tests)
+- **Fresh**: Core features in Rust (LSP, syntax highlighting, debugging) + Plugins for UI/workflows
+
+This is intentional - Fresh prioritizes performance and simplicity over infinite extensibility.
+
+### Top 10 Critical Feature Gaps (for VSCode-like plugin ecosystem)
+
+| Priority | Gap | Impact | Effort |
+|----------|-----|--------|--------|
+| **1** | Cursor/Selection Write | Cannot set cursor position programmatically | 4-6h |
+| **2** | Execute Command | Cannot invoke commands from plugins | 2-3h |
+| **3** | Basic Dialogs | No user confirmation/input dialogs | 4-6h |
+| **4** | File Find (glob) | No `findFiles()` for project search | 3-4h |
+| **5** | File Watchers | Cannot react to external file changes | 6-8h |
+| **6** | Workspace Edit | No multi-file refactoring | 8-12h |
+| **7** | Tree View Provider | No hierarchical UI panels | 12-16h |
+| **8** | Plugin Configuration | Plugins have no settings API | 6-8h |
+| **9** | Progress Indicator | No long-running task feedback | 4-6h |
+| **10** | Clipboard Access | Cannot read/write clipboard | 2-3h |
+
+### What Fresh DOES Well
+
+- ✅ **Buffer Queries** - Full read access to buffers, cursors, selections
+- ✅ **Basic Mutations** - Insert/delete text operations
+- ✅ **Visual Overlays** - RGB highlighting with prefix management
+- ✅ **File System** - Read/write files, stat, directory listing
+- ✅ **Process Spawning** - Async external command execution
+- ✅ **Event Hooks** - Non-blocking hooks for file/buffer/cursor events
+- ✅ **Virtual Buffers** - Custom UI panels with embedded properties
+- ✅ **Mode Definition** - Custom keybindings per plugin
+- ✅ **Path Utilities** - Join, dirname, basename, etc.
+
+### What Fresh CANNOT Do (Plugin Perspective)
+
+- ❌ **Set cursor/selection** - Read-only access to cursor state
+- ❌ **Execute commands** - Cannot invoke commands programmatically
+- ❌ **Show dialogs** - No info/warning/error modals
+- ❌ **Language providers** - No IntelliSense, hover, definition providers
+- ❌ **Tree views** - No hierarchical data UI
+- ❌ **Webviews** - No custom HTML/JS panels
+- ❌ **Output channels** - No streaming log panels
+- ❌ **Terminals** - No integrated terminal creation
+- ❌ **Debug adapters** - No debugging infrastructure
+- ❌ **SCM providers** - No git integration abstraction
+- ❌ **Test controllers** - No test framework integration
+
+### Recommended Implementation Roadmap
+
+#### Phase 1: Essential Plugin APIs (Enables basic plugin authoring)
+
+```typescript
+// Priority additions to EditorAPI
+setCursorPosition(buffer_id: number, position: number): boolean;
+setSelections(selections: SelectionRange[]): boolean;
+revealRange(buffer_id: number, start: number, end: number): boolean;
+executeCommand(name: string, ...args: any[]): any;
+getCommands(): string[];
+showMessage(level: "info" | "warning" | "error", message: string): void;
+findFiles(pattern: string, maxResults?: number): Promise<string[]>;
+getClipboard(): Promise<string>;
+setClipboard(text: string): Promise<void>;
+```
+
+**Effort: ~30-40 hours** | **Impact: High** - Enables navigation, refactoring, and interactive plugins.
+
+#### Phase 2: Enhanced UI & Configuration
+
+```typescript
+// Configuration API
+getConfiguration(section: string): Record<string, any>;
+setConfiguration(section: string, key: string, value: any): void;
+onConfigurationChange(callback: (section: string) => void): void;
+
+// Progress API
+withProgress(title: string, task: (report: (message: string) => void) => Promise<void>): Promise<void>;
+
+// File Watching
+watchFile(path: string, callback: (event: "change" | "delete") => void): Disposable;
+```
+
+**Effort: ~40-50 hours** | **Impact: Medium** - Plugin settings, progress feedback, reactive file updates.
+
+#### Phase 3: Advanced Features (For full IDE-like plugins)
+
+- Tree view providers (file explorer plugins, outline views)
+- Output channels (build logs, LSP logs)
+- Webview panels (custom HTML UIs)
+- Workspace edit (multi-file refactoring)
+
+**Effort: ~100+ hours** | **Impact: High** - Enables complex IDE features.
+
+### Strategic Decision: Hybrid vs Full Extension Model
+
+Fresh's current architecture is intentionally **hybrid**:
+- **Core Rust** handles performance-critical features (LSP, rendering, editing)
+- **TypeScript plugins** handle UI workflows (git integration, diagnostics panels)
+
+**Pros of current approach:**
+- Simpler plugin API surface
+- Better performance (core features in Rust)
+- Easier to maintain consistency
+- Lower barrier for plugin authors
+
+**Cons vs VSCode model:**
+- Less extensible (can't replace core language services)
+- Fewer potential plugins (no IntelliSense providers)
+- Limited ecosystem growth
+
+**Recommendation:** Stay with hybrid model but close the Phase 1 gaps to enable useful plugins like:
+- Git status/blame integration
+- Code navigation tools
+- Project search/replace
+- Custom formatters (via external tools)
+- Bookmark/snippet managers
+
+---
+
 ## Completed Work (Summary)
 
 ### TypeScript Plugin System Migration
