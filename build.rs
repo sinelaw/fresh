@@ -10,10 +10,19 @@ fn main() {
     // Only rerun if ts_runtime.rs changes
     println!("cargo::rerun-if-changed=src/ts_runtime.rs");
 
-    // Generate TypeScript types
-    if let Err(e) = generate_typescript_types() {
-        eprintln!("Warning: Failed to generate TypeScript types: {}", e);
-    }
+    // NOTE: TypeScript type generation is currently disabled because the auto-generator
+    // doesn't handle:
+    // - Async ops (async fn with Promise return types)
+    // - #[serde] parameters (Vec<String>, custom structs)
+    // - Custom return types (Result<SpawnResult, ...>, Result<FileStat, ...>)
+    // - Interface definitions for custom types
+    //
+    // The manually maintained types/fresh.d.ts is more complete and accurate.
+    // Re-enable this once build.rs is enhanced to handle these cases.
+    //
+    // if let Err(e) = generate_typescript_types() {
+    //     eprintln!("Warning: Failed to generate TypeScript types: {}", e);
+    // }
 }
 
 /// Information about a single op
