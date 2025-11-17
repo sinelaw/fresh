@@ -45,6 +45,15 @@ interface FileStat {
 }
 
 /**
+ * Directory entry information
+ */
+interface DirEntry {
+  name: string;
+  is_file: boolean;
+  is_dir: boolean;
+}
+
+/**
  * Main editor API interface
  */
 interface EditorAPI {
@@ -159,6 +168,20 @@ interface EditorAPI {
    * @returns Extension including dot (e.g., ".ts"), or empty string
    */
   pathExtname(path: string): string;
+
+  /**
+   * Check if a path is absolute
+   * @param path - Path to check
+   * @returns true if path is absolute, false otherwise
+   */
+  pathIsAbsolute(path: string): boolean;
+
+  /**
+   * Read directory contents
+   * @param path - Path to directory
+   * @returns Array of directory entries with name and type info
+   */
+  readDir(path: string): DirEntry[];
 }
 
 // Export for module compatibility
