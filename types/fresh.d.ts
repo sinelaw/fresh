@@ -54,6 +54,53 @@ interface DirEntry {
 }
 
 /**
+ * Buffer information
+ */
+interface BufferInfo {
+  id: number;
+  path: string;
+  modified: boolean;
+  length: number;
+}
+
+/**
+ * Selection range
+ */
+interface SelectionRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * Cursor information with optional selection
+ */
+interface CursorInfo {
+  position: number;
+  selection: SelectionRange | null;
+}
+
+/**
+ * Viewport information
+ */
+interface ViewportInfo {
+  top_byte: number;
+  left_column: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Suggestion for prompt autocomplete
+ */
+interface PromptSuggestion {
+  text: string;
+  description?: string;
+  value?: string;
+  disabled?: boolean;
+  keybinding?: string;
+}
+
+/**
  * Main editor API interface
  */
 interface EditorAPI {
@@ -71,6 +118,54 @@ interface EditorAPI {
   getBufferText(buffer_id: number, start: number, end: number): string;
   getCursorLine(): number;
   getAllCursorPositions(): number[];
+
+  // === Buffer Info Queries ===
+  /**
+   * Get full information about a buffer
+   * @param buffer_id - Buffer ID
+   * @returns BufferInfo object or null if buffer not found
+   */
+  getBufferInfo(buffer_id: number): BufferInfo | null;
+
+  /**
+   * List all open buffers
+   * @returns Array of BufferInfo objects
+   */
+  listBuffers(): BufferInfo[];
+
+  /**
+   * Get primary cursor with selection info
+   * @returns CursorInfo object or null if no cursor
+   */
+  getPrimaryCursor(): CursorInfo | null;
+
+  /**
+   * Get all cursors (for multi-cursor support)
+   * @returns Array of CursorInfo objects
+   */
+  getAllCursors(): CursorInfo[];
+
+  /**
+   * Get viewport information
+   * @returns ViewportInfo object or null if no viewport
+   */
+  getViewport(): ViewportInfo | null;
+
+  // === Prompt Operations ===
+  /**
+   * Start an interactive prompt
+   * @param label - Label to display (e.g., "Git grep: ")
+   * @param promptType - Type identifier (e.g., "git-grep")
+   * @returns true if prompt was started successfully
+   */
+  startPrompt(label: string, promptType: string): boolean;
+
+  /**
+   * Set suggestions for the current prompt
+   * @param suggestions - Array of suggestions to display
+   * @returns true if suggestions were set successfully
+   */
+  setPromptSuggestions(suggestions: PromptSuggestion[]): boolean;
 
   // === Buffer Mutations ===
   insertText(buffer_id: number, position: number, text: string): boolean;
