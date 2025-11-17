@@ -21,21 +21,24 @@
 
 #### 🚀 Progress Summary (as of latest commits)
 
-**Phase 1 Status: ~98% Complete**
+**Phase 1 Status: ~100% Complete** 🎉
+**Phase 2 Status: ~70% Complete**
+
 - ✅ **1.1 Deno Core Dependency** - DONE (deno_core 0.272.0 integrated)
 - ✅ **1.2 TypeScript Runtime** - DONE (TypeScriptRuntime struct with JsRuntime wrapper)
 - ✅ **1.3 Editor Ops** - 37 ops implemented (34 sync + 3 async)
 - ✅ **1.4 Type Definitions** - DONE (manually maintained for accuracy)
 - ✅ **1.5 Hook Registration** - DONE (on/off/getHandlers + emit() method)
+- ✅ **2.1 Plugin Manager** - DONE (TypeScriptPluginManager with load/execute/run_hook)
 
 **Key Achievements:**
 - V8 engine successfully embedded in Fresh
 - Native async/await working (Promise-based ops)
 - State sharing via Arc<RwLock<EditorStateSnapshot>>
 - Commands sent via mpsc channel (PluginCommand enum)
-- 33 passing tests covering runtime, ops, state, actions, async ops, file I/O, and hooks
+- **43 passing tests** covering runtime, ops, state, actions, async ops, file I/O, hooks, and plugin manager
 - Manually maintained TypeScript types (37 ops with full async/interface support)
-- Sample TypeScript plugins created (hello_world.ts, bookmarks.ts, git_grep.ts)
+- Sample TypeScript plugins created (hello_world.ts, bookmarks.ts, git_grep.ts, todo_highlighter.ts)
 - Command registration working (PluginAction for global functions)
 - File opening with line/column positioning
 - Split view operations (get active split, open file in split)
@@ -43,10 +46,21 @@
 - **Git integration plugin** - Real-world async usage with git grep/status/branch/log
 - **Event/Hook registration system** - editor.on()/off() for event subscriptions
 - **Emit infrastructure** - TypeScriptRuntime.emit() for Rust→JS event dispatch
+- **TypeScriptPluginManager** - Full plugin lifecycle management mirroring Lua's PluginManager:
+  - load_plugin() - Load .ts/.js files as modules
+  - unload_plugin() - Remove plugins from tracking
+  - reload_plugin() - Hot reload support
+  - load_plugins_from_dir() - Batch loading
+  - execute_action() - Call global JS functions by name
+  - run_hook() - Convert HookArgs to JSON and emit to handlers
+  - process_commands() - Receive PluginCommands from plugins
+  - state_snapshot_handle() - Share state with editor
 
-**Remaining Phase 1 Work:**
-- Mode definition ops (optional for Phase 1)
+**Remaining Work:**
 - Integration with editor main loop (calling emit() from editor events)
+- Wire up TypeScriptPluginManager to Editor struct
+- Load TypeScript plugins on startup alongside Lua plugins
+- Mode definition ops (optional)
 
 **Important Security Consideration:**
 - ⚠️ **Plugin Sandboxing** - Current implementation lacks isolation between plugins
@@ -72,6 +86,7 @@
 12. `8551a63` - chore: Disable TypeScript type auto-generation (preserve manual types)
 13. `849fad8` - feat: Add directory listing and path absolute check ops (34 ops total)
 14. `89aeec9` - feat: Add event/hook registration system (37 ops, 33 tests)
+15. `<pending>` - feat: Add TypeScriptPluginManager with full lifecycle management (43 tests)
 
 ---
 
