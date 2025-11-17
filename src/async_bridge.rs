@@ -47,6 +47,13 @@ pub enum AsyncMessage {
         result: Result<lsp_types::WorkspaceEdit, String>,
     },
 
+    /// LSP hover response
+    LspHover {
+        request_id: u64,
+        /// Hover contents as markdown or plaintext strings
+        contents: Vec<String>,
+    },
+
     /// File changed externally (future: file watching)
     FileChanged { path: String },
 
