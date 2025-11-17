@@ -24,7 +24,7 @@
 **Phase 1 Status: ~95% Complete**
 - ✅ **1.1 Deno Core Dependency** - DONE (deno_core 0.272.0 integrated)
 - ✅ **1.2 TypeScript Runtime** - DONE (TypeScriptRuntime struct with JsRuntime wrapper)
-- ✅ **1.3 Editor Ops** - 22 ops implemented (including async spawn_process!)
+- ✅ **1.3 Editor Ops** - 31 ops implemented (including async spawn_process, file I/O, path ops!)
 - ✅ **1.4 Type Definitions** - DONE (auto-generated + manual async types)
 
 **Key Achievements:**
@@ -45,6 +45,15 @@
 - Hook registration ops (on, off, emit) - complex, requires JS→Rust callback mechanism
 - Mode definition ops (optional for Phase 1)
 
+**Important Security Consideration:**
+- ⚠️ **Plugin Sandboxing** - Current implementation lacks isolation between plugins
+  - All plugins share the same JsRuntime (V8 isolate)
+  - No permission model - all plugins have same file system, process spawn, etc. access
+  - Plugins can potentially interfere with each other via shared globals
+  - **Future work needed**: Per-plugin JsRuntime instances with manifest-based permissions
+  - Consider Deno-style permission flags: `--allow-read`, `--allow-write`, `--allow-run`
+  - Plugin manifest should declare required permissions for user review
+
 **Commits:**
 1. `1eae5c8` - feat: Add TypeScript plugin runtime with deno_core
 2. `80cb50b` - feat: Add comprehensive editor ops to TypeScript runtime
@@ -54,6 +63,7 @@
 6. `f0b825c` - feat: Add comprehensive bookmarks plugin example using new ops
 7. `62be068` - feat: Add async spawn_process op with native Promise support (20 tests total)
 8. `2fe73c0` - feat: Add git-grep plugin and cursor/buffer query ops (22 ops total)
+9. `fad87c6` - feat: Add file system, environment, and path ops (31 ops total)
 
 ---
 
