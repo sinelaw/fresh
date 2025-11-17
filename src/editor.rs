@@ -7,7 +7,6 @@ use crate::config::Config;
 use crate::event::{CursorId, Event, EventLog, SplitDirection, SplitId};
 use crate::file_tree::{FileTree, FileTreeView};
 use crate::fs::{FsBackend, FsManager, LocalFsBackend};
-use crate::hooks::HookRegistry;
 use crate::keybindings::{Action, KeyContext, KeybindingResolver};
 use crate::lsp::{LspServerConfig};
 use crate::lsp_diagnostics;
@@ -16,7 +15,7 @@ use crate::multi_cursor::{
     add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult,
 };
 use crate::plugin_api::PluginCommand;
-use crate::ts_runtime::TypeScriptPluginManager;
+use crate::plugin_thread::PluginThreadHandle;
 use crate::position_history::PositionHistory;
 use crate::prompt::{Prompt, PromptType};
 use crate::split::{SplitManager, SplitViewState};
@@ -345,14 +344,11 @@ pub struct Editor {
     /// Cached layout areas from last render (for mouse hit testing)
     cached_layout: CachedLayout,
 
-    /// Hook registry for plugins
-    hook_registry: Arc<RwLock<HookRegistry>>,
-
     /// Command registry for dynamic commands
     command_registry: Arc<RwLock<CommandRegistry>>,
 
-    /// TypeScript plugin manager
-    ts_plugin_manager: Option<TypeScriptPluginManager>,
+    /// TypeScript plugin thread handle
+    ts_plugin_manager: Option<PluginThreadHandle>,
 
     /// Named panel IDs mapping (for idempotent panel operations)
     /// Maps panel ID (e.g., "diagnostics") to buffer ID
@@ -617,32 +613,28 @@ impl Editor {
         let fs_manager = Arc::new(FsManager::new(fs_backend));
 
         // Initialize plugin system
-        let hook_registry = Arc::new(RwLock::new(HookRegistry::new()));
         let command_registry = Arc::new(RwLock::new(CommandRegistry::new()));
 
-        // Initialize TypeScript plugin manager
-        let ts_plugin_manager = match TypeScriptPluginManager::new(
-            Arc::clone(&hook_registry),
-            Arc::clone(&command_registry),
-        ) {
-            Ok(manager) => Some(manager),
+        // Initialize TypeScript plugin thread
+        let ts_plugin_manager = match PluginThreadHandle::spawn(Arc::clone(&command_registry)) {
+            Ok(handle) => Some(handle),
             Err(e) => {
-                tracing::error!("Failed to create TypeScript plugin manager: {}", e);
+                tracing::error!("Failed to spawn TypeScript plugin thread: {}", e);
                 // In debug/test builds, panic to surface the error
                 #[cfg(debug_assertions)]
-                panic!("TypeScript plugin manager creation failed: {}", e);
+                panic!("TypeScript plugin thread creation failed: {}", e);
                 #[cfg(not(debug_assertions))]
                 None
             }
         };
 
         // Load TypeScript plugins from plugins directory
-        let mut ts_plugin_manager = ts_plugin_manager;
-        if let Some(ref mut manager) = ts_plugin_manager {
+        let ts_plugin_manager = ts_plugin_manager;
+        if let Some(ref manager) = ts_plugin_manager {
             let plugin_dir = working_dir.join("plugins");
             if plugin_dir.exists() {
                 tracing::info!("Loading TypeScript plugins from: {:?}", plugin_dir);
-                let errors = manager.load_plugins_from_dir_blocking(&plugin_dir);
+                let errors = manager.load_plugins_from_dir(&plugin_dir);
                 if !errors.is_empty() {
                     for err in &errors {
                         tracing::error!("TypeScript plugin load error: {}", err);
@@ -698,7 +690,6 @@ impl Editor {
             lsp_status: String::new(),
             mouse_state: MouseState::default(),
             cached_layout: CachedLayout::default(),
-            hook_registry,
             command_registry,
             ts_plugin_manager,
             panel_ids: HashMap::new(),
@@ -2154,33 +2145,10 @@ impl Editor {
     }
 
     /// Trigger plugin hooks for an event (if any)
-    fn trigger_plugin_hooks_for_event(&mut self, event: &Event) {
-        use crate::event_hooks::EventHooks;
-        use crate::hooks::HookArgs;
-
-        if self.ts_plugin_manager.is_some() {
-            // Update plugin state snapshot BEFORE calling hooks
-            // so plugins can query current state
-            self.update_plugin_state_snapshot();
-
-            // Trigger "after" hooks for this event
-            if let Some(hook_args) = event.after_hook(self.active_buffer) {
-                let hook_name = match &hook_args {
-                    HookArgs::AfterInsert { .. } => "after-insert",
-                    HookArgs::AfterDelete { .. } => "after-delete",
-                    _ => "",
-                };
-
-                if !hook_name.is_empty() {
-                    // TypeScript plugin hooks
-                    if let Some(ref mut ts_manager) = self.ts_plugin_manager {
-                        if let Err(e) = ts_manager.run_hook_blocking(hook_name, &hook_args) {
-                            tracing::warn!("TypeScript plugin hook '{}' error: {}", hook_name, e);
-                        }
-                    }
-                }
-            }
-        }
+    fn trigger_plugin_hooks_for_event(&mut self, _event: &Event) {
+        // TypeScript plugin event hooks are not yet implemented
+        // This can be extended to call ts_manager.run_hook() for specific events
+        // when needed, converting events to HookArgs
     }
 
     /// Get the event log for the active buffer
@@ -2483,8 +2451,8 @@ impl Editor {
                         input: prompt.input.clone(),
                     };
 
-                    if let Some(ref mut ts_manager) = self.ts_plugin_manager {
-                        let _ = ts_manager.run_hook_blocking("prompt_cancelled", &hook_args);
+                    if let Some(ref ts_manager) = self.ts_plugin_manager {
+                        ts_manager.run_hook("prompt_cancelled", hook_args);
                     }
                 }
                 PromptType::LspRename { overlay_id, .. } => {
@@ -2617,8 +2585,8 @@ impl Editor {
                     input,
                 };
 
-                if let Some(ref mut ts_manager) = self.ts_plugin_manager {
-                    let _ = ts_manager.run_hook_blocking("prompt_changed", &hook_args);
+                if let Some(ref ts_manager) = self.ts_plugin_manager {
+                    ts_manager.run_hook("prompt_changed", hook_args);
                 }
             }
             _ => {}
@@ -3301,8 +3269,8 @@ impl Editor {
                     input: String::new(),
                 };
 
-                if let Some(ref mut ts_manager) = self.ts_plugin_manager {
-                    let _ = ts_manager.run_hook_blocking("prompt_changed", &hook_args);
+                if let Some(ref ts_manager) = self.ts_plugin_manager {
+                    ts_manager.run_hook("prompt_changed", hook_args);
                 }
             }
             PluginCommand::SetPromptSuggestions { suggestions } => {
@@ -5267,9 +5235,9 @@ impl Editor {
                 }
             }
             Action::PluginAction(action_name) => {
-                // Execute the plugin callback via TypeScript plugin manager
-                if let Some(ref mut manager) = self.ts_plugin_manager {
-                    match manager.execute_action_blocking(&action_name) {
+                // Execute the plugin callback via TypeScript plugin thread
+                if let Some(ref manager) = self.ts_plugin_manager {
+                    match manager.execute_action(&action_name) {
                         Ok(()) => {
                             tracing::info!("Plugin action '{}' executed successfully", action_name);
                         }
@@ -5389,8 +5357,8 @@ impl Editor {
                                 selected_index,
                             };
 
-                            if let Some(ref mut ts_manager) = self.ts_plugin_manager {
-                                let _ = ts_manager.run_hook_blocking("prompt_confirmed", &hook_args);
+                            if let Some(ref ts_manager) = self.ts_plugin_manager {
+                                ts_manager.run_hook("prompt_confirmed", hook_args);
                             }
                         }
                         PromptType::LspRename {
@@ -6718,8 +6686,6 @@ impl Editor {
             self.config.editor.large_file_threshold_bytes,
             self.config.editor.line_wrap,
             self.config.editor.estimated_line_length,
-            Some(&self.hook_registry),
-            None, // TypeScript plugin render hooks not yet supported (require async)
             Some(&self.split_view_states),
         );
         self.cached_layout.split_areas = split_areas;
