@@ -21,10 +21,10 @@
 
 #### 🚀 Progress Summary (as of latest commits)
 
-**Phase 1 Status: ~90% Complete**
+**Phase 1 Status: ~95% Complete**
 - ✅ **1.1 Deno Core Dependency** - DONE (deno_core 0.272.0 integrated)
 - ✅ **1.2 TypeScript Runtime** - DONE (TypeScriptRuntime struct with JsRuntime wrapper)
-- ✅ **1.3 Editor Ops** - 19 ops implemented (including async spawn_process!)
+- ✅ **1.3 Editor Ops** - 22 ops implemented (including async spawn_process!)
 - ✅ **1.4 Type Definitions** - DONE (auto-generated + manual async types)
 
 **Key Achievements:**
@@ -33,17 +33,17 @@
 - State sharing via Arc<RwLock<EditorStateSnapshot>>
 - Commands sent via mpsc channel (PluginCommand enum)
 - 20 passing tests covering runtime, ops, state, actions, and async ops
-- Auto-generated TypeScript types from Rust code (19 ops)
-- Sample TypeScript plugins created (hello_world.ts, bookmarks.ts)
+- Auto-generated TypeScript types from Rust code (22 ops)
+- Sample TypeScript plugins created (hello_world.ts, bookmarks.ts, git_grep.ts)
 - Command registration working (PluginAction for global functions)
 - File opening with line/column positioning
 - Split view operations (get active split, open file in split)
 - **Async process spawning via native Promise** (spawn_process op)
+- **Git integration plugin** - Real-world async usage with git grep/status/branch/log
 
 **Remaining Phase 1 Work:**
 - Hook registration ops (on, off, emit) - complex, requires JS→Rust callback mechanism
 - Mode definition ops (optional for Phase 1)
-- Async ops (create_virtual_buffer_in_split) - spawn_process DONE!
 
 **Commits:**
 1. `1eae5c8` - feat: Add TypeScript plugin runtime with deno_core
@@ -53,6 +53,7 @@
 5. `c610f9e` - test: Add focused unit tests for TypeScript runtime ops (16 tests total)
 6. `f0b825c` - feat: Add comprehensive bookmarks plugin example using new ops
 7. `62be068` - feat: Add async spawn_process op with native Promise support (20 tests total)
+8. (pending) - feat: Add git-grep plugin and cursor/buffer query ops (22 ops total)
 
 ---
 
@@ -119,7 +120,7 @@ fn op_fresh_add_overlay(
 ```
 
 - [x] Define ops inline in `src/ts_runtime.rs` (no separate module)
-- [x] Implement synchronous ops (18 total):
+- [x] Implement synchronous ops (21 total):
   - `op_fresh_get_active_buffer_id` → returns current buffer ID ✅
   - `op_fresh_get_cursor_position` → returns cursor position ✅
   - `op_fresh_get_buffer_path` → returns buffer file path ✅
@@ -138,6 +139,9 @@ fn op_fresh_add_overlay(
   - `op_fresh_open_file` → opens file at location (line/column) ✅
   - `op_fresh_get_active_split_id` → returns split ID ✅
   - `op_fresh_open_file_in_split` → opens file in specific split ✅
+  - `op_fresh_get_buffer_text` → get range of text from buffer ✅
+  - `op_fresh_get_cursor_line` → get current line number ✅
+  - `op_fresh_get_all_cursor_positions` → get all cursor positions (multi-cursor) ✅
   - `op_define_mode` → defines buffer mode (TODO - optional for Phase 1)
 - [x] Implement async ops (for I/O operations):
   - `op_fresh_spawn_process` → spawns external command with Promise ✅
