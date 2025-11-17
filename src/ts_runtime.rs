@@ -1959,8 +1959,11 @@ impl TypeScriptPluginManager {
     /// This is useful for initialization where async context is not available.
     /// Uses a temporary tokio runtime to execute the async load.
     pub fn load_plugin_blocking(&mut self, path: &Path) -> Result<()> {
-        // Create a new tokio runtime for this blocking operation
-        let rt = tokio::runtime::Runtime::new()
+        // Create a new tokio current_thread runtime for this blocking operation
+        // deno_core requires current_thread runtime for async ops
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
             .map_err(|e| anyhow!("Failed to create runtime: {}", e))?;
 
         rt.block_on(self.load_plugin(path))
@@ -1968,7 +1971,11 @@ impl TypeScriptPluginManager {
 
     /// Load all plugins from a directory synchronously (blocking)
     pub fn load_plugins_from_dir_blocking(&mut self, dir: &Path) -> Vec<String> {
-        let rt = match tokio::runtime::Runtime::new() {
+        // deno_core requires current_thread runtime for async ops
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
             Ok(rt) => rt,
             Err(e) => {
                 let err = format!("Failed to create runtime: {}", e);
@@ -1982,7 +1989,10 @@ impl TypeScriptPluginManager {
 
     /// Execute an action synchronously (blocking)
     pub fn execute_action_blocking(&mut self, action_name: &str) -> Result<()> {
-        let rt = tokio::runtime::Runtime::new()
+        // deno_core requires current_thread runtime for async ops
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
             .map_err(|e| anyhow!("Failed to create runtime: {}", e))?;
 
         rt.block_on(self.execute_action(action_name))
@@ -1990,7 +2000,10 @@ impl TypeScriptPluginManager {
 
     /// Run a hook synchronously (blocking)
     pub fn run_hook_blocking(&mut self, hook_name: &str, args: &HookArgs) -> Result<()> {
-        let rt = tokio::runtime::Runtime::new()
+        // deno_core requires a current_thread runtime for async ops
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
             .map_err(|e| anyhow!("Failed to create runtime: {}", e))?;
 
         rt.block_on(self.run_hook(hook_name, args))
@@ -1998,7 +2011,10 @@ impl TypeScriptPluginManager {
 
     /// Reload a plugin synchronously (blocking)
     pub fn reload_plugin_blocking(&mut self, name: &str) -> Result<()> {
-        let rt = tokio::runtime::Runtime::new()
+        // deno_core requires current_thread runtime for async ops
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
             .map_err(|e| anyhow!("Failed to create runtime: {}", e))?;
 
         rt.block_on(self.reload_plugin(name))
