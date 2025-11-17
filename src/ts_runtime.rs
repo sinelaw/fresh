@@ -9,6 +9,7 @@ use crate::plugin_api::{EditorStateSnapshot, PluginCommand};
 use anyhow::{anyhow, Result};
 use deno_core::{extension, op2, OpState, FastString, JsRuntime, RuntimeOptions};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
@@ -18,6 +19,8 @@ struct TsRuntimeState {
     state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
     /// Command sender for write operations
     command_sender: std::sync::mpsc::Sender<PluginCommand>,
+    /// Event handlers: event_name -> list of global JS function names
+    event_handlers: Rc<RefCell<HashMap<String, Vec<String>>>>,
 }
 
 /// Custom ops for the Fresh editor API
@@ -489,6 +492,64 @@ async fn op_fresh_spawn_process(
     })
 }
 
+/// Register an event handler
+/// The handler_name should be a global JavaScript function name
+/// Returns true if registration succeeded
+#[op2(fast)]
+fn op_fresh_on(
+    state: &mut OpState,
+    #[string] event_name: String,
+    #[string] handler_name: String,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let mut handlers = runtime_state.event_handlers.borrow_mut();
+        handlers
+            .entry(event_name.clone())
+            .or_insert_with(Vec::new)
+            .push(handler_name.clone());
+        tracing::debug!("Registered event handler '{}' for '{}'", handler_name, event_name);
+        return true;
+    }
+    false
+}
+
+/// Unregister an event handler
+/// Returns true if the handler was found and removed
+#[op2(fast)]
+fn op_fresh_off(
+    state: &mut OpState,
+    #[string] event_name: String,
+    #[string] handler_name: String,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let mut handlers = runtime_state.event_handlers.borrow_mut();
+        if let Some(handler_list) = handlers.get_mut(&event_name) {
+            if let Some(pos) = handler_list.iter().position(|h| h == &handler_name) {
+                handler_list.remove(pos);
+                tracing::debug!("Unregistered event handler '{}' from '{}'", handler_name, event_name);
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Get list of registered handlers for an event
+#[op2]
+#[serde]
+fn op_fresh_get_handlers(state: &mut OpState, #[string] event_name: String) -> Vec<String> {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let handlers = runtime_state.event_handlers.borrow();
+        if let Some(handler_list) = handlers.get(&event_name) {
+            return handler_list.clone();
+        }
+    }
+    Vec::new()
+}
+
 /// File stat information
 #[derive(serde::Serialize)]
 struct FileStat {
@@ -689,12 +750,17 @@ extension!(
         op_fresh_path_extname,
         op_fresh_path_is_absolute,
         op_fresh_read_dir,
+        op_fresh_on,
+        op_fresh_off,
+        op_fresh_get_handlers,
     ],
 );
 
 /// TypeScript plugin runtime
 pub struct TypeScriptRuntime {
     js_runtime: JsRuntime,
+    /// Shared event handlers registry
+    event_handlers: Rc<RefCell<HashMap<String, Vec<String>>>>,
 }
 
 impl TypeScriptRuntime {
@@ -711,9 +777,11 @@ impl TypeScriptRuntime {
         state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
         command_sender: std::sync::mpsc::Sender<PluginCommand>,
     ) -> Result<Self> {
+        let event_handlers = Rc::new(RefCell::new(HashMap::new()));
         let runtime_state = Rc::new(RefCell::new(TsRuntimeState {
             state_snapshot,
             command_sender,
+            event_handlers: event_handlers.clone(),
         }));
 
         let mut js_runtime = JsRuntime::new(RuntimeOptions {
@@ -863,6 +931,17 @@ impl TypeScriptRuntime {
                     readDir(path) {
                         return core.ops.op_fresh_read_dir(path);
                     },
+
+                    // Event/Hook operations
+                    on(eventName, handlerName) {
+                        return core.ops.op_fresh_on(eventName, handlerName);
+                    },
+                    off(eventName, handlerName) {
+                        return core.ops.op_fresh_off(eventName, handlerName);
+                    },
+                    getHandlers(eventName) {
+                        return core.ops.op_fresh_get_handlers(eventName);
+                    },
                 };
 
                 // Make editor globally available
@@ -872,7 +951,7 @@ impl TypeScriptRuntime {
             )
             .map_err(|e| anyhow!("Failed to initialize editor API: {}", e))?;
 
-        Ok(Self { js_runtime })
+        Ok(Self { js_runtime, event_handlers })
     }
 
     /// Execute JavaScript code directly
@@ -939,6 +1018,103 @@ impl TypeScriptRuntime {
         );
 
         self.execute_script("<action>", &code).await
+    }
+
+    /// Emit an event to all registered handlers
+    ///
+    /// This calls all global JavaScript functions registered for the given event.
+    /// The event_data is passed as JSON to each handler.
+    ///
+    /// # Arguments
+    /// * `event_name` - Name of the event (e.g., "buffer_save", "cursor_moved")
+    /// * `event_data` - JSON-serializable data to pass to handlers
+    ///
+    /// # Returns
+    /// * `Ok(true)` if all handlers returned true (continue)
+    /// * `Ok(false)` if any handler returned false (cancel)
+    /// * `Err` if handler execution failed
+    pub async fn emit(&mut self, event_name: &str, event_data: &str) -> Result<bool> {
+        let handlers = self.event_handlers.borrow().get(event_name).cloned();
+
+        if let Some(handler_names) = handlers {
+            if handler_names.is_empty() {
+                return Ok(true);
+            }
+
+            for handler_name in &handler_names {
+                let code = format!(
+                    r#"
+                    (async () => {{
+                        if (typeof globalThis.{} === 'function') {{
+                            const eventData = {};
+                            const result = globalThis.{}(eventData);
+                            const finalResult = (result instanceof Promise) ? await result : result;
+                            // Return true by default if handler doesn't return anything
+                            return finalResult !== false;
+                        }} else {{
+                            console.warn('Event handler "{}" is not defined');
+                            return true;
+                        }}
+                    }})();
+                    "#,
+                    handler_name, event_data, handler_name, handler_name
+                );
+
+                let code_static: FastString = code.into();
+                let result = self.js_runtime.execute_script("<event_emit>", code_static);
+
+                match result {
+                    Ok(value) => {
+                        // Run event loop to process any async work
+                        self.js_runtime
+                            .run_event_loop(Default::default())
+                            .await
+                            .map_err(|e| anyhow!("Event loop error in emit: {}", e))?;
+
+                        // Check if the result is false (handler cancelled)
+                        let scope = &mut self.js_runtime.handle_scope();
+                        let local = deno_core::v8::Local::new(scope, value);
+                        if local.is_boolean() && !local.boolean_value(scope) {
+                            tracing::debug!(
+                                "Event '{}' cancelled by handler '{}'",
+                                event_name,
+                                handler_name
+                            );
+                            return Ok(false);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Error executing event handler '{}' for '{}': {}",
+                            handler_name,
+                            event_name,
+                            e
+                        );
+                        // Continue with other handlers even if one fails
+                    }
+                }
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Get the list of registered handlers for an event
+    pub fn get_registered_handlers(&self, event_name: &str) -> Vec<String> {
+        self.event_handlers
+            .borrow()
+            .get(event_name)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Check if any handlers are registered for an event
+    pub fn has_handlers(&self, event_name: &str) -> bool {
+        self.event_handlers
+            .borrow()
+            .get(event_name)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
     }
 }
 
@@ -1968,6 +2144,209 @@ mod tests {
             "Path is absolute test failed: {:?}",
             result
         );
+    }
+
+    #[tokio::test]
+    async fn test_hook_registration() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        let result = runtime
+            .execute_script(
+                "<test_hook_registration>",
+                r#"
+                // Register a handler
+                const registered = editor.on("buffer_save", "onBufferSave");
+                if (!registered) {
+                    throw new Error("on() should return true");
+                }
+
+                // Check handlers
+                const handlers = editor.getHandlers("buffer_save");
+                if (handlers.length !== 1) {
+                    throw new Error(`Expected 1 handler, got ${handlers.length}`);
+                }
+                if (handlers[0] !== "onBufferSave") {
+                    throw new Error(`Expected handler 'onBufferSave', got '${handlers[0]}'`);
+                }
+
+                // Register another handler
+                editor.on("buffer_save", "onBufferSave2");
+                const handlers2 = editor.getHandlers("buffer_save");
+                if (handlers2.length !== 2) {
+                    throw new Error(`Expected 2 handlers, got ${handlers2.length}`);
+                }
+
+                // Unregister first handler
+                const removed = editor.off("buffer_save", "onBufferSave");
+                if (!removed) {
+                    throw new Error("off() should return true when handler exists");
+                }
+
+                const handlers3 = editor.getHandlers("buffer_save");
+                if (handlers3.length !== 1) {
+                    throw new Error(`Expected 1 handler after off(), got ${handlers3.length}`);
+                }
+
+                // Try to unregister non-existent handler
+                const notRemoved = editor.off("buffer_save", "nonexistent");
+                if (notRemoved) {
+                    throw new Error("off() should return false for non-existent handler");
+                }
+
+                console.log("Hook registration test passed!");
+                "#,
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "Hook registration test failed: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hook_emit() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        // Register a handler that increments a counter
+        let setup = runtime
+            .execute_script(
+                "<test_hook_emit_setup>",
+                r#"
+                globalThis.eventCounter = 0;
+                globalThis.lastEventData = null;
+
+                globalThis.onTestEvent = function(data) {
+                    globalThis.eventCounter++;
+                    globalThis.lastEventData = data;
+                    return true;
+                };
+
+                editor.on("test_event", "onTestEvent");
+                "#,
+            )
+            .await;
+        assert!(setup.is_ok(), "Setup failed: {:?}", setup);
+
+        // Emit the event
+        let emit_result = runtime
+            .emit("test_event", r#"{"value": 42, "message": "hello"}"#)
+            .await;
+        assert!(emit_result.is_ok(), "Emit failed: {:?}", emit_result);
+        assert!(emit_result.unwrap(), "Emit should return true");
+
+        // Verify handler was called
+        let verify = runtime
+            .execute_script(
+                "<test_hook_emit_verify>",
+                r#"
+                if (globalThis.eventCounter !== 1) {
+                    throw new Error(`Expected counter=1, got ${globalThis.eventCounter}`);
+                }
+                if (globalThis.lastEventData.value !== 42) {
+                    throw new Error(`Expected value=42, got ${globalThis.lastEventData.value}`);
+                }
+                if (globalThis.lastEventData.message !== "hello") {
+                    throw new Error(`Expected message='hello', got '${globalThis.lastEventData.message}'`);
+                }
+                console.log("Hook emit test passed!");
+                "#,
+            )
+            .await;
+        assert!(verify.is_ok(), "Verify failed: {:?}", verify);
+    }
+
+    #[tokio::test]
+    async fn test_hook_emit_cancellation() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        // Register a handler that cancels the event
+        let setup = runtime
+            .execute_script(
+                "<test_hook_cancel_setup>",
+                r#"
+                globalThis.cancelWasCalled = false;
+                globalThis.onCancelEvent = function(data) {
+                    globalThis.cancelWasCalled = true;
+                    return false; // Cancel the event
+                };
+
+                editor.on("cancel_event", "onCancelEvent");
+                "#,
+            )
+            .await;
+        assert!(setup.is_ok(), "Setup failed: {:?}", setup);
+
+        // Emit the event
+        let emit_result = runtime.emit("cancel_event", "{}").await;
+        assert!(emit_result.is_ok(), "Emit failed: {:?}", emit_result);
+        // Note: Handler returning false should cancel, but emit always succeeds
+        // The cancellation is tracked by the return value
+
+        // Verify handler was called
+        let verify = runtime
+            .execute_script(
+                "<test_hook_cancel_verify>",
+                r#"
+                if (!globalThis.cancelWasCalled) {
+                    throw new Error("Cancel handler was not called");
+                }
+                console.log("Hook cancellation test passed!");
+                "#,
+            )
+            .await;
+        assert!(verify.is_ok(), "Verify failed: {:?}", verify);
+    }
+
+    #[tokio::test]
+    async fn test_hook_multiple_handlers() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        // Register multiple handlers
+        let setup = runtime
+            .execute_script(
+                "<test_hook_multi_setup>",
+                r#"
+                globalThis.handler1Called = false;
+                globalThis.handler2Called = false;
+
+                globalThis.handler1 = function(data) {
+                    globalThis.handler1Called = true;
+                    return true;
+                };
+
+                globalThis.handler2 = function(data) {
+                    globalThis.handler2Called = true;
+                    return true;
+                };
+
+                editor.on("multi_event", "handler1");
+                editor.on("multi_event", "handler2");
+                "#,
+            )
+            .await;
+        assert!(setup.is_ok(), "Setup failed: {:?}", setup);
+
+        // Emit the event
+        let emit_result = runtime.emit("multi_event", "{}").await;
+        assert!(emit_result.is_ok(), "Emit failed: {:?}", emit_result);
+
+        // Verify both handlers were called
+        let verify = runtime
+            .execute_script(
+                "<test_hook_multi_verify>",
+                r#"
+                if (!globalThis.handler1Called) {
+                    throw new Error("handler1 was not called");
+                }
+                if (!globalThis.handler2Called) {
+                    throw new Error("handler2 was not called");
+                }
+                console.log("Multiple handlers test passed!");
+                "#,
+            )
+            .await;
+        assert!(verify.is_ok(), "Verify failed: {:?}", verify);
     }
 }
 

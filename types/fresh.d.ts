@@ -182,6 +182,35 @@ interface EditorAPI {
    * @returns Array of directory entries with name and type info
    */
   readDir(path: string): DirEntry[];
+
+  // === Event/Hook Operations ===
+  /**
+   * Register an event handler
+   * @param eventName - Name of the event (e.g., "buffer_save", "cursor_moved")
+   * @param handlerName - Name of a global JavaScript function to call
+   * @returns true if registration succeeded
+   * @example
+   * // Define global handler
+   * globalThis.onSave = (data) => { console.log("Saved:", data); };
+   * // Register it
+   * editor.on("buffer_save", "onSave");
+   */
+  on(eventName: string, handlerName: string): boolean;
+
+  /**
+   * Unregister an event handler
+   * @param eventName - Name of the event
+   * @param handlerName - Name of the handler to remove
+   * @returns true if handler was found and removed
+   */
+  off(eventName: string, handlerName: string): boolean;
+
+  /**
+   * Get list of registered handlers for an event
+   * @param eventName - Name of the event
+   * @returns Array of handler function names
+   */
+  getHandlers(eventName: string): string[];
 }
 
 // Export for module compatibility
