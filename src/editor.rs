@@ -2131,6 +2131,11 @@ impl Editor {
     ///
     /// All event applications MUST go through this method to ensure consistency.
     pub fn apply_event_to_active_buffer(&mut self, event: &Event) {
+        // IMPORTANT: Calculate LSP changes BEFORE applying to buffer!
+        // The byte positions in the events are relative to the ORIGINAL buffer,
+        // so we must convert them to LSP positions before modifying the buffer.
+        let lsp_changes = self.collect_lsp_changes(event);
+
         // 1. Apply the event to the buffer
         self.active_state_mut().apply(event);
 
@@ -2163,8 +2168,8 @@ impl Editor {
         // 3. Trigger plugin hooks for this event
         self.trigger_plugin_hooks_for_event(event);
 
-        // 4. Notify LSP of the change
-        self.notify_lsp_change(event);
+        // 4. Notify LSP of the change using pre-calculated positions
+        self.send_lsp_changes_for_buffer(self.active_buffer, lsp_changes);
     }
 
     /// Trigger plugin hooks for an event (if any)
