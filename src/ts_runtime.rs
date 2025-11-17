@@ -311,6 +311,66 @@ fn op_fresh_get_active_split_id(state: &mut OpState) -> u32 {
     0
 }
 
+/// Get a range of text from a buffer
+/// This is important for plugins that need to analyze buffer content
+#[op2]
+#[string]
+fn op_fresh_get_buffer_text(
+    state: &mut OpState,
+    buffer_id: u32,
+    start: u32,
+    end: u32,
+) -> String {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+            if let Some(buffer_info) = snapshot.buffers.get(&BufferId(buffer_id as usize)) {
+                // For now, we can't directly access buffer content from the snapshot
+                // This would need to be extended to include buffer content
+                // Return empty string as placeholder
+                let _ = (buffer_info, start, end);
+                return String::new();
+            }
+        };
+    }
+    String::new()
+}
+
+/// Get the current line number (1-indexed) for the cursor position
+#[op2(fast)]
+fn op_fresh_get_cursor_line(state: &mut OpState) -> u32 {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+            if let Some(cursor) = &snapshot.primary_cursor {
+                // Simplified: estimate line number from byte position
+                // In a real implementation, this would use buffer content
+                // For now, return 1 as placeholder
+                let _ = cursor.position;
+                return 1;
+            }
+        };
+    }
+    1
+}
+
+/// Get all cursor positions for multi-cursor editing
+#[op2]
+#[serde]
+fn op_fresh_get_all_cursor_positions(state: &mut OpState) -> Vec<u32> {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+            return snapshot
+                .all_cursors
+                .iter()
+                .map(|c| c.position as u32)
+                .collect();
+        };
+    }
+    vec![]
+}
+
 #[op2(fast)]
 fn op_fresh_open_file_in_split(
     state: &mut OpState,
@@ -451,6 +511,9 @@ extension!(
         op_fresh_open_file,
         op_fresh_get_active_split_id,
         op_fresh_open_file_in_split,
+        op_fresh_get_buffer_text,
+        op_fresh_get_cursor_line,
+        op_fresh_get_all_cursor_positions,
         op_fresh_spawn_process,
     ],
 );
@@ -565,6 +628,19 @@ impl TypeScriptRuntime {
                     },
                     openFileInSplit(splitId, path, line = 0, column = 0) {
                         return core.ops.op_fresh_open_file_in_split(splitId, path, line, column);
+                    },
+
+                    // Buffer text operations
+                    getBufferText(bufferId, start, end) {
+                        return core.ops.op_fresh_get_buffer_text(bufferId, start, end);
+                    },
+
+                    // Cursor operations
+                    getCursorLine() {
+                        return core.ops.op_fresh_get_cursor_line();
+                    },
+                    getAllCursorPositions() {
+                        return core.ops.op_fresh_get_all_cursor_positions();
                     },
 
                     // Async operations

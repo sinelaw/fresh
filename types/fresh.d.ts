@@ -48,6 +48,9 @@ interface EditorAPI {
   getBufferLength(buffer_id: number): number;
   isBufferModified(buffer_id: number): boolean;
   getActiveSplitId(): number;
+  getBufferText(buffer_id: number, start: number, end: number): string;
+  getCursorLine(): number;
+  getAllCursorPositions(): number[];
 
   // === Buffer Mutations ===
   insertText(buffer_id: number, position: number, text: string): boolean;
