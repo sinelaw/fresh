@@ -4,6 +4,7 @@
 //! It enables native async/await support, solving the async command execution problem
 //! that existed with the Lua plugin system.
 
+use crate::commands::Suggestion;
 use crate::event::BufferId;
 use crate::plugin_api::{EditorStateSnapshot, PluginCommand};
 use anyhow::{anyhow, Result};
@@ -560,6 +561,192 @@ struct FileStat {
     readonly: bool,
 }
 
+/// Buffer information for TypeScript
+#[derive(serde::Serialize)]
+struct TsBufferInfo {
+    id: u32,
+    path: String,
+    modified: bool,
+    length: u32,
+}
+
+/// Selection range for TypeScript
+#[derive(serde::Serialize)]
+struct TsSelectionRange {
+    start: u32,
+    end: u32,
+}
+
+/// Cursor information for TypeScript
+#[derive(serde::Serialize)]
+struct TsCursorInfo {
+    position: u32,
+    selection: Option<TsSelectionRange>,
+}
+
+/// Viewport information for TypeScript
+#[derive(serde::Serialize)]
+struct TsViewportInfo {
+    top_byte: u32,
+    left_column: u32,
+    width: u32,
+    height: u32,
+}
+
+/// Get full information about a buffer
+#[op2]
+#[serde]
+fn op_fresh_get_buffer_info(state: &mut OpState, buffer_id: u32) -> Option<TsBufferInfo> {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+            if let Some(info) = snapshot.buffers.get(&BufferId(buffer_id as usize)) {
+                return Some(TsBufferInfo {
+                    id: info.id.0 as u32,
+                    path: info.path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+                    modified: info.modified,
+                    length: info.length as u32,
+                });
+            }
+        };
+    }
+    None
+}
+
+/// List all open buffers
+#[op2]
+#[serde]
+fn op_fresh_list_buffers(state: &mut OpState) -> Vec<TsBufferInfo> {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+            return snapshot.buffers.values().map(|info| TsBufferInfo {
+                id: info.id.0 as u32,
+                path: info.path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+                modified: info.modified,
+                length: info.length as u32,
+            }).collect();
+        };
+    }
+    Vec::new()
+}
+
+/// Get primary cursor with selection info
+#[op2]
+#[serde]
+fn op_fresh_get_primary_cursor(state: &mut OpState) -> Option<TsCursorInfo> {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+            if let Some(ref cursor) = snapshot.primary_cursor {
+                return Some(TsCursorInfo {
+                    position: cursor.position as u32,
+                    selection: cursor.selection.as_ref().map(|sel| TsSelectionRange {
+                        start: sel.start as u32,
+                        end: sel.end as u32,
+                    }),
+                });
+            }
+        };
+    }
+    None
+}
+
+/// Get all cursors (for multi-cursor support)
+#[op2]
+#[serde]
+fn op_fresh_get_all_cursors(state: &mut OpState) -> Vec<TsCursorInfo> {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+            return snapshot.all_cursors.iter().map(|cursor| TsCursorInfo {
+                position: cursor.position as u32,
+                selection: cursor.selection.as_ref().map(|sel| TsSelectionRange {
+                    start: sel.start as u32,
+                    end: sel.end as u32,
+                }),
+            }).collect();
+        };
+    }
+    Vec::new()
+}
+
+/// Get viewport information
+#[op2]
+#[serde]
+fn op_fresh_get_viewport(state: &mut OpState) -> Option<TsViewportInfo> {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+            if let Some(ref vp) = snapshot.viewport {
+                return Some(TsViewportInfo {
+                    top_byte: vp.top_byte as u32,
+                    left_column: vp.left_column as u32,
+                    width: vp.width as u32,
+                    height: vp.height as u32,
+                });
+            }
+        };
+    }
+    None
+}
+
+/// Suggestion from TypeScript for prompt autocomplete
+#[derive(serde::Deserialize)]
+struct TsSuggestion {
+    text: String,
+    description: Option<String>,
+    value: Option<String>,
+    disabled: Option<bool>,
+    keybinding: Option<String>,
+}
+
+/// Start an interactive prompt
+#[op2(fast)]
+fn op_fresh_start_prompt(
+    state: &mut OpState,
+    #[string] label: String,
+    #[string] prompt_type: String,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state.command_sender.send(PluginCommand::StartPrompt {
+            label,
+            prompt_type,
+        });
+        return result.is_ok();
+    }
+    false
+}
+
+/// Set suggestions for the current prompt
+#[op2]
+fn op_fresh_set_prompt_suggestions(
+    state: &mut OpState,
+    #[serde] suggestions: Vec<TsSuggestion>,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let converted: Vec<Suggestion> = suggestions
+            .into_iter()
+            .map(|s| Suggestion {
+                text: s.text,
+                description: s.description,
+                value: s.value,
+                disabled: s.disabled.unwrap_or(false),
+                keybinding: s.keybinding,
+            })
+            .collect();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::SetPromptSuggestions {
+                suggestions: converted,
+            });
+        return result.is_ok();
+    }
+    false
+}
+
 /// Read a file's contents asynchronously
 /// Useful for plugins that need to read configuration or data files
 #[op2(async)]
@@ -738,6 +925,13 @@ extension!(
         op_fresh_get_cursor_line,
         op_fresh_get_all_cursor_positions,
         op_fresh_spawn_process,
+        op_fresh_get_buffer_info,
+        op_fresh_list_buffers,
+        op_fresh_get_primary_cursor,
+        op_fresh_get_all_cursors,
+        op_fresh_get_viewport,
+        op_fresh_start_prompt,
+        op_fresh_set_prompt_suggestions,
         op_fresh_read_file,
         op_fresh_write_file,
         op_fresh_file_exists,
@@ -883,6 +1077,31 @@ impl TypeScriptRuntime {
                     },
                     getAllCursorPositions() {
                         return core.ops.op_fresh_get_all_cursor_positions();
+                    },
+
+                    // Buffer info queries
+                    getBufferInfo(bufferId) {
+                        return core.ops.op_fresh_get_buffer_info(bufferId);
+                    },
+                    listBuffers() {
+                        return core.ops.op_fresh_list_buffers();
+                    },
+                    getPrimaryCursor() {
+                        return core.ops.op_fresh_get_primary_cursor();
+                    },
+                    getAllCursors() {
+                        return core.ops.op_fresh_get_all_cursors();
+                    },
+                    getViewport() {
+                        return core.ops.op_fresh_get_viewport();
+                    },
+
+                    // Prompt operations
+                    startPrompt(label, promptType) {
+                        return core.ops.op_fresh_start_prompt(label, promptType);
+                    },
+                    setPromptSuggestions(suggestions) {
+                        return core.ops.op_fresh_set_prompt_suggestions(suggestions);
                     },
 
                     // Async operations
