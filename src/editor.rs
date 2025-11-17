@@ -9186,4 +9186,304 @@ mod tests {
         assert_eq!(range.end.line, 0);
         assert_eq!(range.end.character, 7);
     }
+
+    #[test]
+    fn test_goto_matching_bracket_forward() {
+        let config = Config::default();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
+
+        // Insert text with brackets
+        let state = editor.active_state_mut();
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "fn main() { let x = (1 + 2); }".to_string(),
+            cursor_id: state.cursors.primary_id(),
+        });
+
+        // Move cursor to opening brace '{'
+        state.apply(&Event::MoveCursor {
+            cursor_id: state.cursors.primary_id(),
+            old_position: 31,
+            new_position: 10,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        assert_eq!(state.cursors.primary().position, 10);
+
+        // Call goto_matching_bracket
+        editor.goto_matching_bracket();
+
+        // Should move to closing brace '}' at position 29
+        // "fn main() { let x = (1 + 2); }"
+        //            ^                   ^
+        //           10                  29
+        assert_eq!(editor.active_state().cursors.primary().position, 29);
+    }
+
+    #[test]
+    fn test_goto_matching_bracket_backward() {
+        let config = Config::default();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
+
+        // Insert text with brackets
+        let state = editor.active_state_mut();
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "fn main() { let x = (1 + 2); }".to_string(),
+            cursor_id: state.cursors.primary_id(),
+        });
+
+        // Move cursor to closing paren ')'
+        state.apply(&Event::MoveCursor {
+            cursor_id: state.cursors.primary_id(),
+            old_position: 31,
+            new_position: 26,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Call goto_matching_bracket
+        editor.goto_matching_bracket();
+
+        // Should move to opening paren '('
+        assert_eq!(editor.active_state().cursors.primary().position, 20);
+    }
+
+    #[test]
+    fn test_goto_matching_bracket_nested() {
+        let config = Config::default();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
+
+        // Insert text with nested brackets
+        let state = editor.active_state_mut();
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "{a{b{c}d}e}".to_string(),
+            cursor_id: state.cursors.primary_id(),
+        });
+
+        // Move cursor to first '{'
+        state.apply(&Event::MoveCursor {
+            cursor_id: state.cursors.primary_id(),
+            old_position: 11,
+            new_position: 0,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Call goto_matching_bracket
+        editor.goto_matching_bracket();
+
+        // Should jump to last '}'
+        assert_eq!(editor.active_state().cursors.primary().position, 10);
+    }
+
+    #[test]
+    fn test_search_case_sensitive() {
+        let config = Config::default();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
+
+        // Insert text
+        let state = editor.active_state_mut();
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "Hello hello HELLO".to_string(),
+            cursor_id: state.cursors.primary_id(),
+        });
+
+        // Test case-insensitive search (default)
+        editor.search_case_sensitive = false;
+        editor.perform_search("hello");
+
+        let search_state = editor.search_state.as_ref().unwrap();
+        assert_eq!(search_state.matches.len(), 3, "Should find all 3 matches case-insensitively");
+
+        // Test case-sensitive search
+        editor.search_case_sensitive = true;
+        editor.perform_search("hello");
+
+        let search_state = editor.search_state.as_ref().unwrap();
+        assert_eq!(search_state.matches.len(), 1, "Should find only 1 exact match");
+        assert_eq!(search_state.matches[0], 6, "Should find 'hello' at position 6");
+    }
+
+    #[test]
+    fn test_search_whole_word() {
+        let config = Config::default();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
+
+        // Insert text
+        let state = editor.active_state_mut();
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "test testing tested attest test".to_string(),
+            cursor_id: state.cursors.primary_id(),
+        });
+
+        // Test partial word match (default)
+        editor.search_whole_word = false;
+        editor.search_case_sensitive = true;
+        editor.perform_search("test");
+
+        let search_state = editor.search_state.as_ref().unwrap();
+        assert_eq!(search_state.matches.len(), 5, "Should find 'test' in all occurrences");
+
+        // Test whole word match
+        editor.search_whole_word = true;
+        editor.perform_search("test");
+
+        let search_state = editor.search_state.as_ref().unwrap();
+        assert_eq!(search_state.matches.len(), 2, "Should find only whole word 'test'");
+        assert_eq!(search_state.matches[0], 0, "First match at position 0");
+        assert_eq!(search_state.matches[1], 27, "Second match at position 27");
+    }
+
+    #[test]
+    fn test_bookmarks() {
+        let config = Config::default();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
+
+        // Insert text
+        let state = editor.active_state_mut();
+        state.apply(&Event::Insert {
+            position: 0,
+            text: "Line 1\nLine 2\nLine 3".to_string(),
+            cursor_id: state.cursors.primary_id(),
+        });
+
+        // Move cursor to line 2 start (position 7)
+        state.apply(&Event::MoveCursor {
+            cursor_id: state.cursors.primary_id(),
+            old_position: 21,
+            new_position: 7,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Set bookmark '1'
+        editor.set_bookmark('1');
+        assert!(editor.bookmarks.contains_key(&'1'));
+        assert_eq!(editor.bookmarks.get(&'1').unwrap().position, 7);
+
+        // Move cursor elsewhere
+        let state = editor.active_state_mut();
+        state.apply(&Event::MoveCursor {
+            cursor_id: state.cursors.primary_id(),
+            old_position: 7,
+            new_position: 14,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        });
+
+        // Jump back to bookmark
+        editor.jump_to_bookmark('1');
+        assert_eq!(editor.active_state().cursors.primary().position, 7);
+
+        // Clear bookmark
+        editor.clear_bookmark('1');
+        assert!(!editor.bookmarks.contains_key(&'1'));
+    }
+
+    #[test]
+    fn test_action_enum_new_variants() {
+        // Test that new actions can be parsed from strings
+        use serde_json::json;
+
+        let args = HashMap::new();
+        assert_eq!(Action::from_str("smart_home", &args), Some(Action::SmartHome));
+        assert_eq!(Action::from_str("indent_selection", &args), Some(Action::IndentSelection));
+        assert_eq!(Action::from_str("dedent_selection", &args), Some(Action::DedentSelection));
+        assert_eq!(Action::from_str("toggle_comment", &args), Some(Action::ToggleComment));
+        assert_eq!(Action::from_str("goto_matching_bracket", &args), Some(Action::GoToMatchingBracket));
+        assert_eq!(Action::from_str("list_bookmarks", &args), Some(Action::ListBookmarks));
+        assert_eq!(Action::from_str("toggle_search_case_sensitive", &args), Some(Action::ToggleSearchCaseSensitive));
+        assert_eq!(Action::from_str("toggle_search_whole_word", &args), Some(Action::ToggleSearchWholeWord));
+
+        // Test bookmark actions with arguments
+        let mut args_with_char = HashMap::new();
+        args_with_char.insert("char".to_string(), json!("5"));
+        assert_eq!(Action::from_str("set_bookmark", &args_with_char), Some(Action::SetBookmark('5')));
+        assert_eq!(Action::from_str("jump_to_bookmark", &args_with_char), Some(Action::JumpToBookmark('5')));
+        assert_eq!(Action::from_str("clear_bookmark", &args_with_char), Some(Action::ClearBookmark('5')));
+    }
+
+    #[test]
+    fn test_keybinding_new_defaults() {
+        use crossterm::event::{KeyEvent, KeyEventKind, KeyEventState};
+
+        // Test that new keybindings are properly registered
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        // Test Ctrl+/ is ToggleComment (not CommandPalette)
+        let event = KeyEvent {
+            code: KeyCode::Char('/'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        let action = resolver.resolve(&event, KeyContext::Normal);
+        assert_eq!(action, Action::ToggleComment);
+
+        // Test Ctrl+] is GoToMatchingBracket
+        let event = KeyEvent {
+            code: KeyCode::Char(']'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        let action = resolver.resolve(&event, KeyContext::Normal);
+        assert_eq!(action, Action::GoToMatchingBracket);
+
+        // Test Shift+Tab is DedentSelection
+        let event = KeyEvent {
+            code: KeyCode::Tab,
+            modifiers: KeyModifiers::SHIFT,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        let action = resolver.resolve(&event, KeyContext::Normal);
+        assert_eq!(action, Action::DedentSelection);
+
+        // Test Ctrl+G is GotoLine
+        let event = KeyEvent {
+            code: KeyCode::Char('g'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        let action = resolver.resolve(&event, KeyContext::Normal);
+        assert_eq!(action, Action::GotoLine);
+
+        // Test bookmark keybindings
+        let event = KeyEvent {
+            code: KeyCode::Char('5'),
+            modifiers: KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        let action = resolver.resolve(&event, KeyContext::Normal);
+        assert_eq!(action, Action::SetBookmark('5'));
+
+        let event = KeyEvent {
+            code: KeyCode::Char('5'),
+            modifiers: KeyModifiers::ALT,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        let action = resolver.resolve(&event, KeyContext::Normal);
+        assert_eq!(action, Action::JumpToBookmark('5'));
+    }
 }
+
