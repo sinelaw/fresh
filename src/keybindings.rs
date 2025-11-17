@@ -151,6 +151,12 @@ pub enum Action {
     SelectLine,
     ExpandSelection,
 
+    // Block/rectangular selection (column-wise)
+    BlockSelectLeft,
+    BlockSelectRight,
+    BlockSelectUp,
+    BlockSelectDown,
+
     // Editing
     DeleteBackward,
     DeleteForward,
@@ -994,6 +1000,24 @@ impl KeybindingResolver {
             Action::SelectDocumentEnd,
         );
 
+        // Block/rectangular selection (Ctrl+Alt+arrows)
+        bindings.insert(
+            (KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            Action::BlockSelectLeft,
+        );
+        bindings.insert(
+            (KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            Action::BlockSelectRight,
+        );
+        bindings.insert(
+            (KeyCode::Up, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            Action::BlockSelectUp,
+        );
+        bindings.insert(
+            (KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            Action::BlockSelectDown,
+        );
+
         // Editing
         bindings.insert(
             (KeyCode::Backspace, KeyModifiers::empty()),
@@ -1481,6 +1505,10 @@ impl KeybindingResolver {
             Action::SelectWord => "Select word under cursor".to_string(),
             Action::SelectLine => "Select current line".to_string(),
             Action::ExpandSelection => "Expand selection".to_string(),
+            Action::BlockSelectLeft => "Block select left".to_string(),
+            Action::BlockSelectRight => "Block select right".to_string(),
+            Action::BlockSelectUp => "Block select up".to_string(),
+            Action::BlockSelectDown => "Block select down".to_string(),
             Action::DeleteBackward => "Delete backward".to_string(),
             Action::DeleteForward => "Delete forward".to_string(),
             Action::DeleteWordBackward => "Delete word backward".to_string(),

@@ -2,6 +2,28 @@ use crate::event::CursorId;
 use std::collections::HashMap;
 use std::ops::Range;
 
+/// Selection mode for cursors
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionMode {
+    /// Normal character-wise selection (stream)
+    Normal,
+    /// Block/rectangular selection (column-wise)
+    Block,
+}
+
+impl Default for SelectionMode {
+    fn default() -> Self {
+        SelectionMode::Normal
+    }
+}
+
+/// Position in 2D coordinates (for block selection)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Position2D {
+    pub line: usize,
+    pub column: usize,
+}
+
 /// A cursor in the buffer with optional selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cursor {
@@ -14,6 +36,13 @@ pub struct Cursor {
     /// Desired column for vertical navigation
     /// When moving up/down, try to stay in this column
     pub sticky_column: usize,
+
+    /// Selection mode (normal or block)
+    pub selection_mode: SelectionMode,
+
+    /// Block selection anchor position (line, column) for rectangular selections
+    /// Only used when selection_mode is Block
+    pub block_anchor: Option<Position2D>,
 }
 
 impl Cursor {
@@ -23,6 +52,8 @@ impl Cursor {
             position,
             anchor: None,
             sticky_column: 0,
+            selection_mode: SelectionMode::Normal,
+            block_anchor: None,
         }
     }
 
@@ -32,15 +63,17 @@ impl Cursor {
             position: end,
             anchor: Some(start),
             sticky_column: 0,
+            selection_mode: SelectionMode::Normal,
+            block_anchor: None,
         }
     }
 
     /// Is the cursor collapsed (no selection)?
     pub fn collapsed(&self) -> bool {
-        self.anchor.is_none()
+        self.anchor.is_none() && self.block_anchor.is_none()
     }
 
-    /// Get the selection range, if any
+    /// Get the selection range, if any (for normal selection)
     pub fn selection_range(&self) -> Option<Range<usize>> {
         self.anchor.map(|anchor| {
             if anchor < self.position {
@@ -48,6 +81,25 @@ impl Cursor {
             } else {
                 self.position..anchor
             }
+        })
+    }
+
+    /// Check if this cursor has a block selection
+    pub fn has_block_selection(&self) -> bool {
+        self.selection_mode == SelectionMode::Block && self.block_anchor.is_some()
+    }
+
+    /// Get the block selection bounds (start_line, start_col, end_line, end_col)
+    /// Returns None if not in block selection mode
+    pub fn block_selection_bounds(&self) -> Option<(usize, usize, usize, usize)> {
+        if self.selection_mode != SelectionMode::Block {
+            return None;
+        }
+        self.block_anchor.map(|anchor| {
+            // We need current position as 2D coords, which requires buffer context
+            // For now, just return the anchor info
+            // The actual current position will be computed by the caller using the buffer
+            (anchor.line, anchor.column, anchor.line, anchor.column)
         })
     }
 
@@ -64,11 +116,27 @@ impl Cursor {
     /// Clear the selection, keeping only the position
     pub fn clear_selection(&mut self) {
         self.anchor = None;
+        self.block_anchor = None;
+        self.selection_mode = SelectionMode::Normal;
     }
 
     /// Set the selection anchor
     pub fn set_anchor(&mut self, anchor: usize) {
         self.anchor = Some(anchor);
+    }
+
+    /// Start a block selection at the given 2D position
+    pub fn start_block_selection(&mut self, line: usize, column: usize) {
+        self.selection_mode = SelectionMode::Block;
+        self.block_anchor = Some(Position2D { line, column });
+        // Also set the byte anchor for compatibility
+        // (will need to be set properly by caller with buffer context)
+    }
+
+    /// Clear block selection and return to normal mode
+    pub fn clear_block_selection(&mut self) {
+        self.selection_mode = SelectionMode::Normal;
+        self.block_anchor = None;
     }
 
     /// Move to a position, optionally extending selection
@@ -79,6 +147,11 @@ impl Cursor {
             }
         } else {
             self.anchor = None;
+            // Also clear block selection when not extending
+            if !extend_selection && self.selection_mode == SelectionMode::Block {
+                self.selection_mode = SelectionMode::Normal;
+                self.block_anchor = None;
+            }
         }
         self.position = position;
     }
