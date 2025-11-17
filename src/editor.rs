@@ -819,6 +819,20 @@ impl Editor {
             .collect()
     }
 
+    /// Check if LSP server for a given language is running (ready)
+    pub fn is_lsp_server_ready(&self, language: &str) -> bool {
+        use crate::async_bridge::LspServerStatus;
+        self.lsp_server_statuses
+            .get(language)
+            .map(|status| matches!(status, LspServerStatus::Running))
+            .unwrap_or(false)
+    }
+
+    /// Get the LSP status string (displayed in status bar)
+    pub fn get_lsp_status(&self) -> &str {
+        &self.lsp_status
+    }
+
     /// Configure LSP server for a specific language
     pub fn set_lsp_config(&mut self, language: String, config: LspServerConfig) {
         if let Some(ref mut lsp) = self.lsp {
@@ -10124,6 +10138,156 @@ mod tests {
         };
         let action = resolver.resolve(&event, KeyContext::Normal);
         assert_eq!(action, Action::JumpToBookmark('5'));
+    }
+
+    /// This test demonstrates the bug where LSP didChange notifications contain
+    /// incorrect positions because they're calculated from the already-modified buffer.
+    ///
+    /// When applying LSP rename edits:
+    /// 1. apply_rename_batch_to_buffer() applies the batch to the buffer
+    /// 2. Then calls notify_lsp_change() which calls collect_lsp_changes()
+    /// 3. collect_lsp_changes() converts byte positions to LSP positions using
+    ///    the CURRENT buffer state
+    ///
+    /// But the byte positions in the events are relative to the ORIGINAL buffer,
+    /// not the modified one! This causes LSP to receive wrong positions.
+    #[test]
+    fn test_lsp_rename_didchange_positions_bug() {
+        use crate::text_buffer::Buffer;
+
+        let config = Config::default();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
+
+        // Set buffer content: "fn foo(val: i32) {\n    val + 1\n}\n"
+        // Line 0: positions 0-19 (includes newline)
+        // Line 1: positions 19-31 (includes newline)
+        let initial = "fn foo(val: i32) {\n    val + 1\n}\n";
+        editor.active_state_mut().buffer = Buffer::from_str(initial, 1024 * 1024);
+
+        // Simulate LSP rename batch: rename "val" to "value" in two places
+        // This is applied in reverse order to preserve positions:
+        // 1. Delete "val" at position 23 (line 1, char 4), insert "value"
+        // 2. Delete "val" at position 7 (line 0, char 7), insert "value"
+        let cursor_id = editor.active_state().cursors.primary_id();
+
+        let batch = Event::Batch {
+            events: vec![
+                // Second occurrence first (reverse order for position preservation)
+                Event::Delete {
+                    range: 23..26, // "val" on line 1
+                    deleted_text: "val".to_string(),
+                    cursor_id,
+                },
+                Event::Insert {
+                    position: 23,
+                    text: "value".to_string(),
+                    cursor_id,
+                },
+                // First occurrence second
+                Event::Delete {
+                    range: 7..10, // "val" on line 0
+                    deleted_text: "val".to_string(),
+                    cursor_id,
+                },
+                Event::Insert {
+                    position: 7,
+                    text: "value".to_string(),
+                    cursor_id,
+                },
+            ],
+            description: "LSP Rename".to_string(),
+        };
+
+        // CORRECT: Calculate LSP positions BEFORE applying batch
+        let lsp_changes_before = editor.collect_lsp_changes(&batch);
+
+        // Now apply the batch (this is what apply_rename_batch_to_buffer does)
+        editor.active_state_mut().apply(&batch);
+
+        // BUG DEMONSTRATION: Calculate LSP positions AFTER applying batch
+        // This is what happens when notify_lsp_change is called after state.apply()
+        let lsp_changes_after = editor.collect_lsp_changes(&batch);
+
+        // Verify buffer was correctly modified
+        let final_content = editor.active_state().buffer.to_string();
+        assert_eq!(
+            final_content, "fn foo(value: i32) {\n    value + 1\n}\n",
+            "Buffer should have 'value' in both places"
+        );
+
+        // The CORRECT positions (before applying batch):
+        // - Delete at 23..26 should be line 1, char 4-7 (in original buffer)
+        // - Insert at 23 should be line 1, char 4 (in original buffer)
+        // - Delete at 7..10 should be line 0, char 7-10 (in original buffer)
+        // - Insert at 7 should be line 0, char 7 (in original buffer)
+        assert_eq!(lsp_changes_before.len(), 4, "Should have 4 changes");
+
+        let first_delete = &lsp_changes_before[0];
+        let first_del_range = first_delete.range.unwrap();
+        assert_eq!(
+            first_del_range.start.line, 1,
+            "First delete should be on line 1 (BEFORE)"
+        );
+        assert_eq!(
+            first_del_range.start.character, 4,
+            "First delete start should be at char 4 (BEFORE)"
+        );
+
+        // The INCORRECT positions (after applying batch):
+        // Since the buffer has changed, position 23 now points to different text!
+        // Original buffer position 23 was start of "val" on line 1
+        // But after rename, the buffer is "fn foo(value: i32) {\n    value + 1\n}\n"
+        // Position 23 in new buffer is 'l' in "value" (line 1, offset into "value")
+        assert_eq!(lsp_changes_after.len(), 4, "Should have 4 changes");
+
+        let first_delete_after = &lsp_changes_after[0];
+        let first_del_range_after = first_delete_after.range.unwrap();
+
+        // THIS IS THE BUG: The positions are WRONG when calculated from modified buffer
+        // The first delete's range.end position will be wrong because the buffer changed
+        eprintln!("BEFORE modification:");
+        eprintln!(
+            "  Delete at line {}, char {}-{}",
+            first_del_range.start.line,
+            first_del_range.start.character,
+            first_del_range.end.character
+        );
+        eprintln!("AFTER modification:");
+        eprintln!(
+            "  Delete at line {}, char {}-{}",
+            first_del_range_after.start.line,
+            first_del_range_after.start.character,
+            first_del_range_after.end.character
+        );
+
+        // The bug causes the position calculation to be wrong.
+        // After applying the batch, position 23..26 in the modified buffer
+        // is different from what it was in the original buffer.
+        //
+        // Modified buffer: "fn foo(value: i32) {\n    value + 1\n}\n"
+        // Position 23 = 'l' in second "value"
+        // Position 26 = 'e' in second "value"
+        // This maps to line 1, char 2-5 (wrong!)
+        //
+        // Original buffer: "fn foo(val: i32) {\n    val + 1\n}\n"
+        // Position 23 = 'v' in "val"
+        // Position 26 = ' ' after "val"
+        // This maps to line 1, char 4-7 (correct!)
+
+        // The positions are different! This demonstrates the bug.
+        // Note: Due to how the batch is applied (all operations at once),
+        // the exact positions may vary, but they will definitely be wrong.
+        assert_ne!(
+            first_del_range_after.end.character, first_del_range.end.character,
+            "BUG CONFIRMED: LSP positions are different when calculated after buffer modification!"
+        );
+
+        eprintln!("\n=== BUG DEMONSTRATED ===");
+        eprintln!("When collect_lsp_changes() is called AFTER buffer modification,");
+        eprintln!("the positions are WRONG because they're calculated from the");
+        eprintln!("modified buffer, not the original buffer.");
+        eprintln!("This causes the second rename to fail with 'content modified' error.");
+        eprintln!("========================\n");
     }
 }
 
