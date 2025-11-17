@@ -1118,6 +1118,363 @@ impl TypeScriptRuntime {
     }
 }
 
+// === TypeScript Plugin Manager ===
+
+use crate::command_registry::CommandRegistry;
+use crate::hooks::{HookArgs, HookRegistry};
+use std::path::{Path, PathBuf};
+
+/// Information about a loaded TypeScript plugin
+#[derive(Debug, Clone)]
+pub struct TsPluginInfo {
+    /// Plugin name
+    pub name: String,
+    /// Plugin file path
+    pub path: PathBuf,
+    /// Whether the plugin is enabled
+    pub enabled: bool,
+}
+
+/// TypeScript Plugin Manager - manages TypeScript plugins
+///
+/// This provides an interface similar to PluginManager (Lua) but for TypeScript plugins.
+pub struct TypeScriptPluginManager {
+    /// TypeScript runtime
+    runtime: TypeScriptRuntime,
+
+    /// Loaded plugins
+    plugins: HashMap<String, TsPluginInfo>,
+
+    /// Command registry (shared with editor)
+    commands: Arc<RwLock<CommandRegistry>>,
+
+    /// Command receiver (to get commands from plugins)
+    command_receiver: std::sync::mpsc::Receiver<PluginCommand>,
+
+    /// State snapshot handle for editor to update
+    state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
+}
+
+impl TypeScriptPluginManager {
+    /// Create a new TypeScript plugin manager
+    pub fn new(
+        _hooks: Arc<RwLock<HookRegistry>>,
+        commands: Arc<RwLock<CommandRegistry>>,
+    ) -> Result<Self> {
+        // Create channel for plugin commands
+        let (command_sender, command_receiver) = std::sync::mpsc::channel();
+
+        // Create editor state snapshot for query API
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
+        // Create TypeScript runtime with state
+        let runtime = TypeScriptRuntime::with_state(
+            Arc::clone(&state_snapshot),
+            command_sender,
+        )?;
+
+        tracing::info!("TypeScript plugin manager initialized");
+
+        Ok(Self {
+            runtime,
+            plugins: HashMap::new(),
+            commands,
+            command_receiver,
+            state_snapshot,
+        })
+    }
+
+    /// Load a TypeScript plugin from a file
+    pub async fn load_plugin(&mut self, path: &Path) -> Result<()> {
+        let plugin_name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| anyhow!("Invalid plugin filename"))?
+            .to_string();
+
+        tracing::info!("Loading TypeScript plugin: {} from {:?}", plugin_name, path);
+
+        // Load and execute the module
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| anyhow!("Invalid path encoding"))?;
+
+        self.runtime.load_module(path_str).await?;
+
+        // Store plugin info
+        self.plugins.insert(
+            plugin_name.clone(),
+            TsPluginInfo {
+                name: plugin_name,
+                path: path.to_path_buf(),
+                enabled: true,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Unload a plugin
+    pub fn unload_plugin(&mut self, name: &str) -> Result<()> {
+        if let Some(_plugin) = self.plugins.remove(name) {
+            tracing::info!("Unloading TypeScript plugin: {}", name);
+
+            // Remove plugin's commands (assuming they're prefixed with plugin name)
+            let prefix = format!("{}:", name);
+            self.commands.read().unwrap().unregister_by_prefix(&prefix);
+
+            // Note: We can't truly unload JavaScript modules from V8,
+            // but we can remove the plugin from our tracking
+            // Future: could clear registered hooks for this plugin
+
+            Ok(())
+        } else {
+            Err(anyhow!("Plugin '{}' not found", name))
+        }
+    }
+
+    /// Reload a plugin
+    pub async fn reload_plugin(&mut self, name: &str) -> Result<()> {
+        let path = self
+            .plugins
+            .get(name)
+            .ok_or_else(|| anyhow!("Plugin '{}' not found", name))?
+            .path
+            .clone();
+
+        self.unload_plugin(name)?;
+        self.load_plugin(&path).await?;
+
+        Ok(())
+    }
+
+    /// Load all plugins from a directory
+    pub async fn load_plugins_from_dir(&mut self, dir: &Path) -> Vec<String> {
+        let mut errors = Vec::new();
+
+        if !dir.exists() {
+            tracing::warn!("Plugin directory does not exist: {:?}", dir);
+            return errors;
+        }
+
+        // Scan directory for .ts and .js files
+        match std::fs::read_dir(dir) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let ext = path.extension().and_then(|s| s.to_str());
+                    if ext == Some("ts") || ext == Some("js") {
+                        if let Err(e) = self.load_plugin(&path).await {
+                            let err = format!("Failed to load {:?}: {}", path, e);
+                            tracing::error!("{}", err);
+                            errors.push(err);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                let err = format!("Failed to read plugin directory: {}", e);
+                tracing::error!("{}", err);
+                errors.push(err);
+            }
+        }
+
+        errors
+    }
+
+    /// Get list of loaded plugins
+    pub fn list_plugins(&self) -> Vec<TsPluginInfo> {
+        self.plugins.values().cloned().collect()
+    }
+
+    /// Process plugin commands (should be called in main loop)
+    pub fn process_commands(&mut self) -> Vec<PluginCommand> {
+        let mut commands = Vec::new();
+        while let Ok(cmd) = self.command_receiver.try_recv() {
+            commands.push(cmd);
+        }
+        commands
+    }
+
+    /// Execute a plugin action callback by name
+    pub async fn execute_action(&mut self, action_name: &str) -> Result<()> {
+        tracing::info!("Executing TypeScript plugin action: {}", action_name);
+        self.runtime.execute_action(action_name).await
+    }
+
+    /// Run plugin hooks for a given event
+    ///
+    /// This converts HookArgs to JSON and emits to all registered TypeScript handlers.
+    pub async fn run_hook(&mut self, hook_name: &str, args: &HookArgs) -> Result<()> {
+        // Convert HookArgs to JSON
+        let json_data = self.hook_args_to_json(args)?;
+
+        // Emit to TypeScript handlers
+        self.runtime.emit(hook_name, &json_data).await?;
+
+        Ok(())
+    }
+
+    /// Convert HookArgs to JSON string
+    fn hook_args_to_json(&self, args: &HookArgs) -> Result<String> {
+        let json_value = match args {
+            HookArgs::RenderLine {
+                buffer_id,
+                line_number,
+                byte_start,
+                byte_end,
+                content,
+            } => {
+                serde_json::json!({
+                    "buffer_id": buffer_id.0,
+                    "line_number": line_number,
+                    "byte_start": byte_start,
+                    "byte_end": byte_end,
+                    "content": content,
+                })
+            }
+            HookArgs::BufferActivated { buffer_id } => {
+                serde_json::json!({ "buffer_id": buffer_id.0 })
+            }
+            HookArgs::BufferDeactivated { buffer_id } => {
+                serde_json::json!({ "buffer_id": buffer_id.0 })
+            }
+            HookArgs::BufferClosed { buffer_id } => {
+                serde_json::json!({ "buffer_id": buffer_id.0 })
+            }
+            HookArgs::CursorMoved {
+                buffer_id,
+                cursor_id,
+                old_position,
+                new_position,
+            } => {
+                serde_json::json!({
+                    "buffer_id": buffer_id.0,
+                    "cursor_id": cursor_id.0,
+                    "old_position": old_position,
+                    "new_position": new_position,
+                })
+            }
+            HookArgs::BeforeInsert {
+                buffer_id,
+                position,
+                text,
+            } => {
+                serde_json::json!({
+                    "buffer_id": buffer_id.0,
+                    "position": position,
+                    "text": text,
+                })
+            }
+            HookArgs::AfterInsert {
+                buffer_id,
+                position,
+                text,
+            } => {
+                serde_json::json!({
+                    "buffer_id": buffer_id.0,
+                    "position": position,
+                    "text": text,
+                })
+            }
+            HookArgs::BeforeDelete { buffer_id, range } => {
+                serde_json::json!({
+                    "buffer_id": buffer_id.0,
+                    "start": range.start,
+                    "end": range.end,
+                })
+            }
+            HookArgs::AfterDelete {
+                buffer_id,
+                range,
+                deleted_text,
+            } => {
+                serde_json::json!({
+                    "buffer_id": buffer_id.0,
+                    "start": range.start,
+                    "end": range.end,
+                    "deleted_text": deleted_text,
+                })
+            }
+            HookArgs::BeforeFileOpen { path } => {
+                serde_json::json!({ "path": path.to_string_lossy() })
+            }
+            HookArgs::AfterFileOpen { path, buffer_id } => {
+                serde_json::json!({
+                    "path": path.to_string_lossy(),
+                    "buffer_id": buffer_id.0,
+                })
+            }
+            HookArgs::BeforeFileSave { path, buffer_id } => {
+                serde_json::json!({
+                    "path": path.to_string_lossy(),
+                    "buffer_id": buffer_id.0,
+                })
+            }
+            HookArgs::AfterFileSave { path, buffer_id } => {
+                serde_json::json!({
+                    "path": path.to_string_lossy(),
+                    "buffer_id": buffer_id.0,
+                })
+            }
+            HookArgs::PreCommand { action } => {
+                serde_json::json!({ "action": format!("{:?}", action) })
+            }
+            HookArgs::PostCommand { action } => {
+                serde_json::json!({ "action": format!("{:?}", action) })
+            }
+            HookArgs::Idle { milliseconds } => {
+                serde_json::json!({ "milliseconds": milliseconds })
+            }
+            HookArgs::EditorInitialized => {
+                serde_json::json!({})
+            }
+            HookArgs::PromptChanged { prompt_type, input } => {
+                serde_json::json!({
+                    "prompt_type": prompt_type,
+                    "input": input,
+                })
+            }
+            HookArgs::PromptConfirmed {
+                prompt_type,
+                input,
+                selected_index,
+            } => {
+                serde_json::json!({
+                    "prompt_type": prompt_type,
+                    "input": input,
+                    "selected_index": selected_index,
+                })
+            }
+            HookArgs::PromptCancelled { prompt_type, input } => {
+                serde_json::json!({
+                    "prompt_type": prompt_type,
+                    "input": input,
+                })
+            }
+        };
+
+        serde_json::to_string(&json_value)
+            .map_err(|e| anyhow!("Failed to serialize hook args: {}", e))
+    }
+
+    /// Get access to the state snapshot for updating (used by Editor)
+    pub fn state_snapshot_handle(&self) -> Arc<RwLock<EditorStateSnapshot>> {
+        Arc::clone(&self.state_snapshot)
+    }
+
+    /// Check if any handlers are registered for a hook
+    pub fn has_hook_handlers(&self, hook_name: &str) -> bool {
+        self.runtime.has_handlers(hook_name)
+    }
+
+    /// Get the command registry (for testing)
+    #[allow(dead_code)]
+    pub fn command_registry(&self) -> Arc<RwLock<CommandRegistry>> {
+        Arc::clone(&self.commands)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2347,6 +2704,265 @@ mod tests {
             )
             .await;
         assert!(verify.is_ok(), "Verify failed: {:?}", verify);
+    }
+
+    // === TypeScriptPluginManager Tests ===
+
+    #[tokio::test]
+    async fn test_ts_plugin_manager_creation() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        let manager = TypeScriptPluginManager::new(hooks, commands);
+        assert!(manager.is_ok(), "Failed to create TS plugin manager");
+    }
+
+    #[tokio::test]
+    async fn test_ts_plugin_manager_state_snapshot() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        let manager = TypeScriptPluginManager::new(hooks, commands).unwrap();
+
+        // Get state snapshot handle
+        let snapshot = manager.state_snapshot_handle();
+
+        // Update snapshot
+        {
+            let mut state = snapshot.write().unwrap();
+            state.active_buffer_id = BufferId(42);
+        }
+
+        // Verify it was updated
+        let state = snapshot.read().unwrap();
+        assert_eq!(state.active_buffer_id.0, 42);
+    }
+
+    #[tokio::test]
+    async fn test_ts_plugin_manager_process_commands() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        let mut manager = TypeScriptPluginManager::new(hooks, commands).unwrap();
+
+        // Initially no commands
+        let cmds = manager.process_commands();
+        assert!(cmds.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ts_plugin_manager_list_plugins_empty() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        let manager = TypeScriptPluginManager::new(hooks, commands).unwrap();
+
+        let plugins = manager.list_plugins();
+        assert!(plugins.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ts_plugin_manager_hook_args_to_json() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        let manager = TypeScriptPluginManager::new(hooks, commands).unwrap();
+
+        // Test various hook args conversions
+        let args = HookArgs::BufferActivated {
+            buffer_id: BufferId(5),
+        };
+        let json = manager.hook_args_to_json(&args).unwrap();
+        assert!(json.contains("\"buffer_id\":5"));
+
+        let args = HookArgs::CursorMoved {
+            buffer_id: BufferId(1),
+            cursor_id: crate::event::CursorId(0),
+            old_position: 10,
+            new_position: 20,
+        };
+        let json = manager.hook_args_to_json(&args).unwrap();
+        assert!(json.contains("\"buffer_id\":1"));
+        assert!(json.contains("\"old_position\":10"));
+        assert!(json.contains("\"new_position\":20"));
+
+        let args = HookArgs::EditorInitialized;
+        let json = manager.hook_args_to_json(&args).unwrap();
+        assert_eq!(json, "{}");
+    }
+
+    #[tokio::test]
+    async fn test_ts_plugin_manager_has_no_hook_handlers_initially() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        let manager = TypeScriptPluginManager::new(hooks, commands).unwrap();
+
+        assert!(!manager.has_hook_handlers("buffer_save"));
+        assert!(!manager.has_hook_handlers("cursor_moved"));
+    }
+
+    #[tokio::test]
+    async fn test_ts_plugin_manager_load_inline_plugin() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        let mut manager = TypeScriptPluginManager::new(hooks, commands).unwrap();
+
+        // Create a temporary TypeScript plugin file
+        let mut temp_file = NamedTempFile::with_suffix(".js").unwrap();
+        writeln!(
+            temp_file,
+            r#"
+            // Simple test plugin
+            editor.setStatus("Test plugin loaded");
+
+            // Register a command
+            editor.registerCommand(
+                "Test TS Command",
+                "A test command from TypeScript",
+                "test_ts_action",
+                "normal"
+            );
+
+            // Define the action
+            globalThis.test_ts_action = function() {{
+                editor.setStatus("TS action executed");
+            }};
+        "#
+        )
+        .unwrap();
+        temp_file.flush().unwrap();
+
+        // Load the plugin
+        let result = manager.load_plugin(temp_file.path()).await;
+        assert!(result.is_ok(), "Failed to load plugin: {:?}", result);
+
+        // Verify it's in the list
+        let plugins = manager.list_plugins();
+        assert_eq!(plugins.len(), 1);
+
+        // Check that commands were sent
+        let cmds = manager.process_commands();
+        assert!(!cmds.is_empty(), "Expected commands from plugin");
+
+        // Find SetStatus command
+        let has_status = cmds.iter().any(|cmd| {
+            matches!(cmd, PluginCommand::SetStatus { message } if message.contains("Test plugin loaded"))
+        });
+        assert!(has_status, "Expected SetStatus command");
+    }
+
+    #[tokio::test]
+    async fn test_ts_plugin_manager_execute_action() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        let mut manager = TypeScriptPluginManager::new(hooks, commands).unwrap();
+
+        // Create a plugin with an action
+        let mut temp_file = NamedTempFile::with_suffix(".js").unwrap();
+        writeln!(
+            temp_file,
+            r#"
+            globalThis.myAction = function() {{
+                editor.setStatus("Action executed!");
+            }};
+        "#
+        )
+        .unwrap();
+        temp_file.flush().unwrap();
+
+        // Load the plugin
+        manager.load_plugin(temp_file.path()).await.unwrap();
+        manager.process_commands(); // Clear loading commands
+
+        // Execute the action
+        let result = manager.execute_action("myAction").await;
+        assert!(result.is_ok(), "Failed to execute action: {:?}", result);
+
+        // Check that status was set
+        let cmds = manager.process_commands();
+        let has_action_status = cmds.iter().any(|cmd| {
+            matches!(cmd, PluginCommand::SetStatus { message } if message.contains("Action executed"))
+        });
+        assert!(has_action_status, "Expected SetStatus from action");
+    }
+
+    #[tokio::test]
+    async fn test_ts_plugin_manager_run_hook() {
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        let mut manager = TypeScriptPluginManager::new(hooks, commands).unwrap();
+
+        // Register a hook handler via the runtime
+        let setup = manager.runtime.execute_script(
+            "<test_hook_setup>",
+            r#"
+            globalThis.onBufferActivated = function(data) {
+                editor.setStatus("Buffer " + data.buffer_id + " activated");
+            };
+            editor.on("buffer_activated", "onBufferActivated");
+            "#,
+        ).await;
+        assert!(setup.is_ok(), "Setup failed: {:?}", setup);
+
+        // Clear any setup commands
+        manager.process_commands();
+
+        // Run the hook
+        let args = HookArgs::BufferActivated {
+            buffer_id: BufferId(42),
+        };
+        let result = manager.run_hook("buffer_activated", &args).await;
+        assert!(result.is_ok(), "Failed to run hook: {:?}", result);
+
+        // Check that the handler was called
+        let cmds = manager.process_commands();
+        let has_hook_status = cmds.iter().any(|cmd| {
+            matches!(cmd, PluginCommand::SetStatus { message } if message.contains("Buffer 42 activated"))
+        });
+        assert!(has_hook_status, "Expected SetStatus from hook handler");
+    }
+
+    #[tokio::test]
+    async fn test_ts_plugin_manager_unload_plugin() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        let mut manager = TypeScriptPluginManager::new(hooks, commands).unwrap();
+
+        // Create and load a plugin
+        let mut temp_file = NamedTempFile::with_suffix(".js").unwrap();
+        writeln!(temp_file, r#"// Test plugin"#).unwrap();
+        temp_file.flush().unwrap();
+
+        manager.load_plugin(temp_file.path()).await.unwrap();
+
+        let plugin_name = temp_file
+            .path()
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        assert_eq!(manager.list_plugins().len(), 1);
+
+        // Unload it
+        let result = manager.unload_plugin(&plugin_name);
+        assert!(result.is_ok(), "Failed to unload: {:?}", result);
+        assert_eq!(manager.list_plugins().len(), 0);
     }
 }
 
