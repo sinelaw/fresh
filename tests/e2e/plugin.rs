@@ -627,13 +627,9 @@ fn test_todo_highlighter_updates_on_delete() {
     );
 }
 
-/// Test diagnostics panel plugin loads without Lua scoping errors
-/// This test reproduces the issue where local functions called before being defined cause runtime errors
-///
-/// Note: The diagnostics panel is currently a stub implementation that only sets status messages.
-/// The full implementation with virtual buffers and horizontal splits is not yet complete.
+/// Test diagnostics panel plugin loads and creates a virtual buffer split
+/// This verifies the full implementation with LSP-like diagnostics display
 #[test]
-#[ignore = "Diagnostics panel is a stub - virtual buffer split view not yet implemented"]
 fn test_diagnostics_panel_plugin_loads() {
     // Create a temporary project directory
     let temp_dir = tempfile::TempDir::new().unwrap();
