@@ -702,8 +702,38 @@ impl Editor {
             command_registry,
             ts_plugin_manager,
             panel_ids: HashMap::new(),
-            search_history: crate::input_history::InputHistory::new(),
-            replace_history: crate::input_history::InputHistory::new(),
+            search_history: {
+                // Load search history from disk if available
+                match crate::input_history::get_search_history_path() {
+                    Ok(path) => {
+                        crate::input_history::InputHistory::load_from_file(&path)
+                            .unwrap_or_else(|e| {
+                                tracing::warn!("Failed to load search history: {}", e);
+                                crate::input_history::InputHistory::new()
+                            })
+                    }
+                    Err(e) => {
+                        tracing::warn!("Could not determine search history path: {}", e);
+                        crate::input_history::InputHistory::new()
+                    }
+                }
+            },
+            replace_history: {
+                // Load replace history from disk if available
+                match crate::input_history::get_replace_history_path() {
+                    Ok(path) => {
+                        crate::input_history::InputHistory::load_from_file(&path)
+                            .unwrap_or_else(|e| {
+                                tracing::warn!("Failed to load replace history: {}", e);
+                                crate::input_history::InputHistory::new()
+                            })
+                    }
+                    Err(e) => {
+                        tracing::warn!("Could not determine replace history path: {}", e);
+                        crate::input_history::InputHistory::new()
+                    }
+                }
+            },
             lsp_progress: std::collections::HashMap::new(),
             lsp_server_statuses: std::collections::HashMap::new(),
             lsp_window_messages: Vec::new(),
@@ -8929,6 +8959,35 @@ impl Editor {
             .join(", ");
 
         self.set_status_message(format!("Bookmarks: {}", list_str));
+    }
+
+    /// Save search and replace histories to disk
+    /// Called on shutdown to persist history across sessions
+    pub fn save_histories(&self) {
+        // Save search history
+        if let Ok(path) = crate::input_history::get_search_history_path() {
+            if let Err(e) = self.search_history.save_to_file(&path) {
+                tracing::warn!("Failed to save search history: {}", e);
+            } else {
+                tracing::debug!("Saved search history to {:?}", path);
+            }
+        }
+
+        // Save replace history
+        if let Ok(path) = crate::input_history::get_replace_history_path() {
+            if let Err(e) = self.replace_history.save_to_file(&path) {
+                tracing::warn!("Failed to save replace history: {}", e);
+            } else {
+                tracing::debug!("Saved replace history to {:?}", path);
+            }
+        }
+    }
+}
+
+impl Drop for Editor {
+    fn drop(&mut self) {
+        // Save histories on shutdown
+        self.save_histories();
     }
 }
 

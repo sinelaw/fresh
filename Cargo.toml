@@ -47,6 +47,7 @@ tree-sitter-ruby = "0.23.1"
 tree-sitter-bash = "0.25.0"
 tree-sitter-lua = "0.2.0"
 anyhow = "1.0.100"
+dirs = "5.0"  # For XDG/platform-specific directory detection
 # tree-sitter-markdown = "0.7.1"  # Disabled due to tree-sitter version conflict (uses 0.19.5 instead of 0.25.x)
 
 [dev-dependencies]

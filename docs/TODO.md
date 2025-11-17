@@ -16,7 +16,7 @@ Features are categorized as:
 #### Search & Replace Enhancements
 - [x] Case-sensitive/insensitive toggle ✅
 - [x] Whole word matching ✅
-- [ ] Persist search history across sessions - **🦀 Core** (file I/O, startup/shutdown)
+- [x] Persist search history across sessions (~/.local/share/fresh/) ✅
 - [ ] Multi-file search/replace (integrate with git grep) - **📦 Plugin** (uses existing search APIs)
 - [ ] Progress bar for replace_all on huge files - **🦀 Core** (rendering pipeline)
 
@@ -465,3 +465,4 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 - ✅ Feature categorization (Core vs Plugin analysis)
 - ✅ Block selection rendering (Alt+Shift+arrows highlight rectangular regions)
 - ✅ Block selection E2E tests (5 tests covering all directions)
+- ✅ Search history persistence (save/load to ~/.local/share/fresh/ with Drop impl)

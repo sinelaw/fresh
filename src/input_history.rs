@@ -66,7 +66,7 @@
 /// - Implement `serde::Serialize` and `serde::Deserialize`
 /// - Add methods: `save_to_file()`, `load_from_file()`
 /// - Store in config directory, separate files per history type
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct InputHistory {
     /// History items (oldest to newest)
     items: Vec<String>,
@@ -295,24 +295,67 @@ impl InputHistory {
     }
 
     // ========================================================================
-    // Future persistence methods (to be implemented later)
+    // Persistence methods
     // ========================================================================
-    //
-    // /// Save history to a file
-    // pub fn save_to_file(&self, path: &Path) -> io::Result<()> {
-    //     let json = serde_json::to_string_pretty(&self.items)?;
-    //     std::fs::write(path, json)?;
-    //     Ok(())
-    // }
-    //
-    // /// Load history from a file
-    // pub fn load_from_file(path: &Path) -> io::Result<Self> {
-    //     let json = std::fs::read_to_string(path)?;
-    //     let items: Vec<String> = serde_json::from_str(&json)?;
-    //     let mut history = Self::new();
-    //     history.items = items;
-    //     Ok(history)
-    // }
+
+    /// Save history to a file
+    pub fn save_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
+        // Only save items, not navigation state
+        let json = serde_json::to_string_pretty(&self.items)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+
+    /// Load history from a file
+    pub fn load_from_file(path: &std::path::Path) -> std::io::Result<Self> {
+        if !path.exists() {
+            return Ok(Self::new());
+        }
+
+        let json = std::fs::read_to_string(path)?;
+        let items: Vec<String> = serde_json::from_str(&json)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        let mut history = Self::new();
+        history.items = items;
+
+        // Trim to max_size if file had more items
+        if history.items.len() > history.max_size {
+            let excess = history.items.len() - history.max_size;
+            history.items.drain(0..excess);
+        }
+
+        Ok(history)
+    }
+}
+
+/// Get the data directory for Fresh editor state
+/// Returns $XDG_DATA_HOME/fresh or ~/.local/share/fresh on Linux
+/// Returns ~/Library/Application Support/fresh on macOS
+pub fn get_data_dir() -> std::io::Result<std::path::PathBuf> {
+    let data_dir = dirs::data_dir()
+        .ok_or_else(|| std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Could not determine data directory"
+        ))?;
+    Ok(data_dir.join("fresh"))
+}
+
+/// Get the path for search history file
+pub fn get_search_history_path() -> std::io::Result<std::path::PathBuf> {
+    Ok(get_data_dir()?.join("search_history.json"))
+}
+
+/// Get the path for replace history file
+pub fn get_replace_history_path() -> std::io::Result<std::path::PathBuf> {
+    Ok(get_data_dir()?.join("replace_history.json"))
 }
 
 impl Default for InputHistory {
