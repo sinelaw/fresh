@@ -17,6 +17,7 @@ use crate::multi_cursor::{
 };
 use crate::plugin_api::PluginCommand;
 use crate::plugin_manager::PluginManager;
+use crate::ts_runtime::TypeScriptPluginManager;
 use crate::position_history::PositionHistory;
 use crate::prompt::{Prompt, PromptType};
 use crate::split::{SplitManager, SplitViewState};
@@ -341,6 +342,9 @@ pub struct Editor {
     /// Plugin manager
     plugin_manager: Option<PluginManager>,
 
+    /// TypeScript plugin manager
+    ts_plugin_manager: Option<TypeScriptPluginManager>,
+
     /// Named panel IDs mapping (for idempotent panel operations)
     /// Maps panel ID (e.g., "diagnostics") to buffer ID
     panel_ids: HashMap<String, BufferId>,
@@ -605,6 +609,35 @@ impl Editor {
             }
         }
 
+        // Initialize TypeScript plugin manager
+        let ts_plugin_manager =
+            TypeScriptPluginManager::new(Arc::clone(&hook_registry), Arc::clone(&command_registry))
+                .ok();
+
+        if let Some(ref _manager) = ts_plugin_manager.as_ref() {
+            // Try to load TypeScript plugins from the plugins directory
+            let plugin_dir = working_dir.join("plugins");
+            if plugin_dir.exists() {
+                tracing::info!("Loading TypeScript plugins from: {:?}", plugin_dir);
+                // Note: This is currently a no-op since load_plugins_from_dir_blocking
+                // requires mutable access. We'll load plugins separately.
+            }
+        }
+
+        // Load TypeScript plugins (need mutable borrow)
+        let mut ts_plugin_manager = ts_plugin_manager;
+        if let Some(ref mut manager) = ts_plugin_manager {
+            let plugin_dir = working_dir.join("plugins");
+            if plugin_dir.exists() {
+                let errors = manager.load_plugins_from_dir_blocking(&plugin_dir);
+                if !errors.is_empty() {
+                    for err in errors {
+                        tracing::warn!("TypeScript plugin load error: {}", err);
+                    }
+                }
+            }
+        }
+
         Ok(Editor {
             buffers,
             active_buffer: buffer_id,
@@ -646,6 +679,7 @@ impl Editor {
             hook_registry,
             command_registry,
             plugin_manager,
+            ts_plugin_manager,
             panel_ids: HashMap::new(),
             search_history: crate::input_history::InputHistory::new(),
             replace_history: crate::input_history::InputHistory::new(),
@@ -2813,6 +2847,19 @@ impl Editor {
             }
         }
 
+        // Process TypeScript plugin commands
+        if let Some(ref mut manager) = self.ts_plugin_manager {
+            let commands = manager.process_commands();
+            if !commands.is_empty() {
+                processed_any_commands = true;
+                for command in commands {
+                    if let Err(e) = self.handle_plugin_command(command) {
+                        tracing::error!("Error handling TypeScript plugin command: {}", e);
+                    }
+                }
+            }
+        }
+
         // Only update snapshot if commands were processed (which may have modified buffers)
         if processed_any_commands {
             self.update_plugin_state_snapshot();
@@ -2919,6 +2966,65 @@ impl Editor {
             //
             // For now, plugins can call get_buffer_content() which will fetch on-demand.
             // This is acceptable since plugins typically don't need full buffer content often.
+
+            // Update cursor information for active buffer
+            if let Some(active_state) = self.buffers.get(&self.active_buffer) {
+                // Primary cursor
+                let primary = active_state.cursors.primary();
+                snapshot.primary_cursor = Some(CursorInfo {
+                    position: primary.position,
+                    selection: primary.selection_range(),
+                });
+
+                // All cursors
+                snapshot.all_cursors = active_state
+                    .cursors
+                    .iter()
+                    .map(|(_, cursor)| CursorInfo {
+                        position: cursor.position,
+                        selection: cursor.selection_range(),
+                    })
+                    .collect();
+
+                // Viewport
+                snapshot.viewport = Some(ViewportInfo {
+                    top_byte: active_state.viewport.top_byte,
+                    left_column: active_state.viewport.left_column,
+                    width: active_state.viewport.width,
+                    height: active_state.viewport.height,
+                });
+            } else {
+                snapshot.primary_cursor = None;
+                snapshot.all_cursors.clear();
+                snapshot.viewport = None;
+            }
+        }
+
+        // Also update TypeScript plugin manager state
+        if let Some(ref manager) = self.ts_plugin_manager {
+            use crate::plugin_api::{BufferInfo, CursorInfo, ViewportInfo};
+
+            let snapshot_handle = manager.state_snapshot_handle();
+            let mut snapshot = snapshot_handle.write().unwrap();
+
+            // Update active buffer ID
+            snapshot.active_buffer_id = self.active_buffer;
+
+            // Update active split ID
+            snapshot.active_split_id = self.split_manager.active_split().0;
+
+            // Clear and update buffer info
+            snapshot.buffers.clear();
+
+            for (buffer_id, state) in &self.buffers {
+                let buffer_info = BufferInfo {
+                    id: *buffer_id,
+                    path: state.buffer.file_path().map(|p| p.to_path_buf()),
+                    modified: state.buffer.is_modified(),
+                    length: state.buffer.len(),
+                };
+                snapshot.buffers.insert(*buffer_id, buffer_info);
+            }
 
             // Update cursor information for active buffer
             if let Some(active_state) = self.buffers.get(&self.active_buffer) {
@@ -5101,17 +5207,39 @@ impl Editor {
             }
             Action::PluginAction(action_name) => {
                 // Execute the plugin callback
+                // Try Lua plugin manager first, then TypeScript
+                let mut executed = false;
+
                 if let Some(ref manager) = self.plugin_manager {
                     match manager.execute_action(&action_name) {
                         Ok(()) => {
-                            tracing::info!("Plugin action '{}' executed successfully", action_name);
+                            tracing::info!("Plugin action '{}' executed successfully (Lua)", action_name);
+                            executed = true;
                         }
                         Err(e) => {
-                            self.set_status_message(format!("Plugin error: {}", e));
-                            tracing::error!("Plugin action error: {}", e);
+                            // Not found in Lua, try TypeScript
+                            tracing::debug!("Lua plugin action '{}' not found: {}", action_name, e);
                         }
                     }
-                } else {
+                }
+
+                // Try TypeScript plugin manager if not found in Lua
+                if !executed {
+                    if let Some(ref mut manager) = self.ts_plugin_manager {
+                        match manager.execute_action_blocking(&action_name) {
+                            Ok(()) => {
+                                tracing::info!("Plugin action '{}' executed successfully (TypeScript)", action_name);
+                                executed = true;
+                            }
+                            Err(e) => {
+                                self.set_status_message(format!("Plugin error: {}", e));
+                                tracing::error!("Plugin action error: {}", e);
+                            }
+                        }
+                    }
+                }
+
+                if !executed && self.plugin_manager.is_none() && self.ts_plugin_manager.is_none() {
                     self.set_status_message("Plugin manager not available".to_string());
                 }
             }

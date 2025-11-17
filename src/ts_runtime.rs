@@ -1473,6 +1473,56 @@ impl TypeScriptPluginManager {
     pub fn command_registry(&self) -> Arc<RwLock<CommandRegistry>> {
         Arc::clone(&self.commands)
     }
+
+    /// Load a plugin synchronously (blocking)
+    ///
+    /// This is useful for initialization where async context is not available.
+    /// Uses a temporary tokio runtime to execute the async load.
+    pub fn load_plugin_blocking(&mut self, path: &Path) -> Result<()> {
+        // Create a new tokio runtime for this blocking operation
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| anyhow!("Failed to create runtime: {}", e))?;
+
+        rt.block_on(self.load_plugin(path))
+    }
+
+    /// Load all plugins from a directory synchronously (blocking)
+    pub fn load_plugins_from_dir_blocking(&mut self, dir: &Path) -> Vec<String> {
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                let err = format!("Failed to create runtime: {}", e);
+                tracing::error!("{}", err);
+                return vec![err];
+            }
+        };
+
+        rt.block_on(self.load_plugins_from_dir(dir))
+    }
+
+    /// Execute an action synchronously (blocking)
+    pub fn execute_action_blocking(&mut self, action_name: &str) -> Result<()> {
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| anyhow!("Failed to create runtime: {}", e))?;
+
+        rt.block_on(self.execute_action(action_name))
+    }
+
+    /// Run a hook synchronously (blocking)
+    pub fn run_hook_blocking(&mut self, hook_name: &str, args: &HookArgs) -> Result<()> {
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| anyhow!("Failed to create runtime: {}", e))?;
+
+        rt.block_on(self.run_hook(hook_name, args))
+    }
+
+    /// Reload a plugin synchronously (blocking)
+    pub fn reload_plugin_blocking(&mut self, name: &str) -> Result<()> {
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| anyhow!("Failed to create runtime: {}", e))?;
+
+        rt.block_on(self.reload_plugin(name))
+    }
 }
 
 #[cfg(test)]
