@@ -78,10 +78,11 @@ Features are categorized as:
 
 #### LSP Core UX Features (P1) - **🦀 Core**
 
-- [ ] **Hover Documentation**
-  - Request `textDocument/hover` on Ctrl+K or hover
-  - Show documentation popup with markdown rendering
-  - Cache results, cancel on cursor move
+- [x] **Hover Documentation** ✅
+  - Request `textDocument/hover` on Ctrl+K
+  - Show documentation popup with symbol highlighting
+  - Cancel on cursor move, keyboard dismissal (Esc)
+  - **Note:** Markdown rendering not yet implemented (displays as plain text)
   - **Effort:** 4-6 hours
 
 - [ ] **Code Actions**
@@ -603,3 +604,8 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 - ✅ Block selection E2E tests (5 tests covering all directions)
 - ✅ Search history persistence (save/load to ~/.local/share/fresh/ with Drop impl)
 - ✅ **Plugin Thread Architecture** (PluginThreadHandle with dedicated thread, non-blocking hooks, removed Lua/HookRegistry)
+- ✅ **LSP Hover Documentation** (Ctrl+K shows docs, symbol highlighting, keyboard dismissal)
+- ✅ LSP position calculation fixes (proper UTF-16 encoding for multi-byte chars)
+- ✅ Hover popup positioning (2 lines below cursor to avoid obscuring symbol)
+- ✅ TypeScript syntax highlighting improvements (full JavaScript support)
+- ✅ Plugin API gap analysis documentation (Fresh vs VSCode comparison)
