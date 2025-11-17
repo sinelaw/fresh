@@ -4479,11 +4479,65 @@ impl Editor {
         let lsp_changes = self.collect_lsp_changes(&batch);
         self.active_buffer = original_active;
 
+        // Save cursor position before applying batch
+        // The batch will move the cursor to each edit location, but we want to
+        // preserve the cursor position (adjusted for edits before it)
+        let state = self.buffers.get(&buffer_id).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
+        })?;
+        let original_cursor_pos = state.cursors.primary().position;
+        let original_cursor_anchor = state.cursors.primary().anchor;
+
+        // Calculate cursor position adjustment based on edits
+        // Edits are applied in reverse order (end of file to start), but we need
+        // to calculate the cumulative delta for all edits before the cursor
+        let mut cursor_delta: isize = 0;
+        if let Event::Batch { events, .. } = &batch {
+            for event in events {
+                match event {
+                    Event::Delete { range, .. } => {
+                        if range.end <= original_cursor_pos {
+                            // Delete entirely before cursor - cursor moves back
+                            cursor_delta -= range.len() as isize;
+                        } else if range.start < original_cursor_pos {
+                            // Delete crosses cursor - cursor moves to start of delete
+                            cursor_delta = range.start as isize - original_cursor_pos as isize;
+                        }
+                        // Delete entirely after cursor - no effect
+                    }
+                    Event::Insert { position, text, .. } => {
+                        // Only move cursor if insert is STRICTLY BEFORE cursor position
+                        // If insert is AT cursor, cursor should stay at start of new text
+                        let adjusted_cursor = (original_cursor_pos as isize + cursor_delta) as usize;
+                        if *position < adjusted_cursor {
+                            // Insert before cursor - cursor moves forward
+                            cursor_delta += text.len() as isize;
+                        }
+                        // Insert at or after cursor - no effect on cursor position
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // Apply to buffer state
         let state = self.buffers.get_mut(&buffer_id).ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotFound, "Buffer not found")
         })?;
         state.apply(&batch);
+
+        // Restore cursor to adjusted position
+        let buffer_len = state.buffer.len();
+        let new_cursor_pos = ((original_cursor_pos as isize + cursor_delta).max(0) as usize)
+            .min(buffer_len);
+        state.cursors.primary_mut().position = new_cursor_pos;
+
+        // Adjust anchor if there was a selection
+        if let Some(anchor) = original_cursor_anchor {
+            let new_anchor = ((anchor as isize + cursor_delta).max(0) as usize)
+                .min(buffer_len);
+            state.cursors.primary_mut().anchor = Some(new_anchor);
+        }
 
         // Notify LSP about the changes using pre-calculated positions
         self.send_lsp_changes_for_buffer(buffer_id, lsp_changes);
@@ -10380,6 +10434,254 @@ mod tests {
         eprintln!("modified buffer, not the original buffer.");
         eprintln!("This causes the second rename to fail with 'content modified' error.");
         eprintln!("========================\n");
+    }
+
+    #[test]
+    fn test_lsp_rename_preserves_cursor_position() {
+        use crate::text_buffer::Buffer;
+
+        let config = Config::default();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
+
+        // Set buffer content: "fn foo(val: i32) {\n    val + 1\n}\n"
+        // Line 0: positions 0-19 (includes newline)
+        // Line 1: positions 19-31 (includes newline)
+        let initial = "fn foo(val: i32) {\n    val + 1\n}\n";
+        editor.active_state_mut().buffer = Buffer::from_str(initial, 1024 * 1024);
+
+        // Position cursor at the second "val" (position 23 = 'v' of "val" on line 1)
+        let original_cursor_pos = 23;
+        editor.active_state_mut().cursors.primary_mut().position = original_cursor_pos;
+
+        // Verify cursor is at the right position
+        let text_at_cursor = editor.active_state().buffer.to_string()
+            [original_cursor_pos..original_cursor_pos + 3]
+            .to_string();
+        assert_eq!(text_at_cursor, "val", "Cursor should be at 'val'");
+
+        // Simulate LSP rename batch: rename "val" to "value" in two places
+        // Applied in reverse order (from end of file to start)
+        let cursor_id = editor.active_state().cursors.primary_id();
+        let buffer_id = editor.active_buffer;
+
+        let batch = Event::Batch {
+            events: vec![
+                // Second occurrence first (at position 23, line 1)
+                Event::Delete {
+                    range: 23..26, // "val" on line 1
+                    deleted_text: "val".to_string(),
+                    cursor_id,
+                },
+                Event::Insert {
+                    position: 23,
+                    text: "value".to_string(),
+                    cursor_id,
+                },
+                // First occurrence second (at position 7, line 0)
+                Event::Delete {
+                    range: 7..10, // "val" on line 0
+                    deleted_text: "val".to_string(),
+                    cursor_id,
+                },
+                Event::Insert {
+                    position: 7,
+                    text: "value".to_string(),
+                    cursor_id,
+                },
+            ],
+            description: "LSP Rename".to_string(),
+        };
+
+        // Apply the rename batch (this should preserve cursor position)
+        editor.apply_rename_batch_to_buffer(buffer_id, batch).unwrap();
+
+        // Verify buffer was correctly modified
+        let final_content = editor.active_state().buffer.to_string();
+        assert_eq!(
+            final_content, "fn foo(value: i32) {\n    value + 1\n}\n",
+            "Buffer should have 'value' in both places"
+        );
+
+        // The cursor was originally at position 23 (start of "val" on line 1).
+        // After renaming:
+        // - The first "val" (at pos 7-10) was replaced with "value" (5 chars instead of 3)
+        //   This adds 2 bytes before the cursor.
+        // - The second "val" at the cursor position was replaced.
+        //
+        // Expected cursor position: 23 + 2 = 25 (start of "value" on line 1)
+        let final_cursor_pos = editor.active_state().cursors.primary().position;
+        let expected_cursor_pos = 25; // original 23 + 2 (delta from first rename)
+
+        assert_eq!(
+            final_cursor_pos, expected_cursor_pos,
+            "Cursor should be at position {} (start of 'value' on line 1), but was at {}. \
+             Original pos: {}, expected adjustment: +2 for first rename",
+            expected_cursor_pos, final_cursor_pos, original_cursor_pos
+        );
+
+        // Verify cursor is at start of the renamed symbol
+        let text_at_new_cursor = &final_content[final_cursor_pos..final_cursor_pos + 5];
+        assert_eq!(
+            text_at_new_cursor, "value",
+            "Cursor should be at the start of 'value' after rename"
+        );
+    }
+
+    #[test]
+    fn test_lsp_rename_twice_consecutive() {
+        // This test reproduces the bug where the second rename fails because
+        // LSP positions are calculated incorrectly after the first rename.
+        use crate::text_buffer::Buffer;
+
+        let config = Config::default();
+        let mut editor = Editor::new(config, 80, 24).unwrap();
+
+        // Initial content: "fn foo(val: i32) {\n    val + 1\n}\n"
+        let initial = "fn foo(val: i32) {\n    val + 1\n}\n";
+        editor.active_state_mut().buffer = Buffer::from_str(initial, 1024 * 1024);
+
+        let cursor_id = editor.active_state().cursors.primary_id();
+        let buffer_id = editor.active_buffer;
+
+        // === FIRST RENAME: "val" -> "value" ===
+        // Create batch for first rename (applied in reverse order)
+        let batch1 = Event::Batch {
+            events: vec![
+                // Second occurrence first (at position 23, line 1, char 4)
+                Event::Delete {
+                    range: 23..26,
+                    deleted_text: "val".to_string(),
+                    cursor_id,
+                },
+                Event::Insert {
+                    position: 23,
+                    text: "value".to_string(),
+                    cursor_id,
+                },
+                // First occurrence (at position 7, line 0, char 7)
+                Event::Delete {
+                    range: 7..10,
+                    deleted_text: "val".to_string(),
+                    cursor_id,
+                },
+                Event::Insert {
+                    position: 7,
+                    text: "value".to_string(),
+                    cursor_id,
+                },
+            ],
+            description: "LSP Rename 1".to_string(),
+        };
+
+        // Collect LSP changes BEFORE applying (this is the fix)
+        let lsp_changes1 = editor.collect_lsp_changes(&batch1);
+
+        // Verify first rename LSP positions are correct
+        assert_eq!(lsp_changes1.len(), 4, "First rename should have 4 LSP changes");
+
+        // First delete should be at line 1, char 4-7 (second "val")
+        let first_del = &lsp_changes1[0];
+        let first_del_range = first_del.range.unwrap();
+        assert_eq!(first_del_range.start.line, 1, "First delete line");
+        assert_eq!(first_del_range.start.character, 4, "First delete start char");
+        assert_eq!(first_del_range.end.character, 7, "First delete end char");
+
+        // Apply first rename
+        editor.apply_rename_batch_to_buffer(buffer_id, batch1).unwrap();
+
+        // Verify buffer after first rename
+        let after_first = editor.active_state().buffer.to_string();
+        assert_eq!(
+            after_first, "fn foo(value: i32) {\n    value + 1\n}\n",
+            "After first rename"
+        );
+
+        // === SECOND RENAME: "value" -> "x" ===
+        // Now "value" is at:
+        // - Line 0, char 7-12 (positions 7-12 in buffer)
+        // - Line 1, char 4-9 (positions 25-30 in buffer, because line 0 grew by 2)
+        //
+        // Buffer: "fn foo(value: i32) {\n    value + 1\n}\n"
+        //          0123456789...
+
+        // Create batch for second rename
+        let batch2 = Event::Batch {
+            events: vec![
+                // Second occurrence first (at position 25, line 1, char 4)
+                Event::Delete {
+                    range: 25..30,
+                    deleted_text: "value".to_string(),
+                    cursor_id,
+                },
+                Event::Insert {
+                    position: 25,
+                    text: "x".to_string(),
+                    cursor_id,
+                },
+                // First occurrence (at position 7, line 0, char 7)
+                Event::Delete {
+                    range: 7..12,
+                    deleted_text: "value".to_string(),
+                    cursor_id,
+                },
+                Event::Insert {
+                    position: 7,
+                    text: "x".to_string(),
+                    cursor_id,
+                },
+            ],
+            description: "LSP Rename 2".to_string(),
+        };
+
+        // Collect LSP changes BEFORE applying (this is the fix)
+        let lsp_changes2 = editor.collect_lsp_changes(&batch2);
+
+        // Verify second rename LSP positions are correct
+        // THIS IS WHERE THE BUG WOULD MANIFEST - if positions are wrong,
+        // the LSP server would report "No references found at position"
+        assert_eq!(lsp_changes2.len(), 4, "Second rename should have 4 LSP changes");
+
+        // First delete should be at line 1, char 4-9 (second "value")
+        let second_first_del = &lsp_changes2[0];
+        let second_first_del_range = second_first_del.range.unwrap();
+        assert_eq!(
+            second_first_del_range.start.line, 1,
+            "Second rename first delete should be on line 1"
+        );
+        assert_eq!(
+            second_first_del_range.start.character, 4,
+            "Second rename first delete start should be at char 4"
+        );
+        assert_eq!(
+            second_first_del_range.end.character, 9,
+            "Second rename first delete end should be at char 9 (4 + 5 for 'value')"
+        );
+
+        // Third delete should be at line 0, char 7-12 (first "value")
+        let second_third_del = &lsp_changes2[2];
+        let second_third_del_range = second_third_del.range.unwrap();
+        assert_eq!(
+            second_third_del_range.start.line, 0,
+            "Second rename third delete should be on line 0"
+        );
+        assert_eq!(
+            second_third_del_range.start.character, 7,
+            "Second rename third delete start should be at char 7"
+        );
+        assert_eq!(
+            second_third_del_range.end.character, 12,
+            "Second rename third delete end should be at char 12 (7 + 5 for 'value')"
+        );
+
+        // Apply second rename
+        editor.apply_rename_batch_to_buffer(buffer_id, batch2).unwrap();
+
+        // Verify buffer after second rename
+        let after_second = editor.active_state().buffer.to_string();
+        assert_eq!(
+            after_second, "fn foo(x: i32) {\n    x + 1\n}\n",
+            "After second rename"
+        );
     }
 }
 

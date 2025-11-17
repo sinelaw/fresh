@@ -1644,22 +1644,15 @@ impl PieceTree {
                     // Calculate the document line number
                     let doc_line = lines_before + line_in_piece;
 
-                    // Check if piece starts at a line boundary in the DOCUMENT
-                    // If there are lines before this piece, then this piece starts on a new document line
-                    // If lines_before == 0, the piece is part of document line 0 which starts at offset 0
-                    let piece_starts_at_doc_line_boundary =
-                        (lines_before > 0) || (bytes_before == 0);
-
                     // Calculate column
-                    let column = if line_in_piece == 0 && !piece_starts_at_doc_line_boundary {
-                        // The current line started before this piece
-                        // We can't calculate column from this piece alone - need to use position_to_offset
-                        // to find where the current document line starts
+                    let column = if line_in_piece == 0 && bytes_before == 0 {
+                        // Fast path: piece is at document start, so column is just offset within piece
+                        offset_in_piece
+                    } else if line_in_piece == 0 {
+                        // We're on the first line of this piece, but the document line may have
+                        // started before this piece (after modifications). Find the actual line start.
                         let line_start = self.position_to_offset(doc_line, 0, buffers);
                         offset.saturating_sub(line_start)
-                    } else if line_in_piece == 0 {
-                        // Piece starts at line boundary, so column is just offset within piece
-                        offset_in_piece
                     } else {
                         // Line starts within this piece
                         // Find where the line starts within the piece
@@ -1996,6 +1989,79 @@ mod tests {
         // Should find in added section
         let info = tree.find_by_offset(50).unwrap();
         assert_eq!(info.location, BufferLocation::Added(1));
+    }
+
+    #[test]
+    fn test_offset_to_position_column_after_modification() {
+        // This test reproduces a bug where offset_to_position returns incorrect
+        // column values after buffer modifications.
+        //
+        // Initial content: "fn foo(val: i32) {\n    val + 1\n}\n"
+        // After deleting "val" and inserting "value" twice:
+        // Buffer becomes: "fn foo(value: i32) {\n    value + 1\n}\n"
+        //
+        // Position 25 should be line 1, column 4 (the 'v' in second "value")
+        // But the bug causes it to return column 0.
+
+        // Create buffer with initial content
+        let initial = b"fn foo(val: i32) {\n    val + 1\n}\n";
+        let mut buffer = StringBuffer::new(0, initial.to_vec());
+        let buffers = vec![buffer.clone()];
+
+        let mut tree = PieceTree::new(
+            BufferLocation::Stored(0),
+            0,
+            initial.len(),
+            Some(initial.iter().filter(|&&b| b == b'\n').count()),
+        );
+
+        // Verify initial position works correctly
+        // Position 23 = 'v' of second "val" on line 1 (after newline at pos 18)
+        let pos = tree.offset_to_position(23, &buffers);
+        assert_eq!(pos, Some((1, 4)), "Initial: position 23 should be line 1, column 4");
+
+        // Now simulate LSP rename operations:
+        // 1. Delete "val" at position 23 (3 bytes)
+        // 2. Insert "value" at position 23 (5 bytes)
+        // 3. Delete "val" at position 7 (3 bytes)
+        // 4. Insert "value" at position 7 (5 bytes)
+
+        // First modification: delete "val" at position 23
+        tree.delete(23, 3, &buffers);
+
+        // Insert "value" - need a new buffer
+        let value_buf = StringBuffer::new(1, b"value".to_vec());
+        let buffers = vec![buffer.clone(), value_buf.clone()];
+        tree.insert(23, BufferLocation::Added(1), 0, 5, Some(0), &buffers);
+
+        // Second modification: delete "val" at position 7
+        tree.delete(7, 3, &buffers);
+
+        // Insert "value" - use another buffer
+        let value_buf2 = StringBuffer::new(2, b"value".to_vec());
+        let buffers = vec![buffer.clone(), value_buf.clone(), value_buf2];
+        tree.insert(7, BufferLocation::Added(2), 0, 5, Some(0), &buffers);
+
+        // Buffer is now: "fn foo(value: i32) {\n    value + 1\n}\n"
+        // Line 0: "fn foo(value: i32) {\n" = 21 bytes (positions 0-20)
+        // Line 1: "    value + 1\n" starts at position 21
+        // Position 25 = 21 + 4 = line 1, column 4
+
+        // This is where the bug manifests
+        let pos = tree.offset_to_position(25, &buffers);
+        assert_eq!(
+            pos,
+            Some((1, 4)),
+            "After modification: position 25 should be line 1, column 4"
+        );
+
+        // Also test position 21 (start of line 1)
+        let pos = tree.offset_to_position(21, &buffers);
+        assert_eq!(
+            pos,
+            Some((1, 0)),
+            "Position 21 should be line 1, column 0"
+        );
     }
 }
 
@@ -2566,6 +2632,112 @@ mod property_tests {
             let sum_bytes: usize = pieces.iter().map(|p| p.bytes).sum();
             prop_assert_eq!(sum_bytes, total_bytes,
                 "Sum of piece bytes ({}) doesn't match total_bytes ({})", sum_bytes, total_bytes);
+        }
+
+        /// Property test that verifies offset_to_position returns correct line/column
+        /// after buffer modifications. This catches the bug where column calculation
+        /// was incorrect after insertions/deletions.
+        #[test]
+        fn prop_offset_to_position_correct_after_modifications(
+            ops in prop::collection::vec(
+                prop_oneof![
+                    // Insert with newlines
+                    (0usize..50, prop::collection::vec(
+                        prop_oneof![
+                            Just(b'a'),
+                            Just(b'\n'),
+                        ],
+                        1..20
+                    )).prop_map(|(offset, bytes)| (offset, bytes, true)),
+                    // Delete
+                    (0usize..50, 1usize..10).prop_map(|(offset, bytes)| (offset, vec![], false)),
+                ],
+                5..20
+            ),
+            test_offsets in prop::collection::vec(0usize..100, 3..10)
+        ) {
+            // Start with content that has newlines
+            let initial = b"Hello\nWorld\nTest\n";
+            let mut content = initial.to_vec();
+
+            let mut buffers = vec![StringBuffer::new(0, initial.to_vec())];
+            let newline_count = initial.iter().filter(|&&b| b == b'\n').count();
+            let mut tree = PieceTree::new(
+                BufferLocation::Stored(0),
+                0,
+                initial.len(),
+                Some(newline_count),
+            );
+
+            // Apply operations, tracking actual content
+            for (offset, bytes, is_insert) in ops {
+                if is_insert && !bytes.is_empty() {
+                    let offset = offset.min(content.len());
+                    let newlines = bytes.iter().filter(|&&b| b == b'\n').count();
+
+                    // Add buffer and insert into tree
+                    buffers.push(StringBuffer::new(buffers.len(), bytes.clone()));
+                    tree.insert(
+                        offset,
+                        BufferLocation::Added(buffers.len() - 1),
+                        0,
+                        bytes.len(),
+                        Some(newlines),
+                        &buffers,
+                    );
+
+                    // Update actual content
+                    content.splice(offset..offset, bytes);
+                } else if !is_insert {
+                    // Delete operation - offset is first element, bytes length is implied
+                    let offset = offset.min(content.len());
+                    let delete_len = 5.min(content.len().saturating_sub(offset)); // Use fixed small delete
+                    if delete_len > 0 {
+                        tree.delete(offset, delete_len, &buffers);
+                        content.drain(offset..offset + delete_len);
+                    }
+                }
+            }
+
+            // Helper to compute ground truth line/column from content
+            let compute_position = |content: &[u8], offset: usize| -> (usize, usize) {
+                let offset = offset.min(content.len());
+                let mut line = 0;
+                let mut col = 0;
+                for (i, &byte) in content.iter().enumerate() {
+                    if i == offset {
+                        break;
+                    }
+                    if byte == b'\n' {
+                        line += 1;
+                        col = 0;
+                    } else {
+                        col += 1;
+                    }
+                }
+                (line, col)
+            };
+
+            // Test various offsets
+            for offset in test_offsets {
+                let offset = offset.min(content.len());
+                if offset == 0 {
+                    continue; // Skip 0, it's a special case that always works
+                }
+
+                let expected = compute_position(&content, offset);
+                let actual = tree.offset_to_position(offset, &buffers);
+
+                prop_assert_eq!(
+                    actual,
+                    Some(expected),
+                    "offset_to_position({}) returned {:?}, expected {:?}. Content len: {}",
+                    offset,
+                    actual,
+                    expected,
+                    content.len()
+                );
+            }
         }
     }
 }
