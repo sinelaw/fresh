@@ -5,8 +5,8 @@ expression: "&screen_text"
  File   Edit   View   Selection   Go   Help                                     
  [No Name]*                      ┌────────────────────────────────────┐         
     1 │ Hello, World!            │ Go to Definition                   │        █
-                                 │ Go to Line...                      │        █
-                                 │ Command Palette...           Ctrl+/│        █
+                                 │ Go to Line...                Ctrl+G│        █
+                                 │ Command Palette...           Ctrl+P│        █
                                  └────────────────────────────────────┘        █
                                                                                █
                                                                                █
