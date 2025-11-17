@@ -109,7 +109,8 @@ impl EditorState {
         let buffer = Buffer::load_from_file(path, large_file_threshold)?;
 
         // Try to create a highlighter based on file extension
-        let highlighter = Language::from_path(path).and_then(|lang| {
+        let language = Language::from_path(path);
+        let highlighter = language.and_then(|lang| {
             Highlighter::new(lang)
                 .map_err(|e| {
                     tracing::warn!("Failed to create highlighter: {}", e);
@@ -117,6 +118,12 @@ impl EditorState {
                 })
                 .ok()
         });
+
+        // Initialize semantic highlighter with language if available
+        let mut semantic_highlighter = SemanticHighlighter::new();
+        if let Some(lang) = language {
+            semantic_highlighter.set_language(&lang);
+        }
 
         // Initialize marker list with buffer size
         let mut marker_list = MarkerList::new();
@@ -142,7 +149,7 @@ impl EditorState {
             mode: "insert".to_string(),
             text_properties: TextPropertyManager::new(),
             show_cursors: true,
-            semantic_highlighter: SemanticHighlighter::new(),
+            semantic_highlighter,
         })
     }
 

@@ -28,7 +28,7 @@ pub struct HighlightSpan {
 }
 
 /// Language configuration for syntax highlighting
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Language {
     Rust,
     Python,
