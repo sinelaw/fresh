@@ -3036,11 +3036,11 @@ done
 
     // Open the test file
     harness.open_file(&test_file)?;
-    harness.render()?;
+    harness.process_async_and_render()?;
 
     // Wait for LSP to initialize and plugin to load
     for _ in 0..20 {
-        harness.render()?;
+        harness.process_async_and_render()?;
         std::thread::sleep(Duration::from_millis(50));
     }
 
@@ -3050,11 +3050,11 @@ done
     harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
     harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
     harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
-    harness.render()?;
+    harness.process_async_and_render()?;
 
     // Trigger find references via command palette
     harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
-    harness.render()?;
+    harness.process_async_and_render()?;
     harness.type_text("Find References")?;
     harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
 
@@ -3062,6 +3062,8 @@ done
     // This is where the hang was occurring - the panel should show references content
     let mut panel_appeared = false;
     for i in 0..50 {
+        // Process any async messages by sending a null key event
+        harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
         harness.render()?;
         std::thread::sleep(Duration::from_millis(100));
 
