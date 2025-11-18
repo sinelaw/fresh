@@ -4750,7 +4750,7 @@ impl Editor {
 
         let mut popup = Popup::text(lines, &self.theme);
         popup.title = Some("Signature Help".to_string());
-        popup.position = PopupPosition::AboveCursor;
+        popup.position = PopupPosition::BelowCursor;
         popup.width = 60;
         popup.max_height = 10;
         popup.border_style = Style::default().fg(self.theme.popup_border_fg);
