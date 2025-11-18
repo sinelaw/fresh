@@ -7,6 +7,7 @@ use crate::line_wrapping::{char_position_to_segment, wrap_line, WrapConfig};
 use crate::split::SplitManager;
 use crate::state::EditorState;
 use crate::ui::tabs::TabsRenderer;
+use crate::virtual_text::VirtualTextPosition;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -539,6 +540,11 @@ impl SplitRenderer {
             })
             .collect();
 
+        // Query virtual texts for the viewport and build a lookup by position
+        let virtual_text_lookup = state
+            .virtual_texts
+            .build_lookup(&state.marker_list, viewport_start, viewport_end);
+
         // Check if buffer is empty before creating iterator (to avoid borrow conflict)
         let is_empty_buffer = state.buffer.is_empty();
 
@@ -822,6 +828,13 @@ impl SplitRenderer {
                         &ch.to_string()
                     };
 
+                    // Check for BeforeChar virtual texts at this position
+                    if let Some(vtexts) = virtual_text_lookup.get(&byte_pos) {
+                        for vtext in vtexts.iter().filter(|v| v.position == VirtualTextPosition::BeforeChar) {
+                            line_spans.push(Span::styled(vtext.text.clone(), vtext.style));
+                        }
+                    }
+
                     // Only add non-empty spans
                     if !display_char.is_empty() {
                         if is_cursor && is_active {
@@ -832,6 +845,13 @@ impl SplitRenderer {
                             );
                         }
                         line_spans.push(Span::styled(display_char.to_string(), style));
+                    }
+
+                    // Check for AfterChar virtual texts at this position
+                    if let Some(vtexts) = virtual_text_lookup.get(&byte_pos) {
+                        for vtext in vtexts.iter().filter(|v| v.position == VirtualTextPosition::AfterChar) {
+                            line_spans.push(Span::styled(vtext.text.clone(), vtext.style));
+                        }
                     }
 
                     // If this is a cursor on a newline, we'll handle it after the char loop
