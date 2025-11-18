@@ -698,3 +698,6 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 - ✅ TypeScript syntax highlighting improvements (full JavaScript support)
 - ✅ Plugin API gap analysis documentation (Fresh vs VSCode comparison)
 - ✅ **Find References** (Shift+F12 shows references in virtual buffer split, plugin-based display)
+- ✅ **Inlay Hints documentation** (detailed implementation plan for virtual text rendering infrastructure)
+- ✅ **Multi-file Search/Replace plugin** (git grep integration, virtual buffer results, selective replacement)
+- ✅ **Additional themes** (Nord, Dracula, Solarized Dark)
