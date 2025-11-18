@@ -77,6 +77,18 @@ pub enum AsyncMessage {
         actions: Vec<CodeActionOrCommand>,
     },
 
+    /// LSP pulled diagnostics response (textDocument/diagnostic)
+    LspPulledDiagnostics {
+        request_id: u64,
+        uri: String,
+        /// New result_id for incremental updates (None if server doesn't support)
+        result_id: Option<String>,
+        /// Diagnostics (empty if unchanged)
+        diagnostics: Vec<Diagnostic>,
+        /// True if diagnostics haven't changed since previous_result_id
+        unchanged: bool,
+    },
+
     /// File changed externally (future: file watching)
     FileChanged { path: String },
 

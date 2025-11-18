@@ -291,6 +291,14 @@ enum LspCommand {
         diagnostics: Vec<lsp_types::Diagnostic>,
     },
 
+    /// Request document diagnostics (pull model)
+    DocumentDiagnostic {
+        request_id: u64,
+        uri: Uri,
+        /// Previous result_id for incremental updates (None for full refresh)
+        previous_result_id: Option<String>,
+    },
+
     /// Cancel a pending request
     CancelRequest {
         /// Editor's request ID to cancel
@@ -1114,6 +1122,124 @@ impl LspState {
         }
     }
 
+    /// Handle document diagnostic request (pull diagnostics)
+    async fn handle_document_diagnostic(
+        &mut self,
+        request_id: u64,
+        uri: Uri,
+        previous_result_id: Option<String>,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{
+            DocumentDiagnosticParams, PartialResultParams, TextDocumentIdentifier,
+            WorkDoneProgressParams,
+        };
+
+        tracing::debug!(
+            "LSP: document diagnostic request for {} (previous_result_id: {:?})",
+            uri.as_str(),
+            previous_result_id
+        );
+
+        let params = DocumentDiagnosticParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            identifier: None,
+            previous_result_id,
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        // Send request and get response
+        match self
+            .send_request_sequential::<_, Value>(
+                "textDocument/diagnostic",
+                Some(params),
+                pending,
+            )
+            .await
+        {
+            Ok(result) => {
+                // Parse the diagnostic report result
+                // Can be RelatedFullDocumentDiagnosticReport or RelatedUnchangedDocumentDiagnosticReport
+                let uri_string = uri.as_str().to_string();
+
+                // Try to parse as full report first
+                if let Ok(full_report) =
+                    serde_json::from_value::<lsp_types::RelatedFullDocumentDiagnosticReport>(
+                        result.clone(),
+                    )
+                {
+                    let diagnostics = full_report.full_document_diagnostic_report.items;
+                    let result_id = full_report.full_document_diagnostic_report.result_id;
+
+                    tracing::debug!(
+                        "LSP: received {} diagnostics for {} (result_id: {:?})",
+                        diagnostics.len(),
+                        uri_string,
+                        result_id
+                    );
+
+                    let _ = self.async_tx.send(AsyncMessage::LspPulledDiagnostics {
+                        request_id,
+                        uri: uri_string,
+                        result_id,
+                        diagnostics,
+                        unchanged: false,
+                    });
+                } else if let Ok(unchanged_report) =
+                    serde_json::from_value::<lsp_types::RelatedUnchangedDocumentDiagnosticReport>(
+                        result.clone(),
+                    )
+                {
+                    let result_id = unchanged_report
+                        .unchanged_document_diagnostic_report
+                        .result_id;
+
+                    tracing::debug!(
+                        "LSP: diagnostics unchanged for {} (result_id: {:?})",
+                        uri_string,
+                        result_id
+                    );
+
+                    let _ = self.async_tx.send(AsyncMessage::LspPulledDiagnostics {
+                        request_id,
+                        uri: uri_string,
+                        result_id: Some(result_id),
+                        diagnostics: Vec::new(),
+                        unchanged: true,
+                    });
+                } else {
+                    // Fallback: try to parse as DocumentDiagnosticReportResult
+                    tracing::warn!(
+                        "LSP: could not parse diagnostic report, sending empty: {}",
+                        result
+                    );
+                    let _ = self.async_tx.send(AsyncMessage::LspPulledDiagnostics {
+                        request_id,
+                        uri: uri_string,
+                        result_id: None,
+                        diagnostics: Vec::new(),
+                        unchanged: false,
+                    });
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Document diagnostic request failed: {}", e);
+                // Send empty result on error
+                let _ = self.async_tx.send(AsyncMessage::LspPulledDiagnostics {
+                    request_id,
+                    uri: uri.as_str().to_string(),
+                    result_id: None,
+                    diagnostics: Vec::new(),
+                    unchanged: false,
+                });
+                Err(e)
+            }
+        }
+    }
+
     /// Handle shutdown command
     async fn handle_shutdown(&mut self) -> Result<(), String> {
         tracing::info!("Shutting down async LSP server");
@@ -1657,6 +1783,37 @@ impl LspTask {
                                 let _ = state.async_tx.send(AsyncMessage::LspCodeActions {
                                     request_id,
                                     actions: Vec::new(),
+                                });
+                            }
+                        }
+                        LspCommand::DocumentDiagnostic {
+                            request_id,
+                            uri,
+                            previous_result_id,
+                        } => {
+                            if state.initialized {
+                                tracing::info!(
+                                    "Processing DocumentDiagnostic request for {}",
+                                    uri.as_str()
+                                );
+                                let _ = state
+                                    .handle_document_diagnostic(
+                                        request_id,
+                                        uri,
+                                        previous_result_id,
+                                        &pending,
+                                    )
+                                    .await;
+                            } else {
+                                tracing::debug!(
+                                    "LSP not initialized, cannot get document diagnostics"
+                                );
+                                let _ = state.async_tx.send(AsyncMessage::LspPulledDiagnostics {
+                                    request_id,
+                                    uri: uri.as_str().to_string(),
+                                    result_id: None,
+                                    diagnostics: Vec::new(),
+                                    unchanged: false,
                                 });
                             }
                         }
@@ -2864,6 +3021,25 @@ impl LspHandle {
                 diagnostics,
             })
             .map_err(|_| "Failed to send code_actions command".to_string())
+    }
+
+    /// Request document diagnostics (pull model)
+    ///
+    /// This sends a textDocument/diagnostic request to fetch diagnostics on demand.
+    /// Use `previous_result_id` for incremental updates (server may return unchanged).
+    pub fn document_diagnostic(
+        &self,
+        request_id: u64,
+        uri: Uri,
+        previous_result_id: Option<String>,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::DocumentDiagnostic {
+                request_id,
+                uri,
+                previous_result_id,
+            })
+            .map_err(|_| "Failed to send document_diagnostic command".to_string())
     }
 
     /// Cancel a pending request by its editor request_id
