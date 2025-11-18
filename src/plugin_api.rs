@@ -12,6 +12,16 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
+/// Response from the editor for async plugin operations
+#[derive(Debug, Clone)]
+pub enum PluginResponse {
+    /// Response to CreateVirtualBufferInSplit with the created buffer ID
+    VirtualBufferCreated {
+        request_id: u64,
+        buffer_id: BufferId,
+    },
+}
+
 /// Information about a cursor in the editor
 #[derive(Debug, Clone)]
 pub struct CursorInfo {
@@ -248,6 +258,8 @@ pub enum PluginCommand {
         show_line_numbers: bool,
         /// Whether to show cursors in the buffer (default true)
         show_cursors: bool,
+        /// Optional request ID for async response (if set, editor will send back buffer ID)
+        request_id: Option<u64>,
     },
 
     /// Set the content of a virtual buffer with text properties
@@ -509,37 +521,6 @@ impl PluginApi {
             mode,
             read_only,
             entries,
-        })
-    }
-
-    /// Create a virtual buffer in a horizontal split below the current pane
-    ///
-    /// This creates a new split with the virtual buffer, keeping the original
-    /// buffer visible above it. The ratio controls how much space the original
-    /// pane gets (0.7 = original takes 70%, new buffer takes 30%).
-    ///
-    /// If panel_id is provided and a buffer with that ID already exists,
-    /// the content will be updated instead of creating a new split.
-    pub fn create_virtual_buffer_in_split(
-        &self,
-        name: String,
-        mode: String,
-        read_only: bool,
-        entries: Vec<crate::text_property::TextPropertyEntry>,
-        ratio: f32,
-        panel_id: Option<String>,
-        show_line_numbers: bool,
-        show_cursors: bool,
-    ) -> Result<(), String> {
-        self.send_command(PluginCommand::CreateVirtualBufferInSplit {
-            name,
-            mode,
-            read_only,
-            entries,
-            ratio,
-            panel_id,
-            show_line_numbers,
-            show_cursors,
         })
     }
 

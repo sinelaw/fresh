@@ -2,6 +2,7 @@ use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
+use std::time::Duration;
 
 /// Test that render-line hook receives args properly
 #[test]
@@ -729,5 +730,357 @@ fn test_diagnostics_panel_plugin_loads() {
     assert!(
         final_screen.contains("fn main()"),
         "Expected to see original code buffer in upper split"
+    );
+}
+
+/// Test editor <-> plugin message queue architecture
+///
+/// This test exercises the complete bidirectional message flow:
+/// 1. Editor sends action request to plugin thread (fire-and-forget)
+/// 2. Plugin executes action and sends commands back via command queue
+/// 3. Editor polls command queue with try_recv (non-blocking)
+/// 4. Plugin awaits async response for buffer ID
+///
+/// This ensures no deadlocks occur in the message passing architecture.
+#[test]
+fn test_plugin_message_queue_architecture() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    // Create a test plugin that exercises the message queue:
+    // 1. Registers a command (tests command registration via plugin commands)
+    // 2. When executed, creates a virtual buffer in split (tests async response)
+    // 3. Uses the returned buffer ID to set status (tests async result propagation)
+    let test_plugin = r#"
+// Test plugin for message queue architecture
+// This plugin exercises the bidirectional message flow
+
+// Register a command that will create a virtual buffer
+editor.registerCommand(
+    "Test: Create Virtual Buffer",
+    "Create a virtual buffer and verify buffer ID is returned",
+    "test_create_virtual_buffer",
+    "normal"
+);
+
+// Counter to track executions
+let executionCount = 0;
+
+globalThis.test_create_virtual_buffer = async function(): Promise<void> {
+    executionCount++;
+    editor.setStatus(`Starting execution ${executionCount}...`);
+
+    // Create entries for the virtual buffer
+    const entries = [
+        {
+            text: `Test entry ${executionCount}\n`,
+            properties: {
+                index: executionCount,
+            },
+        },
+    ];
+
+    try {
+        // This is the critical async operation that tests:
+        // 1. Plugin sends CreateVirtualBufferInSplit command
+        // 2. Editor creates buffer and sends response
+        // 3. Plugin receives buffer ID via async channel
+        const bufferId = await editor.createVirtualBufferInSplit({
+            name: "*Test Buffer*",
+            mode: "normal",
+            read_only: true,
+            entries: entries,
+            ratio: 0.5,
+            panel_id: "test-panel",
+            show_line_numbers: false,
+            show_cursors: true,
+        });
+
+        // Verify we got a valid buffer ID
+        if (typeof bufferId === 'number' && bufferId > 0) {
+            editor.setStatus(`Success: Created buffer ID ${bufferId}`);
+        } else {
+            editor.setStatus(`Error: Invalid buffer ID: ${bufferId}`);
+        }
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        editor.setStatus(`Error: ${msg}`);
+    }
+};
+
+editor.setStatus("Message queue test plugin loaded!");
+"#;
+
+    let test_plugin_path = plugins_dir.join("test_message_queue.ts");
+    fs::write(&test_plugin_path, test_plugin).unwrap();
+
+    // Create a simple test file
+    let test_file_content = "Test file content\nLine 2\nLine 3\n";
+    let fixture = TestFixture::new("test_file.txt", test_file_content).unwrap();
+
+    // Create harness with the project directory (so plugins load)
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file - this should trigger plugin loading
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Verify file content is visible
+    harness.assert_screen_contains("Test file content");
+
+    // Verify plugin loaded by checking for the status message
+    let screen = harness.screen_to_string();
+    println!("Screen after plugin load:\n{}", screen);
+
+    // Now execute the command that creates a virtual buffer
+    // This exercises the full message queue flow
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type the command name
+    harness.type_text("Test: Create Virtual Buffer").unwrap();
+    harness.render().unwrap();
+
+    // Verify command appears in palette (proves command registration worked)
+    let palette_screen = harness.screen_to_string();
+    println!("Command palette screen:\n{}", palette_screen);
+    assert!(
+        palette_screen.contains("Create Virtual Buffer"),
+        "Command should be registered and visible in palette"
+    );
+
+    // Execute the command
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Give the async operation time to complete
+    // We need multiple render cycles for the message queue to process
+    for i in 0..10 {
+        harness.render().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+
+        let screen = harness.screen_to_string();
+        if screen.contains("Success: Created buffer ID") {
+            println!("Async operation completed after {} iterations", i + 1);
+            break;
+        }
+    }
+
+    let final_screen = harness.screen_to_string();
+    println!("Final screen after command execution:\n{}", final_screen);
+
+    // Verify the async operation completed successfully
+    // The status should contain the buffer ID
+    assert!(
+        final_screen.contains("Success: Created buffer ID"),
+        "Expected status to show successful buffer creation with ID. \
+         Got screen:\n{}\n\n\
+         If this fails with 'Starting execution...' still visible, \
+         the async response is not being delivered. \
+         If it shows an error, check the error message.",
+        final_screen
+    );
+
+    // Verify the virtual buffer split is visible
+    // The test buffer should show "*Test Buffer*" and the test entry
+    assert!(
+        final_screen.contains("*Test Buffer*") || final_screen.contains("Test entry"),
+        "Expected to see the virtual buffer content. \
+         The split should show either the buffer name or entry content."
+    );
+
+    // Verify the original file content is still visible (split view working)
+    assert!(
+        final_screen.contains("Test file content"),
+        "Expected original file content to still be visible in split view"
+    );
+}
+
+/// Test that multiple plugin actions can be queued without deadlock
+#[test]
+fn test_plugin_multiple_actions_no_deadlock() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    // Create a plugin with multiple commands that all set status
+    let test_plugin = r#"
+// Test plugin for multiple concurrent actions
+
+editor.registerCommand("Action A", "Set status to A", "action_a", "normal");
+editor.registerCommand("Action B", "Set status to B", "action_b", "normal");
+editor.registerCommand("Action C", "Set status to C", "action_c", "normal");
+
+globalThis.action_a = function(): void {
+    editor.setStatus("Status: A executed");
+};
+
+globalThis.action_b = function(): void {
+    editor.setStatus("Status: B executed");
+};
+
+globalThis.action_c = function(): void {
+    editor.setStatus("Status: C executed");
+};
+
+editor.setStatus("Multi-action plugin loaded");
+"#;
+
+    let test_plugin_path = plugins_dir.join("test_multi_action.ts");
+    fs::write(&test_plugin_path, test_plugin).unwrap();
+
+    // Create a simple test file
+    let test_file_content = "Test content\n";
+    let fixture = TestFixture::new("test.txt", test_file_content).unwrap();
+
+    // Create harness
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open file and load plugins
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Execute multiple commands in sequence rapidly
+    // This tests that the message queue handles multiple actions correctly
+    for (action_name, expected_status) in [
+        ("Action A", "A executed"),
+        ("Action B", "B executed"),
+        ("Action C", "C executed"),
+    ] {
+        // Open command palette
+        harness
+            .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+
+        // Type and execute command
+        harness.type_text(action_name).unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+
+        // Give time for processing
+        for _ in 0..5 {
+            harness.render().unwrap();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        let screen = harness.screen_to_string();
+        assert!(
+            screen.contains(expected_status),
+            "Expected status '{}' after executing '{}'. Got:\n{}",
+            expected_status,
+            action_name,
+            screen
+        );
+    }
+}
+
+/// Test that plugin action execution is non-blocking
+///
+/// This verifies that the editor doesn't hang when executing a plugin action
+/// even if the action takes time. The fire-and-forget pattern should allow
+/// the editor to continue processing events.
+#[test]
+fn test_plugin_action_nonblocking() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    // Create a plugin that does some work
+    let test_plugin = r#"
+// Test plugin to verify non-blocking action execution
+
+editor.registerCommand(
+    "Slow Action",
+    "An action that does some computation",
+    "slow_action",
+    "normal"
+);
+
+globalThis.slow_action = function(): void {
+    // Simulate some work (this is synchronous but should not block editor)
+    let sum = 0;
+    for (let i = 0; i < 1000; i++) {
+        sum += i;
+    }
+    editor.setStatus(`Completed: sum = ${sum}`);
+};
+
+editor.setStatus("Nonblocking test plugin loaded");
+"#;
+
+    let test_plugin_path = plugins_dir.join("test_nonblocking.ts");
+    fs::write(&test_plugin_path, test_plugin).unwrap();
+
+    // Create a simple test file
+    let test_file_content = "Test\n";
+    let fixture = TestFixture::new("test.txt", test_file_content).unwrap();
+
+    // Create harness
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Execute the slow action
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Slow Action").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // The key test: we should be able to render multiple times
+    // without the editor hanging
+    let start = std::time::Instant::now();
+    for _ in 0..10 {
+        harness.render().unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let elapsed = start.elapsed();
+
+    // If the action was blocking, this would take much longer
+    // or hang entirely
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "Rendering should complete quickly even with action running. Took {:?}",
+        elapsed
+    );
+
+    // Verify the action completed
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Completed: sum"),
+        "Expected action to complete and set status. Got:\n{}",
+        screen
     );
 }

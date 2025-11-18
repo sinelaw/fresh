@@ -394,6 +394,9 @@ pub struct Editor {
 
     /// Macro recording state (Some(key) if recording, None otherwise)
     macro_recording: Option<MacroRecordingState>,
+
+    /// Pending plugin action receivers (for async action execution)
+    pending_plugin_actions: Vec<(String, crate::plugin_thread::oneshot::Receiver<anyhow::Result<()>>)>,
 }
 
 /// State for macro recording
@@ -744,6 +747,7 @@ impl Editor {
             search_whole_word: false,
             macros: HashMap::new(),
             macro_recording: None,
+            pending_plugin_actions: Vec::new(),
         })
     }
 
@@ -755,6 +759,13 @@ impl Editor {
     /// Emit a control event
     pub fn emit_event(&self, name: impl Into<String>, data: serde_json::Value) {
         self.event_broadcaster.emit_named(name, data);
+    }
+
+    /// Send a response to a plugin for an async operation
+    fn send_plugin_response(&self, response: crate::plugin_api::PluginResponse) {
+        if let Some(ref manager) = self.ts_plugin_manager {
+            manager.deliver_response(response);
+        }
     }
 
     /// Get all keybindings as (key, action) pairs
@@ -2910,12 +2921,38 @@ impl Editor {
             }
         }
 
+        // Process pending plugin action completions
+        // Retain only actions that haven't completed yet
+        self.pending_plugin_actions.retain(|(action_name, receiver)| {
+            match receiver.try_recv() {
+                Ok(result) => {
+                    match result {
+                        Ok(()) => {
+                            tracing::info!("Plugin action '{}' executed successfully", action_name);
+                        }
+                        Err(e) => {
+                            tracing::error!("Plugin action '{}' error: {}", action_name, e);
+                        }
+                    }
+                    false // Remove completed action
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    true // Keep pending action
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    tracing::error!("Plugin thread disconnected during action '{}'", action_name);
+                    false // Remove disconnected action
+                }
+            }
+        });
+
         // Only update snapshot if commands were processed (which may have modified buffers)
         if processed_any_commands {
             self.update_plugin_state_snapshot();
         }
 
-        needs_render
+        // Trigger render if any async messages or plugin commands were processed
+        needs_render || processed_any_commands
     }
 
     /// Update LSP status bar string from active progress operations
@@ -3234,7 +3271,10 @@ impl Editor {
                 line,
                 column,
             } => {
-                // Switch to the target split first
+                // Save current split's view state before switching
+                self.save_current_split_view_state();
+
+                // Switch to the target split
                 let target_split_id = SplitId(split_id);
                 if !self.split_manager.set_active_split(target_split_id) {
                     tracing::error!("Failed to switch to split {}", split_id);
@@ -3248,8 +3288,8 @@ impl Editor {
                     return Ok(());
                 }
 
-                // If line/column specified, jump to that location
-                if line.is_some() || column.is_some() {
+                // Jump to the specified location (or default to start)
+                {
                     let state = self.active_state_mut();
 
                     // Convert 1-indexed line/column to byte position
@@ -3280,7 +3320,7 @@ impl Editor {
                     state.cursors.primary_mut().position = final_position.min(buffer_len);
                     state.cursors.primary_mut().anchor = None;
 
-                    // Ensure the position is visible
+                    // Ensure the position is visible in the viewport
                     state
                         .viewport
                         .ensure_visible(&mut state.buffer, state.cursors.primary());
@@ -3547,6 +3587,7 @@ impl Editor {
                 panel_id,
                 show_line_numbers,
                 show_cursors,
+                request_id,
             } => {
                 // Check if this panel already exists (for idempotent operations)
                 if let Some(pid) = &panel_id {
@@ -3559,6 +3600,13 @@ impl Editor {
                             tracing::info!("Updated existing panel '{}' content", pid);
                             // Focus the existing panel's split
                             self.set_active_buffer(existing_buffer_id);
+                        }
+                        // Send response with existing buffer ID
+                        if let Some(req_id) = request_id {
+                            self.send_plugin_response(crate::plugin_api::PluginResponse::VirtualBufferCreated {
+                                request_id: req_id,
+                                buffer_id: existing_buffer_id,
+                            });
                         }
                         return Ok(());
                     }
@@ -3626,6 +3674,14 @@ impl Editor {
                         // Fall back to just switching to the buffer
                         self.set_active_buffer(buffer_id);
                     }
+                }
+
+                // Send response with buffer ID
+                if let Some(req_id) = request_id {
+                    self.send_plugin_response(crate::plugin_api::PluginResponse::VirtualBufferCreated {
+                        request_id: req_id,
+                        buffer_id,
+                    });
                 }
             }
             PluginCommand::SetVirtualBufferContent { buffer_id, entries } => {
@@ -5578,10 +5634,12 @@ impl Editor {
             }
             Action::PluginAction(action_name) => {
                 // Execute the plugin callback via TypeScript plugin thread
+                // Use non-blocking version to avoid deadlock with async plugin ops
                 if let Some(ref manager) = self.ts_plugin_manager {
-                    match manager.execute_action(&action_name) {
-                        Ok(()) => {
-                            tracing::info!("Plugin action '{}' executed successfully", action_name);
+                    match manager.execute_action_async(&action_name) {
+                        Ok(receiver) => {
+                            // Store pending action for processing in main loop
+                            self.pending_plugin_actions.push((action_name.clone(), receiver));
                         }
                         Err(e) => {
                             self.set_status_message(format!("Plugin error: {}", e));

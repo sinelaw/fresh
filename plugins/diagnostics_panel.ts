@@ -10,6 +10,7 @@
 // Panel state
 let panelOpen = false;
 let diagnosticsBufferId: number | null = null;
+let sourceSplitId: number | null = null; // The split where source code is displayed
 let currentDiagnostics: DiagnosticItem[] = [];
 let selectedIndex = 0;
 
@@ -143,12 +144,16 @@ function generateSampleDiagnostics(): DiagnosticItem[] {
 }
 
 // Show diagnostics panel
-globalThis.show_diagnostics_panel = function (): void {
+globalThis.show_diagnostics_panel = async function (): Promise<void> {
   if (panelOpen) {
     editor.setStatus("Diagnostics panel already open");
     updatePanelContent();
     return;
   }
+
+  // Save the current split ID before creating the diagnostics split
+  // This is where we'll open files when jumping to diagnostics
+  sourceSplitId = editor.getActiveSplitId();
 
   // Generate sample diagnostics
   currentDiagnostics = generateSampleDiagnostics();
@@ -158,27 +163,25 @@ globalThis.show_diagnostics_panel = function (): void {
   const entries = buildPanelEntries();
 
   // Create virtual buffer in horizontal split
-  const success = editor.createVirtualBufferInSplit({
-    name: "*Diagnostics*",
-    mode: "diagnostics-list",
-    read_only: true,
-    entries: entries,
-    ratio: 0.7, // Original pane takes 70%, diagnostics takes 30%
-    panel_id: "diagnostics-panel",
-    show_line_numbers: false,
-    show_cursors: true,
-  });
+  try {
+    diagnosticsBufferId = await editor.createVirtualBufferInSplit({
+      name: "*Diagnostics*",
+      mode: "diagnostics-list",
+      read_only: true,
+      entries: entries,
+      ratio: 0.7, // Original pane takes 70%, diagnostics takes 30%
+      panel_id: "diagnostics-panel",
+      show_line_numbers: false,
+      show_cursors: true,
+    });
 
-  if (success) {
     panelOpen = true;
-    // Store the buffer ID (it will be the active buffer after split)
-    // We need to get it after a small delay since the split is async
-    diagnosticsBufferId = editor.getActiveBufferId();
     editor.setStatus(`Diagnostics: ${currentDiagnostics.length} item(s) - Press RET to jump, n/p to navigate, q to close`);
-    editor.debug("Diagnostics panel opened with virtual buffer split");
-  } else {
+    editor.debug(`Diagnostics panel opened with buffer ID ${diagnosticsBufferId}`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     editor.setStatus("Failed to open diagnostics panel");
-    editor.debug("ERROR: createVirtualBufferInSplit returned false");
+    editor.debug(`ERROR: createVirtualBufferInSplit failed: ${errorMessage}`);
   }
 };
 
@@ -191,6 +194,7 @@ globalThis.hide_diagnostics_panel = function (): void {
 
   panelOpen = false;
   diagnosticsBufferId = null;
+  sourceSplitId = null;
   selectedIndex = 0;
   currentDiagnostics = [];
   editor.setStatus("Diagnostics panel closed");
@@ -219,13 +223,19 @@ globalThis.diagnostics_goto = function (): void {
     return;
   }
 
+  if (sourceSplitId === null) {
+    editor.setStatus("Source split not available");
+    return;
+  }
+
   const bufferId = editor.getActiveBufferId();
   const props = editor.getTextPropertiesAtCursor(bufferId);
 
   if (props.length > 0) {
     const location = props[0].location as { file: string; line: number; column: number } | undefined;
     if (location) {
-      editor.openFile(location.file, location.line, location.column || 0);
+      // Open file in the source split, not the diagnostics split
+      editor.openFileInSplit(sourceSplitId, location.file, location.line, location.column || 0);
       editor.setStatus(`Jumped to ${location.file}:${location.line}`);
     } else {
       editor.setStatus("No location info for this diagnostic");
@@ -234,7 +244,8 @@ globalThis.diagnostics_goto = function (): void {
     // Fallback: use selectedIndex
     const diag = currentDiagnostics[selectedIndex];
     if (diag) {
-      editor.openFile(diag.file, diag.line, diag.column);
+      // Open file in the source split, not the diagnostics split
+      editor.openFileInSplit(sourceSplitId, diag.file, diag.line, diag.column);
       editor.setStatus(`Jumped to ${diag.file}:${diag.line}`);
     }
   }

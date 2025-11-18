@@ -228,9 +228,9 @@ fn run_event_loop(
             let time_since_last_render = Instant::now().duration_since(last_render);
             FRAME_DURATION.saturating_sub(time_since_last_render)
         } else {
-            // If idle, wait up to 1 second (or until an event arrives)
-            // This prevents busy-polling when there's nothing to do
-            Duration::from_secs(1)
+            // When idle, poll frequently to handle async messages from plugins and LSP
+            // This ensures plugin commands are processed with low latency
+            Duration::from_millis(50)
         };
 
         // Poll for events

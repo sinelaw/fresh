@@ -108,6 +108,10 @@ struct TsRuntimeState {
     command_sender: std::sync::mpsc::Sender<PluginCommand>,
     /// Event handlers: event_name -> list of global JS function names
     event_handlers: Rc<RefCell<HashMap<String, Vec<String>>>>,
+    /// Pending response senders for async operations (request_id -> sender)
+    pending_responses: Arc<std::sync::Mutex<HashMap<u64, tokio::sync::oneshot::Sender<crate::plugin_api::PluginResponse>>>>,
+    /// Next request ID for async operations
+    next_request_id: Rc<RefCell<u64>>,
 }
 
 /// Custom ops for the Fresh editor API
@@ -1016,13 +1020,36 @@ struct CreateVirtualBufferOptions {
 
 /// Create a virtual buffer in a horizontal split
 /// This is the key operation for creating diagnostic panels, search results, etc.
-#[op2]
-fn op_fresh_create_virtual_buffer_in_split(
-    state: &mut OpState,
+/// Returns the buffer ID of the created virtual buffer.
+#[op2(async)]
+async fn op_fresh_create_virtual_buffer_in_split(
+    state: Rc<RefCell<OpState>>,
     #[serde] options: CreateVirtualBufferOptions,
-) -> bool {
-    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+) -> Result<u32, deno_core::error::AnyError> {
+    // Get runtime state and create oneshot channel
+    let receiver = {
+        let state = state.borrow();
+        let runtime_state = state
+            .try_borrow::<Rc<RefCell<TsRuntimeState>>>()
+            .ok_or_else(|| deno_core::error::generic_error("Failed to get runtime state"))?;
         let runtime_state = runtime_state.borrow();
+
+        // Allocate request ID
+        let request_id = {
+            let mut id = runtime_state.next_request_id.borrow_mut();
+            let current = *id;
+            *id += 1;
+            current
+        };
+
+        // Create oneshot channel for response
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        // Store the sender
+        {
+            let mut pending = runtime_state.pending_responses.lock().unwrap();
+            pending.insert(request_id, tx);
+        }
 
         // Convert TypeScript entries to Rust TextPropertyEntry
         let entries: Vec<crate::text_property::TextPropertyEntry> = options
@@ -1034,7 +1061,8 @@ fn op_fresh_create_virtual_buffer_in_split(
             })
             .collect();
 
-        let result = runtime_state
+        // Send command with request_id
+        runtime_state
             .command_sender
             .send(PluginCommand::CreateVirtualBufferInSplit {
                 name: options.name,
@@ -1045,10 +1073,24 @@ fn op_fresh_create_virtual_buffer_in_split(
                 panel_id: options.panel_id,
                 show_line_numbers: options.show_line_numbers.unwrap_or(true),
                 show_cursors: options.show_cursors.unwrap_or(true),
-            });
-        return result.is_ok();
+                request_id: Some(request_id),
+            })
+            .map_err(|_| deno_core::error::generic_error("Failed to send command"))?;
+
+        rx
+    };
+
+    // Wait for response
+    let response = receiver
+        .await
+        .map_err(|_| deno_core::error::generic_error("Response channel closed"))?;
+
+    // Extract buffer ID from response
+    match response {
+        crate::plugin_api::PluginResponse::VirtualBufferCreated { buffer_id, .. } => {
+            Ok(buffer_id.0 as u32)
+        }
     }
-    false
 }
 
 /// Define a buffer mode with keybindings
@@ -1193,11 +1235,16 @@ extension!(
     ],
 );
 
+/// Pending response senders type alias for convenience
+pub type PendingResponses = Arc<std::sync::Mutex<HashMap<u64, tokio::sync::oneshot::Sender<crate::plugin_api::PluginResponse>>>>;
+
 /// TypeScript plugin runtime
 pub struct TypeScriptRuntime {
     js_runtime: JsRuntime,
     /// Shared event handlers registry
     event_handlers: Rc<RefCell<HashMap<String, Vec<String>>>>,
+    /// Pending response senders (shared with runtime state for delivering responses)
+    pending_responses: PendingResponses,
 }
 
 impl TypeScriptRuntime {
@@ -1214,11 +1261,23 @@ impl TypeScriptRuntime {
         state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
         command_sender: std::sync::mpsc::Sender<PluginCommand>,
     ) -> Result<Self> {
+        let pending_responses: PendingResponses = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        Self::with_state_and_responses(state_snapshot, command_sender, pending_responses)
+    }
+
+    /// Create a new TypeScript runtime with editor state and shared pending responses
+    pub fn with_state_and_responses(
+        state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
+        command_sender: std::sync::mpsc::Sender<PluginCommand>,
+        pending_responses: PendingResponses,
+    ) -> Result<Self> {
         let event_handlers = Rc::new(RefCell::new(HashMap::new()));
         let runtime_state = Rc::new(RefCell::new(TsRuntimeState {
             state_snapshot,
             command_sender,
             event_handlers: event_handlers.clone(),
+            pending_responses: Arc::clone(&pending_responses),
+            next_request_id: Rc::new(RefCell::new(1)),
         }));
 
         let mut js_runtime = JsRuntime::new(RuntimeOptions {
@@ -1430,7 +1489,32 @@ impl TypeScriptRuntime {
             )
             .map_err(|e| anyhow!("Failed to initialize editor API: {}", e))?;
 
-        Ok(Self { js_runtime, event_handlers })
+        Ok(Self { js_runtime, event_handlers, pending_responses })
+    }
+
+    /// Deliver a response to a pending async operation
+    ///
+    /// This is called by the editor after processing a command that requires a response.
+    pub fn deliver_response(&self, response: crate::plugin_api::PluginResponse) {
+        let request_id = match &response {
+            crate::plugin_api::PluginResponse::VirtualBufferCreated { request_id, .. } => *request_id,
+        };
+
+        let sender = {
+            let mut pending = self.pending_responses.lock().unwrap();
+            pending.remove(&request_id)
+        };
+
+        if let Some(tx) = sender {
+            let _ = tx.send(response);
+        } else {
+            tracing::warn!("No pending response sender for request_id {}", request_id);
+        }
+    }
+
+    /// Get a reference to pending responses for external delivery
+    pub fn pending_responses(&self) -> &PendingResponses {
+        &self.pending_responses
     }
 
     /// Execute JavaScript code directly

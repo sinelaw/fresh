@@ -344,9 +344,9 @@ interface EditorAPI {
    * Create a virtual buffer in a horizontal split below the current pane
    * This is the key operation for creating diagnostic panels, search results, etc.
    * @param options - Configuration for the virtual buffer
-   * @returns true if buffer creation was initiated successfully
+   * @returns The buffer ID of the created virtual buffer
    * @example
-   * editor.createVirtualBufferInSplit({
+   * const bufferId = await editor.createVirtualBufferInSplit({
    *   name: "*Diagnostics*",
    *   mode: "diagnostics-list",
    *   read_only: true,
@@ -360,7 +360,7 @@ interface EditorAPI {
    *   show_cursors: false
    * });
    */
-  createVirtualBufferInSplit(options: CreateVirtualBufferOptions): boolean;
+  createVirtualBufferInSplit(options: CreateVirtualBufferOptions): Promise<number>;
 
   /**
    * Define a buffer mode with keybindings

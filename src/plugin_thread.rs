@@ -66,11 +66,6 @@ pub enum PluginRequest {
         response: oneshot::Sender<Vec<TsPluginInfo>>,
     },
 
-    /// Process pending commands (returns commands for editor)
-    ProcessCommands {
-        response: oneshot::Sender<Vec<PluginCommand>>,
-    },
-
     /// Shutdown the plugin thread
     Shutdown,
 }
@@ -112,6 +107,10 @@ pub mod oneshot {
         ) -> Result<T, mpsc::RecvTimeoutError> {
             self.0.recv_timeout(timeout)
         }
+
+        pub fn try_recv(&self) -> Result<T, mpsc::TryRecvError> {
+            self.0.try_recv()
+        }
     }
 
     pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
@@ -133,6 +132,12 @@ pub struct PluginThreadHandle {
 
     /// Command registry (shared with editor)
     commands: Arc<RwLock<CommandRegistry>>,
+
+    /// Pending response senders for async operations (shared with runtime)
+    pending_responses: crate::ts_runtime::PendingResponses,
+
+    /// Receiver for plugin commands (polled by editor directly)
+    command_receiver: std::sync::mpsc::Receiver<PluginCommand>,
 }
 
 impl PluginThreadHandle {
@@ -143,6 +148,11 @@ impl PluginThreadHandle {
 
         // Create editor state snapshot for query API
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
+        // Create pending responses map (shared between handle and runtime)
+        let pending_responses: crate::ts_runtime::PendingResponses =
+            Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let thread_pending_responses = Arc::clone(&pending_responses);
 
         // Create channel for requests
         let (request_sender, request_receiver) = std::sync::mpsc::channel();
@@ -166,9 +176,10 @@ impl PluginThreadHandle {
             };
 
             // Create TypeScript runtime with state
-            let runtime = match TypeScriptRuntime::with_state(
+            let runtime = match TypeScriptRuntime::with_state_and_responses(
                 Arc::clone(&thread_state_snapshot),
                 command_sender,
+                thread_pending_responses,
             ) {
                 Ok(rt) => rt,
                 Err(e) => {
@@ -187,7 +198,6 @@ impl PluginThreadHandle {
                     &mut runtime,
                     &mut plugins,
                     &thread_commands,
-                    command_receiver,
                     request_receiver,
                 )
                 .await;
@@ -203,7 +213,29 @@ impl PluginThreadHandle {
             thread_handle: Some(thread_handle),
             state_snapshot,
             commands,
+            pending_responses,
+            command_receiver,
         })
+    }
+
+    /// Deliver a response to a pending async operation in the plugin
+    ///
+    /// This is called by the editor after processing a command that requires a response.
+    pub fn deliver_response(&self, response: crate::plugin_api::PluginResponse) {
+        let request_id = match &response {
+            crate::plugin_api::PluginResponse::VirtualBufferCreated { request_id, .. } => *request_id,
+        };
+
+        let sender = {
+            let mut pending = self.pending_responses.lock().unwrap();
+            pending.remove(&request_id)
+        };
+
+        if let Some(tx) = sender {
+            let _ = tx.send(response);
+        } else {
+            tracing::warn!("No pending response sender for request_id {}", request_id);
+        }
     }
 
     /// Load a plugin from a file (blocking)
@@ -280,6 +312,22 @@ impl PluginThreadHandle {
             .map_err(|_| anyhow!("Plugin thread closed"))?
     }
 
+    /// Execute a plugin action (non-blocking)
+    ///
+    /// Returns a receiver that will receive the result when the action completes.
+    /// The caller should poll this while processing commands to avoid deadlock.
+    pub fn execute_action_async(&self, action_name: &str) -> Result<oneshot::Receiver<Result<()>>> {
+        let (tx, rx) = oneshot::channel();
+        self.request_sender
+            .send(PluginRequest::ExecuteAction {
+                action_name: action_name.to_string(),
+                response: tx,
+            })
+            .map_err(|_| anyhow!("Plugin thread not responding"))?;
+
+        Ok(rx)
+    }
+
     /// Run a hook (non-blocking, fire-and-forget)
     ///
     /// This is the key improvement: hooks are now non-blocking.
@@ -323,18 +371,16 @@ impl PluginThreadHandle {
         rx.recv().unwrap_or_default()
     }
 
-    /// Process pending plugin commands (blocking)
-    pub fn process_commands(&self) -> Vec<PluginCommand> {
-        let (tx, rx) = oneshot::channel();
-        if self
-            .request_sender
-            .send(PluginRequest::ProcessCommands { response: tx })
-            .is_err()
-        {
-            return vec![];
+    /// Process pending plugin commands (non-blocking)
+    ///
+    /// Returns immediately with any pending commands by polling the command queue directly.
+    /// This does not require the plugin thread to respond, avoiding deadlocks.
+    pub fn process_commands(&mut self) -> Vec<PluginCommand> {
+        let mut commands = Vec::new();
+        while let Ok(cmd) = self.command_receiver.try_recv() {
+            commands.push(cmd);
         }
-
-        rx.recv().unwrap_or_default()
+        commands
     }
 
     /// Get the state snapshot handle for editor to update
@@ -369,7 +415,6 @@ async fn plugin_thread_loop(
     runtime: &mut TypeScriptRuntime,
     plugins: &mut HashMap<String, TsPluginInfo>,
     commands: &Arc<RwLock<CommandRegistry>>,
-    command_receiver: std::sync::mpsc::Receiver<PluginCommand>,
     request_receiver: std::sync::mpsc::Receiver<PluginRequest>,
 ) {
     tracing::info!("Plugin thread event loop started");
@@ -383,7 +428,6 @@ async fn plugin_thread_loop(
                     runtime,
                     plugins,
                     commands,
-                    &command_receiver,
                 )
                 .await;
 
@@ -410,7 +454,6 @@ async fn handle_request(
     runtime: &mut TypeScriptRuntime,
     plugins: &mut HashMap<String, TsPluginInfo>,
     commands: &Arc<RwLock<CommandRegistry>>,
-    command_receiver: &std::sync::mpsc::Receiver<PluginCommand>,
 ) -> bool {
     match request {
         PluginRequest::LoadPlugin { path, response } => {
@@ -460,14 +503,6 @@ async fn handle_request(
         PluginRequest::ListPlugins { response } => {
             let plugin_list: Vec<TsPluginInfo> = plugins.values().cloned().collect();
             let _ = response.send(plugin_list);
-        }
-
-        PluginRequest::ProcessCommands { response } => {
-            let mut cmds = Vec::new();
-            while let Ok(cmd) = command_receiver.try_recv() {
-                cmds.push(cmd);
-            }
-            let _ = response.send(cmds);
         }
 
         PluginRequest::Shutdown => {
