@@ -1053,7 +1053,7 @@ impl Editor {
                                     request_id,
                                     uri.clone(),
                                     0, 0, // start
-                                    line_count as u32, u32::MAX, // end - use MAX to include all chars
+                                    (line_count + 1) as u32, 0, // end - past last line to cover entire file
                                 ) {
                                     tracing::debug!(
                                         "Failed to request inlay hints (server may not support): {}",
