@@ -2914,6 +2914,13 @@ fn test_pull_diagnostics_result_id_tracking() -> std::io::Result<()> {
 #[test]
 fn test_lsp_find_references() -> std::io::Result<()> {
     use std::time::Duration;
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+    // Initialize tracing subscriber to see logs
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer().with_writer(std::io::stderr))
+        .with(EnvFilter::from_default_env())
+        .try_init();
 
     // Create a temporary project directory
     let temp_dir = tempfile::TempDir::new()?;
@@ -2976,6 +2983,10 @@ while true; do
             ;;
         "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave")
             # No response needed for notifications
+            ;;
+        "textDocument/diagnostic")
+            # Handle pull diagnostics - return empty diagnostics
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"kind":"full","items":[]}}'
             ;;
         "textDocument/references")
             uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
