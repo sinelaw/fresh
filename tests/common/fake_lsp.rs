@@ -698,6 +698,109 @@ done
         std::env::temp_dir().join("fake_lsp_server_pull_diag.sh")
     }
 
+    /// Spawn a fake LSP server that supports inlay hints (textDocument/inlayHint)
+    ///
+    /// This version responds to textDocument/inlayHint requests with sample hints.
+    /// This is useful for testing LSP 3.17+ inlay hints functionality.
+    pub fn spawn_with_inlay_hints() -> std::io::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        // Create a Bash script that supports inlay hints
+        let script = r#"#!/bin/bash
+
+# Function to read a message
+read_message() {
+    # Read headers
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        # Empty line marks end of headers
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+
+    # Read content
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+# Function to send a message
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+
+# Main loop
+while true; do
+    # Read incoming message
+    msg=$(read_message)
+
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    # Extract method from JSON
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+    case "$method" in
+        "initialize")
+            # Send initialize response with inlayHintProvider capability
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"textDocumentSync":1,"inlayHintProvider":true}}}'
+            ;;
+        "initialized")
+            # No response needed for notification
+            ;;
+        "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave")
+            # No response for notifications
+            ;;
+        "textDocument/inlayHint")
+            # Return sample inlay hints
+            # Type hint at position (0, 5) - after "let x"
+            # Parameter hint at position (1, 4) - before function argument
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"position":{"line":0,"character":5},"label":"i32","kind":1},{"position":{"line":1,"character":4},"label":"count","kind":2}]}'
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+            break
+            ;;
+    esac
+done
+"#;
+
+        // Write script to a temporary file
+        let script_path = std::env::temp_dir().join("fake_lsp_server_inlay_hints.sh");
+        std::fs::write(&script_path, script)?;
+
+        // Make it executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            // Wait for stop signal
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Get the path to the inlay hints fake LSP server script
+    pub fn inlay_hints_script_path() -> std::path::PathBuf {
+        std::env::temp_dir().join("fake_lsp_server_inlay_hints.sh")
+    }
+
     /// Stop the server
     pub fn stop(&mut self) {
         let _ = self.stop_tx.send(());

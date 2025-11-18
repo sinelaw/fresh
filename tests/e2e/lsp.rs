@@ -3294,3 +3294,154 @@ fn main() {
 
     Ok(())
 }
+
+/// Test that inlay hints (virtual text) render correctly on screen
+#[test]
+fn test_inlay_hints_render_on_screen() -> std::io::Result<()> {
+    use fresh::virtual_text::VirtualTextPosition;
+    use ratatui::style::{Color, Style};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type some code that would have type hints
+    harness.type_text("let x = 5;\nfoo(10);")?;
+    harness.render()?;
+
+    // Verify initial content
+    let screen = harness.screen_to_string();
+    assert!(screen.contains("let x = 5;"), "Expected code to be visible");
+
+    // Now add inlay hints (simulating LSP response)
+    // Type hint after 'x' (position 5)
+    // Parameter hint before '10' (position 16 = 11 for first line + newline + 4 for "foo(")
+    let state = harness.editor_mut().active_state_mut();
+
+    // Initialize marker list for the buffer content
+    let buf_len = state.buffer.len();
+    if buf_len > 0 {
+        state.marker_list.adjust_for_insert(0, buf_len);
+    }
+
+    // Style for inlay hints - dimmed gray
+    let hint_style = Style::default().fg(Color::Rgb(128, 128, 128));
+
+    // Add type hint after 'x' at position 5
+    state.virtual_texts.add(
+        &mut state.marker_list,
+        5,
+        ": i32".to_string(),
+        hint_style,
+        VirtualTextPosition::AfterChar,
+        0,
+    );
+
+    // Add parameter hint before '10' at position 15 (after "let x = 5;\nfoo(")
+    state.virtual_texts.add(
+        &mut state.marker_list,
+        15,
+        "count:".to_string(),
+        hint_style,
+        VirtualTextPosition::BeforeChar,
+        0,
+    );
+
+    harness.render()?;
+
+    // Get the rendered screen
+    let screen = harness.screen_to_string();
+
+    // Verify the type hint is visible
+    assert!(
+        screen.contains(": i32"),
+        "Expected type hint ': i32' to be visible on screen. Screen:\n{}",
+        screen
+    );
+
+    // Verify the parameter hint is visible
+    assert!(
+        screen.contains("count:"),
+        "Expected parameter hint 'count:' to be visible on screen. Screen:\n{}",
+        screen
+    );
+
+    // Verify original code is still there
+    assert!(
+        screen.contains("let x"),
+        "Expected 'let x' to still be visible"
+    );
+    assert!(
+        screen.contains("foo("),
+        "Expected 'foo(' to still be visible"
+    );
+
+    eprintln!("\n✅ SUCCESS: Inlay hints render correctly on screen!");
+
+    Ok(())
+}
+
+/// Test that virtual text positions update when buffer is edited
+#[test]
+fn test_inlay_hints_position_tracking() -> std::io::Result<()> {
+    use fresh::virtual_text::VirtualTextPosition;
+    use ratatui::style::{Color, Style};
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+
+    // Type initial code
+    harness.type_text("let x = 5;")?;
+    harness.render()?;
+
+    // Add type hint after 'x' at position 5
+    let state = harness.editor_mut().active_state_mut();
+    let buf_len = state.buffer.len();
+    if buf_len > 0 {
+        state.marker_list.adjust_for_insert(0, buf_len);
+    }
+
+    let hint_style = Style::default().fg(Color::Rgb(128, 128, 128));
+    state.virtual_texts.add(
+        &mut state.marker_list,
+        5,
+        ": i32".to_string(),
+        hint_style,
+        VirtualTextPosition::AfterChar,
+        0,
+    );
+
+    harness.render()?;
+
+    // Verify hint is visible
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(": i32"),
+        "Initial hint should be visible"
+    );
+
+    // Now insert text before the hint position
+    // Move cursor to beginning
+    harness.send_key(KeyCode::Home, KeyModifiers::CONTROL)?;
+    harness.render()?;
+
+    // Insert "const " at the beginning
+    harness.type_text("const ")?;
+    harness.render()?;
+
+    // The hint should still be visible (its position should have moved)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(": i32"),
+        "Hint should still be visible after inserting text before it. Screen:\n{}",
+        screen
+    );
+
+    // Buffer should now contain "const let x = 5;"
+    let buffer_content = harness.get_buffer_content();
+    assert!(
+        buffer_content.contains("const let x"),
+        "Buffer should contain inserted text"
+    );
+
+    eprintln!("\n✅ SUCCESS: Inlay hint positions track buffer edits correctly!");
+
+    Ok(())
+}
