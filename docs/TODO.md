@@ -57,11 +57,10 @@ Features are categorized as:
 
 #### LSP Next Priority Features (P1) - **🦀 Core**
 
-- [ ] **Pull Diagnostics** (LSP 3.17+)
+- [x] **Pull Diagnostics** (LSP 3.17+) ✅
   - Implement `textDocument/diagnostic` request
   - Track `resultId` for incremental updates
-  - Reduces redundant data transfer for large projects
-  - **Effort:** 8-12 hours
+  - Auto-trigger after didOpen/didChange
 
 - [ ] **Inlay Hints** (LSP 3.17+)
   - Implement `textDocument/inlayHint`
@@ -592,13 +591,14 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 
 ## Next Steps
 
-1. **High Priority**: Pull Diagnostics (LSP 3.17+) - **🦀 Core**
-2. **High Priority**: Inlay Hints (LSP 3.17+) - **🦀 Core**
-3. **Medium Priority**: Block selection operations (insert/delete/copy) - **🦀 Core**
-4. **Medium Priority**: Complete virtual buffer infrastructure - **🔧 Infrastructure**
-5. **Lower Priority**: Macro persistence, Git integration plugins
+1. **High Priority**: Inlay Hints (LSP 3.17+) - **🦀 Core**
+2. **Medium Priority**: Block selection operations (insert/delete/copy) - **🦀 Core**
+3. **Medium Priority**: Complete virtual buffer infrastructure - **🔧 Infrastructure**
+4. **Lower Priority**: Macro persistence, Git integration plugins
+5. **Lower Priority**: Multi-Root Workspaces - **🦀 Core**
 
 ### Recent Completions (This Session)
+- ✅ Pull Diagnostics (LSP 3.17+ textDocument/diagnostic, auto-trigger on open/change, result_id tracking)
 - ✅ LSP Auto-Restart on Crash (exponential backoff, cooldown, manual restart command)
 - ✅ Bracket auto-close and auto-pair deletion
 - ✅ Jump to next/previous error (F8/Shift+F8)

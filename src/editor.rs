@@ -1006,6 +1006,32 @@ impl Editor {
                                 tracing::warn!("Failed to send didOpen to LSP: {}", e);
                             } else {
                                 tracing::info!("Successfully sent didOpen to LSP");
+
+                                // Request pull diagnostics after opening the file
+                                // Get previous result_id if we have one (for incremental updates)
+                                let previous_result_id = self
+                                    .diagnostic_result_ids
+                                    .get(uri.as_str())
+                                    .cloned();
+                                let request_id = self.next_lsp_request_id;
+                                self.next_lsp_request_id += 1;
+
+                                if let Err(e) = client.document_diagnostic(
+                                    request_id,
+                                    uri.clone(),
+                                    previous_result_id,
+                                ) {
+                                    tracing::debug!(
+                                        "Failed to request pull diagnostics (server may not support): {}",
+                                        e
+                                    );
+                                } else {
+                                    tracing::info!(
+                                        "Requested pull diagnostics for {} (request_id={})",
+                                        uri.as_str(),
+                                        request_id
+                                    );
+                                }
                             }
                         } else {
                             tracing::warn!(
@@ -8560,10 +8586,36 @@ impl Editor {
             if let Some(client) = lsp.get_or_spawn(&language) {
                 // Send all changes in a single didChange notification
                 // This is much more efficient for batch operations like LSP rename
-                if let Err(e) = client.did_change(uri, changes) {
+                if let Err(e) = client.did_change(uri.clone(), changes) {
                     tracing::warn!("Failed to send didChange to LSP: {}", e);
                 } else {
                     tracing::info!("Successfully sent batched didChange to LSP");
+
+                    // Request pull diagnostics after the change
+                    // TODO: Consider debouncing this to avoid excessive requests during rapid typing
+                    let previous_result_id = self
+                        .diagnostic_result_ids
+                        .get(uri.as_str())
+                        .cloned();
+                    let request_id = self.next_lsp_request_id;
+                    self.next_lsp_request_id += 1;
+
+                    if let Err(e) = client.document_diagnostic(
+                        request_id,
+                        uri.clone(),
+                        previous_result_id,
+                    ) {
+                        tracing::debug!(
+                            "Failed to request pull diagnostics after change (server may not support): {}",
+                            e
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Requested pull diagnostics after change for {} (request_id={})",
+                            uri.as_str(),
+                            request_id
+                        );
+                    }
                 }
             } else {
                 tracing::warn!(
