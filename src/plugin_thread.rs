@@ -129,7 +129,7 @@ pub mod oneshot {
 /// Handle to the plugin thread for sending requests
 pub struct PluginThreadHandle {
     /// Channel to send requests to the plugin thread
-    request_sender: std::sync::mpsc::Sender<PluginRequest>,
+    request_sender: tokio::sync::mpsc::UnboundedSender<PluginRequest>,
 
     /// Thread join handle
     thread_handle: Option<JoinHandle<()>>,
@@ -161,8 +161,8 @@ impl PluginThreadHandle {
             Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
         let thread_pending_responses = Arc::clone(&pending_responses);
 
-        // Create channel for requests
-        let (request_sender, request_receiver) = std::sync::mpsc::channel();
+        // Create channel for requests (unbounded allows sync send, async recv)
+        let (request_sender, request_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         // Clone state snapshot for the thread
         let thread_state_snapshot = Arc::clone(&state_snapshot);
@@ -450,14 +450,14 @@ async fn plugin_thread_loop(
     runtime: &mut TypeScriptRuntime,
     plugins: &mut HashMap<String, TsPluginInfo>,
     commands: &Arc<RwLock<CommandRegistry>>,
-    request_receiver: std::sync::mpsc::Receiver<PluginRequest>,
+    mut request_receiver: tokio::sync::mpsc::UnboundedReceiver<PluginRequest>,
 ) {
     tracing::info!("Plugin thread event loop started");
 
     loop {
-        // Process any pending requests (non-blocking check)
-        match request_receiver.try_recv() {
-            Ok(request) => {
+        // Wait for requests (async, no polling/sleeping)
+        match request_receiver.recv().await {
+            Some(request) => {
                 let should_shutdown = handle_request(
                     request,
                     runtime,
@@ -470,12 +470,8 @@ async fn plugin_thread_loop(
                     break;
                 }
             }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // No requests, wait a bit before checking again
-                // This prevents busy-waiting
-                tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-            }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            None => {
+                // Channel closed
                 tracing::info!("Plugin thread request channel closed");
                 break;
             }

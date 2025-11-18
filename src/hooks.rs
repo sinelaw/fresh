@@ -97,6 +97,16 @@ pub enum HookArgs {
         content: String,
     },
 
+    /// Lines have changed and need processing (batched for efficiency)
+    /// This hook fires when:
+    /// - Lines become visible for the first time (viewport scroll)
+    /// - Line content changes (insert/delete)
+    /// Plugins should use this instead of RenderLine for better performance
+    LinesChanged {
+        buffer_id: BufferId,
+        lines: Vec<LineInfo>,
+    },
+
     /// Prompt input changed (user typed/edited)
     PromptChanged { prompt_type: String, input: String },
 
@@ -117,6 +127,19 @@ pub enum HookArgs {
         /// The locations where the symbol is referenced
         locations: Vec<LspLocation>,
     },
+}
+
+/// Information about a single line for the LinesChanged hook
+#[derive(Debug, Clone)]
+pub struct LineInfo {
+    /// Line number (0-based)
+    pub line_number: usize,
+    /// Byte offset where the line starts in the buffer
+    pub byte_start: usize,
+    /// Byte offset where the line ends (exclusive)
+    pub byte_end: usize,
+    /// The content of the line
+    pub content: String,
 }
 
 /// Location information for LSP references
