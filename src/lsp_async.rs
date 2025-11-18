@@ -2583,12 +2583,44 @@ async fn handle_message_dispatch(
                     }
                 }
                 "workspace/configuration" => {
-                    // Return empty configuration - rust-analyzer will use defaults
-                    tracing::debug!("Responding to workspace/configuration with empty config");
+                    // Return configuration with inlay hints enabled for rust-analyzer
+                    // The request contains items asking for configuration sections
+                    // We return an array with one config object per requested item
+                    tracing::debug!("Responding to workspace/configuration with inlay hints enabled");
+
+                    // Parse request params to see how many items are requested
+                    let num_items = request.params
+                        .as_ref()
+                        .and_then(|p| p.get("items"))
+                        .and_then(|items| items.as_array())
+                        .map(|arr| arr.len())
+                        .unwrap_or(1);
+
+                    // rust-analyzer configuration with inlay hints enabled
+                    let ra_config = serde_json::json!({
+                        "inlayHints": {
+                            "typeHints": {
+                                "enable": true
+                            },
+                            "parameterHints": {
+                                "enable": true
+                            },
+                            "chainingHints": {
+                                "enable": true
+                            },
+                            "closureReturnTypeHints": {
+                                "enable": "always"
+                            }
+                        }
+                    });
+
+                    // Return one config object for each requested item
+                    let configs: Vec<Value> = (0..num_items).map(|_| ra_config.clone()).collect();
+
                     JsonRpcResponse {
                         jsonrpc: "2.0".to_string(),
                         id: request.id,
-                        result: Some(Value::Array(vec![])),
+                        result: Some(Value::Array(configs)),
                         error: None,
                     }
                 }
