@@ -7459,6 +7459,54 @@ impl Editor {
             &self.theme,
         );
 
+        // Trigger render_line hooks for all visible lines in all visible buffers
+        // This allows plugins to add overlays before rendering
+        if let Some(ref mut ts_manager) = self.ts_plugin_manager {
+            // Get visible buffers and their areas
+            let visible_buffers = self.split_manager.get_visible_buffers(editor_content_area);
+
+            for (_, buffer_id, split_area) in visible_buffers {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    // Use the split area height as visible line count
+                    let visible_count = split_area.height as usize;
+                    let top_byte = state.viewport.top_byte;
+
+                    // Iterate through visible lines
+                    // Get line number first (immutable borrow) before creating iterator (mutable borrow)
+                    let mut line_number = state.buffer.get_line_number(top_byte);
+                    let mut iter = state.buffer.line_iterator(top_byte, self.config.editor.estimated_line_length);
+
+                    for _ in 0..visible_count {
+                        if let Some((line_start, line_content)) = iter.next() {
+                            let byte_end = line_start + line_content.len();
+
+                            // Create hook args for this line
+                            let hook_args = crate::hooks::HookArgs::RenderLine {
+                                buffer_id,
+                                line_number,
+                                byte_start: line_start,
+                                byte_end,
+                                content: line_content,
+                            };
+
+                            ts_manager.run_hook_blocking("render_line", hook_args);
+                            line_number += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Process any plugin commands (like AddOverlay) that resulted from the hooks
+            let commands = ts_manager.process_commands();
+            for command in commands {
+                if let Err(e) = self.handle_plugin_command(command) {
+                    tracing::error!("Error handling render-line plugin command: {}", e);
+                }
+            }
+        }
+
         // Render editor content (same for both layouts)
         let lsp_waiting = self.pending_completion_request.is_some()
             || self.pending_goto_definition_request.is_some();
