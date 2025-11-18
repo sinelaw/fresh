@@ -3839,9 +3839,9 @@ impl Editor {
                 match self.split_manager.set_split_buffer(split_id, buffer_id) {
                     Ok(()) => {
                         tracing::info!("Set split {:?} to buffer {:?}", split_id, buffer_id);
-                        // If this is the active split, update active buffer
+                        // If this is the active split, update active buffer with all side effects
                         if self.split_manager.active_split() == split_id {
-                            self.active_buffer = buffer_id;
+                            self.set_active_buffer(buffer_id);
                         }
                     }
                     Err(e) => {
@@ -7175,6 +7175,7 @@ impl Editor {
             frame,
             tabs_area,
             &self.buffers,
+            &self.buffer_metadata,
             self.active_buffer,
             &self.theme,
         );
