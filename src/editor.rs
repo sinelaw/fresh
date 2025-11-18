@@ -7753,27 +7753,13 @@ impl Editor {
             self.update_search_highlights(&query);
         }
 
-        // Check if we need space for suggestions popup
-        let suggestion_lines = if let Some(prompt) = &self.prompt {
-            if !prompt.suggestions.is_empty() {
-                // Show up to 10 suggestions
-                prompt.suggestions.len().min(10)
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        // Build main vertical layout: [menu_bar, main_content, suggestions?, status_bar]
-        let mut constraints = vec![
+        // Build main vertical layout: [menu_bar, main_content, status_bar]
+        // Suggestions popup now overlays instead of resizing the layout
+        let constraints = vec![
             Constraint::Length(1), // Menu bar
             Constraint::Min(0),    // Main content area
+            Constraint::Length(1), // Status bar
         ];
-        if suggestion_lines > 0 {
-            constraints.push(Constraint::Length(suggestion_lines as u16 + 2));
-        }
-        constraints.push(Constraint::Length(1)); // Status bar
 
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -7782,8 +7768,7 @@ impl Editor {
 
         let menu_bar_area = main_chunks[0];
         let main_content_area = main_chunks[1];
-        let suggestions_idx = if suggestion_lines > 0 { Some(2) } else { None };
-        let status_bar_idx = if suggestion_lines > 0 { 3 } else { 2 };
+        let status_bar_idx = 2;
 
         // Split main content area based on file explorer visibility
         let editor_content_area;
@@ -7913,13 +7898,28 @@ impl Editor {
         // Render hover highlights for separators and scrollbars
         self.render_hover_highlights(frame);
 
-        // Render suggestions if present (same for both layouts)
+        // Render suggestions as overlay if present (same for both layouts)
         self.cached_layout.suggestions_area = None;
-        if let Some(idx) = suggestions_idx {
-            if let Some(prompt) = &self.prompt {
+        if let Some(prompt) = &self.prompt {
+            if !prompt.suggestions.is_empty() {
+                // Calculate overlay area: position above status bar
+                let suggestion_count = prompt.suggestions.len().min(10);
+                let height = suggestion_count as u16 + 2; // +2 for borders
+
+                // Position suggestions above the status bar
+                let suggestions_area = ratatui::layout::Rect {
+                    x: 0,
+                    y: main_chunks[status_bar_idx].y.saturating_sub(height),
+                    width: size.width,
+                    height,
+                };
+
+                // Clear the area behind the suggestions to obscure underlying text
+                frame.render_widget(ratatui::widgets::Clear, suggestions_area);
+
                 self.cached_layout.suggestions_area = SuggestionsRenderer::render_with_hover(
                     frame,
-                    main_chunks[idx],
+                    suggestions_area,
                     prompt,
                     &self.theme,
                     self.mouse_state.hover_target.as_ref(),
