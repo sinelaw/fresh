@@ -305,12 +305,15 @@ globalThis.references_goto = function (): void {
 
   // Get text properties at cursor position
   const props = editor.getTextPropertiesAtCursor(referencesBufferId);
+  editor.debug(`references_goto: props.length=${props.length}, referencesBufferId=${referencesBufferId}, sourceSplitId=${sourceSplitId}`);
 
   if (props.length > 0) {
+    editor.debug(`references_goto: props[0]=${JSON.stringify(props[0])}`);
     const location = props[0].location as
       | { file: string; line: number; column: number }
       | undefined;
     if (location) {
+      editor.debug(`references_goto: opening ${location.file}:${location.line}:${location.column} in split ${sourceSplitId}`);
       // Open file in the source split, not the references split
       editor.openFileInSplit(
         sourceSplitId,
@@ -321,9 +324,11 @@ globalThis.references_goto = function (): void {
       const displayPath = getRelativePath(location.file);
       editor.setStatus(`Jumped to ${displayPath}:${location.line}`);
     } else {
+      editor.debug(`references_goto: no location in props[0]`);
       editor.setStatus("Move cursor to a reference line");
     }
   } else {
+    editor.debug(`references_goto: no props found at cursor`);
     editor.setStatus("Move cursor to a reference line");
   }
 };
