@@ -4097,5 +4097,87 @@ mod tests {
         // Shutdown
         handle.shutdown();
     }
+
+    #[test]
+    fn test_plugin_thread_load_git_log_plugin() {
+        use crate::plugin_thread::PluginThreadHandle;
+
+        // Initialize tracing subscriber for detailed logging
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_test_writer()
+            .try_init();
+
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        // Spawn the plugin thread
+        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+
+        // Load the actual git_log.ts plugin
+        let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
+        let plugin_path = plugins_dir.join("git_log.ts");
+
+        // Load the plugin through the plugin thread (this could hang!)
+        let result = handle.load_plugin(&plugin_path);
+
+        // Check result
+        match result {
+            Ok(()) => {
+                eprintln!("Git log plugin loaded successfully");
+                // Check that the plugin was loaded
+                let cmds = handle.process_commands();
+                eprintln!("Commands after load: {:?}", cmds.len());
+            }
+            Err(e) => {
+                eprintln!("Git log plugin failed with error: {}", e);
+            }
+        }
+
+        // Shutdown
+        handle.shutdown();
+    }
+
+    #[test]
+    fn test_plugin_thread_execute_git_log_action() {
+        use crate::plugin_thread::PluginThreadHandle;
+
+        // Initialize tracing subscriber for detailed logging
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_test_writer()
+            .try_init();
+
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        // Spawn the plugin thread
+        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+
+        // Load the actual git_log.ts plugin
+        let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
+        let plugin_path = plugins_dir.join("git_log.ts");
+
+        // Load the plugin
+        let result = handle.load_plugin(&plugin_path);
+        assert!(result.is_ok(), "Failed to load git_log plugin: {:?}", result);
+
+        eprintln!("Git log plugin loaded, now executing show_git_log action...");
+
+        // Execute the show_git_log action (this could hang!)
+        let result = handle.execute_action("show_git_log");
+
+        match result {
+            Ok(()) => {
+                eprintln!("show_git_log executed successfully");
+                let cmds = handle.process_commands();
+                eprintln!("Commands after action: {:?}", cmds.len());
+            }
+            Err(e) => {
+                eprintln!("show_git_log failed with error: {}", e);
+            }
+        }
+
+        // Shutdown
+        handle.shutdown();
+    }
 }
 
