@@ -1,5 +1,6 @@
 //! Split pane layout and buffer rendering
 
+use crate::ansi::AnsiParser;
 use crate::cursor::SelectionMode;
 use crate::editor::BufferMetadata;
 use crate::event::{BufferId, EventLog, SplitDirection};
@@ -656,12 +657,29 @@ impl SplitRenderer {
             };
             let max_chars_to_process = left_col.saturating_add(max_visible_chars);
 
+            // ANSI parser for this line to handle escape sequences
+            let mut ansi_parser = AnsiParser::new();
+            // Track visible characters separately from byte position for ANSI handling
+            let mut visible_char_count = 0usize;
+
             let mut chars_iterator = line_content.chars().peekable();
             while let Some(ch) = chars_iterator.next() {
                 let byte_pos = line_start + char_index;
 
+                // Process character through ANSI parser first
+                // If it returns None, the character is part of an escape sequence and should be skipped
+                let ansi_style = match ansi_parser.parse_char(ch) {
+                    Some(style) => style,
+                    None => {
+                        // This character is part of an ANSI escape sequence, skip it
+                        char_index += ch.len_utf8();
+                        continue;
+                    }
+                };
+
                 // Performance: skip expensive style calculations for characters beyond visible range
-                if char_index > max_chars_to_process {
+                // Use visible_char_count (not char_index) since ANSI codes don't take up visible space
+                if visible_char_count > max_chars_to_process {
                     // Fast path: just count remaining characters without processing
                     // This is critical for performance with very long lines (e.g., 100KB single line)
                     char_index += ch.len_utf8();
@@ -718,14 +736,41 @@ impl SplitRenderer {
                         .map(|(overlay, _)| *overlay)
                         .collect();
 
-                    // Build style by layering: base -> syntax -> semantic -> overlays -> selection
-                    let mut style = if let Some(color) = highlight_color {
+                    // Build style by layering: base -> ansi -> syntax -> semantic -> overlays -> selection
+                    // Start with ANSI style as base (if present), otherwise use theme default
+                    let mut style = if ansi_style.fg.is_some()
+                        || ansi_style.bg.is_some()
+                        || !ansi_style.add_modifier.is_empty()
+                    {
+                        // Apply ANSI styling from escape codes
+                        let mut s = Style::default();
+                        if let Some(fg) = ansi_style.fg {
+                            s = s.fg(fg);
+                        } else {
+                            s = s.fg(theme.editor_fg);
+                        }
+                        if let Some(bg) = ansi_style.bg {
+                            s = s.bg(bg);
+                        }
+                        s = s.add_modifier(ansi_style.add_modifier);
+                        s
+                    } else if let Some(color) = highlight_color {
                         // Apply syntax highlighting
                         Style::default().fg(color)
                     } else {
                         // Default color from theme
                         Style::default().fg(theme.editor_fg)
                     };
+
+                    // If we have ANSI style but also syntax highlighting, syntax takes precedence for color
+                    // (unless ANSI has explicit color which we already applied above)
+                    if highlight_color.is_some()
+                        && ansi_style.fg.is_none()
+                        && (ansi_style.bg.is_some() || !ansi_style.add_modifier.is_empty())
+                    {
+                        // ANSI had bg or modifiers but not fg, so apply syntax fg
+                        style = style.fg(highlight_color.unwrap());
+                    }
 
                     // Apply semantic highlighting (word occurrences under cursor)
                     // This gives a subtle background to all instances of the word
@@ -892,6 +937,7 @@ impl SplitRenderer {
                 }
 
                 char_index += ch.len_utf8();
+                visible_char_count += 1;
             }
 
             // Note: We already handle cursors on newlines in the loop above.

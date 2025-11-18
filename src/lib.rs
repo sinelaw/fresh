@@ -1,6 +1,7 @@
 // Editor library - exposes all core modules for testing
 
 pub mod actions;
+pub mod ansi;
 pub mod async_bridge;
 pub mod buffer_mode;
 pub mod command_registry;
