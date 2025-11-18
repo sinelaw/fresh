@@ -837,6 +837,23 @@ fn hook_args_to_json(args: &HookArgs) -> Result<String> {
                 .collect();
             serde_json::json!({ "symbol": symbol, "locations": locs })
         }
+        HookArgs::LinesChanged { buffer_id, lines } => {
+            let lines_json: Vec<serde_json::Value> = lines
+                .iter()
+                .map(|line| {
+                    serde_json::json!({
+                        "line_number": line.line_number,
+                        "byte_start": line.byte_start,
+                        "byte_end": line.byte_end,
+                        "content": line.content,
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "buffer_id": buffer_id.0,
+                "lines": lines_json,
+            })
+        }
     };
 
     serde_json::to_string(&json_value).map_err(|e| anyhow!("Failed to serialize hook args: {}", e))

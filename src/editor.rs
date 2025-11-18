@@ -368,6 +368,10 @@ pub struct Editor {
     /// TypeScript plugin thread handle
     ts_plugin_manager: Option<PluginThreadHandle>,
 
+    /// Track which lines have been seen per buffer (for lines_changed optimization)
+    /// Maps buffer_id -> set of line numbers that have been processed
+    seen_lines: HashMap<BufferId, std::collections::HashSet<usize>>,
+
     /// Named panel IDs mapping (for idempotent panel operations)
     /// Maps panel ID (e.g., "diagnostics") to buffer ID
     panel_ids: HashMap<String, BufferId>,
@@ -408,6 +412,9 @@ pub struct Editor {
 
     /// Pending plugin action receivers (for async action execution)
     pending_plugin_actions: Vec<(String, crate::plugin_thread::oneshot::Receiver<anyhow::Result<()>>)>,
+
+    /// Flag set by plugin commands that need a render (e.g., RefreshLines)
+    plugin_render_requested: bool,
 }
 
 /// State for macro recording
@@ -719,6 +726,7 @@ impl Editor {
             cached_layout: CachedLayout::default(),
             command_registry,
             ts_plugin_manager,
+            seen_lines: HashMap::new(),
             panel_ids: HashMap::new(),
             search_history: {
                 // Load search history from disk if available
@@ -763,6 +771,7 @@ impl Editor {
             macros: HashMap::new(),
             macro_recording: None,
             pending_plugin_actions: Vec::new(),
+            plugin_render_requested: false,
         })
     }
 
@@ -1195,6 +1204,7 @@ impl Editor {
 
         self.buffers.remove(&id);
         self.event_logs.remove(&id);
+        self.seen_lines.remove(&id);
 
         // Remove buffer from all splits' open_buffers lists
         for view_state in self.split_view_states.values_mut() {
@@ -2263,6 +2273,8 @@ impl Editor {
         // Convert event to hook args and fire the appropriate hook
         let hook_args = match event {
             Event::Insert { position, text, .. } => {
+                // Clear seen_lines for this buffer so lines get re-processed
+                self.seen_lines.remove(&buffer_id);
                 Some((
                     "after-insert",
                     crate::hooks::HookArgs::AfterInsert {
@@ -2273,6 +2285,8 @@ impl Editor {
                 ))
             }
             Event::Delete { range, deleted_text, .. } => {
+                // Clear seen_lines for this buffer so lines get re-processed
+                self.seen_lines.remove(&buffer_id);
                 Some((
                     "after-delete",
                     crate::hooks::HookArgs::AfterDelete {
@@ -3081,8 +3095,12 @@ impl Editor {
             }
         });
 
-        // Trigger render if any async messages or plugin commands were processed
-        needs_render || processed_any_commands
+        // Check and clear the plugin render request flag
+        let plugin_render = self.plugin_render_requested;
+        self.plugin_render_requested = false;
+
+        // Trigger render if any async messages, plugin commands were processed, or plugin requested render
+        needs_render || processed_any_commands || plugin_render
     }
 
     /// Update LSP status bar string from active progress operations
@@ -3362,6 +3380,14 @@ impl Editor {
                     // 1. Clearing overlays doesn't affect undo/redo (overlays are ephemeral)
                     // 2. This is a plugin-initiated action, not a user edit
                 }
+            }
+            PluginCommand::RefreshLines { buffer_id } => {
+                // Clear seen_lines for this buffer so all visible lines will be re-processed
+                // on the next render. This is useful when a plugin is enabled and needs to
+                // process lines that were already marked as seen.
+                self.seen_lines.remove(&buffer_id);
+                // Request a render so the lines_changed hook fires
+                self.plugin_render_requested = true;
             }
             PluginCommand::OpenFileAtLocation { path, line, column } => {
                 // Open the file
@@ -7820,18 +7846,18 @@ impl Editor {
 
         // Note: Tabs are now rendered within each split by SplitRenderer
 
-        // Trigger render_line hooks for all visible lines in all visible buffers
+        // Trigger lines_changed hooks for newly visible lines in all visible buffers
         // This allows plugins to add overlays before rendering
+        // Only lines that haven't been seen before are sent (batched for efficiency)
         if let Some(ref mut ts_manager) = self.ts_plugin_manager {
             let hooks_start = std::time::Instant::now();
             // Get visible buffers and their areas
             let visible_buffers = self.split_manager.get_visible_buffers(editor_content_area);
 
-            let mut total_lines = 0usize;
+            let mut total_new_lines = 0usize;
             for (_, buffer_id, split_area) in visible_buffers {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    // Fire render_start hook once per buffer before render_line hooks
-                    // This allows plugins to clear overlays before recreating them
+                    // Fire render_start hook once per buffer
                     let render_start_args = crate::hooks::HookArgs::RenderStart { buffer_id };
                     ts_manager.run_hook_blocking("render_start", render_start_args);
 
@@ -7839,46 +7865,57 @@ impl Editor {
                     let visible_count = split_area.height as usize;
                     let top_byte = state.viewport.top_byte;
 
-                    // Iterate through visible lines
-                    // Get line number first (immutable borrow) before creating iterator (mutable borrow)
+                    // Get or create the seen lines set for this buffer
+                    let seen_lines = self.seen_lines.entry(buffer_id).or_insert_with(std::collections::HashSet::new);
+
+                    // Collect only NEW lines (not seen before)
+                    let mut new_lines: Vec<crate::hooks::LineInfo> = Vec::new();
                     let mut line_number = state.buffer.get_line_number(top_byte);
                     let mut iter = state.buffer.line_iterator(top_byte, self.config.editor.estimated_line_length);
 
                     for _ in 0..visible_count {
                         if let Some((line_start, line_content)) = iter.next() {
-                            let byte_end = line_start + line_content.len();
-
-                            // Create hook args for this line
-                            let hook_args = crate::hooks::HookArgs::RenderLine {
-                                buffer_id,
-                                line_number,
-                                byte_start: line_start,
-                                byte_end,
-                                content: line_content,
-                            };
-
-                            ts_manager.run_hook_blocking("render_line", hook_args);
+                            // Only add if not seen before
+                            if !seen_lines.contains(&line_number) {
+                                let byte_end = line_start + line_content.len();
+                                new_lines.push(crate::hooks::LineInfo {
+                                    line_number,
+                                    byte_start: line_start,
+                                    byte_end,
+                                    content: line_content,
+                                });
+                                seen_lines.insert(line_number);
+                            }
                             line_number += 1;
-                            total_lines += 1;
                         } else {
                             break;
                         }
+                    }
+
+                    // Send batched hook if there are new lines
+                    if !new_lines.is_empty() {
+                        total_new_lines += new_lines.len();
+                        let hook_args = crate::hooks::HookArgs::LinesChanged {
+                            buffer_id,
+                            lines: new_lines,
+                        };
+                        ts_manager.run_hook_blocking("lines_changed", hook_args);
                     }
                 }
             }
             let hooks_elapsed = hooks_start.elapsed();
             tracing::trace!(
-                total_lines = total_lines,
+                new_lines = total_new_lines,
                 elapsed_ms = hooks_elapsed.as_millis(),
                 elapsed_us = hooks_elapsed.as_micros(),
-                "render_line hooks total"
+                "lines_changed hooks total"
             );
 
             // Process any plugin commands (like AddOverlay) that resulted from the hooks
             let commands = ts_manager.process_commands();
             for command in commands {
                 if let Err(e) = self.handle_plugin_command(command) {
-                    tracing::error!("Error handling render-line plugin command: {}", e);
+                    tracing::error!("Error handling plugin command: {}", e);
                 }
             }
         }

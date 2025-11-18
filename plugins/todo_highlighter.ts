@@ -22,9 +22,6 @@ const config: HighlightConfig = {
   ],
 };
 
-// Track processed lines to avoid duplicate highlights
-const processedLines = new Map<number, Set<number>>();
-
 // Track which buffers need their overlays refreshed (content changed)
 const dirtyBuffers = new Set<number>();
 
@@ -35,18 +32,6 @@ function highlightLine(
   byteStart: number,
   content: string
 ): void {
-  if (!config.enabled) return;
-
-  // Check if we've already processed this line in this buffer
-  if (!processedLines.has(bufferId)) {
-    processedLines.set(bufferId, new Set());
-  }
-  const bufferLines = processedLines.get(bufferId)!;
-
-  // Skip if already processed
-  if (bufferLines.has(lineNumber)) return;
-  bufferLines.add(lineNumber);
-
   // Search for keywords
   for (const keyword of config.keywords) {
     let searchStart = 0;
@@ -84,7 +69,6 @@ function highlightLine(
 // Clear highlights for a buffer
 function clearHighlights(bufferId: number): void {
   editor.removeOverlaysByPrefix(bufferId, "todo-");
-  processedLines.delete(bufferId);
 }
 
 // Handle render-start events (only clear overlays if buffer content changed)
@@ -98,15 +82,22 @@ globalThis.onRenderStart = function(data: { buffer_id: number }): void {
   }
 };
 
-// Handle render-line events
-globalThis.onRenderLine = function(data: {
+// Handle lines_changed events (batched for efficiency)
+globalThis.onLinesChanged = function(data: {
   buffer_id: number;
-  line_number: number;
-  byte_start: number;
-  byte_end: number;
-  content: string;
+  lines: Array<{
+    line_number: number;
+    byte_start: number;
+    byte_end: number;
+    content: string;
+  }>;
 }): void {
-  highlightLine(data.buffer_id, data.line_number, data.byte_start, data.content);
+  if (!config.enabled) return;
+
+  // Process all changed lines
+  for (const line of data.lines) {
+    highlightLine(data.buffer_id, line.line_number, line.byte_start, line.content);
+  }
 };
 
 // Handle buffer content changes - mark buffer as needing overlay refresh
@@ -120,13 +111,12 @@ globalThis.onAfterDelete = function(data: { buffer_id: number }): void {
 
 // Handle buffer close events
 globalThis.onBufferClosed = function(data: { buffer_id: number }): void {
-  processedLines.delete(data.buffer_id);
   dirtyBuffers.delete(data.buffer_id);
 };
 
 // Register hooks
 editor.on("render_start", "onRenderStart");
-editor.on("render_line", "onRenderLine");
+editor.on("lines_changed", "onLinesChanged");
 editor.on("after-insert", "onAfterInsert");
 editor.on("after-delete", "onAfterDelete");
 editor.on("buffer_closed", "onBufferClosed");
@@ -134,6 +124,9 @@ editor.on("buffer_closed", "onBufferClosed");
 // Plugin commands
 globalThis.todoHighlighterEnable = function(): void {
   config.enabled = true;
+  // Clear seen_lines so next render processes all visible lines
+  const bufferId = editor.getActiveBufferId();
+  editor.refreshLines(bufferId);
   editor.setStatus("TODO Highlighter: Enabled");
 };
 
@@ -146,8 +139,11 @@ globalThis.todoHighlighterDisable = function(): void {
 
 globalThis.todoHighlighterToggle = function(): void {
   config.enabled = !config.enabled;
-  if (!config.enabled) {
-    const bufferId = editor.getActiveBufferId();
+  const bufferId = editor.getActiveBufferId();
+  if (config.enabled) {
+    // Clear seen_lines so next render processes all visible lines
+    editor.refreshLines(bufferId);
+  } else {
     clearHighlights(bufferId);
   }
   editor.setStatus(`TODO Highlighter: ${config.enabled ? "Enabled" : "Disabled"}`);
