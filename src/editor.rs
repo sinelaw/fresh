@@ -9248,8 +9248,9 @@ impl Editor {
             return;
         }
 
-        // Get theme color before borrowing state
+        // Get theme color and search settings before borrowing state
         let search_bg = self.theme.search_match_bg;
+        let case_sensitive = self.search_case_sensitive;
 
         let state = self.active_state_mut();
 
@@ -9299,13 +9300,16 @@ impl Editor {
         // Get the visible text
         let visible_text = state.get_text_range(visible_start, visible_end);
 
-        // Search for matches in visible area (case-insensitive)
-        let query_lower = query.to_lowercase();
-        let visible_text_lower = visible_text.to_lowercase();
+        // Prepare search strings based on case sensitivity
+        let (search_text, search_query) = if case_sensitive {
+            (visible_text.clone(), query.to_string())
+        } else {
+            (visible_text.to_lowercase(), query.to_lowercase())
+        };
 
         let mut match_count = 0;
         let mut start = 0;
-        while let Some(pos) = visible_text_lower[start..].find(&query_lower) {
+        while let Some(pos) = search_text[start..].find(&search_query) {
             let absolute_pos = visible_start + start + pos;
 
             // Add overlay for this match
