@@ -32,6 +32,7 @@ pub mod marker;
 pub mod marker_tree;
 pub mod multi_cursor;
 pub mod overlay;
+pub mod virtual_text;
 pub mod piece_tree;
 pub mod plugin_api;
 pub mod plugin_process;
