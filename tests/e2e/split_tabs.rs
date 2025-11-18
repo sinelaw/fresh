@@ -240,6 +240,78 @@ fn test_close_buffer_removes_from_tabs() {
     harness.assert_screen_not_contains("file2.txt");
 }
 
+/// Test git log plugin split view tabs
+#[test]
+fn test_git_log_split_tabs() {
+    // Create a git repo with some commits
+    let temp_dir = TempDir::new().unwrap();
+    let repo_path = temp_dir.path();
+
+    // Initialize git repo
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to init git repo");
+
+    // Configure git user
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to set git email");
+
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to set git name");
+
+    // Create a file and commit
+    let file_path = repo_path.join("test.txt");
+    std::fs::write(&file_path, "Hello world").unwrap();
+
+    std::process::Command::new("git")
+        .args(["add", "test.txt"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to git add");
+
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to git commit");
+
+    // Create harness with the repo as working directory
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    eprintln!("\n=== Before git log ===");
+    eprintln!("{}", harness.screen_to_string());
+
+    // Open git log via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("git log").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Wait a bit for async operations
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    eprintln!("\n=== After git log ===");
+    let screen = harness.screen_to_string();
+    eprintln!("{}", screen);
+
+    // Check that we have two splits with tabs
+    // The original file should be visible and the git log should be visible
+    // Both should have their tabs rendered
+}
+
 /// Debug test to print screen and understand tab rendering
 #[test]
 fn test_debug_split_tabs_rendering() {
