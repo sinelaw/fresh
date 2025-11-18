@@ -33,6 +33,7 @@ impl SplitRenderer {
     /// * `large_file_threshold_bytes` - Threshold for using constant scrollbar thumb size
     /// * `line_wrap` - Whether line wrapping is enabled
     /// * `estimated_line_length` - Estimated average line length for large file line estimation
+    /// * `hide_cursor` - Whether to hide the hardware cursor (e.g., when menu is open)
     ///
     /// # Returns
     /// * Vec of (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end) for mouse handling
@@ -49,6 +50,7 @@ impl SplitRenderer {
         line_wrap: bool,
         estimated_line_length: usize,
         split_view_states: Option<&HashMap<crate::event::SplitId, crate::split::SplitViewState>>,
+        hide_cursor: bool,
     ) -> Vec<(crate::event::SplitId, BufferId, Rect, Rect, usize, usize)> {
         let _span = tracing::trace_span!("render_content").entered();
 
@@ -169,6 +171,7 @@ impl SplitRenderer {
                     line_wrap,
                     estimated_line_length,
                     buffer_id,
+                    hide_cursor,
                 );
 
                 // For small files, count actual lines for accurate scrollbar
@@ -391,6 +394,7 @@ impl SplitRenderer {
         line_wrap: bool,
         estimated_line_length: usize,
         _buffer_id: BufferId,
+        hide_cursor: bool,
     ) {
         let _span = tracing::trace_span!("render_buffer_in_split").entered();
 
@@ -1157,8 +1161,8 @@ impl SplitRenderer {
         frame.render_widget(paragraph, area);
 
         // Render cursor and log state (only for active split)
-        // Only show hardware cursor if show_cursors is true for this buffer
-        if is_active && state.show_cursors {
+        // Only show hardware cursor if show_cursors is true for this buffer and not hidden
+        if is_active && state.show_cursors && !hide_cursor {
             // Use cursor position calculated during rendering (no need to call cursor_screen_position)
             let (x, y) = (cursor_screen_x, cursor_screen_y);
 

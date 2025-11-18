@@ -8508,6 +8508,7 @@ impl Editor {
             self.config.editor.line_wrap,
             self.config.editor.estimated_line_length,
             Some(&self.split_view_states),
+            self.menu_state.active_menu.is_some(),
         );
         self.cached_layout.split_areas = split_areas;
         self.cached_layout.separator_areas = self.split_manager.get_separators_with_ids(editor_content_area);
