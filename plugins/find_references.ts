@@ -5,6 +5,7 @@
  *
  * Displays LSP find references results in a virtual buffer split view.
  * Listens for lsp_references hook from the editor and shows results.
+ * Uses cursor movement for navigation (Up/Down/j/k work naturally).
  */
 
 // Panel state
@@ -13,7 +14,6 @@ let referencesBufferId: number | null = null;
 let sourceSplitId: number | null = null;
 let currentReferences: ReferenceItem[] = [];
 let currentSymbol: string = "";
-let selectedIndex = 0;
 let lineCache: Map<string, string[]> = new Map(); // Cache file contents
 
 // Maximum number of results to display
@@ -27,18 +27,13 @@ interface ReferenceItem {
   lineText?: string; // Cached line text
 }
 
-// Define the references mode with keybindings
+// Define the references mode with minimal keybindings
+// Navigation uses normal cursor movement (arrows, j/k work naturally)
 editor.defineMode(
   "references-list",
   null, // no parent mode
   [
     ["Return", "references_goto"],
-    ["n", "references_next"],
-    ["p", "references_prev"],
-    ["j", "references_next"],
-    ["k", "references_prev"],
-    ["Up", "references_prev"],
-    ["Down", "references_next"],
     ["q", "references_close"],
     ["Escape", "references_close"],
   ],
@@ -55,8 +50,7 @@ function getRelativePath(filePath: string): string {
 }
 
 // Format a reference for display with line preview
-function formatReference(item: ReferenceItem, index: number): string {
-  const marker = index === selectedIndex ? ">" : " ";
+function formatReference(item: ReferenceItem): string {
   const displayPath = getRelativePath(item.file);
   const location = `${displayPath}:${item.line}:${item.column}`;
 
@@ -74,7 +68,7 @@ function formatReference(item: ReferenceItem, index: number): string {
     ? trimmedLine.slice(0, maxLineLen - 3) + "..."
     : trimmedLine;
 
-  return `${marker} ${truncatedLocation} │ ${displayLine}\n`;
+  return `  ${truncatedLocation} │ ${displayLine}\n`;
 }
 
 // Build entries for the virtual buffer
@@ -100,7 +94,7 @@ function buildPanelEntries(): TextPropertyEntry[] {
     for (let i = 0; i < currentReferences.length; i++) {
       const ref = currentReferences[i];
       entries.push({
-        text: formatReference(ref, i),
+        text: formatReference(ref),
         properties: {
           type: "reference",
           index: i,
@@ -120,19 +114,11 @@ function buildPanelEntries(): TextPropertyEntry[] {
     properties: { type: "separator" },
   });
   entries.push({
-    text: `[↑/↓/n/p] navigate  [RET] jump  [q/Esc] close\n`,
+    text: `[↑/↓] navigate  [RET] jump  [q/Esc] close\n`,
     properties: { type: "help" },
   });
 
   return entries;
-}
-
-// Update the panel content
-function updatePanelContent(): void {
-  if (referencesBufferId !== null) {
-    const entries = buildPanelEntries();
-    editor.setVirtualBufferContent(referencesBufferId, entries);
-  }
 }
 
 // Load line text for references
@@ -191,7 +177,6 @@ async function showReferencesPanel(symbol: string, references: ReferenceItem[]):
   // Set references and symbol
   currentSymbol = symbol;
   currentReferences = limitedRefs;
-  selectedIndex = 0;
 
   // Load line texts for preview
   await loadLineTexts(currentReferences);
@@ -209,7 +194,7 @@ async function showReferencesPanel(symbol: string, references: ReferenceItem[]):
       ratio: 0.7, // Original pane takes 70%, references takes 30%
       panel_id: "references-panel",
       show_line_numbers: false,
-      show_cursors: false, // No cursor in references panel
+      show_cursors: true, // Enable cursor for navigation
     });
 
     panelOpen = true;
@@ -220,6 +205,11 @@ async function showReferencesPanel(symbol: string, references: ReferenceItem[]):
       `Found ${references.length} reference(s)${limitMsg} - ↑/↓ navigate, RET jump, q close`
     );
     editor.debug(`References panel opened with buffer ID ${referencesBufferId}`);
+
+    // Move cursor to first reference (line 1, after header)
+    if (currentReferences.length > 0) {
+      editor.setCursorPosition(referencesBufferId, 1, 0);
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     editor.setStatus("Failed to open references panel");
@@ -246,6 +236,35 @@ globalThis.on_lsp_references = function (data: { symbol: string; locations: Refe
 // Register the hook handler
 editor.on("lsp_references", "on_lsp_references");
 
+// Handle cursor movement to show current reference info
+globalThis.on_references_cursor_moved = function (data: {
+  buffer_id: number;
+  cursor_id: number;
+  old_position: number;
+  new_position: number;
+}): void {
+  // Only handle cursor movement in our references buffer
+  if (referencesBufferId === null || data.buffer_id !== referencesBufferId) {
+    return;
+  }
+
+  // Get cursor line to determine which reference is selected
+  const cursorInfo = editor.getCursorInfo(referencesBufferId);
+  if (!cursorInfo) return;
+
+  const cursorLine = cursorInfo.line;
+
+  // Line 0 is header, lines 1 to N are references
+  const refIndex = cursorLine - 1;
+
+  if (refIndex >= 0 && refIndex < currentReferences.length) {
+    editor.setStatus(`Reference ${refIndex + 1}/${currentReferences.length}`);
+  }
+};
+
+// Register cursor movement handler
+editor.on("cursor_moved", "on_references_cursor_moved");
+
 // Hide references panel
 globalThis.hide_references_panel = function (): void {
   if (!panelOpen) {
@@ -259,14 +278,13 @@ globalThis.hide_references_panel = function (): void {
   panelOpen = false;
   referencesBufferId = null;
   sourceSplitId = null;
-  selectedIndex = 0;
   currentReferences = [];
   currentSymbol = "";
   lineCache.clear();
   editor.setStatus("References panel closed");
 };
 
-// Navigation: go to selected reference
+// Navigation: go to selected reference (based on cursor position)
 globalThis.references_goto = function (): void {
   if (currentReferences.length === 0) {
     editor.setStatus("No references to jump to");
@@ -278,8 +296,12 @@ globalThis.references_goto = function (): void {
     return;
   }
 
-  const bufferId = editor.getActiveBufferId();
-  const props = editor.getTextPropertiesAtCursor(bufferId);
+  if (referencesBufferId === null) {
+    return;
+  }
+
+  // Get text properties at cursor position
+  const props = editor.getTextPropertiesAtCursor(referencesBufferId);
 
   if (props.length > 0) {
     const location = props[0].location as
@@ -296,36 +318,11 @@ globalThis.references_goto = function (): void {
       const displayPath = getRelativePath(location.file);
       editor.setStatus(`Jumped to ${displayPath}:${location.line}`);
     } else {
-      editor.setStatus("No location info for this reference");
+      editor.setStatus("Move cursor to a reference line");
     }
   } else {
-    // Fallback: use selectedIndex
-    const ref = currentReferences[selectedIndex];
-    if (ref) {
-      editor.openFileInSplit(sourceSplitId, ref.file, ref.line, ref.column);
-      const displayPath = getRelativePath(ref.file);
-      editor.setStatus(`Jumped to ${displayPath}:${ref.line}`);
-    }
+    editor.setStatus("Move cursor to a reference line");
   }
-};
-
-// Navigation: next reference
-globalThis.references_next = function (): void {
-  if (currentReferences.length === 0) return;
-
-  selectedIndex = (selectedIndex + 1) % currentReferences.length;
-  updatePanelContent();
-  editor.setStatus(`Reference ${selectedIndex + 1}/${currentReferences.length}`);
-};
-
-// Navigation: previous reference
-globalThis.references_prev = function (): void {
-  if (currentReferences.length === 0) return;
-
-  selectedIndex =
-    selectedIndex > 0 ? selectedIndex - 1 : currentReferences.length - 1;
-  updatePanelContent();
-  editor.setStatus(`Reference ${selectedIndex + 1}/${currentReferences.length}`);
 };
 
 // Close the references panel
