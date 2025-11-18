@@ -4179,5 +4179,208 @@ mod tests {
         // Shutdown
         handle.shutdown();
     }
+
+    #[test]
+    fn test_plugin_thread_spawn_process_simple() {
+        use crate::plugin_thread::PluginThreadHandle;
+        use tempfile::TempDir;
+
+        // Initialize tracing subscriber for detailed logging
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_test_writer()
+            .try_init();
+
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        // Spawn the plugin thread
+        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+
+        // Create a simple plugin that spawns a process
+        let temp_dir = TempDir::new().unwrap();
+        let plugin_path = temp_dir.path().join("spawn_test.ts");
+
+        std::fs::write(
+            &plugin_path,
+            r#"
+            globalThis.test_spawn = async function(): Promise<void> {
+                editor.setStatus("About to spawn echo...");
+
+                const result = await editor.spawnProcess("echo", ["hello", "world"]);
+
+                editor.setStatus("Spawn completed: exit=" + result.exit_code);
+                editor.debug("stdout: " + result.stdout);
+            };
+
+            editor.setStatus("Spawn test plugin loaded");
+            "#,
+        )
+        .unwrap();
+
+        // Load the plugin
+        let result = handle.load_plugin(&plugin_path);
+        assert!(result.is_ok(), "Failed to load spawn test plugin: {:?}", result);
+
+        eprintln!("Spawn test plugin loaded, now executing test_spawn action...");
+
+        // Execute the test_spawn action (this could hang!)
+        let result = handle.execute_action("test_spawn");
+
+        match result {
+            Ok(()) => {
+                eprintln!("test_spawn executed successfully");
+                let cmds = handle.process_commands();
+                for cmd in &cmds {
+                    eprintln!("  Command: {:?}", cmd);
+                }
+            }
+            Err(e) => {
+                eprintln!("test_spawn failed with error: {}", e);
+            }
+        }
+
+        // Shutdown
+        handle.shutdown();
+    }
+
+    #[test]
+    fn test_plugin_thread_spawn_git_log() {
+        use crate::plugin_thread::PluginThreadHandle;
+        use tempfile::TempDir;
+
+        // Initialize tracing subscriber for detailed logging
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_test_writer()
+            .try_init();
+
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        // Spawn the plugin thread
+        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+
+        // Create a plugin that runs git log like the git_log plugin does
+        let temp_dir = TempDir::new().unwrap();
+        let plugin_path = temp_dir.path().join("git_test.ts");
+
+        std::fs::write(
+            &plugin_path,
+            r#"
+            globalThis.test_git = async function(): Promise<void> {
+                editor.setStatus("About to run git log...");
+
+                const format = "%H%x00%h%x00%an%x00%ae%x00%ai%x00%ar%x00%d%x00%s%x00%b%x1e";
+                const args = ["log", `--format=${format}`, "-n10"];
+
+                const result = await editor.spawnProcess("git", args);
+
+                editor.setStatus("Git log completed: exit=" + result.exit_code + ", lines=" + result.stdout.split("\n").length);
+            };
+
+            editor.setStatus("Git test plugin loaded");
+            "#,
+        )
+        .unwrap();
+
+        // Load the plugin
+        let result = handle.load_plugin(&plugin_path);
+        assert!(result.is_ok(), "Failed to load git test plugin: {:?}", result);
+
+        eprintln!("Git test plugin loaded, now executing test_git action...");
+
+        // Execute the test_git action
+        let result = handle.execute_action("test_git");
+
+        match result {
+            Ok(()) => {
+                eprintln!("test_git executed successfully");
+                let cmds = handle.process_commands();
+                for cmd in &cmds {
+                    eprintln!("  Command: {:?}", cmd);
+                }
+            }
+            Err(e) => {
+                eprintln!("test_git failed with error: {}", e);
+            }
+        }
+
+        // Shutdown
+        handle.shutdown();
+    }
+
+    #[test]
+    fn test_plugin_thread_create_virtual_buffer_hangs() {
+        use crate::plugin_thread::PluginThreadHandle;
+        use tempfile::TempDir;
+
+        // Initialize tracing subscriber for detailed logging
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_test_writer()
+            .try_init();
+
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        // Spawn the plugin thread
+        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+
+        // Create a plugin that mimics git_log with debug logs
+        let temp_dir = TempDir::new().unwrap();
+        let plugin_path = temp_dir.path().join("vbuf_test.ts");
+
+        std::fs::write(
+            &plugin_path,
+            r#"
+            globalThis.test_vbuf = async function(): Promise<void> {
+                editor.debug("Step 1: About to spawn process...");
+
+                const result = await editor.spawnProcess("echo", ["test"]);
+                editor.debug("Step 2: Spawn completed with exit=" + result.exit_code);
+
+                editor.debug("Step 3: About to create virtual buffer...");
+
+                // This should hang because no editor is processing responses
+                const bufferId = await editor.createVirtualBufferInSplit({
+                    name: "*Test*",
+                    mode: "normal",
+                    read_only: true,
+                    entries: [{ text: "test content\n", properties: { type: "test" } }],
+                    ratio: 0.5,
+                });
+
+                editor.debug("Step 4: Virtual buffer created with id=" + bufferId);
+            };
+
+            editor.setStatus("VBuf test plugin loaded");
+            "#,
+        )
+        .unwrap();
+
+        // Load the plugin
+        let result = handle.load_plugin(&plugin_path);
+        assert!(result.is_ok(), "Failed to load vbuf test plugin: {:?}", result);
+
+        eprintln!("VBuf test plugin loaded, now executing test_vbuf action...");
+        eprintln!("Expected to hang after Step 3 (waiting for editor response)");
+
+        // Execute the test_vbuf action (this will hang!)
+        let result = handle.execute_action("test_vbuf");
+
+        match result {
+            Ok(()) => {
+                eprintln!("test_vbuf executed successfully (unexpected!)");
+                let cmds = handle.process_commands();
+                for cmd in &cmds {
+                    eprintln!("  Command: {:?}", cmd);
+                }
+            }
+            Err(e) => {
+                eprintln!("test_vbuf failed with error: {}", e);
+            }
+        }
+
+        // Shutdown
+        handle.shutdown();
+    }
 }
 
