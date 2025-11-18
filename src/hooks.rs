@@ -106,6 +106,8 @@ pub enum HookArgs {
 
     /// LSP find references response received
     LspReferences {
+        /// The symbol name being queried
+        symbol: String,
         /// The locations where the symbol is referenced
         locations: Vec<LspLocation>,
     },

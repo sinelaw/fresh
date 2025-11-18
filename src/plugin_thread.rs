@@ -776,7 +776,7 @@ fn hook_args_to_json(args: &HookArgs) -> Result<String> {
                 "input": input,
             })
         }
-        HookArgs::LspReferences { locations } => {
+        HookArgs::LspReferences { symbol, locations } => {
             let locs: Vec<serde_json::Value> = locations
                 .iter()
                 .map(|loc| {
@@ -787,7 +787,7 @@ fn hook_args_to_json(args: &HookArgs) -> Result<String> {
                     })
                 })
                 .collect();
-            serde_json::json!({ "locations": locs })
+            serde_json::json!({ "symbol": symbol, "locations": locs })
         }
     };
 
