@@ -1432,6 +1432,7 @@ pub fn action_to_events(
         | Action::LspHover
         | Action::LspSignatureHelp
         | Action::LspCodeActions
+        | Action::LspRestart
         | Action::Search
         | Action::FindNext
         | Action::FindPrevious

@@ -314,6 +314,7 @@ pub enum Action {
     LspHover,
     LspSignatureHelp,
     LspCodeActions,
+    LspRestart,
 
     // Search and replace
     Search,
@@ -544,6 +545,7 @@ impl Action {
             "lsp_hover" => Some(Action::LspHover),
             "lsp_signature_help" => Some(Action::LspSignatureHelp),
             "lsp_code_actions" => Some(Action::LspCodeActions),
+            "lsp_restart" => Some(Action::LspRestart),
 
             "search" => Some(Action::Search),
             "find_next" => Some(Action::FindNext),
@@ -1642,6 +1644,7 @@ impl KeybindingResolver {
             Action::LspHover => "LSP: Show hover documentation".to_string(),
             Action::LspSignatureHelp => "LSP: Show signature help".to_string(),
             Action::LspCodeActions => "LSP: Show code actions".to_string(),
+            Action::LspRestart => "LSP: Restart server for current language".to_string(),
             Action::Search => "Search for text in buffer".to_string(),
             Action::FindNext => "Find next search match".to_string(),
             Action::FindPrevious => "Find previous search match".to_string(),
