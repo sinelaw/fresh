@@ -2935,7 +2935,11 @@ impl Editor {
             }
         }
 
-        // Process TypeScript plugin commands and update snapshot only if commands were processed
+        // Update plugin state snapshot BEFORE processing commands
+        // This ensures plugins have access to current editor state (cursor positions, etc.)
+        self.update_plugin_state_snapshot();
+
+        // Process TypeScript plugin commands
         let mut processed_any_commands = false;
         if let Some(ref mut manager) = self.ts_plugin_manager {
             let commands = manager.process_commands();
@@ -2973,11 +2977,6 @@ impl Editor {
                 }
             }
         });
-
-        // Only update snapshot if commands were processed (which may have modified buffers)
-        if processed_any_commands {
-            self.update_plugin_state_snapshot();
-        }
 
         // Trigger render if any async messages or plugin commands were processed
         needs_render || processed_any_commands
