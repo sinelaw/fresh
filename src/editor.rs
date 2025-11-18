@@ -335,6 +335,9 @@ pub struct Editor {
     /// Pending LSP find references request ID (if any)
     pending_references_request: Option<u64>,
 
+    /// Symbol name for pending references request
+    pending_references_symbol: String,
+
     /// Hover symbol range (byte offsets) - for highlighting the symbol under hover
     /// Format: (start_byte_offset, end_byte_offset)
     hover_symbol_range: Option<(usize, usize)>,
@@ -700,6 +703,7 @@ impl Editor {
             pending_goto_definition_request: None,
             pending_hover_request: None,
             pending_references_request: None,
+            pending_references_symbol: String::new(),
             hover_symbol_range: None,
             search_state: None,
             interactive_replace_state: None,
@@ -4379,6 +4383,60 @@ impl Editor {
         let state = self.active_state();
         let cursor_pos = state.cursors.primary().position;
 
+        // Extract the word under cursor for display
+        let symbol = {
+            let text = state.buffer.to_string();
+            let bytes = text.as_bytes();
+            let buf_len = bytes.len();
+
+            if cursor_pos <= buf_len {
+                // Find word boundaries
+                let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+
+                // Find start of word
+                let mut start = cursor_pos;
+                while start > 0 {
+                    // Move to previous byte
+                    start -= 1;
+                    // Skip continuation bytes (UTF-8)
+                    while start > 0 && (bytes[start] & 0xC0) == 0x80 {
+                        start -= 1;
+                    }
+                    // Get the character at this position
+                    if let Some(ch) = text[start..].chars().next() {
+                        if !is_word_char(ch) {
+                            start += ch.len_utf8();
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                // Find end of word
+                let mut end = cursor_pos;
+                while end < buf_len {
+                    if let Some(ch) = text[end..].chars().next() {
+                        if is_word_char(ch) {
+                            end += ch.len_utf8();
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                if start < end {
+                    text[start..end].to_string()
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        };
+
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
 
@@ -4399,6 +4457,7 @@ impl Editor {
                         let request_id = self.next_lsp_request_id;
                         self.next_lsp_request_id += 1;
                         self.pending_references_request = Some(request_id);
+                        self.pending_references_symbol = symbol;
                         self.lsp_status = "LSP: finding references...".to_string();
 
                         let _ = handle.references(
@@ -4463,17 +4522,23 @@ impl Editor {
             .collect();
 
         let count = lsp_locations.len();
-        self.set_status_message(format!("Found {} reference(s)", count));
+        let symbol = std::mem::take(&mut self.pending_references_symbol);
+        self.set_status_message(format!("Found {} reference(s) for '{}'", count, symbol));
 
         // Fire the lsp_references hook so plugins can display the results
         let args = crate::hooks::HookArgs::LspReferences {
+            symbol: symbol.clone(),
             locations: lsp_locations,
         };
         if let Some(ref ts_manager) = self.ts_plugin_manager {
             ts_manager.run_hook("lsp_references", args);
         }
 
-        tracing::info!("Fired lsp_references hook with {} locations", count);
+        tracing::info!(
+            "Fired lsp_references hook with {} locations for symbol '{}'",
+            count,
+            symbol
+        );
 
         Ok(())
     }

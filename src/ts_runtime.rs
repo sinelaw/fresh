@@ -2174,7 +2174,7 @@ impl TypeScriptPluginManager {
                     "input": input,
                 })
             }
-            HookArgs::LspReferences { locations } => {
+            HookArgs::LspReferences { symbol, locations } => {
                 let locs: Vec<serde_json::Value> = locations
                     .iter()
                     .map(|loc| {
@@ -2185,7 +2185,7 @@ impl TypeScriptPluginManager {
                         })
                     })
                     .collect();
-                serde_json::json!({ "locations": locs })
+                serde_json::json!({ "symbol": symbol, "locations": locs })
             }
         };
 
