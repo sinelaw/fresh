@@ -66,7 +66,89 @@ Features are categorized as:
   - Implement `textDocument/inlayHint`
   - Render inline type/parameter hints (e.g., `let x/*: i32*/ = 5;`)
   - High visibility feature expected by modern editor users
-  - **Effort:** 6-8 hours
+  - **Effort:** 12-16 hours (includes virtual text infrastructure)
+
+  **Missing Infrastructure: Inline Virtual Text Rendering**
+
+  The current Overlay system (`src/overlay.rs`) handles visual decorations (underlines, backgrounds, foreground colors) but cannot inject virtual text. The rendering loop in `src/ui/split_rendering.rs` assumes 1:1 character-to-span mapping - each buffer character maps to exactly one Ratatui Span.
+
+  **Recommended Architecture: Extend Overlay System**
+
+  Add a `VirtualText` variant to `OverlayFace`:
+
+  ```rust
+  pub enum OverlayFace {
+      Underline { color: Color, style: UnderlineStyle },
+      Background { color: Color },
+      Foreground { color: Color },
+      Style { style: Style },
+      // NEW: Virtual text injection
+      VirtualText {
+          text: String,
+          style: Style,
+          position: VirtualTextPosition,  // Before/After char
+      },
+  }
+
+  pub enum VirtualTextPosition {
+      BeforeChar,   // Inline, before the character at this position
+      AfterChar,    // Inline, after the character (typical for type hints)
+  }
+  ```
+
+  **Why This Works:**
+  - Reuses IntervalTree (`src/marker_tree.rs`) for O(log n) position tracking
+  - Markers auto-adjust on edits via `adjust_for_edit()`
+  - Viewport-based querying via `query_viewport()` scales to hundreds of hints
+  - No buffer modification - virtual text is purely synthetic
+
+  **Implementation Phases:**
+
+  *Phase 1: Virtual Text Infrastructure* (~4-6 hours)
+  - [ ] Add `VirtualText` variant to `OverlayFace` enum
+  - [ ] Create `InlayHintManager` in new `src/inlay_hint.rs`
+  - [ ] Add `inlay_hints: InlayHintManager` to `EditorState`
+  - [ ] Extend rendering loop (`split_rendering.rs` ~line 810):
+    ```rust
+    // After adding the regular character Span:
+    if let Some(virt) = check_virtual_text_after(byte_pos) {
+        line_spans.push(Span::styled(virt.text, virt.style));
+    }
+    ```
+
+  *Phase 2: LSP Integration* (~3-4 hours)
+  - [ ] Add `textDocument/inlayHint` request to `LspHandle`
+  - [ ] Fetch hints on viewport change (debounced) and after `didChange`
+  - [ ] Convert LSP `InlayHint` to internal representation
+  - [ ] Cache hints with `resultId` for incremental updates
+
+  *Phase 3: Cursor & Interaction* (~3-4 hours)
+  - [ ] Ensure cursor positioning skips virtual text (cursor column != display column)
+  - [ ] Handle selection across virtual text
+  - [ ] Support toggle keybinding (Ctrl+Alt to temporarily hide)
+  - [ ] Configuration: `editor.inlayHints.enabled`
+
+  *Phase 4: Polish* (~2 hours)
+  - [ ] Hover tooltips for hints
+  - [ ] Double-click to insert (if server provides `textEdit`)
+  - [ ] Padding options (`padding_left`, `padding_right`)
+
+  **Key Files:**
+  - `src/marker_tree.rs` (880 lines) - IntervalTree with lazy deltas
+  - `src/overlay.rs` (588 lines) - Extend with VirtualText face
+  - `src/ui/split_rendering.rs` (1223 lines) - Modify rendering loop ~line 810
+  - `src/lsp_diagnostics.rs` - Follow pattern for LSP → Overlay conversion
+
+  **Alternative: Plugin-Based LSP Orchestration**
+
+  If virtual text rendering is implemented as Core infrastructure with a plugin API:
+  ```typescript
+  editor.setInlayHints(bufferId, [
+    { position: 42, text: ": i32", kind: "type" },
+    { position: 100, text: "count:", kind: "parameter" }
+  ]);
+  ```
+  Then the LSP protocol handling (request/response, caching, viewport tracking) could be done in a TypeScript plugin, similar to how VSCode separates Monaco rendering from extension-based providers.
 
 #### LSP Architecture Improvements (P2) - **🦀 Core**
 
