@@ -348,6 +348,8 @@ impl ScriptControlMode {
                 }
             };
 
+            tracing::trace!("script_control: received command {:?}", std::mem::discriminant(&command));
+
             // Record interaction
             self.record_interaction(command.clone());
 
@@ -779,6 +781,7 @@ impl ScriptControlMode {
         let poll_interval = std::time::Duration::from_millis(poll_interval_ms);
 
         loop {
+            tracing::trace!("wait_for: polling loop iteration");
             // Process any pending async messages
             let _ = self.editor.process_async_messages();
             self.render_to_terminal()?;

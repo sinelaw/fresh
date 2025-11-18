@@ -3166,14 +3166,19 @@ impl Editor {
         let mut processed_any_commands = false;
         if let Some(ref mut manager) = self.ts_plugin_manager {
             let commands = manager.process_commands();
+            tracing::trace!("process_async_messages: got {} commands from plugin manager", commands.len());
             if !commands.is_empty() {
+                tracing::trace!("process_plugin_commands: processing {} commands", commands.len());
                 processed_any_commands = true;
                 for command in commands {
+                    tracing::trace!("process_plugin_commands: handling command {:?}", std::mem::discriminant(&command));
                     if let Err(e) = self.handle_plugin_command(command) {
                         tracing::error!("Error handling TypeScript plugin command: {}", e);
                     }
                 }
             }
+        } else {
+            tracing::trace!("process_async_messages: no plugin manager");
         }
 
         // Process pending plugin action completions
@@ -4004,6 +4009,7 @@ impl Editor {
 
                 // Send response with buffer ID
                 if let Some(req_id) = request_id {
+                    tracing::trace!("CreateVirtualBufferInSplit: sending response for request_id={}, buffer_id={:?}", req_id, buffer_id);
                     self.send_plugin_response(crate::plugin_api::PluginResponse::VirtualBufferCreated {
                         request_id: req_id,
                         buffer_id,

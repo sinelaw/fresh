@@ -1077,6 +1077,7 @@ async fn op_fresh_create_virtual_buffer_in_split(
             .collect();
 
         // Send command with request_id
+        tracing::trace!("op_create_virtual_buffer_in_split: sending command with request_id={}", request_id);
         runtime_state
             .command_sender
             .send(PluginCommand::CreateVirtualBufferInSplit {
@@ -1092,6 +1093,7 @@ async fn op_fresh_create_virtual_buffer_in_split(
                 request_id: Some(request_id),
             })
             .map_err(|_| deno_core::error::generic_error("Failed to send command"))?;
+        tracing::trace!("op_create_virtual_buffer_in_split: command sent, waiting for response");
 
         rx
     };
