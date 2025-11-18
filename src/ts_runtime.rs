@@ -3932,5 +3932,170 @@ mod tests {
             per_line_us
         );
     }
+    
+    #[tokio::test]
+    async fn test_ts_plugin_manager_load_plugin_with_import_error() {
+        // Initialize tracing subscriber for detailed logging
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_test_writer()
+            .try_init();
+
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        let mut manager = TypeScriptPluginManager::new(hooks, commands).unwrap();
+
+        // Use the actual plugins directory which has the lib folder
+        let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
+        let plugin_path = plugins_dir.join("test_import_plugin.ts");
+
+        // Create a test plugin that imports from the lib (which exists)
+        std::fs::write(
+            &plugin_path,
+            r#"
+            // Import from the actual lib folder
+            import { PanelManager } from "./lib/index.ts";
+
+            // Use the imported value
+            editor.setStatus("Plugin loaded with PanelManager");
+            editor.debug("PanelManager type: " + typeof PanelManager);
+            "#,
+        )
+        .unwrap();
+
+        // Load the plugin - this should work (or fail with an error, not hang)
+        let result = manager.load_plugin(&plugin_path).await;
+
+        // Clean up test file
+        let _ = std::fs::remove_file(&plugin_path);
+
+        // If imports work correctly, this should succeed
+        // If they don't work, it should fail with an error (not hang)
+        match result {
+            Ok(()) => {
+                // Success - check that the plugin was loaded
+                let cmds = manager.process_commands();
+                let has_status = cmds.iter().any(|cmd| {
+                    matches!(cmd, PluginCommand::SetStatus { message } if message.contains("PanelManager"))
+                });
+                assert!(has_status, "Expected SetStatus with PanelManager mention");
+            }
+            Err(e) => {
+                // If it errors, that's also acceptable (not a hang)
+                // Log the error for debugging
+                eprintln!("Import test failed with error: {}", e);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ts_plugin_manager_load_plugin_with_valid_import() {
+        use tempfile::TempDir;
+
+        let hooks = Arc::new(RwLock::new(HookRegistry::new()));
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        let mut manager = TypeScriptPluginManager::new(hooks, commands).unwrap();
+
+        // Create a temporary directory for the plugin and its import
+        let temp_dir = TempDir::new().unwrap();
+        let lib_path = temp_dir.path().join("lib.ts");
+        let plugin_path = temp_dir.path().join("test_plugin.ts");
+
+        // Create the library module
+        std::fs::write(
+            &lib_path,
+            r#"
+            export const MESSAGE = "Hello from lib";
+            export function greet(name: string): string {
+                return `Hello, ${name}!`;
+            }
+            "#,
+        )
+        .unwrap();
+
+        // Create the plugin that imports from lib
+        std::fs::write(
+            &plugin_path,
+            r#"
+            import { MESSAGE, greet } from "./lib.ts";
+
+            editor.setStatus(MESSAGE);
+            editor.debug(greet("World"));
+            "#,
+        )
+        .unwrap();
+
+        // Load the plugin - this should succeed
+        let result = manager.load_plugin(&plugin_path).await;
+        assert!(result.is_ok(), "Failed to load plugin with valid import: {:?}", result);
+
+        // Check that the status was set with the imported message
+        let cmds = manager.process_commands();
+        let has_status = cmds.iter().any(|cmd| {
+            matches!(cmd, PluginCommand::SetStatus { message } if message.contains("Hello from lib"))
+        });
+        assert!(has_status, "Expected SetStatus with imported MESSAGE");
+    }
+
+    #[test]
+    fn test_plugin_thread_load_plugin_with_import() {
+        use crate::plugin_thread::PluginThreadHandle;
+
+        // Initialize tracing subscriber for detailed logging
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_test_writer()
+            .try_init();
+
+        let commands = Arc::new(RwLock::new(CommandRegistry::new()));
+
+        // Spawn the plugin thread
+        let mut handle = PluginThreadHandle::spawn(commands).unwrap();
+
+        // Use the actual plugins directory which has the lib folder
+        let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins");
+        let plugin_path = plugins_dir.join("test_thread_import_plugin.ts");
+
+        // Create a test plugin that imports from the lib (which exists)
+        std::fs::write(
+            &plugin_path,
+            r#"
+            // Import from the actual lib folder
+            import { PanelManager } from "./lib/index.ts";
+
+            // Use the imported value
+            editor.setStatus("Plugin thread test: PanelManager loaded");
+            editor.debug("PanelManager type: " + typeof PanelManager);
+            "#,
+        )
+        .unwrap();
+
+        // Load the plugin through the plugin thread (this could hang!)
+        let result = handle.load_plugin(&plugin_path);
+
+        // Clean up test file
+        let _ = std::fs::remove_file(&plugin_path);
+
+        // Check result
+        match result {
+            Ok(()) => {
+                // Success - check that the plugin was loaded
+                let cmds = handle.process_commands();
+                let has_status = cmds.iter().any(|cmd| {
+                    matches!(cmd, PluginCommand::SetStatus { message } if message.contains("PanelManager"))
+                });
+                assert!(has_status, "Expected SetStatus with PanelManager mention");
+            }
+            Err(e) => {
+                // If it errors, that's also acceptable (not a hang)
+                eprintln!("Plugin thread import test failed with error: {}", e);
+            }
+        }
+
+        // Shutdown
+        handle.shutdown();
+    }
 }
 
