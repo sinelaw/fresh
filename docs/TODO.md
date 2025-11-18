@@ -337,6 +337,7 @@ Fully functional diagnostics panel with virtual buffer split view:
 - [ ] Nested splits (3+ levels deep) maintain correct hierarchy
 - [ ] Rapid split/close operations don't leak memory
 - [ ] Resizing terminal window redistributes space proportionally
+- [ ] **Automatic split closure for plugin panels** - When a plugin creates a split (e.g., Find References, Diagnostics), the split should automatically close when the buffer is closed, rather than requiring each plugin to track and close the split manually. API suggestion: `createVirtualBufferInSplit` option `close_split_on_buffer_close: true`
 
 ### Test Infrastructure
 - [ ] TypeScript plugin testing infrastructure (unit tests, mocking, test helpers) - **🔧 Infrastructure**

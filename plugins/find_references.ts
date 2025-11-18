@@ -12,6 +12,7 @@
 let panelOpen = false;
 let referencesBufferId: number | null = null;
 let sourceSplitId: number | null = null;
+let referencesSplitId: number | null = null; // Track the split we created
 let currentReferences: ReferenceItem[] = [];
 let currentSymbol: string = "";
 let lineCache: Map<string, string[]> = new Map(); // Cache file contents
@@ -68,7 +69,7 @@ function formatReference(item: ReferenceItem): string {
     ? trimmedLine.slice(0, maxLineLen - 3) + "..."
     : trimmedLine;
 
-  return `  ${truncatedLocation} │ ${displayLine}\n`;
+  return `  ${truncatedLocation}  ${displayLine}\n`;
 }
 
 // Build entries for the virtual buffer
@@ -198,18 +199,16 @@ async function showReferencesPanel(symbol: string, references: ReferenceItem[]):
     });
 
     panelOpen = true;
+    // Track the references split (it becomes active after creation)
+    referencesSplitId = editor.getActiveSplitId();
+
     const limitMsg = references.length > MAX_RESULTS
       ? ` (showing first ${MAX_RESULTS})`
       : "";
     editor.setStatus(
       `Found ${references.length} reference(s)${limitMsg} - ↑/↓ navigate, RET jump, q close`
     );
-    editor.debug(`References panel opened with buffer ID ${referencesBufferId}`);
-
-    // Move cursor to first reference (line 1, after header)
-    if (currentReferences.length > 0) {
-      editor.setCursorPosition(referencesBufferId, 1, 0);
-    }
+    editor.debug(`References panel opened with buffer ID ${referencesBufferId}, split ID ${referencesSplitId}`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     editor.setStatus("Failed to open references panel");
@@ -249,10 +248,8 @@ globalThis.on_references_cursor_moved = function (data: {
   }
 
   // Get cursor line to determine which reference is selected
-  const cursorInfo = editor.getCursorInfo(referencesBufferId);
-  if (!cursorInfo) return;
-
-  const cursorLine = cursorInfo.line;
+  // getCursorLine() returns the line for the active buffer
+  const cursorLine = editor.getCursorLine();
 
   // Line 0 is header, lines 1 to N are references
   const refIndex = cursorLine - 1;
@@ -275,9 +272,15 @@ globalThis.hide_references_panel = function (): void {
     editor.closeBuffer(referencesBufferId);
   }
 
+  // Close the split we created (if it exists and is different from source)
+  if (referencesSplitId !== null && referencesSplitId !== sourceSplitId) {
+    editor.closeSplit(referencesSplitId);
+  }
+
   panelOpen = false;
   referencesBufferId = null;
   sourceSplitId = null;
+  referencesSplitId = null;
   currentReferences = [];
   currentSymbol = "";
   lineCache.clear();

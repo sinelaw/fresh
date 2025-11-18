@@ -1274,13 +1274,26 @@ fn op_fresh_get_text_properties_at_cursor(state: &mut OpState, buffer_id: u32) -
     if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
         let runtime_state = runtime_state.borrow();
         if let Ok(snapshot) = runtime_state.state_snapshot.read() {
-            // Get cursor position
-            if let Some(ref cursor) = snapshot.primary_cursor {
-                // For now, return empty - actual implementation requires buffer access
-                // which would need to be added to the snapshot
-                let _ = (buffer_id, cursor.position);
-                return vec![];
-            }
+            let buffer_id_key = BufferId(buffer_id as usize);
+
+            // Get cursor position for this buffer
+            let cursor_pos = match snapshot.buffer_cursor_positions.get(&buffer_id_key) {
+                Some(pos) => *pos,
+                None => return vec![],
+            };
+
+            // Get text properties for this buffer
+            let properties = match snapshot.buffer_text_properties.get(&buffer_id_key) {
+                Some(props) => props,
+                None => return vec![],
+            };
+
+            // Find all properties that contain the cursor position
+            return properties
+                .iter()
+                .filter(|prop| prop.contains(cursor_pos))
+                .map(|prop| prop.properties.clone())
+                .collect();
         };
     }
     vec![]

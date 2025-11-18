@@ -3058,6 +3058,8 @@ impl Editor {
 
             // Clear and update buffer info
             snapshot.buffers.clear();
+            snapshot.buffer_cursor_positions.clear();
+            snapshot.buffer_text_properties.clear();
 
             for (buffer_id, state) in &self.buffers {
                 let buffer_info = BufferInfo {
@@ -3067,6 +3069,18 @@ impl Editor {
                     length: state.buffer.len(),
                 };
                 snapshot.buffers.insert(*buffer_id, buffer_info);
+
+                // Store cursor position for this buffer
+                let cursor_pos = state.cursors.primary().position;
+                snapshot.buffer_cursor_positions.insert(*buffer_id, cursor_pos);
+
+                // Store text properties if this buffer has any
+                if !state.text_properties.is_empty() {
+                    snapshot.buffer_text_properties.insert(
+                        *buffer_id,
+                        state.text_properties.all().to_vec(),
+                    );
+                }
             }
 
             // Update cursor information for active buffer
