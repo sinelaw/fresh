@@ -9248,8 +9248,9 @@ impl Editor {
             return;
         }
 
-        // Get theme color and search settings before borrowing state
+        // Get theme colors and search settings before borrowing state
         let search_bg = self.theme.search_match_bg;
+        let search_fg = self.theme.search_match_fg;
         let case_sensitive = self.search_case_sensitive;
 
         let state = self.active_state_mut();
@@ -9314,10 +9315,13 @@ impl Editor {
 
             // Add overlay for this match
             let overlay_id = format!("search_highlight_{}", match_count);
+            let search_style = ratatui::style::Style::default()
+                .fg(search_fg)
+                .bg(search_bg);
             let overlay = crate::overlay::Overlay::with_id(
                 &mut state.marker_list,
                 absolute_pos..(absolute_pos + query.len()),
-                crate::overlay::OverlayFace::Background { color: search_bg },
+                crate::overlay::OverlayFace::Style { style: search_style },
                 overlay_id,
             )
             .with_priority_value(10); // Priority - above syntax highlighting
