@@ -8683,12 +8683,14 @@ impl Editor {
             self.update_search_highlights(&query);
         }
 
-        // Build main vertical layout: [menu_bar, main_content, status_bar]
+        // Build main vertical layout: [menu_bar, main_content, status_bar, prompt_line]
         // Suggestions popup now overlays instead of resizing the layout
+        // Prompt line is always reserved to prevent layout shifting
         let constraints = vec![
             Constraint::Length(1), // Menu bar
             Constraint::Min(0),    // Main content area
             Constraint::Length(1), // Status bar
+            Constraint::Length(1), // Prompt line (always reserved)
         ];
 
         let main_chunks = Layout::default()
@@ -8699,6 +8701,7 @@ impl Editor {
         let menu_bar_area = main_chunks[0];
         let main_content_area = main_chunks[1];
         let status_bar_idx = 2;
+        let prompt_line_idx = 3;
 
         // Split main content area based on file explorer visibility
         let editor_content_area;
@@ -8855,14 +8858,15 @@ impl Editor {
         self.cached_layout.suggestions_area = None;
         if let Some(prompt) = &self.prompt {
             if !prompt.suggestions.is_empty() {
-                // Calculate overlay area: position above status bar
+                // Calculate overlay area: position above prompt line (which is below status bar)
                 let suggestion_count = prompt.suggestions.len().min(10);
                 let height = suggestion_count as u16 + 2; // +2 for borders
 
-                // Position suggestions above the status bar
+                // Position suggestions above the prompt line
+                // The prompt line is at main_chunks[3], so suggestions go above it
                 let suggestions_area = ratatui::layout::Rect {
                     x: 0,
-                    y: main_chunks[status_bar_idx].y.saturating_sub(height),
+                    y: main_chunks[prompt_line_idx].y.saturating_sub(height),
                     width: size.width,
                     height,
                 };
@@ -8880,7 +8884,7 @@ impl Editor {
             }
         }
 
-        // Render status bar (same for both layouts)
+        // Render status bar (always visible now)
         // Clone all immutable values before the mutable borrow
         let display_name = self
             .buffer_metadata
@@ -8892,16 +8896,26 @@ impl Editor {
         let lsp_status = self.lsp_status.clone();
         let theme = self.theme.clone();
 
-        StatusBarRenderer::render(
+        // Always render status bar
+        StatusBarRenderer::render_status_bar(
             frame,
             main_chunks[status_bar_idx],
             self.active_state_mut(),
             &status_message,
-            &prompt,
             &lsp_status,
             &theme,
             &display_name,
         );
+
+        // Render prompt line if active
+        if let Some(prompt) = &prompt {
+            StatusBarRenderer::render_prompt(
+                frame,
+                main_chunks[prompt_line_idx],
+                prompt,
+                &theme,
+            );
+        }
 
         // Render popups from the active buffer state
         // Clone theme to avoid borrow checker issues with active_state_mut()

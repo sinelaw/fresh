@@ -14,36 +14,25 @@ use ratatui::Frame;
 pub struct StatusBarRenderer;
 
 impl StatusBarRenderer {
-    /// Render the status bar or prompt/minibuffer
-    ///
-    /// If a prompt is active, renders the prompt instead of the status bar.
+    /// Render only the status bar (without prompt)
     ///
     /// # Arguments
     /// * `frame` - The ratatui frame to render to
     /// * `area` - The rectangular area to render in
     /// * `state` - The active buffer's editor state
     /// * `status_message` - Optional status message to display
-    /// * `prompt` - Optional active prompt
     /// * `lsp_status` - LSP status indicator
     /// * `theme` - The active theme for colors
     /// * `display_name` - The display name for the file (project-relative path)
-    pub fn render(
+    pub fn render_status_bar(
         frame: &mut Frame,
         area: Rect,
         state: &mut EditorState,
         status_message: &Option<String>,
-        prompt: &Option<Prompt>,
         lsp_status: &str,
         theme: &crate::theme::Theme,
         display_name: &str,
     ) {
-        // If we're in prompt mode, render the prompt instead of the status bar
-        if let Some(prompt) = prompt {
-            Self::render_prompt(frame, area, prompt, theme);
-            return;
-        }
-
-        // Normal status bar rendering
         Self::render_status(
             frame,
             area,
@@ -56,7 +45,7 @@ impl StatusBarRenderer {
     }
 
     /// Render the prompt/minibuffer
-    fn render_prompt(frame: &mut Frame, area: Rect, prompt: &Prompt, theme: &crate::theme::Theme) {
+    pub fn render_prompt(frame: &mut Frame, area: Rect, prompt: &Prompt, theme: &crate::theme::Theme) {
         let base_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
 
         // Create spans for the prompt
