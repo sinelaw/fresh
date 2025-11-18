@@ -643,6 +643,7 @@ globalThis.show_git_log = async function(): Promise<void> {
     panel_id: "git-log-panel",
     show_line_numbers: false,
     show_cursors: true,
+    editing_disabled: true,
   });
 
   if (bufferId !== null) {
@@ -755,6 +756,7 @@ globalThis.git_log_show_commit = async function(): Promise<void> {
     split_id: gitLogState.sourceSplitId,
     show_line_numbers: false,
     show_cursors: true,
+    editing_disabled: true,
   });
 
   if (bufferId !== null) {
