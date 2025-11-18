@@ -59,6 +59,12 @@ pub enum AsyncMessage {
         range: Option<((u32, u32), (u32, u32))>,
     },
 
+    /// LSP find references response
+    LspReferences {
+        request_id: u64,
+        locations: Vec<Location>,
+    },
+
     /// File changed externally (future: file watching)
     FileChanged { path: String },
 

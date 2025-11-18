@@ -395,6 +395,12 @@ pub fn get_all_commands() -> Vec<Command> {
             contexts: vec![KeyContext::Normal],
         },
         Command {
+            name: "Find References".to_string(),
+            description: "Find all references to the symbol under cursor".to_string(),
+            action: Action::LspReferences,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
             name: "Navigate Back".to_string(),
             description: "Go back in navigation history".to_string(),
             action: Action::NavigateBack,

@@ -332,6 +332,9 @@ pub struct Editor {
     /// Pending LSP hover request ID (if any)
     pending_hover_request: Option<u64>,
 
+    /// Pending LSP find references request ID (if any)
+    pending_references_request: Option<u64>,
+
     /// Hover symbol range (byte offsets) - for highlighting the symbol under hover
     /// Format: (start_byte_offset, end_byte_offset)
     hover_symbol_range: Option<(usize, usize)>,
@@ -696,6 +699,7 @@ impl Editor {
             pending_completion_request: None,
             pending_goto_definition_request: None,
             pending_hover_request: None,
+            pending_references_request: None,
             hover_symbol_range: None,
             search_state: None,
             interactive_replace_state: None,
@@ -2729,6 +2733,14 @@ impl Editor {
                 } => {
                     self.handle_hover_response(request_id, contents, is_markdown, range);
                 }
+                AsyncMessage::LspReferences {
+                    request_id,
+                    locations,
+                } => {
+                    if let Err(e) = self.handle_references_response(request_id, locations) {
+                        tracing::error!("Error handling references response: {}", e);
+                    }
+                }
                 AsyncMessage::FileChanged { path } => {
                     tracing::info!("File changed externally: {}", path);
                     // TODO: Handle external file changes
@@ -4361,6 +4373,111 @@ impl Editor {
         }
     }
 
+    /// Request LSP find references at current cursor position
+    fn request_references(&mut self) -> io::Result<()> {
+        // Get the current buffer and cursor position
+        let state = self.active_state();
+        let cursor_pos = state.cursors.primary().position;
+
+        // Convert byte position to LSP position (line, UTF-16 code units)
+        let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
+
+        // Get the current file URI and path
+        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let (uri, file_path) = if let Some(meta) = metadata {
+            (meta.file_uri(), meta.file_path())
+        } else {
+            (None, None)
+        };
+
+        if let (Some(uri), Some(path)) = (uri, file_path) {
+            // Detect language from file extension
+            if let Some(language) = crate::lsp_manager::detect_language(path) {
+                // Get LSP handle
+                if let Some(lsp) = self.lsp.as_mut() {
+                    if let Some(handle) = lsp.get_or_spawn(&language) {
+                        let request_id = self.next_lsp_request_id;
+                        self.next_lsp_request_id += 1;
+                        self.pending_references_request = Some(request_id);
+                        self.lsp_status = "LSP: finding references...".to_string();
+
+                        let _ = handle.references(
+                            request_id,
+                            uri.clone(),
+                            line as u32,
+                            character as u32,
+                        );
+                        tracing::info!(
+                            "Requested find references at {}:{}:{} (byte_pos={})",
+                            uri.as_str(),
+                            line,
+                            character,
+                            cursor_pos
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle find references response from LSP
+    fn handle_references_response(
+        &mut self,
+        request_id: u64,
+        locations: Vec<lsp_types::Location>,
+    ) -> io::Result<()> {
+        // Check if this response is for the current pending request
+        if self.pending_references_request != Some(request_id) {
+            tracing::debug!("Ignoring stale references response: {}", request_id);
+            return Ok(());
+        }
+
+        self.pending_references_request = None;
+        self.lsp_status.clear();
+
+        if locations.is_empty() {
+            self.set_status_message("No references found".to_string());
+            return Ok(());
+        }
+
+        // Convert locations to hook args format
+        let lsp_locations: Vec<crate::hooks::LspLocation> = locations
+            .iter()
+            .map(|loc| {
+                // Convert URI to file path
+                let file = if loc.uri.scheme().map(|s| s.as_str()) == Some("file") {
+                    // Extract path from file:// URI
+                    loc.uri.path().as_str().to_string()
+                } else {
+                    loc.uri.as_str().to_string()
+                };
+
+                crate::hooks::LspLocation {
+                    file,
+                    line: loc.range.start.line + 1, // LSP is 0-based, convert to 1-based
+                    column: loc.range.start.character + 1, // LSP is 0-based
+                }
+            })
+            .collect();
+
+        let count = lsp_locations.len();
+        self.set_status_message(format!("Found {} reference(s)", count));
+
+        // Fire the lsp_references hook so plugins can display the results
+        let args = crate::hooks::HookArgs::LspReferences {
+            locations: lsp_locations,
+        };
+        if let Some(ref ts_manager) = self.ts_plugin_manager {
+            ts_manager.run_hook("lsp_references", args);
+        }
+
+        tracing::info!("Fired lsp_references hook with {} locations", count);
+
+        Ok(())
+    }
+
     /// Handle rename response from LSP
     pub fn handle_rename_response(
         &mut self,
@@ -5049,6 +5166,7 @@ impl Editor {
         match action {
             Action::LspCompletion
             | Action::LspGotoDefinition
+            | Action::LspReferences
             | Action::LspHover
             | Action::None => {
                 // Don't cancel for LSP actions or no-op
@@ -5507,6 +5625,9 @@ impl Editor {
             }
             Action::LspHover => {
                 self.request_hover()?;
+            }
+            Action::LspReferences => {
+                self.request_references()?;
             }
             Action::Search => {
                 // Start search prompt

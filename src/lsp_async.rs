@@ -264,6 +264,14 @@ enum LspCommand {
         character: u32,
     },
 
+    /// Request find references
+    References {
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+    },
+
     /// Cancel a pending request
     CancelRequest {
         /// Editor's request ID to cancel
@@ -868,6 +876,73 @@ impl LspState {
         }
     }
 
+    /// Handle find references request
+    async fn handle_references(
+        &mut self,
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{
+            PartialResultParams, Position, ReferenceContext, ReferenceParams,
+            TextDocumentIdentifier, WorkDoneProgressParams,
+        };
+
+        tracing::debug!(
+            "LSP: find references request at {}:{}:{}",
+            uri.as_str(),
+            line,
+            character
+        );
+
+        let params = ReferenceParams {
+            text_document_position: lsp_types::TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line, character },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: ReferenceContext {
+                include_declaration: true,
+            },
+        };
+
+        // Send request and get response
+        match self
+            .send_request_sequential::<_, Value>("textDocument/references", Some(params), pending)
+            .await
+        {
+            Ok(result) => {
+                // Parse the references response (Vec<Location> or null)
+                let locations = if result.is_null() {
+                    Vec::new()
+                } else {
+                    serde_json::from_value::<Vec<lsp_types::Location>>(result).unwrap_or_default()
+                };
+
+                tracing::debug!("LSP: found {} references", locations.len());
+
+                // Send to main loop
+                let _ = self.async_tx.send(AsyncMessage::LspReferences {
+                    request_id,
+                    locations,
+                });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Find references request failed: {}", e);
+                // Send empty result on error
+                let _ = self.async_tx.send(AsyncMessage::LspReferences {
+                    request_id,
+                    locations: Vec::new(),
+                });
+                Err(e)
+            }
+        }
+    }
+
     /// Handle shutdown command
     async fn handle_shutdown(&mut self) -> Result<(), String> {
         tracing::info!("Shutting down async LSP server");
@@ -1342,6 +1417,25 @@ impl LspTask {
                                     contents: String::new(),
                                     is_markdown: false,
                                     range: None,
+                                });
+                            }
+                        }
+                        LspCommand::References {
+                            request_id,
+                            uri,
+                            line,
+                            character,
+                        } => {
+                            if state.initialized {
+                                tracing::info!("Processing References request for {}", uri.as_str());
+                                let _ = state
+                                    .handle_references(request_id, uri, line, character, &pending)
+                                    .await;
+                            } else {
+                                tracing::debug!("LSP not initialized, cannot get references");
+                                let _ = state.async_tx.send(AsyncMessage::LspReferences {
+                                    request_id,
+                                    locations: Vec::new(),
                                 });
                             }
                         }
@@ -2489,6 +2583,24 @@ impl LspHandle {
                 character,
             })
             .map_err(|_| "Failed to send hover command".to_string())
+    }
+
+    /// Request find references
+    pub fn references(
+        &self,
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::References {
+                request_id,
+                uri,
+                line,
+                character,
+            })
+            .map_err(|_| "Failed to send references command".to_string())
     }
 
     /// Cancel a pending request by its editor request_id
