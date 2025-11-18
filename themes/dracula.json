@@ -1,0 +1,62 @@
+{
+  "name": "dracula",
+  "editor": {
+    "bg": [40, 42, 54],
+    "fg": [248, 248, 242],
+    "cursor": [255, 121, 198],
+    "selection_bg": [68, 71, 90],
+    "current_line_bg": [68, 71, 90],
+    "line_number_fg": [98, 114, 164],
+    "line_number_bg": [40, 42, 54]
+  },
+  "ui": {
+    "tab_active_fg": [248, 248, 242],
+    "tab_active_bg": [189, 147, 249],
+    "tab_inactive_fg": [248, 248, 242],
+    "tab_inactive_bg": [68, 71, 90],
+    "tab_separator_bg": [40, 42, 54],
+    "status_bar_fg": [40, 42, 54],
+    "status_bar_bg": [189, 147, 249],
+    "prompt_fg": [40, 42, 54],
+    "prompt_bg": [80, 250, 123],
+    "prompt_selection_fg": [248, 248, 242],
+    "prompt_selection_bg": [189, 147, 249],
+    "popup_border_fg": [98, 114, 164],
+    "popup_bg": [68, 71, 90],
+    "popup_selection_bg": [189, 147, 249],
+    "popup_text_fg": [248, 248, 242],
+    "suggestion_bg": [68, 71, 90],
+    "suggestion_selected_bg": [189, 147, 249],
+    "help_bg": [40, 42, 54],
+    "help_fg": [248, 248, 242],
+    "help_key_fg": [139, 233, 253],
+    "help_separator_fg": [98, 114, 164],
+    "help_indicator_fg": [255, 85, 85],
+    "help_indicator_bg": [40, 42, 54],
+    "split_separator_fg": [98, 114, 164]
+  },
+  "search": {
+    "match_bg": [241, 250, 140],
+    "match_fg": [40, 42, 54]
+  },
+  "diagnostic": {
+    "error_fg": [255, 85, 85],
+    "error_bg": [64, 42, 54],
+    "warning_fg": [241, 250, 140],
+    "warning_bg": [64, 60, 42],
+    "info_fg": [139, 233, 253],
+    "info_bg": [40, 56, 70],
+    "hint_fg": [98, 114, 164],
+    "hint_bg": [40, 42, 54]
+  },
+  "syntax": {
+    "keyword": [255, 121, 198],
+    "string": [241, 250, 140],
+    "comment": [98, 114, 164],
+    "function": [80, 250, 123],
+    "type": [139, 233, 253],
+    "variable": [248, 248, 242],
+    "constant": [189, 147, 249],
+    "operator": [255, 121, 198]
+  }
+}

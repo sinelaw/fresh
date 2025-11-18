@@ -713,7 +713,7 @@ impl Theme {
 
     /// Get all available theme names
     pub fn available_themes() -> Vec<&'static str> {
-        vec!["dark", "light", "high-contrast"]
+        vec!["dark", "light", "high-contrast", "nord", "dracula", "solarized-dark"]
     }
 }
 
@@ -754,10 +754,13 @@ mod tests {
     #[test]
     fn test_available_themes() {
         let themes = Theme::available_themes();
-        assert_eq!(themes.len(), 3);
+        assert_eq!(themes.len(), 6);
         assert!(themes.contains(&"dark"));
         assert!(themes.contains(&"light"));
         assert!(themes.contains(&"high-contrast"));
+        assert!(themes.contains(&"nord"));
+        assert!(themes.contains(&"dracula"));
+        assert!(themes.contains(&"solarized-dark"));
     }
 
     #[test]
