@@ -6,7 +6,6 @@ use crate::state::EditorState;
 ///! Diagnostics are displayed as colored underlines (red for errors, yellow for warnings, etc.)
 use crate::text_buffer::Buffer;
 use lsp_types::{Diagnostic, DiagnosticSeverity};
-use ratatui::style::Color;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
@@ -201,9 +200,6 @@ pub fn apply_diagnostics_to_state(
     // Add new diagnostics (only those that don't already exist)
     let mut added_count = 0;
 
-    // Track unique lines with diagnostics to avoid duplicate margin markers
-    let mut diagnostic_lines = std::collections::HashSet::new();
-
     // Add new diagnostic overlays (skip if already exists)
     // The line anchor system creates anchors on-demand, so no pre-population needed
     for diagnostic in diagnostics {
@@ -211,9 +207,6 @@ pub fn apply_diagnostics_to_state(
 
         // Skip if this diagnostic already has an overlay
         if existing_id_set.contains(&overlay_id) {
-            // Still track the line for margin indicators
-            let line = diagnostic.range.start.line as usize;
-            diagnostic_lines.insert(line);
             continue;
         }
 
@@ -229,22 +222,12 @@ pub fn apply_diagnostics_to_state(
 
             state.overlays.add(overlay);
             added_count += 1;
-
-            // Track the line number for diagnostic indicator
-            let line = diagnostic.range.start.line as usize;
-            diagnostic_lines.insert(line);
         }
     }
 
-    // Clear and rebuild diagnostic indicators (this is fast)
-    state.margins.clear_diagnostic_indicators();
-    for line in diagnostic_lines {
-        state
-            .margins
-            .set_diagnostic_indicator(line, "●".to_string(), Color::Red);
-    }
-
     // Log incremental update stats
+    // Note: Margin indicators are now computed dynamically during rendering
+    // from overlay marker positions, eliminating sync issues with undo/redo
     if added_count > 0 || removed_count > 0 {
         tracing::debug!(
             "Incremental diagnostic update: added={}, removed={}, kept={}",

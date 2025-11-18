@@ -523,6 +523,22 @@ impl SplitRenderer {
                 .overlays
                 .query_viewport(viewport_start, viewport_end, &state.marker_list);
 
+        // Build set of lines with diagnostic overlays for margin indicators
+        // We use the resolved byte positions from viewport_overlays and convert to line numbers
+        let diagnostic_lines: std::collections::HashSet<usize> = viewport_overlays
+            .iter()
+            .filter_map(|(overlay, range)| {
+                // Check if this is a diagnostic overlay by ID prefix
+                if let Some(id) = &overlay.id {
+                    if id.starts_with("lsp-diagnostic-") {
+                        // Convert byte position to line number
+                        return Some(state.buffer.get_line_number(range.start));
+                    }
+                }
+                None
+            })
+            .collect();
+
         // Check if buffer is empty before creating iterator (to avoid borrow conflict)
         let is_empty_buffer = state.buffer.is_empty();
 
@@ -562,12 +578,13 @@ impl SplitRenderer {
             // Render left margin (indicators + line numbers + separator)
             if state.margins.left_config.enabled {
                 // First column: render indicator or space
-                // Check for diagnostic indicator on this line
-                if let Some((symbol, color)) =
-                    state.margins.get_diagnostic_indicator(current_line_num)
-                {
+                // Check for diagnostic indicator on this line (computed dynamically from overlays)
+                if diagnostic_lines.contains(&current_line_num) {
                     // Show diagnostic indicator
-                    line_spans.push(Span::styled(symbol.clone(), Style::default().fg(*color)));
+                    line_spans.push(Span::styled(
+                        "●".to_string(),
+                        Style::default().fg(ratatui::style::Color::Red),
+                    ));
                 } else {
                     // Show space (reserved for future indicators like breakpoints)
                     line_spans.push(Span::raw(" "));
@@ -1045,10 +1062,12 @@ impl SplitRenderer {
                 // Render left margin for the empty last line
                 if state.margins.left_config.enabled {
                     // First column: render indicator or space
-                    if let Some((symbol, color)) =
-                        state.margins.get_diagnostic_indicator(current_line_num)
-                    {
-                        line_spans.push(Span::styled(symbol.clone(), Style::default().fg(*color)));
+                    // Check for diagnostic indicator on this line (computed dynamically from overlays)
+                    if diagnostic_lines.contains(&current_line_num) {
+                        line_spans.push(Span::styled(
+                            "●".to_string(),
+                            Style::default().fg(ratatui::style::Color::Red),
+                        ));
                     } else {
                         line_spans.push(Span::raw(" "));
                     }
