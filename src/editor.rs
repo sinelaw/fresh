@@ -8068,6 +8068,7 @@ impl Editor {
         // Trigger lines_changed hooks for newly visible lines in all visible buffers
         // This allows plugins to add overlays before rendering
         // Only lines that haven't been seen before are sent (batched for efficiency)
+        // Use non-blocking hooks to avoid deadlock when actions are awaiting
         if let Some(ref mut ts_manager) = self.ts_plugin_manager {
             let hooks_start = std::time::Instant::now();
             // Get visible buffers and their areas
@@ -8078,7 +8079,7 @@ impl Editor {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     // Fire render_start hook once per buffer
                     let render_start_args = crate::hooks::HookArgs::RenderStart { buffer_id };
-                    ts_manager.run_hook_blocking("render_start", render_start_args);
+                    ts_manager.run_hook("render_start", render_start_args);
 
                     // Use the split area height as visible line count
                     let visible_count = split_area.height as usize;
@@ -8118,7 +8119,7 @@ impl Editor {
                             buffer_id,
                             lines: new_lines,
                         };
-                        ts_manager.run_hook_blocking("lines_changed", hook_args);
+                        ts_manager.run_hook("lines_changed", hook_args);
                     }
                 }
             }
