@@ -7997,35 +7997,44 @@ impl Editor {
         }
 
         // Check if click is on a scrollbar
-        for (split_id, buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
-            &self.cached_layout.split_areas
-        {
-            if col >= scrollbar_rect.x
-                && col < scrollbar_rect.x + scrollbar_rect.width
-                && row >= scrollbar_rect.y
-                && row < scrollbar_rect.y + scrollbar_rect.height
-            {
-                // Calculate relative row within scrollbar
-                let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
-
-                // Check if click is on thumb or track
-                let is_on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
-
-                if is_on_thumb {
-                    // Click on thumb - start drag from current position (don't jump)
-                    self.mouse_state.dragging_scrollbar = Some(*split_id);
-                    self.mouse_state.drag_start_row = Some(row);
-                    // Record the current viewport position
-                    if let Some(state) = self.buffers.get(buffer_id) {
-                        self.mouse_state.drag_start_top_byte = Some(state.viewport.top_byte);
-                    }
+        let scrollbar_hit = self.cached_layout.split_areas.iter().find_map(
+            |(split_id, buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end)| {
+                if col >= scrollbar_rect.x
+                    && col < scrollbar_rect.x + scrollbar_rect.width
+                    && row >= scrollbar_rect.y
+                    && row < scrollbar_rect.y + scrollbar_rect.height
+                {
+                    let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
+                    let is_on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
+                    Some((*split_id, *buffer_id, *scrollbar_rect, is_on_thumb))
                 } else {
-                    // Click on track - jump to position
-                    self.mouse_state.dragging_scrollbar = Some(*split_id);
-                    self.handle_scrollbar_jump(col, row, *buffer_id, *scrollbar_rect)?;
+                    None
                 }
-                return Ok(());
+            },
+        );
+
+        if let Some((split_id, buffer_id, scrollbar_rect, is_on_thumb)) = scrollbar_hit {
+            // Focus this split
+            self.split_manager.set_active_split(split_id);
+            if buffer_id != self.active_buffer {
+                self.position_history.commit_pending_movement();
+                self.set_active_buffer(buffer_id);
             }
+
+            if is_on_thumb {
+                // Click on thumb - start drag from current position (don't jump)
+                self.mouse_state.dragging_scrollbar = Some(split_id);
+                self.mouse_state.drag_start_row = Some(row);
+                // Record the current viewport position
+                if let Some(state) = self.buffers.get(&buffer_id) {
+                    self.mouse_state.drag_start_top_byte = Some(state.viewport.top_byte);
+                }
+            } else {
+                // Click on track - jump to position
+                self.mouse_state.dragging_scrollbar = Some(split_id);
+                self.handle_scrollbar_jump(col, row, buffer_id, scrollbar_rect)?;
+            }
+            return Ok(());
         }
 
         // Check if click is on a split separator (for drag resizing)
@@ -8051,6 +8060,73 @@ impl Editor {
                 }
                 return Ok(());
             }
+        }
+
+        // Check if click is in tab bar area (1 row above content_rect)
+        let tab_hit = self.cached_layout.split_areas.iter().find_map(
+            |(split_id, buffer_id, content_rect, scrollbar_rect, _thumb_start, _thumb_end)| {
+                // Tab bar is 1 row high, above content_rect, spanning content + scrollbar width
+                let tabs_y = content_rect.y.saturating_sub(1);
+                let tabs_width = content_rect.width + scrollbar_rect.width;
+                if row == tabs_y && col >= content_rect.x && col < content_rect.x + tabs_width {
+                    Some((*split_id, *buffer_id, content_rect.x))
+                } else {
+                    None
+                }
+            },
+        );
+
+        if let Some((split_id, _current_buffer_id, tabs_x)) = tab_hit {
+            // Focus this split when clicking on its tab bar
+            self.split_manager.set_active_split(split_id);
+
+            // Determine which tab was clicked based on position
+            // Get the open buffers for this split
+            let clicked_buffer = if let Some(view_state) = self.split_view_states.get(&split_id) {
+                let relative_x = col.saturating_sub(tabs_x) as usize;
+                let mut current_x = 0usize;
+
+                let mut found_buffer = None;
+                for buffer_id in &view_state.open_buffers {
+                    // Calculate tab width: " {name}{modified} " + separator " "
+                    let tab_width = if let Some(state) = self.buffers.get(buffer_id) {
+                        let name = if let Some(metadata) = self.buffer_metadata.get(buffer_id) {
+                            metadata.display_name.as_str()
+                        } else {
+                            state
+                                .buffer
+                                .file_path()
+                                .and_then(|p| p.file_name())
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("[No Name]")
+                        };
+                        let modified = if state.buffer.is_modified() { 1 } else { 0 };
+                        // " {name}{modified} " = 2 + name.len() + modified
+                        2 + name.chars().count() + modified
+                    } else {
+                        continue;
+                    };
+
+                    if relative_x >= current_x && relative_x < current_x + tab_width {
+                        found_buffer = Some(*buffer_id);
+                        break;
+                    }
+
+                    // Move past this tab and separator (1 char)
+                    current_x += tab_width + 1;
+                }
+                found_buffer
+            } else {
+                None
+            };
+
+            // Switch to the clicked buffer if found, otherwise just focus the split
+            let target_buffer = clicked_buffer.unwrap_or(_current_buffer_id);
+            if target_buffer != self.active_buffer {
+                self.position_history.commit_pending_movement();
+                self.set_active_buffer(target_buffer);
+            }
+            return Ok(());
         }
 
         // Check if click is in editor content area
