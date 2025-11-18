@@ -1093,6 +1093,91 @@ async fn op_fresh_create_virtual_buffer_in_split(
     }
 }
 
+/// Options for creating a virtual buffer in an existing split
+#[derive(serde::Deserialize)]
+struct CreateVirtualBufferInExistingSplitOptions {
+    name: String,
+    mode: String,
+    read_only: bool,
+    entries: Vec<TsTextPropertyEntry>,
+    split_id: u32,
+    show_line_numbers: Option<bool>,
+    show_cursors: Option<bool>,
+}
+
+/// Create a virtual buffer in an existing split
+/// Returns the buffer ID of the created virtual buffer.
+#[op2(async)]
+async fn op_fresh_create_virtual_buffer_in_existing_split(
+    state: Rc<RefCell<OpState>>,
+    #[serde] options: CreateVirtualBufferInExistingSplitOptions,
+) -> Result<u32, deno_core::error::AnyError> {
+    // Get runtime state and create oneshot channel
+    let receiver = {
+        let state = state.borrow();
+        let runtime_state = state
+            .try_borrow::<Rc<RefCell<TsRuntimeState>>>()
+            .ok_or_else(|| deno_core::error::generic_error("Failed to get runtime state"))?;
+        let runtime_state = runtime_state.borrow();
+
+        // Allocate request ID
+        let request_id = {
+            let mut id = runtime_state.next_request_id.borrow_mut();
+            let current = *id;
+            *id += 1;
+            current
+        };
+
+        // Create oneshot channel for response
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        // Store the sender
+        {
+            let mut pending = runtime_state.pending_responses.lock().unwrap();
+            pending.insert(request_id, tx);
+        }
+
+        // Convert TypeScript entries to Rust TextPropertyEntry
+        let entries: Vec<crate::text_property::TextPropertyEntry> = options
+            .entries
+            .into_iter()
+            .map(|e| crate::text_property::TextPropertyEntry {
+                text: e.text,
+                properties: e.properties,
+            })
+            .collect();
+
+        // Send command with request_id
+        runtime_state
+            .command_sender
+            .send(PluginCommand::CreateVirtualBufferInExistingSplit {
+                name: options.name,
+                mode: options.mode,
+                read_only: options.read_only,
+                entries,
+                split_id: crate::event::SplitId(options.split_id as usize),
+                show_line_numbers: options.show_line_numbers.unwrap_or(true),
+                show_cursors: options.show_cursors.unwrap_or(true),
+                request_id: Some(request_id),
+            })
+            .map_err(|_| deno_core::error::generic_error("Failed to send command"))?;
+
+        rx
+    };
+
+    // Wait for response
+    let response = receiver
+        .await
+        .map_err(|_| deno_core::error::generic_error("Response channel closed"))?;
+
+    // Extract buffer ID from response
+    match response {
+        crate::plugin_api::PluginResponse::VirtualBufferCreated { buffer_id, .. } => {
+            Ok(buffer_id.0 as u32)
+        }
+    }
+}
+
 /// Define a buffer mode with keybindings
 #[op2]
 fn op_fresh_define_mode(
@@ -1121,6 +1206,46 @@ fn op_fresh_show_buffer(state: &mut OpState, buffer_id: u32) -> bool {
     if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
         let runtime_state = runtime_state.borrow();
         let result = runtime_state.command_sender.send(PluginCommand::ShowBuffer {
+            buffer_id: BufferId(buffer_id as usize),
+        });
+        return result.is_ok();
+    }
+    false
+}
+
+/// Close a buffer and remove it from all splits
+#[op2(fast)]
+fn op_fresh_close_buffer(state: &mut OpState, buffer_id: u32) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state.command_sender.send(PluginCommand::CloseBuffer {
+            buffer_id: BufferId(buffer_id as usize),
+        });
+        return result.is_ok();
+    }
+    false
+}
+
+/// Focus a specific split
+#[op2(fast)]
+fn op_fresh_focus_split(state: &mut OpState, split_id: u32) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state.command_sender.send(PluginCommand::FocusSplit {
+            split_id: crate::event::SplitId(split_id as usize),
+        });
+        return result.is_ok();
+    }
+    false
+}
+
+/// Set the buffer displayed in a specific split
+#[op2(fast)]
+fn op_fresh_set_split_buffer(state: &mut OpState, split_id: u32, buffer_id: u32) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state.command_sender.send(PluginCommand::SetSplitBuffer {
+            split_id: crate::event::SplitId(split_id as usize),
             buffer_id: BufferId(buffer_id as usize),
         });
         return result.is_ok();
@@ -1228,8 +1353,12 @@ extension!(
         op_fresh_get_handlers,
         // Virtual buffer operations
         op_fresh_create_virtual_buffer_in_split,
+        op_fresh_create_virtual_buffer_in_existing_split,
         op_fresh_define_mode,
         op_fresh_show_buffer,
+        op_fresh_close_buffer,
+        op_fresh_focus_split,
+        op_fresh_set_split_buffer,
         op_fresh_get_text_properties_at_cursor,
         op_fresh_set_virtual_buffer_content,
     ],
@@ -1468,11 +1597,23 @@ impl TypeScriptRuntime {
                     createVirtualBufferInSplit(options) {
                         return core.ops.op_fresh_create_virtual_buffer_in_split(options);
                     },
+                    createVirtualBufferInExistingSplit(options) {
+                        return core.ops.op_fresh_create_virtual_buffer_in_existing_split(options);
+                    },
                     defineMode(name, parent, bindings, readOnly = false) {
                         return core.ops.op_fresh_define_mode(name, parent, bindings, readOnly);
                     },
                     showBuffer(bufferId) {
                         return core.ops.op_fresh_show_buffer(bufferId);
+                    },
+                    closeBuffer(bufferId) {
+                        return core.ops.op_fresh_close_buffer(bufferId);
+                    },
+                    focusSplit(splitId) {
+                        return core.ops.op_fresh_focus_split(splitId);
+                    },
+                    setSplitBuffer(splitId, bufferId) {
+                        return core.ops.op_fresh_set_split_buffer(splitId, bufferId);
                     },
                     getTextPropertiesAtCursor(bufferId) {
                         return core.ops.op_fresh_get_text_properties_at_cursor(bufferId);

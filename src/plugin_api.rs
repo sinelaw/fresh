@@ -5,7 +5,7 @@
 
 use crate::command_registry::CommandRegistry;
 use crate::commands::Command;
-use crate::event::BufferId;
+use crate::event::{BufferId, SplitId};
 use crate::hooks::{HookCallback, HookRegistry};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -284,6 +284,42 @@ pub enum PluginCommand {
 
     /// Switch the current split to display a buffer
     ShowBuffer {
+        buffer_id: BufferId,
+    },
+
+    /// Create a virtual buffer in an existing split (replaces current buffer in that split)
+    CreateVirtualBufferInExistingSplit {
+        /// Display name (e.g., "*Commit Details*")
+        name: String,
+        /// Mode name for buffer-local keybindings
+        mode: String,
+        /// Whether the buffer is read-only
+        read_only: bool,
+        /// Entries with text and embedded properties
+        entries: Vec<crate::text_property::TextPropertyEntry>,
+        /// Target split ID where the buffer should be displayed
+        split_id: SplitId,
+        /// Whether to show line numbers in the buffer (default true)
+        show_line_numbers: bool,
+        /// Whether to show cursors in the buffer (default true)
+        show_cursors: bool,
+        /// Optional request ID for async response
+        request_id: Option<u64>,
+    },
+
+    /// Close a buffer and remove it from all splits
+    CloseBuffer {
+        buffer_id: BufferId,
+    },
+
+    /// Focus a specific split
+    FocusSplit {
+        split_id: SplitId,
+    },
+
+    /// Set the buffer displayed in a specific split
+    SetSplitBuffer {
+        split_id: SplitId,
         buffer_id: BufferId,
     },
 }

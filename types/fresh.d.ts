@@ -132,6 +132,26 @@ interface CreateVirtualBufferOptions {
 }
 
 /**
+ * Options for creating a virtual buffer in an existing split
+ */
+interface CreateVirtualBufferInExistingSplitOptions {
+  /** Display name (e.g., "*Commit Details*") */
+  name: string;
+  /** Mode name for buffer-local keybindings */
+  mode: string;
+  /** Whether the buffer is read-only */
+  read_only: boolean;
+  /** Entries with text and embedded properties */
+  entries: TextPropertyEntry[];
+  /** Target split ID where the buffer should be displayed */
+  split_id: number;
+  /** Whether to show line numbers in the buffer (default true) */
+  show_line_numbers?: boolean;
+  /** Whether to show cursors in the buffer (default true) */
+  show_cursors?: boolean;
+}
+
+/**
  * Main editor API interface
  */
 interface EditorAPI {
@@ -363,6 +383,26 @@ interface EditorAPI {
   createVirtualBufferInSplit(options: CreateVirtualBufferOptions): Promise<number>;
 
   /**
+   * Create a virtual buffer in an existing split
+   * This replaces the current buffer in the target split with the new virtual buffer.
+   * @param options - Configuration for the virtual buffer
+   * @returns The buffer ID of the created virtual buffer
+   * @example
+   * const bufferId = await editor.createVirtualBufferInExistingSplit({
+   *   name: "*Commit Details*",
+   *   mode: "git-commit-detail",
+   *   read_only: true,
+   *   entries: [
+   *     { text: "Commit: abc123\n", properties: { type: "header" } },
+   *   ],
+   *   split_id: sourceSplitId,
+   *   show_line_numbers: false,
+   *   show_cursors: true
+   * });
+   */
+  createVirtualBufferInExistingSplit(options: CreateVirtualBufferInExistingSplitOptions): Promise<number>;
+
+  /**
    * Define a buffer mode with keybindings
    * Modes can inherit from parent modes (e.g., "diagnostics-list" inherits from "special")
    * @param name - Mode name (e.g., "diagnostics-list")
@@ -386,6 +426,29 @@ interface EditorAPI {
    * @returns true if buffer was shown successfully
    */
   showBuffer(bufferId: number): boolean;
+
+  /**
+   * Close a buffer and remove it from all splits
+   * The split will switch to showing another buffer (e.g., the previous one)
+   * @param bufferId - ID of the buffer to close
+   * @returns true if buffer was closed successfully
+   */
+  closeBuffer(bufferId: number): boolean;
+
+  /**
+   * Focus a specific split
+   * @param splitId - ID of the split to focus
+   * @returns true if split was focused successfully
+   */
+  focusSplit(splitId: number): boolean;
+
+  /**
+   * Set the buffer displayed in a specific split
+   * @param splitId - ID of the split
+   * @param bufferId - ID of the buffer to display in the split
+   * @returns true if the buffer was set successfully
+   */
+  setSplitBuffer(splitId: number, bufferId: number): boolean;
 
   /**
    * Get text properties at the cursor position in a buffer
