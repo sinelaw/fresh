@@ -22,7 +22,6 @@ use crate::split::{SplitManager, SplitViewState};
 use crate::state::EditorState;
 use crate::ui::{
     FileExplorerRenderer, HelpRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer,
-    TabsRenderer,
 };
 use crossterm::event::{KeyCode, KeyModifiers};
 use lsp_types::{Position, Range as LspRange, TextDocumentContentChangeEvent};
@@ -619,7 +618,7 @@ impl Editor {
         // Initialize per-split view state for the initial split
         let mut split_view_states = HashMap::new();
         let initial_split_id = split_manager.active_split();
-        let mut initial_view_state = SplitViewState::new(width, height);
+        let mut initial_view_state = SplitViewState::with_buffer(width, height, buffer_id);
         initial_view_state.viewport.line_wrap_enabled = config.editor.line_wrap;
         split_view_states.insert(initial_split_id, initial_view_state);
 
@@ -1101,10 +1100,13 @@ impl Editor {
         let metadata = BufferMetadata::virtual_buffer(name, mode, read_only);
         self.buffer_metadata.insert(buffer_id, metadata);
 
-        // Create a per-split view state for the active split
+        // Add buffer to the active split's open_buffers (tabs)
         let active_split = self.split_manager.active_split();
-        if !self.split_view_states.contains_key(&active_split) {
-            let mut view_state = SplitViewState::new(self.terminal_width, self.terminal_height);
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.add_buffer(buffer_id);
+        } else {
+            // Create view state if it doesn't exist
+            let mut view_state = SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buffer_id);
             view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
             self.split_view_states.insert(active_split, view_state);
         }
@@ -1186,6 +1188,11 @@ impl Editor {
         self.buffers.remove(&id);
         self.event_logs.remove(&id);
 
+        // Remove buffer from all splits' open_buffers lists
+        for view_state in self.split_view_states.values_mut() {
+            view_state.remove_buffer(id);
+        }
+
         // Switch to another buffer if we closed the active one
         if self.active_buffer == id {
             self.set_active_buffer(replacement_buffer);
@@ -1212,10 +1219,23 @@ impl Editor {
         }
     }
 
-    /// Switch to next buffer
+    /// Switch to next buffer in current split's tabs
     pub fn next_buffer(&mut self) {
-        let mut ids: Vec<_> = self.buffers.keys().copied().collect();
-        ids.sort_by_key(|id| id.0); // Sort by buffer ID to ensure consistent order
+        // Get the current split's open buffers
+        let active_split = self.split_manager.active_split();
+        let ids = if let Some(view_state) = self.split_view_states.get(&active_split) {
+            view_state.open_buffers.clone()
+        } else {
+            // Fallback to all buffers if no view state
+            let mut all_ids: Vec<_> = self.buffers.keys().copied().collect();
+            all_ids.sort_by_key(|id| id.0);
+            all_ids
+        };
+
+        if ids.is_empty() {
+            return;
+        }
+
         if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer) {
             let next_idx = (idx + 1) % ids.len();
             if ids[next_idx] != self.active_buffer {
@@ -1235,10 +1255,23 @@ impl Editor {
         }
     }
 
-    /// Switch to previous buffer
+    /// Switch to previous buffer in current split's tabs
     pub fn prev_buffer(&mut self) {
-        let mut ids: Vec<_> = self.buffers.keys().copied().collect();
-        ids.sort_by_key(|id| id.0); // Sort by buffer ID to ensure consistent order
+        // Get the current split's open buffers
+        let active_split = self.split_manager.active_split();
+        let ids = if let Some(view_state) = self.split_view_states.get(&active_split) {
+            view_state.open_buffers.clone()
+        } else {
+            // Fallback to all buffers if no view state
+            let mut all_ids: Vec<_> = self.buffers.keys().copied().collect();
+            all_ids.sort_by_key(|id| id.0);
+            all_ids
+        };
+
+        if ids.is_empty() {
+            return;
+        }
+
         if let Some(idx) = ids.iter().position(|&id| id == self.active_buffer) {
             let prev_idx = if idx == 0 { ids.len() - 1 } else { idx - 1 };
             if ids[prev_idx] != self.active_buffer {
@@ -1362,9 +1395,9 @@ impl Editor {
             0.5,
         ) {
             Ok(new_split_id) => {
-                // Create independent view state for the new split
+                // Create independent view state for the new split with the current buffer
                 let mut view_state =
-                    SplitViewState::new(self.terminal_width, self.terminal_height);
+                    SplitViewState::with_buffer(self.terminal_width, self.terminal_height, current_buffer_id);
                 view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
                 self.split_view_states.insert(new_split_id, view_state);
                 // Restore the new split's view state to the buffer
@@ -1392,9 +1425,9 @@ impl Editor {
             0.5,
         ) {
             Ok(new_split_id) => {
-                // Create independent view state for the new split
+                // Create independent view state for the new split with the current buffer
                 let mut view_state =
-                    SplitViewState::new(self.terminal_width, self.terminal_height);
+                    SplitViewState::with_buffer(self.terminal_width, self.terminal_height, current_buffer_id);
                 view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
                 self.split_view_states.insert(new_split_id, view_state);
                 // Restore the new split's view state to the buffer
@@ -1580,6 +1613,7 @@ impl Editor {
     /// This is the centralized method for switching buffers. It:
     /// - Updates self.active_buffer
     /// - Updates split manager
+    /// - Adds buffer to active split's tabs (if not already there)
     /// - Syncs file explorer to the new active file (if visible)
     ///
     /// Use this instead of directly setting self.active_buffer to ensure
@@ -1593,6 +1627,12 @@ impl Editor {
 
         // Update split manager to show this buffer
         self.split_manager.set_active_buffer_id(buffer_id);
+
+        // Add buffer to the active split's open_buffers (tabs) if not already there
+        let active_split = self.split_manager.active_split();
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.add_buffer(buffer_id);
+        }
 
         // Sync file explorer to the new active file (if visible and applicable)
         self.sync_file_explorer_to_active_file();
@@ -7417,11 +7457,10 @@ impl Editor {
         let status_bar_idx = if suggestion_lines > 0 { 3 } else { 2 };
 
         // Split main content area based on file explorer visibility
-        let tabs_area;
         let editor_content_area;
 
         if self.file_explorer_visible && self.file_explorer.is_some() {
-            // Split horizontally: [file_explorer | editor_with_tabs]
+            // Split horizontally: [file_explorer | editor]
             let horizontal_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
@@ -7431,18 +7470,7 @@ impl Editor {
                 .split(main_content_area);
 
             self.cached_layout.file_explorer_area = Some(horizontal_chunks[0]);
-
-            // Split editor area vertically: [tabs | content]
-            let editor_vertical_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1), // Tabs
-                    Constraint::Min(0),    // Content
-                ])
-                .split(horizontal_chunks[1]);
-
-            tabs_area = editor_vertical_chunks[0];
-            editor_content_area = editor_vertical_chunks[1];
+            editor_content_area = horizontal_chunks[1];
 
             // Render file explorer
             if let Some(ref mut explorer) = self.file_explorer {
@@ -7471,30 +7499,12 @@ impl Editor {
                 );
             }
         } else {
-            // No file explorer: split main content vertically: [tabs | content]
+            // No file explorer: use entire main content area for editor
             self.cached_layout.file_explorer_area = None;
-
-            let vertical_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1), // Tabs
-                    Constraint::Min(0),    // Content
-                ])
-                .split(main_content_area);
-
-            tabs_area = vertical_chunks[0];
-            editor_content_area = vertical_chunks[1];
+            editor_content_area = main_content_area;
         }
 
-        // Render tabs (same for both layouts)
-        TabsRenderer::render(
-            frame,
-            tabs_area,
-            &self.buffers,
-            &self.buffer_metadata,
-            self.active_buffer,
-            &self.theme,
-        );
+        // Note: Tabs are now rendered within each split by SplitRenderer
 
         // Trigger render_line hooks for all visible lines in all visible buffers
         // This allows plugins to add overlays before rendering
@@ -7558,6 +7568,7 @@ impl Editor {
             editor_content_area,
             &self.split_manager,
             &mut self.buffers,
+            &self.buffer_metadata,
             &mut self.event_logs,
             &self.theme,
             lsp_waiting,

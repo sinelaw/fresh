@@ -1,10 +1,12 @@
 //! Split pane layout and buffer rendering
 
 use crate::cursor::SelectionMode;
+use crate::editor::BufferMetadata;
 use crate::event::{BufferId, EventLog, SplitDirection};
 use crate::line_wrapping::{char_position_to_segment, wrap_line, WrapConfig};
 use crate::split::SplitManager;
 use crate::state::EditorState;
+use crate::ui::tabs::TabsRenderer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -23,6 +25,7 @@ impl SplitRenderer {
     /// * `area` - The rectangular area to render in
     /// * `split_manager` - The split manager
     /// * `buffers` - All open buffers
+    /// * `buffer_metadata` - Metadata for buffers (contains display names)
     /// * `event_logs` - Event logs for each buffer
     /// * `theme` - The active theme for colors
     /// * `lsp_waiting` - Whether LSP is waiting
@@ -37,6 +40,7 @@ impl SplitRenderer {
         area: Rect,
         split_manager: &SplitManager,
         buffers: &mut HashMap<BufferId, EditorState>,
+        buffer_metadata: &HashMap<BufferId, BufferMetadata>,
         event_logs: &mut HashMap<BufferId, EventLog>,
         theme: &crate::theme::Theme,
         lsp_waiting: bool,
@@ -58,19 +62,58 @@ impl SplitRenderer {
         for (split_id, buffer_id, split_area) in visible_buffers {
             let is_active = split_id == active_split_id;
 
-            // Reserve 1 column on the right for scrollbar
-            let scrollbar_width = 1;
-            let content_rect = Rect::new(
+            // Reserve 1 line at top for tabs, 1 column on right for scrollbar
+            let tabs_height = 1u16;
+            let scrollbar_width = 1u16;
+
+            // Tabs area at top of split
+            let tabs_rect = Rect::new(
                 split_area.x,
                 split_area.y,
-                split_area.width.saturating_sub(scrollbar_width),
-                split_area.height,
+                split_area.width,
+                tabs_height,
             );
+
+            // Content area below tabs
+            let content_rect = Rect::new(
+                split_area.x,
+                split_area.y + tabs_height,
+                split_area.width.saturating_sub(scrollbar_width),
+                split_area.height.saturating_sub(tabs_height),
+            );
+
+            // Scrollbar on the right side of content (not tabs)
             let scrollbar_rect = Rect::new(
                 split_area.x + split_area.width.saturating_sub(scrollbar_width),
-                split_area.y,
+                split_area.y + tabs_height,
                 scrollbar_width,
-                split_area.height,
+                split_area.height.saturating_sub(tabs_height),
+            );
+
+            // Get the open buffers for this split from split_view_states
+            let split_buffers: Vec<BufferId> = if let Some(view_states) = split_view_states {
+                if let Some(view_state) = view_states.get(&split_id) {
+                    // Use the split's open_buffers list
+                    view_state.open_buffers.clone()
+                } else {
+                    // No view state for this split - just show the current buffer
+                    vec![buffer_id]
+                }
+            } else {
+                // No view states at all - just show the current buffer
+                vec![buffer_id]
+            };
+
+            // Render tabs for this split
+            TabsRenderer::render_for_split(
+                frame,
+                tabs_rect,
+                &split_buffers,
+                buffers,
+                buffer_metadata,
+                buffer_id, // The currently displayed buffer in this split
+                theme,
+                is_active,
             );
 
             // Get references separately to avoid double borrow
