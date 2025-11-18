@@ -485,7 +485,17 @@ impl SplitManager {
 
         // Find the parent of the split to close
         // This requires a parent-tracking traversal
-        self.remove_split_node(split_id)
+        let result = self.remove_split_node(split_id);
+
+        // If we closed the active split, update active_split to another split
+        if result.is_ok() && self.active_split == split_id {
+            let leaf_ids = self.root.leaf_split_ids();
+            if let Some(&first_leaf) = leaf_ids.first() {
+                self.active_split = first_leaf;
+            }
+        }
+
+        result
     }
 
     /// Remove a split node from the tree
