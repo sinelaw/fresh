@@ -912,10 +912,36 @@ impl Editor {
     }
 
     /// Open a file and return its buffer ID
+    ///
+    /// If the file doesn't exist, creates an unsaved buffer with that filename.
+    /// Saving the buffer will create the file.
     pub fn open_file(&mut self, path: &Path) -> io::Result<BufferId> {
+        // Determine if we're opening a non-existent file (for creating new files)
+        let file_exists = path.exists();
+
         // Canonicalize the path to resolve symlinks and normalize path components
         // This ensures consistent path representation throughout the editor
-        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        // For non-existent files, we need to canonicalize the parent directory and append the filename
+        let canonical_path = if file_exists {
+            path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+        } else {
+            // For non-existent files, canonicalize parent dir and append filename
+            if let Some(parent) = path.parent() {
+                let canonical_parent = if parent.as_os_str().is_empty() {
+                    // No parent means just a filename, use working dir
+                    self.working_dir.clone()
+                } else {
+                    parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf())
+                };
+                if let Some(filename) = path.file_name() {
+                    canonical_parent.join(filename)
+                } else {
+                    path.to_path_buf()
+                }
+            } else {
+                path.to_path_buf()
+            }
+        };
         let path = canonical_path.as_path();
 
         // Check if file is already open
@@ -952,12 +978,25 @@ impl Editor {
             id
         };
 
-        let mut state = EditorState::from_file(
-            path,
-            self.terminal_width,
-            self.terminal_height,
-            self.config.editor.large_file_threshold_bytes as usize,
-        )?;
+        // Create the editor state - either load from file or create empty buffer
+        let mut state = if file_exists {
+            EditorState::from_file(
+                path,
+                self.terminal_width,
+                self.terminal_height,
+                self.config.editor.large_file_threshold_bytes as usize,
+            )?
+        } else {
+            // File doesn't exist - create empty buffer with the file path set
+            let mut new_state = EditorState::new(
+                self.terminal_width,
+                self.terminal_height,
+                self.config.editor.large_file_threshold_bytes as usize,
+            );
+            // Set the file path so saving will create the file
+            new_state.buffer.set_file_path(path.to_path_buf());
+            new_state
+        };
         state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
@@ -2842,6 +2881,16 @@ impl Editor {
         }
 
         self.prompt = Some(Prompt::with_suggestions(message, prompt_type, suggestions));
+    }
+
+    /// Start a new prompt with initial text
+    pub fn start_prompt_with_initial_text(
+        &mut self,
+        message: String,
+        prompt_type: PromptType,
+        initial_text: String,
+    ) {
+        self.prompt = Some(Prompt::with_initial_text(message, prompt_type, initial_text));
     }
 
     /// Cancel the current prompt and return to normal mode
@@ -6659,6 +6708,26 @@ impl Editor {
         match action {
             Action::Quit => self.quit(),
             Action::Save => self.save()?,
+            Action::SaveAs => {
+                // Get current filename as default suggestion
+                let current_path = self
+                    .active_state()
+                    .buffer
+                    .file_path()
+                    .map(|p| {
+                        // Make path relative to working_dir if possible
+                        p.strip_prefix(&self.working_dir)
+                            .unwrap_or(p)
+                            .to_string_lossy()
+                            .to_string()
+                    })
+                    .unwrap_or_default();
+                self.start_prompt_with_initial_text(
+                    "Save as: ".to_string(),
+                    PromptType::SaveFileAs,
+                    current_path,
+                );
+            }
             Action::Open => self.start_prompt("Find file: ".to_string(), PromptType::OpenFile),
             Action::GotoLine => {
                 self.start_prompt("Go to line: ".to_string(), PromptType::GotoLine)
@@ -7132,9 +7201,42 @@ impl Editor {
                             }
                         }
                         PromptType::SaveFileAs => {
-                            self.set_status_message(format!(
-                                "Save-as not yet implemented: {input}"
-                            ));
+                            // Resolve path: if relative, make it relative to working_dir
+                            let input_path = Path::new(&input);
+                            let full_path = if input_path.is_absolute() {
+                                input_path.to_path_buf()
+                            } else {
+                                self.working_dir.join(input_path)
+                            };
+
+                            // Save the buffer to the new file
+                            match self.active_state_mut().buffer.save_to_file(&full_path) {
+                                Ok(()) => {
+                                    // Update metadata with the new path
+                                    let metadata = BufferMetadata::with_file(
+                                        full_path.clone(),
+                                        &self.working_dir,
+                                    );
+                                    self.buffer_metadata.insert(self.active_buffer, metadata);
+
+                                    // Notify LSP of the new file if applicable
+                                    self.notify_lsp_save();
+
+                                    // Emit file saved event
+                                    self.emit_event(
+                                        crate::control_event::events::FILE_SAVED.name,
+                                        serde_json::json!({"path": full_path.display().to_string()}),
+                                    );
+
+                                    self.set_status_message(format!(
+                                        "Saved as: {}",
+                                        full_path.display()
+                                    ));
+                                }
+                                Err(e) => {
+                                    self.set_status_message(format!("Error saving file: {}", e));
+                                }
+                            }
                         }
                         PromptType::Search => {
                             self.perform_search(&input);
