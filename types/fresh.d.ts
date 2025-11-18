@@ -451,6 +451,13 @@ interface EditorAPI {
   setSplitBuffer(splitId: number, bufferId: number): boolean;
 
   /**
+   * Close a split (if not the last one)
+   * @param splitId - ID of the split to close
+   * @returns true if the split was closed successfully
+   */
+  closeSplit(splitId: number): boolean;
+
+  /**
    * Get text properties at the cursor position in a buffer
    * Returns all properties for text ranges that contain the cursor position
    * @param bufferId - ID of the buffer to query

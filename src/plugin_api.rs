@@ -322,6 +322,11 @@ pub enum PluginCommand {
         split_id: SplitId,
         buffer_id: BufferId,
     },
+
+    /// Close a split (if not the last one)
+    CloseSplit {
+        split_id: SplitId,
+    },
 }
 
 /// Plugin API context - provides safe access to editor functionality

@@ -666,6 +666,16 @@ globalThis.git_log_close = function(): void {
     return;
   }
 
+  // Close the git log buffer first
+  if (gitLogState.bufferId !== null) {
+    editor.closeBuffer(gitLogState.bufferId);
+  }
+
+  // Close the git log split (this will focus the remaining split)
+  if (gitLogState.splitId !== null) {
+    editor.closeSplit(gitLogState.splitId);
+  }
+
   gitLogState.isOpen = false;
   gitLogState.bufferId = null;
   gitLogState.splitId = null;

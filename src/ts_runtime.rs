@@ -1253,6 +1253,19 @@ fn op_fresh_set_split_buffer(state: &mut OpState, split_id: u32, buffer_id: u32)
     false
 }
 
+/// Close a split (if not the last one)
+#[op2(fast)]
+fn op_fresh_close_split(state: &mut OpState, split_id: u32) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state.command_sender.send(PluginCommand::CloseSplit {
+            split_id: crate::event::SplitId(split_id as usize),
+        });
+        return result.is_ok();
+    }
+    false
+}
+
 /// Get text properties at cursor position
 /// Returns an array of property maps for all properties at the current cursor position
 #[op2]
@@ -1359,6 +1372,7 @@ extension!(
         op_fresh_close_buffer,
         op_fresh_focus_split,
         op_fresh_set_split_buffer,
+        op_fresh_close_split,
         op_fresh_get_text_properties_at_cursor,
         op_fresh_set_virtual_buffer_content,
     ],
@@ -1614,6 +1628,9 @@ impl TypeScriptRuntime {
                     },
                     setSplitBuffer(splitId, bufferId) {
                         return core.ops.op_fresh_set_split_buffer(splitId, bufferId);
+                    },
+                    closeSplit(splitId) {
+                        return core.ops.op_fresh_close_split(splitId);
                     },
                     getTextPropertiesAtCursor(bufferId) {
                         return core.ops.op_fresh_get_text_properties_at_cursor(bufferId);
