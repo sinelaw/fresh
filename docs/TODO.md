@@ -104,27 +104,11 @@ Features are categorized as:
 
   **Implementation Phases:**
 
-  *Phase 1: Virtual Text Infrastructure* (~3-4 hours)
-  - [ ] Create `src/virtual_text.rs` with `VirtualTextManager`
-  - [ ] Add `virtual_texts: VirtualTextManager` to `EditorState`
-  - [ ] Extend rendering loop to inject virtual text Spans:
-    ```rust
-    // Before character: check for BeforeChar virtual text
-    if let Some(vtexts) = vtext_lookup.get(&byte_pos) {
-        for vt in vtexts.iter().filter(|v| v.position == BeforeChar) {
-            line_spans.push(Span::styled(&vt.text, vt.style));
-        }
-    }
-    // Render actual character (existing code)
-    line_spans.push(Span::styled(ch, style));
-    // After character: check for AfterChar virtual text
-    if let Some(vtexts) = vtext_lookup.get(&byte_pos) {
-        for vt in vtexts.iter().filter(|v| v.position == AfterChar) {
-            line_spans.push(Span::styled(&vt.text, vt.style));
-        }
-    }
-    ```
-  - [ ] Add unit tests for VirtualTextManager
+  *Phase 1: Virtual Text Infrastructure* (~3-4 hours) ✅
+  - [x] Create `src/virtual_text.rs` with `VirtualTextManager` ✅
+  - [x] Add `virtual_texts: VirtualTextManager` to `EditorState` ✅
+  - [x] Extend rendering loop to inject virtual text Spans ✅
+  - [x] Add unit tests for VirtualTextManager (12 unit tests + 5 integration tests) ✅
 
   *Phase 2: LSP Integration* (~3-4 hours)
   - [ ] Add `textDocument/inlayHint` request to `LspHandle`
@@ -693,3 +677,4 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 - ✅ **Inlay Hints documentation** (detailed implementation plan for virtual text rendering infrastructure)
 - ✅ **Multi-file Search/Replace plugin** (git grep integration, virtual buffer results, selective replacement)
 - ✅ **Additional themes** (Nord, Dracula, Solarized Dark)
+- ✅ **Virtual Text Infrastructure** (Phase 1 complete: VirtualTextManager, EditorState integration, rendering loop, 17 tests)
