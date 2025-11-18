@@ -611,7 +611,7 @@ impl Theme {
             inactive_cursor: Color::DarkGray,
             selection_bg: Color::Rgb(0, 100, 200),
             current_line_bg: Color::Rgb(20, 20, 20),
-            line_number_fg: Color::Yellow,
+            line_number_fg: Color::Rgb(150, 150, 150),
             line_number_bg: Color::Black,
 
             // UI element colors
