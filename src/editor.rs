@@ -3933,9 +3933,16 @@ impl Editor {
                                 tracing::error!("Failed to update panel content: {}", e);
                             } else {
                                 tracing::info!("Updated existing panel '{}' content", pid);
-                                // Focus the existing panel's split
-                                self.set_active_buffer(existing_buffer_id);
                             }
+
+                            // Find and focus the split that contains this buffer
+                            let splits = self.split_manager.splits_for_buffer(existing_buffer_id);
+                            if let Some(&split_id) = splits.first() {
+                                self.split_manager.set_active_split(split_id);
+                                self.active_buffer = existing_buffer_id;
+                                tracing::debug!("Focused split {:?} containing panel buffer", split_id);
+                            }
+
                             // Send response with existing buffer ID
                             if let Some(req_id) = request_id {
                                 self.send_plugin_response(crate::plugin_api::PluginResponse::VirtualBufferCreated {
