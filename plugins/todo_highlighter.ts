@@ -25,6 +25,9 @@ const config: HighlightConfig = {
 // Track processed lines to avoid duplicate highlights
 const processedLines = new Map<number, Set<number>>();
 
+// Track which buffers need their overlays refreshed (content changed)
+const dirtyBuffers = new Set<number>();
+
 // Process a single line for keyword highlighting
 function highlightLine(
   bufferId: number,
@@ -84,6 +87,17 @@ function clearHighlights(bufferId: number): void {
   processedLines.delete(bufferId);
 }
 
+// Handle render-start events (only clear overlays if buffer content changed)
+globalThis.onRenderStart = function(data: { buffer_id: number }): void {
+  if (!config.enabled) return;
+
+  // Only clear and recreate overlays if the buffer content changed
+  if (dirtyBuffers.has(data.buffer_id)) {
+    clearHighlights(data.buffer_id);
+    dirtyBuffers.delete(data.buffer_id);
+  }
+};
+
 // Handle render-line events
 globalThis.onRenderLine = function(data: {
   buffer_id: number;
@@ -95,13 +109,26 @@ globalThis.onRenderLine = function(data: {
   highlightLine(data.buffer_id, data.line_number, data.byte_start, data.content);
 };
 
+// Handle buffer content changes - mark buffer as needing overlay refresh
+globalThis.onAfterInsert = function(data: { buffer_id: number }): void {
+  dirtyBuffers.add(data.buffer_id);
+};
+
+globalThis.onAfterDelete = function(data: { buffer_id: number }): void {
+  dirtyBuffers.add(data.buffer_id);
+};
+
 // Handle buffer close events
 globalThis.onBufferClosed = function(data: { buffer_id: number }): void {
   processedLines.delete(data.buffer_id);
+  dirtyBuffers.delete(data.buffer_id);
 };
 
 // Register hooks
+editor.on("render_start", "onRenderStart");
 editor.on("render_line", "onRenderLine");
+editor.on("after-insert", "onAfterInsert");
+editor.on("after-delete", "onAfterDelete");
 editor.on("buffer_closed", "onBufferClosed");
 
 // Plugin commands

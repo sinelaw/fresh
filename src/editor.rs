@@ -2209,10 +2209,47 @@ impl Editor {
     }
 
     /// Trigger plugin hooks for an event (if any)
-    fn trigger_plugin_hooks_for_event(&mut self, _event: &Event) {
-        // TypeScript plugin event hooks are not yet implemented
-        // This can be extended to call ts_manager.run_hook() for specific events
-        // when needed, converting events to HookArgs
+    fn trigger_plugin_hooks_for_event(&mut self, event: &Event) {
+        let buffer_id = self.active_buffer;
+
+        // Convert event to hook args and fire the appropriate hook
+        let hook_args = match event {
+            Event::Insert { position, text, .. } => {
+                Some((
+                    "after-insert",
+                    crate::hooks::HookArgs::AfterInsert {
+                        buffer_id,
+                        position: *position,
+                        text: text.clone(),
+                    },
+                ))
+            }
+            Event::Delete { range, deleted_text, .. } => {
+                Some((
+                    "after-delete",
+                    crate::hooks::HookArgs::AfterDelete {
+                        buffer_id,
+                        range: range.clone(),
+                        deleted_text: deleted_text.clone(),
+                    },
+                ))
+            }
+            Event::Batch { events, .. } => {
+                // Fire hooks for each event in the batch
+                for e in events {
+                    self.trigger_plugin_hooks_for_event(e);
+                }
+                None
+            }
+            _ => None,
+        };
+
+        // Fire the hook to TypeScript plugins
+        if let Some((hook_name, args)) = hook_args {
+            if let Some(ref ts_manager) = self.ts_plugin_manager {
+                ts_manager.run_hook(hook_name, args);
+            }
+        }
     }
 
     /// Get the event log for the active buffer
@@ -7467,6 +7504,11 @@ impl Editor {
 
             for (_, buffer_id, split_area) in visible_buffers {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    // Fire render_start hook once per buffer before render_line hooks
+                    // This allows plugins to clear overlays before recreating them
+                    let render_start_args = crate::hooks::HookArgs::RenderStart { buffer_id };
+                    ts_manager.run_hook_blocking("render_start", render_start_args);
+
                     // Use the split area height as visible line count
                     let visible_count = split_area.height as usize;
                     let top_byte = state.viewport.top_byte;
