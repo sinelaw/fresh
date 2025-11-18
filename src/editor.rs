@@ -3781,9 +3781,9 @@ impl Editor {
                     ratio,
                 ) {
                     Ok(new_split_id) => {
-                        // Create independent view state for the new split
+                        // Create independent view state for the new split with the buffer in tabs
                         let mut view_state =
-                            SplitViewState::new(self.terminal_width, self.terminal_height);
+                            SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buffer_id);
                         view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
                         self.split_view_states.insert(new_split_id, view_state);
 
