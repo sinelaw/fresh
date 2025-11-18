@@ -1434,6 +1434,7 @@ pub fn action_to_events(
         | Action::LspCodeActions
         | Action::LspRestart
         | Action::ToggleInlayHints
+        | Action::DumpConfig
         | Action::Search
         | Action::FindNext
         | Action::FindPrevious

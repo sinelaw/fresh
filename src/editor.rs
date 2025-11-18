@@ -1787,6 +1787,36 @@ impl Editor {
         }
     }
 
+    /// Dump the current configuration to the user's config file
+    pub fn dump_config(&mut self) {
+        // Get the config directory path
+        let config_dir = match dirs::config_dir() {
+            Some(dir) => dir.join("fresh"),
+            None => {
+                self.set_status_message("Error: Could not determine config directory".to_string());
+                return;
+            }
+        };
+
+        // Create the config directory if it doesn't exist
+        if let Err(e) = std::fs::create_dir_all(&config_dir) {
+            self.set_status_message(format!("Error creating config directory: {}", e));
+            return;
+        }
+
+        let config_path = config_dir.join("config.json");
+
+        // Save the config
+        match self.config.save_to_file(&config_path) {
+            Ok(()) => {
+                self.set_status_message(format!("Config saved to {}", config_path.display()));
+            }
+            Err(e) => {
+                self.set_status_message(format!("Error saving config: {}", e));
+            }
+        }
+    }
+
     /// Set the active buffer and trigger all necessary side effects
     ///
     /// This is the centralized method for switching buffers. It:
@@ -6689,6 +6719,9 @@ impl Editor {
             }
             Action::ToggleInlayHints => {
                 self.toggle_inlay_hints();
+            }
+            Action::DumpConfig => {
+                self.dump_config();
             }
             Action::Search => {
                 // Start search prompt

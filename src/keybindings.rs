@@ -317,6 +317,9 @@ pub enum Action {
     LspRestart,
     ToggleInlayHints,
 
+    // Config operations
+    DumpConfig,
+
     // Search and replace
     Search,
     FindNext,
@@ -548,6 +551,8 @@ impl Action {
             "lsp_code_actions" => Some(Action::LspCodeActions),
             "lsp_restart" => Some(Action::LspRestart),
             "toggle_inlay_hints" => Some(Action::ToggleInlayHints),
+
+            "dump_config" => Some(Action::DumpConfig),
 
             "search" => Some(Action::Search),
             "find_next" => Some(Action::FindNext),
@@ -1648,6 +1653,7 @@ impl KeybindingResolver {
             Action::LspCodeActions => "LSP: Show code actions".to_string(),
             Action::LspRestart => "LSP: Restart server for current language".to_string(),
             Action::ToggleInlayHints => "Toggle inlay hints".to_string(),
+            Action::DumpConfig => "Dump config to file".to_string(),
             Action::Search => "Search for text in buffer".to_string(),
             Action::FindNext => "Find next search match".to_string(),
             Action::FindPrevious => "Find previous search match".to_string(),
