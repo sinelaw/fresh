@@ -164,13 +164,11 @@ async function loadLineTexts(references: ReferenceItem[]): Promise<void> {
 
 // Show references panel
 async function showReferencesPanel(symbol: string, references: ReferenceItem[]): Promise<void> {
-  // Close existing panel if open
-  if (panelOpen && referencesBufferId !== null) {
-    editor.closeBuffer(referencesBufferId);
+  // Only save the source split ID if panel is not already open
+  // (avoid overwriting it with the references split ID on subsequent calls)
+  if (!panelOpen) {
+    sourceSplitId = editor.getActiveSplitId();
   }
-
-  // Save the current split ID before creating the references split
-  sourceSplitId = editor.getActiveSplitId();
 
   // Limit results
   const limitedRefs = references.slice(0, MAX_RESULTS);
@@ -185,7 +183,8 @@ async function showReferencesPanel(symbol: string, references: ReferenceItem[]):
   // Build panel entries
   const entries = buildPanelEntries();
 
-  // Create virtual buffer in horizontal split
+  // Create or update virtual buffer in horizontal split
+  // The panel_id mechanism will reuse the existing buffer/split if it exists
   try {
     referencesBufferId = await editor.createVirtualBufferInSplit({
       name: "*References*",
