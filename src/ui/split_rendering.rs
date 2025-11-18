@@ -1001,10 +1001,21 @@ impl SplitRenderer {
                         char_position_to_segment(column, &segments)
                     };
 
+                    // Calculate virtual text width before cursor position on this line
+                    // This accounts for inlay hints that shift the visual cursor position
+                    let mut virtual_text_offset: usize = 0;
+                    for byte_pos in line_start..primary_cursor_position {
+                        if let Some(vtexts) = virtual_text_lookup.get(&byte_pos) {
+                            for vtext in vtexts {
+                                virtual_text_offset += vtext.text.chars().count();
+                            }
+                        }
+                    }
+
                     // Cursor screen position relative to this line's rendered segments
                     // Note: cursor_screen_x is the column in the text content, NOT including
                     // the line number gutter (which gets added later at hardware cursor setting)
-                    cursor_screen_x = col_in_segment as u16;
+                    cursor_screen_x = (col_in_segment + virtual_text_offset) as u16;
 
                     // lines_rendered is 1-indexed (incremented before processing), but cursor position needs to be 0-indexed
                     cursor_screen_y = (lines_rendered - 1 + segment_idx) as u16;

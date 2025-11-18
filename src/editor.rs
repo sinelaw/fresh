@@ -4882,11 +4882,8 @@ impl Editor {
                 _ => VirtualTextPosition::AfterChar, // Default to after
             };
 
-            // Add padding for readability
-            let display_text = match position {
-                VirtualTextPosition::AfterChar => format!(": {}", text),
-                VirtualTextPosition::BeforeChar => format!("{}:", text),
-            };
+            // Format display text - just add padding space, rust-analyzer includes the colon
+            let display_text = format!(" {}", text.trim());
 
             state.virtual_texts.add(
                 &mut state.marker_list,
