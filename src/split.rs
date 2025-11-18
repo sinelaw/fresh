@@ -60,9 +60,10 @@ pub enum SplitNode {
 /// Following the Emacs model where each window (split) has its own:
 /// - Point (cursor position) - independent per split
 /// - Window-start (scroll position) - independent per split
+/// - Tabs (open buffers) - independent per split
 ///
 /// This allows multiple splits to display the same buffer at different positions
-/// with independent cursor and scroll positions.
+/// with independent cursor and scroll positions, and each split has its own set of tabs.
 #[derive(Debug, Clone)]
 pub struct SplitViewState {
     /// Independent cursor set for this split (supports multi-cursor)
@@ -70,6 +71,10 @@ pub struct SplitViewState {
 
     /// Independent scroll position for this split
     pub viewport: Viewport,
+
+    /// List of buffer IDs open in this split's tab bar (in order)
+    /// The currently displayed buffer is tracked in the SplitNode::Leaf
+    pub open_buffers: Vec<BufferId>,
 }
 
 impl SplitViewState {
@@ -78,7 +83,34 @@ impl SplitViewState {
         Self {
             cursors: Cursors::new(),
             viewport: Viewport::new(width, height),
+            open_buffers: Vec::new(),
         }
+    }
+
+    /// Create a new split view state with an initial buffer open
+    pub fn with_buffer(width: u16, height: u16, buffer_id: BufferId) -> Self {
+        Self {
+            cursors: Cursors::new(),
+            viewport: Viewport::new(width, height),
+            open_buffers: vec![buffer_id],
+        }
+    }
+
+    /// Add a buffer to this split's tabs (if not already present)
+    pub fn add_buffer(&mut self, buffer_id: BufferId) {
+        if !self.open_buffers.contains(&buffer_id) {
+            self.open_buffers.push(buffer_id);
+        }
+    }
+
+    /// Remove a buffer from this split's tabs
+    pub fn remove_buffer(&mut self, buffer_id: BufferId) {
+        self.open_buffers.retain(|&id| id != buffer_id);
+    }
+
+    /// Check if a buffer is open in this split
+    pub fn has_buffer(&self, buffer_id: BufferId) -> bool {
+        self.open_buffers.contains(&buffer_id)
     }
 }
 
