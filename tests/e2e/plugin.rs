@@ -185,14 +185,18 @@ TODO FIXME HACK NOTE XXX BUG (not in comments)
             if line[..x].contains("//") {
                 // Check the style of the 'T' in "TODO"
                 if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
-                    // Check if background color is set (orange: r=255, g=165, b=0)
+                    // Check if background color is an actual RGB color (not just Reset)
+                    // TODO keywords should be orange (255, 165, 0)
                     if let Some(bg) = style.bg {
                         println!(
                             "Found TODO at ({}, {}) with background color: {:?}",
                             x, y, bg
                         );
-                        found_highlighted_todo = true;
-                        break;
+                        // Only count as highlighted if it's an actual RGB color
+                        if matches!(bg, ratatui::style::Color::Rgb(_, _, _)) {
+                            found_highlighted_todo = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -317,9 +321,12 @@ fn test_todo_highlighter_toggle() {
         if let Some(x) = line.find("TODO") {
             if line[..x].contains("//") {
                 if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
-                    if style.bg.is_some() {
-                        found_highlighted = true;
-                        break;
+                    // Only count as highlighted if it's an actual RGB color
+                    if let Some(bg) = style.bg {
+                        if matches!(bg, ratatui::style::Color::Rgb(_, _, _)) {
+                            found_highlighted = true;
+                            break;
+                        }
                     }
                 }
             }
