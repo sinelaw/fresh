@@ -11,7 +11,7 @@
 //! - Main loop remains responsive and simple
 
 use crate::file_tree::{FileTreeView, NodeId};
-use lsp_types::{CompletionItem, Diagnostic, Location};
+use lsp_types::{CodeActionOrCommand, CompletionItem, Diagnostic, Location, SignatureHelp};
 use std::sync::mpsc;
 
 /// Messages sent from async tasks to the synchronous main loop
@@ -63,6 +63,18 @@ pub enum AsyncMessage {
     LspReferences {
         request_id: u64,
         locations: Vec<Location>,
+    },
+
+    /// LSP signature help response
+    LspSignatureHelp {
+        request_id: u64,
+        signature_help: Option<SignatureHelp>,
+    },
+
+    /// LSP code actions response
+    LspCodeActions {
+        request_id: u64,
+        actions: Vec<CodeActionOrCommand>,
     },
 
     /// File changed externally (future: file watching)

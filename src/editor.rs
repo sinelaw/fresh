@@ -337,6 +337,12 @@ pub struct Editor {
     /// Symbol name for pending references request
     pending_references_symbol: String,
 
+    /// Pending LSP signature help request ID (if any)
+    pending_signature_help_request: Option<u64>,
+
+    /// Pending LSP code actions request ID (if any)
+    pending_code_actions_request: Option<u64>,
+
     /// Hover symbol range (byte offsets) - for highlighting the symbol under hover
     /// Format: (start_byte_offset, end_byte_offset)
     hover_symbol_range: Option<(usize, usize)>,
@@ -703,6 +709,8 @@ impl Editor {
             pending_hover_request: None,
             pending_references_request: None,
             pending_references_symbol: String::new(),
+            pending_signature_help_request: None,
+            pending_code_actions_request: None,
             hover_symbol_range: None,
             search_state: None,
             interactive_replace_state: None,
@@ -2828,6 +2836,18 @@ impl Editor {
                         tracing::error!("Error handling references response: {}", e);
                     }
                 }
+                AsyncMessage::LspSignatureHelp {
+                    request_id,
+                    signature_help,
+                } => {
+                    self.handle_signature_help_response(request_id, signature_help);
+                }
+                AsyncMessage::LspCodeActions {
+                    request_id,
+                    actions,
+                } => {
+                    self.handle_code_actions_response(request_id, actions);
+                }
                 AsyncMessage::FileChanged { path } => {
                     tracing::info!("File changed externally: {}", path);
                     // TODO: Handle external file changes
@@ -4582,6 +4602,300 @@ impl Editor {
         Ok(())
     }
 
+    /// Request LSP signature help at current cursor position
+    fn request_signature_help(&mut self) -> io::Result<()> {
+        // Get the current buffer and cursor position
+        let state = self.active_state();
+        let cursor_pos = state.cursors.primary().position;
+
+        // Convert byte position to LSP position (line, UTF-16 code units)
+        let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
+
+        // Get the current file URI and path
+        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let (uri, file_path) = if let Some(meta) = metadata {
+            (meta.file_uri(), meta.file_path())
+        } else {
+            (None, None)
+        };
+
+        if let (Some(uri), Some(path)) = (uri, file_path) {
+            // Detect language from file extension
+            if let Some(language) = crate::lsp_manager::detect_language(path) {
+                // Get LSP handle
+                if let Some(lsp) = self.lsp.as_mut() {
+                    if let Some(handle) = lsp.get_or_spawn(&language) {
+                        let request_id = self.next_lsp_request_id;
+                        self.next_lsp_request_id += 1;
+                        self.pending_signature_help_request = Some(request_id);
+                        self.lsp_status = "LSP: signature help...".to_string();
+
+                        let _ = handle.signature_help(
+                            request_id,
+                            uri.clone(),
+                            line as u32,
+                            character as u32,
+                        );
+                        tracing::info!(
+                            "Requested signature help at {}:{}:{} (byte_pos={})",
+                            uri.as_str(),
+                            line,
+                            character,
+                            cursor_pos
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle signature help response from LSP
+    fn handle_signature_help_response(
+        &mut self,
+        request_id: u64,
+        signature_help: Option<lsp_types::SignatureHelp>,
+    ) {
+        // Check if this response is for the current pending request
+        if self.pending_signature_help_request != Some(request_id) {
+            tracing::debug!("Ignoring stale signature help response: {}", request_id);
+            return;
+        }
+
+        self.pending_signature_help_request = None;
+        self.lsp_status.clear();
+
+        let signature_help = match signature_help {
+            Some(help) if !help.signatures.is_empty() => help,
+            _ => {
+                tracing::debug!("No signature help available");
+                return;
+            }
+        };
+
+        // Get the active signature
+        let active_signature_idx = signature_help.active_signature.unwrap_or(0) as usize;
+        let signature = match signature_help.signatures.get(active_signature_idx) {
+            Some(sig) => sig,
+            None => return,
+        };
+
+        // Build the display content
+        let mut lines: Vec<String> = Vec::new();
+
+        // Add the signature label (function signature)
+        lines.push(signature.label.clone());
+
+        // Add parameter highlighting info
+        let active_param = signature_help
+            .active_parameter
+            .or(signature.active_parameter)
+            .unwrap_or(0) as usize;
+
+        // If there are parameters, highlight the active one
+        if let Some(params) = &signature.parameters {
+            if let Some(param) = params.get(active_param) {
+                // Get parameter label
+                let param_label = match &param.label {
+                    lsp_types::ParameterLabel::Simple(s) => s.clone(),
+                    lsp_types::ParameterLabel::LabelOffsets(offsets) => {
+                        // Extract substring from signature label
+                        let start = offsets[0] as usize;
+                        let end = offsets[1] as usize;
+                        if end <= signature.label.len() {
+                            signature.label[start..end].to_string()
+                        } else {
+                            String::new()
+                        }
+                    }
+                };
+
+                if !param_label.is_empty() {
+                    lines.push(format!("▶ {}", param_label));
+                }
+
+                // Add parameter documentation if available
+                if let Some(doc) = &param.documentation {
+                    let doc_text = match doc {
+                        lsp_types::Documentation::String(s) => s.clone(),
+                        lsp_types::Documentation::MarkupContent(m) => m.value.clone(),
+                    };
+                    if !doc_text.is_empty() {
+                        lines.push(String::new());
+                        lines.push(doc_text);
+                    }
+                }
+            }
+        }
+
+        // Add function documentation if available
+        if let Some(doc) = &signature.documentation {
+            let doc_text = match doc {
+                lsp_types::Documentation::String(s) => s.clone(),
+                lsp_types::Documentation::MarkupContent(m) => m.value.clone(),
+            };
+            if !doc_text.is_empty() {
+                if lines.len() > 1 {
+                    lines.push(String::new());
+                    lines.push("---".to_string());
+                }
+                lines.push(doc_text);
+            }
+        }
+
+        // Create a popup with the signature help
+        use crate::popup::{Popup, PopupPosition};
+        use ratatui::style::Style;
+
+        let mut popup = Popup::text(lines, &self.theme);
+        popup.title = Some("Signature Help".to_string());
+        popup.position = PopupPosition::AboveCursor;
+        popup.width = 60;
+        popup.max_height = 10;
+        popup.border_style = Style::default().fg(self.theme.popup_border_fg);
+        popup.background_style = Style::default().bg(self.theme.popup_bg);
+
+        // Show the popup
+        if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+            state.popups.show(popup);
+            tracing::info!(
+                "Showing signature help popup for {} signatures",
+                signature_help.signatures.len()
+            );
+        }
+    }
+
+    /// Request LSP code actions at current cursor position
+    fn request_code_actions(&mut self) -> io::Result<()> {
+        // Get the current buffer and cursor position
+        let state = self.active_state();
+        let cursor_pos = state.cursors.primary().position;
+
+        // Convert byte position to LSP position (line, UTF-16 code units)
+        let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
+
+        // Get selection range (if any) or use cursor position
+        let (start_line, start_char, end_line, end_char) =
+            if let Some(range) = state.cursors.primary().selection_range() {
+                let (s_line, s_char) = state.buffer.position_to_lsp_position(range.start);
+                let (e_line, e_char) = state.buffer.position_to_lsp_position(range.end);
+                (s_line as u32, s_char as u32, e_line as u32, e_char as u32)
+            } else {
+                (line as u32, character as u32, line as u32, character as u32)
+            };
+
+        // Get diagnostics at cursor position for context
+        // TODO: Implement diagnostic retrieval when needed
+        let diagnostics = Vec::new();
+
+        // Get the current file URI and path
+        let metadata = self.buffer_metadata.get(&self.active_buffer);
+        let (uri, file_path) = if let Some(meta) = metadata {
+            (meta.file_uri(), meta.file_path())
+        } else {
+            (None, None)
+        };
+
+        if let (Some(uri), Some(path)) = (uri, file_path) {
+            // Detect language from file extension
+            if let Some(language) = crate::lsp_manager::detect_language(path) {
+                // Get LSP handle
+                if let Some(lsp) = self.lsp.as_mut() {
+                    if let Some(handle) = lsp.get_or_spawn(&language) {
+                        let request_id = self.next_lsp_request_id;
+                        self.next_lsp_request_id += 1;
+                        self.pending_code_actions_request = Some(request_id);
+                        self.lsp_status = "LSP: code actions...".to_string();
+
+                        let _ = handle.code_actions(
+                            request_id,
+                            uri.clone(),
+                            start_line,
+                            start_char,
+                            end_line,
+                            end_char,
+                            diagnostics,
+                        );
+                        tracing::info!(
+                            "Requested code actions at {}:{}:{}-{}:{} (byte_pos={})",
+                            uri.as_str(),
+                            start_line,
+                            start_char,
+                            end_line,
+                            end_char,
+                            cursor_pos
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle code actions response from LSP
+    fn handle_code_actions_response(
+        &mut self,
+        request_id: u64,
+        actions: Vec<lsp_types::CodeActionOrCommand>,
+    ) {
+        // Check if this response is for the current pending request
+        if self.pending_code_actions_request != Some(request_id) {
+            tracing::debug!("Ignoring stale code actions response: {}", request_id);
+            return;
+        }
+
+        self.pending_code_actions_request = None;
+        self.lsp_status.clear();
+
+        if actions.is_empty() {
+            self.set_status_message("No code actions available".to_string());
+            return;
+        }
+
+        // Build the display content
+        let mut lines: Vec<String> = Vec::new();
+        lines.push(format!("Code Actions ({}):", actions.len()));
+        lines.push(String::new());
+
+        for (i, action) in actions.iter().enumerate() {
+            let title = match action {
+                lsp_types::CodeActionOrCommand::Command(cmd) => &cmd.title,
+                lsp_types::CodeActionOrCommand::CodeAction(ca) => &ca.title,
+            };
+            lines.push(format!("  {}. {}", i + 1, title));
+        }
+
+        lines.push(String::new());
+        lines.push("Press number to select, Esc to cancel".to_string());
+
+        // Create a popup with the code actions
+        use crate::popup::{Popup, PopupPosition};
+        use ratatui::style::Style;
+
+        let mut popup = Popup::text(lines, &self.theme);
+        popup.title = Some("Code Actions".to_string());
+        popup.position = PopupPosition::BelowCursor;
+        popup.width = 60;
+        popup.max_height = 15;
+        popup.border_style = Style::default().fg(self.theme.popup_border_fg);
+        popup.background_style = Style::default().bg(self.theme.popup_bg);
+
+        // Show the popup
+        if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+            state.popups.show(popup);
+            tracing::info!("Showing code actions popup with {} actions", actions.len());
+        }
+
+        // Note: Executing code actions would require storing the actions and handling
+        // key presses to select and apply them. This is left for future enhancement.
+        self.set_status_message(format!(
+            "Found {} code action(s) - selection not yet implemented",
+            actions.len()
+        ));
+    }
+
     /// Handle find references response from LSP
     fn handle_references_response(
         &mut self,
@@ -5815,6 +6129,12 @@ impl Editor {
             Action::LspReferences => {
                 self.request_references()?;
             }
+            Action::LspSignatureHelp => {
+                self.request_signature_help()?;
+            }
+            Action::LspCodeActions => {
+                self.request_code_actions()?;
+            }
             Action::Search => {
                 // Start search prompt
                 self.start_prompt("Search: ".to_string(), PromptType::Search);
@@ -6330,6 +6650,11 @@ impl Editor {
                                 // Note: LSP notifications now handled automatically by apply_event_to_active_buffer
                             }
                         }
+                    }
+
+                    // Auto-trigger signature help on '(' and ','
+                    if c == '(' || c == ',' {
+                        let _ = self.request_signature_help();
                     }
                 }
             }
