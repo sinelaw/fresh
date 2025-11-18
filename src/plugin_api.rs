@@ -73,6 +73,10 @@ pub struct EditorStateSnapshot {
     pub all_cursors: Vec<CursorInfo>,
     /// Viewport information for the active buffer
     pub viewport: Option<ViewportInfo>,
+    /// Cursor positions per buffer (for buffers other than active)
+    pub buffer_cursor_positions: HashMap<BufferId, usize>,
+    /// Text properties per buffer (for virtual buffers with properties)
+    pub buffer_text_properties: HashMap<BufferId, Vec<crate::text_property::TextProperty>>,
 }
 
 impl EditorStateSnapshot {
@@ -84,6 +88,8 @@ impl EditorStateSnapshot {
             primary_cursor: None,
             all_cursors: Vec::new(),
             viewport: None,
+            buffer_cursor_positions: HashMap::new(),
+            buffer_text_properties: HashMap::new(),
         }
     }
 }
