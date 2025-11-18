@@ -1280,4 +1280,202 @@ mod tests {
             assert_eq!(text4, "line2");
         }
     }
+
+    // Virtual text integration tests
+    mod virtual_text_integration_tests {
+        use super::*;
+        use crate::virtual_text::VirtualTextPosition;
+        use ratatui::style::Style;
+
+        #[test]
+        fn test_virtual_text_add_and_query() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("hello world");
+
+            // Initialize marker list for buffer
+            if state.buffer.len() > 0 {
+                state.marker_list.adjust_for_insert(0, state.buffer.len());
+            }
+
+            // Add virtual text at position 5 (after 'hello')
+            let vtext_id = state.virtual_texts.add(
+                &mut state.marker_list,
+                5,
+                ": string".to_string(),
+                Style::default(),
+                VirtualTextPosition::AfterChar,
+                0,
+            );
+
+            // Query should return the virtual text
+            let results = state.virtual_texts.query_range(&state.marker_list, 0, 11);
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].0, 5); // Position
+            assert_eq!(results[0].1.text, ": string");
+
+            // Build lookup should work
+            let lookup = state.virtual_texts.build_lookup(&state.marker_list, 0, 11);
+            assert!(lookup.contains_key(&5));
+            assert_eq!(lookup[&5].len(), 1);
+            assert_eq!(lookup[&5][0].text, ": string");
+
+            // Clean up
+            state.virtual_texts.remove(&mut state.marker_list, vtext_id);
+            assert!(state.virtual_texts.is_empty());
+        }
+
+        #[test]
+        fn test_virtual_text_position_tracking_on_insert() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("hello world");
+
+            // Initialize marker list for buffer
+            if state.buffer.len() > 0 {
+                state.marker_list.adjust_for_insert(0, state.buffer.len());
+            }
+
+            // Add virtual text at position 6 (the 'w' in 'world')
+            let _vtext_id = state.virtual_texts.add(
+                &mut state.marker_list,
+                6,
+                "/*param*/".to_string(),
+                Style::default(),
+                VirtualTextPosition::BeforeChar,
+                0,
+            );
+
+            // Insert "beautiful " at position 6 using Event
+            let cursor_id = state.cursors.primary_id();
+            state.apply(&Event::Insert {
+                position: 6,
+                text: "beautiful ".to_string(),
+                cursor_id,
+            });
+
+            // Virtual text should now be at position 16 (6 + 10)
+            let results = state.virtual_texts.query_range(&state.marker_list, 0, 30);
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].0, 16); // Position should have moved
+            assert_eq!(results[0].1.text, "/*param*/");
+        }
+
+        #[test]
+        fn test_virtual_text_position_tracking_on_delete() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("hello beautiful world");
+
+            // Initialize marker list for buffer
+            if state.buffer.len() > 0 {
+                state.marker_list.adjust_for_insert(0, state.buffer.len());
+            }
+
+            // Add virtual text at position 16 (the 'w' in 'world')
+            let _vtext_id = state.virtual_texts.add(
+                &mut state.marker_list,
+                16,
+                ": string".to_string(),
+                Style::default(),
+                VirtualTextPosition::AfterChar,
+                0,
+            );
+
+            // Delete "beautiful " (positions 6-16) using Event
+            let cursor_id = state.cursors.primary_id();
+            state.apply(&Event::Delete {
+                range: 6..16,
+                deleted_text: "beautiful ".to_string(),
+                cursor_id,
+            });
+
+            // Virtual text should now be at position 6
+            let results = state.virtual_texts.query_range(&state.marker_list, 0, 20);
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].0, 6); // Position should have moved back
+            assert_eq!(results[0].1.text, ": string");
+        }
+
+        #[test]
+        fn test_multiple_virtual_texts_with_priorities() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("let x = 5");
+
+            // Initialize marker list for buffer
+            if state.buffer.len() > 0 {
+                state.marker_list.adjust_for_insert(0, state.buffer.len());
+            }
+
+            // Add type hint after 'x' (position 5)
+            state.virtual_texts.add(
+                &mut state.marker_list,
+                5,
+                ": i32".to_string(),
+                Style::default(),
+                VirtualTextPosition::AfterChar,
+                0, // Lower priority - renders first
+            );
+
+            // Add another hint at same position with higher priority
+            state.virtual_texts.add(
+                &mut state.marker_list,
+                5,
+                " /* inferred */".to_string(),
+                Style::default(),
+                VirtualTextPosition::AfterChar,
+                10, // Higher priority - renders second
+            );
+
+            // Build lookup - should have both, sorted by priority (lower first)
+            let lookup = state.virtual_texts.build_lookup(&state.marker_list, 0, 10);
+            assert!(lookup.contains_key(&5));
+            let vtexts = &lookup[&5];
+            assert_eq!(vtexts.len(), 2);
+            // Lower priority first (like layer ordering)
+            assert_eq!(vtexts[0].text, ": i32");
+            assert_eq!(vtexts[1].text, " /* inferred */");
+        }
+
+        #[test]
+        fn test_virtual_text_clear() {
+            let mut state =
+                EditorState::new(80, 24, crate::config::LARGE_FILE_THRESHOLD_BYTES as usize);
+            state.buffer = Buffer::from_str_test("test");
+
+            // Initialize marker list for buffer
+            if state.buffer.len() > 0 {
+                state.marker_list.adjust_for_insert(0, state.buffer.len());
+            }
+
+            // Add multiple virtual texts
+            state.virtual_texts.add(
+                &mut state.marker_list,
+                0,
+                "hint1".to_string(),
+                Style::default(),
+                VirtualTextPosition::BeforeChar,
+                0,
+            );
+            state.virtual_texts.add(
+                &mut state.marker_list,
+                2,
+                "hint2".to_string(),
+                Style::default(),
+                VirtualTextPosition::AfterChar,
+                0,
+            );
+
+            assert_eq!(state.virtual_texts.len(), 2);
+
+            // Clear all
+            state.virtual_texts.clear(&mut state.marker_list);
+            assert!(state.virtual_texts.is_empty());
+
+            // Query should return nothing
+            let results = state.virtual_texts.query_range(&state.marker_list, 0, 10);
+            assert!(results.is_empty());
+        }
+    }
 }
