@@ -41,9 +41,9 @@ async function measureOperation(
   const samples: number[] = [];
 
   for (let i = 0; i < iterations; i++) {
-    const start = performance.now();
+    const start = Date.now();
     operation();
-    const end = performance.now();
+    const end = Date.now();
     samples.push(end - start);
   }
 
@@ -71,9 +71,9 @@ async function measureAsyncOperation(
   const samples: number[] = [];
 
   for (let i = 0; i < iterations; i++) {
-    const start = performance.now();
+    const start = Date.now();
     await operation();
-    const end = performance.now();
+    const end = Date.now();
     samples.push(end - start);
   }
 
