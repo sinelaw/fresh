@@ -51,29 +51,33 @@ Features are categorized as:
 
 #### LSP Core Robustness (P0) - **🦀 Core**
 
-- [ ] **Auto-Restart on Crash**
-  - Detect server process death, track restart attempts
-  - Exponential backoff (1s, 2s, 4s, 8s delays)
-  - Give up after 5 restarts in 3 minutes
-  - Notify user on crash with option to manually restart
-  - **Effort:** 4-6 hours
+- [x] **Auto-Restart on Crash** ✅
+  - Detect server process death, exponential backoff (1s, 2s, 4s, 8s)
+  - Give up after 5 restarts in 3 minutes, manual restart command available
 
-#### LSP Architecture Improvements (P1) - **🦀 Core**
+#### LSP Next Priority Features (P1) - **🦀 Core**
+
+- [ ] **Pull Diagnostics** (LSP 3.17+)
+  - Implement `textDocument/diagnostic` request
+  - Track `resultId` for incremental updates
+  - Reduces redundant data transfer for large projects
+  - **Effort:** 8-12 hours
+
+- [ ] **Inlay Hints** (LSP 3.17+)
+  - Implement `textDocument/inlayHint`
+  - Render inline type/parameter hints (e.g., `let x/*: i32*/ = 5;`)
+  - High visibility feature expected by modern editor users
+  - **Effort:** 6-8 hours
+
+#### LSP Architecture Improvements (P2) - **🦀 Core**
 
 - [ ] **Feature Registration System**
   - Abstract features: `trait LspFeature { initialize(), clear() }`
-  - Modular completion, hover, diagnostics (separate files)
   - Enables dynamic capability registration (LSP 3.16+)
-  - **Effort:** 8-12 hours
-
-- [ ] **Pull Diagnostics** (LSP 3.17+)
-  - Implement `textDocument/diagnostic`
-  - Track `resultId` for incremental updates
   - **Effort:** 8-12 hours
 
 - [ ] **Multi-Root Workspaces**
   - Support `Vec<WorkspaceFolder>` instead of single `root_uri`
-  - Send `workspace/didChangeWorkspaceFolders` on add/remove
   - **Effort:** 4-6 hours
 
 #### LSP Core UX Features (P1) - **🦀 Core**
@@ -118,7 +122,6 @@ Features are categorized as:
 #### Deferred (Lower Priority)
 
 - Semantic Tokens - **🦀 Core** (highlighting integration)
-- Inlay Hints - **🦀 Core** (rendering pipeline)
 - Call/Type Hierarchy - **🦀 Core** (LSP protocol)
 - Log Viewer Panel - **📦 Plugin** (UI display)
 
@@ -589,13 +592,14 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 
 ## Next Steps
 
-1. **High Priority**: LSP advanced features (hover, code actions, find references) - **🦀 Core**
-2. **High Priority**: Block selection operations (insert/delete/copy) - **🦀 Core**
-3. **Medium Priority**: Complete virtual buffer infrastructure - **🔧 Infrastructure**
-4. **Medium Priority**: Macro persistence (save/load) - **🦀 Core**
-5. **Lower Priority**: Git integration plugins - **📦 Plugin**
+1. **High Priority**: Pull Diagnostics (LSP 3.17+) - **🦀 Core**
+2. **High Priority**: Inlay Hints (LSP 3.17+) - **🦀 Core**
+3. **Medium Priority**: Block selection operations (insert/delete/copy) - **🦀 Core**
+4. **Medium Priority**: Complete virtual buffer infrastructure - **🔧 Infrastructure**
+5. **Lower Priority**: Macro persistence, Git integration plugins
 
 ### Recent Completions (This Session)
+- ✅ LSP Auto-Restart on Crash (exponential backoff, cooldown, manual restart command)
 - ✅ Bracket auto-close and auto-pair deletion
 - ✅ Jump to next/previous error (F8/Shift+F8)
 - ✅ Macro recording and playback system (Alt+Shift+0-9 / Ctrl+Alt+0-9)
