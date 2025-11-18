@@ -311,6 +311,20 @@ fn op_fresh_clear_all_overlays(state: &mut OpState, buffer_id: u32) -> bool {
 }
 
 #[op2(fast)]
+fn op_fresh_refresh_lines(state: &mut OpState, buffer_id: u32) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::RefreshLines {
+                buffer_id: BufferId(buffer_id as usize),
+            });
+        return result.is_ok();
+    }
+    false
+}
+
+#[op2(fast)]
 fn op_fresh_insert_at_cursor(state: &mut OpState, #[string] text: String) -> bool {
     if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
         let runtime_state = runtime_state.borrow();
@@ -1350,6 +1364,7 @@ extension!(
         op_fresh_remove_overlay,
         op_fresh_remove_overlays_by_prefix,
         op_fresh_clear_all_overlays,
+        op_fresh_refresh_lines,
         op_fresh_insert_at_cursor,
         op_fresh_register_command,
         op_fresh_open_file,
@@ -1503,6 +1518,9 @@ impl TypeScriptRuntime {
                     },
                     clearAllOverlays(bufferId) {
                         return core.ops.op_fresh_clear_all_overlays(bufferId);
+                    },
+                    refreshLines(bufferId) {
+                        return core.ops.op_fresh_refresh_lines(bufferId);
                     },
 
                     // Convenience
@@ -2250,6 +2268,23 @@ impl TypeScriptPluginManager {
                     })
                     .collect();
                 serde_json::json!({ "symbol": symbol, "locations": locs })
+            }
+            HookArgs::LinesChanged { buffer_id, lines } => {
+                let lines_json: Vec<serde_json::Value> = lines
+                    .iter()
+                    .map(|line| {
+                        serde_json::json!({
+                            "line_number": line.line_number,
+                            "byte_start": line.byte_start,
+                            "byte_end": line.byte_end,
+                            "content": line.content,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "buffer_id": buffer_id.0,
+                    "lines": lines_json,
+                })
             }
         };
 

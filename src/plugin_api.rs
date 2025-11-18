@@ -167,6 +167,9 @@ pub enum PluginCommand {
     /// Remove overlays whose ID starts with the given prefix
     RemoveOverlaysByPrefix { buffer_id: BufferId, prefix: String },
 
+    /// Refresh lines for a buffer (clear seen_lines cache to re-trigger lines_changed hook)
+    RefreshLines { buffer_id: BufferId },
+
     /// Open a file at a specific line and column
     /// Line and column are 1-indexed to match git grep output
     OpenFileAtLocation {
