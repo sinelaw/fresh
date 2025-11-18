@@ -99,6 +99,13 @@ async function runBenchmark(): Promise<BenchmarkResults> {
 
   editor.setStatus("Running latency benchmark...");
 
+  // Create test file for readFile benchmark
+  try {
+    await editor.writeFile("/tmp/.fresh_benchmark_test", "test content");
+  } catch (e) {
+    editor.debug(`Failed to create test file: ${e}`);
+  }
+
   // Start Rust-side metrics collection
   (editor as any).metricsStart();
 
@@ -232,22 +239,25 @@ async function runBenchmark(): Promise<BenchmarkResults> {
   ));
 
   // 6. Async operations (actual round-trip)
+  editor.setStatus("Benchmark: testing spawnProcess...");
   results.push(await measureAsyncOperation(
     "spawnProcess (echo)",
-    10, // Fewer iterations for async
+    10,
     () => editor.spawnProcess("echo", ["test"])
   ));
 
+  editor.setStatus("Benchmark: testing readFile...");
   results.push(await measureAsyncOperation(
     "readFile (small)",
     10,
-    () => editor.readFile("/etc/hostname")
+    () => editor.readFile("/tmp/.fresh_benchmark_test")
   ));
 
   // 7. Virtual buffer creation (full round-trip with response)
+  editor.setStatus("Benchmark: testing createVirtualBufferInSplit...");
   results.push(await measureAsyncOperation(
     "createVirtualBufferInSplit",
-    5, // Heavy operation
+    5,
     async () => {
       const id = await editor.createVirtualBufferInSplit({
         name: "*Benchmark*",
