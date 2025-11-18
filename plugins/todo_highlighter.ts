@@ -12,7 +12,7 @@ interface HighlightConfig {
 
 // Plugin configuration
 const config: HighlightConfig = {
-  enabled: true,
+  enabled: false,  // Start disabled, use Enable or Toggle to activate
   keywords: [
     { word: "TODO", color: [255, 200, 50] },     // Yellow
     { word: "FIXME", color: [255, 100, 100] },   // Red
@@ -69,7 +69,7 @@ function highlightLine(
           keyword.color[0],
           keyword.color[1],
           keyword.color[2],
-          true  // underline
+          false  // background color, not underline
         );
       }
 

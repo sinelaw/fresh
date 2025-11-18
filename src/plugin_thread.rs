@@ -55,6 +55,13 @@ pub enum PluginRequest {
     /// Run a hook (fire-and-forget, no response needed)
     RunHook { hook_name: String, args: HookArgs },
 
+    /// Run a hook and wait for completion (blocking)
+    RunHookBlocking {
+        hook_name: String,
+        args: HookArgs,
+        response: oneshot::Sender<()>,
+    },
+
     /// Check if any handlers are registered for a hook
     HasHookHandlers {
         hook_name: String,
@@ -340,6 +347,27 @@ impl PluginThreadHandle {
         });
     }
 
+    /// Run a hook and wait for completion (blocking)
+    ///
+    /// Use this for hooks that need immediate results, like render_line hooks
+    /// that add overlays before rendering.
+    pub fn run_hook_blocking(&self, hook_name: &str, args: HookArgs) {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .request_sender
+            .send(PluginRequest::RunHookBlocking {
+                hook_name: hook_name.to_string(),
+                args,
+                response: tx,
+            })
+            .is_err()
+        {
+            return;
+        }
+        // Wait for completion
+        let _ = rx.recv();
+    }
+
     /// Check if any handlers are registered for a hook (blocking)
     pub fn has_hook_handlers(&self, hook_name: &str) -> bool {
         let (tx, rx) = oneshot::channel();
@@ -490,6 +518,18 @@ async fn handle_request(
             if let Err(e) = run_hook_internal(runtime, &hook_name, &args).await {
                 tracing::error!("Error running hook '{}': {}", hook_name, e);
             }
+        }
+
+        PluginRequest::RunHookBlocking {
+            hook_name,
+            args,
+            response,
+        } => {
+            // Blocking hook execution - notify caller when done
+            if let Err(e) = run_hook_internal(runtime, &hook_name, &args).await {
+                tracing::error!("Error running blocking hook '{}': {}", hook_name, e);
+            }
+            let _ = response.send(());
         }
 
         PluginRequest::HasHookHandlers {
