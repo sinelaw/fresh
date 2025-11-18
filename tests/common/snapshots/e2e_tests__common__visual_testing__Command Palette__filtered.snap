@@ -21,8 +21,8 @@ expression: "&screen_text"
                                                                                █
                                                                                █
                                                                                █
-                                                                               █
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  Show Help  Display the help page with all keybindings                       │
+│  Show Help                              Display the help page with all key...│
+│  Show Signature Help  Ctrl+Shift+Space  Show function parameter hints        │
 └──────────────────────────────────────────────────────────────────────────────┘
 Command: help

@@ -3,7 +3,7 @@ source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   Help                                     
- fresh-test-BIG.txt                                                             
+ /tmp/fresh-test-BIG.txt                                                        
       1 │ @00000000: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx █
           xxxxxxxxxxx                                                          │
       3 │ @00000080: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx │

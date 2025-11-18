@@ -14,15 +14,15 @@ expression: "&screen_text"
                                                                                █
                                                                                █
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  Open File     Ctrl+O  Open a file in a new or existing buffer               │
-│  Save File     Ctrl+S  Save the current buffer to disk                       │
-│  Save File As          Save the current buffer to a new file                 │
-│  New File      Ctrl+N  Create a new empty buffer                             │
-│  Close Buffer          Close the current buffer                              │
-│  Quit          Ctrl+Q  Exit the editor                                       │
-│  Undo          Ctrl+Z  Undo the last edit                                    │
-│  Redo          Ctrl+Y  Redo the last undone edit                             │
-│  Copy          Ctrl+C  Copy selection to clipboard                           │
-│  Cut           Ctrl+X  Cut selection to clipboard                            │
+│  Add Cursor Above          Ctrl+Alt+↑  Add a cursor on the line above        │
+│  Add Cursor Below          Ctrl+Alt+↓  Add a cursor on the line below        │
+│  Add Cursor at Next Match  Ctrl+D        Add a cursor at the next occurren...│
+│  Close Buffer                            Close the current buffer            │
+│  Close Split               Alt+X         Close the current split pane        │
+│  Code Actions              Ctrl+Shift+A  Show available code actions (quic...│
+│  Copy                      Ctrl+C        Copy selection to clipboard         │
+│  Cut                       Ctrl+X        Cut selection to clipboard          │
+│  Decrease Split Size       Alt+-         Decrease the size of the current ...│
+│  Dedent Selection          Shift+Tab     Decrease indentation of selected ...│
 └──────────────────────────────────────────────────────────────────────────────┘
 Command:
