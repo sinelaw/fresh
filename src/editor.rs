@@ -7055,7 +7055,10 @@ impl Editor {
                             let commands = self.command_registry.read().unwrap().get_all();
                             if let Some(cmd) = commands.iter().find(|c| c.name == input) {
                                 let action = cmd.action.clone();
-                                self.set_status_message(format!("Executing: {}", cmd.name));
+                                let cmd_name = cmd.name.clone();
+                                self.set_status_message(format!("Executing: {}", cmd_name));
+                                // Record command usage for history
+                                self.command_registry.write().unwrap().record_usage(&cmd_name);
                                 return self.handle_action(action);
                             } else {
                                 self.set_status_message(format!("Unknown command: {input}"));
