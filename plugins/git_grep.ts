@@ -45,8 +45,8 @@ function parseGitGrepOutput(stdout: string): {
     if (match) {
       results.push(match);
       suggestions.push({
-        text: `${match.file}:${match.line}:${match.column}: ${match.content}`,
-        description: match.file,
+        text: `${match.file}:${match.line}:${match.column}`,
+        description: match.content,
         value: `${match.file}:${match.line}:${match.column}`,
         disabled: false,
       });

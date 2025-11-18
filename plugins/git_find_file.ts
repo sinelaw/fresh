@@ -143,14 +143,9 @@ async function loadGitFiles(): Promise<void> {
 // Convert filtered files to prompt suggestions
 function filesToSuggestions(files: string[]): PromptSuggestion[] {
   return files.map((file) => {
-    // Extract filename for description
-    const parts = file.split("/");
-    const filename = parts[parts.length - 1];
-    const dir = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
-
     return {
       text: file,
-      description: dir ? `${filename} in ${dir}` : filename,
+      description: undefined,
       value: file,
       disabled: false,
     };
