@@ -1659,6 +1659,21 @@ impl TypeScriptRuntime {
 
                 // Make editor globally available
                 globalThis.editor = editor;
+
+                // Pre-compiled event dispatcher for performance
+                // This avoids recompiling JavaScript code for each event emission
+                globalThis.__eventDispatcher = async function(handlerName, eventData) {
+                    const handler = globalThis[handlerName];
+                    if (typeof handler === 'function') {
+                        const result = handler(eventData);
+                        const finalResult = (result instanceof Promise) ? await result : result;
+                        // Return true by default if handler doesn't return anything
+                        return finalResult !== false;
+                    } else {
+                        console.warn('Event handler "' + handlerName + '" is not defined');
+                        return true;
+                    }
+                };
                 "#
                 .to_string(),
             )
@@ -1773,6 +1788,7 @@ impl TypeScriptRuntime {
     /// * `Ok(false)` if any handler returned false (cancel)
     /// * `Err` if handler execution failed
     pub async fn emit(&mut self, event_name: &str, event_data: &str) -> Result<bool> {
+        let emit_start = std::time::Instant::now();
         let handlers = self.event_handlers.borrow().get(event_name).cloned();
 
         if let Some(handler_names) = handlers {
@@ -1781,59 +1797,85 @@ impl TypeScriptRuntime {
             }
 
             for handler_name in &handler_names {
-                let code = format!(
-                    r#"
-                    (async () => {{
-                        if (typeof globalThis.{} === 'function') {{
-                            const eventData = {};
-                            const result = globalThis.{}(eventData);
-                            const finalResult = (result instanceof Promise) ? await result : result;
-                            // Return true by default if handler doesn't return anything
-                            return finalResult !== false;
-                        }} else {{
-                            console.warn('Event handler "{}" is not defined');
-                            return true;
-                        }}
-                    }})();
-                    "#,
-                    handler_name, event_data, handler_name, handler_name
-                );
+                // Call the pre-compiled event dispatcher directly via V8 API
+                // This avoids the overhead of execute_script (parsing, compiling)
+                let call_start = std::time::Instant::now();
+                let result = {
+                    let scope = &mut self.js_runtime.handle_scope();
+                    let context = scope.get_current_context();
+                    let global = context.global(scope);
 
-                let code_static: FastString = code.into();
-                let result = self.js_runtime.execute_script("<event_emit>", code_static);
+                    // Get the __eventDispatcher function
+                    let dispatcher_key =
+                        deno_core::v8::String::new(scope, "__eventDispatcher").unwrap();
+                    let dispatcher_val = global.get(scope, dispatcher_key.into());
 
-                match result {
-                    Ok(value) => {
-                        // Run event loop to process any async work
-                        self.js_runtime
-                            .run_event_loop(Default::default())
-                            .await
-                            .map_err(|e| anyhow!("Event loop error in emit: {}", e))?;
+                    match dispatcher_val {
+                        Some(val) if val.is_function() => {
+                            let dispatcher =
+                                unsafe { deno_core::v8::Local::<deno_core::v8::Function>::cast(val) };
 
-                        // Check if the result is false (handler cancelled)
-                        let scope = &mut self.js_runtime.handle_scope();
-                        let local = deno_core::v8::Local::new(scope, value);
-                        if local.is_boolean() && !local.boolean_value(scope) {
-                            tracing::debug!(
-                                "Event '{}' cancelled by handler '{}'",
-                                event_name,
-                                handler_name
-                            );
-                            return Ok(false);
+                            // Create arguments: handler name and parsed event data
+                            let handler_str =
+                                deno_core::v8::String::new(scope, handler_name).unwrap();
+
+                            // Parse the event_data JSON string into a V8 value
+                            let event_data_str =
+                                deno_core::v8::String::new(scope, event_data).unwrap();
+                            let event_data_val =
+                                deno_core::v8::json::parse(scope, event_data_str.into());
+
+                            match event_data_val {
+                                Some(data) => {
+                                    let args = [handler_str.into(), data];
+                                    let undefined = deno_core::v8::undefined(scope);
+
+                                    // Call the dispatcher function
+                                    dispatcher.call(scope, undefined.into(), &args)
+                                }
+                                None => {
+                                    tracing::error!(
+                                        "Failed to parse event data JSON for '{}'",
+                                        event_name
+                                    );
+                                    None
+                                }
+                            }
+                        }
+                        _ => {
+                            tracing::error!("__eventDispatcher is not defined or not a function");
+                            None
                         }
                     }
-                    Err(e) => {
-                        tracing::error!(
-                            "Error executing event handler '{}' for '{}': {}",
-                            handler_name,
-                            event_name,
-                            e
-                        );
-                        // Continue with other handlers even if one fails
-                    }
+                };
+                let call_elapsed = call_start.elapsed();
+
+                if result.is_some() {
+                    // Run event loop to process any async work (promises)
+                    let event_loop_start = std::time::Instant::now();
+                    self.js_runtime
+                        .run_event_loop(Default::default())
+                        .await
+                        .map_err(|e| anyhow!("Event loop error in emit: {}", e))?;
+                    let event_loop_elapsed = event_loop_start.elapsed();
+
+                    tracing::trace!(
+                        event = event_name,
+                        handler = handler_name,
+                        call_us = call_elapsed.as_micros(),
+                        event_loop_us = event_loop_elapsed.as_micros(),
+                        "emit handler timing"
+                    );
                 }
             }
         }
+
+        let emit_elapsed = emit_start.elapsed();
+        tracing::trace!(
+            event = event_name,
+            total_us = emit_elapsed.as_micros(),
+            "emit total timing"
+        );
 
         Ok(true)
     }
@@ -3786,6 +3828,74 @@ mod tests {
         let result = manager.unload_plugin(&plugin_name);
         assert!(result.is_ok(), "Failed to unload: {:?}", result);
         assert_eq!(manager.list_plugins().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_emit_performance() {
+        use std::time::Instant;
+
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        // Register an event handler that does minimal work (like TODO highlighter)
+        runtime
+            .execute_script(
+                "<setup_handler>",
+                r#"
+                globalThis.onRenderLine = function(data) {
+                    // Simulate TODO highlighter: check if line contains keyword
+                    if (data.content && data.content.includes("TODO")) {
+                        // Would add overlay here
+                    }
+                    return true;
+                };
+                editor.on("render_line", "onRenderLine");
+                "#,
+            )
+            .await
+            .unwrap();
+
+        // Simulate rendering many lines for accurate measurement
+        const NUM_LINES: usize = 100;
+        const NUM_ITERATIONS: usize = 100;
+
+        let mut total_duration = std::time::Duration::ZERO;
+
+        for _ in 0..NUM_ITERATIONS {
+            let start = Instant::now();
+
+            for line_num in 0..NUM_LINES {
+                let event_data = format!(
+                    r#"{{"buffer_id": 1, "line_number": {}, "byte_start": {}, "byte_end": {}, "content": "    let x = 42; // TODO: optimize this"}}"#,
+                    line_num,
+                    line_num * 50,
+                    (line_num + 1) * 50
+                );
+
+                let result = runtime.emit("render_line", &event_data).await;
+                assert!(result.is_ok(), "Emit failed: {:?}", result);
+            }
+
+            total_duration += start.elapsed();
+        }
+
+        let avg_duration = total_duration / NUM_ITERATIONS as u32;
+        let per_line_us = avg_duration.as_micros() / NUM_LINES as u128;
+
+        println!("\n=== EMIT PERFORMANCE BENCHMARK ===");
+        println!("Lines per iteration: {}", NUM_LINES);
+        println!("Iterations: {}", NUM_ITERATIONS);
+        println!("Average time per iteration: {:?}", avg_duration);
+        println!("Average time per line: {} µs", per_line_us);
+        println!("===================================\n");
+
+        // Performance assertion: each emit should take less than 1ms (1000µs)
+        // With the fix, we expect < 100µs per line
+        // Without the fix, it might be > 500µs per line due to recompilation
+        assert!(
+            per_line_us < 1000,
+            "Emit is too slow: {} µs per line (should be < 1000 µs)",
+            per_line_us
+        );
     }
 }
 
