@@ -1439,6 +1439,7 @@ pub fn action_to_events(
         | Action::LspCodeActions
         | Action::LspRestart
         | Action::ToggleInlayHints
+        | Action::ToggleLineNumbers
         | Action::DumpConfig
         | Action::Search
         | Action::FindNext

@@ -1742,6 +1742,22 @@ impl Editor {
         }
     }
 
+    /// Toggle line numbers in the gutter for the active buffer
+    pub fn toggle_line_numbers(&mut self) {
+        if let Some(state) = self.buffers.get_mut(&self.active_buffer) {
+            let currently_shown = state.margins.show_line_numbers;
+            state.margins.set_line_numbers(!currently_shown);
+            if currently_shown {
+                self.set_status_message("Line numbers hidden".to_string());
+            } else {
+                // Restore proper width based on buffer size
+                let total_lines = state.buffer.line_count().unwrap_or(1);
+                state.margins.update_width_for_buffer(total_lines);
+                self.set_status_message("Line numbers shown".to_string());
+            }
+        }
+    }
+
     /// Show the file explorer (does not toggle - ensures it's visible)
     pub fn show_file_explorer(&mut self) {
         if !self.file_explorer_visible {
@@ -6988,6 +7004,7 @@ impl Editor {
             Action::IncreaseSplitSize => self.adjust_split_size(0.05),
             Action::DecreaseSplitSize => self.adjust_split_size(-0.05),
             Action::ToggleFileExplorer => self.toggle_file_explorer(),
+            Action::ToggleLineNumbers => self.toggle_line_numbers(),
             Action::FocusFileExplorer => self.focus_file_explorer(),
             Action::FocusEditor => self.focus_editor(),
             Action::FileExplorerUp => self.file_explorer_navigate_up(),

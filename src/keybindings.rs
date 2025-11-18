@@ -324,6 +324,9 @@ pub enum Action {
     LspRestart,
     ToggleInlayHints,
 
+    // View toggles
+    ToggleLineNumbers,
+
     // Config operations
     DumpConfig,
 
@@ -563,6 +566,8 @@ impl Action {
             "lsp_code_actions" => Some(Action::LspCodeActions),
             "lsp_restart" => Some(Action::LspRestart),
             "toggle_inlay_hints" => Some(Action::ToggleInlayHints),
+
+            "toggle_line_numbers" => Some(Action::ToggleLineNumbers),
 
             "dump_config" => Some(Action::DumpConfig),
 
@@ -1680,6 +1685,7 @@ impl KeybindingResolver {
             Action::LspCodeActions => "LSP: Show code actions".to_string(),
             Action::LspRestart => "LSP: Restart server for current language".to_string(),
             Action::ToggleInlayHints => "Toggle inlay hints".to_string(),
+            Action::ToggleLineNumbers => "Toggle line numbers".to_string(),
             Action::DumpConfig => "Dump config to file".to_string(),
             Action::Search => "Search for text in buffer".to_string(),
             Action::FindNext => "Find next search match".to_string(),

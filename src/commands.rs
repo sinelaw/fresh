@@ -268,6 +268,13 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::DecreaseSplitSize,
             contexts: vec![KeyContext::Normal],
         },
+        // View toggles
+        Command {
+            name: "Toggle Line Numbers".to_string(),
+            description: "Show or hide line numbers in the gutter".to_string(),
+            action: Action::ToggleLineNumbers,
+            contexts: vec![KeyContext::Normal],
+        },
         // File explorer
         Command {
             name: "Toggle File Explorer".to_string(),
