@@ -311,6 +311,84 @@ fn op_fresh_clear_all_overlays(state: &mut OpState, buffer_id: u32) -> bool {
 }
 
 #[op2(fast)]
+#[allow(clippy::too_many_arguments)]
+fn op_fresh_add_virtual_text(
+    state: &mut OpState,
+    buffer_id: u32,
+    #[string] virtual_text_id: String,
+    position: u32,
+    #[string] text: String,
+    r: u8,
+    g: u8,
+    b: u8,
+    before: bool,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state.command_sender.send(PluginCommand::AddVirtualText {
+            buffer_id: BufferId(buffer_id as usize),
+            virtual_text_id,
+            position: position as usize,
+            text,
+            color: (r, g, b),
+            before,
+        });
+        return result.is_ok();
+    }
+    false
+}
+
+#[op2(fast)]
+fn op_fresh_remove_virtual_text(
+    state: &mut OpState,
+    buffer_id: u32,
+    #[string] virtual_text_id: String,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state.command_sender.send(PluginCommand::RemoveVirtualText {
+            buffer_id: BufferId(buffer_id as usize),
+            virtual_text_id,
+        });
+        return result.is_ok();
+    }
+    false
+}
+
+#[op2(fast)]
+fn op_fresh_remove_virtual_texts_by_prefix(
+    state: &mut OpState,
+    buffer_id: u32,
+    #[string] prefix: String,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::RemoveVirtualTextsByPrefix {
+                buffer_id: BufferId(buffer_id as usize),
+                prefix,
+            });
+        return result.is_ok();
+    }
+    false
+}
+
+#[op2(fast)]
+fn op_fresh_clear_virtual_texts(state: &mut OpState, buffer_id: u32) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::ClearVirtualTexts {
+                buffer_id: BufferId(buffer_id as usize),
+            });
+        return result.is_ok();
+    }
+    false
+}
+
+#[op2(fast)]
 fn op_fresh_refresh_lines(state: &mut OpState, buffer_id: u32) -> bool {
     if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
         let runtime_state = runtime_state.borrow();
@@ -1366,6 +1444,10 @@ extension!(
         op_fresh_remove_overlay,
         op_fresh_remove_overlays_by_prefix,
         op_fresh_clear_all_overlays,
+        op_fresh_add_virtual_text,
+        op_fresh_remove_virtual_text,
+        op_fresh_remove_virtual_texts_by_prefix,
+        op_fresh_clear_virtual_texts,
         op_fresh_refresh_lines,
         op_fresh_insert_at_cursor,
         op_fresh_register_command,
@@ -1521,6 +1603,21 @@ impl TypeScriptRuntime {
                     clearAllOverlays(bufferId) {
                         return core.ops.op_fresh_clear_all_overlays(bufferId);
                     },
+
+                    // Virtual text (inline text that doesn't exist in buffer)
+                    addVirtualText(bufferId, virtualTextId, position, text, r, g, b, before) {
+                        return core.ops.op_fresh_add_virtual_text(bufferId, virtualTextId, position, text, r, g, b, before);
+                    },
+                    removeVirtualText(bufferId, virtualTextId) {
+                        return core.ops.op_fresh_remove_virtual_text(bufferId, virtualTextId);
+                    },
+                    removeVirtualTextsByPrefix(bufferId, prefix) {
+                        return core.ops.op_fresh_remove_virtual_texts_by_prefix(bufferId, prefix);
+                    },
+                    clearVirtualTexts(bufferId) {
+                        return core.ops.op_fresh_clear_virtual_texts(bufferId);
+                    },
+
                     refreshLines(bufferId) {
                         return core.ops.op_fresh_refresh_lines(bufferId);
                     },

@@ -3856,6 +3856,59 @@ impl Editor {
                     // 2. This is a plugin-initiated action, not a user edit
                 }
             }
+            PluginCommand::AddVirtualText {
+                buffer_id,
+                virtual_text_id,
+                position,
+                text,
+                color,
+                before,
+            } => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    use crate::virtual_text::VirtualTextPosition;
+                    use ratatui::style::{Color, Style};
+
+                    let vtext_position = if before {
+                        VirtualTextPosition::BeforeChar
+                    } else {
+                        VirtualTextPosition::AfterChar
+                    };
+
+                    let style = Style::default().fg(Color::Rgb(color.0, color.1, color.2));
+
+                    // Remove any existing virtual text with this ID first
+                    state.virtual_texts.remove_by_id(&mut state.marker_list, &virtual_text_id);
+
+                    // Add the new virtual text
+                    state.virtual_texts.add_with_id(
+                        &mut state.marker_list,
+                        position,
+                        text,
+                        style,
+                        vtext_position,
+                        0, // priority
+                        virtual_text_id,
+                    );
+                }
+            }
+            PluginCommand::RemoveVirtualText {
+                buffer_id,
+                virtual_text_id,
+            } => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    state.virtual_texts.remove_by_id(&mut state.marker_list, &virtual_text_id);
+                }
+            }
+            PluginCommand::RemoveVirtualTextsByPrefix { buffer_id, prefix } => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    state.virtual_texts.remove_by_prefix(&mut state.marker_list, &prefix);
+                }
+            }
+            PluginCommand::ClearVirtualTexts { buffer_id } => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    state.virtual_texts.clear(&mut state.marker_list);
+                }
+            }
             PluginCommand::RefreshLines { buffer_id } => {
                 // Clear seen_lines for this buffer so all visible lines will be re-processed
                 // on the next render. This is useful when a plugin is enabled and needs to

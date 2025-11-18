@@ -33,6 +33,8 @@ pub struct VirtualText {
     pub position: VirtualTextPosition,
     /// Priority for ordering multiple hints at same position (higher = later)
     pub priority: i32,
+    /// Optional string identifier for this virtual text (for plugin use)
+    pub string_id: Option<String>,
 }
 
 /// Unique identifier for a virtual text entry
@@ -95,10 +97,92 @@ impl VirtualTextManager {
                 style,
                 position: vtext_position,
                 priority,
+                string_id: None,
             },
         );
 
         id
+    }
+
+    /// Add a virtual text entry with a string identifier
+    ///
+    /// This is useful for plugins that need to track and remove virtual texts by name.
+    pub fn add_with_id(
+        &mut self,
+        marker_list: &mut MarkerList,
+        position: usize,
+        text: String,
+        style: Style,
+        vtext_position: VirtualTextPosition,
+        priority: i32,
+        string_id: String,
+    ) -> VirtualTextId {
+        let marker_id = marker_list.create(position, false);
+
+        let id = VirtualTextId(self.next_id);
+        self.next_id += 1;
+
+        self.texts.insert(
+            id,
+            VirtualText {
+                marker_id,
+                text,
+                style,
+                position: vtext_position,
+                priority,
+                string_id: Some(string_id),
+            },
+        );
+
+        id
+    }
+
+    /// Remove a virtual text entry by its string identifier
+    pub fn remove_by_id(&mut self, marker_list: &mut MarkerList, string_id: &str) -> bool {
+        // Find the entry with matching string_id
+        let to_remove: Vec<VirtualTextId> = self
+            .texts
+            .iter()
+            .filter_map(|(id, vtext)| {
+                if vtext.string_id.as_deref() == Some(string_id) {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut removed = false;
+        for id in to_remove {
+            if let Some(vtext) = self.texts.remove(&id) {
+                marker_list.delete(vtext.marker_id);
+                removed = true;
+            }
+        }
+        removed
+    }
+
+    /// Remove all virtual text entries whose string_id starts with the given prefix
+    pub fn remove_by_prefix(&mut self, marker_list: &mut MarkerList, prefix: &str) {
+        // Collect markers to delete
+        let markers_to_delete: Vec<(VirtualTextId, MarkerId)> = self
+            .texts
+            .iter()
+            .filter_map(|(id, vtext)| {
+                if let Some(ref sid) = vtext.string_id {
+                    if sid.starts_with(prefix) {
+                        return Some((*id, vtext.marker_id));
+                    }
+                }
+                None
+            })
+            .collect();
+
+        // Delete markers and remove entries
+        for (id, marker_id) in markers_to_delete {
+            marker_list.delete(marker_id);
+            self.texts.remove(&id);
+        }
     }
 
     /// Remove a virtual text entry

@@ -1184,6 +1184,264 @@ fn test_todo_highlighter_cursor_perf() {
     // The trace logs will show where time is spent
 }
 
+/// Test Color Highlighter plugin - loads plugin, enables it, and checks for color swatches
+#[test]
+fn test_color_highlighter_plugin() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the color highlighter plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/color_highlighter.ts");
+    let plugin_dest = plugins_dir.join("color_highlighter.ts");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create test file with various color formats
+    let test_file_content = r#"// Test file for Color Highlighter
+// CSS hex colors
+let red = "#ff0000";
+let green = "#0f0";
+let blue = "#0000ff";
+let transparent = "#ff000080";
+
+// CSS rgb/rgba
+background: rgb(255, 128, 0);
+color: rgba(0, 255, 128, 0.5);
+
+// CSS hsl/hsla
+hsl(120, 100%, 50%);
+hsla(240, 100%, 50%, 0.8);
+
+// Rust colors
+Color::Rgb(255, 255, 0)
+Color::Rgb(128, 0, 255)
+"#;
+
+    let fixture = TestFixture::new("test_colors.txt", test_file_content).unwrap();
+
+    // Create harness with the project directory (so plugins load)
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Check that file content is visible
+    harness.assert_screen_contains("#ff0000");
+
+    // Open command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Type "Color Highlighter: Enable" command
+    harness.type_text("Color Highlighter: Enable").unwrap();
+
+    // Execute the command
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Need extra renders to trigger the render-line hooks after enabling
+    harness.render().unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen after enabling Color highlighter:\n{}", screen);
+
+    // Check that color swatches (█) appear in the output
+    // The plugin adds "█ " before each color code
+    let swatch_count = screen.matches('█').count();
+    println!("Found {} color swatches", swatch_count);
+
+    // We should have at least some color swatches visible
+    // (the file has many colors, some should be in the viewport)
+    assert!(
+        swatch_count > 0,
+        "Expected to find color swatch characters (█) after enabling Color Highlighter. \
+         This indicates virtual text is being rendered."
+    );
+
+    // Check that color swatches have foreground colors set
+    // Find a swatch and check its style
+    let lines: Vec<&str> = screen.lines().collect();
+    let mut found_colored_swatch = false;
+
+    for (y, line) in lines.iter().enumerate() {
+        if let Some(x) = line.find('█') {
+            if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
+                // Check if foreground color is set (should be the color being highlighted)
+                if let Some(fg) = style.fg {
+                    println!(
+                        "Found swatch at ({}, {}) with foreground color: {:?}",
+                        x, y, fg
+                    );
+                    // Check if it's an actual RGB color
+                    if matches!(fg, ratatui::style::Color::Rgb(_, _, _)) {
+                        found_colored_swatch = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        found_colored_swatch,
+        "Expected to find at least one color swatch with RGB foreground color"
+    );
+}
+
+/// Test Color Highlighter disable command
+#[test]
+fn test_color_highlighter_disable() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the color highlighter plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/color_highlighter.ts");
+    let plugin_dest = plugins_dir.join("color_highlighter.ts");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create test file with a color
+    let test_file_content = "let color = \"#ff0000\";\n";
+    let fixture = TestFixture::new("test_colors.txt", test_file_content).unwrap();
+
+    // Create harness with the project directory (so plugins load)
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Enable highlighting first
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Color Highlighter: Enable").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.render().unwrap();
+
+    // Verify swatch appears
+    let screen_enabled = harness.screen_to_string();
+    let swatches_enabled = screen_enabled.matches('█').count();
+    assert!(
+        swatches_enabled > 0,
+        "Expected swatches when enabled. Got:\n{}",
+        screen_enabled
+    );
+
+    // Now disable it
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Color Highlighter: Disable").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify the content is still visible after disabling
+    harness.assert_screen_contains("#ff0000");
+
+    // Swatches should be removed
+    let screen_disabled = harness.screen_to_string();
+    let swatches_disabled = screen_disabled.matches('█').count();
+
+    assert!(
+        swatches_disabled < swatches_enabled,
+        "Expected fewer swatches after disabling. Before: {}, After: {}",
+        swatches_enabled,
+        swatches_disabled
+    );
+}
+
+/// Test Color Highlighter toggle command
+#[test]
+fn test_color_highlighter_toggle() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the color highlighter plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/color_highlighter.ts");
+    let plugin_dest = plugins_dir.join("color_highlighter.ts");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create test file with a color
+    let test_file_content = "rgb(128, 64, 255)\n";
+    let fixture = TestFixture::new("test_colors.txt", test_file_content).unwrap();
+
+    // Create harness with the project directory (so plugins load)
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Toggle on
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Color Highlighter: Toggle").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.render().unwrap();
+
+    // Verify swatches appear
+    let screen_on = harness.screen_to_string();
+    let swatches_on = screen_on.matches('█').count();
+    assert!(
+        swatches_on > 0,
+        "Expected swatches after toggle on. Got:\n{}",
+        screen_on
+    );
+
+    // Toggle off
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Color Highlighter: Toggle").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify content is still visible after toggling off
+    harness.assert_screen_contains("rgb(128, 64, 255)");
+}
+
 /// Test that closing and reopening a panel with the same panel_id works correctly
 ///
 /// This test reproduces a bug where:
