@@ -417,6 +417,9 @@ pub struct Editor {
     /// Macro recording state (Some(key) if recording, None otherwise)
     macro_recording: Option<MacroRecordingState>,
 
+    /// Last recorded macro register (for F12 to replay)
+    last_macro_register: Option<char>,
+
     /// Pending plugin action receivers (for async action execution)
     pending_plugin_actions: Vec<(String, crate::plugin_thread::oneshot::Receiver<anyhow::Result<()>>)>,
 
@@ -779,6 +782,7 @@ impl Editor {
             search_whole_word: false,
             macros: HashMap::new(),
             macro_recording: None,
+            last_macro_register: None,
             pending_plugin_actions: Vec::new(),
             plugin_render_requested: false,
         })
@@ -7178,6 +7182,25 @@ impl Editor {
             Action::ListMacros => {
                 self.list_macros_in_buffer();
             }
+            Action::PromptRecordMacro => {
+                self.start_prompt("Record macro (0-9): ".to_string(), PromptType::RecordMacro);
+            }
+            Action::PromptPlayMacro => {
+                self.start_prompt("Play macro (0-9): ".to_string(), PromptType::PlayMacro);
+            }
+            Action::PlayLastMacro => {
+                if let Some(key) = self.last_macro_register {
+                    self.play_macro(key);
+                } else {
+                    self.set_status_message("No macro has been recorded yet".to_string());
+                }
+            }
+            Action::PromptSetBookmark => {
+                self.start_prompt("Set bookmark (0-9): ".to_string(), PromptType::SetBookmark);
+            }
+            Action::PromptJumpToBookmark => {
+                self.start_prompt("Jump to bookmark (0-9): ".to_string(), PromptType::JumpToBookmark);
+            }
             Action::None => {}
             Action::DeleteBackward => {
                 if self.is_editing_disabled() {
@@ -7354,6 +7377,50 @@ impl Editor {
                                 Err(_) => {
                                     self.set_status_message(format!("Invalid line number: {}", input));
                                 }
+                            }
+                        }
+                        PromptType::RecordMacro => {
+                            if let Some(c) = input.trim().chars().next() {
+                                if c.is_ascii_digit() {
+                                    self.toggle_macro_recording(c);
+                                } else {
+                                    self.set_status_message("Macro register must be 0-9".to_string());
+                                }
+                            } else {
+                                self.set_status_message("No register specified".to_string());
+                            }
+                        }
+                        PromptType::PlayMacro => {
+                            if let Some(c) = input.trim().chars().next() {
+                                if c.is_ascii_digit() {
+                                    self.play_macro(c);
+                                } else {
+                                    self.set_status_message("Macro register must be 0-9".to_string());
+                                }
+                            } else {
+                                self.set_status_message("No register specified".to_string());
+                            }
+                        }
+                        PromptType::SetBookmark => {
+                            if let Some(c) = input.trim().chars().next() {
+                                if c.is_ascii_digit() {
+                                    self.set_bookmark(c);
+                                } else {
+                                    self.set_status_message("Bookmark register must be 0-9".to_string());
+                                }
+                            } else {
+                                self.set_status_message("No register specified".to_string());
+                            }
+                        }
+                        PromptType::JumpToBookmark => {
+                            if let Some(c) = input.trim().chars().next() {
+                                if c.is_ascii_digit() {
+                                    self.jump_to_bookmark(c);
+                                } else {
+                                    self.set_status_message("Bookmark register must be 0-9".to_string());
+                                }
+                            } else {
+                                self.set_status_message("No register specified".to_string());
                             }
                         }
                         PromptType::Plugin { custom_type } => {
@@ -10822,10 +10889,12 @@ impl Editor {
     fn stop_macro_recording(&mut self) {
         if let Some(state) = self.macro_recording.take() {
             let action_count = state.actions.len();
-            self.macros.insert(state.key, state.actions);
+            let key = state.key;
+            self.macros.insert(key, state.actions);
+            self.last_macro_register = Some(key);
             self.set_status_message(format!(
                 "Macro '{}' saved ({} actions)",
-                state.key, action_count
+                key, action_count
             ));
         } else {
             self.set_status_message("Not recording a macro".to_string());
@@ -10867,7 +10936,10 @@ impl Editor {
                 | Action::PlayMacro(_)
                 | Action::ToggleMacroRecording(_)
                 | Action::ShowMacro(_)
-                | Action::ListMacros => {}
+                | Action::ListMacros
+                | Action::PromptRecordMacro
+                | Action::PromptPlayMacro
+                | Action::PlayLastMacro => {}
                 _ => {
                     state.actions.push(action.clone());
                 }

@@ -35,6 +35,14 @@ pub enum PromptType {
         end_pos: usize,
         overlay_id: String,
     },
+    /// Record a macro - prompts for register (0-9)
+    RecordMacro,
+    /// Play a macro - prompts for register (0-9)
+    PlayMacro,
+    /// Set a bookmark - prompts for register (0-9)
+    SetBookmark,
+    /// Jump to a bookmark - prompts for register (0-9)
+    JumpToBookmark,
 }
 
 /// Prompt state for the minibuffer

@@ -212,6 +212,13 @@ pub enum Action {
     ToggleMacroRecording(char),
     ShowMacro(char),
     ListMacros,
+    PromptRecordMacro,
+    PromptPlayMacro,
+    PlayLastMacro,
+
+    // Bookmarks (prompt-based)
+    PromptSetBookmark,
+    PromptJumpToBookmark,
 
     // Undo/redo
     Undo,
@@ -469,6 +476,11 @@ impl Action {
                 }
             }
             "list_macros" => Some(Action::ListMacros),
+            "prompt_record_macro" => Some(Action::PromptRecordMacro),
+            "prompt_play_macro" => Some(Action::PromptPlayMacro),
+            "play_last_macro" => Some(Action::PlayLastMacro),
+            "prompt_set_bookmark" => Some(Action::PromptSetBookmark),
+            "prompt_jump_to_bookmark" => Some(Action::PromptJumpToBookmark),
 
             "undo" => Some(Action::Undo),
             "redo" => Some(Action::Redo),
@@ -1157,10 +1169,14 @@ impl KeybindingResolver {
         // Ctrl+G for Go to line
         bindings.insert((KeyCode::Char('g'), KeyModifiers::CONTROL), Action::GotoLine);
 
-        // Macros (F5 to stop recording, Alt+Shift+number to toggle record, Ctrl+Alt+number to play)
+        // Macros (F5 to stop recording, F12 to play last, Alt+Shift+number to toggle record, Ctrl+Alt+number to play)
         bindings.insert(
             (KeyCode::F(5), KeyModifiers::empty()),
             Action::StopMacroRecording,
+        );
+        bindings.insert(
+            (KeyCode::F(12), KeyModifiers::empty()),
+            Action::PlayLastMacro,
         );
         // Common macro registers: 0-9
         for i in '0'..='9' {
@@ -1575,6 +1591,11 @@ impl KeybindingResolver {
             Action::ToggleMacroRecording(c) => format!("Toggle macro recording for '{}'", c),
             Action::ShowMacro(c) => format!("Show macro '{}' in buffer", c),
             Action::ListMacros => "List all recorded macros".to_string(),
+            Action::PromptRecordMacro => "Record macro (prompts for register)".to_string(),
+            Action::PromptPlayMacro => "Play macro (prompts for register)".to_string(),
+            Action::PlayLastMacro => "Play last recorded macro".to_string(),
+            Action::PromptSetBookmark => "Set bookmark (prompts for register)".to_string(),
+            Action::PromptJumpToBookmark => "Jump to bookmark (prompts for register)".to_string(),
             Action::Undo => "Undo".to_string(),
             Action::Redo => "Redo".to_string(),
             Action::ScrollUp => "Scroll up".to_string(),

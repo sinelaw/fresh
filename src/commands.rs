@@ -488,6 +488,42 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::ListMacros,
             contexts: vec![KeyContext::Normal],
         },
+        Command {
+            name: "Record Macro".to_string(),
+            description: "Toggle macro recording for a register (0-9)".to_string(),
+            action: Action::PromptRecordMacro,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Stop Recording Macro".to_string(),
+            description: "Stop the current macro recording".to_string(),
+            action: Action::StopMacroRecording,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Play Macro".to_string(),
+            description: "Play macro from a register (0-9)".to_string(),
+            action: Action::PromptPlayMacro,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Play Last Macro".to_string(),
+            description: "Play the last recorded macro (F12)".to_string(),
+            action: Action::PlayLastMacro,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Set Bookmark".to_string(),
+            description: "Set a bookmark at current position (0-9)".to_string(),
+            action: Action::PromptSetBookmark,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Jump to Bookmark".to_string(),
+            description: "Jump to a bookmark (0-9)".to_string(),
+            action: Action::PromptJumpToBookmark,
+            contexts: vec![KeyContext::Normal],
+        },
         // Config
         Command {
             name: "Dump Config".to_string(),

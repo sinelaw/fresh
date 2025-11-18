@@ -1370,6 +1370,11 @@ pub fn action_to_events(
         | Action::ToggleMacroRecording(_)
         | Action::ShowMacro(_)
         | Action::ListMacros
+        | Action::PromptRecordMacro
+        | Action::PromptPlayMacro
+        | Action::PlayLastMacro
+        | Action::PromptSetBookmark
+        | Action::PromptJumpToBookmark
         | Action::HelpToggle
         | Action::HelpScrollUp
         | Action::HelpScrollDown
