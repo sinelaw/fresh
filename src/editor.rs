@@ -1043,17 +1043,20 @@ impl Editor {
                                 self.pending_inlay_hints_request = Some(request_id);
 
                                 // Get buffer line count for range
-                                let line_count = if let Some(state) = self.buffers.get(&self.active_buffer) {
-                                    state.buffer.line_count().unwrap_or(1000)
+                                // LSP uses 0-indexed lines, so last line is line_count - 1
+                                let (last_line, last_char) = if let Some(state) = self.buffers.get(&self.active_buffer) {
+                                    let line_count = state.buffer.line_count().unwrap_or(1000);
+                                    // Use a large character value to include the entire last line
+                                    (line_count.saturating_sub(1) as u32, 10000)
                                 } else {
-                                    1000 // Default fallback
+                                    (999, 10000) // Default fallback
                                 };
 
                                 if let Err(e) = client.inlay_hints(
                                     request_id,
                                     uri.clone(),
                                     0, 0, // start
-                                    (line_count + 1) as u32, 0, // end - past last line to cover entire file
+                                    last_line, last_char, // end - last line with large char to include all content
                                 ) {
                                     tracing::debug!(
                                         "Failed to request inlay hints (server may not support): {}",
