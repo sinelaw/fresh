@@ -457,18 +457,18 @@ impl Popup {
                 let y = match self.position {
                     PopupPosition::AtCursor => cursor_y,
                     PopupPosition::BelowCursor => {
-                        if cursor_y + 2 + height > terminal_area.height {
+                        if cursor_y + 1 + height > terminal_area.height {
                             // Not enough space below, put above cursor
-                            // Position so bottom of popup ends one line above cursor
-                            cursor_y.saturating_sub(height + 1)
+                            // Position so bottom of popup ends directly above cursor
+                            cursor_y.saturating_sub(height)
                         } else {
-                            // Two lines below cursor (leaves one line gap to show symbol)
-                            cursor_y + 2
+                            // Directly below cursor (one row gap)
+                            cursor_y + 1
                         }
                     }
                     PopupPosition::AboveCursor => {
-                        // Position so bottom of popup ends one line above cursor
-                        cursor_y.saturating_sub(height + 1)
+                        // Position so bottom of popup ends directly above cursor
+                        cursor_y.saturating_sub(height)
                     }
                     _ => cursor_y,
                 };
