@@ -17,15 +17,48 @@ pub struct CommandRegistry {
 
     /// Plugin-registered commands (dynamically added/removed)
     plugin_commands: Arc<RwLock<Vec<Command>>>,
+
+    /// Command usage history (most recent first)
+    /// Used to sort command palette suggestions by recency
+    command_history: Vec<String>,
 }
 
 impl CommandRegistry {
+    /// Maximum number of commands to keep in history
+    const MAX_HISTORY_SIZE: usize = 50;
+
     /// Create a new command registry with built-in commands
     pub fn new() -> Self {
         Self {
             builtin_commands: get_all_commands(),
             plugin_commands: Arc::new(RwLock::new(Vec::new())),
+            command_history: Vec::new(),
         }
+    }
+
+    /// Record that a command was used (for history/sorting)
+    ///
+    /// This moves the command to the front of the history list.
+    /// Recently used commands appear first in suggestions.
+    pub fn record_usage(&mut self, command_name: &str) {
+        // Remove existing entry if present
+        self.command_history.retain(|name| name != command_name);
+
+        // Add to front (most recent)
+        self.command_history.insert(0, command_name.to_string());
+
+        // Trim to max size
+        if self.command_history.len() > Self::MAX_HISTORY_SIZE {
+            self.command_history.truncate(Self::MAX_HISTORY_SIZE);
+        }
+    }
+
+    /// Get the position of a command in history (0 = most recent)
+    /// Returns None if command is not in history
+    fn history_position(&self, command_name: &str) -> Option<usize> {
+        self.command_history
+            .iter()
+            .position(|name| name == command_name)
     }
 
     /// Register a new command (typically from a plugin)
@@ -65,6 +98,10 @@ impl CommandRegistry {
     }
 
     /// Filter commands by fuzzy matching query with context awareness
+    ///
+    /// When query is empty, commands are sorted by recency (most recently used first).
+    /// When query is not empty, commands are sorted by match quality with recency as tiebreaker.
+    /// Disabled commands always appear after enabled ones.
     pub fn filter(
         &self,
         query: &str,
@@ -103,27 +140,46 @@ impl CommandRegistry {
             current_char.is_none() // All query characters matched
         };
 
-        // Filter and convert to suggestions
-        let mut suggestions: Vec<Suggestion> = commands
+        // Filter and convert to suggestions with history position
+        let mut suggestions: Vec<(Suggestion, Option<usize>)> = commands
             .into_iter()
             .filter(|cmd| matches_query(cmd))
             .map(|cmd| {
                 let available = is_available(&cmd);
                 let keybinding =
                     keybinding_resolver.get_keybinding_for_action(&cmd.action, current_context);
-                Suggestion::with_all(
+                let history_pos = self.history_position(&cmd.name);
+                let suggestion = Suggestion::with_all(
                     cmd.name.clone(),
                     Some(cmd.description),
                     !available,
                     keybinding,
-                )
+                );
+                (suggestion, history_pos)
             })
             .collect();
 
-        // Sort: available commands first, then disabled ones
-        suggestions.sort_by_key(|s| s.disabled);
+        // Sort by:
+        // 1. Disabled status (enabled first)
+        // 2. History position (recent first, then never-used alphabetically)
+        suggestions.sort_by(|(a, a_hist), (b, b_hist)| {
+            // First sort by disabled status
+            match a.disabled.cmp(&b.disabled) {
+                std::cmp::Ordering::Equal => {}
+                other => return other,
+            }
 
-        suggestions
+            // Then sort by history position (lower = more recent = better)
+            match (a_hist, b_hist) {
+                (Some(a_pos), Some(b_pos)) => a_pos.cmp(b_pos),
+                (Some(_), None) => std::cmp::Ordering::Less, // In history beats not in history
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.text.cmp(&b.text), // Alphabetical for never-used commands
+            }
+        });
+
+        // Extract just the suggestions
+        suggestions.into_iter().map(|(s, _)| s).collect()
     }
 
     /// Get count of registered plugin commands
@@ -375,5 +431,107 @@ mod tests {
         let custom = registry.find_by_name("Save File").unwrap();
         assert_eq!(custom.description, "Custom save implementation");
         assert_ne!(custom.description, original_desc);
+    }
+
+    #[test]
+    fn test_record_usage() {
+        let mut registry = CommandRegistry::new();
+
+        registry.record_usage("Save File");
+        assert_eq!(registry.history_position("Save File"), Some(0));
+
+        registry.record_usage("Open File");
+        assert_eq!(registry.history_position("Open File"), Some(0));
+        assert_eq!(registry.history_position("Save File"), Some(1));
+
+        // Using Save File again should move it to front
+        registry.record_usage("Save File");
+        assert_eq!(registry.history_position("Save File"), Some(0));
+        assert_eq!(registry.history_position("Open File"), Some(1));
+    }
+
+    #[test]
+    fn test_history_sorting() {
+        use crate::config::Config;
+        use crate::keybindings::KeybindingResolver;
+
+        let mut registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+
+        // Record some commands
+        registry.record_usage("Quit");
+        registry.record_usage("Save File");
+        registry.record_usage("Open File");
+
+        // Filter with empty query should return history-sorted results
+        let results = registry.filter("", KeyContext::Normal, &keybindings);
+
+        // Find positions of our test commands in results
+        let open_pos = results.iter().position(|s| s.text == "Open File").unwrap();
+        let save_pos = results.iter().position(|s| s.text == "Save File").unwrap();
+        let quit_pos = results.iter().position(|s| s.text == "Quit").unwrap();
+
+        // Most recently used should be first
+        assert!(open_pos < save_pos, "Open File should come before Save File");
+        assert!(save_pos < quit_pos, "Save File should come before Quit");
+    }
+
+    #[test]
+    fn test_history_max_size() {
+        let mut registry = CommandRegistry::new();
+
+        // Add more than MAX_HISTORY_SIZE commands
+        for i in 0..60 {
+            registry.record_usage(&format!("Command {}", i));
+        }
+
+        // Should be trimmed to MAX_HISTORY_SIZE
+        assert_eq!(registry.command_history.len(), CommandRegistry::MAX_HISTORY_SIZE);
+
+        // Most recent should still be at front
+        assert_eq!(registry.history_position("Command 59"), Some(0));
+
+        // Oldest should be trimmed
+        assert_eq!(registry.history_position("Command 0"), None);
+    }
+
+    #[test]
+    fn test_unused_commands_alphabetical() {
+        use crate::config::Config;
+        use crate::keybindings::KeybindingResolver;
+
+        let mut registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+
+        // Register some custom commands (never used)
+        registry.register(Command {
+            name: "Zebra Command".to_string(),
+            description: "".to_string(),
+            action: Action::None,
+            contexts: vec![],
+        });
+
+        registry.register(Command {
+            name: "Alpha Command".to_string(),
+            description: "".to_string(),
+            action: Action::None,
+            contexts: vec![],
+        });
+
+        // Use one built-in command
+        registry.record_usage("Save File");
+
+        let results = registry.filter("", KeyContext::Normal, &keybindings);
+
+        let save_pos = results.iter().position(|s| s.text == "Save File").unwrap();
+        let alpha_pos = results.iter().position(|s| s.text == "Alpha Command").unwrap();
+        let zebra_pos = results.iter().position(|s| s.text == "Zebra Command").unwrap();
+
+        // Used command should be first
+        assert!(save_pos < alpha_pos, "Save File should come before Alpha Command");
+        // Unused commands should be alphabetical
+        assert!(alpha_pos < zebra_pos, "Alpha Command should come before Zebra Command");
     }
 }
