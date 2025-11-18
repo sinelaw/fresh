@@ -202,6 +202,10 @@ fn create_client_capabilities() -> ClientCapabilities {
         general: Some(GeneralClientCapabilities {
             ..Default::default()
         }),
+        // Enable rust-analyzer experimental features
+        experimental: Some(serde_json::json!({
+            "serverStatusNotification": true
+        })),
         ..Default::default()
     }
 }
