@@ -4882,8 +4882,8 @@ impl Editor {
                 _ => VirtualTextPosition::AfterChar, // Default to after
             };
 
-            // Format display text - just add padding space, rust-analyzer includes the colon
-            let display_text = format!(" {}", text.trim());
+            // Use the hint text as-is - spacing is handled during rendering
+            let display_text = text;
 
             state.virtual_texts.add(
                 &mut state.marker_list,

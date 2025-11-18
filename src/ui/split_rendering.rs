@@ -831,7 +831,9 @@ impl SplitRenderer {
                     // Check for BeforeChar virtual texts at this position
                     if let Some(vtexts) = virtual_text_lookup.get(&byte_pos) {
                         for vtext in vtexts.iter().filter(|v| v.position == VirtualTextPosition::BeforeChar) {
-                            line_spans.push(Span::styled(vtext.text.clone(), vtext.style));
+                            // Add spacing: "hint_text " before the character
+                            let text_with_space = format!("{} ", vtext.text);
+                            line_spans.push(Span::styled(text_with_space, vtext.style));
                         }
                     }
 
@@ -850,7 +852,9 @@ impl SplitRenderer {
                     // Check for AfterChar virtual texts at this position
                     if let Some(vtexts) = virtual_text_lookup.get(&byte_pos) {
                         for vtext in vtexts.iter().filter(|v| v.position == VirtualTextPosition::AfterChar) {
-                            line_spans.push(Span::styled(vtext.text.clone(), vtext.style));
+                            // Add spacing: " hint_text" after the character
+                            let text_with_space = format!(" {}", vtext.text);
+                            line_spans.push(Span::styled(text_with_space, vtext.style));
                         }
                     }
 
@@ -1003,11 +1007,13 @@ impl SplitRenderer {
 
                     // Calculate virtual text width before cursor position on this line
                     // This accounts for inlay hints that shift the visual cursor position
+                    // Note: add 1 for the padding space we add during rendering
                     let mut virtual_text_offset: usize = 0;
                     for byte_pos in line_start..primary_cursor_position {
                         if let Some(vtexts) = virtual_text_lookup.get(&byte_pos) {
                             for vtext in vtexts {
-                                virtual_text_offset += vtext.text.chars().count();
+                                // +1 for the padding space added during rendering
+                                virtual_text_offset += vtext.text.chars().count() + 1;
                             }
                         }
                     }
