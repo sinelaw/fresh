@@ -1124,6 +1124,9 @@ impl Editor {
         }
         state.buffer.insert(0, &text);
 
+        // Clear modified flag since this is virtual buffer content setting, not user edits
+        state.buffer.clear_modified();
+
         // Set text properties
         state.text_properties = properties;
 
@@ -1157,13 +1160,21 @@ impl Editor {
             }
         }
 
+        // Find a replacement buffer (any buffer that's not the one being closed)
+        let replacement_buffer = *self.buffers.keys().find(|&&bid| bid != id).unwrap();
+
+        // Update all splits that are showing this buffer to show the replacement
+        let splits_to_update = self.split_manager.splits_for_buffer(id);
+        for split_id in splits_to_update {
+            let _ = self.split_manager.set_split_buffer(split_id, replacement_buffer);
+        }
+
         self.buffers.remove(&id);
         self.event_logs.remove(&id);
 
         // Switch to another buffer if we closed the active one
         if self.active_buffer == id {
-            let next_buffer = *self.buffers.keys().next().unwrap();
-            self.set_active_buffer(next_buffer);
+            self.set_active_buffer(replacement_buffer);
         }
 
         Ok(())
@@ -3739,6 +3750,103 @@ impl Editor {
                     tracing::info!("Switched to buffer {:?}", buffer_id);
                 } else {
                     tracing::warn!("Buffer {:?} not found", buffer_id);
+                }
+            }
+            PluginCommand::CreateVirtualBufferInExistingSplit {
+                name,
+                mode,
+                read_only,
+                entries,
+                split_id,
+                show_line_numbers,
+                show_cursors,
+                request_id,
+            } => {
+                // Create the virtual buffer
+                let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+                tracing::info!(
+                    "Created virtual buffer '{}' with mode '{}' for existing split {:?} (id={:?})",
+                    name,
+                    mode,
+                    split_id,
+                    buffer_id
+                );
+
+                // Apply view options to the buffer
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    state.margins.set_line_numbers(show_line_numbers);
+                    state.show_cursors = show_cursors;
+                }
+
+                // Set the content
+                if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
+                    tracing::error!("Failed to set virtual buffer content: {}", e);
+                    return Ok(());
+                }
+
+                // Show the buffer in the target split
+                if let Err(e) = self.split_manager.set_split_buffer(split_id, buffer_id) {
+                    tracing::error!("Failed to set buffer in split {:?}: {}", split_id, e);
+                    // Fall back to just switching to the buffer
+                    self.set_active_buffer(buffer_id);
+                } else {
+                    // Focus the target split
+                    self.split_manager.set_active_split(split_id);
+                    self.active_buffer = buffer_id;
+                    tracing::info!(
+                        "Displayed virtual buffer {:?} in split {:?}",
+                        buffer_id,
+                        split_id
+                    );
+                }
+
+                // Send response with buffer ID
+                if let Some(req_id) = request_id {
+                    self.send_plugin_response(crate::plugin_api::PluginResponse::VirtualBufferCreated {
+                        request_id: req_id,
+                        buffer_id,
+                    });
+                }
+            }
+            PluginCommand::CloseBuffer { buffer_id } => {
+                match self.close_buffer(buffer_id) {
+                    Ok(()) => {
+                        tracing::info!("Closed buffer {:?}", buffer_id);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to close buffer {:?}: {}", buffer_id, e);
+                    }
+                }
+            }
+            PluginCommand::FocusSplit { split_id } => {
+                if self.split_manager.set_active_split(split_id) {
+                    // Update active buffer to match the split's buffer
+                    if let Some(buffer_id) = self.split_manager.active_buffer_id() {
+                        self.active_buffer = buffer_id;
+                    }
+                    tracing::info!("Focused split {:?}", split_id);
+                } else {
+                    tracing::warn!("Split {:?} not found", split_id);
+                }
+            }
+            PluginCommand::SetSplitBuffer { split_id, buffer_id } => {
+                // Verify the buffer exists
+                if !self.buffers.contains_key(&buffer_id) {
+                    tracing::error!("Buffer {:?} not found for SetSplitBuffer", buffer_id);
+                    return Ok(());
+                }
+
+                match self.split_manager.set_split_buffer(split_id, buffer_id) {
+                    Ok(()) => {
+                        tracing::info!("Set split {:?} to buffer {:?}", split_id, buffer_id);
+                        // If this is the active split, update active buffer
+                        if self.split_manager.active_split() == split_id {
+                            self.active_buffer = buffer_id;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to set split buffer: {}", e);
+                    }
                 }
             }
         }

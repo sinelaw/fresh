@@ -383,6 +383,19 @@ impl SplitManager {
         false
     }
 
+    /// Update the buffer ID of a specific split
+    /// Returns Ok(()) if successful, Err with message if split not found or not a leaf
+    pub fn set_split_buffer(&mut self, split_id: SplitId, new_buffer_id: BufferId) -> Result<(), String> {
+        if let Some(node) = self.root.find_mut(split_id) {
+            if let SplitNode::Leaf { buffer_id, .. } = node {
+                *buffer_id = new_buffer_id;
+                return Ok(());
+            }
+            return Err(format!("Split {:?} is not a leaf", split_id));
+        }
+        Err(format!("Split {:?} not found", split_id))
+    }
+
     /// Allocate a new split ID
     fn allocate_split_id(&mut self) -> SplitId {
         let id = SplitId(self.next_split_id);
@@ -603,6 +616,20 @@ impl SplitManager {
             .filter(|(_, buffer_id, _)| *buffer_id == target_buffer_id)
             .map(|(split_id, _, _)| split_id)
             .collect()
+    }
+
+    /// Get the buffer ID for a specific split
+    pub fn buffer_for_split(&self, target_split_id: SplitId) -> Option<BufferId> {
+        self.root
+            .get_leaves_with_rects(Rect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            })
+            .into_iter()
+            .find(|(split_id, _, _)| *split_id == target_split_id)
+            .map(|(_, buffer_id, _)| buffer_id)
     }
 }
 
