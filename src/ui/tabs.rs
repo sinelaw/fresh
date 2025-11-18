@@ -1,5 +1,6 @@
 //! Tab bar rendering for multiple buffers
 
+use crate::editor::BufferMetadata;
 use crate::event::BufferId;
 use crate::state::EditorState;
 use ratatui::layout::Rect;
@@ -19,12 +20,14 @@ impl TabsRenderer {
     /// * `frame` - The ratatui frame to render to
     /// * `area` - The rectangular area to render the tabs in
     /// * `buffers` - All open buffers
+    /// * `buffer_metadata` - Metadata for buffers (contains display names for virtual buffers)
     /// * `active_buffer` - The currently active buffer ID
     /// * `theme` - The active theme for colors
     pub fn render(
         frame: &mut Frame,
         area: Rect,
         buffers: &HashMap<BufferId, EditorState>,
+        buffer_metadata: &HashMap<BufferId, BufferMetadata>,
         active_buffer: BufferId,
         theme: &crate::theme::Theme,
     ) {
@@ -37,12 +40,18 @@ impl TabsRenderer {
 
         for (idx, id) in buffer_ids.iter().enumerate() {
             let state = &buffers[id];
-            let name = state
-                .buffer
-                .file_path()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .unwrap_or("[No Name]");
+
+            // Use display_name from metadata if available, otherwise fall back to file path
+            let name = if let Some(metadata) = buffer_metadata.get(id) {
+                metadata.display_name.as_str()
+            } else {
+                state
+                    .buffer
+                    .file_path()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("[No Name]")
+            };
 
             let modified = if state.buffer.is_modified() { "*" } else { "" };
             let tab_text = format!(" {name}{modified} ");
