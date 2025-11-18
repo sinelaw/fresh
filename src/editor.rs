@@ -2774,6 +2774,48 @@ impl Editor {
         self.start_prompt_with_suggestions(message, prompt_type, Vec::new());
     }
 
+    /// Start a search prompt with the current selection as the default search string
+    ///
+    /// This is used for Search, Replace, and QueryReplace actions.
+    /// If there's a single-line selection, it will be pre-filled in the prompt.
+    /// Otherwise, the last search history item is used as the default.
+    fn start_search_prompt(&mut self, message: String, prompt_type: PromptType) {
+        // Get selected text to use as default search string
+        let selected_text = {
+            let range = {
+                let state = self.active_state();
+                state.cursors.primary().selection_range()
+            };
+            if let Some(range) = range {
+                let state = self.active_state_mut();
+                let text = state.get_text_range(range.start, range.end);
+                // Only use single-line selections
+                if !text.contains('\n') && !text.is_empty() {
+                    Some(text)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        // Determine the default text: selection > last history > empty
+        let default_text = selected_text.or_else(|| self.search_history.last().map(|s| s.to_string()));
+
+        // Start the prompt
+        self.start_prompt(message, prompt_type);
+
+        // Pre-fill with default text if available
+        if let Some(text) = default_text {
+            if let Some(ref mut prompt) = self.prompt {
+                prompt.set_input(text.clone());
+            }
+            // Trigger incremental search highlights for the pre-filled text
+            self.update_search_highlights(&text);
+        }
+    }
+
     /// Start a new prompt with autocomplete suggestions
     pub fn start_prompt_with_suggestions(
         &mut self,
@@ -6732,18 +6774,26 @@ impl Editor {
                 self.dump_config();
             }
             Action::Search => {
-                // Start search prompt
-                self.start_prompt("Search: ".to_string(), PromptType::Search);
+                // If already in a search-related prompt, Ctrl+F acts like Enter (confirm search)
+                let is_search_prompt = self
+                    .prompt
+                    .as_ref()
+                    .is_some_and(|p| matches!(
+                        p.prompt_type,
+                        PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch
+                    ));
+
+                if is_search_prompt {
+                    self.confirm_prompt();
+                } else {
+                    self.start_search_prompt("Search: ".to_string(), PromptType::Search);
+                }
             }
             Action::Replace => {
-                // Always prompt for search query first (with incremental highlighting)
-                // TODO: Implement search history - pre-fill with previous search and allow up/down arrows
-                self.start_prompt("Replace: ".to_string(), PromptType::ReplaceSearch);
+                self.start_search_prompt("Replace: ".to_string(), PromptType::ReplaceSearch);
             }
             Action::QueryReplace => {
-                // Always prompt for search query first (with incremental highlighting)
-                // TODO: Implement search history - pre-fill with previous search and allow up/down arrows
-                self.start_prompt(
+                self.start_search_prompt(
                     "Query replace: ".to_string(),
                     PromptType::QueryReplaceSearch,
                 );
