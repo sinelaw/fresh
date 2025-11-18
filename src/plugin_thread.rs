@@ -233,12 +233,16 @@ impl PluginThreadHandle {
             crate::plugin_api::PluginResponse::VirtualBufferCreated { request_id, .. } => *request_id,
         };
 
+        tracing::trace!("deliver_response: request_id={}", request_id);
+
         let sender = {
             let mut pending = self.pending_responses.lock().unwrap();
+            tracing::trace!("deliver_response: pending_responses has {} entries", pending.len());
             pending.remove(&request_id)
         };
 
         if let Some(tx) = sender {
+            tracing::trace!("deliver_response: sending response for request_id={}", request_id);
             let _ = tx.send(response);
         } else {
             tracing::warn!("No pending response sender for request_id {}", request_id);
@@ -310,6 +314,7 @@ impl PluginThreadHandle {
     /// Returns a receiver that will receive the result when the action completes.
     /// The caller should poll this while processing commands to avoid deadlock.
     pub fn execute_action_async(&self, action_name: &str) -> Result<oneshot::Receiver<Result<()>>> {
+        tracing::trace!("execute_action_async: starting action '{}'", action_name);
         let (tx, rx) = oneshot::channel();
         self.request_sender
             .send(PluginRequest::ExecuteAction {
@@ -318,6 +323,7 @@ impl PluginThreadHandle {
             })
             .map_err(|_| anyhow!("Plugin thread not responding"))?;
 
+        tracing::trace!("execute_action_async: request sent for '{}'", action_name);
         Ok(rx)
     }
 
