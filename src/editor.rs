@@ -2880,7 +2880,18 @@ impl Editor {
             _ => {}
         }
 
+        // Check if we need to update suggestions after creating the prompt
+        let needs_suggestions = matches!(
+            prompt_type,
+            PromptType::OpenFile | PromptType::SaveFileAs | PromptType::Command
+        );
+
         self.prompt = Some(Prompt::with_suggestions(message, prompt_type, suggestions));
+
+        // For file and command prompts, populate initial suggestions
+        if needs_suggestions {
+            self.update_prompt_suggestions();
+        }
     }
 
     /// Start a new prompt with initial text
@@ -2939,9 +2950,12 @@ impl Editor {
     pub fn confirm_prompt(&mut self) -> Option<(String, PromptType, Option<usize>)> {
         if let Some(prompt) = self.prompt.take() {
             let selected_index = prompt.selected_suggestion;
-            // For command prompts, prefer the selected suggestion over raw input
-            let final_input = if matches!(prompt.prompt_type, PromptType::Command) {
-                // For Command, use the selected suggestion if any
+            // For command and file prompts, prefer the selected suggestion over raw input
+            let final_input = if matches!(
+                prompt.prompt_type,
+                PromptType::Command | PromptType::OpenFile | PromptType::SaveFileAs
+            ) {
+                // Use the selected suggestion if any
                 if let Some(selected_idx) = prompt.selected_suggestion {
                     if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
                         // Don't confirm disabled commands
@@ -3038,6 +3052,23 @@ impl Editor {
             PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {
                 // Update incremental search highlights as user types
                 self.update_search_highlights(&input);
+            }
+            PromptType::OpenFile | PromptType::SaveFileAs => {
+                // Fire plugin hook for file path completion
+                use crate::hooks::HookArgs;
+                let prompt_type_str = match prompt_type {
+                    PromptType::OpenFile => "open-file",
+                    PromptType::SaveFileAs => "save-file-as",
+                    _ => unreachable!(),
+                };
+                let hook_args = HookArgs::PromptChanged {
+                    prompt_type: prompt_type_str.to_string(),
+                    input,
+                };
+
+                if let Some(ref ts_manager) = self.ts_plugin_manager {
+                    ts_manager.run_hook("prompt_changed", hook_args);
+                }
             }
             PromptType::Plugin { custom_type } => {
                 // Fire plugin hook for prompt input change
@@ -6561,10 +6592,13 @@ impl Editor {
                             if !suggestion.disabled {
                                 prompt.input = suggestion.get_value().to_string();
                                 prompt.cursor_pos = prompt.input.len();
+                                prompt.clear_selection();
                             }
                         }
                     }
                 }
+                // Refresh suggestions after accepting (important for path completion)
+                self.update_prompt_suggestions();
             }
             Action::PromptMoveWordLeft => {
                 if let Some(prompt) = self.prompt_mut() {
