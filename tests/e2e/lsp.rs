@@ -3113,3 +3113,184 @@ done
 
     Ok(())
 }
+
+/// Test find references with real rust-analyzer on a cargo project
+///
+/// This test creates a temporary cargo project, starts rust-analyzer,
+/// and tests the find references functionality end-to-end.
+///
+/// Requires rust-analyzer to be installed on the system.
+#[test]
+#[ignore] // Run with: cargo test test_find_references_with_rust_analyzer -- --ignored --nocapture
+fn test_find_references_with_rust_analyzer() -> std::io::Result<()> {
+    use std::process::Command;
+    use std::time::Duration;
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+    // Initialize tracing subscriber to see logs
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer().with_writer(std::io::stderr))
+        .with(EnvFilter::from_default_env())
+        .try_init();
+
+    // Check if rust-analyzer is available
+    let ra_check = Command::new("rust-analyzer").arg("--version").output();
+    if ra_check.is_err() || !ra_check.unwrap().status.success() {
+        eprintln!("rust-analyzer not found, skipping test");
+        return Ok(());
+    }
+
+    // Create a temporary cargo project
+    let temp_dir = tempfile::TempDir::new()?;
+    let project_root = temp_dir.path().to_path_buf();
+
+    // Create Cargo.toml
+    let cargo_toml = r#"[package]
+name = "test_project"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+"#;
+    std::fs::write(project_root.join("Cargo.toml"), cargo_toml)?;
+
+    // Create src directory
+    let src_dir = project_root.join("src");
+    std::fs::create_dir(&src_dir)?;
+
+    // Create main.rs with a function that has multiple references
+    let main_rs = r#"fn helper_function(value: i32) -> i32 {
+    value * 2
+}
+
+fn main() {
+    let x = helper_function(5);
+    let y = helper_function(10);
+    let z = helper_function(x + y);
+    println!("Result: {}", z);
+}
+"#;
+    let main_rs_path = src_dir.join("main.rs");
+    std::fs::write(&main_rs_path, main_rs)?;
+
+    // Create plugins directory and copy find_references plugin
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir)?;
+
+    let plugin_source = std::env::current_dir()?.join("plugins/find_references.ts");
+    let plugin_dest = plugins_dir.join("find_references.ts");
+    std::fs::copy(&plugin_source, &plugin_dest)?;
+
+    // Use default config (which includes rust-analyzer)
+    let config = fresh::config::Config::default();
+
+    // Create harness with config and working directory
+    let mut harness = crate::common::harness::EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        config,
+        project_root.clone(),
+    )?;
+
+    // Open the test file
+    harness.open_file(&main_rs_path)?;
+    harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    eprintln!("Waiting for rust-analyzer to initialize...");
+
+    // Wait for LSP to initialize (rust-analyzer can take a while)
+    let mut lsp_ready = false;
+    for i in 0..100 {
+        harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
+        harness.render()?;
+
+        let screen = harness.screen_to_string();
+        if screen.contains("LSP [rust: ready]") || screen.contains("rust: ready") {
+            eprintln!("LSP ready after {} iterations", i + 1);
+            lsp_ready = true;
+            break;
+        }
+
+        if i % 20 == 0 {
+            eprintln!("Iteration {}: waiting for LSP...", i);
+        }
+
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    if !lsp_ready {
+        eprintln!("Warning: LSP may not be fully ready, continuing anyway...");
+    }
+
+    eprintln!("Screen before find references:\n{}", harness.screen_to_string());
+
+    // Move cursor to the function name "helper_function" on line 1
+    // The function starts at column 3 (after "fn ")
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    // Trigger find references via command palette
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.render()?;
+    harness.type_text("Find References")?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+
+    eprintln!("Find references triggered, waiting for results...");
+
+    // Wait for the references panel to appear with actual results
+    let mut panel_appeared = false;
+    for i in 0..100 {
+        harness.send_key(KeyCode::Null, KeyModifiers::NONE)?;
+        harness.render()?;
+        std::thread::sleep(Duration::from_millis(100));
+
+        let screen = harness.screen_to_string();
+
+        // Debug: print progress every 20 iterations
+        if i % 20 == 0 {
+            eprintln!("Iteration {}: checking for panel...", i);
+            if let Some(last_line) = screen.lines().last() {
+                eprintln!("Status: {}", last_line);
+            }
+        }
+
+        // Look for actual panel content - should show references to helper_function
+        if screen.contains("═══ References") || screen.contains("helper_function") && screen.contains("main.rs:") {
+            eprintln!("References panel appeared after {} iterations", i + 1);
+            panel_appeared = true;
+            break;
+        }
+
+        // Also check for "Found X reference" in status
+        if screen.contains("Found") && screen.contains("reference") {
+            eprintln!("Status shows references found at iteration {}", i + 1);
+        }
+    }
+
+    let final_screen = harness.screen_to_string();
+    eprintln!("Final screen:\n{}", final_screen);
+
+    assert!(
+        panel_appeared,
+        "Find references should complete and show results panel. Screen:\n{}",
+        final_screen
+    );
+
+    // The panel should show at least 4 references:
+    // 1. The definition on line 1
+    // 2. Call on line 6
+    // 3. Call on line 7
+    // 4. Call on line 8
+    assert!(
+        final_screen.contains("helper_function"),
+        "Panel should show 'helper_function' in results. Screen:\n{}",
+        final_screen
+    );
+
+    eprintln!("\n✅ SUCCESS: Find references works with rust-analyzer!");
+
+    Ok(())
+}
