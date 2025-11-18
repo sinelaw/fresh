@@ -97,6 +97,12 @@ pub enum AsyncMessage {
         hints: Vec<InlayHint>,
     },
 
+    /// LSP server status became quiescent (project fully loaded)
+    /// This is a rust-analyzer specific notification (experimental/serverStatus)
+    LspServerQuiescent {
+        language: String,
+    },
+
     /// File changed externally (future: file watching)
     FileChanged { path: String },
 
