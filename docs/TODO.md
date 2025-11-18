@@ -110,11 +110,11 @@ Features are categorized as:
   - [x] Extend rendering loop to inject virtual text Spans ✅
   - [x] Add unit tests for VirtualTextManager (12 unit tests + 5 integration tests) ✅
 
-  *Phase 2: LSP Integration* (~3-4 hours)
-  - [ ] Add `textDocument/inlayHint` request to `LspHandle`
-  - [ ] Fetch hints on viewport change (debounced) and after `didChange`
-  - [ ] Convert LSP `InlayHint` to internal representation
-  - [ ] Cache hints per-file, invalidate on edits
+  *Phase 2: LSP Integration* (~3-4 hours) ✅
+  - [x] Add `textDocument/inlayHint` request to `LspHandle` ✅
+  - [x] Fetch hints on file open ✅
+  - [x] Convert LSP `InlayHint` to internal VirtualText representation ✅
+  - [ ] Debounced fetching on viewport change and after `didChange` (future enhancement)
 
   *Phase 3: Plugin API* (~2 hours)
   - [ ] Expose `op_fresh_set_virtual_texts(buffer_id, texts)`
@@ -678,3 +678,4 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 - ✅ **Multi-file Search/Replace plugin** (git grep integration, virtual buffer results, selective replacement)
 - ✅ **Additional themes** (Nord, Dracula, Solarized Dark)
 - ✅ **Virtual Text Infrastructure** (Phase 1 complete: VirtualTextManager, EditorState integration, rendering loop, 17 tests)
+- ✅ **LSP Inlay Hints** (Phase 2 complete: textDocument/inlayHint request, auto-fetch on file open, type/parameter hint conversion)
