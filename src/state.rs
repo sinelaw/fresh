@@ -14,6 +14,7 @@ use crate::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
 use crate::popup::{Popup, PopupContent, PopupListItem, PopupManager, PopupPosition};
 use crate::semantic_highlight::SemanticHighlighter;
 use crate::text_buffer::{Buffer, LineNumber};
+use crate::virtual_text::VirtualTextManager;
 use crate::text_property::TextPropertyManager;
 use crate::viewport::Viewport;
 use anyhow::Result;
@@ -42,6 +43,9 @@ pub struct EditorState {
 
     /// Marker list for content-anchored overlay positions
     pub marker_list: MarkerList,
+
+    /// Virtual text manager for inline hints (type hints, parameter hints, etc.)
+    pub virtual_texts: VirtualTextManager,
 
     /// Popups for floating windows (completion, documentation, etc.)
     pub popups: PopupManager,
@@ -92,6 +96,7 @@ impl EditorState {
             indent_calculator: RefCell::new(IndentCalculator::new()),
             overlays: OverlayManager::new(),
             marker_list: MarkerList::new(),
+            virtual_texts: VirtualTextManager::new(),
             popups: PopupManager::new(),
             margins: MarginManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
@@ -149,6 +154,7 @@ impl EditorState {
             indent_calculator: RefCell::new(IndentCalculator::new()),
             overlays: OverlayManager::new(),
             marker_list,
+            virtual_texts: VirtualTextManager::new(),
             popups: PopupManager::new(),
             margins: MarginManager::new(),
             primary_cursor_line_number: LineNumber::Absolute(0), // Start at line 0
