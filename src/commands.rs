@@ -488,6 +488,19 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::ListMacros,
             contexts: vec![KeyContext::Normal],
         },
+        // Config
+        Command {
+            name: "Dump Config".to_string(),
+            description: "Save the current configuration to the user config file".to_string(),
+            action: Action::DumpConfig,
+            contexts: vec![],
+        },
+        Command {
+            name: "Toggle Inlay Hints".to_string(),
+            description: "Show or hide LSP inlay hints (type hints, parameter hints)".to_string(),
+            action: Action::ToggleInlayHints,
+            contexts: vec![KeyContext::Normal],
+        },
     ]
 }
 
