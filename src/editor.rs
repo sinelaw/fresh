@@ -394,6 +394,10 @@ pub struct Editor {
     /// LSP log messages (recent messages from window/logMessage)
     lsp_log_messages: Vec<LspMessageEntry>,
 
+    /// Diagnostic result IDs per URI (for incremental pull diagnostics)
+    /// Maps URI string to last result_id received from server
+    diagnostic_result_ids: HashMap<String, String>,
+
     /// Event broadcaster for control events (observable by external systems)
     event_broadcaster: crate::control_event::EventBroadcaster,
 
@@ -764,6 +768,7 @@ impl Editor {
             lsp_server_statuses: std::collections::HashMap::new(),
             lsp_window_messages: Vec::new(),
             lsp_log_messages: Vec::new(),
+            diagnostic_result_ids: HashMap::new(),
             event_broadcaster: crate::control_event::EventBroadcaster::default(),
             bookmarks: HashMap::new(),
             search_case_sensitive: true,
@@ -778,6 +783,11 @@ impl Editor {
     /// Get a reference to the event broadcaster
     pub fn event_broadcaster(&self) -> &crate::control_event::EventBroadcaster {
         &self.event_broadcaster
+    }
+
+    /// Get a reference to the async bridge (if available)
+    pub fn async_bridge(&self) -> Option<&AsyncBridge> {
+        self.async_bridge.as_ref()
     }
 
     /// Emit a control event
@@ -2861,6 +2871,58 @@ impl Editor {
                     actions,
                 } => {
                     self.handle_code_actions_response(request_id, actions);
+                }
+                AsyncMessage::LspPulledDiagnostics {
+                    request_id: _,
+                    uri,
+                    result_id,
+                    diagnostics,
+                    unchanged,
+                } => {
+                    // Handle pulled diagnostics (LSP 3.17+ pull model)
+                    if unchanged {
+                        tracing::debug!("Diagnostics unchanged for {} (result_id: {:?})", uri, result_id);
+                        // No need to update - diagnostics haven't changed
+                    } else {
+                        tracing::debug!(
+                            "Processing {} pulled diagnostics for {} (result_id: {:?})",
+                            diagnostics.len(),
+                            uri,
+                            result_id
+                        );
+
+                        // Find the buffer for this URI
+                        if let Ok(diagnostic_url) = uri.parse::<lsp_types::Uri>() {
+                            if let Some((buffer_id, _)) = self
+                                .buffer_metadata
+                                .iter()
+                                .find(|(_, m)| m.file_uri() == Some(&diagnostic_url))
+                            {
+                                // Apply diagnostics to the buffer
+                                if let Some(state) = self.buffers.get_mut(buffer_id) {
+                                    lsp_diagnostics::apply_diagnostics_to_state_cached(
+                                        state,
+                                        &diagnostics,
+                                        &self.theme,
+                                    );
+                                    tracing::info!(
+                                        "Applied {} pulled diagnostics to buffer {:?}",
+                                        diagnostics.len(),
+                                        buffer_id
+                                    );
+                                }
+                            } else {
+                                tracing::debug!("No buffer found for pulled diagnostic URI: {}", uri);
+                            }
+                        } else {
+                            tracing::warn!("Could not parse pulled diagnostic URI: {}", uri);
+                        }
+                    }
+
+                    // Store result_id for incremental updates
+                    if let Some(result_id) = result_id {
+                        self.diagnostic_result_ids.insert(uri, result_id);
+                    }
                 }
                 AsyncMessage::FileChanged { path } => {
                     tracing::info!("File changed externally: {}", path);
