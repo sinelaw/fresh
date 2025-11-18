@@ -1430,6 +1430,8 @@ pub fn action_to_events(
         | Action::LspReferences
         | Action::LspRename
         | Action::LspHover
+        | Action::LspSignatureHelp
+        | Action::LspCodeActions
         | Action::Search
         | Action::FindNext
         | Action::FindPrevious

@@ -85,10 +85,11 @@ Features are categorized as:
   - **Note:** Markdown rendering not yet implemented (displays as plain text)
   - **Effort:** 4-6 hours
 
-- [ ] **Code Actions**
+- [x] **Code Actions** ✅
   - Query `textDocument/codeAction` for quick fixes
   - Show menu/popup with available actions
-  - Apply `WorkspaceEdit` changes
+  - Apply `WorkspaceEdit` changes (selection not yet implemented)
+  - Keybinding: Ctrl+. to trigger code actions
   - **Effort:** 6-8 hours
 
 - [x] **Find References** ✅
@@ -97,10 +98,10 @@ Features are categorized as:
   - Jump to reference on Enter, navigate with n/p/j/k
   - **Effort:** 4-6 hours
 
-- [ ] **Signature Help**
-  - Request `textDocument/signatureHelp` on `(` and `,`
-  - Show parameter hints in popup
-  - Highlight active parameter
+- [x] **Signature Help** ✅
+  - Request `textDocument/signatureHelp` on `(` and `,` (auto-trigger)
+  - Show parameter hints in popup with active parameter highlighting
+  - Keybinding: Ctrl+Shift+Space for manual trigger
   - **Effort:** 4-6 hours
 
 #### LSP Developer Experience (P2) - **🦀 Core**

@@ -272,6 +272,25 @@ enum LspCommand {
         character: u32,
     },
 
+    /// Request signature help
+    SignatureHelp {
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+    },
+
+    /// Request code actions
+    CodeActions {
+        request_id: u64,
+        uri: Uri,
+        start_line: u32,
+        start_char: u32,
+        end_line: u32,
+        end_char: u32,
+        diagnostics: Vec<lsp_types::Diagnostic>,
+    },
+
     /// Cancel a pending request
     CancelRequest {
         /// Editor's request ID to cancel
@@ -943,6 +962,158 @@ impl LspState {
         }
     }
 
+    /// Handle signature help request
+    async fn handle_signature_help(
+        &mut self,
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{
+            Position, SignatureHelpParams, TextDocumentIdentifier, TextDocumentPositionParams,
+            WorkDoneProgressParams,
+        };
+
+        tracing::debug!(
+            "LSP: signature help request at {}:{}:{}",
+            uri.as_str(),
+            line,
+            character
+        );
+
+        let params = SignatureHelpParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line, character },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            context: None, // We can add context later for re-triggers
+        };
+
+        // Send request and get response
+        match self
+            .send_request_sequential::<_, Value>("textDocument/signatureHelp", Some(params), pending)
+            .await
+        {
+            Ok(result) => {
+                // Parse the signature help response (SignatureHelp or null)
+                let signature_help = if result.is_null() {
+                    None
+                } else {
+                    serde_json::from_value::<lsp_types::SignatureHelp>(result).ok()
+                };
+
+                tracing::debug!(
+                    "LSP: signature help received: {} signatures",
+                    signature_help
+                        .as_ref()
+                        .map(|h| h.signatures.len())
+                        .unwrap_or(0)
+                );
+
+                // Send to main loop
+                let _ = self.async_tx.send(AsyncMessage::LspSignatureHelp {
+                    request_id,
+                    signature_help,
+                });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Signature help request failed: {}", e);
+                // Send empty result on error
+                let _ = self.async_tx.send(AsyncMessage::LspSignatureHelp {
+                    request_id,
+                    signature_help: None,
+                });
+                Err(e)
+            }
+        }
+    }
+
+    /// Handle code actions request
+    async fn handle_code_actions(
+        &mut self,
+        request_id: u64,
+        uri: Uri,
+        start_line: u32,
+        start_char: u32,
+        end_line: u32,
+        end_char: u32,
+        diagnostics: Vec<lsp_types::Diagnostic>,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{
+            CodeActionContext, CodeActionParams, PartialResultParams, Position, Range,
+            TextDocumentIdentifier, WorkDoneProgressParams,
+        };
+
+        tracing::debug!(
+            "LSP: code actions request at {}:{}:{}-{}:{}",
+            uri.as_str(),
+            start_line,
+            start_char,
+            end_line,
+            end_char
+        );
+
+        let params = CodeActionParams {
+            text_document: TextDocumentIdentifier { uri },
+            range: Range {
+                start: Position {
+                    line: start_line,
+                    character: start_char,
+                },
+                end: Position {
+                    line: end_line,
+                    character: end_char,
+                },
+            },
+            context: CodeActionContext {
+                diagnostics,
+                only: None,
+                trigger_kind: None,
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        // Send request and get response
+        match self
+            .send_request_sequential::<_, Value>("textDocument/codeAction", Some(params), pending)
+            .await
+        {
+            Ok(result) => {
+                // Parse the code actions response (Vec<CodeActionOrCommand> or null)
+                let actions = if result.is_null() {
+                    Vec::new()
+                } else {
+                    serde_json::from_value::<Vec<lsp_types::CodeActionOrCommand>>(result)
+                        .unwrap_or_default()
+                };
+
+                tracing::debug!("LSP: received {} code actions", actions.len());
+
+                // Send to main loop
+                let _ = self.async_tx.send(AsyncMessage::LspCodeActions {
+                    request_id,
+                    actions,
+                });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Code actions request failed: {}", e);
+                // Send empty result on error
+                let _ = self.async_tx.send(AsyncMessage::LspCodeActions {
+                    request_id,
+                    actions: Vec::new(),
+                });
+                Err(e)
+            }
+        }
+    }
+
     /// Handle shutdown command
     async fn handle_shutdown(&mut self) -> Result<(), String> {
         tracing::info!("Shutting down async LSP server");
@@ -1436,6 +1607,56 @@ impl LspTask {
                                 let _ = state.async_tx.send(AsyncMessage::LspReferences {
                                     request_id,
                                     locations: Vec::new(),
+                                });
+                            }
+                        }
+                        LspCommand::SignatureHelp {
+                            request_id,
+                            uri,
+                            line,
+                            character,
+                        } => {
+                            if state.initialized {
+                                tracing::info!("Processing SignatureHelp request for {}", uri.as_str());
+                                let _ = state
+                                    .handle_signature_help(request_id, uri, line, character, &pending)
+                                    .await;
+                            } else {
+                                tracing::debug!("LSP not initialized, cannot get signature help");
+                                let _ = state.async_tx.send(AsyncMessage::LspSignatureHelp {
+                                    request_id,
+                                    signature_help: None,
+                                });
+                            }
+                        }
+                        LspCommand::CodeActions {
+                            request_id,
+                            uri,
+                            start_line,
+                            start_char,
+                            end_line,
+                            end_char,
+                            diagnostics,
+                        } => {
+                            if state.initialized {
+                                tracing::info!("Processing CodeActions request for {}", uri.as_str());
+                                let _ = state
+                                    .handle_code_actions(
+                                        request_id,
+                                        uri,
+                                        start_line,
+                                        start_char,
+                                        end_line,
+                                        end_char,
+                                        diagnostics,
+                                        &pending,
+                                    )
+                                    .await;
+                            } else {
+                                tracing::debug!("LSP not initialized, cannot get code actions");
+                                let _ = state.async_tx.send(AsyncMessage::LspCodeActions {
+                                    request_id,
+                                    actions: Vec::new(),
                                 });
                             }
                         }
@@ -2601,6 +2822,48 @@ impl LspHandle {
                 character,
             })
             .map_err(|_| "Failed to send references command".to_string())
+    }
+
+    /// Request signature help
+    pub fn signature_help(
+        &self,
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::SignatureHelp {
+                request_id,
+                uri,
+                line,
+                character,
+            })
+            .map_err(|_| "Failed to send signature_help command".to_string())
+    }
+
+    /// Request code actions
+    pub fn code_actions(
+        &self,
+        request_id: u64,
+        uri: Uri,
+        start_line: u32,
+        start_char: u32,
+        end_line: u32,
+        end_char: u32,
+        diagnostics: Vec<lsp_types::Diagnostic>,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::CodeActions {
+                request_id,
+                uri,
+                start_line,
+                start_char,
+                end_line,
+                end_char,
+                diagnostics,
+            })
+            .map_err(|_| "Failed to send code_actions command".to_string())
     }
 
     /// Cancel a pending request by its editor request_id

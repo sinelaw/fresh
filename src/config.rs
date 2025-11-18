@@ -471,6 +471,22 @@ impl Config {
                 args: HashMap::new(),
                 when: None,
             },
+            // LSP signature help (also auto-triggered on '(' and ',')
+            Keybinding {
+                key: "space".to_string(),
+                modifiers: vec!["ctrl".to_string(), "shift".to_string()],
+                action: "lsp_signature_help".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
+            // LSP code actions (quick fixes, refactorings)
+            Keybinding {
+                key: ".".to_string(),
+                modifiers: vec!["ctrl".to_string()],
+                action: "lsp_code_actions".to_string(),
+                args: HashMap::new(),
+                when: None,
+            },
             // File Explorer - Toggle and focus
             Keybinding {
                 key: "b".to_string(),
