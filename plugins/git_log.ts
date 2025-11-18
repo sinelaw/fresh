@@ -1,7 +1,5 @@
 /// <reference path="../types/fresh.d.ts" />
 
-import { PanelManager, NavigationController, VirtualBufferFactory } from "./lib/index.ts";
-
 /**
  * Git Log Plugin - Magit-style Git Log Interface
  *
@@ -36,6 +34,17 @@ interface GitLogOptions {
   maxCommits: number;
 }
 
+interface GitLogState {
+  isOpen: boolean;
+  bufferId: number | null;
+  splitId: number | null; // The split where git log is displayed
+  sourceSplitId: number | null; // The split where source code is displayed
+  sourceBufferId: number | null; // The buffer that was in the source split (to restore later)
+  commits: GitCommit[];
+  selectedIndex: number;
+  options: GitLogOptions;
+}
+
 interface GitCommitDetailState {
   isOpen: boolean;
   bufferId: number | null;
@@ -47,22 +56,21 @@ interface GitCommitDetailState {
 // State Management
 // =============================================================================
 
-// Panel and navigation managers
-const panel = new PanelManager("*Git Log*", "git-log");
-const nav = new NavigationController<GitCommit>({
-  itemLabel: "Commit",
-  wrap: false,
-  onSelectionChange: () => updateGitLogView(),
-});
-
-// Options for git log display
-const options: GitLogOptions = {
-  showGraph: false,  // Disabled by default - graph interferes with format parsing
-  showRefs: true,
-  maxCommits: 100,
+const gitLogState: GitLogState = {
+  isOpen: false,
+  bufferId: null,
+  splitId: null,
+  sourceSplitId: null,
+  sourceBufferId: null,
+  commits: [],
+  selectedIndex: 0,
+  options: {
+    showGraph: false,  // Disabled by default - graph interferes with format parsing
+    showRefs: true,
+    maxCommits: 100,
+  },
 };
 
-// Commit detail state (secondary panel in existing split)
 const commitDetailState: GitCommitDetailState = {
   isOpen: false,
   bufferId: null,
@@ -149,7 +157,7 @@ async function fetchGitLog(): Promise<GitCommit[]> {
   const args = [
     "log",
     `--format=${format}`,
-    `-n${options.maxCommits}`,
+    `-n${gitLogState.options.maxCommits}`,
   ];
 
   const result = await editor.spawnProcess("git", args);
@@ -206,7 +214,7 @@ async function fetchCommitDiff(hash: string): Promise<string> {
 // =============================================================================
 
 function formatCommitRow(commit: GitCommit, index: number): string {
-  const marker = index === nav.selectedIndex ? "* " : "  ";
+  const marker = index === gitLogState.selectedIndex ? "* " : "  ";
 
   // Build the line parts
   let line = marker;
@@ -215,7 +223,7 @@ function formatCommitRow(commit: GitCommit, index: number): string {
   line += commit.shortHash + " ";
 
   // Add refs if present and enabled
-  if (options.showRefs && commit.refs) {
+  if (gitLogState.options.showRefs && commit.refs) {
     line += commit.refs + " ";
   }
 
@@ -227,7 +235,6 @@ function formatCommitRow(commit: GitCommit, index: number): string {
 
 function buildGitLogEntries(): TextPropertyEntry[] {
   const entries: TextPropertyEntry[] = [];
-  const commits = nav.getItems();
 
   // Magit-style header
   entries.push({
@@ -235,15 +242,15 @@ function buildGitLogEntries(): TextPropertyEntry[] {
     properties: { type: "section-header" },
   });
 
-  if (commits.length === 0) {
+  if (gitLogState.commits.length === 0) {
     entries.push({
       text: "  No commits found\n",
       properties: { type: "empty" },
     });
   } else {
     // Add each commit
-    for (let i = 0; i < commits.length; i++) {
-      const commit = commits[i];
+    for (let i = 0; i < gitLogState.commits.length; i++) {
+      const commit = gitLogState.commits[i];
       entries.push({
         text: formatCommitRow(commit, i),
         properties: {
@@ -267,7 +274,7 @@ function buildGitLogEntries(): TextPropertyEntry[] {
     properties: { type: "blank" },
   });
   entries.push({
-    text: `${commits.length} commits | RET: show | j/k/n/p: nav | g/G: first/last | y: yank hash | r: refresh | q: quit\n`,
+    text: `${gitLogState.commits.length} commits | RET: show | j/k/n/p: nav | g/G: first/last | y: yank hash | r: refresh | q: quit\n`,
     properties: { type: "footer" },
   });
 
@@ -275,10 +282,9 @@ function buildGitLogEntries(): TextPropertyEntry[] {
 }
 
 function applyGitLogHighlighting(): void {
-  if (panel.bufferId === null) return;
+  if (gitLogState.bufferId === null) return;
 
-  const bufferId = panel.bufferId;
-  const commits = nav.getItems();
+  const bufferId = gitLogState.bufferId;
 
   // Clear existing overlays
   editor.removeOverlaysByPrefix(bufferId, "gitlog-");
@@ -317,13 +323,13 @@ function applyGitLogHighlighting(): void {
     }
 
     const commitIndex = lineIdx - headerLines;
-    if (commitIndex < 0 || commitIndex >= commits.length) {
+    if (commitIndex < 0 || commitIndex >= gitLogState.commits.length) {
       byteOffset += line.length + 1;
       continue;
     }
 
-    const commit = commits[commitIndex];
-    const isSelected = commitIndex === nav.selectedIndex;
+    const commit = gitLogState.commits[commitIndex];
+    const isSelected = commitIndex === gitLogState.selectedIndex;
 
     // Find and highlight different parts of the line
     let pos = 2; // Skip marker
@@ -344,7 +350,7 @@ function applyGitLogHighlighting(): void {
     pos += commit.shortHash.length + 1;
 
     // Highlight refs (branches/tags)
-    if (options.showRefs && commit.refs) {
+    if (gitLogState.options.showRefs && commit.refs) {
       const refsStart = byteOffset + pos;
       const refsEnd = refsStart + commit.refs.length;
 
@@ -388,8 +394,11 @@ function applyGitLogHighlighting(): void {
 }
 
 function updateGitLogView(): void {
-  panel.updateContent(buildGitLogEntries());
-  applyGitLogHighlighting();
+  if (gitLogState.bufferId !== null) {
+    const entries = buildGitLogEntries();
+    editor.setVirtualBufferContent(gitLogState.bufferId, entries);
+    applyGitLogHighlighting();
+  }
 }
 
 // =============================================================================
@@ -600,84 +609,134 @@ function applyCommitDetailHighlighting(): void {
 // =============================================================================
 
 globalThis.show_git_log = async function(): Promise<void> {
-  if (panel.isOpen) {
+  if (gitLogState.isOpen) {
     editor.setStatus("Git log already open");
     return;
   }
 
   editor.setStatus("Loading git log...");
 
-  // Fetch commits
-  const commits = await fetchGitLog();
+  // Store the current split ID and buffer ID before creating the panel
+  gitLogState.sourceSplitId = editor.getActiveSplitId();
+  gitLogState.sourceBufferId = editor.getActiveBufferId();
 
-  if (commits.length === 0) {
+  // Fetch commits
+  gitLogState.commits = await fetchGitLog();
+  gitLogState.selectedIndex = 0;
+
+  if (gitLogState.commits.length === 0) {
     editor.setStatus("No commits found or not a git repository");
+    gitLogState.sourceSplitId = null;
     return;
   }
 
-  // Set up navigation
-  nav.setItems(commits);
+  // Build entries
+  const entries = buildGitLogEntries();
 
-  // Build entries and open panel
-  try {
-    await panel.open({
-      entries: buildGitLogEntries(),
-      ratio: 0.4,
-    });
+  // Create virtual buffer in split
+  const bufferId = await editor.createVirtualBufferInSplit({
+    name: "*Git Log*",
+    mode: "git-log",
+    read_only: true,
+    entries: entries,
+    ratio: 0.6, // Original takes 60%, git log takes 40%
+    panel_id: "git-log-panel",
+    show_line_numbers: false,
+    show_cursors: true,
+    editing_disabled: true,
+  });
+
+  if (bufferId !== null) {
+    gitLogState.isOpen = true;
+    gitLogState.bufferId = bufferId;
+    gitLogState.splitId = editor.getActiveSplitId(); // Capture the git log's split ID
 
     // Apply syntax highlighting
     applyGitLogHighlighting();
 
-    editor.setStatus(`Git log: ${commits.length} commits | Press ? for help`);
+    editor.setStatus(`Git log: ${gitLogState.commits.length} commits | Press ? for help`);
     editor.debug("Git log panel opened");
-  } catch (error) {
+  } else {
+    gitLogState.sourceSplitId = null;
     editor.setStatus("Failed to open git log panel");
   }
 };
 
 globalThis.git_log_close = function(): void {
-  if (!panel.isOpen) {
+  if (!gitLogState.isOpen) {
     return;
   }
 
-  // Close the panel
-  panel.close();
-  nav.reset();
+  // Close the git log buffer first
+  if (gitLogState.bufferId !== null) {
+    editor.closeBuffer(gitLogState.bufferId);
+  }
 
+  // Close the git log split (this will focus the remaining split)
+  if (gitLogState.splitId !== null) {
+    editor.closeSplit(gitLogState.splitId);
+  }
+
+  gitLogState.isOpen = false;
+  gitLogState.bufferId = null;
+  gitLogState.splitId = null;
+  gitLogState.sourceSplitId = null;
+  gitLogState.sourceBufferId = null;
+  gitLogState.commits = [];
+  gitLogState.selectedIndex = 0;
   editor.setStatus("Git log closed");
 };
 
 globalThis.git_log_next = function(): void {
-  nav.next();
+  if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
+
+  gitLogState.selectedIndex = Math.min(
+    gitLogState.selectedIndex + 1,
+    gitLogState.commits.length - 1
+  );
+  updateGitLogView();
+  editor.setStatus(`Commit ${gitLogState.selectedIndex + 1}/${gitLogState.commits.length}`);
 };
 
 globalThis.git_log_prev = function(): void {
-  nav.prev();
+  if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
+
+  gitLogState.selectedIndex = Math.max(gitLogState.selectedIndex - 1, 0);
+  updateGitLogView();
+  editor.setStatus(`Commit ${gitLogState.selectedIndex + 1}/${gitLogState.commits.length}`);
 };
 
 globalThis.git_log_first = function(): void {
-  nav.first();
+  if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
+
+  gitLogState.selectedIndex = 0;
+  updateGitLogView();
+  editor.setStatus(`Commit 1/${gitLogState.commits.length}`);
 };
 
 globalThis.git_log_last = function(): void {
-  nav.last();
+  if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
+
+  gitLogState.selectedIndex = gitLogState.commits.length - 1;
+  updateGitLogView();
+  editor.setStatus(`Commit ${gitLogState.commits.length}/${gitLogState.commits.length}`);
 };
 
 globalThis.git_log_refresh = async function(): Promise<void> {
-  if (!panel.isOpen) return;
+  if (!gitLogState.isOpen) return;
 
   editor.setStatus("Refreshing git log...");
-  const commits = await fetchGitLog();
-  nav.setItems(commits, false); // Don't reset index
+  gitLogState.commits = await fetchGitLog();
+  gitLogState.selectedIndex = Math.min(gitLogState.selectedIndex, gitLogState.commits.length - 1);
   updateGitLogView();
-  editor.setStatus(`Git log refreshed: ${commits.length} commits`);
+  editor.setStatus(`Git log refreshed: ${gitLogState.commits.length} commits`);
 };
 
 globalThis.git_log_show_commit = async function(): Promise<void> {
-  if (!panel.isOpen || nav.isEmpty) return;
-  if (panel.sourceSplitId === null) return;
+  if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
+  if (gitLogState.sourceSplitId === null) return;
 
-  const commit = nav.selected;
+  const commit = gitLogState.commits[gitLogState.selectedIndex];
   if (!commit) return;
 
   editor.setStatus(`Loading commit ${commit.shortHash}...`);
@@ -689,16 +748,21 @@ globalThis.git_log_show_commit = async function(): Promise<void> {
   const entries = buildCommitDetailEntries(commit, diff);
 
   // Create virtual buffer in the source split (upper split)
-  const bufferId = await VirtualBufferFactory.createInSplit(panel.sourceSplitId, {
+  const bufferId = await editor.createVirtualBufferInExistingSplit({
     name: `*Commit: ${commit.shortHash}*`,
     mode: "git-commit-detail",
+    read_only: true,
     entries: entries,
+    split_id: gitLogState.sourceSplitId,
+    show_line_numbers: false,
+    show_cursors: true,
+    editing_disabled: true,
   });
 
   if (bufferId !== null) {
     commitDetailState.isOpen = true;
     commitDetailState.bufferId = bufferId;
-    commitDetailState.splitId = panel.sourceSplitId;
+    commitDetailState.splitId = gitLogState.sourceSplitId;
     commitDetailState.commit = commit;
 
     // Apply syntax highlighting
@@ -711,9 +775,9 @@ globalThis.git_log_show_commit = async function(): Promise<void> {
 };
 
 globalThis.git_log_copy_hash = function(): void {
-  if (!panel.isOpen || nav.isEmpty) return;
+  if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
 
-  const commit = nav.selected;
+  const commit = gitLogState.commits[gitLogState.selectedIndex];
   if (!commit) return;
 
   // Use spawn to copy to clipboard (works on most systems)
@@ -738,8 +802,8 @@ globalThis.git_commit_detail_close = function(): void {
   }
 
   // First, restore the original buffer to the source split before closing the commit detail buffer
-  if (commitDetailState.splitId !== null && panel.sourceBufferId !== null) {
-    editor.setSplitBuffer(commitDetailState.splitId, panel.sourceBufferId);
+  if (commitDetailState.splitId !== null && gitLogState.sourceBufferId !== null) {
+    editor.setSplitBuffer(commitDetailState.splitId, gitLogState.sourceBufferId);
   }
 
   // Now close the commit detail buffer (it's no longer displayed anywhere)
@@ -753,7 +817,9 @@ globalThis.git_commit_detail_close = function(): void {
   commitDetailState.commit = null;
 
   // Return focus to the git log split
-  panel.focusPanel();
+  if (gitLogState.splitId !== null) {
+    editor.focusSplit(gitLogState.splitId);
+  }
 
   editor.setStatus("Commit details closed");
 };

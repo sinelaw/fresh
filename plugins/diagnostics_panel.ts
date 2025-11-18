@@ -1,13 +1,18 @@
 /// <reference path="../types/fresh.d.ts" />
 
-import { PanelManager, NavigationController } from "./lib/index.ts";
-
 /**
  * Diagnostics Panel Plugin (TypeScript)
  *
  * Full diagnostics panel implementation with virtual buffer split view.
  * Provides LSP-like diagnostics display with severity icons and navigation.
  */
+
+// Panel state
+let panelOpen = false;
+let diagnosticsBufferId: number | null = null;
+let sourceSplitId: number | null = null; // The split where source code is displayed
+let currentDiagnostics: DiagnosticItem[] = [];
+let selectedIndex = 0;
 
 // Diagnostic item structure
 interface DiagnosticItem {
@@ -17,14 +22,6 @@ interface DiagnosticItem {
   line: number;
   column: number;
 }
-
-// Panel and navigation managers
-const panel = new PanelManager("*Diagnostics*", "diagnostics-list");
-const nav = new NavigationController<DiagnosticItem>({
-  itemLabel: "Diagnostic",
-  wrap: true,
-  onSelectionChange: () => updatePanelContent(),
-});
 
 // Severity icons
 const severityIcons: Record<string, string> = {
@@ -53,14 +50,13 @@ editor.defineMode(
 // Format a diagnostic for display
 function formatDiagnostic(item: DiagnosticItem, index: number): string {
   const icon = severityIcons[item.severity] || "[?]";
-  const marker = index === nav.selectedIndex ? ">" : " ";
+  const marker = index === selectedIndex ? ">" : " ";
   return `${marker} ${icon} ${item.file}:${item.line}:${item.column} - ${item.message}\n`;
 }
 
 // Build entries for the virtual buffer
 function buildPanelEntries(): TextPropertyEntry[] {
   const entries: TextPropertyEntry[] = [];
-  const diagnostics = nav.getItems();
 
   // Header
   entries.push({
@@ -68,15 +64,15 @@ function buildPanelEntries(): TextPropertyEntry[] {
     properties: { type: "header" },
   });
 
-  if (diagnostics.length === 0) {
+  if (currentDiagnostics.length === 0) {
     entries.push({
       text: "  No diagnostics available\n",
       properties: { type: "empty" },
     });
   } else {
     // Add each diagnostic
-    for (let i = 0; i < diagnostics.length; i++) {
-      const diag = diagnostics[i];
+    for (let i = 0; i < currentDiagnostics.length; i++) {
+      const diag = currentDiagnostics[i];
       entries.push({
         text: formatDiagnostic(diag, i),
         properties: {
@@ -94,8 +90,8 @@ function buildPanelEntries(): TextPropertyEntry[] {
   }
 
   // Footer with summary
-  const errorCount = diagnostics.filter((d) => d.severity === "error").length;
-  const warningCount = diagnostics.filter((d) => d.severity === "warning").length;
+  const errorCount = currentDiagnostics.filter((d) => d.severity === "error").length;
+  const warningCount = currentDiagnostics.filter((d) => d.severity === "warning").length;
   entries.push({
     text: `───────────────────────\n`,
     properties: { type: "separator" },
@@ -110,7 +106,10 @@ function buildPanelEntries(): TextPropertyEntry[] {
 
 // Update the panel content
 function updatePanelContent(): void {
-  panel.updateContent(buildPanelEntries());
+  if (diagnosticsBufferId !== null) {
+    const entries = buildPanelEntries();
+    editor.setVirtualBufferContent(diagnosticsBufferId, entries);
+  }
 }
 
 // Generate sample diagnostics for the current file
@@ -146,25 +145,39 @@ function generateSampleDiagnostics(): DiagnosticItem[] {
 
 // Show diagnostics panel
 globalThis.show_diagnostics_panel = async function (): Promise<void> {
-  if (panel.isOpen) {
+  if (panelOpen) {
     editor.setStatus("Diagnostics panel already open");
     updatePanelContent();
     return;
   }
 
-  // Generate sample diagnostics and set up navigation
-  const diagnostics = generateSampleDiagnostics();
-  nav.setItems(diagnostics);
+  // Save the current split ID before creating the diagnostics split
+  // This is where we'll open files when jumping to diagnostics
+  sourceSplitId = editor.getActiveSplitId();
 
-  // Build panel entries and open panel
+  // Generate sample diagnostics
+  currentDiagnostics = generateSampleDiagnostics();
+  selectedIndex = 0;
+
+  // Build panel entries
+  const entries = buildPanelEntries();
+
+  // Create virtual buffer in horizontal split
   try {
-    await panel.open({
-      entries: buildPanelEntries(),
-      ratio: 0.3,
+    diagnosticsBufferId = await editor.createVirtualBufferInSplit({
+      name: "*Diagnostics*",
+      mode: "diagnostics-list",
+      read_only: true,
+      entries: entries,
+      ratio: 0.7, // Original pane takes 70%, diagnostics takes 30%
+      panel_id: "diagnostics-panel",
+      show_line_numbers: false,
+      show_cursors: true,
     });
 
-    editor.setStatus(`Diagnostics: ${diagnostics.length} item(s) - Press RET to jump, n/p to navigate, q to close`);
-    editor.debug(`Diagnostics panel opened with buffer ID ${panel.bufferId}`);
+    panelOpen = true;
+    editor.setStatus(`Diagnostics: ${currentDiagnostics.length} item(s) - Press RET to jump, n/p to navigate, q to close`);
+    editor.debug(`Diagnostics panel opened with buffer ID ${diagnosticsBufferId}`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     editor.setStatus("Failed to open diagnostics panel");
@@ -174,19 +187,22 @@ globalThis.show_diagnostics_panel = async function (): Promise<void> {
 
 // Hide diagnostics panel
 globalThis.hide_diagnostics_panel = function (): void {
-  if (!panel.isOpen) {
+  if (!panelOpen) {
     editor.setStatus("Diagnostics panel not open");
     return;
   }
 
-  panel.close();
-  nav.reset();
+  panelOpen = false;
+  diagnosticsBufferId = null;
+  sourceSplitId = null;
+  selectedIndex = 0;
+  currentDiagnostics = [];
   editor.setStatus("Diagnostics panel closed");
 };
 
 // Toggle diagnostics panel
 globalThis.toggle_diagnostics_panel = function (): void {
-  if (panel.isOpen) {
+  if (panelOpen) {
     globalThis.hide_diagnostics_panel();
   } else {
     globalThis.show_diagnostics_panel();
@@ -195,43 +211,41 @@ globalThis.toggle_diagnostics_panel = function (): void {
 
 // Show diagnostic count
 globalThis.show_diagnostics_count = function (): void {
-  const diagnostics = nav.getItems();
-  const errorCount = diagnostics.filter((d) => d.severity === "error").length;
-  const warningCount = diagnostics.filter((d) => d.severity === "warning").length;
+  const errorCount = currentDiagnostics.filter((d) => d.severity === "error").length;
+  const warningCount = currentDiagnostics.filter((d) => d.severity === "warning").length;
   editor.setStatus(`Diagnostics: ${errorCount} errors, ${warningCount} warnings`);
 };
 
 // Navigation: go to selected diagnostic
 globalThis.diagnostics_goto = function (): void {
-  if (nav.isEmpty) {
+  if (currentDiagnostics.length === 0) {
     editor.setStatus("No diagnostics to jump to");
     return;
   }
 
-  if (panel.sourceSplitId === null) {
+  if (sourceSplitId === null) {
     editor.setStatus("Source split not available");
     return;
   }
 
-  const bufferId = panel.bufferId;
-  if (bufferId === null) return;
-
+  const bufferId = editor.getActiveBufferId();
   const props = editor.getTextPropertiesAtCursor(bufferId);
 
   if (props.length > 0) {
     const location = props[0].location as { file: string; line: number; column: number } | undefined;
     if (location) {
       // Open file in the source split, not the diagnostics split
-      editor.openFileInSplit(panel.sourceSplitId, location.file, location.line, location.column || 0);
+      editor.openFileInSplit(sourceSplitId, location.file, location.line, location.column || 0);
       editor.setStatus(`Jumped to ${location.file}:${location.line}`);
     } else {
       editor.setStatus("No location info for this diagnostic");
     }
   } else {
-    // Fallback: use selected item from navigation
-    const diag = nav.selected;
+    // Fallback: use selectedIndex
+    const diag = currentDiagnostics[selectedIndex];
     if (diag) {
-      editor.openFileInSplit(panel.sourceSplitId, diag.file, diag.line, diag.column);
+      // Open file in the source split, not the diagnostics split
+      editor.openFileInSplit(sourceSplitId, diag.file, diag.line, diag.column);
       editor.setStatus(`Jumped to ${diag.file}:${diag.line}`);
     }
   }
@@ -239,12 +253,20 @@ globalThis.diagnostics_goto = function (): void {
 
 // Navigation: next diagnostic
 globalThis.diagnostics_next = function (): void {
-  nav.next();
+  if (currentDiagnostics.length === 0) return;
+
+  selectedIndex = (selectedIndex + 1) % currentDiagnostics.length;
+  updatePanelContent();
+  editor.setStatus(`Diagnostic ${selectedIndex + 1}/${currentDiagnostics.length}`);
 };
 
 // Navigation: previous diagnostic
 globalThis.diagnostics_prev = function (): void {
-  nav.prev();
+  if (currentDiagnostics.length === 0) return;
+
+  selectedIndex = selectedIndex > 0 ? selectedIndex - 1 : currentDiagnostics.length - 1;
+  updatePanelContent();
+  editor.setStatus(`Diagnostic ${selectedIndex + 1}/${currentDiagnostics.length}`);
 };
 
 // Close the diagnostics panel
