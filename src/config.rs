@@ -480,9 +480,10 @@ impl Config {
                 when: None,
             },
             // LSP code actions (quick fixes, refactorings)
+            // Note: Ctrl+. doesn't work in many terminals, so we use Ctrl+Shift+A
             Keybinding {
-                key: ".".to_string(),
-                modifiers: vec!["ctrl".to_string()],
+                key: "a".to_string(),
+                modifiers: vec!["ctrl".to_string(), "shift".to_string()],
                 action: "lsp_code_actions".to_string(),
                 args: HashMap::new(),
                 when: None,

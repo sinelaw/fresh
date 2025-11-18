@@ -401,6 +401,18 @@ pub fn get_all_commands() -> Vec<Command> {
             contexts: vec![KeyContext::Normal],
         },
         Command {
+            name: "Show Signature Help".to_string(),
+            description: "Show function parameter hints".to_string(),
+            action: Action::LspSignatureHelp,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Code Actions".to_string(),
+            description: "Show available code actions (quick fixes, refactorings)".to_string(),
+            action: Action::LspCodeActions,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
             name: "Navigate Back".to_string(),
             description: "Go back in navigation history".to_string(),
             action: Action::NavigateBack,
