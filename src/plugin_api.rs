@@ -264,6 +264,8 @@ pub enum PluginCommand {
         show_line_numbers: bool,
         /// Whether to show cursors in the buffer (default true)
         show_cursors: bool,
+        /// Whether editing is disabled for this buffer (default false)
+        editing_disabled: bool,
         /// Optional request ID for async response (if set, editor will send back buffer ID)
         request_id: Option<u64>,
     },
@@ -309,6 +311,8 @@ pub enum PluginCommand {
         show_line_numbers: bool,
         /// Whether to show cursors in the buffer (default true)
         show_cursors: bool,
+        /// Whether editing is disabled for this buffer (default false)
+        editing_disabled: bool,
         /// Optional request ID for async response
         request_id: Option<u64>,
     },
