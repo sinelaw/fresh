@@ -299,6 +299,17 @@ enum LspCommand {
         previous_result_id: Option<String>,
     },
 
+    /// Request inlay hints for a range (LSP 3.17+)
+    InlayHints {
+        request_id: u64,
+        uri: Uri,
+        /// Range to get hints for (typically viewport)
+        start_line: u32,
+        start_char: u32,
+        end_line: u32,
+        end_char: u32,
+    },
+
     /// Cancel a pending request
     CancelRequest {
         /// Editor's request ID to cancel
@@ -1240,6 +1251,82 @@ impl LspState {
         }
     }
 
+    /// Handle inlay hints request (LSP 3.17+)
+    async fn handle_inlay_hints(
+        &mut self,
+        request_id: u64,
+        uri: Uri,
+        start_line: u32,
+        start_char: u32,
+        end_line: u32,
+        end_char: u32,
+        pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
+    ) -> Result<(), String> {
+        use lsp_types::{InlayHintParams, Range, Position, TextDocumentIdentifier, WorkDoneProgressParams};
+
+        tracing::debug!(
+            "LSP: inlay hints request for {} ({}:{} - {}:{})",
+            uri.as_str(),
+            start_line,
+            start_char,
+            end_line,
+            end_char
+        );
+
+        let params = InlayHintParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            range: Range {
+                start: Position {
+                    line: start_line,
+                    character: start_char,
+                },
+                end: Position {
+                    line: end_line,
+                    character: end_char,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+
+        match self
+            .send_request_sequential::<_, Option<Vec<lsp_types::InlayHint>>>(
+                "textDocument/inlayHint",
+                Some(params),
+                pending,
+            )
+            .await
+        {
+            Ok(hints) => {
+                let hints = hints.unwrap_or_default();
+                let uri_string = uri.as_str().to_string();
+
+                tracing::debug!(
+                    "LSP: received {} inlay hints for {}",
+                    hints.len(),
+                    uri_string
+                );
+
+                let _ = self.async_tx.send(AsyncMessage::LspInlayHints {
+                    request_id,
+                    uri: uri_string,
+                    hints,
+                });
+
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Inlay hints request failed: {}", e);
+                // Send empty result on error
+                let _ = self.async_tx.send(AsyncMessage::LspInlayHints {
+                    request_id,
+                    uri: uri.as_str().to_string(),
+                    hints: Vec::new(),
+                });
+                Err(e)
+            }
+        }
+    }
+
     /// Handle shutdown command
     async fn handle_shutdown(&mut self) -> Result<(), String> {
         tracing::info!("Shutting down async LSP server");
@@ -1814,6 +1901,41 @@ impl LspTask {
                                     result_id: None,
                                     diagnostics: Vec::new(),
                                     unchanged: false,
+                                });
+                            }
+                        }
+                        LspCommand::InlayHints {
+                            request_id,
+                            uri,
+                            start_line,
+                            start_char,
+                            end_line,
+                            end_char,
+                        } => {
+                            if state.initialized {
+                                tracing::info!(
+                                    "Processing InlayHints request for {}",
+                                    uri.as_str()
+                                );
+                                let _ = state
+                                    .handle_inlay_hints(
+                                        request_id,
+                                        uri,
+                                        start_line,
+                                        start_char,
+                                        end_line,
+                                        end_char,
+                                        &pending,
+                                    )
+                                    .await;
+                            } else {
+                                tracing::debug!(
+                                    "LSP not initialized, cannot get inlay hints"
+                                );
+                                let _ = state.async_tx.send(AsyncMessage::LspInlayHints {
+                                    request_id,
+                                    uri: uri.as_str().to_string(),
+                                    hints: Vec::new(),
                                 });
                             }
                         }
@@ -3040,6 +3162,30 @@ impl LspHandle {
                 previous_result_id,
             })
             .map_err(|_| "Failed to send document_diagnostic command".to_string())
+    }
+
+    /// Request inlay hints for a range (LSP 3.17+)
+    ///
+    /// Inlay hints are virtual text annotations displayed inline (e.g., type hints, parameter names).
+    pub fn inlay_hints(
+        &self,
+        request_id: u64,
+        uri: Uri,
+        start_line: u32,
+        start_char: u32,
+        end_line: u32,
+        end_char: u32,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::InlayHints {
+                request_id,
+                uri,
+                start_line,
+                start_char,
+                end_line,
+                end_char,
+            })
+            .map_err(|_| "Failed to send inlay_hints command".to_string())
     }
 
     /// Cancel a pending request by its editor request_id

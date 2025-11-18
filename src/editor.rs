@@ -343,6 +343,9 @@ pub struct Editor {
     /// Pending LSP code actions request ID (if any)
     pending_code_actions_request: Option<u64>,
 
+    /// Pending LSP inlay hints request ID (if any)
+    pending_inlay_hints_request: Option<u64>,
+
     /// Hover symbol range (byte offsets) - for highlighting the symbol under hover
     /// Format: (start_byte_offset, end_byte_offset)
     hover_symbol_range: Option<(usize, usize)>,
@@ -722,6 +725,7 @@ impl Editor {
             pending_references_symbol: String::new(),
             pending_signature_help_request: None,
             pending_code_actions_request: None,
+            pending_inlay_hints_request: None,
             hover_symbol_range: None,
             search_state: None,
             interactive_replace_state: None,
@@ -2954,6 +2958,44 @@ impl Editor {
                         self.diagnostic_result_ids.insert(uri, result_id);
                     }
                 }
+                AsyncMessage::LspInlayHints {
+                    request_id,
+                    uri,
+                    hints,
+                } => {
+                    // Handle inlay hints response
+                    if self.pending_inlay_hints_request == Some(request_id) {
+                        self.pending_inlay_hints_request = None;
+
+                        tracing::debug!(
+                            "Processing {} inlay hints for {}",
+                            hints.len(),
+                            uri
+                        );
+
+                        // Find the buffer for this URI and apply hints
+                        if let Ok(hint_url) = uri.parse::<lsp_types::Uri>() {
+                            if let Some((buffer_id, _)) = self
+                                .buffer_metadata
+                                .iter()
+                                .find(|(_, m)| m.file_uri() == Some(&hint_url))
+                            {
+                                if let Some(state) = self.buffers.get_mut(buffer_id) {
+                                    Self::apply_inlay_hints_to_state(state, &hints);
+                                }
+                            } else {
+                                tracing::debug!("No buffer found for inlay hints URI: {}", uri);
+                            }
+                        } else {
+                            tracing::warn!("Could not parse inlay hints URI: {}", uri);
+                        }
+                    } else {
+                        tracing::debug!(
+                            "Ignoring stale inlay hints response (request_id={})",
+                            request_id
+                        );
+                    }
+                }
                 AsyncMessage::FileChanged { path } => {
                     tracing::info!("File changed externally: {}", path);
                     // TODO: Handle external file changes
@@ -4704,6 +4746,63 @@ impl Editor {
             state.popups.show(popup);
             tracing::info!("Showing hover popup (markdown={})", is_markdown);
         }
+    }
+
+    /// Apply inlay hints to editor state as virtual text
+    fn apply_inlay_hints_to_state(state: &mut crate::state::EditorState, hints: &[lsp_types::InlayHint]) {
+        use crate::virtual_text::VirtualTextPosition;
+        use ratatui::style::{Color, Style};
+
+        // Clear existing inlay hints
+        state.virtual_texts.clear(&mut state.marker_list);
+
+        if hints.is_empty() {
+            return;
+        }
+
+        // Style for inlay hints - dimmed to not distract from actual code
+        let hint_style = Style::default().fg(Color::Rgb(128, 128, 128));
+
+        for hint in hints {
+            // Convert LSP position to byte offset
+            let byte_offset = state.buffer.lsp_position_to_byte(
+                hint.position.line as usize,
+                hint.position.character as usize,
+            );
+
+            // Extract text from hint label
+            let text = match &hint.label {
+                lsp_types::InlayHintLabel::String(s) => s.clone(),
+                lsp_types::InlayHintLabel::LabelParts(parts) => {
+                    parts.iter().map(|p| p.value.as_str()).collect::<String>()
+                }
+            };
+
+            // Determine position based on hint kind
+            // Type hints go after, parameter hints go before
+            let position = match hint.kind {
+                Some(lsp_types::InlayHintKind::TYPE) => VirtualTextPosition::AfterChar,
+                Some(lsp_types::InlayHintKind::PARAMETER) => VirtualTextPosition::BeforeChar,
+                _ => VirtualTextPosition::AfterChar, // Default to after
+            };
+
+            // Add padding for readability
+            let display_text = match position {
+                VirtualTextPosition::AfterChar => format!(": {}", text),
+                VirtualTextPosition::BeforeChar => format!("{}:", text),
+            };
+
+            state.virtual_texts.add(
+                &mut state.marker_list,
+                byte_offset,
+                display_text,
+                hint_style,
+                position,
+                0, // Default priority
+            );
+        }
+
+        tracing::debug!("Applied {} inlay hints as virtual text", hints.len());
     }
 
     /// Request LSP find references at current cursor position
