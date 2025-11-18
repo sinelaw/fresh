@@ -3226,10 +3226,10 @@ fn main() {
     eprintln!("Screen before find references:\n{}", harness.screen_to_string());
 
     // Move cursor to the function name "helper_function" on line 1
-    // The function starts at column 3 (after "fn ")
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
-    harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    // The function starts at column 3 (after "fn "), move to column 7 to be clearly inside
+    for _ in 0..7 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    }
     harness.render()?;
 
     // Trigger find references via command palette
