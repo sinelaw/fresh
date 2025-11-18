@@ -282,7 +282,7 @@ Fully functional diagnostics panel with virtual buffer split view:
 - [ ] Minimap (optional) - **🦀 Core** (separate rendering view)
 
 #### Themes & Appearance
-- [ ] More built-in themes (Solarized, Monokai, Dracula, Nord) - **📦 Plugin** (JSON configs)
+- [x] More built-in themes (Solarized, Monokai, Dracula, Nord) - **📦 Plugin** (JSON configs) ✅ (Nord, Dracula, Solarized Dark added)
 - [ ] Theme customization UI - **📦 Plugin** (settings editor)
 - [ ] Font configuration (size, family) - **🦀 Core** (terminal setup)
 - [ ] Ligature support - **🦀 Core** (rendering)
