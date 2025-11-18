@@ -167,6 +167,34 @@ pub enum PluginCommand {
     /// Remove overlays whose ID starts with the given prefix
     RemoveOverlaysByPrefix { buffer_id: BufferId, prefix: String },
 
+    /// Add virtual text (inline text that doesn't exist in the buffer)
+    /// Used for color swatches, type hints, parameter hints, etc.
+    AddVirtualText {
+        buffer_id: BufferId,
+        virtual_text_id: String,
+        position: usize,
+        text: String,
+        color: (u8, u8, u8),
+        before: bool, // true = before char, false = after char
+    },
+
+    /// Remove a virtual text by ID
+    RemoveVirtualText {
+        buffer_id: BufferId,
+        virtual_text_id: String,
+    },
+
+    /// Remove virtual texts whose ID starts with the given prefix
+    RemoveVirtualTextsByPrefix {
+        buffer_id: BufferId,
+        prefix: String,
+    },
+
+    /// Clear all virtual texts from a buffer
+    ClearVirtualTexts {
+        buffer_id: BufferId,
+    },
+
     /// Refresh lines for a buffer (clear seen_lines cache to re-trigger lines_changed hook)
     RefreshLines { buffer_id: BufferId },
 
