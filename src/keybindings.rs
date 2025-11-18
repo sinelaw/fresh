@@ -1351,6 +1351,12 @@ impl KeybindingResolver {
             (KeyCode::Char('a'), KeyModifiers::CONTROL),
             Action::PromptSelectAll,
         );
+        // Additional bindings for PromptConfirm (same as Enter)
+        prompt_bindings.insert(
+            (KeyCode::Char('f'), KeyModifiers::CONTROL),
+            Action::PromptConfirm,
+        );
+        prompt_bindings.insert((KeyCode::F(3), KeyModifiers::empty()), Action::PromptConfirm);
         all_bindings.insert(KeyContext::Prompt, prompt_bindings);
 
         // Popup context bindings

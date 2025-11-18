@@ -276,6 +276,34 @@ impl InputHistory {
         self.items.last().map(|s| s.as_str())
     }
 
+    /// Initialize navigation at the last history item
+    ///
+    /// Call this when pre-filling a prompt with the last history item.
+    /// This sets up the navigation state so that pressing Up will go to
+    /// the second-to-last item, not the last item again.
+    ///
+    /// # Example
+    /// ```
+    /// # use fresh::input_history::InputHistory;
+    /// let mut history = InputHistory::new();
+    /// history.push("first".to_string());
+    /// history.push("second".to_string());
+    /// history.push("third".to_string());
+    ///
+    /// // Pre-fill prompt with "third"
+    /// history.init_at_last();
+    ///
+    /// // Now Up goes to "second", not "third"
+    /// let prev = history.navigate_prev("third");
+    /// assert_eq!(prev, Some("second".to_string()));
+    /// ```
+    pub fn init_at_last(&mut self) {
+        if !self.items.is_empty() {
+            self.position = Some(self.items.len() - 1);
+            self.temp_input = None;
+        }
+    }
+
     /// Check if history is empty
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()

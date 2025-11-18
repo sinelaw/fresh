@@ -457,6 +457,9 @@ fn test_search_history_navigation() {
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
+    // Clear history to ensure test isolation
+    harness.editor_mut().clear_search_history();
+
     // First search: "hello"
     harness
         .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
@@ -493,19 +496,14 @@ fn test_search_history_navigation() {
         .unwrap();
     harness.render().unwrap();
 
-    // Open search prompt again
+    // Open search prompt again - should pre-fill with most recent search ("test")
     harness
         .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Search: ");
-
-    // Press Up arrow - should show "test" (most recent)
-    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
     harness.assert_screen_contains("Search: test");
 
-    // Press Up arrow again - should show "foo"
+    // Press Up arrow - should show "foo" (previous in history)
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("Search: foo");
@@ -545,6 +543,9 @@ fn test_search_history_preserves_current_input() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
+
+    // Clear history to ensure test isolation
+    harness.editor_mut().clear_search_history();
 
     // Add one item to history
     harness
@@ -665,6 +666,9 @@ fn test_search_history_skips_empty_and_duplicates() {
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
+    // Clear history to ensure test isolation
+    harness.editor_mut().clear_search_history();
+
     // Try to search with empty string (should not be added to history)
     harness
         .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
@@ -707,14 +711,10 @@ fn test_search_history_skips_empty_and_duplicates() {
         .unwrap();
     harness.render().unwrap();
 
-    // Open search and check history
+    // Open search and check history - should pre-fill with "other" (most recent)
     harness
         .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
-
-    // Press Up - should show "other"
-    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("Search: other");
 

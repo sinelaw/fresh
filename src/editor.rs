@@ -2801,6 +2801,7 @@ impl Editor {
         };
 
         // Determine the default text: selection > last history > empty
+        let from_history = selected_text.is_none();
         let default_text = selected_text.or_else(|| self.search_history.last().map(|s| s.to_string()));
 
         // Start the prompt
@@ -2810,6 +2811,14 @@ impl Editor {
         if let Some(text) = default_text {
             if let Some(ref mut prompt) = self.prompt {
                 prompt.set_input(text.clone());
+                // Select all the pre-filled text so typing replaces it
+                prompt.selection_anchor = Some(0);
+                prompt.cursor_pos = text.len();
+            }
+            // If pre-filling from history, initialize navigation at last item
+            // so pressing Up goes to the second-to-last item, not the same item
+            if from_history {
+                self.search_history.init_at_last();
             }
             // Trigger incremental search highlights for the pre-filled text
             self.update_search_highlights(&text);
@@ -7265,6 +7274,22 @@ impl Editor {
                     return self.handle_interactive_replace_key(c);
                 // Handle character insertion in prompt mode
                 } else if self.is_prompting() {
+                    // Reset history navigation when user starts typing
+                    // This allows them to press Up to get back to history items
+                    if let Some(ref prompt) = self.prompt {
+                        match &prompt.prompt_type {
+                            PromptType::Search
+                            | PromptType::ReplaceSearch
+                            | PromptType::QueryReplaceSearch => {
+                                self.search_history.reset_navigation();
+                            }
+                            PromptType::Replace { .. } | PromptType::QueryReplace { .. } => {
+                                self.replace_history.reset_navigation();
+                            }
+                            _ => {}
+                        }
+                    }
+
                     if let Some(prompt) = self.prompt_mut() {
                         // Use insert_str to properly handle selection deletion
                         let s = c.to_string();
@@ -10866,6 +10891,12 @@ impl Editor {
             .join(", ");
 
         self.set_status_message(format!("Bookmarks: {}", list_str));
+    }
+
+    /// Clear the search history
+    /// Used primarily for testing to ensure test isolation
+    pub fn clear_search_history(&mut self) {
+        self.search_history.clear();
     }
 
     /// Save search and replace histories to disk
