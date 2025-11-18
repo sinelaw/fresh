@@ -2849,6 +2849,32 @@ async fn handle_notification_dispatch(
                 }
             }
         }
+        "experimental/serverStatus" => {
+            // rust-analyzer specific: server status notification
+            // When quiescent is true, the project is fully loaded
+            if let Some(params) = notification.params {
+                if let Ok(status) = serde_json::from_value::<serde_json::Map<String, Value>>(params)
+                {
+                    let quiescent = status
+                        .get("quiescent")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    tracing::info!(
+                        "LSP ({}) server status: quiescent={}",
+                        language,
+                        quiescent
+                    );
+
+                    if quiescent {
+                        // Project is fully loaded - notify editor to re-request inlay hints
+                        let _ = async_tx.send(AsyncMessage::LspServerQuiescent {
+                            language: language.to_string(),
+                        });
+                    }
+                }
+            }
+        }
         _ => {
             tracing::debug!("Unhandled notification: {}", notification.method);
         }

@@ -3036,6 +3036,62 @@ impl Editor {
                         );
                     }
                 }
+                AsyncMessage::LspServerQuiescent { language } => {
+                    // rust-analyzer project is fully loaded - re-request inlay hints
+                    tracing::info!(
+                        "LSP ({}) project fully loaded, re-requesting inlay hints",
+                        language
+                    );
+
+                    // Re-request inlay hints for all open buffers with this language
+                    if let Some(lsp) = self.lsp.as_mut() {
+                        if let Some(client) = lsp.get_or_spawn(&language) {
+                            // Collect buffer info first to avoid borrow issues
+                            let buffer_infos: Vec<_> = self
+                                .buffer_metadata
+                                .iter()
+                                .filter_map(|(buffer_id, metadata)| {
+                                    if let Some(uri) = metadata.file_uri() {
+                                        let line_count = self
+                                            .buffers
+                                            .get(buffer_id)
+                                            .and_then(|s| s.buffer.line_count())
+                                            .unwrap_or(1000);
+                                        Some((uri.clone(), line_count))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+
+                            for (uri, line_count) in buffer_infos {
+                                let request_id = self.next_lsp_request_id;
+                                self.next_lsp_request_id += 1;
+                                self.pending_inlay_hints_request = Some(request_id);
+
+                                let last_line = line_count.saturating_sub(1) as u32;
+                                if let Err(e) = client.inlay_hints(
+                                    request_id,
+                                    uri.clone(),
+                                    0, 0,
+                                    last_line, 10000,
+                                ) {
+                                    tracing::debug!(
+                                        "Failed to re-request inlay hints for {}: {}",
+                                        uri.as_str(),
+                                        e
+                                    );
+                                } else {
+                                    tracing::info!(
+                                        "Re-requested inlay hints for {} (request_id={})",
+                                        uri.as_str(),
+                                        request_id
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 AsyncMessage::FileChanged { path } => {
                     tracing::info!("File changed externally: {}", path);
                     // TODO: Handle external file changes
