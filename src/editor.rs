@@ -3025,6 +3025,24 @@ impl Editor {
                     self.lsp_server_statuses.insert(language.clone(), status.clone());
                     self.update_lsp_status_from_server_statuses();
 
+                    // Handle server crash - trigger auto-restart
+                    if status == crate::async_bridge::LspServerStatus::Error {
+                        // Only trigger restart if transitioning to error from a running state
+                        let was_running = old_status.map(|s| {
+                            matches!(s,
+                                crate::async_bridge::LspServerStatus::Running |
+                                crate::async_bridge::LspServerStatus::Initializing
+                            )
+                        }).unwrap_or(false);
+
+                        if was_running {
+                            if let Some(lsp) = self.lsp.as_mut() {
+                                let message = lsp.handle_server_crash(&language);
+                                self.status_message = Some(message);
+                            }
+                        }
+                    }
+
                     // Emit control event
                     let status_str = match status {
                         crate::async_bridge::LspServerStatus::Starting => "starting",
@@ -3094,6 +3112,53 @@ impl Editor {
                 }
             }
         });
+
+        // Process pending LSP server restarts (with exponential backoff)
+        if let Some(lsp) = self.lsp.as_mut() {
+            let restart_results = lsp.process_pending_restarts();
+            for (language, success, message) in restart_results {
+                self.status_message = Some(message.clone());
+
+                // If restart was successful, we need to re-notify about open documents
+                if success {
+                    // Find all open buffers for this language and re-send didOpen
+                    let buffers_for_language: Vec<_> = self
+                        .buffer_metadata
+                        .iter()
+                        .filter_map(|(buf_id, meta)| {
+                            if let Some(path) = meta.file_path() {
+                                if crate::lsp_manager::detect_language(path) == Some(language.clone()) {
+                                    Some((*buf_id, path.clone()))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    // Re-send didOpen for each buffer
+                    for (buffer_id, path) in buffers_for_language {
+                        if let Some(state) = self.buffers.get(&buffer_id) {
+                            let content = state.buffer.to_string();
+                            let uri: Option<lsp_types::Uri> = url::Url::from_file_path(&path)
+                                .ok()
+                                .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok());
+                            if let Some(uri) = uri {
+                                if let Some(lang_id) = crate::lsp_manager::detect_language(&path) {
+                                    if let Some(lsp) = self.lsp.as_mut() {
+                                        if let Some(handle) = lsp.get_or_spawn(&lang_id) {
+                                            let _ = handle.did_open(uri, content, lang_id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Check and clear the plugin render request flag
         let plugin_render = self.plugin_render_requested;
@@ -6160,6 +6225,66 @@ impl Editor {
             }
             Action::LspCodeActions => {
                 self.request_code_actions()?;
+            }
+            Action::LspRestart => {
+                // Get the language for the current buffer
+                if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer) {
+                    if let Some(path) = metadata.file_path() {
+                        if let Some(language) = crate::lsp_manager::detect_language(path) {
+                            let restart_result = if let Some(lsp) = self.lsp.as_mut() {
+                                Some(lsp.manual_restart(&language))
+                            } else {
+                                None
+                            };
+
+                            if let Some((success, message)) = restart_result {
+                                self.status_message = Some(message);
+                                if success {
+                                    // Re-send didOpen for all buffers of this language
+                                    let buffers_for_language: Vec<_> = self
+                                        .buffer_metadata
+                                        .iter()
+                                        .filter_map(|(buf_id, meta)| {
+                                            if let Some(p) = meta.file_path() {
+                                                if crate::lsp_manager::detect_language(p) == Some(language.clone()) {
+                                                    Some((*buf_id, p.clone()))
+                                                } else {
+                                                    None
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect();
+
+                                    for (buffer_id, buf_path) in buffers_for_language {
+                                        if let Some(state) = self.buffers.get(&buffer_id) {
+                                            let content = state.buffer.to_string();
+                                            let uri: Option<lsp_types::Uri> = url::Url::from_file_path(&buf_path)
+                                                .ok()
+                                                .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok());
+                                            if let Some(uri) = uri {
+                                                if let Some(lang_id) = crate::lsp_manager::detect_language(&buf_path) {
+                                                    if let Some(lsp) = self.lsp.as_mut() {
+                                                        if let Some(handle) = lsp.get_or_spawn(&lang_id) {
+                                                            let _ = handle.did_open(uri, content, lang_id);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                self.status_message = Some("No LSP manager available".to_string());
+                            }
+                        } else {
+                            self.status_message = Some("No LSP server configured for this file type".to_string());
+                        }
+                    } else {
+                        self.status_message = Some("Current buffer has no associated file".to_string());
+                    }
+                }
             }
             Action::Search => {
                 // Start search prompt

@@ -10,7 +10,13 @@ use crate::async_bridge::AsyncBridge;
 use crate::lsp::LspServerConfig;
 use crate::lsp_async::LspHandle;
 use lsp_types::Uri;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
+
+/// Constants for restart behavior
+const MAX_RESTARTS_IN_WINDOW: usize = 5;
+const RESTART_WINDOW_SECS: u64 = 180; // 3 minutes
+const RESTART_BACKOFF_BASE_MS: u64 = 1000; // 1s, 2s, 4s, 8s...
 
 /// Manager for multiple language servers (async version)
 pub struct LspManager {
@@ -28,6 +34,15 @@ pub struct LspManager {
 
     /// Async bridge for communication
     async_bridge: Option<AsyncBridge>,
+
+    /// Restart attempt timestamps per language (for tracking restart frequency)
+    restart_attempts: HashMap<String, Vec<Instant>>,
+
+    /// Languages currently in restart cooldown (gave up after too many restarts)
+    restart_cooldown: HashSet<String>,
+
+    /// Scheduled restart times (language -> when to restart)
+    pending_restarts: HashMap<String, Instant>,
 }
 
 impl LspManager {
@@ -39,6 +54,9 @@ impl LspManager {
             root_uri,
             runtime: None,
             async_bridge: None,
+            restart_attempts: HashMap::new(),
+            restart_cooldown: HashSet::new(),
+            pending_restarts: HashMap::new(),
         }
     }
 
@@ -104,6 +122,162 @@ impl LspManager {
                 None
             }
         }
+    }
+
+    /// Handle a server crash by scheduling a restart with exponential backoff
+    ///
+    /// Returns a message describing the action taken (for UI notification)
+    pub fn handle_server_crash(&mut self, language: &str) -> String {
+        // Remove the crashed handle
+        if let Some(handle) = self.handles.remove(language) {
+            let _ = handle.shutdown(); // Best-effort cleanup
+        }
+
+        // Check if we're in cooldown
+        if self.restart_cooldown.contains(language) {
+            return format!(
+                "LSP server for {} crashed. Too many restarts - use 'Restart LSP Server' command to retry.",
+                language
+            );
+        }
+
+        // Clean up old restart attempts outside the window
+        let now = Instant::now();
+        let window = Duration::from_secs(RESTART_WINDOW_SECS);
+        let attempts = self.restart_attempts.entry(language.to_string()).or_default();
+        attempts.retain(|t| now.duration_since(*t) < window);
+
+        // Check if we've exceeded max restarts
+        if attempts.len() >= MAX_RESTARTS_IN_WINDOW {
+            self.restart_cooldown.insert(language.to_string());
+            tracing::warn!(
+                "LSP server for {} has crashed {} times in {} minutes, entering cooldown",
+                language,
+                MAX_RESTARTS_IN_WINDOW,
+                RESTART_WINDOW_SECS / 60
+            );
+            return format!(
+                "LSP server for {} has crashed too many times ({} in {} min). Use 'Restart LSP Server' command to manually restart.",
+                language,
+                MAX_RESTARTS_IN_WINDOW,
+                RESTART_WINDOW_SECS / 60
+            );
+        }
+
+        // Calculate exponential backoff delay
+        let attempt_number = attempts.len();
+        let delay_ms = RESTART_BACKOFF_BASE_MS * (1 << attempt_number); // 1s, 2s, 4s, 8s
+        let restart_time = now + Duration::from_millis(delay_ms);
+
+        // Schedule the restart
+        self.pending_restarts.insert(language.to_string(), restart_time);
+
+        tracing::info!(
+            "LSP server for {} crashed (attempt {}/{}), will restart in {}ms",
+            language,
+            attempt_number + 1,
+            MAX_RESTARTS_IN_WINDOW,
+            delay_ms
+        );
+
+        format!(
+            "LSP server for {} crashed (attempt {}/{}), restarting in {}s...",
+            language,
+            attempt_number + 1,
+            MAX_RESTARTS_IN_WINDOW,
+            delay_ms / 1000
+        )
+    }
+
+    /// Check and process any pending restarts that are due
+    ///
+    /// Returns list of (language, success, message) for each restart attempted
+    pub fn process_pending_restarts(&mut self) -> Vec<(String, bool, String)> {
+        let now = Instant::now();
+        let mut results = Vec::new();
+
+        // Find restarts that are due
+        let due_restarts: Vec<String> = self
+            .pending_restarts
+            .iter()
+            .filter(|(_, time)| **time <= now)
+            .map(|(lang, _)| lang.clone())
+            .collect();
+
+        for language in due_restarts {
+            self.pending_restarts.remove(&language);
+
+            // Record this restart attempt
+            self.restart_attempts
+                .entry(language.clone())
+                .or_default()
+                .push(now);
+
+            // Attempt to spawn the server
+            if self.get_or_spawn(&language).is_some() {
+                let message = format!("LSP server for {} restarted successfully", language);
+                tracing::info!("{}", message);
+                results.push((language, true, message));
+            } else {
+                let message = format!("Failed to restart LSP server for {}", language);
+                tracing::error!("{}", message);
+                results.push((language, false, message));
+            }
+        }
+
+        results
+    }
+
+    /// Check if a language server is in restart cooldown
+    pub fn is_in_cooldown(&self, language: &str) -> bool {
+        self.restart_cooldown.contains(language)
+    }
+
+    /// Check if a language server has a pending restart
+    pub fn has_pending_restart(&self, language: &str) -> bool {
+        self.pending_restarts.contains_key(language)
+    }
+
+    /// Clear cooldown for a language and allow manual restart
+    pub fn clear_cooldown(&mut self, language: &str) {
+        self.restart_cooldown.remove(language);
+        self.restart_attempts.remove(language);
+        self.pending_restarts.remove(language);
+        tracing::info!("Cleared restart cooldown for {}", language);
+    }
+
+    /// Manually restart a language server (bypasses cooldown)
+    ///
+    /// Returns (success, message) tuple
+    pub fn manual_restart(&mut self, language: &str) -> (bool, String) {
+        // Clear any existing state
+        self.clear_cooldown(language);
+
+        // Remove existing handle
+        if let Some(handle) = self.handles.remove(language) {
+            let _ = handle.shutdown();
+        }
+
+        // Spawn new server
+        if self.get_or_spawn(language).is_some() {
+            let message = format!("LSP server for {} restarted manually", language);
+            tracing::info!("{}", message);
+            (true, message)
+        } else {
+            let message = format!("Failed to manually restart LSP server for {}", language);
+            tracing::error!("{}", message);
+            (false, message)
+        }
+    }
+
+    /// Get the number of recent restart attempts for a language
+    pub fn restart_attempt_count(&self, language: &str) -> usize {
+        let now = Instant::now();
+        let window = Duration::from_secs(RESTART_WINDOW_SECS);
+        self.restart_attempts
+            .get(language)
+            .map(|attempts| attempts.iter().filter(|t| now.duration_since(**t) < window).count())
+            .unwrap_or(0)
     }
 
     /// Shutdown all language servers
