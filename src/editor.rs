@@ -5110,6 +5110,12 @@ impl Editor {
         request_id: u64,
         locations: Vec<lsp_types::Location>,
     ) -> io::Result<()> {
+        tracing::info!(
+            "handle_references_response: received {} locations for request_id={}",
+            locations.len(),
+            request_id
+        );
+
         // Check if this response is for the current pending request
         if self.pending_references_request != Some(request_id) {
             tracing::debug!("Ignoring stale references response: {}", request_id);
