@@ -1016,6 +1016,7 @@ struct CreateVirtualBufferOptions {
     panel_id: Option<String>,
     show_line_numbers: Option<bool>,
     show_cursors: Option<bool>,
+    editing_disabled: Option<bool>,
 }
 
 /// Create a virtual buffer in a horizontal split
@@ -1073,6 +1074,7 @@ async fn op_fresh_create_virtual_buffer_in_split(
                 panel_id: options.panel_id,
                 show_line_numbers: options.show_line_numbers.unwrap_or(true),
                 show_cursors: options.show_cursors.unwrap_or(true),
+                editing_disabled: options.editing_disabled.unwrap_or(false),
                 request_id: Some(request_id),
             })
             .map_err(|_| deno_core::error::generic_error("Failed to send command"))?;
@@ -1103,6 +1105,7 @@ struct CreateVirtualBufferInExistingSplitOptions {
     split_id: u32,
     show_line_numbers: Option<bool>,
     show_cursors: Option<bool>,
+    editing_disabled: Option<bool>,
 }
 
 /// Create a virtual buffer in an existing split
@@ -1158,6 +1161,7 @@ async fn op_fresh_create_virtual_buffer_in_existing_split(
                 split_id: crate::event::SplitId(options.split_id as usize),
                 show_line_numbers: options.show_line_numbers.unwrap_or(true),
                 show_cursors: options.show_cursors.unwrap_or(true),
+                editing_disabled: options.editing_disabled.unwrap_or(false),
                 request_id: Some(request_id),
             })
             .map_err(|_| deno_core::error::generic_error("Failed to send command"))?;

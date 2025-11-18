@@ -64,6 +64,11 @@ pub struct EditorState {
     /// Can be set to false for virtual buffers like diagnostics panels
     pub show_cursors: bool,
 
+    /// Whether editing is disabled for this buffer (default false)
+    /// When true, typing, deletion, cut/paste, undo/redo are blocked
+    /// but navigation, selection, and copy are still allowed
+    pub editing_disabled: bool,
+
     /// Semantic highlighter for word occurrence highlighting
     pub semantic_highlighter: SemanticHighlighter,
 }
@@ -93,6 +98,7 @@ impl EditorState {
             mode: "insert".to_string(),
             text_properties: TextPropertyManager::new(),
             show_cursors: true,
+            editing_disabled: false,
             semantic_highlighter: SemanticHighlighter::new(),
         }
     }
@@ -149,6 +155,7 @@ impl EditorState {
             mode: "insert".to_string(),
             text_properties: TextPropertyManager::new(),
             show_cursors: true,
+            editing_disabled: false,
             semantic_highlighter,
         })
     }

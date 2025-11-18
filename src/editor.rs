@@ -804,6 +804,12 @@ impl Editor {
         false
     }
 
+    /// Check if editing should be disabled for the active buffer
+    /// This returns true when editing_disabled is true (e.g., for read-only virtual buffers)
+    pub fn is_editing_disabled(&self) -> bool {
+        self.active_state().editing_disabled
+    }
+
     /// Resolve a keybinding for the active buffer's mode
     ///
     /// If the active buffer has a mode (virtual buffer), check if that mode
@@ -3599,6 +3605,7 @@ impl Editor {
                 panel_id,
                 show_line_numbers,
                 show_cursors,
+                editing_disabled,
                 request_id,
             } => {
                 // Check if this panel already exists (for idempotent operations)
@@ -3637,11 +3644,13 @@ impl Editor {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     state.margins.set_line_numbers(show_line_numbers);
                     state.show_cursors = show_cursors;
+                    state.editing_disabled = editing_disabled;
                     tracing::debug!(
-                        "Set buffer {:?} view options: show_line_numbers={}, show_cursors={}",
+                        "Set buffer {:?} view options: show_line_numbers={}, show_cursors={}, editing_disabled={}",
                         buffer_id,
                         show_line_numbers,
-                        show_cursors
+                        show_cursors,
+                        editing_disabled
                     );
                 }
 
@@ -3761,6 +3770,7 @@ impl Editor {
                 split_id,
                 show_line_numbers,
                 show_cursors,
+                editing_disabled,
                 request_id,
             } => {
                 // Create the virtual buffer
@@ -3777,6 +3787,7 @@ impl Editor {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     state.margins.set_line_numbers(show_line_numbers);
                     state.show_cursors = show_cursors;
+                    state.editing_disabled = editing_disabled;
                 }
 
                 // Set the content
@@ -5443,9 +5454,25 @@ impl Editor {
                 }
             }
             Action::Copy => self.copy_selection(),
-            Action::Cut => self.cut_selection(),
-            Action::Paste => self.paste(),
+            Action::Cut => {
+                if self.is_editing_disabled() {
+                    self.set_status_message("Editing disabled in this buffer".to_string());
+                    return Ok(());
+                }
+                self.cut_selection()
+            }
+            Action::Paste => {
+                if self.is_editing_disabled() {
+                    self.set_status_message("Editing disabled in this buffer".to_string());
+                    return Ok(());
+                }
+                self.paste()
+            }
             Action::Undo => {
+                if self.is_editing_disabled() {
+                    self.set_status_message("Editing disabled in this buffer".to_string());
+                    return Ok(());
+                }
                 let events = self.active_event_log_mut().undo();
                 // Apply all inverse events collected during undo
                 for event in events {
@@ -5453,6 +5480,10 @@ impl Editor {
                 }
             }
             Action::Redo => {
+                if self.is_editing_disabled() {
+                    self.set_status_message("Editing disabled in this buffer".to_string());
+                    return Ok(());
+                }
                 let events = self.active_event_log_mut().redo();
                 // Apply all events collected during redo
                 for event in events {
@@ -5742,6 +5773,10 @@ impl Editor {
             }
             Action::None => {}
             Action::DeleteBackward => {
+                if self.is_editing_disabled() {
+                    self.set_status_message("Editing disabled in this buffer".to_string());
+                    return Ok(());
+                }
                 // Normal backspace handling
                 if let Some(events) = self.action_to_events(Action::DeleteBackward) {
                     if events.len() > 1 {
@@ -5992,6 +6027,11 @@ impl Editor {
                     }
                     self.update_prompt_suggestions();
                 } else {
+                    // Check if editing is disabled (show_cursors = false)
+                    if self.is_editing_disabled() {
+                        self.set_status_message("Editing disabled in this buffer".to_string());
+                        return Ok(());
+                    }
                     // Normal mode character insertion
                     // Cancel any pending LSP requests since the text is changing
                     self.cancel_pending_lsp_requests();
@@ -6021,6 +6061,25 @@ impl Editor {
                 // Convert action to events and apply them
                 // Get description before moving action
                 let action_description = format!("{:?}", action);
+
+                // Check if this is an editing action and editing is disabled
+                let is_editing_action = matches!(
+                    action,
+                    Action::InsertNewline
+                        | Action::InsertTab
+                        | Action::DeleteForward
+                        | Action::DeleteWordBackward
+                        | Action::DeleteWordForward
+                        | Action::DeleteLine
+                        | Action::IndentSelection
+                        | Action::DedentSelection
+                        | Action::ToggleComment
+                );
+
+                if is_editing_action && self.is_editing_disabled() {
+                    self.set_status_message("Editing disabled in this buffer".to_string());
+                    return Ok(());
+                }
 
                 if let Some(events) = self.action_to_events(action) {
                     // Wrap multiple events (multi-cursor) in a Batch for atomic undo

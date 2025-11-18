@@ -129,6 +129,8 @@ interface CreateVirtualBufferOptions {
   show_line_numbers?: boolean;
   /** Whether to show cursors in the buffer (default true) */
   show_cursors?: boolean;
+  /** Whether editing is disabled for this buffer (default false) */
+  editing_disabled?: boolean;
 }
 
 /**
@@ -149,6 +151,8 @@ interface CreateVirtualBufferInExistingSplitOptions {
   show_line_numbers?: boolean;
   /** Whether to show cursors in the buffer (default true) */
   show_cursors?: boolean;
+  /** Whether editing is disabled for this buffer (default false) */
+  editing_disabled?: boolean;
 }
 
 /**
