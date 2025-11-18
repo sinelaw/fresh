@@ -1053,7 +1053,7 @@ impl Editor {
                                     request_id,
                                     uri.clone(),
                                     0, 0, // start
-                                    line_count as u32, 0, // end
+                                    line_count as u32, u32::MAX, // end - use MAX to include all chars
                                 ) {
                                     tracing::debug!(
                                         "Failed to request inlay hints (server may not support): {}",
@@ -2998,10 +2998,11 @@ impl Editor {
                     if self.pending_inlay_hints_request == Some(request_id) {
                         self.pending_inlay_hints_request = None;
 
-                        tracing::debug!(
-                            "Processing {} inlay hints for {}",
+                        tracing::info!(
+                            "Received {} inlay hints for {} (request_id={})",
                             hints.len(),
-                            uri
+                            uri,
+                            request_id
                         );
 
                         // Find the buffer for this URI and apply hints
@@ -3013,9 +3014,14 @@ impl Editor {
                             {
                                 if let Some(state) = self.buffers.get_mut(buffer_id) {
                                     Self::apply_inlay_hints_to_state(state, &hints);
+                                    tracing::info!(
+                                        "Applied {} inlay hints as virtual text to buffer {:?}",
+                                        hints.len(),
+                                        buffer_id
+                                    );
                                 }
                             } else {
-                                tracing::debug!("No buffer found for inlay hints URI: {}", uri);
+                                tracing::warn!("No buffer found for inlay hints URI: {}", uri);
                             }
                         } else {
                             tracing::warn!("Could not parse inlay hints URI: {}", uri);
