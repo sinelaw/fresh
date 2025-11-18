@@ -93,6 +93,20 @@ impl Prompt {
         }
     }
 
+    /// Create a new prompt with initial text
+    pub fn with_initial_text(message: String, prompt_type: PromptType, initial_text: String) -> Self {
+        let cursor_pos = initial_text.len();
+        Self {
+            message,
+            input: initial_text,
+            cursor_pos,
+            prompt_type,
+            suggestions: Vec::new(),
+            selected_suggestion: None,
+            selection_anchor: None,
+        }
+    }
+
     /// Move cursor left
     pub fn cursor_left(&mut self) {
         if self.cursor_pos > 0 {
