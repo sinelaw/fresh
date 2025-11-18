@@ -682,6 +682,11 @@ async fn run_hook_internal(
 /// Convert HookArgs to JSON string
 fn hook_args_to_json(args: &HookArgs) -> Result<String> {
     let json_value = match args {
+        HookArgs::RenderStart { buffer_id } => {
+            serde_json::json!({
+                "buffer_id": buffer_id.0,
+            })
+        }
         HookArgs::RenderLine {
             buffer_id,
             line_number,

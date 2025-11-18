@@ -80,6 +80,12 @@ pub enum HookArgs {
     /// Editor is initializing
     EditorInitialized,
 
+    /// Rendering is starting for a buffer (called once per buffer before render_line hooks)
+    /// Plugins can use this to clear overlays before they get recreated
+    RenderStart {
+        buffer_id: BufferId,
+    },
+
     /// A line is being rendered (called during the rendering pass)
     /// This hook fires once per visible line during each frame
     /// Plugins can inspect content and add overlays without additional traversal
