@@ -2174,6 +2174,19 @@ impl TypeScriptPluginManager {
                     "input": input,
                 })
             }
+            HookArgs::LspReferences { locations } => {
+                let locs: Vec<serde_json::Value> = locations
+                    .iter()
+                    .map(|loc| {
+                        serde_json::json!({
+                            "file": loc.file,
+                            "line": loc.line,
+                            "column": loc.column,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({ "locations": locs })
+            }
         };
 
         serde_json::to_string(&json_value)

@@ -103,6 +103,23 @@ pub enum HookArgs {
 
     /// Prompt was cancelled (user pressed Escape/Ctrl+G)
     PromptCancelled { prompt_type: String, input: String },
+
+    /// LSP find references response received
+    LspReferences {
+        /// The locations where the symbol is referenced
+        locations: Vec<LspLocation>,
+    },
+}
+
+/// Location information for LSP references
+#[derive(Debug, Clone)]
+pub struct LspLocation {
+    /// File path
+    pub file: String,
+    /// Line number (1-based)
+    pub line: u32,
+    /// Column number (1-based)
+    pub column: u32,
 }
 
 /// Type for hook callbacks

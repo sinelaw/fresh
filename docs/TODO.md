@@ -91,10 +91,10 @@ Features are categorized as:
   - Apply `WorkspaceEdit` changes
   - **Effort:** 6-8 hours
 
-- [ ] **Find References**
-  - Request `textDocument/references`
-  - Display results in quickfix/location list
-  - Jump to reference on selection
+- [x] **Find References** ✅
+  - Request `textDocument/references` (Shift+F12 or command palette)
+  - Display results in virtual buffer split view (plugin-based)
+  - Jump to reference on Enter, navigate with n/p/j/k
   - **Effort:** 4-6 hours
 
 - [ ] **Signature Help**
@@ -609,3 +609,4 @@ Multi-cursor editing, unlimited undo/redo, position history navigation, auto-ind
 - ✅ Hover popup positioning (2 lines below cursor to avoid obscuring symbol)
 - ✅ TypeScript syntax highlighting improvements (full JavaScript support)
 - ✅ Plugin API gap analysis documentation (Fresh vs VSCode comparison)
+- ✅ **Find References** (Shift+F12 shows references in virtual buffer split, plugin-based display)

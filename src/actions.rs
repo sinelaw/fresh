@@ -1427,6 +1427,7 @@ pub fn action_to_events(
         | Action::FileExplorerToggleGitignored
         | Action::LspCompletion
         | Action::LspGotoDefinition
+        | Action::LspReferences
         | Action::LspRename
         | Action::LspHover
         | Action::Search

@@ -309,6 +309,7 @@ pub enum Action {
     // LSP operations
     LspCompletion,
     LspGotoDefinition,
+    LspReferences,
     LspRename,
     LspHover,
 
@@ -536,6 +537,7 @@ impl Action {
 
             "lsp_completion" => Some(Action::LspCompletion),
             "lsp_goto_definition" => Some(Action::LspGotoDefinition),
+            "lsp_references" => Some(Action::LspReferences),
             "lsp_rename" => Some(Action::LspRename),
             "lsp_hover" => Some(Action::LspHover),
 
@@ -1195,8 +1197,12 @@ impl KeybindingResolver {
             Action::FocusFileExplorer,
         );
 
-        // LSP operations (F2 for rename, like VS Code)
+        // LSP operations (F2 for rename, Shift+F12 for references, like VS Code)
         bindings.insert((KeyCode::F(2), KeyModifiers::empty()), Action::LspRename);
+        bindings.insert(
+            (KeyCode::F(12), KeyModifiers::SHIFT),
+            Action::LspReferences,
+        );
 
         all_bindings.insert(KeyContext::Normal, bindings);
 
@@ -1627,6 +1633,7 @@ impl KeybindingResolver {
             }
             Action::LspCompletion => "LSP: Show completion suggestions".to_string(),
             Action::LspGotoDefinition => "LSP: Go to definition".to_string(),
+            Action::LspReferences => "LSP: Find references".to_string(),
             Action::LspRename => "LSP: Rename symbol".to_string(),
             Action::LspHover => "LSP: Show hover documentation".to_string(),
             Action::Search => "Search for text in buffer".to_string(),
