@@ -8,7 +8,8 @@
     "scroll_offset": 3,
     "syntax_highlighting": true,
     "highlight_timeout_ms": 5,
-    "snapshot_interval": 100
+    "snapshot_interval": 100,
+    "enable_inlay_hints": true
   },
   "keybindings": [],
   "languages": {

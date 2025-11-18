@@ -315,6 +315,7 @@ pub enum Action {
     LspSignatureHelp,
     LspCodeActions,
     LspRestart,
+    ToggleInlayHints,
 
     // Search and replace
     Search,
@@ -546,6 +547,7 @@ impl Action {
             "lsp_signature_help" => Some(Action::LspSignatureHelp),
             "lsp_code_actions" => Some(Action::LspCodeActions),
             "lsp_restart" => Some(Action::LspRestart),
+            "toggle_inlay_hints" => Some(Action::ToggleInlayHints),
 
             "search" => Some(Action::Search),
             "find_next" => Some(Action::FindNext),
@@ -1645,6 +1647,7 @@ impl KeybindingResolver {
             Action::LspSignatureHelp => "LSP: Show signature help".to_string(),
             Action::LspCodeActions => "LSP: Show code actions".to_string(),
             Action::LspRestart => "LSP: Restart server for current language".to_string(),
+            Action::ToggleInlayHints => "Toggle inlay hints".to_string(),
             Action::Search => "Search for text in buffer".to_string(),
             Action::FindNext => "Find next search match".to_string(),
             Action::FindPrevious => "Find previous search match".to_string(),

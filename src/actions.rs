@@ -1433,6 +1433,7 @@ pub fn action_to_events(
         | Action::LspSignatureHelp
         | Action::LspCodeActions
         | Action::LspRestart
+        | Action::ToggleInlayHints
         | Action::Search
         | Action::FindNext
         | Action::FindPrevious

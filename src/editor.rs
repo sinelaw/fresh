@@ -1037,38 +1037,40 @@ impl Editor {
                                     );
                                 }
 
-                                // Request inlay hints for the entire file
-                                let request_id = self.next_lsp_request_id;
-                                self.next_lsp_request_id += 1;
-                                self.pending_inlay_hints_request = Some(request_id);
+                                // Request inlay hints for the entire file (if enabled)
+                                if self.config.editor.enable_inlay_hints {
+                                    let request_id = self.next_lsp_request_id;
+                                    self.next_lsp_request_id += 1;
+                                    self.pending_inlay_hints_request = Some(request_id);
 
-                                // Get buffer line count for range
-                                // LSP uses 0-indexed lines, so last line is line_count - 1
-                                let (last_line, last_char) = if let Some(state) = self.buffers.get(&self.active_buffer) {
-                                    let line_count = state.buffer.line_count().unwrap_or(1000);
-                                    // Use a large character value to include the entire last line
-                                    (line_count.saturating_sub(1) as u32, 10000)
-                                } else {
-                                    (999, 10000) // Default fallback
-                                };
+                                    // Get buffer line count for range
+                                    // LSP uses 0-indexed lines, so last line is line_count - 1
+                                    let (last_line, last_char) = if let Some(state) = self.buffers.get(&self.active_buffer) {
+                                        let line_count = state.buffer.line_count().unwrap_or(1000);
+                                        // Use a large character value to include the entire last line
+                                        (line_count.saturating_sub(1) as u32, 10000)
+                                    } else {
+                                        (999, 10000) // Default fallback
+                                    };
 
-                                if let Err(e) = client.inlay_hints(
-                                    request_id,
-                                    uri.clone(),
-                                    0, 0, // start
-                                    last_line, last_char, // end - last line with large char to include all content
-                                ) {
-                                    tracing::debug!(
-                                        "Failed to request inlay hints (server may not support): {}",
-                                        e
-                                    );
-                                    self.pending_inlay_hints_request = None;
-                                } else {
-                                    tracing::info!(
-                                        "Requested inlay hints for {} (request_id={})",
-                                        uri.as_str(),
-                                        request_id
-                                    );
+                                    if let Err(e) = client.inlay_hints(
+                                        request_id,
+                                        uri.clone(),
+                                        0, 0, // start
+                                        last_line, last_char, // end - last line with large char to include all content
+                                    ) {
+                                        tracing::debug!(
+                                            "Failed to request inlay hints (server may not support): {}",
+                                            e
+                                        );
+                                        self.pending_inlay_hints_request = None;
+                                    } else {
+                                        tracing::info!(
+                                            "Requested inlay hints for {} (request_id={})",
+                                            uri.as_str(),
+                                            request_id
+                                        );
+                                    }
                                 }
                             }
                         } else {
@@ -1701,6 +1703,87 @@ impl Editor {
     pub fn show_file_explorer(&mut self) {
         if !self.file_explorer_visible {
             self.toggle_file_explorer();
+        }
+    }
+
+    /// Toggle inlay hints visibility
+    pub fn toggle_inlay_hints(&mut self) {
+        self.config.editor.enable_inlay_hints = !self.config.editor.enable_inlay_hints;
+
+        if self.config.editor.enable_inlay_hints {
+            // Re-request inlay hints for the active buffer
+            self.request_inlay_hints_for_active_buffer();
+            self.set_status_message("Inlay hints enabled".to_string());
+        } else {
+            // Clear inlay hints from all buffers
+            for state in self.buffers.values_mut() {
+                state.virtual_texts.clear(&mut state.marker_list);
+            }
+            self.set_status_message("Inlay hints disabled".to_string());
+        }
+    }
+
+    /// Request inlay hints for the active buffer (if enabled and LSP available)
+    fn request_inlay_hints_for_active_buffer(&mut self) {
+        if !self.config.editor.enable_inlay_hints {
+            return;
+        }
+
+        // Get metadata for the active buffer
+        let metadata = match self.buffer_metadata.get(&self.active_buffer) {
+            Some(m) => m,
+            None => return,
+        };
+
+        let uri = match metadata.file_uri() {
+            Some(uri) => uri.clone(),
+            None => return,
+        };
+
+        let path = match metadata.file_path() {
+            Some(p) => p.clone(),
+            None => return,
+        };
+
+        let language = match crate::lsp_manager::detect_language(&path) {
+            Some(lang) => lang,
+            None => return,
+        };
+
+        // Get line count from buffer state
+        let line_count = if let Some(state) = self.buffers.get(&self.active_buffer) {
+            state.buffer.line_count().unwrap_or(1000)
+        } else {
+            return;
+        };
+        let last_line = line_count.saturating_sub(1) as u32;
+
+        // Get LSP client for this language
+        if let Some(lsp) = &mut self.lsp {
+            if let Some(client) = lsp.get_or_spawn(&language) {
+                let request_id = self.next_lsp_request_id;
+                self.next_lsp_request_id += 1;
+                self.pending_inlay_hints_request = Some(request_id);
+
+                if let Err(e) = client.inlay_hints(
+                    request_id,
+                    uri.clone(),
+                    0, 0,
+                    last_line, 10000,
+                ) {
+                    tracing::debug!(
+                        "Failed to request inlay hints: {}",
+                        e
+                    );
+                    self.pending_inlay_hints_request = None;
+                } else {
+                    tracing::info!(
+                        "Requested inlay hints for {} (request_id={})",
+                        uri.as_str(),
+                        request_id
+                    );
+                }
+            }
         }
     }
 
@@ -3064,29 +3147,32 @@ impl Editor {
                                 })
                                 .collect();
 
-                            for (uri, line_count) in buffer_infos {
-                                let request_id = self.next_lsp_request_id;
-                                self.next_lsp_request_id += 1;
-                                self.pending_inlay_hints_request = Some(request_id);
+                            // Only request inlay hints if enabled
+                            if self.config.editor.enable_inlay_hints {
+                                for (uri, line_count) in buffer_infos {
+                                    let request_id = self.next_lsp_request_id;
+                                    self.next_lsp_request_id += 1;
+                                    self.pending_inlay_hints_request = Some(request_id);
 
-                                let last_line = line_count.saturating_sub(1) as u32;
-                                if let Err(e) = client.inlay_hints(
-                                    request_id,
-                                    uri.clone(),
-                                    0, 0,
-                                    last_line, 10000,
-                                ) {
-                                    tracing::debug!(
-                                        "Failed to re-request inlay hints for {}: {}",
-                                        uri.as_str(),
-                                        e
-                                    );
-                                } else {
-                                    tracing::info!(
-                                        "Re-requested inlay hints for {} (request_id={})",
-                                        uri.as_str(),
-                                        request_id
-                                    );
+                                    let last_line = line_count.saturating_sub(1) as u32;
+                                    if let Err(e) = client.inlay_hints(
+                                        request_id,
+                                        uri.clone(),
+                                        0, 0,
+                                        last_line, 10000,
+                                    ) {
+                                        tracing::debug!(
+                                            "Failed to re-request inlay hints for {}: {}",
+                                            uri.as_str(),
+                                            e
+                                        );
+                                    } else {
+                                        tracing::info!(
+                                            "Re-requested inlay hints for {} (request_id={})",
+                                            uri.as_str(),
+                                            request_id
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -6600,6 +6686,9 @@ impl Editor {
                         self.status_message = Some("Current buffer has no associated file".to_string());
                     }
                 }
+            }
+            Action::ToggleInlayHints => {
+                self.toggle_inlay_hints();
             }
             Action::Search => {
                 // Start search prompt
