@@ -11,6 +11,28 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
+
+/// Wrapper for PluginCommand with timing information
+#[derive(Debug, Clone)]
+pub struct TimestampedPluginCommand {
+    pub command: PluginCommand,
+    pub enqueued_at: Instant,
+}
+
+impl TimestampedPluginCommand {
+    pub fn new(command: PluginCommand) -> Self {
+        Self {
+            command,
+            enqueued_at: Instant::now(),
+        }
+    }
+
+    /// Get the time this command spent in the queue
+    pub fn queue_latency(&self) -> std::time::Duration {
+        self.enqueued_at.elapsed()
+    }
+}
 
 /// Response from the editor for async plugin operations
 #[derive(Debug, Clone)]

@@ -12,12 +12,14 @@
 use crate::command_registry::CommandRegistry;
 use crate::hooks::HookArgs;
 use crate::plugin_api::{EditorStateSnapshot, PluginCommand};
+use crate::plugin_metrics::PluginMetrics;
 use crate::ts_runtime::{TsPluginInfo, TypeScriptRuntime};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
+use std::time::Instant;
 
 /// Request messages sent to the plugin thread
 #[derive(Debug)]
@@ -630,11 +632,18 @@ async fn run_hook_internal(
     hook_name: &str,
     args: &HookArgs,
 ) -> Result<()> {
+    let start = Instant::now();
+
     // Convert HookArgs to JSON
     let json_data = hook_args_to_json(args)?;
 
     // Emit to TypeScript handlers
     runtime.emit(hook_name, &json_data).await?;
+
+    // Record hook timing
+    if PluginMetrics::is_active() {
+        PluginMetrics::record_hook(hook_name, start.elapsed());
+    }
 
     Ok(())
 }

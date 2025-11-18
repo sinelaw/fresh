@@ -34,6 +34,7 @@ pub mod multi_cursor;
 pub mod overlay;
 pub mod piece_tree;
 pub mod plugin_api;
+pub mod plugin_metrics;
 pub mod plugin_process;
 pub mod plugin_thread;
 pub mod popup;

@@ -15,6 +15,7 @@ use crate::multi_cursor::{
     add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult,
 };
 use crate::plugin_api::PluginCommand;
+use crate::plugin_metrics::PluginMetrics;
 use crate::plugin_thread::PluginThreadHandle;
 use crate::position_history::PositionHistory;
 use crate::prompt::{Prompt, PromptType};
@@ -3027,6 +3028,8 @@ impl Editor {
 
     /// Update the plugin state snapshot with current editor state
     fn update_plugin_state_snapshot(&mut self) {
+        let start = std::time::Instant::now();
+
         // Update TypeScript plugin manager state
         if let Some(ref manager) = self.ts_plugin_manager {
             use crate::plugin_api::{BufferInfo, CursorInfo, ViewportInfo};
@@ -3085,10 +3088,30 @@ impl Editor {
                 snapshot.viewport = None;
             }
         }
+
+        // Record snapshot update timing
+        if PluginMetrics::is_active() {
+            PluginMetrics::record_snapshot(start.elapsed());
+        }
     }
 
     /// Handle a plugin command
     fn handle_plugin_command(&mut self, command: PluginCommand) -> io::Result<()> {
+        // Record timing if metrics collection is active
+        let start = std::time::Instant::now();
+        let command_type = format!("{:?}", std::mem::discriminant(&command));
+
+        let result = self.handle_plugin_command_inner(command);
+
+        if PluginMetrics::is_active() {
+            PluginMetrics::record_command(&command_type, start.elapsed());
+        }
+
+        result
+    }
+
+    /// Inner implementation of handle_plugin_command
+    fn handle_plugin_command_inner(&mut self, command: PluginCommand) -> io::Result<()> {
         match command {
             PluginCommand::InsertText {
                 buffer_id,

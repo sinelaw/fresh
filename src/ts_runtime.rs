@@ -7,6 +7,7 @@
 use crate::commands::Suggestion;
 use crate::event::BufferId;
 use crate::plugin_api::{EditorStateSnapshot, PluginCommand};
+use crate::plugin_metrics::PluginMetrics;
 use anyhow::{anyhow, Result};
 use deno_core::{
     extension, op2, FastString, JsRuntime, ModuleLoadResponse, ModuleSource,
@@ -1316,6 +1317,30 @@ fn op_fresh_set_virtual_buffer_content(
     false
 }
 
+// === Metrics Operations ===
+
+/// Start collecting plugin latency metrics
+#[op2(fast)]
+fn op_fresh_metrics_start() {
+    PluginMetrics::start();
+}
+
+/// Stop collecting metrics and return the report
+#[op2]
+#[string]
+fn op_fresh_metrics_stop() -> String {
+    match PluginMetrics::stop() {
+        Some(metrics) => PluginMetrics::generate_report(&metrics),
+        None => "No metrics collected".to_string(),
+    }
+}
+
+/// Check if metrics collection is active
+#[op2(fast)]
+fn op_fresh_metrics_is_active() -> bool {
+    PluginMetrics::is_active()
+}
+
 // Define the extension with our ops
 extension!(
     fresh_runtime,
@@ -1375,6 +1400,10 @@ extension!(
         op_fresh_close_split,
         op_fresh_get_text_properties_at_cursor,
         op_fresh_set_virtual_buffer_content,
+        // Metrics operations
+        op_fresh_metrics_start,
+        op_fresh_metrics_stop,
+        op_fresh_metrics_is_active,
     ],
 );
 
@@ -1637,6 +1666,17 @@ impl TypeScriptRuntime {
                     },
                     setVirtualBufferContent(bufferId, entries) {
                         return core.ops.op_fresh_set_virtual_buffer_content(bufferId, entries);
+                    },
+
+                    // Metrics operations
+                    metricsStart() {
+                        core.ops.op_fresh_metrics_start();
+                    },
+                    metricsStop() {
+                        return core.ops.op_fresh_metrics_stop();
+                    },
+                    metricsIsActive() {
+                        return core.ops.op_fresh_metrics_is_active();
                     },
                 };
 
