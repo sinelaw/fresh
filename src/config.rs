@@ -75,6 +75,10 @@ pub struct EditorConfig {
     /// without line metadata. Typical values: 80-120 bytes.
     #[serde(default = "default_estimated_line_length")]
     pub estimated_line_length: usize,
+
+    /// Whether to enable LSP inlay hints (type hints, parameter hints, etc.)
+    #[serde(default = "default_true")]
+    pub enable_inlay_hints: bool,
 }
 
 fn default_tab_size() -> usize {
@@ -128,6 +132,7 @@ impl Default for EditorConfig {
             snapshot_interval: default_snapshot_interval(),
             large_file_threshold_bytes: default_large_file_threshold(),
             estimated_line_length: default_estimated_line_length(),
+            enable_inlay_hints: true,
         }
     }
 }
