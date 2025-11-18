@@ -1809,7 +1809,15 @@ impl Editor {
         // Save the config
         match self.config.save_to_file(&config_path) {
             Ok(()) => {
-                self.set_status_message(format!("Config saved to {}", config_path.display()));
+                // Open the saved config file in a new buffer
+                match self.open_file(&config_path) {
+                    Ok(_buffer_id) => {
+                        self.set_status_message(format!("Config saved to {}", config_path.display()));
+                    }
+                    Err(e) => {
+                        self.set_status_message(format!("Config saved but failed to open: {}", e));
+                    }
+                }
             }
             Err(e) => {
                 self.set_status_message(format!("Error saving config: {}", e));
