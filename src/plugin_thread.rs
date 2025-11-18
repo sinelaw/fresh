@@ -305,20 +305,6 @@ impl PluginThreadHandle {
             .map_err(|_| anyhow!("Plugin thread closed"))?
     }
 
-    /// Execute a plugin action (blocking)
-    pub fn execute_action(&self, action_name: &str) -> Result<()> {
-        let (tx, rx) = oneshot::channel();
-        self.request_sender
-            .send(PluginRequest::ExecuteAction {
-                action_name: action_name.to_string(),
-                response: tx,
-            })
-            .map_err(|_| anyhow!("Plugin thread not responding"))?;
-
-        rx.recv()
-            .map_err(|_| anyhow!("Plugin thread closed"))?
-    }
-
     /// Execute a plugin action (non-blocking)
     ///
     /// Returns a receiver that will receive the result when the action completes.

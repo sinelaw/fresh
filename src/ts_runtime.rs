@@ -4140,6 +4140,8 @@ mod tests {
     #[test]
     fn test_plugin_thread_execute_git_log_action() {
         use crate::plugin_thread::PluginThreadHandle;
+        use crate::plugin_api::PluginCommand;
+        use crate::event::BufferId;
 
         // Initialize tracing subscriber for detailed logging
         let _ = tracing_subscriber::fmt()
@@ -4162,18 +4164,55 @@ mod tests {
 
         eprintln!("Git log plugin loaded, now executing show_git_log action...");
 
-        // Execute the show_git_log action (this could hang!)
-        let result = handle.execute_action("show_git_log");
+        // Execute the show_git_log action using async pattern
+        let receiver = handle.execute_action_async("show_git_log").unwrap();
 
-        match result {
-            Ok(()) => {
-                eprintln!("show_git_log executed successfully");
-                let cmds = handle.process_commands();
-                eprintln!("Commands after action: {:?}", cmds.len());
+        // Simulate editor event loop: process commands while action runs
+        let mut completed = false;
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(10);
+
+        while !completed && start.elapsed() < timeout {
+            // Process any commands from the plugin
+            let cmds = handle.process_commands();
+            for cmd in cmds {
+                match cmd {
+                    PluginCommand::CreateVirtualBufferInSplit { request_id: Some(req_id), .. } => {
+                        eprintln!("Received CreateVirtualBufferInSplit with request_id={}", req_id);
+                        let response = crate::plugin_api::PluginResponse::VirtualBufferCreated {
+                            request_id: req_id,
+                            buffer_id: BufferId(100),
+                        };
+                        handle.deliver_response(response);
+                        eprintln!("Delivered response for request_id={}", req_id);
+                    }
+                    PluginCommand::SetStatus { message } => {
+                        eprintln!("Plugin status: {}", message);
+                    }
+                    _ => {}
+                }
             }
-            Err(e) => {
-                eprintln!("show_git_log failed with error: {}", e);
+
+            // Check if action completed
+            match receiver.try_recv() {
+                Ok(result) => {
+                    completed = true;
+                    match result {
+                        Ok(()) => eprintln!("show_git_log executed successfully!"),
+                        Err(e) => eprintln!("show_git_log failed: {}", e),
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    panic!("Action receiver disconnected");
+                }
             }
+        }
+
+        if !completed {
+            panic!("Test timed out waiting for show_git_log to complete");
         }
 
         // Shutdown
@@ -4223,20 +4262,35 @@ mod tests {
 
         eprintln!("Spawn test plugin loaded, now executing test_spawn action...");
 
-        // Execute the test_spawn action (this could hang!)
-        let result = handle.execute_action("test_spawn");
+        // Execute the test_spawn action using async pattern
+        let receiver = handle.execute_action_async("test_spawn").unwrap();
 
-        match result {
-            Ok(()) => {
-                eprintln!("test_spawn executed successfully");
-                let cmds = handle.process_commands();
-                for cmd in &cmds {
-                    eprintln!("  Command: {:?}", cmd);
+        // Wait for completion while processing commands
+        let mut completed = false;
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(5);
+
+        while !completed && start.elapsed() < timeout {
+            let _cmds = handle.process_commands();
+            match receiver.try_recv() {
+                Ok(result) => {
+                    completed = true;
+                    match result {
+                        Ok(()) => eprintln!("test_spawn executed successfully"),
+                        Err(e) => eprintln!("test_spawn failed: {}", e),
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    panic!("Action receiver disconnected");
                 }
             }
-            Err(e) => {
-                eprintln!("test_spawn failed with error: {}", e);
-            }
+        }
+
+        if !completed {
+            panic!("Test timed out");
         }
 
         // Shutdown
@@ -4288,20 +4342,35 @@ mod tests {
 
         eprintln!("Git test plugin loaded, now executing test_git action...");
 
-        // Execute the test_git action
-        let result = handle.execute_action("test_git");
+        // Execute the test_git action using async pattern
+        let receiver = handle.execute_action_async("test_git").unwrap();
 
-        match result {
-            Ok(()) => {
-                eprintln!("test_git executed successfully");
-                let cmds = handle.process_commands();
-                for cmd in &cmds {
-                    eprintln!("  Command: {:?}", cmd);
+        // Wait for completion while processing commands
+        let mut completed = false;
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(5);
+
+        while !completed && start.elapsed() < timeout {
+            let _cmds = handle.process_commands();
+            match receiver.try_recv() {
+                Ok(result) => {
+                    completed = true;
+                    match result {
+                        Ok(()) => eprintln!("test_git executed successfully"),
+                        Err(e) => eprintln!("test_git failed: {}", e),
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    panic!("Action receiver disconnected");
                 }
             }
-            Err(e) => {
-                eprintln!("test_git failed with error: {}", e);
-            }
+        }
+
+        if !completed {
+            panic!("Test timed out");
         }
 
         // Shutdown
