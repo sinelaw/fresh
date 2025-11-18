@@ -1036,6 +1036,37 @@ impl Editor {
                                         request_id
                                     );
                                 }
+
+                                // Request inlay hints for the entire file
+                                let request_id = self.next_lsp_request_id;
+                                self.next_lsp_request_id += 1;
+                                self.pending_inlay_hints_request = Some(request_id);
+
+                                // Get buffer line count for range
+                                let line_count = if let Some(state) = self.buffers.get(&self.active_buffer) {
+                                    state.buffer.line_count().unwrap_or(1000)
+                                } else {
+                                    1000 // Default fallback
+                                };
+
+                                if let Err(e) = client.inlay_hints(
+                                    request_id,
+                                    uri.clone(),
+                                    0, 0, // start
+                                    line_count as u32, 0, // end
+                                ) {
+                                    tracing::debug!(
+                                        "Failed to request inlay hints (server may not support): {}",
+                                        e
+                                    );
+                                    self.pending_inlay_hints_request = None;
+                                } else {
+                                    tracing::info!(
+                                        "Requested inlay hints for {} (request_id={})",
+                                        uri.as_str(),
+                                        request_id
+                                    );
+                                }
                             }
                         } else {
                             tracing::warn!(
