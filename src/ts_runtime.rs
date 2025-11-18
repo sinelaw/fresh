@@ -4309,8 +4309,10 @@ mod tests {
     }
 
     #[test]
-    fn test_plugin_thread_create_virtual_buffer_hangs() {
+    fn test_plugin_thread_create_virtual_buffer_async() {
         use crate::plugin_thread::PluginThreadHandle;
+        use crate::plugin_api::PluginCommand;
+        use crate::event::BufferId;
         use tempfile::TempDir;
 
         // Initialize tracing subscriber for detailed logging
@@ -4361,22 +4363,61 @@ mod tests {
         assert!(result.is_ok(), "Failed to load vbuf test plugin: {:?}", result);
 
         eprintln!("VBuf test plugin loaded, now executing test_vbuf action...");
-        eprintln!("Expected to hang after Step 3 (waiting for editor response)");
+        eprintln!("Using async pattern to avoid deadlock");
 
-        // Execute the test_vbuf action (this will hang!)
-        let result = handle.execute_action("test_vbuf");
+        // Execute the action using async pattern (non-blocking)
+        let receiver = handle.execute_action_async("test_vbuf").unwrap();
 
-        match result {
-            Ok(()) => {
-                eprintln!("test_vbuf executed successfully (unexpected!)");
-                let cmds = handle.process_commands();
-                for cmd in &cmds {
-                    eprintln!("  Command: {:?}", cmd);
+        // Simulate editor event loop: process commands while action runs
+        let mut completed = false;
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(5);
+
+        while !completed && start.elapsed() < timeout {
+            // Process any commands from the plugin
+            let cmds = handle.process_commands();
+            for cmd in cmds {
+                match cmd {
+                    PluginCommand::CreateVirtualBufferInSplit { request_id: Some(req_id), .. } => {
+                        eprintln!("Received CreateVirtualBufferInSplit with request_id={}", req_id);
+                        // Deliver a fake response (in real editor, this would be the actual buffer_id)
+                        let response = crate::plugin_api::PluginResponse::VirtualBufferCreated {
+                            request_id: req_id,
+                            buffer_id: BufferId(100), // Fake buffer ID
+                        };
+                        handle.deliver_response(response);
+                        eprintln!("Delivered response for request_id={}", req_id);
+                    }
+                    PluginCommand::SetStatus { message } => {
+                        eprintln!("Plugin status: {}", message);
+                    }
+                    _ => {
+                        // Other commands (debug goes to tracing, not here)
+                    }
                 }
             }
-            Err(e) => {
-                eprintln!("test_vbuf failed with error: {}", e);
+
+            // Check if action completed
+            match receiver.try_recv() {
+                Ok(result) => {
+                    completed = true;
+                    match result {
+                        Ok(()) => eprintln!("test_vbuf executed successfully!"),
+                        Err(e) => eprintln!("test_vbuf failed: {}", e),
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Action still running, continue processing
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    panic!("Action receiver disconnected");
+                }
             }
+        }
+
+        if !completed {
+            panic!("Test timed out waiting for action to complete");
         }
 
         // Shutdown
