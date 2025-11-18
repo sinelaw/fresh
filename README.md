@@ -28,3 +28,9 @@ cargo build --release
 - [User Guide](docs/USER_GUIDE.md)
 - [Plugin Development](docs/PLUGIN_DEVELOPMENT.md)
 - [Architecture](docs/ARCHITECTURE.md)
+
+## License
+
+Copyright (c) Noam Lewis
+
+This project is licensed under the GNU General Public License v2.0 (GPL-2.0).
