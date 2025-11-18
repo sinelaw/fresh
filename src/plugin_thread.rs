@@ -352,6 +352,7 @@ impl PluginThreadHandle {
     /// Use this for hooks that need immediate results, like render_line hooks
     /// that add overlays before rendering.
     pub fn run_hook_blocking(&self, hook_name: &str, args: HookArgs) {
+        let start = std::time::Instant::now();
         let (tx, rx) = oneshot::channel();
         if self
             .request_sender
@@ -366,6 +367,12 @@ impl PluginThreadHandle {
         }
         // Wait for completion
         let _ = rx.recv();
+        let elapsed = start.elapsed();
+        tracing::trace!(
+            hook = hook_name,
+            elapsed_us = elapsed.as_micros(),
+            "run_hook_blocking completed"
+        );
     }
 
     /// Check if any handlers are registered for a hook (blocking)

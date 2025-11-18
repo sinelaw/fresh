@@ -1091,3 +1091,95 @@ editor.setStatus("Nonblocking test plugin loaded");
         screen
     );
 }
+
+/// Performance test for TODO highlighter with cursor movement
+/// Run with: RUST_LOG=trace cargo test test_todo_highlighter_cursor_perf -- --nocapture
+#[test]
+fn test_todo_highlighter_cursor_perf() {
+    // Initialize tracing subscriber for performance analysis
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("fresh=trace".parse().unwrap()),
+        )
+        .with_test_writer()
+        .try_init();
+
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the TODO highlighter plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/todo_highlighter.ts");
+    let plugin_dest = plugins_dir.join("todo_highlighter.ts");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create a larger test file with many lines and TODO comments
+    let mut test_content = String::new();
+    for i in 0..100 {
+        if i % 5 == 0 {
+            test_content.push_str(&format!("// TODO: Task number {}\n", i));
+        } else if i % 7 == 0 {
+            test_content.push_str(&format!("// FIXME: Issue number {}\n", i));
+        } else {
+            test_content.push_str(&format!("Line {} of test content\n", i));
+        }
+    }
+    let fixture = TestFixture::new("test_perf.txt", &test_content).unwrap();
+
+    // Create harness with the project directory
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Enable TODO Highlighter
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("TODO Highlighter: Enable").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Measure cursor movement performance
+    let num_moves = 20;
+
+    println!("\n=== TODO Highlighter Cursor Movement Performance Test ===");
+    println!("Moving cursor down {} times...", num_moves);
+
+    let down_start = std::time::Instant::now();
+    for _ in 0..num_moves {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+    let down_elapsed = down_start.elapsed();
+
+    println!("Moving cursor up {} times...", num_moves);
+
+    let up_start = std::time::Instant::now();
+    for _ in 0..num_moves {
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+    let up_elapsed = up_start.elapsed();
+
+    println!("\n=== Results ===");
+    println!("Down: {:?} total, {:?} per move", down_elapsed, down_elapsed / num_moves);
+    println!("Up: {:?} total, {:?} per move", up_elapsed, up_elapsed / num_moves);
+    println!("Total: {:?}", down_elapsed + up_elapsed);
+    println!("================\n");
+
+    // No assertion on timing - this is for data collection
+    // The trace logs will show where time is spent
+}

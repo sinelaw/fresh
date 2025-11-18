@@ -7823,9 +7823,11 @@ impl Editor {
         // Trigger render_line hooks for all visible lines in all visible buffers
         // This allows plugins to add overlays before rendering
         if let Some(ref mut ts_manager) = self.ts_plugin_manager {
+            let hooks_start = std::time::Instant::now();
             // Get visible buffers and their areas
             let visible_buffers = self.split_manager.get_visible_buffers(editor_content_area);
 
+            let mut total_lines = 0usize;
             for (_, buffer_id, split_area) in visible_buffers {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     // Fire render_start hook once per buffer before render_line hooks
@@ -7857,12 +7859,20 @@ impl Editor {
 
                             ts_manager.run_hook_blocking("render_line", hook_args);
                             line_number += 1;
+                            total_lines += 1;
                         } else {
                             break;
                         }
                     }
                 }
             }
+            let hooks_elapsed = hooks_start.elapsed();
+            tracing::trace!(
+                total_lines = total_lines,
+                elapsed_ms = hooks_elapsed.as_millis(),
+                elapsed_us = hooks_elapsed.as_micros(),
+                "render_line hooks total"
+            );
 
             // Process any plugin commands (like AddOverlay) that resulted from the hooks
             let commands = ts_manager.process_commands();
