@@ -5582,20 +5582,20 @@ impl Editor {
         // Determine the current context first
         let mut context = self.get_key_context();
 
-        // Special case: Hover popups should be dismissed on any key press
+        // Special case: Hover and Signature Help popups should be dismissed on any key press
         if matches!(context, crate::keybindings::KeyContext::Popup) {
-            // Check if the current popup is a hover popup (identified by title)
-            let is_hover_popup = self
+            // Check if the current popup is a hover or signature help popup (identified by title)
+            let is_dismissable_popup = self
                 .active_state()
                 .popups
                 .top()
                 .and_then(|p| p.title.as_ref())
-                .is_some_and(|title| title == "Hover");
+                .is_some_and(|title| title == "Hover" || title == "Signature Help");
 
-            if is_hover_popup {
-                // Dismiss the hover popup on any key press
+            if is_dismissable_popup {
+                // Dismiss the popup on any key press
                 self.hide_popup();
-                tracing::debug!("Dismissed hover popup on key press");
+                tracing::debug!("Dismissed hover/signature help popup on key press");
                 // Recalculate context now that popup is gone
                 context = self.get_key_context();
             }
@@ -6786,9 +6786,13 @@ impl Editor {
                 self.update_hover_target(col, row);
             }
             MouseEventKind::ScrollUp => {
+                // Dismiss hover/signature help popups on scroll
+                self.dismiss_transient_popups();
                 self.handle_mouse_scroll(col, row, -3)?;
             }
             MouseEventKind::ScrollDown => {
+                // Dismiss hover/signature help popups on scroll
+                self.dismiss_transient_popups();
                 self.handle_mouse_scroll(col, row, 3)?;
             }
             _ => {
@@ -8183,6 +8187,22 @@ impl Editor {
                 overlay_id: "hover_symbol".to_string(),
             };
             self.apply_event_to_active_buffer(&remove_overlay_event);
+        }
+    }
+
+    /// Dismiss transient popups (Hover, Signature Help) if present
+    /// These popups should be dismissed on scroll or other user actions
+    fn dismiss_transient_popups(&mut self) {
+        let is_transient_popup = self
+            .active_state()
+            .popups
+            .top()
+            .and_then(|p| p.title.as_ref())
+            .is_some_and(|title| title == "Hover" || title == "Signature Help");
+
+        if is_transient_popup {
+            self.hide_popup();
+            tracing::debug!("Dismissed transient popup on scroll");
         }
     }
 
