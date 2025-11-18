@@ -1242,6 +1242,10 @@ impl Editor {
         self.event_logs.remove(&id);
         self.seen_lines.remove(&id);
 
+        // Remove buffer from panel_ids mapping if it was a panel buffer
+        // This prevents stale entries when the same panel_id is reused later
+        self.panel_ids.retain(|_, &mut buf_id| buf_id != id);
+
         // Remove buffer from all splits' open_buffers lists
         for view_state in self.split_view_states.values_mut() {
             view_state.remove_buffer(id);
@@ -3921,23 +3925,35 @@ impl Editor {
                 // Check if this panel already exists (for idempotent operations)
                 if let Some(pid) = &panel_id {
                     if let Some(&existing_buffer_id) = self.panel_ids.get(pid) {
-                        // Panel exists, just update its content
-                        if let Err(e) = self.set_virtual_buffer_content(existing_buffer_id, entries)
-                        {
-                            tracing::error!("Failed to update panel content: {}", e);
+                        // Verify the buffer actually exists (defensive check for stale entries)
+                        if self.buffers.contains_key(&existing_buffer_id) {
+                            // Panel exists, just update its content
+                            if let Err(e) = self.set_virtual_buffer_content(existing_buffer_id, entries)
+                            {
+                                tracing::error!("Failed to update panel content: {}", e);
+                            } else {
+                                tracing::info!("Updated existing panel '{}' content", pid);
+                                // Focus the existing panel's split
+                                self.set_active_buffer(existing_buffer_id);
+                            }
+                            // Send response with existing buffer ID
+                            if let Some(req_id) = request_id {
+                                self.send_plugin_response(crate::plugin_api::PluginResponse::VirtualBufferCreated {
+                                    request_id: req_id,
+                                    buffer_id: existing_buffer_id,
+                                });
+                            }
+                            return Ok(());
                         } else {
-                            tracing::info!("Updated existing panel '{}' content", pid);
-                            // Focus the existing panel's split
-                            self.set_active_buffer(existing_buffer_id);
+                            // Buffer no longer exists, remove stale panel_id entry
+                            tracing::warn!(
+                                "Removing stale panel_id '{}' pointing to non-existent buffer {:?}",
+                                pid,
+                                existing_buffer_id
+                            );
+                            self.panel_ids.remove(pid);
+                            // Fall through to create a new buffer
                         }
-                        // Send response with existing buffer ID
-                        if let Some(req_id) = request_id {
-                            self.send_plugin_response(crate::plugin_api::PluginResponse::VirtualBufferCreated {
-                                request_id: req_id,
-                                buffer_id: existing_buffer_id,
-                            });
-                        }
-                        return Ok(());
                     }
                 }
 

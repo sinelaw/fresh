@@ -1183,3 +1183,220 @@ fn test_todo_highlighter_cursor_perf() {
     // No assertion on timing - this is for data collection
     // The trace logs will show where time is spent
 }
+
+/// Test that closing and reopening a panel with the same panel_id works correctly
+///
+/// This test reproduces a bug where:
+/// 1. A virtual buffer is created with a panel_id
+/// 2. The buffer is closed
+/// 3. Another virtual buffer is created with the same panel_id
+/// 4. The editor tries to reuse the old buffer ID (which no longer exists)
+/// 5. Result: "Failed to update panel content: Buffer not found"
+///
+/// The root cause is that `close_buffer()` doesn't clean up the `panel_ids` mapping,
+/// leaving a stale entry that points to a non-existent buffer.
+#[test]
+fn test_panel_id_cleanup_after_buffer_close() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    // Create a plugin that creates a virtual buffer panel, closes it, and creates it again
+    let test_plugin = r#"
+// Test plugin for panel_id cleanup after buffer close
+// This reproduces the find references bug where closing and reopening fails
+
+let panelBufferId: number | null = null;
+let panelSplitId: number | null = null;
+let executionCount = 0;
+
+editor.registerCommand(
+    "Test: Create Panel",
+    "Create a virtual buffer panel with panel_id",
+    "test_create_panel",
+    "normal"
+);
+
+editor.registerCommand(
+    "Test: Close Panel",
+    "Close the panel buffer",
+    "test_close_panel",
+    "normal"
+);
+
+// Create panel with panel_id
+globalThis.test_create_panel = async function(): Promise<void> {
+    executionCount++;
+    editor.setStatus(`Creating panel (attempt ${executionCount})...`);
+
+    const entries = [
+        {
+            text: `Panel content ${executionCount}\n`,
+            properties: { index: executionCount },
+        },
+        {
+            text: `Created at ${Date.now()}\n`,
+            properties: { type: "info" },
+        },
+    ];
+
+    try {
+        panelBufferId = await editor.createVirtualBufferInSplit({
+            name: "*Test Panel*",
+            mode: "normal",
+            read_only: true,
+            entries: entries,
+            ratio: 0.7,
+            panel_id: "test-reusable-panel", // Same panel_id every time
+            show_line_numbers: false,
+            show_cursors: true,
+        });
+
+        panelSplitId = editor.getActiveSplitId();
+        editor.setStatus(`Panel created (attempt ${executionCount}): buffer ID ${panelBufferId}`);
+        editor.debug(`Panel created with buffer ID ${panelBufferId}, split ID ${panelSplitId}`);
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        editor.setStatus(`Panel creation FAILED (attempt ${executionCount}): ${msg}`);
+        editor.debug(`ERROR: Panel creation failed: ${msg}`);
+    }
+};
+
+// Close the panel
+globalThis.test_close_panel = function(): void {
+    if (panelBufferId !== null) {
+        editor.closeBuffer(panelBufferId);
+        editor.setStatus(`Panel closed (buffer ID was ${panelBufferId})`);
+        editor.debug(`Closed panel buffer ID ${panelBufferId}`);
+
+        if (panelSplitId !== null) {
+            editor.closeSplit(panelSplitId);
+        }
+
+        panelBufferId = null;
+        panelSplitId = null;
+    } else {
+        editor.setStatus("No panel to close");
+    }
+};
+
+editor.setStatus("Panel cleanup test plugin loaded");
+"#;
+
+    let test_plugin_path = plugins_dir.join("test_panel_cleanup.ts");
+    fs::write(&test_plugin_path, test_plugin).unwrap();
+
+    // Create a simple test file
+    let test_file_content = "Test file for panel cleanup\n";
+    let fixture = TestFixture::new("test.txt", test_file_content).unwrap();
+
+    // Create harness
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+
+    // Open file and load plugins
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Wait for plugin to load
+    for _ in 0..5 {
+        harness.render().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // === First panel creation - should succeed ===
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Test: Create Panel").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for async operation
+    for _ in 0..10 {
+        harness.render().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let screen1 = harness.screen_to_string();
+    println!("Screen after first panel creation:\n{}", screen1);
+
+    assert!(
+        screen1.contains("Panel created (attempt 1)"),
+        "First panel creation should succeed. Got:\n{}",
+        screen1
+    );
+    assert!(
+        screen1.contains("Panel content 1"),
+        "First panel content should be visible. Got:\n{}",
+        screen1
+    );
+
+    // === Close the panel ===
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Test: Close Panel").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    for _ in 0..5 {
+        harness.render().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let screen2 = harness.screen_to_string();
+    println!("Screen after closing panel:\n{}", screen2);
+
+    assert!(
+        screen2.contains("Panel closed"),
+        "Panel close should succeed. Got:\n{}",
+        screen2
+    );
+
+    // === Second panel creation - this is where the bug manifests ===
+    // The editor should create a new panel, but instead it tries to reuse
+    // the old buffer ID (which no longer exists) because panel_ids wasn't cleaned up
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Test: Create Panel").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for async operation
+    for _ in 0..10 {
+        harness.render().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let screen3 = harness.screen_to_string();
+    println!("Screen after second panel creation:\n{}", screen3);
+
+    // This is the key assertion - second creation should succeed
+    // Before the fix, this will fail because panel_ids has a stale entry
+    assert!(
+        screen3.contains("Panel created (attempt 2)"),
+        "BUG: Second panel creation should succeed, but it failed. \
+         The panel_ids mapping wasn't cleaned up when the buffer was closed, \
+         causing the editor to try to reuse a non-existent buffer ID. Got:\n{}",
+        screen3
+    );
+    assert!(
+        screen3.contains("Panel content 2"),
+        "Second panel content should be visible. Got:\n{}",
+        screen3
+    );
+}
