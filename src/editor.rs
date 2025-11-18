@@ -3849,6 +3849,20 @@ impl Editor {
                     }
                 }
             }
+            PluginCommand::CloseSplit { split_id } => {
+                match self.split_manager.close_split(split_id) {
+                    Ok(()) => {
+                        tracing::info!("Closed split {:?}", split_id);
+                        // Update active buffer to match the new active split
+                        if let Some(buffer_id) = self.split_manager.active_buffer_id() {
+                            self.set_active_buffer(buffer_id);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to close split {:?}: {}", split_id, e);
+                    }
+                }
+            }
         }
         Ok(())
     }
