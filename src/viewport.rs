@@ -327,11 +327,13 @@ impl Viewport {
                             let line_content = if let Some((_, content)) = iter.next() {
                                 content.trim_end_matches('\n').to_string()
                             } else {
+                                // At EOF after trailing newline - empty line
                                 String::new()
                             };
 
-                            // Wrap the line
+                            // Wrap the line (even if empty, it still takes 1 row)
                             let segments = wrap_line(&line_content, &wrap_config);
+                            let segments_count = segments.len().max(1); // Empty line is 1 row
 
                             // Find which segment the cursor is in
                             let cursor_column = cursor.position.saturating_sub(cursor_line_start);
@@ -339,7 +341,8 @@ impl Viewport {
                                 char_position_to_segment(cursor_column, &segments);
 
                             // Add the rows for this line up to and including the cursor's segment
-                            visual_rows += cursor_segment_idx + 1;
+                            // For empty lines, cursor_segment_idx is 0, so we add 1 row
+                            visual_rows += cursor_segment_idx.min(segments_count - 1) + 1;
 
                             // Check if cursor's row is within viewport with scroll offset applied
                             // Cursor should be between effective_offset and (viewport_lines - effective_offset)
@@ -411,6 +414,9 @@ impl Viewport {
                     let (cursor_segment_idx, _) =
                         char_position_to_segment(cursor_column, &segments);
                     visual_rows_counted += cursor_segment_idx + 1;
+                } else {
+                    // At EOF after trailing newline - cursor is on empty line, needs 1 row
+                    visual_rows_counted += 1;
                 }
 
                 // Now move backwards counting visual rows until we reach target
