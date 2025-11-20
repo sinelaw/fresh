@@ -1464,6 +1464,7 @@ pub fn action_to_events(
         | Action::MenuDown
         | Action::MenuExecute
         | Action::MenuOpen(_)
+        | Action::SwitchKeybindingMap(_)
         | Action::PluginAction(_)
         | Action::None
         | Action::ScrollTabsLeft

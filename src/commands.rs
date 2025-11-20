@@ -568,6 +568,25 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::ToggleInlayHints,
             contexts: vec![KeyContext::Normal],
         },
+        // Keybinding map switching
+        Command {
+            name: "Switch to Default Keybindings".to_string(),
+            description: "Switch to the default keybinding map".to_string(),
+            action: Action::SwitchKeybindingMap("default".to_string()),
+            contexts: vec![],
+        },
+        Command {
+            name: "Switch to Emacs Keybindings".to_string(),
+            description: "Switch to Emacs-style keybindings".to_string(),
+            action: Action::SwitchKeybindingMap("emacs".to_string()),
+            contexts: vec![],
+        },
+        Command {
+            name: "Switch to VSCode Keybindings".to_string(),
+            description: "Switch to VSCode-style keybindings".to_string(),
+            action: Action::SwitchKeybindingMap("vscode".to_string()),
+            contexts: vec![],
+        },
     ]
 }
 

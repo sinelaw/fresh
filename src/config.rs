@@ -15,8 +15,17 @@ pub struct Config {
     #[serde(default)]
     pub file_explorer: FileExplorerConfig,
 
+    /// Custom keybindings (overrides for the active map)
     #[serde(default)]
     pub keybindings: Vec<Keybinding>,
+
+    /// Named keybinding maps (user can define custom maps here)
+    #[serde(default)]
+    pub keybinding_maps: HashMap<String, Vec<Keybinding>>,
+
+    /// Active keybinding map name (e.g., "default", "emacs", "vscode", or a custom name)
+    #[serde(default = "default_keybinding_map_name")]
+    pub active_keybinding_map: String,
 
     #[serde(default)]
     pub languages: HashMap<String, LanguageConfig>,
@@ -26,6 +35,10 @@ pub struct Config {
 
     #[serde(default)]
     pub menu: MenuConfig,
+}
+
+fn default_keybinding_map_name() -> String {
+    "default".to_string()
 }
 
 fn default_theme_name() -> String {
@@ -136,6 +149,7 @@ impl Default for EditorConfig {
         }
     }
 }
+
 
 /// File explorer configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,6 +274,8 @@ impl Default for Config {
             editor: EditorConfig::default(),
             file_explorer: FileExplorerConfig::default(),
             keybindings: Self::default_keybindings(),
+            keybinding_maps: HashMap::new(), // User-defined maps go here
+            active_keybinding_map: default_keybinding_map_name(),
             languages: Self::default_languages(),
             lsp: Self::default_lsp_config(),
             menu: MenuConfig::default(),
@@ -999,6 +1015,42 @@ impl Config {
                         args: HashMap::new(),
                         when: None,
                         checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Submenu {
+                        label: "Keybinding Style".to_string(),
+                        items: vec![
+                            MenuItem::Action {
+                                label: "Default".to_string(),
+                                action: "switch_keybinding_map".to_string(),
+                                args: {
+                                    let mut map = HashMap::new();
+                                    map.insert("map".to_string(), serde_json::json!("default"));
+                                    map
+                                },
+                                when: None,
+                            },
+                            MenuItem::Action {
+                                label: "Emacs".to_string(),
+                                action: "switch_keybinding_map".to_string(),
+                                args: {
+                                    let mut map = HashMap::new();
+                                    map.insert("map".to_string(), serde_json::json!("emacs"));
+                                    map
+                                },
+                                when: None,
+                            },
+                            MenuItem::Action {
+                                label: "VSCode".to_string(),
+                                action: "switch_keybinding_map".to_string(),
+                                args: {
+                                    let mut map = HashMap::new();
+                                    map.insert("map".to_string(), serde_json::json!("vscode"));
+                                    map
+                                },
+                                when: None,
+                            },
+                        ],
                     },
                 ],
             },

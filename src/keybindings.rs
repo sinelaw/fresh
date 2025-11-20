@@ -346,6 +346,9 @@ pub enum Action {
     MenuExecute,      // Execute selected menu item (Enter)
     MenuOpen(String), // Open a specific menu by name (e.g., "File", "Edit")
 
+    // Keybinding map switching
+    SwitchKeybindingMap(String), // Switch to a named keybinding map (e.g., "default", "emacs", "vscode")
+
     // Plugin custom actions
     PluginAction(String),
 
@@ -588,6 +591,11 @@ impl Action {
                 Some(Action::MenuOpen(name.to_string()))
             }
 
+            "switch_keybinding_map" => {
+                let map_name = args.get("map")?.as_str()?;
+                Some(Action::SwitchKeybindingMap(map_name.to_string()))
+            }
+
             _ => None,
         }
     }
@@ -607,13 +615,28 @@ pub struct KeybindingResolver {
 impl KeybindingResolver {
     /// Create a new resolver from configuration
     pub fn new(config: &Config) -> Self {
+        // Determine which bindings to use based on active keybinding map
+        let default_bindings = Self::get_bindings_for_map(&config.active_keybinding_map);
+
         let mut resolver = Self {
             bindings: HashMap::new(),
-            default_bindings: Self::create_default_bindings(),
+            default_bindings,
         };
 
-        // Load bindings from config
-        for binding in &config.keybindings {
+        // First, load bindings from the active keybinding map if it's user-defined
+        if let Some(map_bindings) = config.keybinding_maps.get(&config.active_keybinding_map) {
+            resolver.load_bindings_from_vec(map_bindings);
+        }
+
+        // Then, load custom keybindings (these override the map bindings)
+        resolver.load_bindings_from_vec(&config.keybindings);
+
+        resolver
+    }
+
+    /// Load bindings from a vector of keybinding definitions
+    fn load_bindings_from_vec(&mut self, bindings: &[crate::config::Keybinding]) {
+        for binding in bindings {
             if let Some(key_code) = Self::parse_key(&binding.key) {
                 let modifiers = Self::parse_modifiers(&binding.modifiers);
                 if let Some(action) = Action::from_str(&binding.action, &binding.args) {
@@ -624,16 +647,27 @@ impl KeybindingResolver {
                         KeyContext::Normal
                     };
 
-                    resolver
-                        .bindings
+                    self.bindings
                         .entry(context)
                         .or_insert_with(HashMap::new)
                         .insert((key_code, modifiers), action);
                 }
             }
         }
+    }
 
-        resolver
+    /// Get the default bindings for a named map (built-in or empty for user maps)
+    fn get_bindings_for_map(map_name: &str) -> HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>> {
+        match map_name {
+            "default" => Self::create_default_bindings(),
+            "emacs" => Self::create_emacs_bindings(),
+            "vscode" => Self::create_vscode_bindings(),
+            _ => {
+                // For user-defined maps, start with no default bindings
+                // (they'll be loaded from the keybinding_maps config)
+                HashMap::new()
+            }
+        }
     }
 
     /// Check if an action is application-wide (should be accessible in all contexts)
@@ -1462,6 +1496,138 @@ impl KeybindingResolver {
         all_bindings
     }
 
+    /// Create Emacs-style keybindings
+    fn create_emacs_bindings() -> HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>> {
+        let mut all_bindings = HashMap::new();
+
+        // Global context bindings (work in all contexts)
+        let mut global_bindings = HashMap::new();
+
+        // Command palette (Ctrl+P for compatibility)
+        global_bindings.insert(
+            (KeyCode::Char('p'), KeyModifiers::CONTROL),
+            Action::CommandPalette,
+        );
+
+        // Menu activation (F10)
+        global_bindings.insert(
+            (KeyCode::F(10), KeyModifiers::empty()),
+            Action::MenuActivate,
+        );
+
+        all_bindings.insert(KeyContext::Global, global_bindings);
+
+        // Normal context bindings (Emacs-style)
+        let mut bindings = HashMap::new();
+
+        // Basic movement (Emacs style)
+        bindings.insert((KeyCode::Char('f'), KeyModifiers::CONTROL), Action::MoveRight);  // C-f
+        bindings.insert((KeyCode::Char('b'), KeyModifiers::CONTROL), Action::MoveLeft);   // C-b
+        bindings.insert((KeyCode::Char('n'), KeyModifiers::CONTROL), Action::MoveDown);   // C-n
+        bindings.insert((KeyCode::Char('p'), KeyModifiers::CONTROL), Action::MoveUp);     // C-p
+        bindings.insert((KeyCode::Char('a'), KeyModifiers::CONTROL), Action::MoveLineStart); // C-a
+        bindings.insert((KeyCode::Char('e'), KeyModifiers::CONTROL), Action::MoveLineEnd);   // C-e
+
+        // Word movement
+        bindings.insert((KeyCode::Char('f'), KeyModifiers::ALT), Action::MoveWordRight);  // M-f
+        bindings.insert((KeyCode::Char('b'), KeyModifiers::ALT), Action::MoveWordLeft);   // M-b
+
+        // Document navigation
+        bindings.insert((KeyCode::Char('v'), KeyModifiers::ALT), Action::MovePageUp);     // M-v
+        bindings.insert((KeyCode::Char('v'), KeyModifiers::CONTROL), Action::MovePageDown); // C-v
+        bindings.insert((KeyCode::Home, KeyModifiers::CONTROL | KeyModifiers::ALT), Action::MoveDocumentStart); // C-M-<
+        bindings.insert((KeyCode::End, KeyModifiers::CONTROL | KeyModifiers::ALT), Action::MoveDocumentEnd);   // C-M->
+
+        // Editing
+        bindings.insert((KeyCode::Char('d'), KeyModifiers::CONTROL), Action::DeleteForward);  // C-d
+        bindings.insert((KeyCode::Char('h'), KeyModifiers::CONTROL), Action::DeleteBackward); // C-h
+        bindings.insert((KeyCode::Char('d'), KeyModifiers::ALT), Action::DeleteWordForward);  // M-d
+        bindings.insert((KeyCode::Backspace, KeyModifiers::ALT), Action::DeleteWordBackward); // M-backspace
+        bindings.insert((KeyCode::Char('k'), KeyModifiers::CONTROL), Action::DeleteLine);     // C-k
+
+        // Clipboard (Emacs-style kill/yank)
+        bindings.insert((KeyCode::Char('w'), KeyModifiers::CONTROL), Action::Cut);      // C-w (kill)
+        bindings.insert((KeyCode::Char('w'), KeyModifiers::ALT), Action::Copy);         // M-w (copy)
+        bindings.insert((KeyCode::Char('y'), KeyModifiers::CONTROL), Action::Paste);    // C-y (yank)
+
+        // Selection
+        // Note: Emacs uses C-Space to set mark, which we handle separately
+        bindings.insert((KeyCode::Char('a'), KeyModifiers::CONTROL | KeyModifiers::ALT), Action::SelectAll); // C-x h equivalent
+
+        // File operations (using C-x prefix would need chord support)
+        bindings.insert((KeyCode::Char('s'), KeyModifiers::CONTROL), Action::Save);      // C-x C-s (simplified)
+        bindings.insert((KeyCode::Char('o'), KeyModifiers::CONTROL), Action::Open);      // C-x C-f (simplified)
+        bindings.insert((KeyCode::Char('c'), KeyModifiers::CONTROL | KeyModifiers::ALT), Action::Quit); // C-x C-c (simplified)
+
+        // Undo/Redo
+        bindings.insert((KeyCode::Char('_'), KeyModifiers::CONTROL | KeyModifiers::SHIFT), Action::Undo); // C-_
+        bindings.insert((KeyCode::Char('z'), KeyModifiers::CONTROL), Action::Undo);      // C-/ alternative
+
+        // Search
+        bindings.insert((KeyCode::Char('s'), KeyModifiers::ALT), Action::Search);         // C-s (simplified)
+        bindings.insert((KeyCode::Char('r'), KeyModifiers::ALT), Action::QueryReplace);   // M-% (simplified)
+
+        // Arrow keys still work
+        bindings.insert((KeyCode::Left, KeyModifiers::empty()), Action::MoveLeft);
+        bindings.insert((KeyCode::Right, KeyModifiers::empty()), Action::MoveRight);
+        bindings.insert((KeyCode::Up, KeyModifiers::empty()), Action::MoveUp);
+        bindings.insert((KeyCode::Down, KeyModifiers::empty()), Action::MoveDown);
+        bindings.insert((KeyCode::Home, KeyModifiers::empty()), Action::MoveLineStart);
+        bindings.insert((KeyCode::End, KeyModifiers::empty()), Action::MoveLineEnd);
+        bindings.insert((KeyCode::PageUp, KeyModifiers::empty()), Action::MovePageUp);
+        bindings.insert((KeyCode::PageDown, KeyModifiers::empty()), Action::MovePageDown);
+
+        // Other essential bindings
+        bindings.insert((KeyCode::Enter, KeyModifiers::empty()), Action::InsertNewline);
+        bindings.insert((KeyCode::Tab, KeyModifiers::empty()), Action::InsertTab);
+        bindings.insert((KeyCode::Backspace, KeyModifiers::empty()), Action::DeleteBackward);
+        bindings.insert((KeyCode::Delete, KeyModifiers::empty()), Action::DeleteForward);
+
+        all_bindings.insert(KeyContext::Normal, bindings);
+
+        // Reuse other contexts from default bindings for now
+        // TODO: Add Emacs-specific bindings for Prompt, Popup, FileExplorer, Menu contexts
+
+        all_bindings
+    }
+
+    /// Create VSCode-style keybindings
+    fn create_vscode_bindings() -> HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>> {
+        // For now, VSCode bindings are similar to default bindings
+        // We can customize specific bindings that differ from the default
+        let mut all_bindings = Self::create_default_bindings();
+
+        // VSCode-specific overrides
+        let normal_bindings = all_bindings.entry(KeyContext::Normal).or_insert_with(HashMap::new);
+
+        // Add VSCode-specific keybindings here
+        // For example, VSCode uses Ctrl+D for add cursor next match
+        normal_bindings.insert(
+            (KeyCode::Char('d'), KeyModifiers::CONTROL),
+            Action::AddCursorNextMatch,
+        );
+
+        // VSCode uses Ctrl+/ for toggle comment
+        normal_bindings.insert(
+            (KeyCode::Char('/'), KeyModifiers::CONTROL),
+            Action::ToggleComment,
+        );
+
+        // VSCode uses Ctrl+Shift+K to delete line
+        normal_bindings.insert(
+            (KeyCode::Char('k'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            Action::DeleteLine,
+        );
+
+        // VSCode uses Ctrl+G to go to line
+        normal_bindings.insert(
+            (KeyCode::Char('g'), KeyModifiers::CONTROL),
+            Action::GotoLine,
+        );
+
+        all_bindings
+    }
+
     /// Get all keybindings (for help display)
     /// Returns a Vec of (key_description, action_description)
     pub fn get_all_bindings(&self) -> Vec<(String, String)> {
@@ -1699,6 +1865,7 @@ impl KeybindingResolver {
             Action::MenuDown => "Navigate to next menu item".to_string(),
             Action::MenuExecute => "Execute selected menu item".to_string(),
             Action::MenuOpen(name) => format!("Open {} menu", name),
+            Action::SwitchKeybindingMap(map) => format!("Switch to '{}' keybindings", map),
             Action::PluginAction(name) => format!("Plugin action: {}", name),
             Action::ScrollTabsLeft => "Scroll tabs left".to_string(),
             Action::ScrollTabsRight => "Scroll tabs right".to_string(),

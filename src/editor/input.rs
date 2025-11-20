@@ -995,6 +995,24 @@ impl Editor {
                 }
             }
 
+            Action::SwitchKeybindingMap(map_name) => {
+                // Check if the map exists (either built-in or user-defined)
+                let is_builtin = matches!(map_name.as_str(), "default" | "emacs" | "vscode");
+                let is_user_defined = self.config.keybinding_maps.contains_key(&map_name);
+
+                if is_builtin || is_user_defined {
+                    // Update the active keybinding map in config
+                    self.config.active_keybinding_map = map_name.clone();
+
+                    // Reload the keybinding resolver with the new map
+                    self.keybindings = crate::keybindings::KeybindingResolver::new(&self.config);
+
+                    self.set_status_message(format!("Switched to '{}' keybindings", map_name));
+                } else {
+                    self.set_status_message(format!("Unknown keybinding map: '{}'", map_name));
+                }
+            }
+
             Action::SmartHome => {
                 self.smart_home();
             }
