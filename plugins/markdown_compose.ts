@@ -604,12 +604,14 @@ function processBuffer(bufferId: number, splitId?: number): void {
     return;
   }
 
-  editor.debug(`processBuffer: processing ${info.path}`);
+  editor.debug(`processBuffer: processing ${info.path}, buffer_id=${bufferId}`);
 
   // Get buffer content
   const bufferLength = editor.getBufferLength(bufferId);
+  editor.debug(`processBuffer: getBufferLength returned ${bufferLength}`);
+
   const text = editor.getBufferText(bufferId, 0, bufferLength);
-  editor.debug(`processBuffer: buffer length = ${text.length} bytes`);
+  editor.debug(`processBuffer: getBufferText returned ${text.length} bytes, first 100 chars: ${text.substring(0, 100)}`);
 
   // Parse markdown
   const parser = new MarkdownParser(text);
