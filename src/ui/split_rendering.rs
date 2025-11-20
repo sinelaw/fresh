@@ -1057,8 +1057,13 @@ impl SplitRenderer {
             }
 
             // Check if this is a wrapped continuation line
-            // A continuation line starts with a Break token, which has None mapping
-            let is_continuation = view_mapping.get(line_view_offset) == Some(&None);
+            // A continuation line comes AFTER a Break token's newline (which has None mapping)
+            // So check if the previous character (the newline) was a Break
+            let is_continuation = if line_view_offset > 0 {
+                view_mapping.get(line_view_offset - 1) == Some(&None)
+            } else {
+                false // First line is never a continuation
+            };
 
             // Only increment source line number if this is NOT a continuation
             if !is_continuation && lines_rendered > 0 {
