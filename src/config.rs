@@ -1154,7 +1154,8 @@ impl Config {
                                     map.insert("map".to_string(), serde_json::json!("default"));
                                     map
                                 },
-                when: None,
+                                when: None,
+                                checkbox: None,
                             },
                             MenuItem::Action {
                                 label: "Emacs".to_string(),
@@ -1164,7 +1165,8 @@ impl Config {
                                     map.insert("map".to_string(), serde_json::json!("emacs"));
                                     map
                                 },
-                when: None,
+                                when: None,
+                                checkbox: None,
                             },
                             MenuItem::Action {
                                 label: "VSCode".to_string(),
@@ -1174,7 +1176,8 @@ impl Config {
                                     map.insert("map".to_string(), serde_json::json!("vscode"));
                                     map
                                 },
-                when: None,
+                                when: None,
+                                checkbox: None,
                             },
                         ],
                     },
