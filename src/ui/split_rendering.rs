@@ -799,7 +799,12 @@ impl SplitRenderer {
         view_mode: &ViewMode,
         compose_width: Option<u16>,
     ) -> ComposeLayout {
-        if view_mode != &ViewMode::Compose {
+        // Enable centering/margins if:
+        // 1. View mode is explicitly Compose, OR
+        // 2. compose_width is set (plugin-driven compose mode)
+        let should_compose = view_mode == &ViewMode::Compose || compose_width.is_some();
+
+        if !should_compose {
             return ComposeLayout {
                 render_area: area,
                 left_pad: 0,
@@ -835,7 +840,8 @@ impl SplitRenderer {
         view_mode: &ViewMode,
         theme: &crate::theme::Theme,
     ) {
-        if view_mode != &ViewMode::Compose {
+        // Render margins if there are any pads (indicates compose layout is active)
+        if layout.left_pad == 0 && layout.right_pad == 0 {
             return;
         }
 
