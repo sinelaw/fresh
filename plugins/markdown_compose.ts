@@ -607,7 +607,8 @@ function processBuffer(bufferId: number, splitId?: number): void {
   editor.debug(`processBuffer: processing ${info.path}`);
 
   // Get buffer content
-  const text = editor.getBufferText(bufferId);
+  const bufferLength = editor.getBufferLength(bufferId);
+  const text = editor.getBufferText(bufferId, 0, bufferLength);
   editor.debug(`processBuffer: buffer length = ${text.length} bytes`);
 
   // Parse markdown
