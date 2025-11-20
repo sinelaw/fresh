@@ -58,3 +58,26 @@ declare global {
  */
 type BufferId = number;
 
+/** View token wire format for view transforms */
+interface ViewTokenWire {
+  /** Source byte offset (null for injected view-only content) */
+  source_offset: number | null;
+  /** Token kind: Text, Newline, Space, or Break */
+  kind: ViewTokenWireKind;
+}
+
+/** View token kind discriminated union */
+type ViewTokenWireKind =
+  | { Text: string }
+  | "Newline"
+  | "Space"
+  | "Break";
+
+/** Layout hints for compose mode */
+interface LayoutHints {
+  /** Optional compose width for centering/wrapping */
+  compose_width?: number | null;
+  /** Optional column guides for tables */
+  column_guides?: number[] | null;
+}
+

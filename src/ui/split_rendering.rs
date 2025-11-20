@@ -1608,7 +1608,7 @@ impl SplitRenderer {
         lsp_waiting: bool,
         view_mode: ViewMode,
         compose_width: Option<u16>,
-        _compose_column_guides: Option<Vec<u16>>,
+        compose_column_guides: Option<Vec<u16>>,
         view_transform: Option<ViewTransformPayload>,
         estimated_line_length: usize,
         _buffer_id: BufferId,
@@ -1727,6 +1727,28 @@ impl SplitRenderer {
             Paragraph::new(lines).block(Block::default().borders(Borders::NONE)),
             render_area,
         );
+
+        // Render column guides if present (for tables, etc.)
+        if let Some(guides) = compose_column_guides {
+            let guide_style = Style::default()
+                .fg(theme.line_number_fg)
+                .add_modifier(Modifier::DIM);
+            let guide_height = render_output.content_lines_rendered.min(render_area.height as usize);
+
+            for col in guides {
+                // Column guides are relative to content area (after gutter)
+                let guide_x = render_area.x + gutter_width as u16 + col;
+
+                // Only draw if the guide is within the visible area
+                if guide_x >= render_area.x && guide_x < render_area.x + render_area.width {
+                    for row in 0..guide_height {
+                        let cell_area = Rect::new(guide_x, render_area.y + row as u16, 1, 1);
+                        let guide_char = Paragraph::new("│").style(guide_style);
+                        frame.render_widget(guide_char, cell_area);
+                    }
+                }
+            }
+        }
 
         let buffer_ends_with_newline = if state.buffer.len() > 0 {
             let last_char = state.get_text_range(state.buffer.len() - 1, state.buffer.len());
