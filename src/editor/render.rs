@@ -352,6 +352,26 @@ impl Editor {
         }
 
         // Render menu bar last so dropdown appears on top of all other content
+        // Prepare checkbox states from editor state
+        let checkbox_states = crate::ui::CheckboxStates {
+            line_numbers: self
+                .buffers
+                .get(&self.active_buffer)
+                .map(|state| state.margins.show_line_numbers)
+                .unwrap_or(true),
+            line_wrap: self
+                .buffers
+                .get(&self.active_buffer)
+                .map(|state| state.viewport.line_wrap_enabled)
+                .unwrap_or(false),
+            compose_mode: self
+                .buffers
+                .get(&self.active_buffer)
+                .map(|state| state.view_mode == crate::state::ViewMode::Compose)
+                .unwrap_or(false),
+            file_explorer: self.file_explorer.is_some(),
+        };
+
         crate::ui::MenuRenderer::render(
             frame,
             menu_bar_area,
@@ -361,6 +381,7 @@ impl Editor {
             &self.theme,
             self.mouse_state.hover_target.as_ref(),
             self.has_active_selection(),
+            &checkbox_states,
         );
     }
 

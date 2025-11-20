@@ -18,7 +18,7 @@ pub mod tabs;
 
 // Re-export main types for convenience
 pub use file_explorer::FileExplorerRenderer;
-pub use menu::{MenuRenderer, MenuState};
+pub use menu::{CheckboxStates, MenuRenderer, MenuState};
 pub use split_rendering::SplitRenderer;
 pub use status_bar::StatusBarRenderer;
 pub use suggestions::SuggestionsRenderer;

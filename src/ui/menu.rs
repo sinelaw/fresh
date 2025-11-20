@@ -8,6 +8,15 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
+/// Checkbox states for menu items
+#[derive(Debug, Clone, Default)]
+pub struct CheckboxStates {
+    pub line_numbers: bool,
+    pub line_wrap: bool,
+    pub compose_mode: bool,
+    pub file_explorer: bool,
+}
+
 fn is_menu_item_enabled(item: &MenuItem, selection_active: bool) -> bool {
     match item {
         MenuItem::Action { when, .. } => match when.as_deref() {
@@ -15,6 +24,16 @@ fn is_menu_item_enabled(item: &MenuItem, selection_active: bool) -> bool {
             _ => true,
         },
         _ => true,
+    }
+}
+
+fn is_checkbox_checked(checkbox: &Option<String>, states: &CheckboxStates) -> bool {
+    match checkbox.as_deref() {
+        Some("line_numbers") => states.line_numbers,
+        Some("line_wrap") => states.line_wrap,
+        Some("compose_mode") => states.compose_mode,
+        Some("file_explorer") => states.file_explorer,
+        _ => false,
     }
 }
 
@@ -166,6 +185,8 @@ impl MenuRenderer {
     /// * `keybindings` - Keybinding resolver for displaying shortcuts
     /// * `theme` - The active theme for colors
     /// * `hover_target` - The currently hovered UI element (if any)
+    /// * `selection_active` - Whether there is an active selection
+    /// * `checkbox_states` - Current state of checkbox menu items
     pub fn render(
         frame: &mut Frame,
         area: Rect,
@@ -175,6 +196,7 @@ impl MenuRenderer {
         theme: &Theme,
         hover_target: Option<&crate::editor::HoverTarget>,
         selection_active: bool,
+        checkbox_states: &CheckboxStates,
     ) {
         // Combine config menus with plugin menus
         let all_menus: Vec<&Menu> = menu_config
@@ -251,6 +273,7 @@ impl MenuRenderer {
                     theme,
                     hover_target,
                     selection_active,
+                    checkbox_states,
                 );
             }
         }
@@ -268,6 +291,7 @@ impl MenuRenderer {
         theme: &Theme,
         hover_target: Option<&crate::editor::HoverTarget>,
         selection_active: bool,
+        checkbox_states: &CheckboxStates,
     ) {
         // Calculate the x position of the dropdown based on menu index
         let mut x_offset = 0;
@@ -312,7 +336,7 @@ impl MenuRenderer {
             let enabled = is_menu_item_enabled(item, selection_active);
 
             let line = match item {
-                MenuItem::Action { label, action, .. } => {
+                MenuItem::Action { label, action, checkbox, .. } => {
                     let style = if is_highlighted {
                         Style::default()
                             .fg(theme.menu_highlight_fg)
@@ -332,12 +356,24 @@ impl MenuRenderer {
                         .find_keybinding_for_action(action, crate::keybindings::KeyContext::Normal)
                         .unwrap_or_default();
 
-                    // Calculate spacing for alignment
-                    let label_width = max_width.saturating_sub(keybinding.len() + 4);
-                    let text = if keybinding.is_empty() {
-                        format!(" {:<width$}", label, width = max_width - 2)
+                    // Determine checkbox icon if checkbox is present
+                    let checkbox_icon = if checkbox.is_some() {
+                        if is_checkbox_checked(checkbox, checkbox_states) {
+                            "☑ "
+                        } else {
+                            "☐ "
+                        }
                     } else {
-                        format!(" {:<label_width$} {}", label, keybinding)
+                        ""
+                    };
+
+                    // Calculate spacing for alignment
+                    let checkbox_width = if checkbox.is_some() { 2 } else { 0 };
+                    let label_width = max_width.saturating_sub(keybinding.len() + checkbox_width + 4);
+                    let text = if keybinding.is_empty() {
+                        format!(" {}{:<width$}", checkbox_icon, label, width = max_width - checkbox_width - 2)
+                    } else {
+                        format!(" {}{:<label_width$} {}", checkbox_icon, label, keybinding)
                     };
 
                     let mut final_style = style;
@@ -406,6 +442,7 @@ mod tests {
                         action: "new_file".to_string(),
                         args: HashMap::new(),
                         when: None,
+                        checkbox: None,
                     },
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
@@ -413,12 +450,14 @@ mod tests {
                         action: "save".to_string(),
                         args: HashMap::new(),
                         when: None,
+                        checkbox: None,
                     },
                     MenuItem::Action {
                         label: "Quit".to_string(),
                         action: "quit".to_string(),
                         args: HashMap::new(),
                         when: None,
+                        checkbox: None,
                     },
                 ],
             },
@@ -430,12 +469,14 @@ mod tests {
                         action: "undo".to_string(),
                         args: HashMap::new(),
                         when: None,
+                        checkbox: None,
                     },
                     MenuItem::Action {
                         label: "Redo".to_string(),
                         action: "redo".to_string(),
                         args: HashMap::new(),
                         when: None,
+                        checkbox: None,
                     },
                 ],
             },
@@ -446,6 +487,7 @@ mod tests {
                     action: "toggle_file_explorer".to_string(),
                     args: HashMap::new(),
                     when: None,
+                    checkbox: None,
                 }],
             },
         ]
@@ -569,6 +611,7 @@ mod tests {
                 action: "find_in_selection".to_string(),
                 args: HashMap::new(),
                 when: Some("has_selection".to_string()),
+                checkbox: None,
             }],
         };
         state.open_menu(0);
