@@ -17,6 +17,48 @@
       "when": "global"
     },
     {
+      "key": "f",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "File"},
+      "when": "global"
+    },
+    {
+      "key": "e",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "Edit"},
+      "when": "global"
+    },
+    {
+      "key": "v",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "View"},
+      "when": "global"
+    },
+    {
+      "key": "s",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "Selection"},
+      "when": "global"
+    },
+    {
+      "key": "g",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "Go"},
+      "when": "global"
+    },
+    {
+      "key": "h",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "Help"},
+      "when": "global"
+    },
+    {
       "comment": "Normal context - Basic movement",
       "key": "Left",
       "modifiers": [],
@@ -283,6 +325,286 @@
       "when": "normal"
     },
     {
+      "comment": "Normal context - Word deletion",
+      "key": "Backspace",
+      "modifiers": ["ctrl"],
+      "action": "delete_word_backward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "h",
+      "modifiers": ["ctrl"],
+      "action": "delete_word_backward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Delete",
+      "modifiers": ["ctrl"],
+      "action": "delete_word_forward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Advanced selection",
+      "key": "w",
+      "modifiers": ["ctrl"],
+      "action": "select_word",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "l",
+      "modifiers": ["ctrl"],
+      "action": "select_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["ctrl", "shift"],
+      "action": "expand_selection",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Block selection",
+      "key": "Left",
+      "modifiers": ["alt", "shift"],
+      "action": "block_select_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["alt", "shift"],
+      "action": "block_select_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Up",
+      "modifiers": ["alt", "shift"],
+      "action": "block_select_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["alt", "shift"],
+      "action": "block_select_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Multi-cursor",
+      "key": "d",
+      "modifiers": ["ctrl"],
+      "action": "add_cursor_next_match",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Up",
+      "modifiers": ["ctrl", "alt"],
+      "action": "add_cursor_above",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["ctrl", "alt"],
+      "action": "add_cursor_below",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Search and replace",
+      "key": "f",
+      "modifiers": ["ctrl"],
+      "action": "search",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "r",
+      "modifiers": ["ctrl"],
+      "action": "replace",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "r",
+      "modifiers": ["ctrl", "alt"],
+      "action": "query_replace",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F3",
+      "modifiers": [],
+      "action": "find_next",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F3",
+      "modifiers": ["shift"],
+      "action": "find_previous",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Error navigation",
+      "key": "F8",
+      "modifiers": [],
+      "action": "jump_to_next_error",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F8",
+      "modifiers": ["shift"],
+      "action": "jump_to_previous_error",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Smart editing",
+      "key": "/",
+      "modifiers": ["ctrl"],
+      "action": "toggle_comment",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Tab",
+      "modifiers": ["shift"],
+      "action": "dedent_selection",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "]",
+      "modifiers": ["ctrl"],
+      "action": "goto_matching_bracket",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "g",
+      "modifiers": ["ctrl"],
+      "action": "goto_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "n",
+      "modifiers": ["ctrl"],
+      "action": "new",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Help",
+      "key": "F1",
+      "modifiers": [],
+      "action": "show_help",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F1",
+      "modifiers": ["shift"],
+      "action": "keyboard_shortcuts",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Buffer navigation",
+      "key": "PageUp",
+      "modifiers": ["ctrl"],
+      "action": "prev_buffer",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": ["ctrl"],
+      "action": "next_buffer",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Tab scrolling",
+      "key": "PageUp",
+      "modifiers": ["alt"],
+      "action": "scroll_tabs_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": ["alt"],
+      "action": "scroll_tabs_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Position history",
+      "key": "Left",
+      "modifiers": ["alt"],
+      "action": "navigate_back",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["alt"],
+      "action": "navigate_forward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - File explorer",
+      "key": "b",
+      "modifiers": ["ctrl"],
+      "action": "focus_file_explorer",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - LSP",
+      "key": "F2",
+      "modifiers": [],
+      "action": "lsp_rename",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F12",
+      "modifiers": ["shift"],
+      "action": "lsp_references",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Macros",
+      "key": "F5",
+      "modifiers": [],
+      "action": "stop_macro_recording",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F12",
+      "modifiers": [],
+      "action": "play_last_macro",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Normal context - Scrolling",
       "key": "Up",
       "modifiers": ["ctrl"],
@@ -330,7 +652,7 @@
     {
       "key": "Delete",
       "modifiers": [],
-      "action": "prompt_delete_word_forward",
+      "action": "prompt_delete",
       "args": {},
       "when": "prompt"
     },
@@ -408,6 +730,115 @@
       "key": "Right",
       "modifiers": ["ctrl"],
       "action": "prompt_move_word_right",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt context - Word deletion",
+      "key": "Backspace",
+      "modifiers": ["ctrl"],
+      "action": "prompt_delete_word_backward",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "h",
+      "modifiers": ["ctrl"],
+      "action": "prompt_delete_word_backward",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Delete",
+      "modifiers": ["ctrl"],
+      "action": "prompt_delete_word_forward",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt context - Clipboard",
+      "key": "c",
+      "modifiers": ["ctrl"],
+      "action": "prompt_copy",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "x",
+      "modifiers": ["ctrl"],
+      "action": "prompt_cut",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "v",
+      "modifiers": ["ctrl"],
+      "action": "prompt_paste",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt context - Selection",
+      "key": "Left",
+      "modifiers": ["shift"],
+      "action": "prompt_move_left_selecting",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["shift"],
+      "action": "prompt_move_right_selecting",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Home",
+      "modifiers": ["shift"],
+      "action": "prompt_move_home_selecting",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "End",
+      "modifiers": ["shift"],
+      "action": "prompt_move_end_selecting",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Left",
+      "modifiers": ["ctrl", "shift"],
+      "action": "prompt_select_word_left",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["ctrl", "shift"],
+      "action": "prompt_select_word_right",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "a",
+      "modifiers": ["ctrl"],
+      "action": "prompt_select_all",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt context - Additional confirm bindings",
+      "key": "f",
+      "modifiers": ["ctrl"],
+      "action": "prompt_confirm",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "F3",
+      "modifiers": [],
+      "action": "prompt_confirm",
       "args": {},
       "when": "prompt"
     },
@@ -507,6 +938,20 @@
     {
       "key": "Escape",
       "modifiers": [],
+      "action": "focus_editor",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "r",
+      "modifiers": ["ctrl"],
+      "action": "file_explorer_refresh",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "b",
+      "modifiers": ["ctrl"],
       "action": "focus_editor",
       "args": {},
       "when": "file_explorer"
