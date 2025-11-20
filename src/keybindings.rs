@@ -1521,6 +1521,7 @@ mod tests {
         config.keybindings.push(Keybinding {
             key: "esc".to_string(),
             modifiers: vec![],
+            keys: vec![],
             action: "quit".to_string(), // Override Esc in popup context to quit
             args: HashMap::new(),
             when: Some("popup".to_string()),
@@ -1573,6 +1574,7 @@ mod tests {
         config.keybindings.push(Keybinding {
             key: "f".to_string(),
             modifiers: vec!["ctrl".to_string()],
+            keys: vec![],
             action: "command_palette".to_string(),
             args: HashMap::new(),
             when: None, // Default to normal context
@@ -1582,6 +1584,7 @@ mod tests {
         config.keybindings.push(Keybinding {
             key: "k".to_string(),
             modifiers: vec!["ctrl".to_string()],
+            keys: vec![],
             action: "prompt_cancel".to_string(),
             args: HashMap::new(),
             when: Some("prompt".to_string()),
