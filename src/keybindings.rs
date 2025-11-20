@@ -1645,15 +1645,21 @@ impl KeybindingResolver {
         bindings.insert((KeyCode::Char('a'), KeyModifiers::CONTROL), Action::MoveLineStart); // C-a
         bindings.insert((KeyCode::Char('e'), KeyModifiers::CONTROL), Action::MoveLineEnd);   // C-e
 
-        // Word movement
+        // Word movement (Emacs and arrow key variants)
         bindings.insert((KeyCode::Char('f'), KeyModifiers::ALT), Action::MoveWordRight);  // M-f
         bindings.insert((KeyCode::Char('b'), KeyModifiers::ALT), Action::MoveWordLeft);   // M-b
+        bindings.insert((KeyCode::Left, KeyModifiers::CONTROL), Action::MoveWordLeft);    // Ctrl+Left
+        bindings.insert((KeyCode::Right, KeyModifiers::CONTROL), Action::MoveWordRight);  // Ctrl+Right
 
         // Document navigation
         bindings.insert((KeyCode::Char('v'), KeyModifiers::ALT), Action::MovePageUp);     // M-v
         bindings.insert((KeyCode::Char('v'), KeyModifiers::CONTROL), Action::MovePageDown); // C-v
         bindings.insert((KeyCode::Home, KeyModifiers::CONTROL | KeyModifiers::ALT), Action::MoveDocumentStart); // C-M-<
         bindings.insert((KeyCode::End, KeyModifiers::CONTROL | KeyModifiers::ALT), Action::MoveDocumentEnd);   // C-M->
+
+        // Scrolling (Alt+Up/Down for scroll without moving cursor)
+        bindings.insert((KeyCode::Up, KeyModifiers::ALT), Action::ScrollUp);     // M-Up
+        bindings.insert((KeyCode::Down, KeyModifiers::ALT), Action::ScrollDown); // M-Down
 
         // Editing
         bindings.insert((KeyCode::Char('d'), KeyModifiers::CONTROL), Action::DeleteForward);  // C-d
@@ -1681,7 +1687,7 @@ impl KeybindingResolver {
         bindings.insert((KeyCode::Char('s'), KeyModifiers::ALT), Action::Search);         // C-s (simplified)
         bindings.insert((KeyCode::Char('r'), KeyModifiers::ALT), Action::QueryReplace);   // M-% (simplified)
 
-        // Arrow keys still work
+        // Arrow keys (basic movement)
         bindings.insert((KeyCode::Left, KeyModifiers::empty()), Action::MoveLeft);
         bindings.insert((KeyCode::Right, KeyModifiers::empty()), Action::MoveRight);
         bindings.insert((KeyCode::Up, KeyModifiers::empty()), Action::MoveUp);
@@ -1690,6 +1696,20 @@ impl KeybindingResolver {
         bindings.insert((KeyCode::End, KeyModifiers::empty()), Action::MoveLineEnd);
         bindings.insert((KeyCode::PageUp, KeyModifiers::empty()), Action::MovePageUp);
         bindings.insert((KeyCode::PageDown, KeyModifiers::empty()), Action::MovePageDown);
+
+        // Shift+arrow selection (standard selection still works in Emacs mode)
+        bindings.insert((KeyCode::Left, KeyModifiers::SHIFT), Action::SelectLeft);
+        bindings.insert((KeyCode::Right, KeyModifiers::SHIFT), Action::SelectRight);
+        bindings.insert((KeyCode::Up, KeyModifiers::SHIFT), Action::SelectUp);
+        bindings.insert((KeyCode::Down, KeyModifiers::SHIFT), Action::SelectDown);
+        bindings.insert((KeyCode::Home, KeyModifiers::SHIFT), Action::SelectLineStart);
+        bindings.insert((KeyCode::End, KeyModifiers::SHIFT), Action::SelectLineEnd);
+        bindings.insert((KeyCode::PageUp, KeyModifiers::SHIFT), Action::SelectPageUp);
+        bindings.insert((KeyCode::PageDown, KeyModifiers::SHIFT), Action::SelectPageDown);
+
+        // Ctrl+Shift+arrow word selection
+        bindings.insert((KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT), Action::SelectWordLeft);
+        bindings.insert((KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT), Action::SelectWordRight);
 
         // Other essential bindings
         bindings.insert((KeyCode::Enter, KeyModifiers::empty()), Action::InsertNewline);
