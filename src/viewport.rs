@@ -299,6 +299,9 @@ impl Viewport {
 
         // Check if cursor is visible by counting VISUAL ROWS between top_byte and cursor
         // When line wrapping is enabled, we need to count wrapped rows, not logical lines!
+        // Apply scroll_offset to keep cursor away from edges
+        let effective_offset = self.scroll_offset.min(viewport_lines / 2);
+
         let cursor_is_visible = if cursor_line_start < self.top_byte {
             // Cursor is above viewport
             false
@@ -338,8 +341,10 @@ impl Viewport {
                             // Add the rows for this line up to and including the cursor's segment
                             visual_rows += cursor_segment_idx + 1;
 
-                            // Check if cursor's row is within viewport
-                            break visual_rows <= viewport_lines;
+                            // Check if cursor's row is within viewport with scroll offset applied
+                            // Cursor should be between effective_offset and (viewport_lines - effective_offset)
+                            break visual_rows > effective_offset
+                                && visual_rows <= viewport_lines.saturating_sub(effective_offset);
                         } else {
                             // We passed the cursor's line without finding it - shouldn't happen
                             break false;
@@ -375,7 +380,9 @@ impl Viewport {
                     lines_from_top += 1;
                 }
 
-                lines_from_top < viewport_lines
+                // Apply scroll offset: cursor should be between offset and (viewport_lines - offset)
+                lines_from_top > effective_offset
+                    && lines_from_top < viewport_lines.saturating_sub(effective_offset)
             }
         };
 

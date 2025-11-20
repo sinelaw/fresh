@@ -1025,6 +1025,9 @@ impl SplitRenderer {
         let mut last_visible_x: u16 = 0;
         let mut view_start_line_skip = view_anchor.start_line_skip;
 
+        // Track the current source line number separately from display lines
+        let mut current_source_line_num = starting_line_num;
+
         loop {
             let (line_view_offset, line_content, line_has_newline) =
                 if let Some(ViewLine {
@@ -1053,7 +1056,15 @@ impl SplitRenderer {
                 break;
             }
 
-            let current_line_num = starting_line_num + lines_rendered;
+            // Check if this is a wrapped continuation line
+            // A continuation line starts with a Break token, which has None mapping
+            let is_continuation = view_mapping.get(line_view_offset) == Some(&None);
+
+            // Only increment source line number if this is NOT a continuation
+            if !is_continuation && lines_rendered > 0 {
+                current_source_line_num += 1;
+            }
+
             lines_rendered += 1;
 
             // Apply horizontal scrolling - skip characters before left_column
@@ -1067,7 +1078,8 @@ impl SplitRenderer {
 
             // Render left margin (indicators + line numbers + separator)
             if state.margins.left_config.enabled {
-                if diagnostic_lines.contains(&current_line_num) {
+                // For continuation lines, don't show diagnostic indicators
+                if !is_continuation && diagnostic_lines.contains(&current_source_line_num) {
                     // Show diagnostic indicator
                     push_span_with_map(
                         &mut line_spans,
@@ -1087,26 +1099,38 @@ impl SplitRenderer {
                     );
                 }
 
-                // Next N columns: render line number (right-aligned)
-                let margin_content = state.margins.render_line(
-                    current_line_num,
-                    crate::margin::MarginPosition::Left,
-                    estimated_lines,
-                );
-                let (rendered_text, style_opt) =
-                    margin_content.render(state.margins.left_config.width);
+                // Next N columns: render line number (right-aligned) or blank for continuations
+                if is_continuation {
+                    // For wrapped continuation lines, render blank space
+                    let blank = " ".repeat(state.margins.left_config.width);
+                    push_span_with_map(
+                        &mut line_spans,
+                        &mut line_view_map,
+                        blank,
+                        Style::default().fg(theme.line_number_fg),
+                        None,
+                    );
+                } else {
+                    let margin_content = state.margins.render_line(
+                        current_source_line_num,
+                        crate::margin::MarginPosition::Left,
+                        estimated_lines,
+                    );
+                    let (rendered_text, style_opt) =
+                        margin_content.render(state.margins.left_config.width);
 
-                // Use custom style if provided, otherwise use default theme color
-                let margin_style =
-                    style_opt.unwrap_or_else(|| Style::default().fg(theme.line_number_fg));
+                    // Use custom style if provided, otherwise use default theme color
+                    let margin_style =
+                        style_opt.unwrap_or_else(|| Style::default().fg(theme.line_number_fg));
 
-                push_span_with_map(
-                    &mut line_spans,
-                    &mut line_view_map,
-                    rendered_text,
-                    margin_style,
-                    None,
-                );
+                    push_span_with_map(
+                        &mut line_spans,
+                        &mut line_view_map,
+                        rendered_text,
+                        margin_style,
+                        None,
+                    );
+                }
 
                 // Render separator
                 if state.margins.left_config.show_separator {
@@ -1186,8 +1210,8 @@ impl SplitRenderer {
                     // Also check for block/rectangular selections
                     let is_in_block_selection = block_selections.iter().any(
                         |(start_line, start_col, end_line, end_col)| {
-                            current_line_num >= *start_line
-                                && current_line_num <= *end_line
+                            current_source_line_num >= *start_line
+                                && current_source_line_num <= *end_line
                                 && char_index >= *start_col
                                 && char_index <= *end_col
                         },
@@ -1547,6 +1571,7 @@ impl SplitRenderer {
         buffer_ends_with_newline: bool,
         last_line_end: Option<LastLineEnd>,
         lines_rendered: usize,
+        gutter_width: usize,
     ) -> Option<(u16, u16)> {
         if current_cursor.is_some() || primary_cursor_position != buffer_len {
             return current_cursor;
@@ -1555,9 +1580,10 @@ impl SplitRenderer {
         if buffer_ends_with_newline {
             if let Some(end) = last_line_end {
                 // Cursor should appear on the implicit empty line after the newline
-                return Some((0, end.pos.1.saturating_add(1)));
+                // Include gutter width in x coordinate
+                return Some((gutter_width as u16, end.pos.1.saturating_add(1)));
             }
-            return Some((0, lines_rendered as u16));
+            return Some((gutter_width as u16, lines_rendered as u16));
         }
 
         last_line_end.map(|end| end.pos)
@@ -1711,6 +1737,7 @@ impl SplitRenderer {
             buffer_ends_with_newline,
             render_output.last_line_end,
             render_output.content_lines_rendered,
+            gutter_width,
         );
 
         if is_active && state.show_cursors && !hide_cursor {
@@ -1934,6 +1961,7 @@ mod tests {
             buffer_newline,
             output.last_line_end,
             output.content_lines_rendered,
+            0, // gutter_width (gutters disabled in tests)
         );
         assert_eq!(cursor, Some((0, 1)));
     }
@@ -1948,6 +1976,7 @@ mod tests {
             buffer_newline,
             output.last_line_end,
             output.content_lines_rendered,
+            0, // gutter_width (gutters disabled in tests)
         );
         assert_eq!(cursor, Some((3, 0)));
     }
@@ -2027,6 +2056,7 @@ mod tests {
             buffer_newline,
             output.last_line_end,
             output.content_lines_rendered,
+            0, // gutter_width (gutters disabled in tests)
         );
 
         // Debug dump if we find unexpected results
