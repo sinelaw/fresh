@@ -283,6 +283,21 @@
       "when": "normal"
     },
     {
+      "comment": "Normal context - Scrolling",
+      "key": "Up",
+      "modifiers": ["ctrl"],
+      "action": "scroll_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["ctrl"],
+      "action": "scroll_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Normal context - Cancel/Escape",
       "key": "Escape",
       "modifiers": [],
