@@ -620,8 +620,8 @@ function processBuffer(bufferId: number, splitId?: number): void {
   applyMarkdownStyling(bufferId, tokens);
   editor.debug(`processBuffer: applied styling overlays`);
 
-  // Get viewport info
-  const viewport = editor.getViewportInfo(bufferId);
+  // Get viewport info (no buffer_id parameter - it's for the active buffer)
+  const viewport = editor.getViewport();
   if (!viewport) {
     editor.debug(`processBuffer: no viewport, processing whole buffer`);
     // No viewport, process whole buffer
