@@ -317,17 +317,58 @@ impl MenuRenderer {
 
         let dropdown_height = menu.items.len() + 2; // +2 for borders
 
+        // Calculate the desired position
+        let desired_x = menu_bar_area.x.saturating_add(x_offset as u16);
+        let desired_y = menu_bar_area.y.saturating_add(1);
+        let desired_width = max_width as u16;
+        let desired_height = dropdown_height as u16;
+
+        // Get the terminal size from the frame area (assuming frame covers full terminal)
+        // We need to ensure dropdown fits within the visible area
+        let terminal_width = frame.area().width;
+        let terminal_height = frame.area().height;
+
+        // Bounds check: ensure dropdown doesn't overflow terminal
+        // If dropdown would go off the right edge, move it left
+        let x = if desired_x.saturating_add(desired_width) > terminal_width {
+            terminal_width.saturating_sub(desired_width)
+        } else {
+            desired_x
+        };
+
+        // If dropdown would go off the bottom, cap the height
+        let available_height = terminal_height.saturating_sub(desired_y);
+        let height = desired_height.min(available_height);
+
+        // Cap width to available space
+        let available_width = terminal_width.saturating_sub(x);
+        let width = desired_width.min(available_width);
+
+        // Only render if we have at least minimal space
+        if width < 10 || height < 3 {
+            // Terminal is too small to render dropdown meaningfully
+            return;
+        }
+
         // Position dropdown below the menu bar
         let dropdown_area = Rect {
-            x: menu_bar_area.x + x_offset as u16,
-            y: menu_bar_area.y + 1,
-            width: max_width as u16,
-            height: dropdown_height as u16,
+            x,
+            y: desired_y,
+            width,
+            height,
         };
 
         // Build dropdown content
         let mut lines = Vec::new();
-        for (idx, item) in menu.items.iter().enumerate() {
+
+        // Calculate how many items we can show (accounting for borders)
+        let max_items = (height.saturating_sub(2)) as usize;
+        let items_to_show = menu.items.len().min(max_items);
+
+        // Use the actual width for formatting (accounting for borders)
+        let content_width = (width as usize).saturating_sub(2);
+
+        for (idx, item) in menu.items.iter().enumerate().take(items_to_show) {
             let is_highlighted = highlighted_item == Some(idx);
             let is_hovered = matches!(
                 hover_target,
@@ -367,11 +408,12 @@ impl MenuRenderer {
                         ""
                     };
 
-                    // Calculate spacing for alignment
+                    // Calculate spacing for alignment using actual content width
                     let checkbox_width = if checkbox.is_some() { 2 } else { 0 };
-                    let label_width = max_width.saturating_sub(keybinding.len() + checkbox_width + 4);
+                    let label_width = content_width.saturating_sub(keybinding.len() + checkbox_width + 2);
                     let text = if keybinding.is_empty() {
-                        format!(" {}{:<width$}", checkbox_icon, label, width = max_width - checkbox_width - 2)
+                        let padding = content_width.saturating_sub(checkbox_width);
+                        format!(" {}{:<width$}", checkbox_icon, label, width = padding)
                     } else {
                         format!(" {}{:<label_width$} {}", checkbox_icon, label, keybinding)
                     };
@@ -384,7 +426,7 @@ impl MenuRenderer {
                     Line::from(vec![Span::styled(text, final_style)])
                 }
                 MenuItem::Separator { .. } => {
-                    let separator = "─".repeat(max_width - 2);
+                    let separator = "─".repeat(content_width);
                     Line::from(vec![Span::styled(
                         format!(" {separator}"),
                         Style::default()
@@ -407,8 +449,9 @@ impl MenuRenderer {
                             .bg(theme.menu_dropdown_bg)
                     };
 
+                    let arrow_padding = content_width.saturating_sub(2);
                     Line::from(vec![Span::styled(
-                        format!(" {:<width$} ▶", label, width = max_width - 4),
+                        format!(" {:<width$} ▶", label, width = arrow_padding),
                         style,
                     )])
                 }
