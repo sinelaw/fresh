@@ -1670,6 +1670,9 @@ impl KeybindingResolver {
         // Selection
         // Note: Emacs uses C-Space to set mark, which we handle separately
 
+        // C-g: keyboard-quit (universal cancel in Emacs)
+        bindings.insert((KeyCode::Char('g'), KeyModifiers::CONTROL), Action::RemoveSecondaryCursors); // C-g
+
         // Undo/Redo
         bindings.insert((KeyCode::Char('_'), KeyModifiers::CONTROL | KeyModifiers::SHIFT), Action::Undo); // C-_
         bindings.insert((KeyCode::Char('z'), KeyModifiers::CONTROL), Action::Undo);      // C-/ alternative
@@ -1695,6 +1698,30 @@ impl KeybindingResolver {
         bindings.insert((KeyCode::Delete, KeyModifiers::empty()), Action::DeleteForward);
 
         all_bindings.insert(KeyContext::Normal, bindings);
+
+        // Prompt context bindings (minibuffer)
+        let mut prompt_bindings = HashMap::new();
+        // C-g: cancel prompt (like Escape)
+        prompt_bindings.insert((KeyCode::Char('g'), KeyModifiers::CONTROL), Action::PromptCancel);
+        all_bindings.insert(KeyContext::Prompt, prompt_bindings);
+
+        // Popup context bindings (completion, hover, etc.)
+        let mut popup_bindings = HashMap::new();
+        // C-g: cancel popup (like Escape)
+        popup_bindings.insert((KeyCode::Char('g'), KeyModifiers::CONTROL), Action::PopupCancel);
+        all_bindings.insert(KeyContext::Popup, popup_bindings);
+
+        // File explorer context bindings
+        let mut explorer_bindings = HashMap::new();
+        // C-g: return focus to editor (like Escape)
+        explorer_bindings.insert((KeyCode::Char('g'), KeyModifiers::CONTROL), Action::FocusEditor);
+        all_bindings.insert(KeyContext::FileExplorer, explorer_bindings);
+
+        // Menu context bindings
+        let mut menu_bindings = HashMap::new();
+        // C-g: close menu (like Escape)
+        menu_bindings.insert((KeyCode::Char('g'), KeyModifiers::CONTROL), Action::MenuClose);
+        all_bindings.insert(KeyContext::Menu, menu_bindings);
 
         // Create chord bindings (multi-key sequences)
         let mut chord_bindings = HashMap::new();
