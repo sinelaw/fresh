@@ -253,6 +253,7 @@ impl Editor {
         let lsp_status = self.lsp_status.clone();
         let theme = self.theme.clone();
         let keybindings_cloned = self.keybindings.clone(); // Clone the keybindings
+        let chord_state_cloned = self.chord_state.clone(); // Clone the chord state
 
         // Always render status bar
         StatusBarRenderer::render_status_bar(
@@ -265,6 +266,7 @@ impl Editor {
             &theme,
             &display_name,
             &keybindings_cloned, // Pass the cloned keybindings
+            &chord_state_cloned, // Pass the cloned chord state
         );
 
         // Render prompt line if active

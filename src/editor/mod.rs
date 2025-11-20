@@ -267,6 +267,10 @@ pub struct Editor {
 
     /// Flag set by plugin commands that need a render (e.g., RefreshLines)
     plugin_render_requested: bool,
+
+    /// Pending chord sequence for multi-key bindings (e.g., C-x C-s in Emacs)
+    /// Stores the keys pressed so far in a chord sequence
+    chord_state: Vec<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
 }
 
 impl Editor {
@@ -529,6 +533,7 @@ impl Editor {
             last_macro_register: None,
             pending_plugin_actions: Vec::new(),
             plugin_render_requested: false,
+            chord_state: Vec::new(),
         })
     }
 

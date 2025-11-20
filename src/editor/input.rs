@@ -91,8 +91,33 @@ impl Editor {
             }
         }
 
-        // Resolve the key event to an action
+        // Check for chord sequence matches first
         let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+        let chord_result = self.keybindings.resolve_chord(&self.chord_state, &key_event, context);
+
+        match chord_result {
+            crate::keybindings::ChordResolution::Complete(action) => {
+                // Complete chord match - execute action and clear chord state
+                tracing::debug!("Complete chord match -> Action: {:?}", action);
+                self.chord_state.clear();
+                return self.handle_action(action);
+            }
+            crate::keybindings::ChordResolution::Partial => {
+                // Partial match - add to chord state and wait for more keys
+                tracing::debug!("Partial chord match - waiting for next key");
+                self.chord_state.push((code, modifiers));
+                return Ok(());
+            }
+            crate::keybindings::ChordResolution::NoMatch => {
+                // No chord match - clear state and try regular resolution
+                if !self.chord_state.is_empty() {
+                    tracing::debug!("Chord sequence abandoned, clearing state");
+                    self.chord_state.clear();
+                }
+            }
+        }
+
+        // Regular single-key resolution
         let action = self.keybindings.resolve(&key_event, context);
 
         tracing::debug!("Context: {:?} -> Action: {:?}", context, action);

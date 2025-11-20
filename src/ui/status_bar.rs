@@ -22,6 +22,7 @@ impl StatusBarRenderer {
     /// * `lsp_status` - LSP status indicator
     /// * `theme` - The active theme for colors
     /// * `display_name` - The display name for the file (project-relative path)
+    /// * `chord_state` - Current chord sequence state (for multi-key bindings)
     pub fn render_status_bar(
         frame: &mut Frame,
         area: Rect,
@@ -32,6 +33,7 @@ impl StatusBarRenderer {
         theme: &crate::theme::Theme,
         display_name: &str,
         keybindings: &crate::keybindings::KeybindingResolver,
+        chord_state: &[(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
     ) {
         Self::render_status(
             frame,
@@ -43,6 +45,7 @@ impl StatusBarRenderer {
             theme,
             display_name,
             keybindings,
+            chord_state,
         );
     }
 
@@ -112,11 +115,24 @@ impl StatusBarRenderer {
         theme: &crate::theme::Theme,
         display_name: &str,
         keybindings: &crate::keybindings::KeybindingResolver,
+        chord_state: &[(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
     ) {
         // Use the pre-computed display name from buffer metadata
         let filename = display_name;
 
         let modified = if state.buffer.is_modified() { " [+]" } else { "" };
+
+        // Format chord state if present
+        let chord_display = if !chord_state.is_empty() {
+            let chord_str = chord_state
+                .iter()
+                .map(|(code, modifiers)| crate::keybindings::format_keybinding(code, modifiers))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!(" [{}]", chord_str)
+        } else {
+            String::new()
+        };
 
         // View mode indicator
         let mode_label = match state.view_mode {
@@ -210,7 +226,7 @@ impl StatusBarRenderer {
         let base_status = format!(
             "{filename}{modified} | Ln {line}, Col {col}{diagnostics_summary}{cursor_count_indicator}{lsp_indicator}"
         );
-        let left_status = format!("{base_status}{message_suffix}");
+        let left_status = format!("{base_status}{chord_display}{message_suffix}");
 
         // Build Command Palette indicator for right side
         // Always show Command Palette indicator on the right side

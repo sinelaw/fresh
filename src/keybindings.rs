@@ -601,26 +601,47 @@ impl Action {
     }
 }
 
+/// Result of chord resolution
+#[derive(Debug, Clone, PartialEq)]
+pub enum ChordResolution {
+    /// Complete match: execute the action
+    Complete(Action),
+    /// Partial match: continue waiting for more keys in the sequence
+    Partial,
+    /// No match: the sequence doesn't match any binding
+    NoMatch,
+}
+
 /// Resolves key events to actions based on configuration
 #[derive(Clone)]
 pub struct KeybindingResolver {
-    /// Map from context to key bindings
+    /// Map from context to key bindings (single key bindings)
     /// Context-specific bindings have priority over normal bindings
     bindings: HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>>,
 
-    /// Default bindings for each context
+    /// Default bindings for each context (single key bindings)
     default_bindings: HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>>,
+
+    /// Chord bindings (multi-key sequences)
+    /// Maps context -> sequence -> action
+    chord_bindings: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
+
+    /// Default chord bindings for each context
+    default_chord_bindings: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
 }
 
 impl KeybindingResolver {
     /// Create a new resolver from configuration
     pub fn new(config: &Config) -> Self {
         // Determine which bindings to use based on active keybinding map
-        let default_bindings = Self::get_bindings_for_map(&config.active_keybinding_map);
+        let (default_bindings, default_chord_bindings) =
+            Self::get_bindings_for_map(&config.active_keybinding_map);
 
         let mut resolver = Self {
             bindings: HashMap::new(),
             default_bindings,
+            chord_bindings: HashMap::new(),
+            default_chord_bindings,
         };
 
         // First, load bindings from the active keybinding map if it's user-defined
@@ -637,16 +658,38 @@ impl KeybindingResolver {
     /// Load bindings from a vector of keybinding definitions
     fn load_bindings_from_vec(&mut self, bindings: &[crate::config::Keybinding]) {
         for binding in bindings {
-            if let Some(key_code) = Self::parse_key(&binding.key) {
-                let modifiers = Self::parse_modifiers(&binding.modifiers);
-                if let Some(action) = Action::from_str(&binding.action, &binding.args) {
-                    // Determine context from "when" clause
-                    let context = if let Some(ref when) = binding.when {
-                        KeyContext::from_when_clause(when).unwrap_or(KeyContext::Normal)
-                    } else {
-                        KeyContext::Normal
-                    };
+            // Determine context from "when" clause
+            let context = if let Some(ref when) = binding.when {
+                KeyContext::from_when_clause(when).unwrap_or(KeyContext::Normal)
+            } else {
+                KeyContext::Normal
+            };
 
+            if let Some(action) = Action::from_str(&binding.action, &binding.args) {
+                // Check if this is a chord binding (has keys field)
+                if !binding.keys.is_empty() {
+                    // Parse the chord sequence
+                    let mut sequence = Vec::new();
+                    for key_press in &binding.keys {
+                        if let Some(key_code) = Self::parse_key(&key_press.key) {
+                            let modifiers = Self::parse_modifiers(&key_press.modifiers);
+                            sequence.push((key_code, modifiers));
+                        } else {
+                            // Invalid key in sequence, skip this binding
+                            break;
+                        }
+                    }
+
+                    // Only add if all keys in sequence were valid
+                    if sequence.len() == binding.keys.len() && !sequence.is_empty() {
+                        self.chord_bindings
+                            .entry(context)
+                            .or_insert_with(HashMap::new)
+                            .insert(sequence, action);
+                    }
+                } else if let Some(key_code) = Self::parse_key(&binding.key) {
+                    // Single key binding (legacy format)
+                    let modifiers = Self::parse_modifiers(&binding.modifiers);
                     self.bindings
                         .entry(context)
                         .or_insert_with(HashMap::new)
@@ -657,15 +700,21 @@ impl KeybindingResolver {
     }
 
     /// Get the default bindings for a named map (built-in or empty for user maps)
-    fn get_bindings_for_map(map_name: &str) -> HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>> {
+    /// Returns (single_key_bindings, chord_bindings)
+    fn get_bindings_for_map(
+        map_name: &str,
+    ) -> (
+        HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>>,
+        HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
+    ) {
         match map_name {
-            "default" => Self::create_default_bindings(),
-            "emacs" => Self::create_emacs_bindings(),
-            "vscode" => Self::create_vscode_bindings(),
+            "default" => (Self::create_default_bindings(), HashMap::new()),
+            "emacs" => Self::create_emacs_bindings_with_chords(),
+            "vscode" => (Self::create_vscode_bindings(), HashMap::new()),
             _ => {
                 // For user-defined maps, start with no default bindings
                 // (they'll be loaded from the keybinding_maps config)
-                HashMap::new()
+                (HashMap::new(), HashMap::new())
             }
         }
     }
@@ -682,6 +731,70 @@ impl KeybindingResolver {
                 | Action::PromptCancel  // Esc should always cancel
                 | Action::PopupCancel // Esc should always cancel
         )
+    }
+
+    /// Resolve a key event with chord state to check for multi-key sequences
+    /// Returns:
+    /// - Complete(action): The sequence is complete, execute the action
+    /// - Partial: The sequence is partial (prefix of a chord), wait for more keys
+    /// - NoMatch: The sequence doesn't match any chord binding
+    pub fn resolve_chord(
+        &self,
+        chord_state: &[(KeyCode, KeyModifiers)],
+        event: &KeyEvent,
+        context: KeyContext,
+    ) -> ChordResolution {
+        // Build the full sequence: existing chord state + new key
+        let mut full_sequence = chord_state.to_vec();
+        full_sequence.push((event.code, event.modifiers));
+
+        tracing::debug!(
+            "KeybindingResolver.resolve_chord: sequence={:?}, context={:?}",
+            full_sequence,
+            context
+        );
+
+        // Check all chord binding sources in priority order
+        let search_order = vec![
+            (&self.chord_bindings, &KeyContext::Global, "custom global"),
+            (
+                &self.default_chord_bindings,
+                &KeyContext::Global,
+                "default global",
+            ),
+            (&self.chord_bindings, &context, "custom context"),
+            (&self.default_chord_bindings, &context, "default context"),
+        ];
+
+        let mut has_partial_match = false;
+
+        for (binding_map, bind_context, label) in search_order {
+            if let Some(context_chords) = binding_map.get(bind_context) {
+                // Check for exact match
+                if let Some(action) = context_chords.get(&full_sequence) {
+                    tracing::debug!("  -> Complete chord match in {}: {:?}", label, action);
+                    return ChordResolution::Complete(action.clone());
+                }
+
+                // Check for partial match (our sequence is a prefix of any binding)
+                for (chord_seq, _) in context_chords.iter() {
+                    if chord_seq.len() > full_sequence.len()
+                        && chord_seq[..full_sequence.len()] == full_sequence[..]
+                    {
+                        tracing::debug!("  -> Partial chord match in {}", label);
+                        has_partial_match = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if has_partial_match {
+            ChordResolution::Partial
+        } else {
+            tracing::debug!("  -> No chord match");
+            ChordResolution::NoMatch
+        }
     }
 
     /// Resolve a key event to an action in the given context
@@ -1496,8 +1609,12 @@ impl KeybindingResolver {
         all_bindings
     }
 
-    /// Create Emacs-style keybindings
-    fn create_emacs_bindings() -> HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>> {
+    /// Create Emacs-style keybindings with chord support
+    /// Returns (single_key_bindings, chord_bindings)
+    fn create_emacs_bindings_with_chords() -> (
+        HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>>,
+        HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
+    ) {
         let mut all_bindings = HashMap::new();
 
         // Global context bindings (work in all contexts)
@@ -1552,12 +1669,6 @@ impl KeybindingResolver {
 
         // Selection
         // Note: Emacs uses C-Space to set mark, which we handle separately
-        bindings.insert((KeyCode::Char('a'), KeyModifiers::CONTROL | KeyModifiers::ALT), Action::SelectAll); // C-x h equivalent
-
-        // File operations (using C-x prefix would need chord support)
-        bindings.insert((KeyCode::Char('s'), KeyModifiers::CONTROL), Action::Save);      // C-x C-s (simplified)
-        bindings.insert((KeyCode::Char('o'), KeyModifiers::CONTROL), Action::Open);      // C-x C-f (simplified)
-        bindings.insert((KeyCode::Char('c'), KeyModifiers::CONTROL | KeyModifiers::ALT), Action::Quit); // C-x C-c (simplified)
 
         // Undo/Redo
         bindings.insert((KeyCode::Char('_'), KeyModifiers::CONTROL | KeyModifiers::SHIFT), Action::Undo); // C-_
@@ -1585,10 +1696,123 @@ impl KeybindingResolver {
 
         all_bindings.insert(KeyContext::Normal, bindings);
 
-        // Reuse other contexts from default bindings for now
-        // TODO: Add Emacs-specific bindings for Prompt, Popup, FileExplorer, Menu contexts
+        // Create chord bindings (multi-key sequences)
+        let mut chord_bindings = HashMap::new();
+        let mut normal_chords = HashMap::new();
 
-        all_bindings
+        // C-x prefix commands (file operations and window management)
+        // C-x C-s: Save file
+        normal_chords.insert(
+            vec![
+                (KeyCode::Char('x'), KeyModifiers::CONTROL),
+                (KeyCode::Char('s'), KeyModifiers::CONTROL),
+            ],
+            Action::Save,
+        );
+
+        // C-x C-f: Open file (find-file in Emacs)
+        normal_chords.insert(
+            vec![
+                (KeyCode::Char('x'), KeyModifiers::CONTROL),
+                (KeyCode::Char('f'), KeyModifiers::CONTROL),
+            ],
+            Action::Open,
+        );
+
+        // C-x C-w: Save as (write-file in Emacs)
+        normal_chords.insert(
+            vec![
+                (KeyCode::Char('x'), KeyModifiers::CONTROL),
+                (KeyCode::Char('w'), KeyModifiers::CONTROL),
+            ],
+            Action::SaveAs,
+        );
+
+        // C-x C-c: Quit
+        normal_chords.insert(
+            vec![
+                (KeyCode::Char('x'), KeyModifiers::CONTROL),
+                (KeyCode::Char('c'), KeyModifiers::CONTROL),
+            ],
+            Action::Quit,
+        );
+
+        // C-x k: Close buffer (kill-buffer in Emacs)
+        normal_chords.insert(
+            vec![
+                (KeyCode::Char('x'), KeyModifiers::CONTROL),
+                (KeyCode::Char('k'), KeyModifiers::empty()),
+            ],
+            Action::Close,
+        );
+
+        // C-x b: Switch buffer (via command palette for now)
+        normal_chords.insert(
+            vec![
+                (KeyCode::Char('x'), KeyModifiers::CONTROL),
+                (KeyCode::Char('b'), KeyModifiers::empty()),
+            ],
+            Action::CommandPalette,
+        );
+
+        // C-x h: Select all (mark-whole-buffer in Emacs)
+        normal_chords.insert(
+            vec![
+                (KeyCode::Char('x'), KeyModifiers::CONTROL),
+                (KeyCode::Char('h'), KeyModifiers::empty()),
+            ],
+            Action::SelectAll,
+        );
+
+        // C-x 2: Split horizontal
+        normal_chords.insert(
+            vec![
+                (KeyCode::Char('x'), KeyModifiers::CONTROL),
+                (KeyCode::Char('2'), KeyModifiers::empty()),
+            ],
+            Action::SplitHorizontal,
+        );
+
+        // C-x 3: Split vertical
+        normal_chords.insert(
+            vec![
+                (KeyCode::Char('x'), KeyModifiers::CONTROL),
+                (KeyCode::Char('3'), KeyModifiers::empty()),
+            ],
+            Action::SplitVertical,
+        );
+
+        // C-x 0: Close split
+        normal_chords.insert(
+            vec![
+                (KeyCode::Char('x'), KeyModifiers::CONTROL),
+                (KeyCode::Char('0'), KeyModifiers::empty()),
+            ],
+            Action::CloseSplit,
+        );
+
+        // C-x o: Other window (next split)
+        normal_chords.insert(
+            vec![
+                (KeyCode::Char('x'), KeyModifiers::CONTROL),
+                (KeyCode::Char('o'), KeyModifiers::empty()),
+            ],
+            Action::NextSplit,
+        );
+
+        // C-x u: Undo (alternative to C-/)
+        normal_chords.insert(
+            vec![
+                (KeyCode::Char('x'), KeyModifiers::CONTROL),
+                (KeyCode::Char('u'), KeyModifiers::empty()),
+            ],
+            Action::Undo,
+        );
+
+        chord_bindings.insert(KeyContext::Normal, normal_chords);
+
+        // Return both single-key and chord bindings
+        (all_bindings, chord_bindings)
     }
 
     /// Create VSCode-style keybindings

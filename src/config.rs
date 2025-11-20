@@ -191,15 +191,31 @@ impl Default for FileExplorerConfig {
     }
 }
 
-/// Keybinding definition
+/// A single key in a sequence
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Keybinding {
+pub struct KeyPress {
     /// Key name (e.g., "a", "Enter", "F1")
     pub key: String,
-
     /// Modifiers (e.g., ["ctrl"], ["ctrl", "shift"])
     #[serde(default)]
     pub modifiers: Vec<String>,
+}
+
+/// Keybinding definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Keybinding {
+    /// Key name (e.g., "a", "Enter", "F1") - for single-key bindings
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub key: String,
+
+    /// Modifiers (e.g., ["ctrl"], ["ctrl", "shift"]) - for single-key bindings
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modifiers: Vec<String>,
+
+    /// Key sequence for chord bindings (e.g., [{"key": "x", "modifiers": ["ctrl"]}, {"key": "s", "modifiers": ["ctrl"]}])
+    /// If present, takes precedence over key + modifiers
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<KeyPress>,
 
     /// Action to perform (e.g., "insert_char", "move_left")
     pub action: String,
@@ -322,6 +338,7 @@ impl Config {
                 modifiers: vec![],
                 action: "move_left".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -329,6 +346,7 @@ impl Config {
                 modifiers: vec![],
                 action: "move_right".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -336,6 +354,7 @@ impl Config {
                 modifiers: vec![],
                 action: "move_up".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -343,6 +362,7 @@ impl Config {
                 modifiers: vec![],
                 action: "move_down".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             // Editing
@@ -351,6 +371,7 @@ impl Config {
                 modifiers: vec![],
                 action: "delete_backward".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -358,6 +379,7 @@ impl Config {
                 modifiers: vec![],
                 action: "delete_forward".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -365,6 +387,7 @@ impl Config {
                 modifiers: vec![],
                 action: "insert_newline".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             // File operations
@@ -373,6 +396,7 @@ impl Config {
                 modifiers: vec!["ctrl".to_string()],
                 action: "save".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -380,6 +404,7 @@ impl Config {
                 modifiers: vec!["ctrl".to_string()],
                 action: "quit".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             // Undo/redo
@@ -388,6 +413,7 @@ impl Config {
                 modifiers: vec!["ctrl".to_string()],
                 action: "undo".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -395,6 +421,7 @@ impl Config {
                 modifiers: vec!["ctrl".to_string()],
                 action: "redo".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             // Multi-cursor
@@ -403,6 +430,7 @@ impl Config {
                 modifiers: vec!["ctrl".to_string()],
                 action: "add_cursor_next_match".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -410,6 +438,7 @@ impl Config {
                 modifiers: vec!["ctrl".to_string(), "alt".to_string()],
                 action: "add_cursor_above".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -417,6 +446,7 @@ impl Config {
                 modifiers: vec!["ctrl".to_string(), "alt".to_string()],
                 action: "add_cursor_below".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             // Split view operations
@@ -426,6 +456,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "split_horizontal".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -433,6 +464,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "split_vertical".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -440,6 +472,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "close_split".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -447,6 +480,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "next_split".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -454,6 +488,7 @@ impl Config {
                 modifiers: vec!["alt".to_string(), "shift".to_string()],
                 action: "prev_split".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -461,6 +496,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "increase_split_size".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -468,6 +504,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "decrease_split_size".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             // LSP features
@@ -476,6 +513,7 @@ impl Config {
                 modifiers: vec!["ctrl".to_string()],
                 action: "lsp_completion".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -483,6 +521,7 @@ impl Config {
                 modifiers: vec![],
                 action: "lsp_goto_definition".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -490,6 +529,7 @@ impl Config {
                 modifiers: vec!["ctrl".to_string(), "shift".to_string()],
                 action: "lsp_hover".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             // LSP signature help (also auto-triggered on '(' and ',')
@@ -498,6 +538,7 @@ impl Config {
                 modifiers: vec!["ctrl".to_string(), "shift".to_string()],
                 action: "lsp_signature_help".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             // LSP code actions (quick fixes, refactorings)
@@ -507,6 +548,7 @@ impl Config {
                 modifiers: vec!["ctrl".to_string(), "shift".to_string()],
                 action: "lsp_code_actions".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             // File Explorer - Toggle and focus
@@ -515,6 +557,7 @@ impl Config {
                 modifiers: vec!["ctrl".to_string()],
                 action: "toggle_file_explorer".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -522,6 +565,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "focus_file_explorer".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -529,6 +573,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "focus_editor".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             // File Explorer - Navigation
@@ -539,6 +584,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "file_explorer_down".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -546,6 +592,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "file_explorer_up".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             // File Explorer - Operations
@@ -554,6 +601,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "file_explorer_open".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -561,6 +609,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "file_explorer_expand".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -568,6 +617,7 @@ impl Config {
                 modifiers: vec!["alt".to_string(), "shift".to_string()],
                 action: "file_explorer_collapse".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -575,6 +625,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "file_explorer_refresh".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             // File Explorer - File Operations
@@ -583,6 +634,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "file_explorer_new_file".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -590,6 +642,7 @@ impl Config {
                 modifiers: vec!["alt".to_string(), "shift".to_string()],
                 action: "file_explorer_new_directory".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -597,6 +650,7 @@ impl Config {
                 modifiers: vec!["alt".to_string(), "shift".to_string()],
                 action: "file_explorer_delete".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -604,6 +658,7 @@ impl Config {
                 modifiers: vec![],
                 action: "file_explorer_rename".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             // File Explorer - Toggles
@@ -612,6 +667,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "file_explorer_toggle_hidden".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
             Keybinding {
@@ -619,6 +675,7 @@ impl Config {
                 modifiers: vec!["alt".to_string()],
                 action: "file_explorer_toggle_gitignored".to_string(),
                 args: HashMap::new(),
+                keys: vec![],
                 when: None,
             },
         ]
@@ -1028,7 +1085,7 @@ impl Config {
                                     map.insert("map".to_string(), serde_json::json!("default"));
                                     map
                                 },
-                                when: None,
+                when: None,
                             },
                             MenuItem::Action {
                                 label: "Emacs".to_string(),
@@ -1038,7 +1095,7 @@ impl Config {
                                     map.insert("map".to_string(), serde_json::json!("emacs"));
                                     map
                                 },
-                                when: None,
+                when: None,
                             },
                             MenuItem::Action {
                                 label: "VSCode".to_string(),
@@ -1048,7 +1105,7 @@ impl Config {
                                     map.insert("map".to_string(), serde_json::json!("vscode"));
                                     map
                                 },
-                                when: None,
+                when: None,
                             },
                         ],
                     },
