@@ -569,7 +569,12 @@ function buildViewTransform(
     column_guides: null,
   };
 
-  editor.submitViewTransform(
+  editor.debug(`buildViewTransform: submitting ${viewTokens.length} tokens, compose_width=${config.composeWidth}`);
+  if (viewTokens.length > 0 && viewTokens.length < 10) {
+    editor.debug(`buildViewTransform: first tokens: ${JSON.stringify(viewTokens.slice(0, 5))}`);
+  }
+
+  const success = editor.submitViewTransform(
     bufferId,
     splitId,
     viewportStart,
@@ -577,6 +582,8 @@ function buildViewTransform(
     viewTokens,
     layoutHints
   );
+
+  editor.debug(`buildViewTransform: submit result = ${success}`);
 }
 
 // Process a buffer in compose mode
@@ -586,26 +593,36 @@ function processBuffer(bufferId: number, splitId?: number): void {
 
   // Get buffer info
   const info = editor.getBufferInfo(bufferId);
-  if (!info) return;
-
-  // Only process markdown files
-  if (!info.path.endsWith('.md') && !info.path.endsWith('.markdown')) {
+  if (!info) {
+    editor.debug(`processBuffer: no buffer info for ${bufferId}`);
     return;
   }
 
+  // Only process markdown files
+  if (!info.path.endsWith('.md') && !info.path.endsWith('.markdown')) {
+    editor.debug(`processBuffer: not a markdown file: ${info.path}`);
+    return;
+  }
+
+  editor.debug(`processBuffer: processing ${info.path}`);
+
   // Get buffer content
   const text = editor.getBufferText(bufferId);
+  editor.debug(`processBuffer: buffer length = ${text.length} bytes`);
 
   // Parse markdown
   const parser = new MarkdownParser(text);
   const tokens = parser.parse();
+  editor.debug(`processBuffer: parsed ${tokens.length} markdown tokens`);
 
   // Apply styling with overlays
   applyMarkdownStyling(bufferId, tokens);
+  editor.debug(`processBuffer: applied styling overlays`);
 
   // Get viewport info
   const viewport = editor.getViewportInfo(bufferId);
   if (!viewport) {
+    editor.debug(`processBuffer: no viewport, processing whole buffer`);
     // No viewport, process whole buffer
     const viewportStart = 0;
     const viewportEnd = text.length;
@@ -617,12 +634,43 @@ function processBuffer(bufferId: number, splitId?: number): void {
   // We need to process a bit more than the visible area to handle wrapping
   const viewportStart = Math.max(0, viewport.top_byte - 500);
   const viewportEnd = Math.min(text.length, viewport.top_byte + (viewport.height * 200));
+  editor.debug(`processBuffer: viewport ${viewportStart}-${viewportEnd}, top_byte=${viewport.top_byte}, height=${viewport.height}`);
 
   // Build and submit view transform
   buildViewTransform(bufferId, splitId || null, text, viewportStart, viewportEnd, tokens);
 }
 
-// Toggle compose mode
+// Enable markdown compose for a buffer
+function enableMarkdownCompose(bufferId: number): void {
+  const info = editor.getBufferInfo(bufferId);
+  if (!info) return;
+
+  // Only work with markdown files
+  if (!info.path.endsWith('.md') && !info.path.endsWith('.markdown')) {
+    return;
+  }
+
+  if (!composeBuffers.has(bufferId)) {
+    composeBuffers.add(bufferId);
+    config.enabled = true;
+    processBuffer(bufferId);
+    editor.debug(`Markdown compose enabled for buffer ${bufferId}`);
+  }
+}
+
+// Disable markdown compose for a buffer
+function disableMarkdownCompose(bufferId: number): void {
+  if (composeBuffers.has(bufferId)) {
+    composeBuffers.delete(bufferId);
+    editor.removeOverlaysByPrefix(bufferId, "md:");
+    // Clear view transform to return to normal rendering
+    // (Submit empty transform = identity/source view)
+    editor.refreshLines(bufferId);
+    editor.debug(`Markdown compose disabled for buffer ${bufferId}`);
+  }
+}
+
+// Toggle markdown compose mode for current buffer
 globalThis.markdownToggleCompose = function(): void {
   const bufferId = editor.getActiveBufferId();
   const info = editor.getBufferInfo(bufferId);
@@ -636,23 +684,22 @@ globalThis.markdownToggleCompose = function(): void {
   }
 
   if (composeBuffers.has(bufferId)) {
-    // Disable compose mode
-    composeBuffers.delete(bufferId);
-    editor.removeOverlaysByPrefix(bufferId, "md:");
-    editor.setStatus("Markdown Compose: Disabled");
+    disableMarkdownCompose(bufferId);
+    editor.setStatus("Markdown Compose: OFF");
   } else {
-    // Enable compose mode
-    config.enabled = true;
-    composeBuffers.add(bufferId);
-    processBuffer(bufferId);
-    editor.setStatus("Markdown Compose: Enabled");
+    enableMarkdownCompose(bufferId);
+    // Trigger a re-render to apply the transform
+    editor.refreshLines(bufferId);
+    editor.setStatus("Markdown Compose: ON (soft breaks, styled)");
   }
 };
 
 // Handle render events
 globalThis.onMarkdownRenderStart = function(data: { buffer_id: number }): void {
-  if (!config.enabled) return;
-  processBuffer(data.buffer_id);
+  // Process markdown buffers that have compose mode enabled
+  if (composeBuffers.has(data.buffer_id)) {
+    processBuffer(data.buffer_id);
+  }
 };
 
 // Handle content changes
@@ -675,14 +722,14 @@ editor.on("render_start", "onMarkdownRenderStart");
 editor.on("after-insert", "onMarkdownAfterInsert");
 editor.on("after-delete", "onMarkdownAfterDelete");
 
-// Register commands
+// Register command
 editor.registerCommand(
-  "Markdown: Toggle Compose Mode",
-  "Toggle semi-WYSIWYG Markdown rendering",
+  "Markdown: Toggle Compose",
+  "Toggle beautiful Markdown rendering (soft breaks, syntax highlighting)",
   "markdownToggleCompose",
   "normal"
 );
 
 // Initialization
-editor.setStatus("Markdown Compose plugin loaded");
-editor.debug("Markdown Compose initialized - press :MarkdownToggleCompose to enable");
+editor.debug("Markdown Compose plugin loaded - use 'Markdown: Toggle Compose' command");
+editor.setStatus("Markdown plugin ready");
