@@ -2,6 +2,22 @@
   "inherits": null,
   "bindings": [
     {
+      "comment": "Global bindings (work in all contexts)",
+      "key": "p",
+      "modifiers": ["ctrl"],
+      "action": "command_palette",
+      "args": {},
+      "when": "global"
+    },
+    {
+      "key": "F10",
+      "modifiers": [],
+      "action": "menu_activate",
+      "args": {},
+      "when": "global"
+    },
+    {
+      "comment": "Normal context - Basic movement",
       "key": "Left",
       "modifiers": [],
       "action": "move_left",
@@ -30,6 +46,35 @@
       "when": "normal"
     },
     {
+      "key": "Home",
+      "modifiers": [],
+      "action": "move_line_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "End",
+      "modifiers": [],
+      "action": "move_line_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "PageUp",
+      "modifiers": [],
+      "action": "move_page_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": [],
+      "action": "move_page_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - File operations",
       "key": "s",
       "modifiers": ["ctrl"],
       "action": "save",
@@ -51,6 +96,14 @@
       "when": "normal"
     },
     {
+      "comment": "Normal context - Editing",
+      "key": "z",
+      "modifiers": ["ctrl"],
+      "action": "undo",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "key": "y",
       "modifiers": ["ctrl"],
       "action": "redo",
@@ -58,11 +111,192 @@
       "when": "normal"
     },
     {
+      "key": "Backspace",
+      "modifiers": [],
+      "action": "delete_backward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Delete",
+      "modifiers": [],
+      "action": "delete_forward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Enter",
+      "modifiers": [],
+      "action": "insert_newline",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Tab",
+      "modifiers": [],
+      "action": "insert_tab",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Document navigation",
+      "key": "Home",
+      "modifiers": ["ctrl"],
+      "action": "move_document_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "End",
+      "modifiers": ["ctrl"],
+      "action": "move_document_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Word movement",
+      "key": "Left",
+      "modifiers": ["ctrl"],
+      "action": "move_word_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["ctrl"],
+      "action": "move_word_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Selection",
+      "key": "Left",
+      "modifiers": ["shift"],
+      "action": "select_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["shift"],
+      "action": "select_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Up",
+      "modifiers": ["shift"],
+      "action": "select_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["shift"],
+      "action": "select_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Home",
+      "modifiers": ["shift"],
+      "action": "select_line_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "End",
+      "modifiers": ["shift"],
+      "action": "select_line_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Home",
+      "modifiers": ["ctrl", "shift"],
+      "action": "select_document_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "End",
+      "modifiers": ["ctrl", "shift"],
+      "action": "select_document_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Left",
+      "modifiers": ["ctrl", "shift"],
+      "action": "select_word_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["ctrl", "shift"],
+      "action": "select_word_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "PageUp",
+      "modifiers": ["shift"],
+      "action": "select_page_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": ["shift"],
+      "action": "select_page_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "a",
+      "modifiers": ["ctrl"],
+      "action": "select_all",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Clipboard",
+      "key": "c",
+      "modifiers": ["ctrl"],
+      "action": "copy",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "x",
+      "modifiers": ["ctrl"],
+      "action": "cut",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "v",
+      "modifiers": ["ctrl"],
+      "action": "paste",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Cancel/Escape",
       "key": "Escape",
       "modifiers": [],
       "action": "remove_secondary_cursors",
       "args": {},
       "when": "normal"
+    },
+    {
+      "comment": "Prompt context - Navigation",
+      "key": "Enter",
+      "modifiers": [],
+      "action": "prompt_confirm",
+      "args": {},
+      "when": "prompt"
     },
     {
       "key": "Escape",
@@ -72,11 +306,188 @@
       "when": "prompt"
     },
     {
+      "key": "Backspace",
+      "modifiers": [],
+      "action": "prompt_backspace",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Delete",
+      "modifiers": [],
+      "action": "prompt_delete_word_forward",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Left",
+      "modifiers": [],
+      "action": "prompt_move_left",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Right",
+      "modifiers": [],
+      "action": "prompt_move_right",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Home",
+      "modifiers": [],
+      "action": "prompt_move_start",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "End",
+      "modifiers": [],
+      "action": "prompt_move_end",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Up",
+      "modifiers": [],
+      "action": "prompt_select_prev",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Down",
+      "modifiers": [],
+      "action": "prompt_select_next",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "PageUp",
+      "modifiers": [],
+      "action": "prompt_page_up",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": [],
+      "action": "prompt_page_down",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Tab",
+      "modifiers": [],
+      "action": "prompt_accept_suggestion",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Left",
+      "modifiers": ["ctrl"],
+      "action": "prompt_move_word_left",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["ctrl"],
+      "action": "prompt_move_word_right",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Popup context - Navigation",
+      "key": "Up",
+      "modifiers": [],
+      "action": "popup_select_prev",
+      "args": {},
+      "when": "popup"
+    },
+    {
+      "key": "Down",
+      "modifiers": [],
+      "action": "popup_select_next",
+      "args": {},
+      "when": "popup"
+    },
+    {
+      "key": "PageUp",
+      "modifiers": [],
+      "action": "popup_page_up",
+      "args": {},
+      "when": "popup"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": [],
+      "action": "popup_page_down",
+      "args": {},
+      "when": "popup"
+    },
+    {
+      "key": "Enter",
+      "modifiers": [],
+      "action": "popup_confirm",
+      "args": {},
+      "when": "popup"
+    },
+    {
       "key": "Escape",
       "modifiers": [],
       "action": "popup_cancel",
       "args": {},
       "when": "popup"
+    },
+    {
+      "comment": "File Explorer context",
+      "key": "Up",
+      "modifiers": [],
+      "action": "file_explorer_up",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Down",
+      "modifiers": [],
+      "action": "file_explorer_down",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "PageUp",
+      "modifiers": [],
+      "action": "file_explorer_page_up",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": [],
+      "action": "file_explorer_page_down",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Enter",
+      "modifiers": [],
+      "action": "file_explorer_open",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Right",
+      "modifiers": [],
+      "action": "file_explorer_expand",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Left",
+      "modifiers": [],
+      "action": "file_explorer_collapse",
+      "args": {},
+      "when": "file_explorer"
     },
     {
       "key": "Escape",
@@ -86,25 +497,47 @@
       "when": "file_explorer"
     },
     {
+      "comment": "Menu context",
+      "key": "Left",
+      "modifiers": [],
+      "action": "menu_left",
+      "args": {},
+      "when": "menu"
+    },
+    {
+      "key": "Right",
+      "modifiers": [],
+      "action": "menu_right",
+      "args": {},
+      "when": "menu"
+    },
+    {
+      "key": "Up",
+      "modifiers": [],
+      "action": "menu_up",
+      "args": {},
+      "when": "menu"
+    },
+    {
+      "key": "Down",
+      "modifiers": [],
+      "action": "menu_down",
+      "args": {},
+      "when": "menu"
+    },
+    {
+      "key": "Enter",
+      "modifiers": [],
+      "action": "menu_execute",
+      "args": {},
+      "when": "menu"
+    },
+    {
       "key": "Escape",
       "modifiers": [],
       "action": "menu_close",
       "args": {},
       "when": "menu"
-    },
-    {
-      "key": "p",
-      "modifiers": ["ctrl"],
-      "action": "command_palette",
-      "args": {},
-      "when": "global"
-    },
-    {
-      "key": "F10",
-      "modifiers": [],
-      "action": "menu_activate",
-      "args": {},
-      "when": "global"
     }
   ]
 }
