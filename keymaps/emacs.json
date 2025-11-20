@@ -1,0 +1,251 @@
+{
+  "inherits": null,
+  "bindings": [
+    {
+      "comment": "Global bindings",
+      "key": "p",
+      "modifiers": ["ctrl"],
+      "action": "command_palette",
+      "args": {},
+      "when": "global"
+    },
+    {
+      "key": "F10",
+      "modifiers": [],
+      "action": "menu_activate",
+      "args": {},
+      "when": "global"
+    },
+    {
+      "comment": "Emacs movement - C-f/b/n/p",
+      "key": "f",
+      "modifiers": ["ctrl"],
+      "action": "move_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "b",
+      "modifiers": ["ctrl"],
+      "action": "move_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "n",
+      "modifiers": ["ctrl"],
+      "action": "move_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "p",
+      "modifiers": ["ctrl"],
+      "action": "move_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "a",
+      "modifiers": ["ctrl"],
+      "action": "move_line_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "e",
+      "modifiers": ["ctrl"],
+      "action": "move_line_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Word movement - M-f/b and Ctrl+arrows",
+      "key": "f",
+      "modifiers": ["alt"],
+      "action": "move_word_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "b",
+      "modifiers": ["alt"],
+      "action": "move_word_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Left",
+      "modifiers": ["ctrl"],
+      "action": "move_word_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["ctrl"],
+      "action": "move_word_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Clipboard - C-w (kill), M-w (copy), C-y (yank)",
+      "key": "w",
+      "modifiers": ["ctrl"],
+      "action": "cut",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "w",
+      "modifiers": ["alt"],
+      "action": "copy",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "y",
+      "modifiers": ["ctrl"],
+      "action": "paste",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-g - keyboard quit",
+      "key": "g",
+      "modifiers": ["ctrl"],
+      "action": "remove_secondary_cursors",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "g",
+      "modifiers": ["ctrl"],
+      "action": "prompt_cancel",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "g",
+      "modifiers": ["ctrl"],
+      "action": "popup_cancel",
+      "args": {},
+      "when": "popup"
+    },
+    {
+      "key": "g",
+      "modifiers": ["ctrl"],
+      "action": "focus_editor",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "g",
+      "modifiers": ["ctrl"],
+      "action": "menu_close",
+      "args": {},
+      "when": "menu"
+    },
+    {
+      "comment": "C-x prefix commands (chords)",
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "s", "modifiers": ["ctrl"]}
+      ],
+      "action": "save",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "f", "modifiers": ["ctrl"]}
+      ],
+      "action": "open",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "c", "modifiers": ["ctrl"]}
+      ],
+      "action": "quit",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Arrow keys still work",
+      "key": "Left",
+      "modifiers": [],
+      "action": "move_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": [],
+      "action": "move_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Up",
+      "modifiers": [],
+      "action": "move_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": [],
+      "action": "move_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Shift+arrows for selection",
+      "key": "Left",
+      "modifiers": ["shift"],
+      "action": "select_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["shift"],
+      "action": "select_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Up",
+      "modifiers": ["shift"],
+      "action": "select_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["shift"],
+      "action": "select_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Scrolling",
+      "key": "Up",
+      "modifiers": ["alt"],
+      "action": "scroll_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["alt"],
+      "action": "scroll_down",
+      "args": {},
+      "when": "normal"
+    }
+  ]
+}

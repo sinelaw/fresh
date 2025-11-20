@@ -20,8 +20,9 @@ pub struct Config {
     pub keybindings: Vec<Keybinding>,
 
     /// Named keybinding maps (user can define custom maps here)
+    /// Each map can optionally inherit from another map
     #[serde(default)]
-    pub keybinding_maps: HashMap<String, Vec<Keybinding>>,
+    pub keybinding_maps: HashMap<String, KeymapConfig>,
 
     /// Active keybinding map name (e.g., "default", "emacs", "vscode", or a custom name)
     #[serde(default = "default_keybinding_map_name")]
@@ -229,6 +230,18 @@ pub struct Keybinding {
     pub when: Option<String>,
 }
 
+/// Keymap configuration (for built-in and user-defined keymaps)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeymapConfig {
+    /// Optional parent keymap to inherit from
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inherits: Option<String>,
+
+    /// Keybindings defined in this keymap
+    #[serde(default)]
+    pub bindings: Vec<Keybinding>,
+}
+
 /// Language-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageConfig {
@@ -327,6 +340,62 @@ impl Config {
         std::fs::write(path.as_ref(), contents).map_err(|e| ConfigError::IoError(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// Load a built-in keymap from embedded JSON
+    fn load_builtin_keymap(name: &str) -> Option<KeymapConfig> {
+        let json_content = match name {
+            "default" => include_str!("../keymaps/default.json"),
+            "emacs" => include_str!("../keymaps/emacs.json"),
+            "vscode" => include_str!("../keymaps/vscode.json"),
+            _ => return None,
+        };
+
+        serde_json::from_str(json_content).ok()
+    }
+
+    /// Resolve a keymap with inheritance
+    /// Returns all bindings from the keymap and its parent chain
+    pub fn resolve_keymap(&self, map_name: &str) -> Vec<Keybinding> {
+        let mut visited = std::collections::HashSet::new();
+        self.resolve_keymap_recursive(map_name, &mut visited)
+    }
+
+    /// Recursive helper for resolve_keymap
+    fn resolve_keymap_recursive(
+        &self,
+        map_name: &str,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> Vec<Keybinding> {
+        // Prevent infinite loops
+        if visited.contains(map_name) {
+            eprintln!("Warning: Circular inheritance detected in keymap '{}'", map_name);
+            return Vec::new();
+        }
+        visited.insert(map_name.to_string());
+
+        // Try to load the keymap (user-defined or built-in)
+        let keymap = self
+            .keybinding_maps
+            .get(map_name)
+            .cloned()
+            .or_else(|| Self::load_builtin_keymap(map_name));
+
+        let Some(keymap) = keymap else {
+            return Vec::new();
+        };
+
+        // Start with parent bindings (if any)
+        let mut all_bindings = if let Some(ref parent_name) = keymap.inherits {
+            self.resolve_keymap_recursive(parent_name, visited)
+        } else {
+            Vec::new()
+        };
+
+        // Add this keymap's bindings (they override parent bindings)
+        all_bindings.extend(keymap.bindings);
+
+        all_bindings
     }
 
     /// Create a new config with default keybindings

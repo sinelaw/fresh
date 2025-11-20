@@ -1,0 +1,34 @@
+{
+  "inherits": "default",
+  "bindings": [
+    {
+      "comment": "VSCode-specific overrides",
+      "key": "d",
+      "modifiers": ["ctrl"],
+      "action": "add_cursor_next_match",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "/",
+      "modifiers": ["ctrl"],
+      "action": "toggle_comment",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "k",
+      "modifiers": ["ctrl", "shift"],
+      "action": "delete_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "g",
+      "modifiers": ["ctrl"],
+      "action": "goto_line",
+      "args": {},
+      "when": "normal"
+    }
+  ]
+}

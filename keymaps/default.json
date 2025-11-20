@@ -1,0 +1,110 @@
+{
+  "inherits": null,
+  "bindings": [
+    {
+      "key": "Left",
+      "modifiers": [],
+      "action": "move_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": [],
+      "action": "move_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Up",
+      "modifiers": [],
+      "action": "move_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": [],
+      "action": "move_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "s",
+      "modifiers": ["ctrl"],
+      "action": "save",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "q",
+      "modifiers": ["ctrl"],
+      "action": "quit",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "o",
+      "modifiers": ["ctrl"],
+      "action": "open",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "y",
+      "modifiers": ["ctrl"],
+      "action": "redo",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Escape",
+      "modifiers": [],
+      "action": "remove_secondary_cursors",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Escape",
+      "modifiers": [],
+      "action": "prompt_cancel",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Escape",
+      "modifiers": [],
+      "action": "popup_cancel",
+      "args": {},
+      "when": "popup"
+    },
+    {
+      "key": "Escape",
+      "modifiers": [],
+      "action": "focus_editor",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Escape",
+      "modifiers": [],
+      "action": "menu_close",
+      "args": {},
+      "when": "menu"
+    },
+    {
+      "key": "p",
+      "modifiers": ["ctrl"],
+      "action": "command_palette",
+      "args": {},
+      "when": "global"
+    },
+    {
+      "key": "F10",
+      "modifiers": [],
+      "action": "menu_activate",
+      "args": {},
+      "when": "global"
+    }
+  ]
+}
