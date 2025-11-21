@@ -702,7 +702,7 @@ Use prefixed IDs for easy batch removal (e.g., "spell:line42:word3").
 Multiple overlays can apply to the same range; colors blend.
 
 ```typescript
-addOverlay(buffer_id: number, overlay_id: string, start: number, end: number, r: number, g: number, b: number, underline: boolean): boolean
+addOverlay(buffer_id: number, overlay_id: string, start: number, end: number, r: number, g: number, b: number, underline: boolean, bold: boolean, italic: boolean): boolean
 ```
 
 **Parameters:**
@@ -717,6 +717,8 @@ addOverlay(buffer_id: number, overlay_id: string, start: number, end: number, r:
 | `g` | `number` | Green (0-255) |
 | `b` | `number` | uffer_id - Target buffer ID |
 | `underline` | `boolean` | Add underline decoration |
+| `bold` | `boolean` | Use bold text |
+| `italic` | `boolean` | Use italic text |
 
 #### `removeOverlay`
 

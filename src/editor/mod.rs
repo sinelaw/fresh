@@ -3182,15 +3182,15 @@ impl Editor {
                 range,
                 color,
                 underline,
+                bold,
+                italic,
             } => {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    let face = if underline {
-                        crate::event::OverlayFace::Underline {
-                            color,
-                            style: crate::event::UnderlineStyle::Wavy,
-                        }
-                    } else {
-                        crate::event::OverlayFace::Background { color }
+                    let face = crate::event::OverlayFace::Style {
+                        color,
+                        bold,
+                        italic,
+                        underline,
                     };
                     let event = Event::AddOverlay {
                         overlay_id,

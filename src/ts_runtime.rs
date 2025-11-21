@@ -337,6 +337,8 @@ fn op_fresh_delete_range(state: &mut OpState, buffer_id: u32, start: u32, end: u
 /// @param g - Green (0-255)
 /// @param b - Blue (0-255)
 /// @param underline - Add underline decoration
+/// @param bold - Use bold text
+/// @param italic - Use italic text
 #[op2(fast)]
 fn op_fresh_add_overlay(
     state: &mut OpState,
@@ -348,6 +350,8 @@ fn op_fresh_add_overlay(
     g: u8,
     b: u8,
     underline: bool,
+    bold: bool,
+    italic: bool,
 ) -> bool {
     if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
         let runtime_state = runtime_state.borrow();
@@ -359,6 +363,8 @@ fn op_fresh_add_overlay(
                 range: (start as usize)..(end as usize),
                 color: (r, g, b),
                 underline,
+                bold,
+                italic,
             });
         return result.is_ok();
     }
@@ -2214,8 +2220,8 @@ impl TypeScriptRuntime {
                     },
 
                     // Overlays
-                    addOverlay(bufferId, overlayId, start, end, r, g, b, underline) {
-                        return core.ops.op_fresh_add_overlay(bufferId, overlayId, start, end, r, g, b, underline);
+                    addOverlay(bufferId, overlayId, start, end, r, g, b, underline, bold = false, italic = false) {
+                        return core.ops.op_fresh_add_overlay(bufferId, overlayId, start, end, r, g, b, underline, bold, italic);
                     },
                     removeOverlay(bufferId, overlayId) {
                         return core.ops.op_fresh_remove_overlay(bufferId, overlayId);

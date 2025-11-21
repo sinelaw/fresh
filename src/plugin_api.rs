@@ -175,6 +175,8 @@ pub enum PluginCommand {
         range: Range<usize>,
         color: (u8, u8, u8),
         underline: bool,
+        bold: bool,
+        italic: bool,
     },
 
     /// Remove an overlay from a buffer
@@ -518,6 +520,8 @@ impl PluginApi {
         range: Range<usize>,
         color: (u8, u8, u8),
         underline: bool,
+        bold: bool,
+        italic: bool,
     ) -> Result<(), String> {
         self.send_command(PluginCommand::AddOverlay {
             buffer_id,
@@ -525,6 +529,8 @@ impl PluginApi {
             range,
             color,
             underline,
+            bold,
+            italic,
         })
     }
 

@@ -422,42 +422,42 @@ function applyMarkdownStyling(bufferId: number, tokens: Token[]): void {
         break;
 
       case TokenType.Bold:
-        // Style bold markers (** or __) subdued, content bright
+        // Style bold markers (** or __) subdued, content bold
         const boldMatch = token.text.match(/^(\*\*|__)(.*)(\*\*|__)$/);
         if (boldMatch) {
           const markerLen = boldMatch[1].length;
           // Subdued markers
           editor.addOverlay(bufferId, `md:bold-start:${token.start}`,
             token.start, token.start + markerLen,
-            COLORS.boldMarker[0], COLORS.boldMarker[1], COLORS.boldMarker[2], false);
+            COLORS.boldMarker[0], COLORS.boldMarker[1], COLORS.boldMarker[2], false, false, false);
           editor.addOverlay(bufferId, `md:bold-end:${token.start}`,
             token.end - markerLen, token.end,
-            COLORS.boldMarker[0], COLORS.boldMarker[1], COLORS.boldMarker[2], false);
-          // Bright content
+            COLORS.boldMarker[0], COLORS.boldMarker[1], COLORS.boldMarker[2], false, false, false);
+          // Bold content with bold=true
           editor.addOverlay(bufferId, `md:bold-content:${token.start}`,
             token.start + markerLen, token.end - markerLen,
-            COLORS.bold[0], COLORS.bold[1], COLORS.bold[2], false);
+            COLORS.bold[0], COLORS.bold[1], COLORS.bold[2], false, true, false);
         } else {
           color = COLORS.bold;
         }
         break;
 
       case TokenType.Italic:
-        // Style italic markers (* or _) subdued, content colored
+        // Style italic markers (* or _) subdued, content italic
         const italicMatch = token.text.match(/^(\*|_)(.*)(\*|_)$/);
         if (italicMatch) {
           const markerLen = 1;
           // Subdued markers
           editor.addOverlay(bufferId, `md:italic-start:${token.start}`,
             token.start, token.start + markerLen,
-            COLORS.italicMarker[0], COLORS.italicMarker[1], COLORS.italicMarker[2], false);
+            COLORS.italicMarker[0], COLORS.italicMarker[1], COLORS.italicMarker[2], false, false, false);
           editor.addOverlay(bufferId, `md:italic-end:${token.start}`,
             token.end - markerLen, token.end,
-            COLORS.italicMarker[0], COLORS.italicMarker[1], COLORS.italicMarker[2], false);
-          // Content
+            COLORS.italicMarker[0], COLORS.italicMarker[1], COLORS.italicMarker[2], false, false, false);
+          // Italic content with italic=true
           editor.addOverlay(bufferId, `md:italic-content:${token.start}`,
             token.start + markerLen, token.end - markerLen,
-            COLORS.italic[0], COLORS.italic[1], COLORS.italic[2], false);
+            COLORS.italic[0], COLORS.italic[1], COLORS.italic[2], false, false, true);
         } else {
           color = COLORS.italic;
         }
