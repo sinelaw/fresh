@@ -1099,9 +1099,18 @@ function transformTokensForMarkdown(
   return result;
 }
 
-// Handle render_start - only clear overlays if buffer content changed
+// Handle render_start - enable highlighting for markdown files and clear if dirty
 globalThis.onMarkdownRenderStart = function(data: { buffer_id: number }): void {
-  if (!highlightingBuffers.has(data.buffer_id)) return;
+  // Auto-enable highlighting for markdown files on first render
+  if (!highlightingBuffers.has(data.buffer_id)) {
+    const info = editor.getBufferInfo(data.buffer_id);
+    if (info && isMarkdownFile(info.path)) {
+      highlightingBuffers.add(data.buffer_id);
+      editor.debug(`Markdown highlighting auto-enabled for buffer ${data.buffer_id}`);
+    } else {
+      return;
+    }
+  }
 
   // Only clear and recreate overlays if the buffer content changed
   if (dirtyBuffers.has(data.buffer_id)) {
@@ -1120,7 +1129,15 @@ globalThis.onMarkdownLinesChanged = function(data: {
     content: string;
   }>;
 }): void {
-  if (!highlightingBuffers.has(data.buffer_id)) return;
+  // Auto-enable highlighting for markdown files
+  if (!highlightingBuffers.has(data.buffer_id)) {
+    const info = editor.getBufferInfo(data.buffer_id);
+    if (info && isMarkdownFile(info.path)) {
+      highlightingBuffers.add(data.buffer_id);
+    } else {
+      return;
+    }
+  }
 
   // Process all changed lines
   for (const line of data.lines) {
