@@ -122,11 +122,6 @@ pub struct EditorStateSnapshot {
     pub buffer_cursor_positions: HashMap<BufferId, usize>,
     /// Text properties per buffer (for virtual buffers with properties)
     pub buffer_text_properties: HashMap<BufferId, Vec<crate::text_property::TextProperty>>,
-    /// Cached content for active buffer's viewport region (for plugins)
-    /// Format: (start_offset, end_offset, content_string)
-    /// Only populated for reasonably-sized buffers; huge files return empty
-    /// to preserve lazy loading. Plugins should check buffer length.
-    pub active_buffer_content_cache: Option<(usize, usize, String)>,
 }
 
 impl EditorStateSnapshot {
@@ -140,7 +135,6 @@ impl EditorStateSnapshot {
             viewport: None,
             buffer_cursor_positions: HashMap::new(),
             buffer_text_properties: HashMap::new(),
-            active_buffer_content_cache: None,
         }
     }
 }

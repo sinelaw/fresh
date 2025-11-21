@@ -110,11 +110,33 @@ impl Editor {
             let visible_buffers = self.split_manager.get_visible_buffers(editor_content_area);
 
             let mut total_new_lines = 0usize;
-            for (_, buffer_id, split_area) in visible_buffers {
+            for (split_id, buffer_id, split_area) in visible_buffers {
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     // Fire render_start hook once per buffer
                     let render_start_args = crate::hooks::HookArgs::RenderStart { buffer_id };
                     ts_manager.run_hook("render_start", render_start_args);
+
+                    // Fire view_transform_request hook with base tokens
+                    // This allows plugins to transform the view (e.g., soft breaks for markdown)
+                    let visible_count = split_area.height as usize;
+                    let base_tokens = crate::ui::split_rendering::SplitRenderer::build_base_tokens_for_hook(
+                        &mut state.buffer,
+                        state.viewport.top_byte,
+                        self.config.editor.estimated_line_length,
+                        visible_count,
+                    );
+                    let viewport_start = state.viewport.top_byte;
+                    let viewport_end = base_tokens.last()
+                        .and_then(|t| t.source_offset)
+                        .unwrap_or(viewport_start);
+                    let transform_args = crate::hooks::HookArgs::ViewTransformRequest {
+                        buffer_id,
+                        split_id,
+                        viewport_start,
+                        viewport_end,
+                        tokens: base_tokens,
+                    };
+                    ts_manager.run_hook("view_transform_request", transform_args);
 
                     // Use the split area height as visible line count
                     let visible_count = split_area.height as usize;

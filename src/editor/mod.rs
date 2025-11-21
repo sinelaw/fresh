@@ -3139,20 +3139,6 @@ impl Editor {
                 snapshot.all_cursors.clear();
                 snapshot.viewport = None;
             }
-
-            // Cache active buffer content for plugins (respecting huge file limits)
-            snapshot.active_buffer_content_cache = None;
-            if let Some(active_state) = self.buffers.get_mut(&self.active_buffer) {
-                let buffer_len = active_state.buffer.len();
-                // Only cache for files under the large file threshold (default 1MB)
-                // This preserves lazy loading for huge files
-                let threshold = self.config.editor.large_file_threshold_bytes as usize;
-                if buffer_len <= threshold {
-                    // Cache the entire buffer for reasonable-sized files
-                    let content = active_state.get_text_range(0, buffer_len);
-                    snapshot.active_buffer_content_cache = Some((0, buffer_len, content));
-                }
-            }
         }
     }
 

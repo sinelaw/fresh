@@ -697,30 +697,158 @@ globalThis.markdownToggleCompose = function(): void {
   }
 };
 
-// Handle render events
-globalThis.onMarkdownRenderStart = function(data: { buffer_id: number }): void {
-  // Process markdown buffers that have compose mode enabled
-  if (composeBuffers.has(data.buffer_id)) {
-    processBuffer(data.buffer_id);
+// Handle view transform request - receives tokens from core for transformation
+// This is the streaming approach: core pushes tokens, plugin transforms them
+globalThis.onMarkdownViewTransform = function(data: {
+  buffer_id: number;
+  split_id: number;
+  viewport_start: number;
+  viewport_end: number;
+  tokens: ViewTokenWire[];
+}): void {
+  if (!config.enabled) return;
+  if (!composeBuffers.has(data.buffer_id)) return;
+
+  const info = editor.getBufferInfo(data.buffer_id);
+  if (!info) return;
+  if (!info.path.endsWith('.md') && !info.path.endsWith('.markdown')) return;
+
+  editor.debug(`onMarkdownViewTransform: buffer=${data.buffer_id}, split=${data.split_id}, tokens=${data.tokens.length}`);
+
+  // Reconstruct text from tokens for parsing (we need text for markdown parsing)
+  let reconstructedText = '';
+  for (const token of data.tokens) {
+    if (typeof token.kind === 'object' && 'Text' in token.kind) {
+      reconstructedText += token.kind.Text;
+    } else if (token.kind === 'Newline') {
+      reconstructedText += '\n';
+    } else if (token.kind === 'Space') {
+      reconstructedText += ' ';
+    }
   }
+
+  // Parse markdown from reconstructed text
+  const parser = new MarkdownParser(reconstructedText);
+  const mdTokens = parser.parse();
+
+  // Apply overlays for styling (this still works via the existing overlay API)
+  // Offset the markdown tokens by viewport_start for correct positioning
+  const offsetTokens = mdTokens.map(t => ({
+    ...t,
+    start: t.start + data.viewport_start,
+    end: t.end + data.viewport_start,
+  }));
+  applyMarkdownStyling(data.buffer_id, offsetTokens);
+
+  // Transform the view tokens based on markdown structure
+  // Convert newlines to spaces for soft breaks (paragraphs)
+  const transformedTokens = transformTokensForMarkdown(data.tokens, mdTokens, data.viewport_start);
+
+  // Submit the transformed tokens
+  const layoutHints: LayoutHints = {
+    compose_width: config.composeWidth,
+    column_guides: null,
+  };
+
+  editor.submitViewTransform(
+    data.buffer_id,
+    data.split_id,
+    data.viewport_start,
+    data.viewport_end,
+    transformedTokens,
+    layoutHints
+  );
 };
 
-// Handle content changes
+// Transform view tokens based on markdown structure
+function transformTokensForMarkdown(
+  tokens: ViewTokenWire[],
+  mdTokens: Token[],
+  viewportStart: number
+): ViewTokenWire[] {
+  const result: ViewTokenWire[] = [];
+
+  // Build a set of positions that should have hard breaks
+  const hardBreakPositions = new Set<number>();
+  for (const t of mdTokens) {
+    if (t.type === TokenType.HardBreak ||
+        t.type === TokenType.Header1 ||
+        t.type === TokenType.Header2 ||
+        t.type === TokenType.Header3 ||
+        t.type === TokenType.Header4 ||
+        t.type === TokenType.Header5 ||
+        t.type === TokenType.Header6 ||
+        t.type === TokenType.ListItem ||
+        t.type === TokenType.OrderedListItem ||
+        t.type === TokenType.Checkbox ||
+        t.type === TokenType.CodeBlockFence ||
+        t.type === TokenType.CodeBlockContent ||
+        t.type === TokenType.BlockQuote ||
+        t.type === TokenType.HorizontalRule) {
+      // Mark the end of these elements as hard breaks
+      hardBreakPositions.add(t.end + viewportStart);
+    }
+  }
+
+  // Also mark empty lines (two consecutive newlines) as hard breaks
+  let lastWasNewline = false;
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.kind === 'Newline') {
+      if (lastWasNewline && token.source_offset !== null) {
+        hardBreakPositions.add(token.source_offset);
+      }
+      lastWasNewline = true;
+    } else {
+      lastWasNewline = false;
+    }
+  }
+
+  // Transform tokens
+  for (const token of tokens) {
+    if (token.kind === 'Newline') {
+      const pos = token.source_offset;
+      if (pos !== null && hardBreakPositions.has(pos)) {
+        // Keep as newline (hard break)
+        result.push(token);
+      } else {
+        // Convert to space (soft break)
+        result.push({
+          source_offset: token.source_offset,
+          kind: 'Space',
+        });
+      }
+    } else {
+      // Keep other tokens as-is
+      result.push(token);
+    }
+  }
+
+  return result;
+}
+
+// Handle render_start for overlays only (not transform)
+globalThis.onMarkdownRenderStart = function(data: { buffer_id: number }): void {
+  // Nothing to do here now - view_transform_request handles everything
+};
+
+// Handle content changes - clear seen lines to trigger re-transform
 globalThis.onMarkdownAfterInsert = function(data: { buffer_id: number }): void {
   if (!config.enabled) return;
   if (composeBuffers.has(data.buffer_id)) {
-    processBuffer(data.buffer_id);
+    editor.refreshLines(data.buffer_id);
   }
 };
 
 globalThis.onMarkdownAfterDelete = function(data: { buffer_id: number }): void {
   if (!config.enabled) return;
   if (composeBuffers.has(data.buffer_id)) {
-    processBuffer(data.buffer_id);
+    editor.refreshLines(data.buffer_id);
   }
 };
 
-// Register hooks
+// Register hooks - use the new streaming view_transform_request hook
+editor.on("view_transform_request", "onMarkdownViewTransform");
 editor.on("render_start", "onMarkdownRenderStart");
 editor.on("after-insert", "onMarkdownAfterInsert");
 editor.on("after-delete", "onMarkdownAfterDelete");

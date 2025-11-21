@@ -3,8 +3,9 @@
 //! Hooks allow plugins to subscribe to editor events and react to them.
 //! This is inspired by Emacs' hook system.
 
-use crate::event::{BufferId, CursorId};
+use crate::event::{BufferId, CursorId, SplitId};
 use crate::keybindings::Action;
+use crate::plugin_api::ViewTokenWire;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -132,6 +133,21 @@ pub enum HookArgs {
         symbol: String,
         /// The locations where the symbol is referenced
         locations: Vec<LspLocation>,
+    },
+
+    /// View transform request - core pushes base tokens to plugins for transformation
+    /// Plugins receive the tokenized viewport content and can transform it
+    /// (e.g., converting newlines to soft breaks for markdown compose mode).
+    /// Plugin should call submitViewTransform() with transformed tokens.
+    ViewTransformRequest {
+        buffer_id: BufferId,
+        split_id: SplitId,
+        /// Byte offset of the viewport start
+        viewport_start: usize,
+        /// Byte offset of the viewport end
+        viewport_end: usize,
+        /// Base tokens (Text, Newline, Space) from the source
+        tokens: Vec<ViewTokenWire>,
     },
 }
 

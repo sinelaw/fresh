@@ -403,24 +403,22 @@ getActiveSplitId(): number
 #### `getBufferText`
 
 Extract text from a buffer by byte range
-Returns empty string if buffer doesn't exist or range is invalid.
-Positions must be valid UTF-8 boundaries. For full content use
-getBufferText(id, 0, getBufferLength(id)).
-Note: Only works for active buffer and files under large_file_threshold (1MB).
-For huge files, returns empty string to preserve lazy loading. Plugins should
-check getBufferLength() and handle this gracefully.
+DEPRECATED: Use the view_transform hook instead, which receives tokens
+from core during render. This avoids pulling buffer content and works
+with huge files.
+Returns empty string - plugins should use streaming transforms.
 
 ```typescript
-getBufferText(buffer_id: number, start: number, end: number): string
+getBufferText(_buffer_id: number, _start: number, _end: number): string
 ```
 
 **Parameters:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `buffer_id` | `number` | Target buffer ID |
-| `start` | `number` | Start byte offset (inclusive) |
-| `end` | `number` | End byte offset (exclusive) |
+| `_buffer_id` | `number` | - |
+| `_start` | `number` | - |
+| `_end` | `number` | - |
 
 #### `getCursorLine`
 

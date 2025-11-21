@@ -704,44 +704,19 @@ fn op_fresh_get_active_split_id(state: &mut OpState) -> u32 {
 
 /// Extract text from a buffer by byte range
 ///
-/// Returns empty string if buffer doesn't exist or range is invalid.
-/// Positions must be valid UTF-8 boundaries. For full content use
-/// getBufferText(id, 0, getBufferLength(id)).
+/// DEPRECATED: Use the view_transform hook instead, which receives tokens
+/// from core during render. This avoids pulling buffer content and works
+/// with huge files.
 ///
-/// Note: Only works for active buffer and files under large_file_threshold (1MB).
-/// For huge files, returns empty string to preserve lazy loading. Plugins should
-/// check getBufferLength() and handle this gracefully.
-///
-/// @param buffer_id - Target buffer ID
-/// @param start - Start byte offset (inclusive)
-/// @param end - End byte offset (exclusive)
+/// Returns empty string - plugins should use streaming transforms.
+/// @param buffer_id - Target buffer ID (unused)
+/// @param start - Start byte offset (unused)
+/// @param end - End byte offset (unused)
 #[op2]
 #[string]
-fn op_fresh_get_buffer_text(state: &mut OpState, buffer_id: u32, start: u32, end: u32) -> String {
-    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
-        let runtime_state = runtime_state.borrow();
-        if let Ok(snapshot) = runtime_state.state_snapshot.read() {
-            // Check if this is the active buffer and we have cached content
-            if snapshot.active_buffer_id == BufferId(buffer_id as usize) {
-                if let Some((cache_start, cache_end, ref content)) =
-                    snapshot.active_buffer_content_cache
-                {
-                    let start = start as usize;
-                    let end = end as usize;
-                    // Check if requested range is within cached range
-                    if start >= cache_start && end <= cache_end {
-                        let rel_start = start - cache_start;
-                        let rel_end = end - cache_start;
-                        if rel_end <= content.len() {
-                            return content[rel_start..rel_end].to_string();
-                        }
-                    }
-                }
-            }
-            // Buffer exists but content not cached (huge file or not active buffer)
-            // Return empty - plugin should check getBufferLength and handle gracefully
-        };
-    }
+fn op_fresh_get_buffer_text(_state: &mut OpState, _buffer_id: u32, _start: u32, _end: u32) -> String {
+    // Plugins should use view_transform hook which receives tokens from core
+    // This avoids the need to pull buffer content and works with huge files
     String::new()
 }
 
@@ -3062,6 +3037,37 @@ impl TypeScriptPluginManager {
                 serde_json::json!({
                     "buffer_id": buffer_id.0,
                     "lines": lines_json,
+                })
+            }
+            HookArgs::ViewTransformRequest {
+                buffer_id,
+                split_id,
+                viewport_start,
+                viewport_end,
+                tokens,
+            } => {
+                use crate::plugin_api::ViewTokenWireKind;
+                let tokens_json: Vec<serde_json::Value> = tokens
+                    .iter()
+                    .map(|token| {
+                        let kind_json = match &token.kind {
+                            ViewTokenWireKind::Text(s) => serde_json::json!({ "Text": s }),
+                            ViewTokenWireKind::Newline => serde_json::json!("Newline"),
+                            ViewTokenWireKind::Space => serde_json::json!("Space"),
+                            ViewTokenWireKind::Break => serde_json::json!("Break"),
+                        };
+                        serde_json::json!({
+                            "source_offset": token.source_offset,
+                            "kind": kind_json,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "buffer_id": buffer_id.0,
+                    "split_id": split_id.0,
+                    "viewport_start": viewport_start,
+                    "viewport_end": viewport_end,
+                    "tokens": tokens_json,
                 })
             }
         };

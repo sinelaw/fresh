@@ -646,6 +646,16 @@ impl SplitRenderer {
         tokens
     }
 
+    /// Public wrapper for building base tokens - used by render.rs for the view_transform_request hook
+    pub fn build_base_tokens_for_hook(
+        buffer: &mut Buffer,
+        top_byte: usize,
+        estimated_line_length: usize,
+        visible_count: usize,
+    ) -> Vec<crate::plugin_api::ViewTokenWire> {
+        Self::build_base_tokens(buffer, top_byte, estimated_line_length, visible_count)
+    }
+
     fn apply_wrapping_transform(
         tokens: Vec<crate::plugin_api::ViewTokenWire>,
         content_width: usize,

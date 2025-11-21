@@ -914,6 +914,37 @@ fn hook_args_to_json(args: &HookArgs) -> Result<String> {
                 "lines": lines_json,
             })
         }
+        HookArgs::ViewTransformRequest {
+            buffer_id,
+            split_id,
+            viewport_start,
+            viewport_end,
+            tokens,
+        } => {
+            use crate::plugin_api::ViewTokenWireKind;
+            let tokens_json: Vec<serde_json::Value> = tokens
+                .iter()
+                .map(|token| {
+                    let kind_json = match &token.kind {
+                        ViewTokenWireKind::Text(s) => serde_json::json!({ "Text": s }),
+                        ViewTokenWireKind::Newline => serde_json::json!("Newline"),
+                        ViewTokenWireKind::Space => serde_json::json!("Space"),
+                        ViewTokenWireKind::Break => serde_json::json!("Break"),
+                    };
+                    serde_json::json!({
+                        "source_offset": token.source_offset,
+                        "kind": kind_json,
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "buffer_id": buffer_id.0,
+                "split_id": split_id.0,
+                "viewport_start": viewport_start,
+                "viewport_end": viewport_end,
+                "tokens": tokens_json,
+            })
+        }
     };
 
     serde_json::to_string(&json_value).map_err(|e| anyhow!("Failed to serialize hook args: {}", e))
