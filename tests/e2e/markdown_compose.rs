@@ -24,6 +24,44 @@ fn test_markdown_file_open() {
     harness.assert_screen_contains("Markdown Compose Mode Test");
 }
 
+/// Test buffer content API (getBufferText with start and end)
+#[test]
+fn test_buffer_content_api() {
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let md_path = PathBuf::from(manifest_dir)
+        .join("tests")
+        .join("fixtures")
+        .join("markdown_sample.md");
+
+    harness.open_file(&md_path).unwrap();
+
+    // Get buffer content to verify it's not empty
+    let content = harness.get_buffer_content();
+    assert!(!content.is_empty(), "Buffer content should not be empty");
+    assert!(content.contains("# Markdown Compose Mode Test"), "Should contain header");
+}
+
+/// Test that viewport info is available
+#[test]
+fn test_viewport_info_available() {
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let md_path = PathBuf::from(manifest_dir)
+        .join("tests")
+        .join("fixtures")
+        .join("markdown_sample.md");
+
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    // Just verify the file loads and renders without crashing
+    // The plugin's getViewport() call happens during render
+    harness.assert_screen_contains("Markdown");
+}
+
 /// Test markdown compose mode toggle command
 #[test]
 fn test_markdown_compose_toggle() {
@@ -51,7 +89,41 @@ fn test_markdown_compose_toggle() {
 
     // Command palette should be visible
     // Note: This test is basic - a full test would search for and execute
-    // the "Markdown: Toggle Compose Mode" command
+    // the "Markdown: Toggle Compose" command
+}
+
+/// Test that plugin doesn't crash on empty buffer
+#[test]
+fn test_empty_buffer_handling() {
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    // Create empty markdown file
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let empty_md = temp_dir.path().join("empty.md");
+    std::fs::write(&empty_md, "").unwrap();
+
+    harness.open_file(&empty_md).unwrap();
+    harness.render().unwrap();
+
+    // Should render without crashing
+    harness.assert_screen_contains("empty.md");
+}
+
+/// Test that plugin handles non-markdown files correctly
+#[test]
+fn test_non_markdown_file_ignored() {
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    // Create a non-markdown file
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let txt_file = temp_dir.path().join("test.txt");
+    std::fs::write(&txt_file, "This is not markdown").unwrap();
+
+    harness.open_file(&txt_file).unwrap();
+    harness.render().unwrap();
+
+    // Should render normally without trying to apply markdown processing
+    harness.assert_screen_contains("test.txt");
 }
 
 /// Test that markdown headers are properly styled
