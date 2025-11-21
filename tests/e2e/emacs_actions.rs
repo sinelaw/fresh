@@ -4,9 +4,19 @@
 //!
 //! Note: Shadow validation is disabled because these new actions
 //! aren't tracked by the harness's shadow buffer yet.
+//!
+//! These tests use the Emacs keybinding style which has these actions bound.
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
+
+/// Create a harness with Emacs keybinding style
+fn emacs_harness(width: u16, height: u16) -> EditorTestHarness {
+    let mut config = Config::default();
+    config.active_keybinding_map = "emacs".to_string();
+    EditorTestHarness::with_config(width, height, config).unwrap()
+}
 
 // =============================================================================
 // Transpose Characters (C-t) Tests
@@ -15,7 +25,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 /// Test transpose_chars swaps two characters
 #[test]
 fn test_transpose_chars_basic() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = emacs_harness(80, 24);
     // Note: shadow validation disabled - new actions not tracked
 
     // Type some text
@@ -42,7 +52,7 @@ fn test_transpose_chars_basic() {
 /// Test transpose_chars at beginning of buffer does nothing
 #[test]
 fn test_transpose_chars_at_beginning() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = emacs_harness(80, 24);
 
     harness.type_text("abc").unwrap();
     harness.render().unwrap();
@@ -64,8 +74,7 @@ fn test_transpose_chars_at_beginning() {
 /// Test transpose_chars at end of buffer
 #[test]
 fn test_transpose_chars_at_end() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    
+    let mut harness = emacs_harness(80, 24);
 
     harness.type_text("ab").unwrap();
     harness.render().unwrap();
@@ -88,8 +97,7 @@ fn test_transpose_chars_at_end() {
 /// Test open_line inserts newline without moving cursor
 #[test]
 fn test_open_line_basic() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    
+    let mut harness = emacs_harness(80, 24);
 
     harness.type_text("hello").unwrap();
     harness.render().unwrap();
@@ -122,8 +130,7 @@ fn test_open_line_basic() {
 /// Test open_line at beginning of buffer
 #[test]
 fn test_open_line_at_beginning() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    
+    let mut harness = emacs_harness(80, 24);
 
     harness.type_text("hello").unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -146,7 +153,7 @@ fn test_open_line_at_beginning() {
 /// Test recenter scrolls view to center cursor
 #[test]
 fn test_recenter_basic() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = emacs_harness(80, 24);
 
     // Create content with many lines
     let lines: Vec<String> = (1..=100).map(|i| format!("Line {}", i)).collect();
@@ -206,8 +213,7 @@ fn test_recenter_basic() {
 /// Test set_mark starts a selection
 #[test]
 fn test_set_mark_basic() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    
+    let mut harness = emacs_harness(80, 24);
 
     harness.type_text("hello world").unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -242,7 +248,7 @@ fn test_set_mark_basic() {
 /// Test set_mark followed by shift+movement extends selection
 #[test]
 fn test_set_mark_then_shift_move_creates_selection() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut harness = emacs_harness(80, 24);
 
     harness.type_text("hello world").unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();

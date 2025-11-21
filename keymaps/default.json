@@ -189,22 +189,6 @@
       "when": "normal"
     },
     {
-      "comment": "Open line (insert newline without moving cursor)",
-      "key": "o",
-      "modifiers": ["ctrl"],
-      "action": "open_line",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "Recenter view on cursor",
-      "key": "l",
-      "modifiers": ["ctrl"],
-      "action": "recenter",
-      "args": {},
-      "when": "normal"
-    },
-    {
       "comment": "Set mark to start selection",
       "key": " ",
       "modifiers": ["ctrl"],
