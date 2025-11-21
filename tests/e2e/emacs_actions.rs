@@ -245,6 +245,36 @@ fn test_set_mark_basic() {
     );
 }
 
+/// Test set_mark followed by regular movement extends selection (Emacs mark mode)
+#[test]
+fn test_set_mark_then_regular_move_creates_selection() {
+    let mut harness = emacs_harness(80, 24);
+
+    harness.type_text("hello world").unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Set mark at beginning
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Move forward 5 characters with regular movement (no shift)
+    // In Emacs mark mode, this should extend selection
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Check selection state - anchor should still be at 0 (mark mode)
+    let cursor = harness.editor().active_state().cursors.primary();
+    assert_eq!(cursor.anchor, Some(0), "Anchor should still be at 0");
+    assert_eq!(cursor.position, 5, "Cursor should be at position 5");
+}
+
 /// Test set_mark followed by shift+movement extends selection
 #[test]
 fn test_set_mark_then_shift_move_creates_selection() {

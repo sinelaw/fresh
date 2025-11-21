@@ -43,6 +43,10 @@ pub struct Cursor {
     /// Block selection anchor position (line, column) for rectangular selections
     /// Only used when selection_mode is Block
     pub block_anchor: Option<Position2D>,
+
+    /// Whether regular movement should clear the selection (default: true)
+    /// When false (e.g., after set_mark in Emacs mode), movement preserves the anchor
+    pub deselect_on_move: bool,
 }
 
 impl Cursor {
@@ -54,6 +58,7 @@ impl Cursor {
             sticky_column: 0,
             selection_mode: SelectionMode::Normal,
             block_anchor: None,
+            deselect_on_move: true, // Default: movement clears selection
         }
     }
 
@@ -65,6 +70,7 @@ impl Cursor {
             sticky_column: 0,
             selection_mode: SelectionMode::Normal,
             block_anchor: None,
+            deselect_on_move: true, // Default: movement clears selection
         }
     }
 

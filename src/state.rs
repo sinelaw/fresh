@@ -381,8 +381,10 @@ impl EditorState {
 
             Event::SetAnchor { cursor_id, position } => {
                 // Set the anchor (selection start) for a specific cursor
+                // Also disable deselect_on_move so movement preserves the selection (Emacs mark mode)
                 if let Some(cursor) = self.cursors.get_mut(*cursor_id) {
                     cursor.anchor = Some(*position);
+                    cursor.deselect_on_move = false;
                 }
             }
 

@@ -489,12 +489,18 @@ pub fn action_to_events(
             for (cursor_id, cursor) in state.cursors.iter() {
                 // Use prev_char_boundary to ensure we land on a valid UTF-8 character boundary
                 let new_pos = state.buffer.prev_char_boundary(cursor.position);
+                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
+                let new_anchor = if cursor.deselect_on_move {
+                    None
+                } else {
+                    cursor.anchor
+                };
                 events.push(Event::MoveCursor {
                     cursor_id,
                     old_position: cursor.position,
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
-                    new_anchor: None, // No selection
+                    new_anchor,
                     old_sticky_column: cursor.sticky_column,
                     new_sticky_column: 0, // Reset sticky column on horizontal movement
                 });
@@ -509,12 +515,18 @@ pub fn action_to_events(
                     .buffer
                     .next_char_boundary(cursor.position)
                     .min(max_pos);
+                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
+                let new_anchor = if cursor.deselect_on_move {
+                    None
+                } else {
+                    cursor.anchor
+                };
                 events.push(Event::MoveCursor {
                     cursor_id,
                     old_position: cursor.position,
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
-                    new_anchor: None,
+                    new_anchor,
                     old_sticky_column: cursor.sticky_column,
                     new_sticky_column: 0, // Reset sticky column on horizontal movement
                 });
@@ -544,12 +556,18 @@ pub fn action_to_events(
                     let prev_line_len = prev_line_content.trim_end_matches('\n').len();
                     let new_pos = prev_line_start + goal_column.min(prev_line_len);
 
+                    // Preserve anchor if deselect_on_move is false (Emacs mark mode)
+                    let new_anchor = if cursor.deselect_on_move {
+                        None
+                    } else {
+                        cursor.anchor
+                    };
                     events.push(Event::MoveCursor {
                         cursor_id,
                         old_position: cursor.position,
                         new_position: new_pos,
                         old_anchor: cursor.anchor,
-                        new_anchor: None,
+                        new_anchor,
                         old_sticky_column: cursor.sticky_column,
                         new_sticky_column: goal_column, // Preserve the goal column
                     });
@@ -579,12 +597,18 @@ pub fn action_to_events(
                     let next_line_len = next_line_content.trim_end_matches('\n').len();
                     let new_pos = next_line_start + goal_column.min(next_line_len);
 
+                    // Preserve anchor if deselect_on_move is false (Emacs mark mode)
+                    let new_anchor = if cursor.deselect_on_move {
+                        None
+                    } else {
+                        cursor.anchor
+                    };
                     events.push(Event::MoveCursor {
                         cursor_id,
                         old_position: cursor.position,
                         new_position: new_pos,
                         old_anchor: cursor.anchor,
-                        new_anchor: None,
+                        new_anchor,
                         old_sticky_column: cursor.sticky_column,
                         new_sticky_column: goal_column, // Preserve the goal column
                     });
