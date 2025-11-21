@@ -134,6 +134,7 @@ fn test_open_file_workflow() {
     harness.assert_screen_not_contains("Open file:");
 
     // Check that the file content is displayed
+    // Note: File content display may require additional renders after async file load
     harness.assert_screen_contains("Hello from prompt test!");
 
     // Check that the filename appears in the status bar
