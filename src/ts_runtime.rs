@@ -707,6 +707,11 @@ fn op_fresh_get_active_split_id(state: &mut OpState) -> u32 {
 /// Returns empty string if buffer doesn't exist or range is invalid.
 /// Positions must be valid UTF-8 boundaries. For full content use
 /// getBufferText(id, 0, getBufferLength(id)).
+///
+/// Note: Only works for active buffer and files under large_file_threshold (1MB).
+/// For huge files, returns empty string to preserve lazy loading. Plugins should
+/// check getBufferLength() and handle this gracefully.
+///
 /// @param buffer_id - Target buffer ID
 /// @param start - Start byte offset (inclusive)
 /// @param end - End byte offset (exclusive)
@@ -716,13 +721,25 @@ fn op_fresh_get_buffer_text(state: &mut OpState, buffer_id: u32, start: u32, end
     if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
         let runtime_state = runtime_state.borrow();
         if let Ok(snapshot) = runtime_state.state_snapshot.read() {
-            if let Some(buffer_info) = snapshot.buffers.get(&BufferId(buffer_id as usize)) {
-                // For now, we can't directly access buffer content from the snapshot
-                // This would need to be extended to include buffer content
-                // Return empty string as placeholder
-                let _ = (buffer_info, start, end);
-                return String::new();
+            // Check if this is the active buffer and we have cached content
+            if snapshot.active_buffer_id == BufferId(buffer_id as usize) {
+                if let Some((cache_start, cache_end, ref content)) =
+                    snapshot.active_buffer_content_cache
+                {
+                    let start = start as usize;
+                    let end = end as usize;
+                    // Check if requested range is within cached range
+                    if start >= cache_start && end <= cache_end {
+                        let rel_start = start - cache_start;
+                        let rel_end = end - cache_start;
+                        if rel_end <= content.len() {
+                            return content[rel_start..rel_end].to_string();
+                        }
+                    }
+                }
             }
+            // Buffer exists but content not cached (huge file or not active buffer)
+            // Return empty - plugin should check getBufferLength and handle gracefully
         };
     }
     String::new()
@@ -2247,6 +2264,11 @@ impl TypeScriptRuntime {
                     },
                     clearVirtualTexts(bufferId) {
                         return core.ops.op_fresh_clear_virtual_texts(bufferId);
+                    },
+
+                    // View transforms (for compose mode)
+                    submitViewTransform(bufferId, splitId, start, end, tokens, layoutHints) {
+                        return core.ops.op_fresh_submit_view_transform(bufferId, splitId, start, end, tokens, layoutHints);
                     },
 
                     refreshLines(bufferId) {

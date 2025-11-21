@@ -406,6 +406,9 @@ Extract text from a buffer by byte range
 Returns empty string if buffer doesn't exist or range is invalid.
 Positions must be valid UTF-8 boundaries. For full content use
 getBufferText(id, 0, getBufferLength(id)).
+Note: Only works for active buffer and files under large_file_threshold (1MB).
+For huge files, returns empty string to preserve lazy loading. Plugins should
+check getBufferLength() and handle this gracefully.
 
 ```typescript
 getBufferText(buffer_id: number, start: number, end: number): string
