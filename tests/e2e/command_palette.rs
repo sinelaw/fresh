@@ -14,12 +14,12 @@ fn test_command_palette_trigger() {
     harness.render().unwrap();
 
     // Check that the command prompt is visible
-    harness.assert_screen_contains("Command: ");
+    harness.assert_screen_contains("Command:");
 
-    // Check that suggestions are visible (should show all commands initially)
-    harness.assert_screen_contains("Open File");
-    harness.assert_screen_contains("Save File");
-    harness.assert_screen_contains("Quit");
+    // Check that suggestions are visible (commands sorted alphabetically, so Add Cursor commands appear first)
+    harness.assert_screen_contains("Add Cursor Above");
+    harness.assert_screen_contains("Add Cursor Below");
+    harness.assert_screen_contains("Close Buffer");
 }
 
 /// Test command palette autocomplete filtering
@@ -54,7 +54,7 @@ fn test_command_palette_navigation() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Command: ");
+    harness.assert_screen_contains("Command:");
 
     // Navigate down
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -63,8 +63,8 @@ fn test_command_palette_navigation() {
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Commands should still be visible
-    harness.assert_screen_contains("Open File");
+    // Commands should still be visible (alphabetically sorted, so Add Cursor commands first)
+    harness.assert_screen_contains("Add Cursor Above");
 }
 
 /// Test command palette Tab completion
@@ -87,6 +87,7 @@ fn test_command_palette_tab_completion() {
 
     // The input should be completed to "Open File" (the first matching command)
     harness.assert_screen_contains("Command: Open File");
+    // Note: The prompt shows "Command:" followed by the input text
 }
 
 /// Test command palette cancel with Escape
@@ -100,14 +101,14 @@ fn test_command_palette_cancel() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Command: ");
+    harness.assert_screen_contains("Command:");
 
     // Cancel with Escape
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Prompt should be gone
-    harness.assert_screen_not_contains("Command: ");
+    harness.assert_screen_not_contains("Command:");
     harness.assert_screen_contains("Canceled");
 }
 
@@ -682,20 +683,19 @@ fn test_command_palette_shows_shortcuts() {
     harness.render().unwrap();
 
     // Check that the command palette is visible
-    harness.assert_screen_contains("Command: ");
+    harness.assert_screen_contains("Command:");
 
-    // Check that some commands with shortcuts are visible
-    // Save File should show Ctrl+S
-    harness.assert_screen_contains("Save File");
-    harness.assert_screen_contains("Ctrl+S");
+    // Check that commands with shortcuts are visible (commands sorted alphabetically)
+    // Add Cursor Above should show Ctrl+Alt+↑
+    harness.assert_screen_contains("Add Cursor Above");
+    harness.assert_screen_contains("Ctrl+Alt+");
 
-    // Quit should show Ctrl+Q
-    harness.assert_screen_contains("Quit");
-    harness.assert_screen_contains("Ctrl+Q");
+    // Add Cursor Below should show Ctrl+Alt+↓
+    harness.assert_screen_contains("Add Cursor Below");
 
-    // Open File should show Ctrl+O
-    harness.assert_screen_contains("Open File");
-    harness.assert_screen_contains("Ctrl+O");
+    // Copy should show Ctrl+C
+    harness.assert_screen_contains("Copy");
+    harness.assert_screen_contains("Ctrl+C");
 }
 
 /// Test that shortcuts are displayed for filtered commands

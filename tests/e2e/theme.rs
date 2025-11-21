@@ -63,7 +63,7 @@ fn test_theme_loading_from_config_high_contrast() {
     assert_eq!(theme.editor_fg, Color::Rgb(255, 255, 255));
     assert_eq!(theme.cursor, Color::Yellow);
     assert_eq!(theme.tab_active_fg, Color::Rgb(0, 0, 0)); // Black as RGB
-    assert_eq!(theme.tab_active_bg, Color::Yellow);
+    assert_eq!(theme.tab_active_bg, Color::Rgb(100, 149, 237)); // Cornflower blue from theme file
 }
 
 #[test]
