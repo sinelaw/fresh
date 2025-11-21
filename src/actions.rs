@@ -622,12 +622,18 @@ pub fn action_to_events(
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
                 if let Some((line_start, _)) = iter.next() {
+                    // Preserve anchor if deselect_on_move is false (Emacs mark mode)
+                    let new_anchor = if cursor.deselect_on_move {
+                        None
+                    } else {
+                        cursor.anchor
+                    };
                     events.push(Event::MoveCursor {
                         cursor_id,
                         old_position: cursor.position,
                         new_position: line_start,
                         old_anchor: cursor.anchor,
-                        new_anchor: None,
+                        new_anchor,
                         old_sticky_column: cursor.sticky_column,
                         new_sticky_column: 0, // Reset sticky column
                     });
@@ -645,12 +651,18 @@ pub fn action_to_events(
                     let line_len = line_content.trim_end_matches('\n').len();
                     let line_end = line_start + line_len;
 
+                    // Preserve anchor if deselect_on_move is false (Emacs mark mode)
+                    let new_anchor = if cursor.deselect_on_move {
+                        None
+                    } else {
+                        cursor.anchor
+                    };
                     events.push(Event::MoveCursor {
                         cursor_id,
                         old_position: cursor.position,
                         new_position: line_end,
                         old_anchor: cursor.anchor,
-                        new_anchor: None,
+                        new_anchor,
                         old_sticky_column: cursor.sticky_column,
                         new_sticky_column: 0, // Reset sticky column
                     });
@@ -661,12 +673,18 @@ pub fn action_to_events(
         Action::MoveWordLeft => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 let new_pos = find_word_start_left(&state.buffer, cursor.position);
+                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
+                let new_anchor = if cursor.deselect_on_move {
+                    None
+                } else {
+                    cursor.anchor
+                };
                 events.push(Event::MoveCursor {
                     cursor_id,
                     old_position: cursor.position,
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
-                    new_anchor: None,
+                    new_anchor,
                     old_sticky_column: cursor.sticky_column,
                     new_sticky_column: 0, // Reset sticky column
                 });
@@ -676,12 +694,18 @@ pub fn action_to_events(
         Action::MoveWordRight => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 let new_pos = find_word_start_right(&state.buffer, cursor.position);
+                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
+                let new_anchor = if cursor.deselect_on_move {
+                    None
+                } else {
+                    cursor.anchor
+                };
                 events.push(Event::MoveCursor {
                     cursor_id,
                     old_position: cursor.position,
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
-                    new_anchor: None,
+                    new_anchor,
                     old_sticky_column: cursor.sticky_column,
                     new_sticky_column: 0, // Reset sticky column
                 });
@@ -690,12 +714,18 @@ pub fn action_to_events(
 
         Action::MoveDocumentStart => {
             for (cursor_id, cursor) in state.cursors.iter() {
+                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
+                let new_anchor = if cursor.deselect_on_move {
+                    None
+                } else {
+                    cursor.anchor
+                };
                 events.push(Event::MoveCursor {
                     cursor_id,
                     old_position: cursor.position,
                     new_position: 0,
                     old_anchor: cursor.anchor,
-                    new_anchor: None,
+                    new_anchor,
                     old_sticky_column: cursor.sticky_column,
                     new_sticky_column: 0, // Reset sticky column
                 });
@@ -705,12 +735,18 @@ pub fn action_to_events(
         Action::MoveDocumentEnd => {
             for (cursor_id, cursor) in state.cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
+                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
+                let new_anchor = if cursor.deselect_on_move {
+                    None
+                } else {
+                    cursor.anchor
+                };
                 events.push(Event::MoveCursor {
                     cursor_id,
                     old_position: cursor.position,
                     new_position: max_pos,
                     old_anchor: cursor.anchor,
-                    new_anchor: None,
+                    new_anchor,
                     old_sticky_column: cursor.sticky_column,
                     new_sticky_column: 0, // Reset sticky column
                 });
@@ -745,12 +781,18 @@ pub fn action_to_events(
                     }
                 }
 
+                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
+                let new_anchor = if cursor.deselect_on_move {
+                    None
+                } else {
+                    cursor.anchor
+                };
                 events.push(Event::MoveCursor {
                     cursor_id,
                     old_position: cursor.position,
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
-                    new_anchor: None,
+                    new_anchor,
                     old_sticky_column: cursor.sticky_column,
                     new_sticky_column: goal_column, // Preserve the goal column
                 });
@@ -789,12 +831,18 @@ pub fn action_to_events(
                     }
                 }
 
+                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
+                let new_anchor = if cursor.deselect_on_move {
+                    None
+                } else {
+                    cursor.anchor
+                };
                 events.push(Event::MoveCursor {
                     cursor_id,
                     old_position: cursor.position,
                     new_position: new_pos,
                     old_anchor: cursor.anchor,
-                    new_anchor: None,
+                    new_anchor,
                     old_sticky_column: cursor.sticky_column,
                     new_sticky_column: goal_column, // Preserve the goal column
                 });
