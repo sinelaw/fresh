@@ -12,3 +12,9 @@
 
 *File opened at top*
 
+## Step 2: before_typing
+
+![before_typing](../screenshots/Large_File_Typing_02_before_typing.svg)
+
+*Positioned at line 10 before typing*
+

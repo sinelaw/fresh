@@ -18,3 +18,9 @@
 
 *File menu activated - dropdown shows options with keyboard shortcuts*
 
+## Step 3: edit_menu_open
+
+![edit_menu_open](../screenshots/Menu_Bar_Navigation_03_edit_menu_open.svg)
+
+*Edit menu - shows Undo, Redo, Cut, Copy, Paste, Find, Replace*
+

@@ -262,8 +262,6 @@
   <text x="55" y="122" fill="#f1fa8c" class="terminal" style="">│</text>
   <text x="73" y="122" fill="#ffffff" class="terminal" style="">}</text>
   <text x="712" y="122" fill="#6272a4" class="terminal" style="">█</text>
-  <text x="37" y="140" fill="#f1fa8c" class="terminal" style="">6</text>
-  <text x="55" y="140" fill="#f1fa8c" class="terminal" style="">│</text>
   <text x="712" y="140" fill="#6272a4" class="terminal" style="">█</text>
   <text x="712" y="158" fill="#6272a4" class="terminal" style="">█</text>
   <text x="712" y="176" fill="#6272a4" class="terminal" style="">█</text>

@@ -12,3 +12,9 @@
 
 *File opened at top*
 
+## Step 2: after_5_down
+
+![after_5_down](../screenshots/Large_File_Cursor_Movement_02_after_5_down.svg)
+
+*After pressing Down 5 times*
+

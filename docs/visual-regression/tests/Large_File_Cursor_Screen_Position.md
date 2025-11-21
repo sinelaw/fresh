@@ -12,3 +12,9 @@
 
 *Cursor at line 0*
 
+## Step 2: line_5
+
+![line_5](../screenshots/Large_File_Cursor_Screen_Position_02_line_5.svg)
+
+*Cursor at line 5*
+

@@ -12,3 +12,9 @@
 
 *Code before diagnostics appear*
 
+## Step 2: diagnostics_with_bullets
+
+![diagnostics_with_bullets](../screenshots/LSP_Diagnostics_02_diagnostics_with_bullets.svg)
+
+*Diagnostics with red bullet points in separate margin column*
+
