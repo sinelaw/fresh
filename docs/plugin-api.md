@@ -593,6 +593,21 @@ submitViewTransform(buffer_id: number, split_id?: number | null, start: number, 
 | `tokens` | `ViewTokenWire[]` | Array of tokens with source offsets |
 | `layout_hints` | `LayoutHints | null` (optional) | Optional layout hints (compose width, column guides) |
 
+#### `clearViewTransform`
+
+Clear view transform for a buffer/split (returns to normal rendering)
+
+```typescript
+clearViewTransform(buffer_id: number, split_id?: number | null): boolean
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `buffer_id` | `number` | Buffer ID |
+| `split_id` | `number | null` (optional) | Optional split ID (uses active split if not specified) |
+
 #### `insertAtCursor`
 
 Insert text at the current cursor position in the active buffer

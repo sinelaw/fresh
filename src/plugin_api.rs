@@ -229,6 +229,12 @@ pub enum PluginCommand {
         payload: ViewTransformPayload,
     },
 
+    /// Clear view transform for a buffer/split (returns to normal rendering)
+    ClearViewTransform {
+        buffer_id: BufferId,
+        split_id: Option<SplitId>,
+    },
+
     /// Remove all overlays from a buffer
     ClearAllOverlays { buffer_id: BufferId },
 
@@ -857,6 +863,8 @@ mod tests {
             0..10,
             (255, 0, 0),
             true,
+            false,
+            false,
         );
         assert!(result.is_ok());
 
@@ -868,12 +876,16 @@ mod tests {
                 range,
                 color,
                 underline,
+                bold,
+                italic,
             } => {
                 assert_eq!(buffer_id.0, 1);
                 assert_eq!(overlay_id, "test-overlay");
                 assert_eq!(range, 0..10);
                 assert_eq!(color, (255, 0, 0));
                 assert!(underline);
+                assert!(!bold);
+                assert!(!italic);
             }
             _ => panic!("Wrong command type"),
         }

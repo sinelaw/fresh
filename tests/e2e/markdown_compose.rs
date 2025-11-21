@@ -250,3 +250,47 @@ fn test_markdown_block_quotes() {
     let buffer_content = harness.get_buffer_content();
     assert!(buffer_content.contains("> This is a block quote."));
 }
+
+/// Test that disabling compose mode doesn't blank the view
+#[test]
+fn test_compose_mode_disable_preserves_content() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    // Create a simple markdown file
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let md_path = temp_dir.path().join("test.md");
+    std::fs::write(&md_path, "# Test Header\n\nSome **bold** text.\n\n- List item 1\n- List item 2\n").unwrap();
+
+    // Open the markdown file
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    // Verify initial content is visible
+    harness.assert_screen_contains("Test Header");
+    harness.assert_screen_contains("bold");
+
+    // Open command palette and toggle compose mode ON
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+    harness.type_text("Markdown: Toggle Compose").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should show compose mode enabled status
+    // Content should still be visible
+    harness.assert_screen_contains("Test Header");
+
+    // Toggle compose mode OFF
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+    harness.type_text("Markdown: Toggle Compose").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // CRITICAL: Content should still be visible after disabling compose mode
+    harness.assert_screen_contains("Test Header");
+    harness.assert_screen_contains("bold");
+    harness.assert_screen_contains("List item");
+}

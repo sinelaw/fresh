@@ -620,6 +620,30 @@ fn op_fresh_submit_view_transform(
     false
 }
 
+/// Clear view transform for a buffer/split (returns to normal rendering)
+/// @param buffer_id - Buffer ID
+/// @param split_id - Optional split ID (uses active split if not specified)
+/// @returns true if clear succeeded
+#[op2]
+fn op_fresh_clear_view_transform(
+    state: &mut OpState,
+    buffer_id: u32,
+    split_id: Option<u32>,
+) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let split_id = split_id.map(|id| SplitId(id as usize));
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::ClearViewTransform {
+                buffer_id: BufferId(buffer_id as usize),
+                split_id,
+            });
+        return result.is_ok();
+    }
+    false
+}
+
 /// Insert text at the current cursor position in the active buffer
 /// @param text - The text to insert
 /// @returns true if insertion succeeded
@@ -2093,6 +2117,7 @@ extension!(
         op_fresh_remove_virtual_texts_by_prefix,
         op_fresh_clear_virtual_texts,
         op_fresh_submit_view_transform,
+        op_fresh_clear_view_transform,
         op_fresh_refresh_lines,
         op_fresh_insert_at_cursor,
         op_fresh_register_command,
@@ -2275,6 +2300,9 @@ impl TypeScriptRuntime {
                     // View transforms (for compose mode)
                     submitViewTransform(bufferId, splitId, start, end, tokens, layoutHints) {
                         return core.ops.op_fresh_submit_view_transform(bufferId, splitId, start, end, tokens, layoutHints);
+                    },
+                    clearViewTransform(bufferId, splitId = null) {
+                        return core.ops.op_fresh_clear_view_transform(bufferId, splitId);
                     },
 
                     refreshLines(bufferId) {
@@ -3444,6 +3472,8 @@ mod tests {
                 range,
                 color,
                 underline,
+                bold,
+                italic,
             } => {
                 assert_eq!(buffer_id.0, 42);
                 assert_eq!(overlay_id, "test-overlay");
@@ -3451,6 +3481,8 @@ mod tests {
                 assert_eq!(range.end, 50);
                 assert_eq!(*color, (255, 0, 0));
                 assert!(*underline);
+                assert!(!*bold);
+                assert!(!*italic);
             }
             _ => panic!("Expected AddOverlay command"),
         }

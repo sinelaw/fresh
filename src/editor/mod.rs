@@ -3392,6 +3392,16 @@ impl Editor {
                     });
                 view_state.view_transform = Some(payload);
             }
+            PluginCommand::ClearViewTransform {
+                buffer_id,
+                split_id,
+            } => {
+                let target_split = split_id.unwrap_or(self.split_manager.active_split());
+                if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
+                    view_state.view_transform = None;
+                    view_state.compose_width = None;
+                }
+            }
             PluginCommand::OpenFileAtLocation { path, line, column } => {
                 // Open the file
                 if let Err(e) = self.open_file(&path) {

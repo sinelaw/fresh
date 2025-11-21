@@ -932,12 +932,8 @@ function disableMarkdownCompose(bufferId: number): void {
     // Re-enable line numbers
     editor.setLineNumbers(bufferId, true);
 
-    // Clear compose width (margins) by submitting empty layout hints
-    const bufferLength = editor.getBufferLength(bufferId);
-    editor.submitViewTransform(bufferId, null, 0, bufferLength, [], {
-      compose_width: null,
-      column_guides: null,
-    });
+    // Clear view transform to return to normal rendering
+    editor.clearViewTransform(bufferId);
 
     // Keep highlighting on, just clear the view transform
     editor.refreshLines(bufferId);
@@ -1155,18 +1151,16 @@ globalThis.onMarkdownAfterInsert = function(data: { buffer_id: number }): void {
   if (highlightingBuffers.has(data.buffer_id)) {
     dirtyBuffers.add(data.buffer_id);
   }
-  if (composeBuffers.has(data.buffer_id)) {
-    editor.refreshLines(data.buffer_id);
-  }
+  // Note: Don't call refreshLines here - it causes flicker
+  // The natural render cycle will handle updates
 };
 
 globalThis.onMarkdownAfterDelete = function(data: { buffer_id: number }): void {
   if (highlightingBuffers.has(data.buffer_id)) {
     dirtyBuffers.add(data.buffer_id);
   }
-  if (composeBuffers.has(data.buffer_id)) {
-    editor.refreshLines(data.buffer_id);
-  }
+  // Note: Don't call refreshLines here - it causes flicker
+  // The natural render cycle will handle updates
 };
 
 // Handle buffer close events
