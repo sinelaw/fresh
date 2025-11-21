@@ -21,6 +21,9 @@ const highlightingBuffers = new Set<number>();
 // Track buffers in compose mode (explicit toggle)
 const composeBuffers = new Set<number>();
 
+// Track which buffers need their overlays refreshed (content changed)
+const dirtyBuffers = new Set<number>();
+
 // Markdown token types for parsing
 enum TokenType {
   Header1,
@@ -525,6 +528,224 @@ function applyMarkdownStyling(bufferId: number, tokens: Token[]): void {
   }
 }
 
+// Highlight a single line for markdown (used with lines_changed event)
+function highlightLine(
+  bufferId: number,
+  lineNumber: number,
+  byteStart: number,
+  content: string
+): void {
+  const trimmed = content.trim();
+  if (trimmed.length === 0) return;
+
+  // Headers
+  const headerMatch = trimmed.match(/^(#{1,6})\s/);
+  if (headerMatch) {
+    editor.addOverlay(
+      bufferId,
+      `md:header:${lineNumber}`,
+      byteStart,
+      byteStart + content.length,
+      COLORS.header[0], COLORS.header[1], COLORS.header[2],
+      false, true, false  // bold
+    );
+    return;
+  }
+
+  // Code block fences
+  if (trimmed.startsWith('```')) {
+    editor.addOverlay(
+      bufferId,
+      `md:fence:${lineNumber}`,
+      byteStart,
+      byteStart + content.length,
+      COLORS.fence[0], COLORS.fence[1], COLORS.fence[2],
+      false
+    );
+    return;
+  }
+
+  // Block quotes
+  if (trimmed.startsWith('>')) {
+    editor.addOverlay(
+      bufferId,
+      `md:quote:${lineNumber}`,
+      byteStart,
+      byteStart + content.length,
+      COLORS.quote[0], COLORS.quote[1], COLORS.quote[2],
+      false
+    );
+    return;
+  }
+
+  // Horizontal rules
+  if (trimmed.match(/^[-*_]{3,}$/)) {
+    editor.addOverlay(
+      bufferId,
+      `md:hr:${lineNumber}`,
+      byteStart,
+      byteStart + content.length,
+      COLORS.quote[0], COLORS.quote[1], COLORS.quote[2],
+      false
+    );
+    return;
+  }
+
+  // List items (unordered)
+  const listMatch = content.match(/^(\s*)([-*+])\s/);
+  if (listMatch) {
+    const bulletStart = byteStart + listMatch[1].length;
+    const bulletEnd = bulletStart + 1;
+    editor.addOverlay(
+      bufferId,
+      `md:bullet:${lineNumber}`,
+      bulletStart,
+      bulletEnd,
+      COLORS.listBullet[0], COLORS.listBullet[1], COLORS.listBullet[2],
+      false
+    );
+  }
+
+  // Ordered list items
+  const orderedMatch = content.match(/^(\s*)(\d+\.)\s/);
+  if (orderedMatch) {
+    const numStart = byteStart + orderedMatch[1].length;
+    const numEnd = numStart + orderedMatch[2].length;
+    editor.addOverlay(
+      bufferId,
+      `md:ordnum:${lineNumber}`,
+      numStart,
+      numEnd,
+      COLORS.listBullet[0], COLORS.listBullet[1], COLORS.listBullet[2],
+      false
+    );
+  }
+
+  // Checkboxes
+  const checkMatch = content.match(/^(\s*[-*+]\s+)(\[[ x]\])/);
+  if (checkMatch) {
+    const checkStart = byteStart + checkMatch[1].length;
+    const checkEnd = checkStart + checkMatch[2].length;
+    editor.addOverlay(
+      bufferId,
+      `md:checkbox:${lineNumber}`,
+      checkStart,
+      checkEnd,
+      COLORS.checkbox[0], COLORS.checkbox[1], COLORS.checkbox[2],
+      false
+    );
+  }
+
+  // Inline elements
+
+  // Inline code: `code`
+  const codeRegex = /`([^`]+)`/g;
+  let match;
+  while ((match = codeRegex.exec(content)) !== null) {
+    editor.addOverlay(
+      bufferId,
+      `md:code:${lineNumber}:${match.index}`,
+      byteStart + match.index,
+      byteStart + match.index + match[0].length,
+      COLORS.code[0], COLORS.code[1], COLORS.code[2],
+      false
+    );
+  }
+
+  // Bold: **text** or __text__
+  const boldRegex = /(\*\*|__)([^*_]+)\1/g;
+  while ((match = boldRegex.exec(content)) !== null) {
+    const markerLen = match[1].length;
+    const fullStart = byteStart + match.index;
+    const fullEnd = fullStart + match[0].length;
+    // Subdued markers
+    editor.addOverlay(
+      bufferId,
+      `md:bold-start:${lineNumber}:${match.index}`,
+      fullStart, fullStart + markerLen,
+      COLORS.boldMarker[0], COLORS.boldMarker[1], COLORS.boldMarker[2],
+      false, false, false
+    );
+    editor.addOverlay(
+      bufferId,
+      `md:bold-end:${lineNumber}:${match.index}`,
+      fullEnd - markerLen, fullEnd,
+      COLORS.boldMarker[0], COLORS.boldMarker[1], COLORS.boldMarker[2],
+      false, false, false
+    );
+    // Bold content
+    editor.addOverlay(
+      bufferId,
+      `md:bold-content:${lineNumber}:${match.index}`,
+      fullStart + markerLen, fullEnd - markerLen,
+      COLORS.bold[0], COLORS.bold[1], COLORS.bold[2],
+      false, true, false
+    );
+  }
+
+  // Italic: *text* or _text_ (but not inside bold)
+  const italicRegex = /(?<!\*|\w)(\*|_)(?!\*|_)([^*_\n]+)(?<!\*|_)\1(?!\*|\w)/g;
+  while ((match = italicRegex.exec(content)) !== null) {
+    const fullStart = byteStart + match.index;
+    const fullEnd = fullStart + match[0].length;
+    // Subdued markers
+    editor.addOverlay(
+      bufferId,
+      `md:italic-start:${lineNumber}:${match.index}`,
+      fullStart, fullStart + 1,
+      COLORS.italicMarker[0], COLORS.italicMarker[1], COLORS.italicMarker[2],
+      false, false, false
+    );
+    editor.addOverlay(
+      bufferId,
+      `md:italic-end:${lineNumber}:${match.index}`,
+      fullEnd - 1, fullEnd,
+      COLORS.italicMarker[0], COLORS.italicMarker[1], COLORS.italicMarker[2],
+      false, false, false
+    );
+    // Italic content
+    editor.addOverlay(
+      bufferId,
+      `md:italic-content:${lineNumber}:${match.index}`,
+      fullStart + 1, fullEnd - 1,
+      COLORS.italic[0], COLORS.italic[1], COLORS.italic[2],
+      false, false, true
+    );
+  }
+
+  // Links: [text](url)
+  const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+  while ((match = linkRegex.exec(content)) !== null) {
+    const fullStart = byteStart + match.index;
+    const textStart = fullStart + 1;
+    const textEnd = textStart + match[1].length;
+    const urlStart = textEnd + 2;
+    const urlEnd = urlStart + match[2].length;
+
+    // Link text (underlined)
+    editor.addOverlay(
+      bufferId,
+      `md:linktext:${lineNumber}:${match.index}`,
+      textStart, textEnd,
+      COLORS.link[0], COLORS.link[1], COLORS.link[2],
+      true  // underline
+    );
+    // Link URL (subdued)
+    editor.addOverlay(
+      bufferId,
+      `md:linkurl:${lineNumber}:${match.index}`,
+      urlStart, urlEnd,
+      COLORS.linkUrl[0], COLORS.linkUrl[1], COLORS.linkUrl[2],
+      false
+    );
+  }
+}
+
+// Clear highlights for a buffer
+function clearHighlights(bufferId: number): void {
+  editor.removeOverlaysByPrefix(bufferId, "md:");
+}
+
 // Build view transform with soft breaks
 function buildViewTransform(
   bufferId: number,
@@ -642,18 +863,6 @@ function isMarkdownFile(path: string): boolean {
   return path.endsWith('.md') || path.endsWith('.markdown');
 }
 
-// Apply highlighting only (no compose mode features)
-function applyHighlighting(bufferId: number): void {
-  const info = editor.getBufferInfo(bufferId);
-  if (!info || !isMarkdownFile(info.path)) return;
-
-  const bufferLength = editor.getBufferLength(bufferId);
-  const text = editor.getBufferText(bufferId, 0, bufferLength);
-  const parser = new MarkdownParser(text);
-  const tokens = parser.parse();
-  applyMarkdownStyling(bufferId, tokens);
-}
-
 // Process a buffer in compose mode (highlighting + view transform)
 function processBuffer(bufferId: number, splitId?: number): void {
   if (!composeBuffers.has(bufferId)) return;
@@ -692,7 +901,8 @@ function enableHighlighting(bufferId: number): void {
 
   if (!highlightingBuffers.has(bufferId)) {
     highlightingBuffers.add(bufferId);
-    applyHighlighting(bufferId);
+    // Trigger a refresh so lines_changed will process visible lines
+    editor.refreshLines(bufferId);
     editor.debug(`Markdown highlighting enabled for buffer ${bufferId}`);
   }
 }
@@ -874,11 +1084,32 @@ function transformTokensForMarkdown(
   return result;
 }
 
-// Handle render_start - apply highlighting for markdown files
+// Handle render_start - only clear overlays if buffer content changed
 globalThis.onMarkdownRenderStart = function(data: { buffer_id: number }): void {
-  // Auto-enable highlighting for markdown files
-  if (highlightingBuffers.has(data.buffer_id)) {
-    applyHighlighting(data.buffer_id);
+  if (!highlightingBuffers.has(data.buffer_id)) return;
+
+  // Only clear and recreate overlays if the buffer content changed
+  if (dirtyBuffers.has(data.buffer_id)) {
+    clearHighlights(data.buffer_id);
+    dirtyBuffers.delete(data.buffer_id);
+  }
+};
+
+// Handle lines_changed - process visible lines incrementally
+globalThis.onMarkdownLinesChanged = function(data: {
+  buffer_id: number;
+  lines: Array<{
+    line_number: number;
+    byte_start: number;
+    byte_end: number;
+    content: string;
+  }>;
+}): void {
+  if (!highlightingBuffers.has(data.buffer_id)) return;
+
+  // Process all changed lines
+  for (const line of data.lines) {
+    highlightLine(data.buffer_id, line.line_number, line.byte_start, line.content);
   }
 };
 
@@ -887,10 +1118,10 @@ globalThis.onMarkdownBufferActivated = function(data: { buffer_id: number }): vo
   enableHighlighting(data.buffer_id);
 };
 
-// Handle content changes - refresh highlighting and transforms
+// Handle content changes - mark buffer as needing overlay refresh
 globalThis.onMarkdownAfterInsert = function(data: { buffer_id: number }): void {
   if (highlightingBuffers.has(data.buffer_id)) {
-    applyHighlighting(data.buffer_id);
+    dirtyBuffers.add(data.buffer_id);
   }
   if (composeBuffers.has(data.buffer_id)) {
     editor.refreshLines(data.buffer_id);
@@ -899,19 +1130,28 @@ globalThis.onMarkdownAfterInsert = function(data: { buffer_id: number }): void {
 
 globalThis.onMarkdownAfterDelete = function(data: { buffer_id: number }): void {
   if (highlightingBuffers.has(data.buffer_id)) {
-    applyHighlighting(data.buffer_id);
+    dirtyBuffers.add(data.buffer_id);
   }
   if (composeBuffers.has(data.buffer_id)) {
     editor.refreshLines(data.buffer_id);
   }
 };
 
+// Handle buffer close events
+globalThis.onMarkdownBufferClosed = function(data: { buffer_id: number }): void {
+  highlightingBuffers.delete(data.buffer_id);
+  composeBuffers.delete(data.buffer_id);
+  dirtyBuffers.delete(data.buffer_id);
+};
+
 // Register hooks
 editor.on("view_transform_request", "onMarkdownViewTransform");
 editor.on("render_start", "onMarkdownRenderStart");
+editor.on("lines_changed", "onMarkdownLinesChanged");
 editor.on("buffer_activated", "onMarkdownBufferActivated");
 editor.on("after-insert", "onMarkdownAfterInsert");
 editor.on("after-delete", "onMarkdownAfterDelete");
+editor.on("buffer_closed", "onMarkdownBufferClosed");
 
 // Register command
 editor.registerCommand(
