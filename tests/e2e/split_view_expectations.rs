@@ -340,11 +340,8 @@ fn test_close_split_expands_remaining() {
         "Should have vertical separator"
     );
 
-    // Close current split
-    harness
-        .send_key(KeyCode::Char('x'), KeyModifiers::ALT)
-        .unwrap();
-    harness.render().unwrap();
+    // Close current split via command palette
+    close_split(&mut harness);
 
     // Should see success message
     harness.assert_screen_contains("Closed split");
