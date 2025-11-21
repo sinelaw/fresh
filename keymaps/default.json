@@ -644,6 +644,148 @@
       "when": "normal"
     },
     {
+      "comment": "Normal context - Set Bookmarks (Ctrl+Shift+0-9)",
+      "key": "0",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "0"},
+      "when": "normal"
+    },
+    {
+      "key": "1",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "1"},
+      "when": "normal"
+    },
+    {
+      "key": "2",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "2"},
+      "when": "normal"
+    },
+    {
+      "key": "3",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "3"},
+      "when": "normal"
+    },
+    {
+      "key": "4",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "4"},
+      "when": "normal"
+    },
+    {
+      "key": "5",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "5"},
+      "when": "normal"
+    },
+    {
+      "key": "6",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "6"},
+      "when": "normal"
+    },
+    {
+      "key": "7",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "7"},
+      "when": "normal"
+    },
+    {
+      "key": "8",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "8"},
+      "when": "normal"
+    },
+    {
+      "key": "9",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "9"},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Jump to Bookmarks (Alt+0-9)",
+      "key": "0",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "0"},
+      "when": "normal"
+    },
+    {
+      "key": "1",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "1"},
+      "when": "normal"
+    },
+    {
+      "key": "2",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "2"},
+      "when": "normal"
+    },
+    {
+      "key": "3",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "3"},
+      "when": "normal"
+    },
+    {
+      "key": "4",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "4"},
+      "when": "normal"
+    },
+    {
+      "key": "5",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "5"},
+      "when": "normal"
+    },
+    {
+      "key": "6",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "6"},
+      "when": "normal"
+    },
+    {
+      "key": "7",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "7"},
+      "when": "normal"
+    },
+    {
+      "key": "8",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "8"},
+      "when": "normal"
+    },
+    {
+      "key": "9",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "9"},
+      "when": "normal"
+    },
+    {
       "comment": "Prompt context - Navigation",
       "key": "Enter",
       "modifiers": [],

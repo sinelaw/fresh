@@ -652,17 +652,61 @@ impl KeybindingResolver {
             default_chord_bindings: HashMap::new(),
         };
 
-        // Load bindings from the active keymap (with inheritance resolution)
+        // Load bindings from the active keymap (with inheritance resolution) into default_bindings
         let map_bindings = config.resolve_keymap(&config.active_keybinding_map);
-        resolver.load_bindings_from_vec(&map_bindings);
+        resolver.load_default_bindings_from_vec(&map_bindings);
 
-        // Then, load custom keybindings (these override the map bindings)
+        // Then, load custom keybindings (these override the default map bindings)
         resolver.load_bindings_from_vec(&config.keybindings);
 
         resolver
     }
 
-    /// Load bindings from a vector of keybinding definitions
+    /// Load default bindings from a vector of keybinding definitions (into default_bindings/default_chord_bindings)
+    fn load_default_bindings_from_vec(&mut self, bindings: &[crate::config::Keybinding]) {
+        for binding in bindings {
+            // Determine context from "when" clause
+            let context = if let Some(ref when) = binding.when {
+                KeyContext::from_when_clause(when).unwrap_or(KeyContext::Normal)
+            } else {
+                KeyContext::Normal
+            };
+
+            if let Some(action) = Action::from_str(&binding.action, &binding.args) {
+                // Check if this is a chord binding (has keys field)
+                if !binding.keys.is_empty() {
+                    // Parse the chord sequence
+                    let mut sequence = Vec::new();
+                    for key_press in &binding.keys {
+                        if let Some(key_code) = Self::parse_key(&key_press.key) {
+                            let modifiers = Self::parse_modifiers(&key_press.modifiers);
+                            sequence.push((key_code, modifiers));
+                        } else {
+                            // Invalid key in sequence, skip this binding
+                            break;
+                        }
+                    }
+
+                    // Only add if all keys in sequence were valid
+                    if sequence.len() == binding.keys.len() && !sequence.is_empty() {
+                        self.default_chord_bindings
+                            .entry(context)
+                            .or_insert_with(HashMap::new)
+                            .insert(sequence, action);
+                    }
+                } else if let Some(key_code) = Self::parse_key(&binding.key) {
+                    // Single key binding (legacy format)
+                    let modifiers = Self::parse_modifiers(&binding.modifiers);
+                    self.default_bindings
+                        .entry(context)
+                        .or_insert_with(HashMap::new)
+                        .insert((key_code, modifiers), action);
+                }
+            }
+        }
+    }
+
+    /// Load custom bindings from a vector of keybinding definitions (into bindings/chord_bindings)
     fn load_bindings_from_vec(&mut self, bindings: &[crate::config::Keybinding]) {
         for binding in bindings {
             // Determine context from "when" clause

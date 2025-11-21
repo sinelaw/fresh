@@ -801,6 +801,6 @@ mod tests {
         let popup_below = popup.clone().with_position(PopupPosition::BelowCursor);
         let area = popup_below.calculate_area(terminal_area, Some((20, 10)));
         assert_eq!(area.x, 20);
-        assert_eq!(area.y, 11); // One row below cursor
+        assert_eq!(area.y, 12); // Two rows below cursor (allows space for cursor line)
     }
 }

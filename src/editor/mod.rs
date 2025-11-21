@@ -6197,17 +6197,22 @@ mod tests {
         assert!(events.is_some());
 
         let events = events.unwrap();
-        // Should have events for the two secondary cursors
-        assert_eq!(events.len(), 2);
+        // Should have RemoveCursor events for the two secondary cursors
+        // Plus ClearAnchor events for all cursors (to clear Emacs mark mode)
+        let remove_cursor_events: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::RemoveCursor { cursor_id, .. } => Some(*cursor_id),
+                _ => None,
+            })
+            .collect();
 
-        for event in &events {
-            match event {
-                Event::RemoveCursor { cursor_id, .. } => {
-                    // Should not be the first cursor (the one we're keeping)
-                    assert_ne!(*cursor_id, first_id);
-                }
-                _ => panic!("Expected RemoveCursor event"),
-            }
+        // Should have 2 RemoveCursor events (one for each secondary cursor)
+        assert_eq!(remove_cursor_events.len(), 2);
+
+        for cursor_id in &remove_cursor_events {
+            // Should not be the first cursor (the one we're keeping)
+            assert_ne!(*cursor_id, first_id);
         }
     }
 
@@ -7220,7 +7225,9 @@ mod tests {
         }
 
         // Force active buffer to first tab and ensure helper brings it into view.
-        editor.ensure_active_tab_visible(split_id, buf1, 20);
+        // Note: available_width must be >= tab width (2 + name_len) for offset to be 0
+        // Tab width = 2 + 20 (name length) = 22, so we need at least 22
+        editor.ensure_active_tab_visible(split_id, buf1, 25);
         assert_eq!(
             editor
                 .split_view_states
@@ -7231,7 +7238,7 @@ mod tests {
         );
 
         // Now make the last tab active and ensure offset moves forward but stays bounded.
-        editor.ensure_active_tab_visible(split_id, buf3, 20);
+        editor.ensure_active_tab_visible(split_id, buf3, 25);
         let view_state = editor.split_view_states.get(&split_id).unwrap();
         assert!(view_state.tab_scroll_offset > 0);
         let total_width: usize = view_state

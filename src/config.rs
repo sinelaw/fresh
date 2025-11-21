@@ -1026,7 +1026,12 @@ mod tests {
         assert_eq!(config.editor.tab_size, 4);
         assert!(config.editor.line_numbers);
         assert!(config.editor.syntax_highlighting);
-        assert!(!config.keybindings.is_empty());
+        // keybindings is empty by design - it's for user customizations only
+        // The actual keybindings come from resolve_keymap(active_keybinding_map)
+        assert!(config.keybindings.is_empty());
+        // But the resolved keymap should have bindings
+        let resolved = config.resolve_keymap(&config.active_keybinding_map);
+        assert!(!resolved.is_empty());
     }
 
     #[test]
