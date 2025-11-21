@@ -9,7 +9,7 @@ expression: "&screen_text"
     3 │     println!("Value: {}", value);                                      █
     4 │     result                                                             █
     5 │ }                                                                      █
-    6 │                                                                        █
+                                                                               █
                                                                                █
                                                                                █
                                                                                █

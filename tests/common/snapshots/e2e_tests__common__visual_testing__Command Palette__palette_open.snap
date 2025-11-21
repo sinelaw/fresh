@@ -18,11 +18,11 @@ expression: "&screen_text"
 │  Add Cursor Below          Ctrl+Alt+↓  Add a cursor on the line below        │
 │  Add Cursor at Next Match  Ctrl+D        Add a cursor at the next occurren...│
 │  Close Buffer                            Close the current buffer            │
-│  Close Split               Alt+X         Close the current split pane        │
-│  Code Actions              Ctrl+Shift+A  Show available code actions (quic...│
+│  Close Split                             Close the current split pane        │
+│  Code Actions                            Show available code actions (quic...│
 │  Copy                      Ctrl+C        Copy selection to clipboard         │
 │  Cut                       Ctrl+X        Cut selection to clipboard          │
-│  Decrease Split Size       Alt+-         Decrease the size of the current ...│
+│  Decrease Split Size                     Decrease the size of the current ...│
 │  Dedent Selection          Shift+Tab     Decrease indentation of selected ...│
 [No Name] | Ln 0, Col 0                                         Palette: Ctrl+P 
 Command:

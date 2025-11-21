@@ -4,10 +4,10 @@ expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   Help                 
  [No Name]*                                                 
-    1 │ This is a very long line of text that will definit █
-        ely exceed the terminal width and should wrap to m █
-        ultiple lines when line wrapping is enabled.       █
-                                                           █
+    1 │ This is a very long line of text that will         █
+      │ definitely exceed the terminal width and should    █
+      │ wrap to multiple lines when line wrapping is       █
+      │ enabled.                                           █
                                                            █
                                                            █
                                                            █
