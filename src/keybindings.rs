@@ -159,6 +159,14 @@ pub enum Action {
     DeleteWordBackward,
     DeleteWordForward,
     DeleteLine,
+    TransposeChars,
+    OpenLine,
+
+    // View
+    Recenter,
+
+    // Selection
+    SetMark,
 
     // Clipboard
     Copy,
@@ -405,6 +413,10 @@ impl Action {
             "delete_word_backward" => Some(Action::DeleteWordBackward),
             "delete_word_forward" => Some(Action::DeleteWordForward),
             "delete_line" => Some(Action::DeleteLine),
+            "transpose_chars" => Some(Action::TransposeChars),
+            "open_line" => Some(Action::OpenLine),
+            "recenter" => Some(Action::Recenter),
+            "set_mark" => Some(Action::SetMark),
 
             "copy" => Some(Action::Copy),
             "cut" => Some(Action::Cut),
@@ -1148,6 +1160,10 @@ impl KeybindingResolver {
             Action::DeleteWordBackward => "Delete word backward".to_string(),
             Action::DeleteWordForward => "Delete word forward".to_string(),
             Action::DeleteLine => "Delete line".to_string(),
+            Action::TransposeChars => "Transpose characters".to_string(),
+            Action::OpenLine => "Open line below".to_string(),
+            Action::Recenter => "Recenter view on cursor".to_string(),
+            Action::SetMark => "Set mark (start selection)".to_string(),
             Action::Copy => "Copy".to_string(),
             Action::Cut => "Cut".to_string(),
             Action::Paste => "Paste".to_string(),

@@ -1301,6 +1301,68 @@ pub fn action_to_events(
             }
         }
 
+        Action::TransposeChars => {
+            // Transpose the character before the cursor with the one at the cursor
+            // Collect cursor positions first to avoid borrow issues
+            let cursor_positions: Vec<_> = state
+                .cursors
+                .iter()
+                .map(|(id, c)| (id, c.position))
+                .collect();
+
+            for (cursor_id, pos) in cursor_positions {
+                // Need at least 2 characters: one before and one at cursor
+                if pos > 0 && pos < state.buffer.len() {
+                    // Get the two characters as a string
+                    let text = state.get_text_range(pos - 1, pos + 1);
+                    let chars: Vec<char> = text.chars().collect();
+                    if chars.len() >= 2 {
+                        // Delete both characters and insert them swapped
+                        events.push(Event::Delete {
+                            range: (pos - 1)..(pos + 1),
+                            deleted_text: text,
+                            cursor_id,
+                        });
+                        let swapped = format!("{}{}", chars[1], chars[0]);
+                        events.push(Event::Insert {
+                            position: pos - 1,
+                            text: swapped,
+                            cursor_id,
+                        });
+                    }
+                }
+            }
+        }
+
+        Action::OpenLine => {
+            // Insert a newline at cursor position but don't move cursor
+            // (like pressing Enter but staying on current line)
+            for (cursor_id, cursor) in state.cursors.iter() {
+                events.push(Event::Insert {
+                    position: cursor.position,
+                    text: "\n".to_string(),
+                    cursor_id,
+                });
+            }
+        }
+
+        Action::Recenter => {
+            // Scroll so that the cursor is centered in the view
+            // This is handled specially - we emit a Recenter event
+            events.push(Event::Recenter);
+        }
+
+        Action::SetMark => {
+            // Set the selection anchor at the current cursor position
+            // This starts a selection that extends as the cursor moves
+            for (cursor_id, cursor) in state.cursors.iter() {
+                events.push(Event::SetAnchor {
+                    cursor_id,
+                    position: cursor.position,
+                });
+            }
+        }
+
         Action::RemoveSecondaryCursors => {
             // Generate RemoveCursor events for all cursors except the first (original) one
             // Find the first cursor ID (lowest ID = original cursor)

@@ -80,6 +80,15 @@ pub enum Event {
         top_line: usize,
     },
 
+    /// Center the viewport on the cursor
+    Recenter,
+
+    /// Set the anchor (selection start) for a cursor
+    SetAnchor {
+        cursor_id: CursorId,
+        position: usize,
+    },
+
     /// Change mode (if implementing modal editing)
     ChangeMode {
         mode: String,

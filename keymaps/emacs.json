@@ -275,6 +275,38 @@
       "when": "normal"
     },
     {
+      "comment": "C-t - transpose chars",
+      "key": "t",
+      "modifiers": ["ctrl"],
+      "action": "transpose_chars",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-o - open line (insert newline, stay on line)",
+      "key": "o",
+      "modifiers": ["ctrl"],
+      "action": "open_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-l - recenter (scroll cursor to center)",
+      "key": "l",
+      "modifiers": ["ctrl"],
+      "action": "recenter",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-SPC - set mark (start selection)",
+      "key": " ",
+      "modifiers": ["ctrl"],
+      "action": "set_mark",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Arrow keys still work",
       "key": "Left",
       "modifiers": [],

@@ -369,6 +369,23 @@ impl EditorState {
                 self.viewport.scroll_to(&mut self.buffer, *top_line);
             }
 
+            Event::Recenter => {
+                // Center the viewport on the primary cursor
+                if let Some((_id, cursor)) = self.cursors.iter().next() {
+                    let cursor_line = self.buffer.position_to_line_col(cursor.position).0;
+                    let half_height = (self.viewport.height / 2) as usize;
+                    let new_top = cursor_line.saturating_sub(half_height);
+                    self.viewport.scroll_to(&mut self.buffer, new_top);
+                }
+            }
+
+            Event::SetAnchor { cursor_id, position } => {
+                // Set the anchor (selection start) for a specific cursor
+                if let Some(cursor) = self.cursors.get_mut(*cursor_id) {
+                    cursor.anchor = Some(*position);
+                }
+            }
+
             Event::ChangeMode { mode } => {
                 self.mode = mode.clone();
             }
