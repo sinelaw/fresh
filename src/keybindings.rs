@@ -408,6 +408,12 @@ impl Action {
             "select_line" => Some(Action::SelectLine),
             "expand_selection" => Some(Action::ExpandSelection),
 
+            // Block/rectangular selection
+            "block_select_left" => Some(Action::BlockSelectLeft),
+            "block_select_right" => Some(Action::BlockSelectRight),
+            "block_select_up" => Some(Action::BlockSelectUp),
+            "block_select_down" => Some(Action::BlockSelectDown),
+
             "delete_backward" => Some(Action::DeleteBackward),
             "delete_forward" => Some(Action::DeleteForward),
             "delete_word_backward" => Some(Action::DeleteWordBackward),

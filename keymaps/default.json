@@ -606,7 +606,148 @@
       "when": "normal"
     },
     {
-      "comment": "Normal context - Macros",
+      "comment": "Normal context - Macros (Alt+Shift+0-9 to toggle recording)",
+      "key": "0",
+      "modifiers": ["alt", "shift"],
+      "action": "toggle_macro_recording",
+      "args": {"char": "0"},
+      "when": "normal"
+    },
+    {
+      "key": "1",
+      "modifiers": ["alt", "shift"],
+      "action": "toggle_macro_recording",
+      "args": {"char": "1"},
+      "when": "normal"
+    },
+    {
+      "key": "2",
+      "modifiers": ["alt", "shift"],
+      "action": "toggle_macro_recording",
+      "args": {"char": "2"},
+      "when": "normal"
+    },
+    {
+      "key": "3",
+      "modifiers": ["alt", "shift"],
+      "action": "toggle_macro_recording",
+      "args": {"char": "3"},
+      "when": "normal"
+    },
+    {
+      "key": "4",
+      "modifiers": ["alt", "shift"],
+      "action": "toggle_macro_recording",
+      "args": {"char": "4"},
+      "when": "normal"
+    },
+    {
+      "key": "5",
+      "modifiers": ["alt", "shift"],
+      "action": "toggle_macro_recording",
+      "args": {"char": "5"},
+      "when": "normal"
+    },
+    {
+      "key": "6",
+      "modifiers": ["alt", "shift"],
+      "action": "toggle_macro_recording",
+      "args": {"char": "6"},
+      "when": "normal"
+    },
+    {
+      "key": "7",
+      "modifiers": ["alt", "shift"],
+      "action": "toggle_macro_recording",
+      "args": {"char": "7"},
+      "when": "normal"
+    },
+    {
+      "key": "8",
+      "modifiers": ["alt", "shift"],
+      "action": "toggle_macro_recording",
+      "args": {"char": "8"},
+      "when": "normal"
+    },
+    {
+      "key": "9",
+      "modifiers": ["alt", "shift"],
+      "action": "toggle_macro_recording",
+      "args": {"char": "9"},
+      "when": "normal"
+    },
+    {
+      "comment": "Macro playback (Ctrl+0-9)",
+      "key": "0",
+      "modifiers": ["ctrl"],
+      "action": "play_macro",
+      "args": {"char": "0"},
+      "when": "normal"
+    },
+    {
+      "key": "1",
+      "modifiers": ["ctrl"],
+      "action": "play_macro",
+      "args": {"char": "1"},
+      "when": "normal"
+    },
+    {
+      "key": "2",
+      "modifiers": ["ctrl"],
+      "action": "play_macro",
+      "args": {"char": "2"},
+      "when": "normal"
+    },
+    {
+      "key": "3",
+      "modifiers": ["ctrl"],
+      "action": "play_macro",
+      "args": {"char": "3"},
+      "when": "normal"
+    },
+    {
+      "key": "4",
+      "modifiers": ["ctrl"],
+      "action": "play_macro",
+      "args": {"char": "4"},
+      "when": "normal"
+    },
+    {
+      "key": "5",
+      "modifiers": ["ctrl"],
+      "action": "play_macro",
+      "args": {"char": "5"},
+      "when": "normal"
+    },
+    {
+      "key": "6",
+      "modifiers": ["ctrl"],
+      "action": "play_macro",
+      "args": {"char": "6"},
+      "when": "normal"
+    },
+    {
+      "key": "7",
+      "modifiers": ["ctrl"],
+      "action": "play_macro",
+      "args": {"char": "7"},
+      "when": "normal"
+    },
+    {
+      "key": "8",
+      "modifiers": ["ctrl"],
+      "action": "play_macro",
+      "args": {"char": "8"},
+      "when": "normal"
+    },
+    {
+      "key": "9",
+      "modifiers": ["ctrl"],
+      "action": "play_macro",
+      "args": {"char": "9"},
+      "when": "normal"
+    },
+    {
       "key": "F5",
       "modifiers": [],
       "action": "stop_macro_recording",
