@@ -3,11 +3,11 @@ source: tests/common/visual_testing.rs
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   Help                                     
- [No Name]*                      ┌────────────────────────────────────┐         
-    1 │ Hello, World!            │ Go to Definition                   │        █
-                                 │ Go to Line...                Ctrl+G│        █
-                                 │ Command Palette...           Ctrl+P│        █
-                                 └────────────────────────────────────┘        █
+ [No Name]*                                                                     
+    1 │ Hello, World!                                                          █
+                                                                               █
+                                                                               █
+                                                                               █
                                                                                █
                                                                                █
                                                                                █

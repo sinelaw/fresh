@@ -24,3 +24,9 @@
 
 *After pressing Down 25 times*
 
+## Step 4: after_50_down
+
+![after_50_down](../screenshots/Large_File_Cursor_Movement_04_after_50_down.svg)
+
+*After pressing Down 50 times*
+

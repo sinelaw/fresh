@@ -30,3 +30,9 @@
 
 *View menu - shows File Explorer, Split options*
 
+## Step 5: menu_item_highlighted
+
+![menu_item_highlighted](../screenshots/Menu_Bar_Navigation_05_menu_item_highlighted.svg)
+
+*Second item highlighted within View menu*
+
