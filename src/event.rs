@@ -89,6 +89,12 @@ pub enum Event {
         position: usize,
     },
 
+    /// Clear the anchor and reset deselect_on_move for a cursor
+    /// Used to cancel Emacs mark mode
+    ClearAnchor {
+        cursor_id: CursorId,
+    },
+
     /// Change mode (if implementing modal editing)
     ChangeMode {
         mode: String,

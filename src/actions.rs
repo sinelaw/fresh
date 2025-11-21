@@ -1437,6 +1437,7 @@ pub fn action_to_events(
 
         Action::RemoveSecondaryCursors => {
             // Generate RemoveCursor events for all cursors except the first (original) one
+            // Also clear anchor and reset deselect_on_move on all cursors (cancels Emacs mark mode)
             // Find the first cursor ID (lowest ID = original cursor)
             let first_id = state
                 .cursors
@@ -1453,6 +1454,8 @@ pub fn action_to_events(
                         anchor: cursor.anchor,
                     });
                 }
+                // Clear anchor and reset deselect_on_move for all cursors (including the first one)
+                events.push(Event::ClearAnchor { cursor_id });
             }
         }
 

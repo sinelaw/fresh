@@ -305,3 +305,82 @@ fn test_set_mark_then_shift_move_creates_selection() {
 
     // The selection should span from 0 to 5 (selecting "hello")
 }
+
+/// Test Escape cancels mark mode and clears selection
+#[test]
+fn test_escape_cancels_mark_mode() {
+    let mut harness = emacs_harness(80, 24);
+
+    harness.type_text("hello world").unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Set mark at beginning
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Move forward 5 characters
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Verify mark mode is active
+    let cursor = harness.editor().active_state().cursors.primary();
+    assert_eq!(cursor.anchor, Some(0), "Anchor should be at 0 before escape");
+    assert!(!cursor.deselect_on_move, "deselect_on_move should be false (mark mode active)");
+
+    // Press Escape to cancel mark mode
+    harness
+        .send_key(KeyCode::Esc, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify mark mode is cancelled
+    let cursor = harness.editor().active_state().cursors.primary();
+    assert_eq!(cursor.anchor, None, "Anchor should be cleared after escape");
+    assert!(cursor.deselect_on_move, "deselect_on_move should be true (mark mode cancelled)");
+}
+
+/// Test Ctrl+G cancels mark mode (Emacs-style keyboard-quit)
+#[test]
+fn test_ctrl_g_cancels_mark_mode() {
+    let mut harness = emacs_harness(80, 24);
+
+    harness.type_text("hello world").unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Set mark at beginning
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Move forward 5 characters
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Verify mark mode is active
+    let cursor = harness.editor().active_state().cursors.primary();
+    assert_eq!(cursor.anchor, Some(0), "Anchor should be at 0 before C-g");
+
+    // Press Ctrl+G to cancel mark mode
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify mark mode is cancelled
+    let cursor = harness.editor().active_state().cursors.primary();
+    assert_eq!(cursor.anchor, None, "Anchor should be cleared after C-g");
+    assert!(cursor.deselect_on_move, "deselect_on_move should be true (mark mode cancelled)");
+}
