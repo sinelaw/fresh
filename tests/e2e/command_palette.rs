@@ -117,13 +117,16 @@ fn test_command_palette_execute() {
     use crossterm::event::{KeyCode, KeyModifiers};
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
+    // Verify line numbers are shown initially (default config)
+    harness.assert_screen_contains("1 │");
+
     // Trigger the command palette
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Type a valid command name - use "List Bookmarks" which produces visible output
-    harness.type_text("List Bookmarks").unwrap();
+    // Type a valid command name - use "Toggle Line Numbers" which has visible effect
+    harness.type_text("Toggle Line Numbers").unwrap();
 
     // Execute with Enter
     harness
@@ -131,8 +134,8 @@ fn test_command_palette_execute() {
         .unwrap();
     harness.render().unwrap();
 
-    // The bookmark list buffer should now be visible
-    harness.assert_screen_contains("BOOKMARKS");
+    // Line numbers should now be hidden
+    harness.assert_screen_not_contains("1 │");
 }
 
 /// Test command palette fuzzy matching

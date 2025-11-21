@@ -69,8 +69,8 @@ fn test_alt_h_opens_help_menu() {
         .unwrap();
     harness.render().unwrap();
 
-    // Help menu dropdown should be visible
-    harness.assert_screen_contains("Show Help");
+    // Help menu dropdown should be visible (renamed from "Show Help")
+    harness.assert_screen_contains("Show Fresh Manual");
 }
 
 /// Test that F10 activates the menu bar
