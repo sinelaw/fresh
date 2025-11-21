@@ -311,7 +311,7 @@ fn test_git_find_file_shows_results() {
     trigger_git_find_file(&mut harness);
 
     // Check that the prompt appeared
-    harness.assert_screen_contains("Find file: ");
+    harness.assert_screen_contains("Open file: ");
 
     // Wait for async git ls-files to complete and populate file list
     // The plugin loads files asynchronously, so we need to wait for results
@@ -440,7 +440,7 @@ fn test_git_find_file_selection_navigation() {
     println!("After navigation:\n{screen}");
 
     // Prompt should still be active
-    assert!(screen.contains("Find file:"));
+    assert!(screen.contains("Open file:"));
 }
 
 /// Test git find file confirm - opens selected file
@@ -483,7 +483,7 @@ fn test_git_find_file_confirm_opens_file() {
     println!("After confirming file:\n{screen}");
 
     // The file should have opened and we should be out of prompt mode
-    harness.assert_screen_not_contains("Find file:");
+    harness.assert_screen_not_contains("Open file:");
 
     // Check if file content is visible
     let has_file_content =
@@ -580,7 +580,7 @@ fn test_git_find_file_scrolling_many_files() {
     println!("After scrolling:\n{screen}");
 
     // Should still show the prompt
-    assert!(screen.contains("Find file:"));
+    assert!(screen.contains("Open file:"));
 }
 
 /// Test that git commands work from command palette
@@ -755,7 +755,7 @@ fn test_git_find_file_actually_opens_file() {
                 let s = h.screen_to_string();
                 let lines: Vec<&str> = s.lines().collect();
 
-                // The last line is the prompt "Find file: lib.rs"
+                // The last line is the prompt "Open file: lib.rs"
                 // Check if any line EXCEPT the last one contains "src/"
                 lines
                     .iter()
@@ -810,7 +810,7 @@ fn test_git_find_file_actually_opens_file() {
     );
 
     // 3. Status bar should show we're no longer in prompt mode
-    harness.assert_screen_not_contains("Find file:");
+    harness.assert_screen_not_contains("Open file:");
 }
 
 /// REPRODUCTION TEST: Verify cursor jumps to correct line in git grep

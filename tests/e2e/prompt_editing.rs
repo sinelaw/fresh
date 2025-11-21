@@ -229,7 +229,7 @@ fn test_open_file_delete_word_backward() {
     harness.render().unwrap();
 
     // Should show find file prompt
-    harness.assert_screen_contains("Find file:");
+    harness.assert_screen_contains("Open file:");
 
     // Type a file path
     harness.type_text("src/editor.rs").unwrap();
@@ -246,7 +246,7 @@ fn test_open_file_delete_word_backward() {
     println!("Screen after Ctrl+Backspace in open file:\n{screen}");
 
     // Uncomment when implementing:
-    // harness.assert_screen_contains("Find file: src/editor.");
+    // harness.assert_screen_contains("Open file: src/editor.");
     // harness.assert_screen_not_contains("rs");
 }
 
@@ -274,7 +274,7 @@ fn test_editing_actions_consistency() {
         .unwrap();
     harness.type_text("test.txt").unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Find file: test.txt");
+    harness.assert_screen_contains("Open file: test.txt");
 
     // Cancel
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();

@@ -122,8 +122,8 @@ fn test_command_palette_execute() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Type the command name
-    harness.type_text("Show Help").unwrap();
+    // Type a valid command name - use "List Bookmarks" which produces visible output
+    harness.type_text("List Bookmarks").unwrap();
 
     // Execute with Enter
     harness
@@ -131,8 +131,8 @@ fn test_command_palette_execute() {
         .unwrap();
     harness.render().unwrap();
 
-    // Help should now be visible
-    harness.assert_screen_contains("KEYBOARD SHORTCUTS");
+    // The bookmark list buffer should now be visible
+    harness.assert_screen_contains("BOOKMARKS");
 }
 
 /// Test command palette fuzzy matching
@@ -535,8 +535,8 @@ fn test_command_palette_up_no_wraparound() {
     harness.render().unwrap();
 
     // "Open File" command opens a file picker prompt
-    // We should see "Find file:" prompt
-    harness.assert_screen_contains("Find file:");
+    // We should see "Open file:" prompt
+    harness.assert_screen_contains("Open file:");
 }
 
 /// Test that Down arrow stops at the end of the list instead of wrapping
@@ -602,7 +602,7 @@ fn test_command_palette_pageup_no_wraparound() {
     harness.render().unwrap();
 
     // Should execute the first command "Open File"
-    harness.assert_screen_contains("Find file:");
+    harness.assert_screen_contains("Open file:");
 }
 
 /// Test that PageDown stops at the end of the list instead of wrapping
@@ -651,12 +651,12 @@ fn test_command_palette_pagedown_no_wraparound() {
     harness.assert_screen_not_contains("Save File As");
 
     // The last available command in Normal context should be either:
-    // - Git: Find File (opens "Find file:" prompt)
+    // - Git: Find File (opens "Open file:" prompt)
     // - Git: Grep (opens "Git Grep:" prompt)
     // - Or we get an error message about command not being available (for File Explorer commands)
     // - Or a truncated error message (indicated by "Command '..." and ending with "is...")
     let is_expected_result = screen.contains("Git Grep:")
-        || screen.contains("Find file:")
+        || screen.contains("Open file:")
         || screen.contains("not available in")
         || (screen.contains("Command '") && screen.contains("is..."));
     assert!(

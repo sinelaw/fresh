@@ -14,7 +14,7 @@ fn test_prompt_rendering() {
 
     // Check that the prompt is visible in the status bar area (bottom line)
     let screen = harness.screen_to_string();
-    harness.assert_screen_contains("Find file: ");
+    harness.assert_screen_contains("Open file:");
 
     // Check that the status bar has yellow background (prompt color)
     let buffer = harness.buffer();
@@ -41,35 +41,35 @@ fn test_prompt_input_handling() {
         .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Find file: ");
+    harness.assert_screen_contains("Open file:");
 
     // Type some text
     harness.type_text("test.txt").unwrap();
-    harness.assert_screen_contains("Find file: test.txt");
+    harness.assert_screen_contains("Open file:test.txt");
 
     // Test backspace
     harness
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Find file: test.tx");
+    harness.assert_screen_contains("Open file:test.tx");
     harness.assert_screen_not_contains("test.txt");
 
     // Type more
     harness.type_text("t2").unwrap();
-    harness.assert_screen_contains("Find file: test.txt2");
+    harness.assert_screen_contains("Open file:test.txt2");
 
     // Test Home (move cursor to start)
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // Type at the beginning
     harness.type_text("my_").unwrap();
-    harness.assert_screen_contains("Find file: my_test.txt2");
+    harness.assert_screen_contains("Open file:my_test.txt2");
 
     // Test End (move cursor to end)
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.type_text("!").unwrap();
-    harness.assert_screen_contains("Find file: my_test.txt2!");
+    harness.assert_screen_contains("Open file:my_test.txt2!");
 }
 
 /// Test canceling the prompt with Escape
@@ -83,7 +83,7 @@ fn test_prompt_cancel() {
         .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Find file: ");
+    harness.assert_screen_contains("Open file:");
 
     // Type some text
     harness.type_text("test.txt").unwrap();
@@ -94,7 +94,7 @@ fn test_prompt_cancel() {
     harness.render().unwrap();
 
     // Prompt should be gone, and "Canceled" message should appear
-    harness.assert_screen_not_contains("Find file: ");
+    harness.assert_screen_not_contains("Open file:");
     harness.assert_screen_contains("Canceled");
 }
 
@@ -118,7 +118,7 @@ fn test_open_file_workflow() {
         .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Find file: ");
+    harness.assert_screen_contains("Open file:");
 
     // Type the file path
     let path_str = file_path.to_str().unwrap();
@@ -131,7 +131,7 @@ fn test_open_file_workflow() {
     harness.render().unwrap();
 
     // Check that the file was opened
-    harness.assert_screen_not_contains("Find file: ");
+    harness.assert_screen_not_contains("Open file:");
 
     // Check that the file content is displayed
     harness.assert_screen_contains("Hello from prompt test!");
