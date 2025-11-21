@@ -923,15 +923,10 @@
   <rect x="243" y="288" width="9" height="18" fill="#000000"/>
   <rect x="252" y="288" width="9" height="18" fill="#000000"/>
   <rect x="261" y="288" width="9" height="18" fill="#000000"/>
-  <text x="262" y="302" fill="#44475a" class="terminal" style="">A</text>
   <rect x="270" y="288" width="9" height="18" fill="#000000"/>
-  <text x="271" y="302" fill="#44475a" class="terminal" style="">l</text>
   <rect x="279" y="288" width="9" height="18" fill="#000000"/>
-  <text x="280" y="302" fill="#44475a" class="terminal" style="">t</text>
   <rect x="288" y="288" width="9" height="18" fill="#000000"/>
-  <text x="289" y="302" fill="#44475a" class="terminal" style="">+</text>
   <rect x="297" y="288" width="9" height="18" fill="#000000"/>
-  <text x="298" y="302" fill="#44475a" class="terminal" style="">X</text>
   <rect x="306" y="288" width="9" height="18" fill="#000000"/>
   <rect x="315" y="288" width="9" height="18" fill="#000000"/>
   <rect x="324" y="288" width="9" height="18" fill="#000000"/>
@@ -1045,29 +1040,17 @@
   <rect x="243" y="306" width="9" height="18" fill="#000000"/>
   <rect x="252" y="306" width="9" height="18" fill="#000000"/>
   <rect x="261" y="306" width="9" height="18" fill="#000000"/>
-  <text x="262" y="320" fill="#44475a" class="terminal" style="">C</text>
   <rect x="270" y="306" width="9" height="18" fill="#000000"/>
-  <text x="271" y="320" fill="#44475a" class="terminal" style="">t</text>
   <rect x="279" y="306" width="9" height="18" fill="#000000"/>
-  <text x="280" y="320" fill="#44475a" class="terminal" style="">r</text>
   <rect x="288" y="306" width="9" height="18" fill="#000000"/>
-  <text x="289" y="320" fill="#44475a" class="terminal" style="">l</text>
   <rect x="297" y="306" width="9" height="18" fill="#000000"/>
-  <text x="298" y="320" fill="#44475a" class="terminal" style="">+</text>
   <rect x="306" y="306" width="9" height="18" fill="#000000"/>
-  <text x="307" y="320" fill="#44475a" class="terminal" style="">S</text>
   <rect x="315" y="306" width="9" height="18" fill="#000000"/>
-  <text x="316" y="320" fill="#44475a" class="terminal" style="">h</text>
   <rect x="324" y="306" width="9" height="18" fill="#000000"/>
-  <text x="325" y="320" fill="#44475a" class="terminal" style="">i</text>
   <rect x="333" y="306" width="9" height="18" fill="#000000"/>
-  <text x="334" y="320" fill="#44475a" class="terminal" style="">f</text>
   <rect x="342" y="306" width="9" height="18" fill="#000000"/>
-  <text x="343" y="320" fill="#44475a" class="terminal" style="">t</text>
   <rect x="351" y="306" width="9" height="18" fill="#000000"/>
-  <text x="352" y="320" fill="#44475a" class="terminal" style="">+</text>
   <rect x="360" y="306" width="9" height="18" fill="#000000"/>
-  <text x="361" y="320" fill="#44475a" class="terminal" style="">A</text>
   <rect x="369" y="306" width="9" height="18" fill="#000000"/>
   <rect x="378" y="306" width="9" height="18" fill="#000000"/>
   <rect x="387" y="306" width="9" height="18" fill="#000000"/>
@@ -1418,15 +1401,10 @@
   <rect x="243" y="360" width="9" height="18" fill="#000000"/>
   <rect x="252" y="360" width="9" height="18" fill="#000000"/>
   <rect x="261" y="360" width="9" height="18" fill="#000000"/>
-  <text x="262" y="374" fill="#44475a" class="terminal" style="">A</text>
   <rect x="270" y="360" width="9" height="18" fill="#000000"/>
-  <text x="271" y="374" fill="#44475a" class="terminal" style="">l</text>
   <rect x="279" y="360" width="9" height="18" fill="#000000"/>
-  <text x="280" y="374" fill="#44475a" class="terminal" style="">t</text>
   <rect x="288" y="360" width="9" height="18" fill="#000000"/>
-  <text x="289" y="374" fill="#44475a" class="terminal" style="">+</text>
   <rect x="297" y="360" width="9" height="18" fill="#000000"/>
-  <text x="298" y="374" fill="#44475a" class="terminal" style="">-</text>
   <rect x="306" y="360" width="9" height="18" fill="#000000"/>
   <rect x="315" y="360" width="9" height="18" fill="#000000"/>
   <rect x="324" y="360" width="9" height="18" fill="#000000"/>

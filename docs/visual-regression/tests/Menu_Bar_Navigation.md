@@ -12,3 +12,9 @@
 
 *Menu bar visible at top showing File, Edit, View, Selection, Go, Help*
 
+## Step 2: file_menu_open
+
+![file_menu_open](../screenshots/Menu_Bar_Navigation_02_file_menu_open.svg)
+
+*File menu activated - dropdown shows options with keyboard shortcuts*
+

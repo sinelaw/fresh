@@ -9,7 +9,7 @@ expression: "&screen_text"
 ●   3 │     let y = 10;                                                        █
     4 │     println!("Hello");                                                 █
     5 │ }                                                                      █
-    6 │                                                                        █
+                                                                               █
                                                                                █
                                                                                █
                                                                                █

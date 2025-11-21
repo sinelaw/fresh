@@ -12,3 +12,9 @@
 
 *Editor before opening command palette*
 
+## Step 2: palette_open
+
+![palette_open](../screenshots/Command_Palette_02_palette_open.svg)
+
+*Command palette opened*
+

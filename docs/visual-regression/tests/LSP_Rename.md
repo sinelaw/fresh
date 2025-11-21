@@ -18,21 +18,3 @@
 
 *Cursor positioned on 'value' parameter*
 
-## Step 3: rename_mode_active
-
-![rename_mode_active](../screenshots/LSP_Rename_03_rename_mode_active.svg)
-
-*Rename mode activated - 'value' highlighted in blue*
-
-## Step 4: typing_new_name
-
-![typing_new_name](../screenshots/LSP_Rename_04_typing_new_name.svg)
-
-*Typing new name 'amount' - live preview in editor*
-
-## Step 5: rename_complete
-
-![rename_complete](../screenshots/LSP_Rename_05_rename_complete.svg)
-
-*Rename complete - all 3 occurrences of 'value' renamed to 'amount'*
-

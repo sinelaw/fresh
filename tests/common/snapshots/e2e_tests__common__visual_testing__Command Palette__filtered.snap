@@ -21,8 +21,8 @@ expression: "&screen_text"
                                                                                █
                                                                                █
                                                                                █
+                                                                               █
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  Show Help                              Display the help page with all key...│
-│  Show Signature Help  Ctrl+Shift+Space  Show function parameter hints        │
+│  Show Signature Help  Show function parameter hints                          │
 [No Name] | Ln 0, Col 0                                         Palette: Ctrl+P 
 Command: help
