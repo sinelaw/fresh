@@ -162,6 +162,30 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::DeleteLine,
             contexts: vec![KeyContext::Normal],
         },
+        Command {
+            name: "Transpose Characters".to_string(),
+            description: "Swap the character before cursor with the one at cursor".to_string(),
+            action: Action::TransposeChars,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Open Line".to_string(),
+            description: "Insert newline at cursor without moving cursor".to_string(),
+            action: Action::OpenLine,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Recenter".to_string(),
+            description: "Center the view on the cursor".to_string(),
+            action: Action::Recenter,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Set Mark".to_string(),
+            description: "Set selection anchor to start a selection".to_string(),
+            action: Action::SetMark,
+            contexts: vec![KeyContext::Normal],
+        },
         // Selection
         Command {
             name: "Select All".to_string(),
