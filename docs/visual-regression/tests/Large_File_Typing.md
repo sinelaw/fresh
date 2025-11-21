@@ -18,3 +18,9 @@
 
 *Positioned at line 10 before typing*
 
+## Step 3: after_typing
+
+![after_typing](../screenshots/Large_File_Typing_03_after_typing.svg)
+
+*After typing 'HELLO'*
+

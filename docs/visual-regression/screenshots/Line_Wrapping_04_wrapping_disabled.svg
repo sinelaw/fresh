@@ -320,5 +320,5 @@
   <text x="523" y="410" fill="#ff5555" class="terminal" style="">P</text>
   <rect x="531" y="396" width="9" height="18" fill="#000000"/>
   <!-- Cursor indicator -->
-  <rect x="513" y="36" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
+  <rect x="1296" y="36" width="9" height="18" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>
 </svg>

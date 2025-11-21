@@ -24,3 +24,9 @@
 
 *Edit menu - shows Undo, Redo, Cut, Copy, Paste, Find, Replace*
 
+## Step 4: view_menu_open
+
+![view_menu_open](../screenshots/Menu_Bar_Navigation_04_view_menu_open.svg)
+
+*View menu - shows File Explorer, Split options*
+
