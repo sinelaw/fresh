@@ -147,13 +147,18 @@ fn test_close_split() {
 fn test_cannot_close_last_split() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    // Try to close the only split (Alt+x)
+    // Try to close the only split via command palette
     harness
-        .send_key(KeyCode::Char('x'), KeyModifiers::ALT)
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.render().unwrap();
+    harness.type_text("close split").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
 
     // Should see error message
-    harness.render().unwrap();
     harness.assert_screen_contains("Cannot close split");
 }
 
