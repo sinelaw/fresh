@@ -1,22 +1,24 @@
 // Markdown Compose Mode Plugin
 // Provides beautiful, semi-WYSIWYG rendering of Markdown documents
-// Implements soft breaks, structure styling, and view transforms
+// - Highlighting: automatically enabled for all markdown files
+// - Compose mode: explicitly toggled, adds margins, soft-wrapping, different editing
 
 interface MarkdownConfig {
-  enabled: boolean;
   composeWidth: number;
   maxWidth: number;
   hideLineNumbers: boolean;
 }
 
 const config: MarkdownConfig = {
-  enabled: false,
   composeWidth: 80,
   maxWidth: 100,
   hideLineNumbers: true,
 };
 
-// Track buffers in compose mode
+// Track buffers with highlighting enabled (auto for markdown files)
+const highlightingBuffers = new Set<number>();
+
+// Track buffers in compose mode (explicit toggle)
 const composeBuffers = new Set<number>();
 
 // Markdown token types for parsing
@@ -78,11 +80,13 @@ const COLORS = {
   header: [100, 149, 237] as [number, number, number], // Cornflower blue
   code: [152, 195, 121] as [number, number, number],   // Green
   codeBlock: [152, 195, 121] as [number, number, number],
-  fence: [128, 128, 128] as [number, number, number],  // Gray
+  fence: [80, 80, 80] as [number, number, number],     // Subdued gray for ```
   link: [86, 156, 214] as [number, number, number],    // Light blue
-  linkUrl: [128, 128, 128] as [number, number, number], // Gray
-  bold: [229, 192, 123] as [number, number, number],   // Gold
-  italic: [198, 120, 221] as [number, number, number], // Purple
+  linkUrl: [80, 80, 80] as [number, number, number],   // Subdued gray
+  bold: [255, 255, 220] as [number, number, number],   // Bright for bold text
+  boldMarker: [80, 80, 80] as [number, number, number], // Subdued for ** markers
+  italic: [198, 180, 221] as [number, number, number], // Light purple for italic
+  italicMarker: [80, 80, 80] as [number, number, number], // Subdued for * markers
   quote: [128, 128, 128] as [number, number, number],  // Gray
   checkbox: [152, 195, 121] as [number, number, number], // Green
   listBullet: [86, 156, 214] as [number, number, number], // Light blue
@@ -418,11 +422,45 @@ function applyMarkdownStyling(bufferId: number, tokens: Token[]): void {
         break;
 
       case TokenType.Bold:
-        color = COLORS.bold;
+        // Style bold markers (** or __) subdued, content bright
+        const boldMatch = token.text.match(/^(\*\*|__)(.*)(\*\*|__)$/);
+        if (boldMatch) {
+          const markerLen = boldMatch[1].length;
+          // Subdued markers
+          editor.addOverlay(bufferId, `md:bold-start:${token.start}`,
+            token.start, token.start + markerLen,
+            COLORS.boldMarker[0], COLORS.boldMarker[1], COLORS.boldMarker[2], false);
+          editor.addOverlay(bufferId, `md:bold-end:${token.start}`,
+            token.end - markerLen, token.end,
+            COLORS.boldMarker[0], COLORS.boldMarker[1], COLORS.boldMarker[2], false);
+          // Bright content
+          editor.addOverlay(bufferId, `md:bold-content:${token.start}`,
+            token.start + markerLen, token.end - markerLen,
+            COLORS.bold[0], COLORS.bold[1], COLORS.bold[2], false);
+        } else {
+          color = COLORS.bold;
+        }
         break;
 
       case TokenType.Italic:
-        color = COLORS.italic;
+        // Style italic markers (* or _) subdued, content colored
+        const italicMatch = token.text.match(/^(\*|_)(.*)(\*|_)$/);
+        if (italicMatch) {
+          const markerLen = 1;
+          // Subdued markers
+          editor.addOverlay(bufferId, `md:italic-start:${token.start}`,
+            token.start, token.start + markerLen,
+            COLORS.italicMarker[0], COLORS.italicMarker[1], COLORS.italicMarker[2], false);
+          editor.addOverlay(bufferId, `md:italic-end:${token.start}`,
+            token.end - markerLen, token.end,
+            COLORS.italicMarker[0], COLORS.italicMarker[1], COLORS.italicMarker[2], false);
+          // Content
+          editor.addOverlay(bufferId, `md:italic-content:${token.start}`,
+            token.start + markerLen, token.end - markerLen,
+            COLORS.italic[0], COLORS.italic[1], COLORS.italic[2], false);
+        } else {
+          color = COLORS.italic;
+        }
         break;
 
       case TokenType.LinkText:
@@ -599,88 +637,84 @@ function buildViewTransform(
   editor.debug(`buildViewTransform: submit result = ${success}`);
 }
 
-// Process a buffer in compose mode
+// Check if a file is a markdown file
+function isMarkdownFile(path: string): boolean {
+  return path.endsWith('.md') || path.endsWith('.markdown');
+}
+
+// Apply highlighting only (no compose mode features)
+function applyHighlighting(bufferId: number): void {
+  const info = editor.getBufferInfo(bufferId);
+  if (!info || !isMarkdownFile(info.path)) return;
+
+  const bufferLength = editor.getBufferLength(bufferId);
+  const text = editor.getBufferText(bufferId, 0, bufferLength);
+  const parser = new MarkdownParser(text);
+  const tokens = parser.parse();
+  applyMarkdownStyling(bufferId, tokens);
+}
+
+// Process a buffer in compose mode (highlighting + view transform)
 function processBuffer(bufferId: number, splitId?: number): void {
-  if (!config.enabled) return;
   if (!composeBuffers.has(bufferId)) return;
 
-  // Get buffer info
   const info = editor.getBufferInfo(bufferId);
-  if (!info) {
-    editor.debug(`processBuffer: no buffer info for ${bufferId}`);
-    return;
-  }
-
-  // Only process markdown files
-  if (!info.path.endsWith('.md') && !info.path.endsWith('.markdown')) {
-    editor.debug(`processBuffer: not a markdown file: ${info.path}`);
-    return;
-  }
+  if (!info || !isMarkdownFile(info.path)) return;
 
   editor.debug(`processBuffer: processing ${info.path}, buffer_id=${bufferId}`);
 
-  // Get buffer content
   const bufferLength = editor.getBufferLength(bufferId);
-  editor.debug(`processBuffer: getBufferLength returned ${bufferLength}`);
-
   const text = editor.getBufferText(bufferId, 0, bufferLength);
-  editor.debug(`processBuffer: getBufferText returned ${text.length} bytes, first 100 chars: ${text.substring(0, 100)}`);
-
-  // Parse markdown
   const parser = new MarkdownParser(text);
   const tokens = parser.parse();
-  editor.debug(`processBuffer: parsed ${tokens.length} markdown tokens`);
 
   // Apply styling with overlays
   applyMarkdownStyling(bufferId, tokens);
-  editor.debug(`processBuffer: applied styling overlays`);
 
-  // Get viewport info (no buffer_id parameter - it's for the active buffer)
+  // Get viewport info and build view transform
   const viewport = editor.getViewport();
   if (!viewport) {
-    editor.debug(`processBuffer: no viewport, processing whole buffer`);
-    // No viewport, process whole buffer
     const viewportStart = 0;
     const viewportEnd = text.length;
     buildViewTransform(bufferId, splitId || null, text, viewportStart, viewportEnd, tokens);
     return;
   }
 
-  // Calculate viewport range
-  // We need to process a bit more than the visible area to handle wrapping
   const viewportStart = Math.max(0, viewport.top_byte - 500);
   const viewportEnd = Math.min(text.length, viewport.top_byte + (viewport.height * 200));
-  editor.debug(`processBuffer: viewport ${viewportStart}-${viewportEnd}, top_byte=${viewport.top_byte}, height=${viewport.height}`);
-
-  // Build and submit view transform
   buildViewTransform(bufferId, splitId || null, text, viewportStart, viewportEnd, tokens);
 }
 
-// Enable markdown compose for a buffer
+// Enable highlighting for a markdown buffer (auto on file open)
+function enableHighlighting(bufferId: number): void {
+  const info = editor.getBufferInfo(bufferId);
+  if (!info || !isMarkdownFile(info.path)) return;
+
+  if (!highlightingBuffers.has(bufferId)) {
+    highlightingBuffers.add(bufferId);
+    applyHighlighting(bufferId);
+    editor.debug(`Markdown highlighting enabled for buffer ${bufferId}`);
+  }
+}
+
+// Enable full compose mode for a buffer (explicit toggle)
 function enableMarkdownCompose(bufferId: number): void {
   const info = editor.getBufferInfo(bufferId);
-  if (!info) return;
-
-  // Only work with markdown files
-  if (!info.path.endsWith('.md') && !info.path.endsWith('.markdown')) {
-    return;
-  }
+  if (!info || !isMarkdownFile(info.path)) return;
 
   if (!composeBuffers.has(bufferId)) {
     composeBuffers.add(bufferId);
-    config.enabled = true;
+    highlightingBuffers.add(bufferId);  // Also ensure highlighting is on
     processBuffer(bufferId);
     editor.debug(`Markdown compose enabled for buffer ${bufferId}`);
   }
 }
 
-// Disable markdown compose for a buffer
+// Disable compose mode for a buffer (but keep highlighting)
 function disableMarkdownCompose(bufferId: number): void {
   if (composeBuffers.has(bufferId)) {
     composeBuffers.delete(bufferId);
-    editor.removeOverlaysByPrefix(bufferId, "md:");
-    // Clear view transform to return to normal rendering
-    // (Submit empty transform = identity/source view)
+    // Keep highlighting on, just clear the view transform
     editor.refreshLines(bufferId);
     editor.debug(`Markdown compose disabled for buffer ${bufferId}`);
   }
@@ -711,7 +745,7 @@ globalThis.markdownToggleCompose = function(): void {
 };
 
 // Handle view transform request - receives tokens from core for transformation
-// This is the streaming approach: core pushes tokens, plugin transforms them
+// Only applies transforms when in compose mode (not just highlighting)
 globalThis.onMarkdownViewTransform = function(data: {
   buffer_id: number;
   split_id: number;
@@ -719,12 +753,11 @@ globalThis.onMarkdownViewTransform = function(data: {
   viewport_end: number;
   tokens: ViewTokenWire[];
 }): void {
-  if (!config.enabled) return;
+  // Only transform when in compose mode (view transforms change line wrapping etc)
   if (!composeBuffers.has(data.buffer_id)) return;
 
   const info = editor.getBufferInfo(data.buffer_id);
-  if (!info) return;
-  if (!info.path.endsWith('.md') && !info.path.endsWith('.markdown')) return;
+  if (!info || !isMarkdownFile(info.path)) return;
 
   editor.debug(`onMarkdownViewTransform: buffer=${data.buffer_id}, split=${data.split_id}, tokens=${data.tokens.length}`);
 
@@ -841,29 +874,42 @@ function transformTokensForMarkdown(
   return result;
 }
 
-// Handle render_start for overlays only (not transform)
+// Handle render_start - apply highlighting for markdown files
 globalThis.onMarkdownRenderStart = function(data: { buffer_id: number }): void {
-  // Nothing to do here now - view_transform_request handles everything
+  // Auto-enable highlighting for markdown files
+  if (highlightingBuffers.has(data.buffer_id)) {
+    applyHighlighting(data.buffer_id);
+  }
 };
 
-// Handle content changes - clear seen lines to trigger re-transform
+// Handle buffer activation - auto-enable highlighting for markdown files
+globalThis.onMarkdownBufferActivated = function(data: { buffer_id: number }): void {
+  enableHighlighting(data.buffer_id);
+};
+
+// Handle content changes - refresh highlighting and transforms
 globalThis.onMarkdownAfterInsert = function(data: { buffer_id: number }): void {
-  if (!config.enabled) return;
+  if (highlightingBuffers.has(data.buffer_id)) {
+    applyHighlighting(data.buffer_id);
+  }
   if (composeBuffers.has(data.buffer_id)) {
     editor.refreshLines(data.buffer_id);
   }
 };
 
 globalThis.onMarkdownAfterDelete = function(data: { buffer_id: number }): void {
-  if (!config.enabled) return;
+  if (highlightingBuffers.has(data.buffer_id)) {
+    applyHighlighting(data.buffer_id);
+  }
   if (composeBuffers.has(data.buffer_id)) {
     editor.refreshLines(data.buffer_id);
   }
 };
 
-// Register hooks - use the new streaming view_transform_request hook
+// Register hooks
 editor.on("view_transform_request", "onMarkdownViewTransform");
 editor.on("render_start", "onMarkdownRenderStart");
+editor.on("buffer_activated", "onMarkdownBufferActivated");
 editor.on("after-insert", "onMarkdownAfterInsert");
 editor.on("after-delete", "onMarkdownAfterDelete");
 

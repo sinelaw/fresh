@@ -935,13 +935,7 @@ impl Config {
                         when: None,
                         checkbox: Some("line_wrap".to_string()),
                     },
-                    MenuItem::Action {
-                        label: "Compose Mode".to_string(),
-                        action: "toggle_compose_mode".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: Some("compose_mode".to_string()),
-                    },
+                    // Note: Compose Mode removed from menu - markdown_compose plugin provides this
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
                         label: "Set Background...".to_string(),

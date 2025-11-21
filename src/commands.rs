@@ -343,18 +343,7 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::ToggleLineWrap,
             contexts: vec![KeyContext::Normal],
         },
-        Command {
-            name: "Compose Mode: Toggle".to_string(),
-            description: "Toggle compose (semi-WYSIWYG) rendering for this buffer".to_string(),
-            action: Action::ToggleComposeMode,
-            contexts: vec![KeyContext::Normal],
-        },
-        Command {
-            name: "Compose Mode: Set Width".to_string(),
-            description: "Set compose column width (empty to use viewport)".to_string(),
-            action: Action::SetComposeWidth,
-            contexts: vec![KeyContext::Normal],
-        },
+        // Note: Compose mode commands removed - markdown_compose plugin provides these
         Command {
             name: "Set Background".to_string(),
             description: "Choose an ANSI art file to use as a faded background".to_string(),
