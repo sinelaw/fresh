@@ -216,6 +216,12 @@ pub enum PluginCommand {
         hints: LayoutHints,
     },
 
+    /// Enable/disable line numbers for a buffer
+    SetLineNumbers {
+        buffer_id: BufferId,
+        enabled: bool,
+    },
+
     /// Submit a transformed view stream for a viewport
     SubmitViewTransform {
         buffer_id: BufferId,

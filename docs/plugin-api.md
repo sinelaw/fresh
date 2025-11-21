@@ -559,6 +559,21 @@ deleteRange(buffer_id: number, start: number, end: number): boolean
 | `start` | `number` | Start byte offset (inclusive) |
 | `end` | `number` | End byte offset (exclusive) |
 
+#### `setLineNumbers`
+
+Enable/disable line numbers for a buffer
+
+```typescript
+setLineNumbers(buffer_id: number, enabled: boolean): boolean
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `buffer_id` | `number` | The buffer ID |
+| `enabled` | `boolean` | Whether to show line numbers |
+
 #### `submitViewTransform`
 
 Submit a transformed view stream for a viewport

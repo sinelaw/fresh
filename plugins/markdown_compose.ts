@@ -915,6 +915,10 @@ function enableMarkdownCompose(bufferId: number): void {
   if (!composeBuffers.has(bufferId)) {
     composeBuffers.add(bufferId);
     highlightingBuffers.add(bufferId);  // Also ensure highlighting is on
+
+    // Hide line numbers in compose mode
+    editor.setLineNumbers(bufferId, false);
+
     processBuffer(bufferId);
     editor.debug(`Markdown compose enabled for buffer ${bufferId}`);
   }
@@ -924,6 +928,17 @@ function enableMarkdownCompose(bufferId: number): void {
 function disableMarkdownCompose(bufferId: number): void {
   if (composeBuffers.has(bufferId)) {
     composeBuffers.delete(bufferId);
+
+    // Re-enable line numbers
+    editor.setLineNumbers(bufferId, true);
+
+    // Clear compose width (margins) by submitting empty layout hints
+    const bufferLength = editor.getBufferLength(bufferId);
+    editor.submitViewTransform(bufferId, null, 0, bufferLength, [], {
+      compose_width: null,
+      column_guides: null,
+    });
+
     // Keep highlighting on, just clear the view transform
     editor.refreshLines(bufferId);
     editor.debug(`Markdown compose disabled for buffer ${bufferId}`);

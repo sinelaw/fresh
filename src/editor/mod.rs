@@ -3373,6 +3373,11 @@ impl Editor {
                 view_state.compose_width = hints.compose_width;
                 view_state.compose_column_guides = hints.column_guides;
             }
+            PluginCommand::SetLineNumbers { buffer_id, enabled } => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    state.margins.set_line_numbers(enabled);
+                }
+            }
             PluginCommand::SubmitViewTransform {
                 buffer_id,
                 split_id,

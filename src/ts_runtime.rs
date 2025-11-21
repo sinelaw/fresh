@@ -417,6 +417,25 @@ fn op_fresh_remove_overlays_by_prefix(
     false
 }
 
+/// Enable/disable line numbers for a buffer
+/// @param buffer_id - The buffer ID
+/// @param enabled - Whether to show line numbers
+/// @returns true if successful
+#[op2(fast)]
+fn op_fresh_set_line_numbers(state: &mut OpState, buffer_id: u32, enabled: bool) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::SetLineNumbers {
+                buffer_id: BufferId(buffer_id as usize),
+                enabled,
+            });
+        return result.is_ok();
+    }
+    false
+}
+
 /// Remove all overlays from a buffer
 /// @param buffer_id - The buffer ID
 /// @returns true if overlays were cleared
@@ -2067,6 +2086,7 @@ extension!(
         op_fresh_add_overlay,
         op_fresh_remove_overlay,
         op_fresh_remove_overlays_by_prefix,
+        op_fresh_set_line_numbers,
         op_fresh_clear_all_overlays,
         op_fresh_add_virtual_text,
         op_fresh_remove_virtual_text,
@@ -2231,6 +2251,11 @@ impl TypeScriptRuntime {
                     },
                     clearAllOverlays(bufferId) {
                         return core.ops.op_fresh_clear_all_overlays(bufferId);
+                    },
+
+                    // Line numbers
+                    setLineNumbers(bufferId, enabled) {
+                        return core.ops.op_fresh_set_line_numbers(bufferId, enabled);
                     },
 
                     // Virtual text (inline text that doesn't exist in buffer)
