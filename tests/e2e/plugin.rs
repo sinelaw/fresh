@@ -1689,6 +1689,17 @@ fn test_clangd_plugin_file_status_notification() -> std::io::Result<()> {
         .join("plugins/clangd_support.ts");
     fs::copy(&plugin_source, plugins_dir.join("clangd_support.ts")).unwrap();
 
+    // Copy the lib directory that the plugin depends on
+    let lib_source_dir = std::env::current_dir().unwrap().join("plugins/lib");
+    let lib_dest_dir = plugins_dir.join("lib");
+    fs::create_dir(&lib_dest_dir).unwrap();
+    for entry in fs::read_dir(&lib_source_dir).unwrap() {
+        let entry = entry.unwrap();
+        if entry.path().extension().map(|e| e == "ts").unwrap_or(false) {
+            fs::copy(entry.path(), lib_dest_dir.join(entry.file_name())).unwrap();
+        }
+    }
+
     let src_dir = project_root.join("src");
     fs::create_dir_all(&src_dir).unwrap();
     let source_file = src_dir.join("main.cpp");
@@ -1758,6 +1769,17 @@ fn test_clangd_plugin_switch_source_header() -> std::io::Result<()> {
         .unwrap()
         .join("plugins/clangd_support.ts");
     fs::copy(&plugin_source, plugins_dir.join("clangd_support.ts")).unwrap();
+
+    // Copy the lib directory that the plugin depends on
+    let lib_source_dir = std::env::current_dir().unwrap().join("plugins/lib");
+    let lib_dest_dir = plugins_dir.join("lib");
+    fs::create_dir(&lib_dest_dir).unwrap();
+    for entry in fs::read_dir(&lib_source_dir).unwrap() {
+        let entry = entry.unwrap();
+        if entry.path().extension().map(|e| e == "ts").unwrap_or(false) {
+            fs::copy(entry.path(), lib_dest_dir.join(entry.file_name())).unwrap();
+        }
+    }
 
     let src_dir = project_root.join("src");
     fs::create_dir_all(&src_dir).unwrap();
