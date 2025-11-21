@@ -181,6 +181,38 @@
       "when": "normal"
     },
     {
+      "comment": "Transpose characters (swap char before cursor with char at cursor)",
+      "key": "t",
+      "modifiers": ["ctrl"],
+      "action": "transpose_chars",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Open line (insert newline without moving cursor)",
+      "key": "o",
+      "modifiers": ["ctrl"],
+      "action": "open_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Recenter view on cursor",
+      "key": "l",
+      "modifiers": ["ctrl"],
+      "action": "recenter",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Set mark to start selection",
+      "key": " ",
+      "modifiers": ["ctrl"],
+      "action": "set_mark",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Normal context - Document navigation",
       "key": "Home",
       "modifiers": ["ctrl"],
