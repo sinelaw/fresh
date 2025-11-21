@@ -413,8 +413,10 @@ fn test_macro_recording_toggle() {
         status
     );
 
-    // Stop recording with F5
-    harness.send_key(KeyCode::F(5), KeyModifiers::NONE).unwrap();
+    // Stop recording by toggling again (Alt+Shift+0)
+    harness
+        .send_key(KeyCode::Char('0'), KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
 
     let status = harness
@@ -456,8 +458,10 @@ fn test_macro_record_and_playback() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
-    // Stop recording
-    harness.send_key(KeyCode::F(5), KeyModifiers::NONE).unwrap();
+    // Stop recording by toggling again (Alt+Shift+1)
+    harness
+        .send_key(KeyCode::Char('1'), KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
 
     let content = harness.get_buffer_content();
@@ -468,12 +472,9 @@ fn test_macro_record_and_playback() {
         content
     );
 
-    // Play macro 1 with Ctrl+Alt+1 to process line2
+    // Play macro 1 with Ctrl+1 to process line2
     harness
-        .send_key(
-            KeyCode::Char('1'),
-            KeyModifiers::CONTROL | KeyModifiers::ALT,
-        )
+        .send_key(KeyCode::Char('1'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
@@ -487,10 +488,7 @@ fn test_macro_record_and_playback() {
 
     // Play macro again for line3
     harness
-        .send_key(
-            KeyCode::Char('1'),
-            KeyModifiers::CONTROL | KeyModifiers::ALT,
-        )
+        .send_key(KeyCode::Char('1'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
@@ -565,10 +563,7 @@ fn test_play_nonexistent_macro() {
 
     // Try to play macro 7 (which was never recorded)
     harness
-        .send_key(
-            KeyCode::Char('7'),
-            KeyModifiers::CONTROL | KeyModifiers::ALT,
-        )
+        .send_key(KeyCode::Char('7'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
