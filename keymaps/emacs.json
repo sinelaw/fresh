@@ -175,6 +175,106 @@
       "when": "normal"
     },
     {
+      "comment": "C-x k - kill buffer (close)",
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "k", "modifiers": []}
+      ],
+      "action": "close",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-x o - other window (next split)",
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "o", "modifiers": []}
+      ],
+      "action": "next_split",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-x 0 - delete window (close split)",
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "0", "modifiers": []}
+      ],
+      "action": "close_split",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-x 2 - split below (horizontal)",
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "2", "modifiers": []}
+      ],
+      "action": "split_horizontal",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-x 3 - split right (vertical)",
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "3", "modifiers": []}
+      ],
+      "action": "split_vertical",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "M-g g - goto line",
+      "keys": [
+        {"key": "g", "modifiers": ["alt"]},
+        {"key": "g", "modifiers": []}
+      ],
+      "action": "goto_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "M-d - kill word forward",
+      "key": "d",
+      "modifiers": ["alt"],
+      "action": "delete_word_forward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "M-Backspace - kill word backward",
+      "key": "Backspace",
+      "modifiers": ["alt"],
+      "action": "delete_word_backward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "M-< - beginning of buffer",
+      "key": ",",
+      "modifiers": ["alt", "shift"],
+      "action": "move_document_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "M-> - end of buffer",
+      "key": ".",
+      "modifiers": ["alt", "shift"],
+      "action": "move_document_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "M-% - query replace",
+      "key": "5",
+      "modifiers": ["alt", "shift"],
+      "action": "query_replace",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Arrow keys still work",
       "key": "Left",
       "modifiers": [],
