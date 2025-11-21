@@ -36,6 +36,7 @@ enum TokenType {
   HorizontalRule,
   Paragraph,
   HardBreak,
+  Image,  // Images should have hard breaks (not soft breaks)
   InlineCode,
   Bold,
   Italic,
@@ -240,6 +241,17 @@ class MarkdownParser {
     if (line.endsWith('  ') || line.endsWith('\\')) {
       this.tokens.push({
         type: TokenType.HardBreak,
+        start,
+        end,
+        text: line,
+      });
+      return;
+    }
+
+    // Images: ![alt](url) - these should have hard breaks to keep each on its own line
+    if (trimmed.match(/^!\[.*\]\(.*\)$/)) {
+      this.tokens.push({
+        type: TokenType.Image,
         start,
         end,
         text: line,
@@ -513,7 +525,8 @@ function buildViewTransform(
          t.type === TokenType.BlockQuote ||
          t.type === TokenType.CodeBlockFence ||
          t.type === TokenType.CodeBlockContent ||
-         t.type === TokenType.HorizontalRule) &&
+         t.type === TokenType.HorizontalRule ||
+         t.type === TokenType.Image) &&
         t.start <= lineStart && t.end >= lineStart
       );
 
@@ -784,7 +797,8 @@ function transformTokensForMarkdown(
         t.type === TokenType.CodeBlockFence ||
         t.type === TokenType.CodeBlockContent ||
         t.type === TokenType.BlockQuote ||
-        t.type === TokenType.HorizontalRule) {
+        t.type === TokenType.HorizontalRule ||
+        t.type === TokenType.Image) {
       // Mark the end of these elements as hard breaks
       hardBreakPositions.add(t.end + viewportStart);
     }

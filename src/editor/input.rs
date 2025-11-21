@@ -623,7 +623,13 @@ impl Editor {
                 let current_line_numbers = self.active_state().margins.show_line_numbers;
                 if let Some(vs) = self.split_view_states.get_mut(&active_split) {
                     vs.view_mode = view_mode.clone();
-                    vs.viewport.line_wrap_enabled = matches!(view_mode, crate::state::ViewMode::Compose) || default_wrap;
+                    // In Compose mode, disable builtin line wrap - the plugin handles
+                    // wrapping by inserting Break tokens in the view transform pipeline.
+                    // In Source mode, respect the user's default_wrap preference.
+                    vs.viewport.line_wrap_enabled = match view_mode {
+                        crate::state::ViewMode::Compose => false,
+                        crate::state::ViewMode::Source => default_wrap,
+                    };
                     match view_mode {
                         crate::state::ViewMode::Compose => {
                             vs.compose_prev_line_numbers = Some(current_line_numbers);
@@ -643,8 +649,11 @@ impl Editor {
                 {
                     let state = self.active_state_mut();
                     state.view_mode = view_mode.clone();
-                    state.viewport.line_wrap_enabled =
-                        matches!(view_mode, crate::state::ViewMode::Compose) || default_wrap;
+                    // In Compose mode, disable builtin line wrap - plugin handles wrapping.
+                    state.viewport.line_wrap_enabled = match view_mode {
+                        crate::state::ViewMode::Compose => false,
+                        crate::state::ViewMode::Source => default_wrap,
+                    };
                 }
 
                 let mode_label = match view_mode {

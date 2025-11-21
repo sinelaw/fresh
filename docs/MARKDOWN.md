@@ -63,6 +63,8 @@ Goal: keep Markdown source intact and visible, render a semi-WYSIWYG view (style
 - **Layout hints API** (`src/plugin_api.rs:68-74`, `src/editor/mod.rs:3360-3375`): `SetLayoutHints` for compose width and column guides
 - **Cursor mapping** (`src/ui/split_rendering.rs:609-632, 821-1471`): source → view → screen mapping with fallback logic (19 commits fixing edge cases)
 - **Token flattening** (`src/view.rs:114-145`): `flatten_tokens()` converts wire format to view lines
+- **Disable renderer wrapping in Compose** (`src/editor/input.rs:626-632, 653-656`): builtin `line_wrap_enabled` is disabled in Compose mode so plugin Break tokens control wrapping
+- **Markdown plugin image handling** (`plugins/markdown_compose.ts`): image lines are treated as hard breaks to prevent incorrect merging
 
 ### 🚧 Partially Implemented
 - **Wrapping as transform**: wrapping happens in renderer (`split_rendering.rs:1305-1393`), not as a token-inserting transform step. Plugins cannot control wrapping strategy.
@@ -72,8 +74,7 @@ Goal: keep Markdown source intact and visible, render a semi-WYSIWYG view (style
 - **Multi-pass transforms**: design allows chaining; current implementation supports single transform per viewport.
 - **Visual-line navigation**: up/down should operate on display lines in Compose mode; currently behaves like Source mode.
 - **Column guides rendering**: stored in state but not drawn.
-- **Disable renderer wrapping in Compose**: wrapping still uses `viewport.line_wrap_enabled` instead of plugin-controlled breaks.
-- **Markdown plugin** (`markdown_compose`): no plugin yet. Soft breaks, structure rendering (headers, lists, code blocks), styling all missing.
+- **Context-sensitive Enter**: Enter in compose mode should be context-aware (continue lists, add bullets, double-newline for paragraphs). Requires plugin hook for key interception.
 
 ### Critical Gap
 The design envisions:
