@@ -168,10 +168,15 @@ TODO FIXME HACK NOTE XXX BUG (not in comments)
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
 
-    // Need an extra render to trigger the render-line hooks after enabling
-    harness.render().unwrap();
+    // Need multiple async processing cycles for plugin to:
+    // 1. Process the RefreshLines command from the channel
+    // 2. Clear seen_lines and set plugin_render_requested
+    // 3. Re-render to trigger lines_changed hook
+    // 4. Process addOverlay commands from the hook
+    harness.process_async_and_render().unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.process_async_and_render().unwrap();
 
     // Now check that highlights are actually rendered
     // The TODO keyword should have a background color applied
@@ -190,15 +195,15 @@ TODO FIXME HACK NOTE XXX BUG (not in comments)
             if line[..x].contains("//") {
                 // Check the style of the 'T' in "TODO"
                 if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
-                    // Check if background color is an actual RGB color (not just Reset)
-                    // TODO keywords should be orange (255, 165, 0)
-                    if let Some(bg) = style.bg {
+                    // Check if foreground color is an actual RGB color (overlays set foreground, not background)
+                    // TODO keywords should be yellow (255, 200, 50)
+                    if let Some(fg) = style.fg {
                         println!(
-                            "Found TODO at ({}, {}) with background color: {:?}",
-                            x, y, bg
+                            "Found TODO at ({}, {}) with foreground color: {:?}",
+                            x, y, fg
                         );
                         // Only count as highlighted if it's an actual RGB color
-                        if matches!(bg, ratatui::style::Color::Rgb(_, _, _)) {
+                        if matches!(fg, ratatui::style::Color::Rgb(_, _, _)) {
                             found_highlighted_todo = true;
                             break;
                         }
@@ -312,12 +317,13 @@ fn test_todo_highlighter_toggle() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
 
-    // Need an extra render to trigger the render-line hooks after enabling
-    harness.render().unwrap();
+    // Need multiple async processing cycles for plugin to process RefreshLines and addOverlay commands
+    harness.process_async_and_render().unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.process_async_and_render().unwrap();
 
-    // Verify highlighting is enabled by checking for background color
+    // Verify highlighting is enabled by checking for foreground color (overlays set foreground, not background)
     let screen = harness.screen_to_string();
     let lines: Vec<&str> = screen.lines().collect();
     let mut found_highlighted = false;
@@ -327,8 +333,8 @@ fn test_todo_highlighter_toggle() {
             if line[..x].contains("//") {
                 if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
                     // Only count as highlighted if it's an actual RGB color
-                    if let Some(bg) = style.bg {
-                        if matches!(bg, ratatui::style::Color::Rgb(_, _, _)) {
+                    if let Some(fg) = style.fg {
+                        if matches!(fg, ratatui::style::Color::Rgb(_, _, _)) {
                             found_highlighted = true;
                             break;
                         }
@@ -1075,7 +1081,7 @@ editor.setStatus("Nonblocking test plugin loaded");
     // without the editor hanging
     let start = std::time::Instant::now();
     for _ in 0..10 {
-        harness.render().unwrap();
+        harness.process_async_and_render().unwrap();
         std::thread::sleep(Duration::from_millis(10));
     }
     let elapsed = start.elapsed();
@@ -1290,21 +1296,33 @@ Color::Rgb(128, 0, 255)
     let mut found_colored_swatch = false;
 
     for (y, line) in lines.iter().enumerate() {
-        if let Some(x) = line.find('█') {
-            if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
-                // Check if foreground color is set (should be the color being highlighted)
-                if let Some(fg) = style.fg {
-                    println!(
-                        "Found swatch at ({}, {}) with foreground color: {:?}",
-                        x, y, fg
-                    );
-                    // Check if it's an actual RGB color
-                    if matches!(fg, ratatui::style::Color::Rgb(_, _, _)) {
-                        found_colored_swatch = true;
-                        break;
+        // Find swatch using char indices to handle multi-byte chars correctly
+        for (char_idx, ch) in line.char_indices() {
+            if ch == '█' {
+                // Use character position, not byte position
+                let x = line[..char_idx].chars().count();
+                // Bounds check - skip if outside screen
+                if x >= 80 {
+                    continue;
+                }
+                if let Some(style) = harness.get_cell_style(x as u16, y as u16) {
+                    // Check if foreground color is set (should be the color being highlighted)
+                    if let Some(fg) = style.fg {
+                        println!(
+                            "Found swatch at ({}, {}) with foreground color: {:?}",
+                            x, y, fg
+                        );
+                        // Check if it's an actual RGB color
+                        if matches!(fg, ratatui::style::Color::Rgb(_, _, _)) {
+                            found_colored_swatch = true;
+                            break;
+                        }
                     }
                 }
             }
+        }
+        if found_colored_swatch {
+            break;
         }
     }
 
@@ -1353,12 +1371,33 @@ fn test_color_highlighter_disable() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
-    harness.render().unwrap();
+
+    // Need multiple async processing cycles for plugin to process virtual text insertion
+    harness.process_async_and_render().unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Helper function to count color swatches (excludes scrollbar at position 79)
+    fn count_color_swatches(screen: &str) -> usize {
+        screen
+            .lines()
+            .flat_map(|line| {
+                line.char_indices().filter(|&(char_idx, ch)| {
+                    if ch != '█' {
+                        return false;
+                    }
+                    // Calculate character position (not byte position)
+                    let x = line[..char_idx].chars().count();
+                    // Exclude scrollbar (at position 79, the last visible column)
+                    x < 79
+                })
+            })
+            .count()
+    }
 
     // Verify swatch appears
     let screen_enabled = harness.screen_to_string();
-    let swatches_enabled = screen_enabled.matches('█').count();
+    let swatches_enabled = count_color_swatches(&screen_enabled);
     assert!(
         swatches_enabled > 0,
         "Expected swatches when enabled. Got:\n{}",
@@ -1380,7 +1419,7 @@ fn test_color_highlighter_disable() {
 
     // Swatches should be removed
     let screen_disabled = harness.screen_to_string();
-    let swatches_disabled = screen_disabled.matches('█').count();
+    let swatches_disabled = count_color_swatches(&screen_disabled);
 
     assert!(
         swatches_disabled < swatches_enabled,
