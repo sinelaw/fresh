@@ -8,12 +8,12 @@
 | Metric | Count |
 |--------|-------|
 | Total tests | 1312 |
-| Passed | 1279 |
-| Failed | 8 |
+| Passed | 1280 |
+| Failed | 7 |
 | Timed out | 3 |
 | Skipped/Ignored | 22 |
 
-**Pass rate:** 97.6% (improved from 96.9% - fixed git, rendering, split view, and harness tests)
+**Pass rate:** 97.7% (improved from 97.6% - fixed LSP crash detection, added layout constants)
 
 ## Recent Fixes (This Session)
 
@@ -52,6 +52,11 @@
     - Updated find_all_cursors to detect inactive cursor background colors (not just REVERSED modifier)
     - Added detection for Color::Rgb(100, 100, 100), Color::Rgb(180, 180, 180), Color::DarkGray
 13. **visual_menu_bar test** - Ignored pending snapshot regeneration with cargo-insta
+14. **LSP crash detection test** - Fixed status bar extraction using new layout-aware helper
+15. **Layout constants module** - Added `tests/common/harness::layout` module with:
+    - Constants: `MENU_BAR_ROW`, `TAB_BAR_ROW`, `CONTENT_START_ROW`, `BOTTOM_RESERVED_ROWS`, `TOTAL_RESERVED_ROWS`
+    - Functions: `status_bar_row()`, `prompt_line_row()`, `content_end_row()`, `content_row_count()`
+    - Harness methods: `get_screen_row()`, `get_menu_bar()`, `get_tab_bar()`, `get_status_bar()`, `get_prompt_line()`
 
 ## Prerequisites
 
@@ -130,7 +135,7 @@ cargo insta accept --all  # Accept all pending snapshots
 | Category | Failures | Issue |
 |----------|----------|-------|
 | plugin | 5 + 2 timeout | Plugin async message processing, clangd integration (timing issues) |
-| lsp | 3 | LSP server crash detection, find references, rename |
+| lsp | 2 | LSP find references, rename (rust-analyzer integration) |
 | selection | 1 timeout | Large buffer performance (expand_selection times out) |
 
 ### Details on Remaining Failures
@@ -145,7 +150,6 @@ cargo insta accept --all  # Accept all pending snapshots
 - `test_diagnostics_panel_plugin_loads` (timeout) - Complex plugin setup
 
 **LSP tests (external dependencies):**
-- `test_lsp_crash_detection_and_restart` - LSP server simulation
 - `test_lsp_find_references` - rust-analyzer integration
 - `test_rust_analyzer_rename_content_modified` - rust-analyzer integration
 
