@@ -8,12 +8,12 @@
 | Metric | Count |
 |--------|-------|
 | Total tests | 1312 |
-| Passed | 1248 |
-| Failed | 41 |
+| Passed | 1259 |
+| Failed | 30 |
 | Timed out | 3 |
 | Skipped/Ignored | 20 |
 
-**Pass rate:** 95.2% (improved from 93.4% - fixed 24 tests)
+**Pass rate:** 96.0% (improved from 93.4% - fixed 35 tests)
 
 ## Recent Fixes (This Session)
 
@@ -30,6 +30,11 @@
    - Add process_async_and_render() calls for async plugin commands
    - Properly count color swatches excluding scrollbar characters
    - Handle multi-byte character indexing correctly
+7. **prompt/prompt_editing tests** - Fixed ALL 11 failing tests:
+   - Add missing action string mappings for prompt selection actions
+   - Add normalize_path() to resolve . and .. in file paths
+   - Remove "./" prefix from Open File prompt default directory
+   - Fix test expectations for prompt format
 
 ## Prerequisites
 
@@ -107,14 +112,12 @@ cargo insta accept --all  # Accept all pending snapshots
 
 | Category | Failures | Issue |
 |----------|----------|-------|
-| plugin | 7 + 2 timeout | Plugin async message processing, clangd integration |
-| search | 8 | Search state not preserved after prompt closes (find_next issue) |
-| prompt | 6 | Prompt handling (file operations) |
-| prompt_editing | 5 | Prompt text editing (selection, copy/paste) |
-| smart_editing | 5 | jump_to_error (LSP diagnostics) |
+| search | 7 | Search state not preserved after prompt closes (find_next issue) |
+| plugin | 5 + 2 timeout | Plugin async message processing, clangd integration |
 | git | 5 | Git integration (file finder, grep) |
-| scrolling | 2 | Viewport calculations |
+| smart_editing | 5 | jump_to_error (LSP diagnostics) |
 | lsp | 3 | LSP server setup, crash detection, find references |
+| scrolling | 2 | Viewport calculations |
 | rendering | 1 | Cursor position with large line numbers |
 | split_view | 1 | Split view cursor visibility |
 | file_explorer | 1 | Scroll behavior |
