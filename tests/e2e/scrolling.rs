@@ -1908,8 +1908,10 @@ fn test_page_down_when_buffer_equals_viewport_height() {
     use tempfile::TempDir;
 
     let terminal_height = 24u16;
-    let viewport_height = (terminal_height - 2) as usize; // 22 lines (minus tab bar and status bar)
-    let expected_bottom_row = (terminal_height - 2) as u16; // Row 22
+    // Layout: menu bar, tab bar, content, status bar, prompt line
+    // Content area is terminal_height - 3 (rows 2 to terminal_height-3)
+    let viewport_height = (terminal_height - 3) as usize; // 21 lines
+    let expected_bottom_row = (terminal_height - 3) as u16; // Row 21
 
     // Create buffer with exactly viewport_height lines
     let temp_dir = TempDir::new().unwrap();
