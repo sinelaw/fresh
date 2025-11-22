@@ -122,6 +122,11 @@ pub struct EditorStateSnapshot {
     pub buffer_cursor_positions: HashMap<BufferId, usize>,
     /// Text properties per buffer (for virtual buffers with properties)
     pub buffer_text_properties: HashMap<BufferId, Vec<crate::text_property::TextProperty>>,
+    /// Selected text from the primary cursor (if any selection exists)
+    /// This is populated on each update to avoid needing full buffer access
+    pub selected_text: Option<String>,
+    /// Internal clipboard content (for plugins that need clipboard access)
+    pub clipboard: String,
 }
 
 impl EditorStateSnapshot {
@@ -135,6 +140,8 @@ impl EditorStateSnapshot {
             viewport: None,
             buffer_cursor_positions: HashMap::new(),
             buffer_text_properties: HashMap::new(),
+            selected_text: None,
+            clipboard: String::new(),
         }
     }
 }
@@ -441,6 +448,13 @@ pub enum PluginCommand {
         params: Option<Value>,
         request_id: u64,
     },
+
+    /// Set the internal clipboard content
+    SetClipboard { text: String },
+
+    /// Delete the current selection in the active buffer
+    /// This deletes all selected text across all cursors
+    DeleteSelection,
 }
 
 /// Plugin API context - provides safe access to editor functionality

@@ -123,8 +123,8 @@ pub struct Editor {
     /// Keybinding resolver
     keybindings: KeybindingResolver,
 
-    /// Shared clipboard
-    clipboard: String,
+    /// Shared clipboard (handles both internal and system clipboard)
+    clipboard: crate::clipboard::Clipboard,
 
     /// Should the editor quit?
     should_quit: bool,
@@ -173,6 +173,9 @@ pub struct Editor {
 
     /// Whether file explorer is visible
     file_explorer_visible: bool,
+
+    /// Whether mouse capture is enabled
+    mouse_enabled: bool,
 
     /// Current keybinding context
     key_context: KeyContext,
@@ -483,7 +486,7 @@ impl Editor {
             ansi_background_path: None,
             background_fade: crate::ansi_background::DEFAULT_BACKGROUND_FADE,
             keybindings,
-            clipboard: String::new(),
+            clipboard: crate::clipboard::Clipboard::new(),
             should_quit: false,
             status_message: None,
             plugin_status_message: None,
@@ -500,6 +503,7 @@ impl Editor {
             file_explorer: None,
             fs_manager,
             file_explorer_visible: false,
+            mouse_enabled: true,
             key_context: KeyContext::Normal,
             menu_state: crate::ui::MenuState::new(),
             working_dir,
@@ -1554,6 +1558,26 @@ impl Editor {
         }
     }
 
+    /// Toggle mouse capture on/off
+    pub fn toggle_mouse_capture(&mut self) {
+        use std::io::stdout;
+
+        self.mouse_enabled = !self.mouse_enabled;
+
+        if self.mouse_enabled {
+            let _ = crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture);
+            self.set_status_message("Mouse capture enabled".to_string());
+        } else {
+            let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
+            self.set_status_message("Mouse capture disabled".to_string());
+        }
+    }
+
+    /// Check if mouse capture is enabled
+    pub fn is_mouse_enabled(&self) -> bool {
+        self.mouse_enabled
+    }
+
     /// Toggle inlay hints visibility
     pub fn toggle_inlay_hints(&mut self) {
         self.config.editor.enable_inlay_hints = !self.config.editor.enable_inlay_hints;
@@ -1865,7 +1889,7 @@ impl Editor {
         }
 
         if !text.is_empty() {
-            self.clipboard = text;
+            self.clipboard.copy(text);
             self.status_message = Some("Copied".to_string());
         }
     }
@@ -1913,9 +1937,11 @@ impl Editor {
 
     /// Paste the clipboard content
     pub fn paste(&mut self) {
-        if self.clipboard.is_empty() {
-            return;
-        }
+        // Get content from clipboard (tries system first, falls back to internal)
+        let paste_text = match self.clipboard.paste() {
+            Some(text) => text,
+            None => return,
+        };
 
         let state = self.active_state();
         let cursor_id = state.cursors.primary_id();
@@ -1923,7 +1949,7 @@ impl Editor {
 
         let event = Event::Insert {
             position,
-            text: self.clipboard.clone(),
+            text: paste_text,
             cursor_id,
         };
 
@@ -3147,13 +3173,23 @@ impl Editor {
             }
 
             // Update cursor information for active buffer
-            if let Some(active_state) = self.buffers.get(&self.active_buffer) {
+            if let Some(active_state) = self.buffers.get_mut(&self.active_buffer) {
                 // Primary cursor
                 let primary = active_state.cursors.primary();
+                let primary_position = primary.position;
+                let primary_selection = primary.selection_range();
+
                 snapshot.primary_cursor = Some(CursorInfo {
-                    position: primary.position,
-                    selection: primary.selection_range(),
+                    position: primary_position,
+                    selection: primary_selection.clone(),
                 });
+
+                // Selected text from primary cursor (for clipboard plugin)
+                snapshot.selected_text = if let Some(range) = primary_selection {
+                    Some(active_state.get_text_range(range.start, range.end))
+                } else {
+                    None
+                };
 
                 // All cursors
                 snapshot.all_cursors = active_state
@@ -3176,7 +3212,11 @@ impl Editor {
                 snapshot.primary_cursor = None;
                 snapshot.all_cursors.clear();
                 snapshot.viewport = None;
+                snapshot.selected_text = None;
             }
+
+            // Update clipboard (provide internal clipboard content to plugins)
+            snapshot.clipboard = self.clipboard.get_internal().to_string();
         }
     }
 
@@ -4169,6 +4209,44 @@ impl Editor {
                         request_id,
                         result: Err(err_msg),
                     });
+                }
+            }
+            PluginCommand::SetClipboard { text } => {
+                self.clipboard.copy(text);
+            }
+            PluginCommand::DeleteSelection => {
+                // Get deletions from state (same logic as cut_selection but without copy)
+                let deletions: Vec<_> = {
+                    let state = self.active_state();
+                    state
+                        .cursors
+                        .iter()
+                        .filter_map(|(_, c)| c.selection_range())
+                        .collect()
+                };
+
+                if !deletions.is_empty() {
+                    // Get deleted text and cursor id
+                    let state = self.active_state_mut();
+                    let primary_id = state.cursors.primary_id();
+                    let events: Vec<_> = deletions
+                        .iter()
+                        .rev()
+                        .map(|range| {
+                            let deleted_text = state.get_text_range(range.start, range.end);
+                            Event::Delete {
+                                range: range.clone(),
+                                deleted_text,
+                                cursor_id: primary_id,
+                            }
+                        })
+                        .collect();
+
+                    // Apply events
+                    for event in events {
+                        self.active_event_log_mut().append(event.clone());
+                        self.apply_event_to_active_buffer(&event);
+                    }
                 }
             }
         }
@@ -5865,8 +5943,8 @@ mod tests {
         let config = Config::default();
         let mut editor = Editor::new(config, 80, 24).unwrap();
 
-        // Manually set clipboard
-        editor.clipboard = "test".to_string();
+        // Manually set clipboard (using internal to avoid system clipboard in tests)
+        editor.clipboard.set_internal("test".to_string());
 
         // Paste should work
         editor.paste();
