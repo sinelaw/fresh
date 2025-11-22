@@ -50,6 +50,14 @@ interface GitCommitDetailState {
   commit: GitCommit | null;
 }
 
+interface GitFileViewState {
+  isOpen: boolean;
+  bufferId: number | null;
+  splitId: number | null;
+  filePath: string | null;
+  commitHash: string | null;
+}
+
 // =============================================================================
 // State Management
 // =============================================================================
@@ -72,6 +80,14 @@ const commitDetailState: GitCommitDetailState = {
   bufferId: null,
   splitId: null,
   commit: null,
+};
+
+const fileViewState: GitFileViewState = {
+  isOpen: false,
+  bufferId: null,
+  splitId: null,
+  filePath: null,
+  commitHash: null,
 };
 
 // =============================================================================
@@ -124,6 +140,17 @@ editor.defineMode(
     ["Return", "git_commit_detail_open_file"],
     ["q", "git_commit_detail_close"],
     ["Escape", "git_commit_detail_close"],
+  ],
+  true // read-only
+);
+
+// Define git-file-view mode for viewing files at a specific commit
+editor.defineMode(
+  "git-file-view",
+  "normal", // inherit from normal mode for cursor movement
+  [
+    ["q", "git_file_view_close"],
+    ["Escape", "git_file_view_close"],
   ],
   true // read-only
 );
@@ -197,19 +224,20 @@ async function fetchCommitDiff(hash: string): Promise<string> {
 // =============================================================================
 
 function formatCommitRow(commit: GitCommit): string {
-  // Build the line parts
-  let line = "";
-
-  // Add hash
-  line += commit.shortHash + " ";
+  // Build a structured line for consistent parsing and highlighting
+  // Format: shortHash | refs | author | relativeDate | subject
+  let line = commit.shortHash;
 
   // Add refs if present and enabled
   if (gitLogState.options.showRefs && commit.refs) {
-    line += commit.refs + " ";
+    line += " " + commit.refs;
   }
 
+  // Add author in parentheses
+  line += " (" + commit.author + ", " + commit.relativeDate + ")";
+
   // Add subject
-  line += commit.subject;
+  line += " " + commit.subject;
 
   return line + "\n";
 }
@@ -275,7 +303,7 @@ function applyGitLogHighlighting(): void {
   const content = editor.getBufferText(bufferId, 0, bufferLength);
   const lines = content.split("\n");
 
-  // Get cursor line to highlight current row
+  // Get cursor line to highlight current row (1-indexed from API)
   const cursorLine = editor.getCursorLine();
   const headerLines = 1; // Just "Commits:" header
 
@@ -283,18 +311,22 @@ function applyGitLogHighlighting(): void {
 
   for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
     const line = lines[lineIdx];
+    const lineStart = byteOffset;
+    const lineEnd = byteOffset + line.length;
 
     // Highlight section header
     if (line === "Commits:") {
       editor.addOverlay(
         bufferId,
         `gitlog-section-${lineIdx}`,
-        byteOffset,
-        byteOffset + line.length,
+        lineStart,
+        lineEnd,
         colors.header[0],
         colors.header[1],
         colors.header[2],
-        true // underline
+        true,  // underline
+        true,  // bold
+        false  // italic
       );
       byteOffset += line.length + 1;
       continue;
@@ -307,63 +339,108 @@ function applyGitLogHighlighting(): void {
     }
 
     const commit = gitLogState.commits[commitIndex];
-    const isCurrentLine = lineIdx === cursorLine;
+    // cursorLine is 1-indexed, lineIdx is 0-indexed
+    const isCurrentLine = (lineIdx + 1) === cursorLine;
 
     // Highlight entire line if cursor is on it (using selected color with underline)
     if (isCurrentLine) {
       editor.addOverlay(
         bufferId,
         `gitlog-cursorline-${lineIdx}`,
-        byteOffset,
-        byteOffset + line.length,
+        lineStart,
+        lineEnd,
         colors.selected[0],
         colors.selected[1],
         colors.selected[2],
-        true, // underline to make it visible
-        true  // bold
+        true,  // underline to make it visible
+        true,  // bold
+        false  // italic
       );
     }
 
-    // Find and highlight different parts of the line
-    let pos = 0;
-
-    // Highlight hash
-    const hashStart = byteOffset + pos;
-    const hashEnd = hashStart + commit.shortHash.length;
+    // Parse the line format: "shortHash refs (author, relativeDate) subject"
+    // Highlight hash (first 7+ chars until space)
+    const hashEnd = commit.shortHash.length;
     editor.addOverlay(
       bufferId,
       `gitlog-hash-${lineIdx}`,
-      hashStart,
-      hashEnd,
+      lineStart,
+      lineStart + hashEnd,
       colors.hash[0],
       colors.hash[1],
       colors.hash[2],
-      false
+      false, // underline
+      false, // bold
+      false  // italic
     );
-    pos += commit.shortHash.length + 1;
 
-    // Highlight refs (branches/tags)
+    // Highlight refs (branches/tags) if present
     if (gitLogState.options.showRefs && commit.refs) {
-      const refsStart = byteOffset + pos;
-      const refsEnd = refsStart + commit.refs.length;
+      const refsStartInLine = line.indexOf(commit.refs);
+      if (refsStartInLine >= 0) {
+        const refsStart = lineStart + refsStartInLine;
+        const refsEnd = refsStart + commit.refs.length;
 
-      // Determine color based on ref type
-      let refColor = colors.branch;
-      if (commit.refs.includes("tag:")) {
-        refColor = colors.tag;
-      } else if (commit.refs.includes("origin/") || commit.refs.includes("remote")) {
-        refColor = colors.remote;
+        // Determine color based on ref type
+        let refColor = colors.branch;
+        if (commit.refs.includes("tag:")) {
+          refColor = colors.tag;
+        } else if (commit.refs.includes("origin/") || commit.refs.includes("remote")) {
+          refColor = colors.remote;
+        }
+
+        editor.addOverlay(
+          bufferId,
+          `gitlog-refs-${lineIdx}`,
+          refsStart,
+          refsEnd,
+          refColor[0],
+          refColor[1],
+          refColor[2],
+          false, // underline
+          false, // bold
+          false  // italic
+        );
       }
+    }
 
+    // Highlight author name (inside parentheses)
+    const authorPattern = "(" + commit.author + ",";
+    const authorStartInLine = line.indexOf(authorPattern);
+    if (authorStartInLine >= 0) {
+      const authorStart = lineStart + authorStartInLine + 1; // skip "("
+      const authorEnd = authorStart + commit.author.length;
       editor.addOverlay(
         bufferId,
-        `gitlog-refs-${lineIdx}`,
-        refsStart,
-        refsEnd,
-        refColor[0],
-        refColor[1],
-        refColor[2],
-        false
+        `gitlog-author-${lineIdx}`,
+        authorStart,
+        authorEnd,
+        colors.author[0],
+        colors.author[1],
+        colors.author[2],
+        false, // underline
+        false, // bold
+        false  // italic
+      );
+    }
+
+    // Highlight relative date
+    const datePattern = ", " + commit.relativeDate + ")";
+    const dateStartInLine = line.indexOf(datePattern);
+    if (dateStartInLine >= 0) {
+      const dateStart = lineStart + dateStartInLine + 2; // skip ", "
+      const dateEnd = dateStart + commit.relativeDate.length;
+      editor.addOverlay(
+        bufferId,
+        `gitlog-date-${lineIdx}`,
+        dateStart,
+        dateEnd,
+        colors.date[0],
+        colors.date[1],
+        colors.date[2],
+        false, // underline
+        false, // bold
+        false  // italic
       );
     }
 
@@ -531,7 +608,9 @@ function applyCommitDetailHighlighting(): void {
         colors.diffAdd[0],
         colors.diffAdd[1],
         colors.diffAdd[2],
-        false
+        false, // underline
+        false, // bold
+        false  // italic
       );
     }
     // Highlight diff deletions (red)
@@ -544,10 +623,12 @@ function applyCommitDetailHighlighting(): void {
         colors.diffDel[0],
         colors.diffDel[1],
         colors.diffDel[2],
-        false
+        false, // underline
+        false, // bold
+        false  // italic
       );
     }
-    // Highlight hunk headers (blue)
+    // Highlight hunk headers (cyan/blue)
     else if (line.startsWith("@@")) {
       editor.addOverlay(
         bufferId,
@@ -557,7 +638,9 @@ function applyCommitDetailHighlighting(): void {
         colors.diffHunk[0],
         colors.diffHunk[1],
         colors.diffHunk[2],
-        false
+        false, // underline
+        true,  // bold
+        false  // italic
       );
     }
     // Highlight commit hash in "commit <hash>" line (git show format)
@@ -573,7 +656,9 @@ function applyCommitDetailHighlighting(): void {
           colors.hash[0],
           colors.hash[1],
           colors.hash[2],
-          true // bold
+          false, // underline
+          true,  // bold
+          false  // italic
         );
       }
     }
@@ -587,7 +672,9 @@ function applyCommitDetailHighlighting(): void {
         colors.author[0],
         colors.author[1],
         colors.author[2],
-        false
+        false, // underline
+        false, // bold
+        false  // italic
       );
     }
     // Highlight date line
@@ -600,7 +687,9 @@ function applyCommitDetailHighlighting(): void {
         colors.date[0],
         colors.date[1],
         colors.date[2],
-        false
+        false, // underline
+        false, // bold
+        false  // italic
       );
     }
     // Highlight diff file headers
@@ -613,7 +702,9 @@ function applyCommitDetailHighlighting(): void {
         colors.header[0],
         colors.header[1],
         colors.header[2],
-        true // bold
+        false, // underline
+        true,  // bold
+        false  // italic
       );
     }
 
@@ -845,9 +936,58 @@ globalThis.git_commit_detail_close = function(): void {
   editor.setStatus(`Git log: ${gitLogState.commits.length} commits | ↑/↓: navigate | RET: show | q: quit`);
 };
 
-// Open file at the current diff line position
-globalThis.git_commit_detail_open_file = function(): void {
+// Close file view and go back to commit detail
+globalThis.git_file_view_close = function(): void {
+  if (!fileViewState.isOpen) {
+    return;
+  }
+
+  // Go back to the commit detail view by restoring the commit detail buffer
+  if (fileViewState.splitId !== null && commitDetailState.bufferId !== null) {
+    editor.setSplitBuffer(fileViewState.splitId, commitDetailState.bufferId);
+    // Re-apply highlighting since we're switching back
+    applyCommitDetailHighlighting();
+  }
+
+  // Close the file view buffer (it's no longer displayed)
+  if (fileViewState.bufferId !== null) {
+    editor.closeBuffer(fileViewState.bufferId);
+  }
+
+  fileViewState.isOpen = false;
+  fileViewState.bufferId = null;
+  fileViewState.splitId = null;
+  fileViewState.filePath = null;
+  fileViewState.commitHash = null;
+
+  if (commitDetailState.commit) {
+    editor.setStatus(`Commit ${commitDetailState.commit.shortHash} | ↑/↓: navigate | RET: open file | q: back`);
+  }
+};
+
+// Fetch file content at a specific commit
+async function fetchFileAtCommit(commitHash: string, filePath: string): Promise<string | null> {
+  const result = await editor.spawnProcess("git", [
+    "show",
+    `${commitHash}:${filePath}`,
+  ]);
+
+  if (result.exit_code !== 0) {
+    return null;
+  }
+
+  return result.stdout;
+}
+
+// Open file at the current diff line position - shows file as it was at that commit
+globalThis.git_commit_detail_open_file = async function(): Promise<void> {
   if (!commitDetailState.isOpen || commitDetailState.bufferId === null) {
+    return;
+  }
+
+  const commit = commitDetailState.commit;
+  if (!commit) {
+    editor.setStatus("No commit context available");
     return;
   }
 
@@ -859,16 +999,49 @@ globalThis.git_commit_detail_open_file = function(): void {
     const line = props[0].line as number | undefined;
 
     if (file) {
-      // Construct full path relative to cwd
-      const cwd = editor.getCwd();
-      const fullPath = file.startsWith("/") ? file : `${cwd}/${file}`;
+      editor.setStatus(`Loading ${file} at ${commit.shortHash}...`);
 
-      // Open the file at the specified line
-      const targetLine = line || 1;
-      const success = editor.openFile(fullPath, targetLine, 1);
+      // Fetch file content at this commit
+      const content = await fetchFileAtCommit(commit.hash, file);
 
-      if (success) {
-        editor.setStatus(`Opened ${file}:${targetLine}`);
+      if (content === null) {
+        editor.setStatus(`File ${file} not found at commit ${commit.shortHash}`);
+        return;
+      }
+
+      // Build entries for the virtual buffer - one entry per line for proper line tracking
+      const lines = content.split("\n");
+      const entries: TextPropertyEntry[] = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        entries.push({
+          text: lines[i] + (i < lines.length - 1 ? "\n" : ""),
+          properties: { type: "content", line: i + 1 },
+        });
+      }
+
+      // Create a read-only virtual buffer with the file content
+      const bufferId = await editor.createVirtualBufferInExistingSplit({
+        name: `${file} @ ${commit.shortHash}`,
+        mode: "git-file-view",
+        read_only: true,
+        entries: entries,
+        split_id: commitDetailState.splitId!,
+        show_line_numbers: true,
+        show_cursors: true,
+        editing_disabled: true,
+      });
+
+      if (bufferId !== null) {
+        // Track file view state so we can navigate back
+        fileViewState.isOpen = true;
+        fileViewState.bufferId = bufferId;
+        fileViewState.splitId = commitDetailState.splitId;
+        fileViewState.filePath = file;
+        fileViewState.commitHash = commit.hash;
+
+        const targetLine = line || 1;
+        editor.setStatus(`${file} @ ${commit.shortHash} (read-only) | Target: line ${targetLine} | q: back`);
       } else {
         editor.setStatus(`Failed to open ${file}`);
       }
