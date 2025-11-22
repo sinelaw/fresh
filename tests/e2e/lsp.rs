@@ -2543,10 +2543,8 @@ fn test_lsp_crash_detection_and_restart() -> std::io::Result<()> {
         // Look for "error", "crashed", or "restarting"
         if screen.contains("error") || screen.contains("crashed") || screen.contains("restarting") {
             crash_detected = true;
-            // Extract the status message from screen (last line usually)
-            if let Some(line) = screen.lines().last() {
-                status_msg = line.to_string();
-            }
+            // Extract the status message using the layout-aware helper
+            status_msg = harness.get_status_bar();
             eprintln!("Iteration {}: Crash/error detected in screen", i);
             break;
         }

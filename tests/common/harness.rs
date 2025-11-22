@@ -1,6 +1,49 @@
 // EditorTestHarness - Virtual terminal environment for E2E testing
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+/// Terminal layout constants
+/// The editor uses a fixed layout with reserved rows for UI elements
+pub mod layout {
+    /// Menu bar is always at row 0
+    pub const MENU_BAR_ROW: usize = 0;
+
+    /// Tab bar is at row 1 (within the main content area)
+    pub const TAB_BAR_ROW: usize = 1;
+
+    /// Content starts at row 2 (after menu bar and tab bar)
+    pub const CONTENT_START_ROW: usize = 2;
+
+    /// Number of rows reserved at the bottom (status bar + prompt line)
+    pub const BOTTOM_RESERVED_ROWS: usize = 2;
+
+    /// Total reserved rows (menu bar at top, status bar + prompt at bottom)
+    pub const TOTAL_RESERVED_ROWS: usize = 4;
+
+    /// Get the status bar row for a given terminal height
+    #[inline]
+    pub const fn status_bar_row(terminal_height: usize) -> usize {
+        terminal_height - 2
+    }
+
+    /// Get the prompt line row for a given terminal height
+    #[inline]
+    pub const fn prompt_line_row(terminal_height: usize) -> usize {
+        terminal_height - 1
+    }
+
+    /// Get the content end row (exclusive) for a given terminal height
+    #[inline]
+    pub const fn content_end_row(terminal_height: usize) -> usize {
+        terminal_height - BOTTOM_RESERVED_ROWS
+    }
+
+    /// Get the number of content rows for a given terminal height
+    #[inline]
+    pub const fn content_row_count(terminal_height: usize) -> usize {
+        terminal_height.saturating_sub(TOTAL_RESERVED_ROWS)
+    }
+}
 use fresh::fs::{BackendMetrics, FsBackend, LocalFsBackend, SlowFsBackend, SlowFsConfig};
 use fresh::{config::Config, editor::Editor};
 use ratatui::{backend::TestBackend, Terminal};
@@ -751,17 +794,41 @@ impl EditorTestHarness {
     /// Get the content area row range on screen (start_row, end_row inclusive)
     /// This accounts for menu bar, tab bar, status bar, and prompt line
     pub fn content_area_rows(&self) -> (usize, usize) {
-        // Layout: [menu_bar, main_content, status_bar, prompt_line]
-        // Menu bar: row 0
-        // Main content area: rows 1 to (terminal_height - 3)
-        //   - Tab bar: row 1 (within split)
-        //   - Content + scrollbar: rows 2 to (terminal_height - 3)
-        // Status bar: row (terminal_height - 2)
-        // Prompt line: row (terminal_height - 1)
         let terminal_height = self.terminal.size().unwrap().height as usize;
-        let content_first_row = 2; // After menu bar and tab bar
-        let content_last_row = terminal_height.saturating_sub(3); // Before status bar and prompt line
+        let content_first_row = layout::CONTENT_START_ROW;
+        let content_last_row = layout::content_end_row(terminal_height).saturating_sub(1);
         (content_first_row, content_last_row)
+    }
+
+    /// Get the terminal height
+    pub fn terminal_height(&self) -> usize {
+        self.terminal.size().unwrap().height as usize
+    }
+
+    /// Get a specific row from the screen as a string
+    pub fn get_screen_row(&self, row: usize) -> String {
+        let screen = self.screen_to_string();
+        screen.lines().nth(row).map(|s| s.to_string()).unwrap_or_default()
+    }
+
+    /// Get the menu bar row content
+    pub fn get_menu_bar(&self) -> String {
+        self.get_screen_row(layout::MENU_BAR_ROW)
+    }
+
+    /// Get the tab bar row content
+    pub fn get_tab_bar(&self) -> String {
+        self.get_screen_row(layout::TAB_BAR_ROW)
+    }
+
+    /// Get the status bar row content
+    pub fn get_status_bar(&self) -> String {
+        self.get_screen_row(layout::status_bar_row(self.terminal_height()))
+    }
+
+    /// Get the prompt line content
+    pub fn get_prompt_line(&self) -> String {
+        self.get_screen_row(layout::prompt_line_row(self.terminal_height()))
     }
 
     /// Get the primary cursor's selection range, if any
