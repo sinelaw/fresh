@@ -41,6 +41,7 @@ interface GitLogState {
   sourceBufferId: number | null; // The buffer that was open before git log (to restore on close)
   commits: GitCommit[];
   options: GitLogOptions;
+  cachedContent: string; // Store content for highlighting (getBufferText doesn't work for virtual buffers)
 }
 
 interface GitCommitDetailState {
@@ -48,6 +49,7 @@ interface GitCommitDetailState {
   bufferId: number | null;
   splitId: number | null;
   commit: GitCommit | null;
+  cachedContent: string; // Store content for highlighting
 }
 
 interface GitFileViewState {
@@ -73,6 +75,7 @@ const gitLogState: GitLogState = {
     showRefs: true,
     maxCommits: 100,
   },
+  cachedContent: "",
 };
 
 const commitDetailState: GitCommitDetailState = {
@@ -80,6 +83,7 @@ const commitDetailState: GitCommitDetailState = {
   bufferId: null,
   splitId: null,
   commit: null,
+  cachedContent: "",
 };
 
 const fileViewState: GitFileViewState = {
@@ -242,6 +246,11 @@ function formatCommitRow(commit: GitCommit): string {
   return line + "\n";
 }
 
+// Helper to extract content string from entries (for highlighting)
+function entriesToContent(entries: TextPropertyEntry[]): string {
+  return entries.map(e => e.text).join("");
+}
+
 function buildGitLogEntries(): TextPropertyEntry[] {
   const entries: TextPropertyEntry[] = [];
 
@@ -298,9 +307,9 @@ function applyGitLogHighlighting(): void {
   // Clear existing overlays
   editor.removeOverlaysByPrefix(bufferId, "gitlog-");
 
-  // Get buffer content to find positions for highlighting
-  const bufferLength = editor.getBufferLength(bufferId);
-  const content = editor.getBufferText(bufferId, 0, bufferLength);
+  // Use cached content (getBufferText doesn't work for virtual buffers)
+  const content = gitLogState.cachedContent;
+  if (!content) return;
   const lines = content.split("\n");
 
   // Get cursor line to highlight current row (1-indexed from API)
@@ -451,6 +460,7 @@ function applyGitLogHighlighting(): void {
 function updateGitLogView(): void {
   if (gitLogState.bufferId !== null) {
     const entries = buildGitLogEntries();
+    gitLogState.cachedContent = entriesToContent(entries);
     editor.setVirtualBufferContent(gitLogState.bufferId, entries);
     applyGitLogHighlighting();
   }
@@ -586,9 +596,9 @@ function applyCommitDetailHighlighting(): void {
   // Clear existing overlays
   editor.removeOverlaysByPrefix(bufferId, "gitdetail-");
 
-  // Get buffer content
-  const bufferLength = editor.getBufferLength(bufferId);
-  const content = editor.getBufferText(bufferId, 0, bufferLength);
+  // Use cached content (getBufferText doesn't work for virtual buffers)
+  const content = commitDetailState.cachedContent;
+  if (!content) return;
   const lines = content.split("\n");
 
   let byteOffset = 0;
@@ -737,8 +747,9 @@ globalThis.show_git_log = async function(): Promise<void> {
     return;
   }
 
-  // Build entries
+  // Build entries and cache content for highlighting
   const entries = buildGitLogEntries();
+  gitLogState.cachedContent = entriesToContent(entries);
 
   // Create virtual buffer in the current split (replacing current buffer)
   const bufferId = await editor.createVirtualBufferInExistingSplit({
@@ -858,6 +869,9 @@ globalThis.git_log_show_commit = async function(): Promise<void> {
 
   // Build entries using raw git show output
   const entries = buildCommitDetailEntries(commit, showOutput);
+
+  // Cache content for highlighting (getBufferText doesn't work for virtual buffers)
+  commitDetailState.cachedContent = entriesToContent(entries);
 
   // Create virtual buffer in the current split (replacing git log view)
   const bufferId = await editor.createVirtualBufferInExistingSplit({
