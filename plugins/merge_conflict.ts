@@ -997,20 +997,61 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
     return;
   }
 
-  // Read file content from disk (working tree has conflict markers)
-  const content = await editor.readFile(info.path);
+  editor.debug(`Merge: starting for ${info.path}`);
 
-  if (!content) {
-    editor.setStatus("Failed to read file content");
+  // Get the directory of the file for running git commands
+  const fileDir = editor.pathDirname(info.path);
+  editor.debug(`Merge: file directory is ${fileDir}`);
+
+  // Check if we're in a git repo (run from file's directory)
+  const gitCheck = await editor.spawnProcess("git", ["rev-parse", "--is-inside-work-tree"], fileDir);
+  editor.debug(`Merge: git rev-parse exit_code=${gitCheck.exit_code}, stdout=${gitCheck.stdout.trim()}`);
+
+  if (gitCheck.exit_code !== 0 || gitCheck.stdout.trim() !== "true") {
+    editor.setStatus("Not in a git repository - merge conflict resolution requires git");
     return;
+  }
+
+  // Check if file has unmerged entries using git (run from file's directory)
+  const lsFilesResult = await editor.spawnProcess("git", ["ls-files", "-u", info.path], fileDir);
+  editor.debug(`Merge: git ls-files -u exit_code=${lsFilesResult.exit_code}, stdout length=${lsFilesResult.stdout.length}, stderr=${lsFilesResult.stderr}`);
+
+  const hasUnmergedEntries = lsFilesResult.exit_code === 0 && lsFilesResult.stdout.trim().length > 0;
+
+  if (!hasUnmergedEntries) {
+    editor.setStatus("No unmerged entries - file is not in a merge conflict state");
+    return;
+  }
+
+  // Get file content from git's working tree (has conflict markers)
+  const catFileResult = await editor.spawnProcess("git", ["show", `:0:${info.path}`]);
+
+  // If :0: doesn't exist, read the working tree file directly
+  let content: string;
+  if (catFileResult.exit_code !== 0) {
+    editor.debug(`Merge: git show :0: failed, reading working tree file`);
+    const fileContent = await editor.readFile(info.path);
+    if (!fileContent) {
+      editor.setStatus("Failed to read file content");
+      return;
+    }
+    content = fileContent;
+  } else {
+    // The staged version shouldn't have conflict markers, use working tree
+    const fileContent = await editor.readFile(info.path);
+    if (!fileContent) {
+      editor.setStatus("Failed to read file content");
+      return;
+    }
+    content = fileContent;
   }
 
   // Check for conflict markers in content
   const hasMarkers = hasConflictMarkers(content);
-  editor.debug(`Merge: file has conflict markers: ${hasMarkers}`);
+  editor.debug(`Merge: file has conflict markers: ${hasMarkers}, content length: ${content.length}`);
 
   if (!hasMarkers) {
-    editor.setStatus("No conflict markers found in this file");
+    editor.setStatus("No conflict markers found in file content");
     return;
   }
 
@@ -1424,14 +1465,18 @@ globalThis.onMergeBufferActivated = async function(data: { buffer_id: number }):
   const info = editor.getBufferInfo(data.buffer_id);
   if (!info || !info.path) return;
 
-  // Check for conflict markers by reading the file
+  // Check if we're in a git repo first
   try {
-    const content = await editor.readFile(info.path);
-    if (content && hasConflictMarkers(content)) {
+    const gitCheck = await editor.spawnProcess("git", ["rev-parse", "--is-inside-work-tree"]);
+    if (gitCheck.exit_code !== 0) return;
+
+    // Check for unmerged entries
+    const lsFiles = await editor.spawnProcess("git", ["ls-files", "-u", info.path]);
+    if (lsFiles.exit_code === 0 && lsFiles.stdout.trim().length > 0) {
       editor.setStatus(`Conflicts detected! Use 'Merge: Start Resolution' or run start_merge_conflict`);
     }
   } catch (e) {
-    // File might not exist yet, ignore
+    // Not in git repo or other error, ignore
   }
 };
 
@@ -1442,14 +1487,18 @@ globalThis.onMergeAfterFileOpen = async function(data: { buffer_id: number; path
   // Don't trigger if already in merge mode
   if (mergeState.isActive) return;
 
-  // Check for conflict markers by reading the file
+  // Check if we're in a git repo first
   try {
-    const content = await editor.readFile(data.path);
-    if (content && hasConflictMarkers(content)) {
+    const gitCheck = await editor.spawnProcess("git", ["rev-parse", "--is-inside-work-tree"]);
+    if (gitCheck.exit_code !== 0) return;
+
+    // Check for unmerged entries
+    const lsFiles = await editor.spawnProcess("git", ["ls-files", "-u", data.path]);
+    if (lsFiles.exit_code === 0 && lsFiles.stdout.trim().length > 0) {
       editor.setStatus(`⚠ Merge conflicts detected in ${data.path} - Use 'Merge: Start Resolution'`);
     }
   } catch (e) {
-    // File might not exist yet, ignore
+    // Not in git repo or other error, ignore
   }
 };
 

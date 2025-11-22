@@ -2,6 +2,7 @@ use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
+use tracing_subscriber::EnvFilter;
 
 /// Test file content with git conflict markers
 const CONFLICT_FILE_CONTENT: &str = r#"// Some code before conflict
@@ -109,9 +110,136 @@ fn test_merge_conflict_plugin_loads() {
     harness.assert_screen_contains("<<<<<<< HEAD");
 }
 
+/// Helper to set up a git repo with a merge conflict
+fn setup_git_merge_conflict(project_root: &std::path::Path) -> std::path::PathBuf {
+    use std::process::Command;
+
+    let conflict_file = project_root.join("conflict.rs");
+
+    // Initialize git repo
+    let init_output = Command::new("git")
+        .args(["init"])
+        .current_dir(project_root)
+        .output()
+        .expect("git init failed");
+    eprintln!("git init: {:?}", String::from_utf8_lossy(&init_output.stderr));
+
+    // Configure git user for commits and disable signing
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(project_root)
+        .output()
+        .expect("git config email failed");
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(project_root)
+        .output()
+        .expect("git config name failed");
+    // Disable commit signing for tests
+    Command::new("git")
+        .args(["config", "commit.gpgsign", "false"])
+        .current_dir(project_root)
+        .output()
+        .expect("git config gpgsign failed");
+
+    // Create initial file with a line we'll conflict on (same line modified in both branches)
+    fs::write(&conflict_file, "conflict line\n").unwrap();
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(project_root)
+        .output()
+        .expect("git add failed");
+    Command::new("git")
+        .args(["commit", "-m", "initial"])
+        .current_dir(project_root)
+        .output()
+        .expect("git commit failed");
+
+    // Create a branch and modify THE SAME LINE
+    Command::new("git")
+        .args(["checkout", "-b", "feature"])
+        .current_dir(project_root)
+        .output()
+        .expect("git checkout -b failed");
+    fs::write(&conflict_file, "feature version of line\n").unwrap();
+    Command::new("git")
+        .args(["commit", "-am", "feature change"])
+        .current_dir(project_root)
+        .output()
+        .expect("git commit failed");
+
+    // Get the current branch name (could be master or main)
+    let branch_output = Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(project_root)
+        .output()
+        .expect("git branch failed");
+    eprintln!("Current branch in feature: {:?}", String::from_utf8_lossy(&branch_output.stdout));
+
+    // Go back to the initial branch (try master first, then main)
+    let checkout_master = Command::new("git")
+        .args(["checkout", "master"])
+        .current_dir(project_root)
+        .output();
+
+    if checkout_master.is_err() || !checkout_master.as_ref().unwrap().status.success() {
+        eprintln!("master checkout failed, trying main...");
+        Command::new("git")
+            .args(["checkout", "main"])
+            .current_dir(project_root)
+            .output()
+            .expect("git checkout main failed");
+    }
+
+    // Modify THE SAME LINE differently on main/master
+    fs::write(&conflict_file, "main version of line\n").unwrap();
+    let commit_output = Command::new("git")
+        .args(["commit", "-am", "main change"])
+        .current_dir(project_root)
+        .output()
+        .expect("git commit failed");
+    eprintln!("commit on main: {:?}", String::from_utf8_lossy(&commit_output.stderr));
+
+    // Try to merge - this MUST fail with conflict since we modified the same line
+    let merge_output = Command::new("git")
+        .args(["merge", "feature"])
+        .current_dir(project_root)
+        .output()
+        .expect("git merge failed");
+
+    eprintln!("Git merge exit code: {}", merge_output.status);
+    eprintln!("Git merge stdout: {:?}", String::from_utf8_lossy(&merge_output.stdout));
+    eprintln!("Git merge stderr: {:?}", String::from_utf8_lossy(&merge_output.stderr));
+
+    // Verify the file has conflict markers
+    let content = fs::read_to_string(&conflict_file).unwrap();
+    eprintln!("Conflict file content:\n{}", content);
+
+    // Verify git sees it as unmerged
+    let ls_files = Command::new("git")
+        .args(["ls-files", "-u"])
+        .current_dir(project_root)
+        .output()
+        .expect("git ls-files failed");
+    eprintln!("git ls-files -u output: {:?}", String::from_utf8_lossy(&ls_files.stdout));
+
+    assert!(
+        content.contains("<<<<<<<"),
+        "Expected conflict markers in file, got: {}",
+        content
+    );
+
+    conflict_file
+}
+
 /// Test that Merge: Start Resolution command works
 #[test]
 fn test_merge_start_resolution_command() {
+    // Enable tracing for debugging
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("fresh=debug")
+        .try_init();
+
     // Create a temporary project directory
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
@@ -127,40 +255,58 @@ fn test_merge_start_resolution_command() {
     let plugin_dest = plugins_dir.join("merge_conflict.ts");
     fs::copy(&plugin_source, &plugin_dest).unwrap();
 
-    // Create test file with conflict markers
-    let fixture = TestFixture::new("conflict.rs", SIMPLE_CONFLICT).unwrap();
+    // Set up a real git merge conflict
+    let conflict_file = setup_git_merge_conflict(&project_root);
+    eprintln!("Conflict file path: {:?}", conflict_file);
 
     // Create harness with the project directory
     let mut harness =
-        EditorTestHarness::with_config_and_working_dir(100, 30, Default::default(), project_root)
+        EditorTestHarness::with_config_and_working_dir(100, 30, Default::default(), project_root.clone())
             .unwrap();
 
-    // Open the test file
-    harness.open_file(&fixture.path).unwrap();
+    // Open the conflict file
+    eprintln!("Opening conflict file...");
+    harness.open_file(&conflict_file).unwrap();
     harness.render().unwrap();
 
+    let screen_before = harness.screen_to_string();
+    eprintln!("Screen before command:\n{}", screen_before);
+
     // Run Merge: Start Resolution command
+    eprintln!("Sending Ctrl+P...");
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.render().unwrap();
+
+    eprintln!("Typing command...");
     harness.type_text("Merge: Start Resolution").unwrap();
+    harness.render().unwrap();
+
+    eprintln!("Pressing Enter...");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
     // Process async operations for panel creation
+    eprintln!("Processing async 1...");
     harness.process_async_and_render().unwrap();
+    eprintln!("Processing async 2...");
     harness.process_async_and_render().unwrap();
+    eprintln!("Processing async 3...");
+    harness.process_async_and_render().unwrap();
+    eprintln!("Processing async 4...");
+    harness.process_async_and_render().unwrap();
+    eprintln!("Processing async 5...");
     harness.process_async_and_render().unwrap();
 
     // The merge UI should now be visible
     // Check for panel headers
     let screen = harness.screen_to_string();
-    println!("Screen after starting merge:\n{}", screen);
+    eprintln!("Screen after starting merge:\n{}", screen);
 
-    // Should see merge UI elements
+    // Should see merge UI elements or status message
     // At minimum, check for some indication the command ran
-    // (The exact UI depends on the implementation)
 }
 
 /// Test conflict navigation with n/p keys
