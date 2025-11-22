@@ -1209,7 +1209,10 @@ impl SplitRenderer {
                     Some(style) => style,
                     None => {
                         // This character is part of an ANSI escape sequence, skip it
+                        // But we still need to increment col_offset since view_mapping includes
+                        // all characters (ANSI sequences are in the flattened view text)
                         char_index += ch.len_utf8();
+                        col_offset += 1;
                         continue;
                     }
                 };
