@@ -184,7 +184,7 @@ fn op_fresh_debug(#[string] message: String) {
 /// Get the buffer ID of the focused editor pane
 ///
 /// Returns 0 if no buffer is active (rare edge case).
-/// Use this ID with other buffer operations like getBufferText or insertText.
+/// Use this ID with other buffer operations like insertText.
 #[op2(fast)]
 fn op_fresh_get_active_buffer_id(state: &mut OpState) -> u32 {
     if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
@@ -238,8 +238,7 @@ fn op_fresh_get_buffer_path(state: &mut OpState, buffer_id: u32) -> String {
 
 /// Get the total byte length of a buffer's content
 ///
-/// Returns 0 if buffer doesn't exist. Use with getBufferText to read
-/// the full buffer: getBufferText(id, 0, getBufferLength(id)).
+/// Returns 0 if buffer doesn't exist.
 /// @param buffer_id - Target buffer ID
 #[op2(fast)]
 fn op_fresh_get_buffer_length(state: &mut OpState, buffer_id: u32) -> u32 {
@@ -764,24 +763,6 @@ fn op_fresh_get_active_split_id(state: &mut OpState) -> u32 {
         };
     }
     0
-}
-
-/// Extract text from a buffer by byte range
-///
-/// DEPRECATED: Use the view_transform hook instead, which receives tokens
-/// from core during render. This avoids pulling buffer content and works
-/// with huge files.
-///
-/// Returns empty string - plugins should use streaming transforms.
-/// @param buffer_id - Target buffer ID (unused)
-/// @param start - Start byte offset (unused)
-/// @param end - End byte offset (unused)
-#[op2]
-#[string]
-fn op_fresh_get_buffer_text(_state: &mut OpState, _buffer_id: u32, _start: u32, _end: u32) -> String {
-    // Plugins should use view_transform hook which receives tokens from core
-    // This avoids the need to pull buffer content and works with huge files
-    String::new()
 }
 
 /// Get the line number of the primary cursor (1-indexed)
@@ -2140,7 +2121,6 @@ extension!(
         op_fresh_open_file,
         op_fresh_get_active_split_id,
         op_fresh_open_file_in_split,
-        op_fresh_get_buffer_text,
         op_fresh_get_cursor_line,
         op_fresh_get_all_cursor_positions,
         op_fresh_spawn_process,
@@ -2350,11 +2330,6 @@ impl TypeScriptRuntime {
                     },
                     openFileInSplit(splitId, path, line = 0, column = 0) {
                         return core.ops.op_fresh_open_file_in_split(splitId, path, line, column);
-                    },
-
-                    // Buffer text operations
-                    getBufferText(bufferId, start, end) {
-                        return core.ops.op_fresh_get_buffer_text(bufferId, start, end);
                     },
 
                     // Cursor operations
