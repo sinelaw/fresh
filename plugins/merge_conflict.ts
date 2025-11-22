@@ -200,7 +200,8 @@ function parseConflicts(content: string): ConflictBlock[] {
   // Regex to match conflict blocks
   // Supports optional base section (||||||| marker)
   // Key: use ^ anchors to ensure markers are at start of lines (multiline mode)
-  const conflictRegex = /^<<<<<<<[^\n]*\n([\s\S]*?)(?:^\|\|\|\|\|\|\|[^\n]*\n([\s\S]*?))?^=======\n([\s\S]*?)^>>>>>>>[^\n]*$/gm;
+  // Note: use \r?\n to handle both LF and CRLF line endings
+  const conflictRegex = /^<<<<<<<[^\r\n]*\r?\n([\s\S]*?)(?:^\|\|\|\|\|\|\|[^\r\n]*\r?\n([\s\S]*?))?^=======\r?\n([\s\S]*?)^>>>>>>>[^\r\n]*$/gm;
 
   let match;
   let index = 0;

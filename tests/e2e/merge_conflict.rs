@@ -802,3 +802,79 @@ fn test_diff3_conflict_resolution() {
     // The conflict markers should be gone
     // Note: The exact content depends on which resolution was chosen
 }
+
+/// Test that CRLF line endings are handled correctly (Windows-style files)
+#[test]
+fn test_merge_conflict_crlf_line_endings() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the merge conflict plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/merge_conflict.ts");
+    let plugin_dest = plugins_dir.join("merge_conflict.ts");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create test file with CRLF line endings (Windows-style)
+    // This is the diff3 conflict but with \r\n instead of \n
+    let crlf_content = "}\r\n\r\nstatic int showdf(char *mntdir, struct obd_statfs *stat,\r\n<<<<<<< HEAD\r\n                  char *uuid, enum mntdf_flags flags,\r\n                  char *type, int index, int rc)\r\n||||||| parent of a3f05d81f6\r\n                  const char *uuid, enum mntdf_flags flags,\r\n                  char *type, int index, int rc)\r\n=======\r\n                  const char *uuid, enum mntdf_flags flags,\r\n                  char *type, int index, int rc, enum showdf_fields fields)\r\n>>>>>>> a3f05d81f6\r\n{\r\n";
+    let fixture = TestFixture::new("crlf_conflict.c", crlf_content).unwrap();
+
+    // Create harness
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Verify conflict markers are visible
+    harness.assert_screen_contains("<<<<<<< HEAD");
+
+    // Start merge resolution
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Merge: Start Resolution").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness.process_async_and_render().unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.process_async_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen with CRLF conflict:\n{}", screen);
+
+    // CRITICAL: Verify the merge actually started (CRLF should be handled)
+    assert!(
+        !screen.contains("No conflict markers found"),
+        "Merge should detect conflicts in CRLF files - regex must handle \\r\\n"
+    );
+
+    // Should see merge UI elements
+    assert!(
+        screen.contains("OURS") || screen.contains("Merge:") || screen.contains("Conflict"),
+        "Merge UI should be visible for CRLF files"
+    );
+
+    // Resolve and save
+    harness
+        .send_key(KeyCode::Char('u'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.render().unwrap();
+}

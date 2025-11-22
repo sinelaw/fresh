@@ -4,7 +4,8 @@
  */
 
 // The exact regex from the plugin
-const conflictRegex = /^<<<<<<<[^\n]*\n([\s\S]*?)(?:^\|\|\|\|\|\|\|[^\n]*\n([\s\S]*?))?^=======\n([\s\S]*?)^>>>>>>>[^\n]*$/gm;
+// Note: use \r?\n to handle both LF and CRLF line endings
+const conflictRegex = /^<<<<<<<[^\r\n]*\r?\n([\s\S]*?)(?:^\|\|\|\|\|\|\|[^\r\n]*\r?\n([\s\S]*?))?^=======\r?\n([\s\S]*?)^>>>>>>>[^\r\n]*$/gm;
 
 function parseConflicts(content) {
   const conflicts = [];
