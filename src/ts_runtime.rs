@@ -2054,6 +2054,25 @@ fn op_fresh_distribute_splits_evenly(state: &mut OpState) -> bool {
     false
 }
 
+/// Set cursor position in a buffer (also scrolls viewport to show cursor)
+/// @param buffer_id - ID of the buffer
+/// @param position - Byte offset position for the cursor
+/// @returns true if the command was sent successfully
+#[op2(fast)]
+fn op_fresh_set_buffer_cursor(state: &mut OpState, buffer_id: u32, position: u32) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::SetBufferCursor {
+                buffer_id: crate::event::BufferId(buffer_id as usize),
+                position: position as usize,
+            });
+        return result.is_ok();
+    }
+    false
+}
+
 /// Get text properties at the cursor position in a buffer
 /// @param buffer_id - ID of the buffer to query
 /// @returns Array of property objects for text ranges containing the cursor
@@ -2198,6 +2217,7 @@ extension!(
         op_fresh_close_split,
         op_fresh_set_split_ratio,
         op_fresh_distribute_splits_evenly,
+        op_fresh_set_buffer_cursor,
         op_fresh_get_text_properties_at_cursor,
         op_fresh_set_virtual_buffer_content,
     ],
@@ -2500,6 +2520,9 @@ impl TypeScriptRuntime {
                     },
                     distributeSplitsEvenly() {
                         return core.ops.op_fresh_distribute_splits_evenly();
+                    },
+                    setBufferCursor(bufferId, position) {
+                        return core.ops.op_fresh_set_buffer_cursor(bufferId, position);
                     },
                     getTextPropertiesAtCursor(bufferId) {
                         return core.ops.op_fresh_get_text_properties_at_cursor(bufferId);

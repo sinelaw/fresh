@@ -707,6 +707,21 @@ This adjusts the ratios of all container splits so each leaf split gets equal sp
 distributeSplitsEvenly(): boolean
 ```
 
+#### `setBufferCursor`
+
+Set cursor position in a buffer (also scrolls viewport to show cursor)
+
+```typescript
+setBufferCursor(buffer_id: number, position: number): boolean
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `buffer_id` | `number` | ID of the buffer |
+| `position` | `number` | Byte offset position for the cursor |
+
 ### Async Operations
 
 #### `spawnProcess`

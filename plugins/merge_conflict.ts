@@ -1036,6 +1036,99 @@ function updateStatusBar(): void {
   }
 }
 
+/**
+ * Scroll all three panels to show the selected conflict
+ * This computes the byte offset where the conflict appears in each panel's content
+ * and uses setBufferCursor to scroll the viewport.
+ */
+function scrollToSelectedConflict(): void {
+  const conflict = mergeState.conflicts[mergeState.selectedIndex];
+  if (!conflict) return;
+
+  // Scroll OURS panel
+  if (mergeState.oursPanelId !== null) {
+    const oursOffset = computeConflictOffset("ours", conflict.index);
+    if (oursOffset >= 0) {
+      editor.setBufferCursor(mergeState.oursPanelId, oursOffset);
+    }
+  }
+
+  // Scroll THEIRS panel
+  if (mergeState.theirsPanelId !== null) {
+    const theirsOffset = computeConflictOffset("theirs", conflict.index);
+    if (theirsOffset >= 0) {
+      editor.setBufferCursor(mergeState.theirsPanelId, theirsOffset);
+    }
+  }
+
+  // Scroll RESULT panel
+  if (mergeState.resultPanelId !== null) {
+    const resultOffset = computeResultConflictOffset(conflict.index);
+    if (resultOffset >= 0) {
+      editor.setBufferCursor(mergeState.resultPanelId, resultOffset);
+    }
+  }
+}
+
+/**
+ * Compute the byte offset where a conflict appears in the OURS or THEIRS panel content.
+ * This is based on the full file content from git, where the conflict region
+ * corresponds to where the original conflict markers were in the working tree.
+ */
+function computeConflictOffset(side: "ours" | "theirs", conflictIndex: number): number {
+  const content = side === "ours" ? mergeState.oursContent : mergeState.theirsContent;
+
+  // If we have the full git content, we need to find where the conflict would be
+  // The conflicts array has startOffset/endOffset in the original file with markers
+  // But the git versions don't have markers, so we need to estimate position
+  if (content) {
+    // Simple approach: use the conflict's start offset ratio to estimate position
+    // This isn't perfect but gives a reasonable scroll position
+    const conflict = mergeState.conflicts[conflictIndex];
+    if (conflict) {
+      // Calculate ratio of conflict position in original file
+      const originalLength = mergeState.originalContent.length;
+      if (originalLength > 0) {
+        const ratio = conflict.startOffset / originalLength;
+        return Math.floor(ratio * content.length);
+      }
+    }
+  }
+
+  // If no git content, we built entries manually - find "--- Conflict N ---"
+  const entries = buildFullFileEntries(side);
+  let offset = 0;
+  for (const entry of entries) {
+    if (entry.text.includes(`--- Conflict ${conflictIndex + 1} ---`)) {
+      return offset;
+    }
+    offset += entry.text.length;
+  }
+
+  return 0;
+}
+
+/**
+ * Compute the byte offset where a conflict appears in the RESULT panel content.
+ * This is based on the result file entries which include conflict markers or resolved content.
+ */
+function computeResultConflictOffset(conflictIndex: number): number {
+  const entries = buildResultFileEntries();
+  let offset = 0;
+
+  for (const entry of entries) {
+    // Look for the conflict's marker (either unresolved markers or "Conflict N" header)
+    if (entry.text.includes(`Conflict ${conflictIndex + 1}`)) {
+      return offset;
+    }
+    // Also check for <<<<<<< OURS markers that correspond to this conflict
+    // by tracking which conflict we're in
+    offset += entry.text.length;
+  }
+
+  return 0;
+}
+
 // =============================================================================
 // Public Commands - Activation
 // =============================================================================
@@ -1174,6 +1267,9 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
 
   updateViews();
 
+  // Scroll all panels to show the first conflict
+  scrollToSelectedConflict();
+
   const remaining = mergeState.conflicts.length - autoResolved;
   if (remaining > 0) {
     editor.setStatus(`Merge: ${remaining} conflicts to resolve (${autoResolved} auto-resolved)`);
@@ -1282,7 +1378,9 @@ globalThis.merge_next_conflict = function(): void {
     return;
   }
   if (mergeState.conflicts.length === 1) {
-    editor.setStatus("Only one conflict - already selected");
+    // Single conflict: just re-scroll to it (useful for re-focusing)
+    editor.setStatus("Conflict 1 of 1 (re-focused)");
+    scrollToSelectedConflict();
     return;
   }
 
@@ -1296,6 +1394,7 @@ globalThis.merge_next_conflict = function(): void {
       mergeState.selectedIndex = index;
       editor.setStatus(`Conflict ${index + 1} of ${mergeState.conflicts.length}`);
       updateViews();
+      scrollToSelectedConflict();
       return;
     }
     index = (index + 1) % mergeState.conflicts.length;
@@ -1305,6 +1404,7 @@ globalThis.merge_next_conflict = function(): void {
   mergeState.selectedIndex = (mergeState.selectedIndex + 1) % mergeState.conflicts.length;
   editor.setStatus(`Conflict ${mergeState.selectedIndex + 1} of ${mergeState.conflicts.length} (all resolved)`);
   updateViews();
+  scrollToSelectedConflict();
 };
 
 globalThis.merge_prev_conflict = function(): void {
@@ -1319,7 +1419,9 @@ globalThis.merge_prev_conflict = function(): void {
     return;
   }
   if (mergeState.conflicts.length === 1) {
-    editor.setStatus("Only one conflict - already selected");
+    // Single conflict: just re-scroll to it (useful for re-focusing)
+    editor.setStatus("Conflict 1 of 1 (re-focused)");
+    scrollToSelectedConflict();
     return;
   }
 
@@ -1333,6 +1435,7 @@ globalThis.merge_prev_conflict = function(): void {
       mergeState.selectedIndex = index;
       editor.setStatus(`Conflict ${index + 1} of ${mergeState.conflicts.length}`);
       updateViews();
+      scrollToSelectedConflict();
       return;
     }
     index = (index - 1 + mergeState.conflicts.length) % mergeState.conflicts.length;
@@ -1342,6 +1445,7 @@ globalThis.merge_prev_conflict = function(): void {
   mergeState.selectedIndex = (mergeState.selectedIndex - 1 + mergeState.conflicts.length) % mergeState.conflicts.length;
   editor.setStatus(`Conflict ${mergeState.selectedIndex + 1} of ${mergeState.conflicts.length} (all resolved)`);
   updateViews();
+  scrollToSelectedConflict();
 };
 
 // =============================================================================

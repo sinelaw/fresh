@@ -456,6 +456,13 @@ pub enum PluginCommand {
         split_ids: Vec<SplitId>,
     },
 
+    /// Set cursor position in a buffer (also scrolls viewport to show cursor)
+    SetBufferCursor {
+        buffer_id: BufferId,
+        /// Byte offset position for the cursor
+        position: usize,
+    },
+
     /// Send an arbitrary LSP request and return the raw JSON response
     SendLspRequest {
         language: String,

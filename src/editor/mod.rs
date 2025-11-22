@@ -4202,6 +4202,25 @@ impl Editor {
                 self.split_manager.distribute_splits_evenly();
                 tracing::debug!("Distributed splits evenly");
             }
+            PluginCommand::SetBufferCursor {
+                buffer_id,
+                position,
+            } => {
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    // Set cursor position (false = don't extend selection)
+                    state.cursors.primary_mut().move_to(position, false);
+                    // Ensure the cursor is visible by scrolling the viewport
+                    let cursor = state.cursors.primary().clone();
+                    state.viewport.ensure_visible(&mut state.buffer, &cursor);
+                    tracing::debug!(
+                        "Set cursor position to {} in buffer {:?}",
+                        position,
+                        buffer_id
+                    );
+                } else {
+                    tracing::warn!("Buffer {:?} not found for SetBufferCursor", buffer_id);
+                }
+            }
             PluginCommand::SendLspRequest {
                 language,
                 method,
