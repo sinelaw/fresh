@@ -956,6 +956,10 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
   await createMergePanels();
 
   mergeState.isActive = true;
+
+  // Register merge-mode commands now that we're active
+  registerMergeModeCommands();
+
   updateViews();
 
   const remaining = mergeState.conflicts.length - autoResolved;
@@ -1262,6 +1266,9 @@ function closeMergePanels(): void {
     editor.showBuffer(mergeState.sourceBufferId);
   }
 
+  // Unregister merge-mode commands
+  unregisterMergeModeCommands();
+
   // Reset state
   mergeState.isActive = false;
   mergeState.sourceBufferId = null;
@@ -1339,62 +1346,43 @@ editor.on("buffer_activated", "onMergeBufferActivated");
 editor.on("after-file-open", "onMergeAfterFileOpen");
 
 // =============================================================================
-// Command Registration
+// Command Registration - Dynamic based on merge mode state
 // =============================================================================
 
+// Commands that are only available during active merge mode
+const MERGE_MODE_COMMANDS = [
+  { name: "Merge: Next Conflict", desc: "Jump to next unresolved conflict", action: "merge_next_conflict" },
+  { name: "Merge: Previous Conflict", desc: "Jump to previous unresolved conflict", action: "merge_prev_conflict" },
+  { name: "Merge: Use Ours", desc: "Accept our version for current conflict", action: "merge_use_ours" },
+  { name: "Merge: Take Theirs", desc: "Accept their version for current conflict", action: "merge_take_theirs" },
+  { name: "Merge: Use Both", desc: "Accept both versions for current conflict", action: "merge_use_both" },
+  { name: "Merge: Save & Exit", desc: "Save resolved content and exit merge mode", action: "merge_save_and_exit" },
+  { name: "Merge: Abort", desc: "Abort merge resolution without saving", action: "merge_abort" },
+];
+
+/**
+ * Register merge-mode specific commands (called when merge mode starts)
+ */
+function registerMergeModeCommands(): void {
+  for (const cmd of MERGE_MODE_COMMANDS) {
+    editor.registerCommand(cmd.name, cmd.desc, cmd.action, "normal");
+  }
+}
+
+/**
+ * Unregister merge-mode specific commands (called when merge mode ends)
+ */
+function unregisterMergeModeCommands(): void {
+  for (const cmd of MERGE_MODE_COMMANDS) {
+    editor.unregisterCommand(cmd.name);
+  }
+}
+
+// Only register "Start Resolution" at plugin load - other commands are registered dynamically
 editor.registerCommand(
   "Merge: Start Resolution",
   "Start 3-way merge conflict resolution for current file",
   "start_merge_conflict",
-  "normal"
-);
-
-editor.registerCommand(
-  "Merge: Next Conflict",
-  "Jump to next unresolved conflict",
-  "merge_next_conflict",
-  "normal"
-);
-
-editor.registerCommand(
-  "Merge: Previous Conflict",
-  "Jump to previous unresolved conflict",
-  "merge_prev_conflict",
-  "normal"
-);
-
-editor.registerCommand(
-  "Merge: Use Ours",
-  "Accept our version for current conflict",
-  "merge_use_ours",
-  "normal"
-);
-
-editor.registerCommand(
-  "Merge: Take Theirs",
-  "Accept their version for current conflict",
-  "merge_take_theirs",
-  "normal"
-);
-
-editor.registerCommand(
-  "Merge: Use Both",
-  "Accept both versions for current conflict",
-  "merge_use_both",
-  "normal"
-);
-
-editor.registerCommand(
-  "Merge: Save & Exit",
-  "Save resolved content and exit merge mode",
-  "merge_save_and_exit",
-  "normal"
-);
-
-editor.registerCommand(
-  "Merge: Abort",
-  "Abort merge resolution without saving",
-  "merge_abort",
   "normal"
 );
 

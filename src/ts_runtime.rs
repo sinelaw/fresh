@@ -711,6 +711,21 @@ fn op_fresh_register_command(
     false
 }
 
+/// Unregister a custom command by name
+/// @param name - The name of the command to unregister
+/// @returns true if the command was successfully unregistered
+#[op2(fast)]
+fn op_fresh_unregister_command(state: &mut OpState, #[string] name: String) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::UnregisterCommand { name });
+        return result.is_ok();
+    }
+    false
+}
+
 /// Open a file in the editor, optionally at a specific location
 /// @param path - File path to open
 /// @param line - Line number to jump to (0 for no jump)
@@ -2121,6 +2136,7 @@ extension!(
         op_fresh_refresh_lines,
         op_fresh_insert_at_cursor,
         op_fresh_register_command,
+        op_fresh_unregister_command,
         op_fresh_open_file,
         op_fresh_get_active_split_id,
         op_fresh_open_file_in_split,
@@ -2317,6 +2333,10 @@ impl TypeScriptRuntime {
                     // Command registration
                     registerCommand(name, description, action, contexts = "") {
                         return core.ops.op_fresh_register_command(name, description, action, contexts);
+                    },
+
+                    unregisterCommand(name) {
+                        return core.ops.op_fresh_unregister_command(name);
                     },
 
                     // File operations

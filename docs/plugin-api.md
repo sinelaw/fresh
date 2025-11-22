@@ -639,6 +639,20 @@ registerCommand(name: string, description: string, action: string, contexts: str
 | `action` | `string` | JavaScript function name to call when command is triggered |
 | `contexts` | `string` | Comma-separated list of contexts (e.g., "normal,prompt") |
 
+#### `unregisterCommand`
+
+Unregister a custom command by name
+
+```typescript
+unregisterCommand(name: string): boolean
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `name` | `string` | The name of the command to unregister |
+
 #### `openFile`
 
 Open a file in the editor, optionally at a specific location
