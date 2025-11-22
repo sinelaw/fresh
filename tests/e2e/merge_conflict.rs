@@ -725,9 +725,19 @@ fn test_diff3_conflict_with_base_section() {
     let screen = harness.screen_to_string();
     println!("Screen after starting merge with diff3 conflict:\n{}", screen);
 
-    // Should show OURS panel with the OURS content
-    // The plugin should have detected 1 conflict
-    // Note: The exact UI may vary, but we should see merge-related content
+    // CRITICAL: Verify the merge actually started by checking for merge UI elements
+    // The plugin should have detected the conflict and shown merge panels
+    // If it says "No conflict markers found", the regex is broken
+    assert!(
+        !screen.contains("No conflict markers found"),
+        "Merge should have detected the conflict - regex may be broken"
+    );
+
+    // Should see OURS or THEIRS or RESULT panel headers
+    assert!(
+        screen.contains("OURS") || screen.contains("Merge:") || screen.contains("Conflict"),
+        "Merge UI should be visible after starting resolution"
+    );
 }
 
 /// Test that diff3-style conflict can be resolved
