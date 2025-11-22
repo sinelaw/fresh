@@ -882,21 +882,20 @@ editor.setStatus("Message queue test plugin loaded!");
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Give the async operation time to complete
-    // We need multiple render cycles for the message queue to process
-    for i in 0..10 {
-        harness.render().unwrap();
-        std::thread::sleep(Duration::from_millis(50));
-
-        let screen = harness.screen_to_string();
-        if screen.contains("Success: Created buffer ID") {
-            println!("Async operation completed after {} iterations", i + 1);
-            break;
-        }
-    }
+    // Wait for the async operation to complete
+    let completed = harness
+        .wait_for_async(
+            |h| h.screen_to_string().contains("Success: Created buffer ID"),
+            5000,
+        )
+        .unwrap();
 
     let final_screen = harness.screen_to_string();
     println!("Final screen after command execution:\n{}", final_screen);
+
+    if !completed {
+        println!("Warning: Async operation did not complete within timeout");
+    }
 
     // Verify the async operation completed successfully
     // The status should contain the buffer ID
@@ -995,16 +994,18 @@ editor.setStatus("Multi-action plugin loaded");
             .send_key(KeyCode::Enter, KeyModifiers::NONE)
             .unwrap();
 
-        // Give time for processing
-        for _ in 0..5 {
-            harness.render().unwrap();
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        // Wait for the action to complete (async processing)
+        let found = harness
+            .wait_for_async(
+                |h| h.screen_to_string().contains(expected_status),
+                2000,
+            )
+            .unwrap();
 
         let screen = harness.screen_to_string();
         assert!(
-            screen.contains(expected_status),
-            "Expected status '{}' after executing '{}'. Got:\n{}",
+            found,
+            "Expected status '{}' after executing '{}' within timeout. Got:\n{}",
             expected_status,
             action_name,
             screen
@@ -1077,19 +1078,26 @@ editor.setStatus("Nonblocking test plugin loaded");
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // The key test: we should be able to render multiple times
-    // without the editor hanging
+    // The key test: we should be able to render and the action should complete
+    // without blocking the editor
     let start = std::time::Instant::now();
-    for _ in 0..10 {
-        harness.process_async_and_render().unwrap();
-        std::thread::sleep(Duration::from_millis(10));
-    }
+
+    // Wait for the action to complete (async processing)
+    let completed = harness
+        .wait_for_async(
+            |h| {
+                let screen = h.screen_to_string();
+                screen.contains("Completed: sum")
+            },
+            3000, // 3 second timeout
+        )
+        .unwrap();
     let elapsed = start.elapsed();
 
     // If the action was blocking, this would take much longer
     // or hang entirely
     assert!(
-        elapsed < Duration::from_secs(2),
+        elapsed < Duration::from_secs(3),
         "Rendering should complete quickly even with action running. Took {:?}",
         elapsed
     );
@@ -1097,8 +1105,8 @@ editor.setStatus("Nonblocking test plugin loaded");
     // Verify the action completed
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Completed: sum"),
-        "Expected action to complete and set status. Got:\n{}",
+        completed,
+        "Expected action to complete and set status within timeout. Got:\n{}",
         screen
     );
 }

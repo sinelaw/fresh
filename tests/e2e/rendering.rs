@@ -217,10 +217,19 @@ fn test_cursor_position_with_large_line_numbers() {
 
     println!("\nValidating line numbers:");
 
-    // Get the last visible line number
+    // Get the last visible line number (skip continuation lines from wrapped text)
     // Note: For large files, line numbers are estimated when jumping to end
     // The estimation is based on buffer_len / 80 (average line length)
-    if let Some(last_line) = content_lines.last() {
+    // Continuation lines have only whitespace before "│", so filter those out
+    let numbered_lines: Vec<&str> = content_lines
+        .iter()
+        .filter(|line| {
+            let part = line.split("│").next().unwrap_or("").trim();
+            !part.is_empty() && part.chars().all(|c| c.is_ascii_digit())
+        })
+        .copied()
+        .collect();
+    if let Some(last_line) = numbered_lines.last() {
         let line_num_part = last_line.split("│").next().unwrap_or("").trim();
         let line_num: usize = line_num_part.parse().unwrap_or(0);
         println!("Last visible line number: {line_num} (may be estimated)");

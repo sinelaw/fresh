@@ -684,9 +684,9 @@ impl EditorTestHarness {
     /// Find all visible cursors on screen
     /// Returns a vec of (x, y, character_at_cursor, is_primary)
     /// Primary cursor is detected at hardware cursor position
-    /// Secondary cursors are detected by REVERSED style modifier
+    /// Secondary cursors are detected by REVERSED style modifier or inactive cursor background
     pub fn find_all_cursors(&mut self) -> Vec<(u16, u16, String, bool)> {
-        use ratatui::style::Modifier;
+        use ratatui::style::{Color, Modifier};
         let mut cursors = Vec::new();
 
         // Get hardware cursor position (primary cursor)
@@ -700,7 +700,14 @@ impl EditorTestHarness {
             cursors.push((hw_x, hw_y, cell.symbol().to_string(), true));
         }
 
-        // Find secondary cursors (cells with REVERSED modifier)
+        // Find secondary cursors (cells with REVERSED modifier or inactive cursor background)
+        // Inactive cursor colors from theme.rs: Rgb(100,100,100) (dark), Rgb(180,180,180) (light), DarkGray (base16)
+        let inactive_cursor_colors = [
+            Color::Rgb(100, 100, 100),
+            Color::Rgb(180, 180, 180),
+            Color::DarkGray,
+        ];
+
         for y in 0..buffer.area.height {
             for x in 0..buffer.area.width {
                 // Skip if this is the hardware cursor position
@@ -710,7 +717,9 @@ impl EditorTestHarness {
 
                 let pos = buffer.index_of(x, y);
                 if let Some(cell) = buffer.content.get(pos) {
-                    if cell.modifier.contains(Modifier::REVERSED) {
+                    let is_reversed = cell.modifier.contains(Modifier::REVERSED);
+                    let has_inactive_cursor_bg = inactive_cursor_colors.contains(&cell.bg);
+                    if is_reversed || has_inactive_cursor_bg {
                         cursors.push((x, y, cell.symbol().to_string(), false));
                     }
                 }

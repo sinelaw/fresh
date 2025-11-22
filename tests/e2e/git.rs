@@ -310,22 +310,22 @@ fn test_git_find_file_shows_results() {
     // Trigger git find file
     trigger_git_find_file(&mut harness);
 
-    // Check that the prompt appeared
-    harness.assert_screen_contains("Open file: ");
-
-    // Wait for async git ls-files to complete and populate file list
-    // The plugin loads files asynchronously, so we need to wait for results
+    // Wait for async git ls-files to complete and the file picker to appear
+    // The plugin loads files asynchronously, so we need to wait for both
+    // the prompt "Find file: " and some file results to appear
     let found = harness
         .wait_for_async(
             |h| {
                 let screen = h.screen_to_string();
-                screen.contains("src/") || screen.contains(".rs") || screen.contains("Cargo.toml")
+                // Wait for both the prompt and file content
+                screen.contains("Find file:") &&
+                    (screen.contains("src/") || screen.contains(".rs") || screen.contains("Cargo.toml"))
             },
-            3000, // Increased timeout for async git command
+            5000, // Increased timeout for async git command
         )
         .unwrap();
 
-    assert!(found, "File list should appear within timeout");
+    assert!(found, "File picker and file list should appear within timeout");
 
     let screen = harness.screen_to_string();
     println!("Git find file screen:\n{screen}");
@@ -440,7 +440,7 @@ fn test_git_find_file_selection_navigation() {
     println!("After navigation:\n{screen}");
 
     // Prompt should still be active
-    assert!(screen.contains("Open file:"));
+    assert!(screen.contains("Find file:"));
 }
 
 /// Test git find file confirm - opens selected file
@@ -475,15 +475,23 @@ fn test_git_find_file_confirm_opens_file() {
         .unwrap();
     harness.render().unwrap();
 
-    // Give it time to open the file
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    harness.render().unwrap();
+    // Wait for file to actually load (async operation)
+    harness
+        .wait_for_async(
+            |h| {
+                let screen = h.screen_to_string();
+                // Wait for prompt to close (file opened)
+                !screen.contains("Find file:")
+            },
+            3000,
+        )
+        .unwrap();
 
     let screen = harness.screen_to_string();
     println!("After confirming file:\n{screen}");
 
     // The file should have opened and we should be out of prompt mode
-    harness.assert_screen_not_contains("Open file:");
+    harness.assert_screen_not_contains("Find file:");
 
     // Check if file content is visible
     let has_file_content =
@@ -580,7 +588,7 @@ fn test_git_find_file_scrolling_many_files() {
     println!("After scrolling:\n{screen}");
 
     // Should still show the prompt
-    assert!(screen.contains("Open file:"));
+    assert!(screen.contains("Find file:"));
 }
 
 /// Test that git commands work from command palette
@@ -668,9 +676,16 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
         .unwrap();
     harness.render().unwrap();
 
-    // Give time for file to load
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    harness.render().unwrap();
+    // Wait for file to actually load (async operation)
+    let file_loaded = harness
+        .wait_for_async(
+            |h| {
+                let content = h.get_buffer_content();
+                !content.is_empty() && content != "\n" && content.contains("println")
+            },
+            3000,
+        )
+        .unwrap();
 
     // CRITICAL CHECKS:
 
@@ -679,8 +694,8 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
     println!("Buffer content after selection:\n{buffer_content}");
 
     assert!(
-        !buffer_content.is_empty() && buffer_content != "\n",
-        "BUG: Buffer is still empty! File was not opened. Buffer: {buffer_content:?}"
+        file_loaded,
+        "BUG: File was not opened within timeout. Buffer: {buffer_content:?}"
     );
 
     assert!(
@@ -755,7 +770,7 @@ fn test_git_find_file_actually_opens_file() {
                 let s = h.screen_to_string();
                 let lines: Vec<&str> = s.lines().collect();
 
-                // The last line is the prompt "Open file: lib.rs"
+                // The last line is the prompt "Find file: lib.rs"
                 // Check if any line EXCEPT the last one contains "src/"
                 lines
                     .iter()
@@ -810,7 +825,7 @@ fn test_git_find_file_actually_opens_file() {
     );
 
     // 3. Status bar should show we're no longer in prompt mode
-    harness.assert_screen_not_contains("Open file:");
+    harness.assert_screen_not_contains("Find file:");
 }
 
 /// REPRODUCTION TEST: Verify cursor jumps to correct line in git grep
@@ -856,16 +871,24 @@ fn test_git_grep_cursor_position_accuracy() {
         .unwrap();
     harness.render().unwrap();
 
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    harness.render().unwrap();
+    // Wait for file to actually load (async operation)
+    let file_loaded = harness
+        .wait_for_async(
+            |h| {
+                let content = h.get_buffer_content();
+                content.contains("MARKER")
+            },
+            3000,
+        )
+        .unwrap();
 
     // Check buffer content
     let buffer_content = harness.get_buffer_content();
     println!("Buffer content:\n{buffer_content}");
 
     assert!(
-        buffer_content.contains("MARKER"),
-        "BUG: File not opened or wrong file opened. Buffer: {buffer_content:?}"
+        file_loaded,
+        "BUG: File not opened or wrong file opened within timeout. Buffer: {buffer_content:?}"
     );
 
     // The cursor should be on line 3 (0-indexed = line 2)

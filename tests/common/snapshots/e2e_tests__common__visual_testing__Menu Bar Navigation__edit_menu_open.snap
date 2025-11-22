@@ -1,26 +1,27 @@
 ---
 source: tests/common/visual_testing.rs
+assertion_line: 69
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   Help                                     
- [No Name]*                                                                     
-    1 │ Hello, World!                                                          █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
-                                                                               █
+ [No Na┌───────────────────────────────────┐                                    
+    1 ││ Undo                        Ctrl+Z│                                   █
+       │ Redo                        Ctrl+Y│                                   █
+       │ ──────────────────────────────────│                                   █
+       │ Cut                         Ctrl+X│                                   █
+       │ Copy                        Ctrl+C│                                   █
+       │ Paste                       Ctrl+V│                                   █
+       │ ──────────────────────────────────│                                   █
+       │ Select All                  Ctrl+A│                                   █
+       │ ──────────────────────────────────│                                   █
+       │ Find...                     Ctrl+F│                                   █
+       │ Find in Selection                 │                                   █
+       │ Find Next                       F3│                                   █
+       │ Find Previous             Shift+F3│                                   █
+       │ Replace...              Ctrl+Alt+R│                                   █
+       │ ──────────────────────────────────│                                   █
+       │ Delete Line                       │                                   █
+       └───────────────────────────────────┘                                   █
                                                                                █
                                                                                █
                                                                                █

@@ -30,21 +30,3 @@
 
 *View menu - shows File Explorer, Split options*
 
-## Step 5: menu_item_highlighted
-
-![menu_item_highlighted](../screenshots/Menu_Bar_Navigation_05_menu_item_highlighted.svg)
-
-*Second item highlighted within View menu*
-
-## Step 6: help_menu_open
-
-![help_menu_open](../screenshots/Menu_Bar_Navigation_06_help_menu_open.svg)
-
-*Help menu - shows help and about options*
-
-## Step 7: menu_closed
-
-![menu_closed](../screenshots/Menu_Bar_Navigation_07_menu_closed.svg)
-
-*Menu closed - back to normal editing with menu bar still visible at top*
-
