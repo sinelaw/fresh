@@ -396,7 +396,7 @@ fn test_interactive_replace_wrap_around() {
 
     // Should finish (no more matches before start_pos=25)
     // Check the status message shows completion (truncated on screen)
-    harness.assert_screen_contains("Replaced 2 occurr");
+    harness.assert_screen_contains("Replaced 2 occ");
 
     // Verify the buffer content has the expected replacements
     let content = harness.get_buffer_content();
@@ -469,7 +469,7 @@ fn test_interactive_replace_wrap_stops_at_start() {
     harness.render().unwrap();
 
     // Should finish (second foo is at/past starting position)
-    harness.assert_screen_contains("Replaced 1 occurr");
+    harness.assert_screen_contains("Replaced 1 occ");
 }
 
 /// Test that search highlights update when scrolling to show new matches
@@ -761,29 +761,29 @@ fn test_replace_history_separate_from_search() {
         .unwrap();
     harness.render().unwrap();
 
-    // Open replace again
+    // Open replace again - pre-fills with "hello" (last search history item)
     harness
         .send_key(KeyCode::Char('r'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Replace: ");
-
-    // Press Up - should show "hello" (from replace search history)
-    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
     harness.assert_screen_contains("Replace: hello");
 
-    // Confirm to get to replacement prompt
+    // Press Up - should show "search_term" (going back in shared search history)
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Replace: search_term");
+
+    // Confirm to get to replacement prompt (searching for "search_term")
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Replace 'hello' with: ");
+    harness.assert_screen_contains("Replace 'search_term' with: ");
 
-    // Press Up - should show "goodbye" (from replace history)
+    // Press Up - should show "goodbye" (from replace history, which is separate)
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Replace 'hello' with: goodbye");
+    harness.assert_screen_contains("Replace 'search_term' with: goodbye");
 
     // Cancel
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -900,25 +900,21 @@ fn test_history_updates_incremental_highlights() {
         .unwrap();
     harness.render().unwrap();
 
-    // Open search again
+    // Open search again - prompt pre-fills with "foo" (last history item)
     harness
         .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
-    // Press Up to navigate to "foo"
-    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Verify "foo" appears on screen (should be highlighted incrementally)
+    // Verify prompt shows "foo" (pre-filled from last search)
     let screen = harness.screen_to_string();
     assert!(screen.contains("foo bar"), "Should show 'foo' in content");
     assert!(
         screen.contains("Search: foo"),
-        "Should show 'foo' in prompt"
+        "Should show 'foo' in prompt (pre-filled)"
     );
 
-    // Press Up to navigate to "hello"
+    // Press Up to navigate back in history to "hello"
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 

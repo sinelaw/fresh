@@ -1083,7 +1083,8 @@ impl KeybindingResolver {
 
     /// Parse a key string to KeyCode
     fn parse_key(key: &str) -> Option<KeyCode> {
-        match key.to_lowercase().as_str() {
+        let lower = key.to_lowercase();
+        match lower.as_str() {
             "enter" => Some(KeyCode::Enter),
             "backspace" => Some(KeyCode::Backspace),
             "delete" | "del" => Some(KeyCode::Delete),
@@ -1101,6 +1102,10 @@ impl KeybindingResolver {
             "pagedown" => Some(KeyCode::PageDown),
 
             s if s.len() == 1 => s.chars().next().map(KeyCode::Char),
+            // Handle function keys like "f1", "f2", ..., "f12"
+            s if s.starts_with('f') && s.len() >= 2 => {
+                s[1..].parse::<u8>().ok().map(KeyCode::F)
+            }
             _ => None,
         }
     }

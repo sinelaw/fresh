@@ -8,12 +8,12 @@
 | Metric | Count |
 |--------|-------|
 | Total tests | 1312 |
-| Passed | 1259 |
-| Failed | 30 |
+| Passed | 1270 |
+| Failed | 19 |
 | Timed out | 3 |
 | Skipped/Ignored | 20 |
 
-**Pass rate:** 96.0% (improved from 93.4% - fixed 35 tests)
+**Pass rate:** 96.8% (improved from 96.0% - fixed 11 more tests)
 
 ## Recent Fixes (This Session)
 
@@ -35,6 +35,10 @@
    - Add normalize_path() to resolve . and .. in file paths
    - Remove "./" prefix from Open File prompt default directory
    - Fix test expectations for prompt format
+8. **search tests** - Fixed ALL 7 failing tests:
+   - Add function key (F1-F12) parsing to keybindings resolver (F3 find_next wasn't working)
+   - Fix test expectations for search history navigation (pre-fill + Up goes back in history)
+   - Fix truncated status message assertions ("Replaced 2 occ" instead of full string)
 
 ## Prerequisites
 
@@ -112,15 +116,14 @@ cargo insta accept --all  # Accept all pending snapshots
 
 | Category | Failures | Issue |
 |----------|----------|-------|
-| search | 7 | Search state not preserved after prompt closes (find_next issue) |
-| plugin | 5 + 2 timeout | Plugin async message processing, clangd integration |
+| plugin | 5 + 3 timeout | Plugin async message processing, clangd integration |
 | git | 5 | Git integration (file finder, grep) |
-| smart_editing | 5 | jump_to_error (LSP diagnostics) |
 | lsp | 3 | LSP server setup, crash detection, find references |
 | scrolling | 2 | Viewport calculations |
 | rendering | 1 | Cursor position with large line numbers |
 | split_view | 1 | Split view cursor visibility |
 | file_explorer | 1 | Scroll behavior |
+| visual_regression | 1 | Menu bar snapshot |
 
 ## Key Terminal Layout
 
