@@ -1,5 +1,6 @@
 ---
 source: tests/common/visual_testing.rs
+assertion_line: 69
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   Help                 
@@ -8,20 +9,20 @@ expression: "&screen_text"
       │ definitely exceed the terminal width and should    █
       │ wrap to multiple lines when line wrapping is       █
       │ enabled.                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
 [No Name] [+] | Ln 0, Col 144               Palette: Ctrl+P

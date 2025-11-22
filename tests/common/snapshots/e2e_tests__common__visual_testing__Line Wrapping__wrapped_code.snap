@@ -16,12 +16,12 @@ expression: "&screen_text"
       │ very_long_function_name_with_many_parameters(param1█
       │ : String, param2: i32, param3: bool, param4:       █
       │ Vec<String>) -> Result<String, Error> {            █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
 [No Name] [+] | Ln 2, Col 138               Palette: Ctrl+P

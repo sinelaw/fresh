@@ -666,6 +666,7 @@ impl SplitRenderer {
         content_width: usize,
         gutter_width: usize,
     ) -> Vec<crate::plugin_api::ViewTokenWire> {
+        use crate::ansi::visible_char_count;
         use crate::plugin_api::{ViewTokenWire, ViewTokenWireKind};
 
         let mut wrapped = Vec::new();
@@ -682,7 +683,9 @@ impl SplitRenderer {
                     current_line_width = 0;
                 }
                 ViewTokenWireKind::Text(text) => {
-                    let text_len = text.chars().count();
+                    // Use visible character count (excludes ANSI escape sequences)
+                    // so line width calculation is based on actual visual width
+                    let text_len = visible_char_count(text);
 
                     // If this token would exceed line width, insert Break before it
                     if current_line_width > 0 && current_line_width + text_len > available_width {
@@ -693,8 +696,10 @@ impl SplitRenderer {
                         current_line_width = 0;
                     }
 
-                    // If token itself is longer than line width, split it
-                    if text_len > available_width {
+                    // If visible text is longer than line width, we need to split
+                    // However, we don't split tokens containing ANSI codes to avoid
+                    // breaking escape sequences. ANSI-heavy content may exceed line width.
+                    if text_len > available_width && !crate::ansi::contains_ansi_codes(text) {
                         let chars: Vec<char> = text.chars().collect();
                         let mut char_idx = 0;
                         let source_base = token.source_offset;
@@ -713,7 +718,8 @@ impl SplitRenderer {
                                 continue;
                             }
 
-                            let chunk: String = chars[char_idx..char_idx + chunk_size].iter().collect();
+                            let chunk: String =
+                                chars[char_idx..char_idx + chunk_size].iter().collect();
                             let chunk_source = source_base.map(|b| b + char_idx);
 
                             wrapped.push(ViewTokenWire {

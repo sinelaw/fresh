@@ -508,3 +508,84 @@ fn test_page_down_line_numbers() {
         "After moving up, viewport should have scrolled up from line {after_second_pagedown} to {final_line}"
     );
 }
+
+/// Test ANSI escape sequence rendering with RGB colors
+/// Verifies that ANSI RGB color codes in files are properly parsed and rendered
+/// with the correct foreground colors instead of being displayed as raw text.
+/// This tests the specific bug where col_offset was not incremented for ANSI
+/// escape sequence characters, causing the view_mapping to be out of sync.
+#[test]
+fn test_ansi_rgb_color_rendering() {
+    use ratatui::style::Color;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("ansi_rgb_test.txt");
+
+    // Create a file with multiple ANSI RGB color codes in sequence
+    // This pattern mimics ANSI art files like landscape-wide.txt
+    // Each block character (█) has its own RGB color escape sequence
+    // Pattern: \x1b[38;2;R;G;Bm█ repeated
+    let mut content = String::new();
+    for i in 0..20 {
+        // Vary the RGB values slightly for each block
+        let r = 100 + i * 5;
+        let g = 50 + i * 3;
+        let b = 150 + i * 2;
+        content.push_str(&format!("\x1b[38;2;{r};{g};{b}m█"));
+    }
+    content.push_str("\x1b[0m"); // Reset at end
+    std::fs::write(&file_path, &content).unwrap();
+
+    // Use default harness which has line wrapping enabled
+    // The ANSI-aware wrapping should handle this correctly
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Get the content area start row (after menu bar and tab bar)
+    let (content_row, _) = harness.content_area_rows();
+
+    // The gutter is: indicator (1) + line numbers (4) + separator (3) = 8 chars
+    let gutter_width = 8;
+
+    let screen = harness.screen_to_string();
+    println!("Screen content:\n{screen}");
+
+    // Critical test: The screen should NOT contain raw ANSI escape code fragments
+    // If the col_offset bug exists, we'd see partial codes like ";2;100;50;150m" displayed
+    harness.assert_screen_not_contains(";2;"); // Partial RGB escape should not be visible
+    harness.assert_screen_not_contains("38;2"); // ANSI code prefix should not be visible
+    harness.assert_screen_not_contains(";50;"); // Middle of RGB params should not be visible
+
+    // Verify that block characters (█) are displayed with correct RGB colors
+    // Check the first block character
+    let first_block_style = harness.get_cell_style(gutter_width, content_row as u16);
+    println!("Style at first block position ({gutter_width}, {content_row}): {first_block_style:?}");
+
+    assert!(
+        first_block_style.is_some(),
+        "Expected to find a cell at position ({gutter_width}, {content_row})"
+    );
+    let style = first_block_style.unwrap();
+
+    // The first block should have RGB(100, 50, 150) foreground
+    assert_eq!(
+        style.fg,
+        Some(Color::Rgb(100, 50, 150)),
+        "Expected first block to have RGB(100,50,150) foreground from ANSI code, got {:?}",
+        style.fg
+    );
+
+    // Check a block in the middle (index 10 -> RGB(150, 80, 170))
+    let mid_block_style = harness.get_cell_style(gutter_width + 10, content_row as u16);
+    println!("Style at block 10 position: {mid_block_style:?}");
+
+    if let Some(mid_style) = mid_block_style {
+        assert_eq!(
+            mid_style.fg,
+            Some(Color::Rgb(150, 80, 170)),
+            "Expected block 10 to have RGB(150,80,170) foreground, got {:?}",
+            mid_style.fg
+        );
+    }
+}

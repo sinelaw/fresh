@@ -1,5 +1,6 @@
 ---
 source: tests/common/visual_testing.rs
+assertion_line: 69
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   Help                 
@@ -12,16 +13,16 @@ expression: "&screen_text"
       │ demonstrate that multiple lines can be wrapped at  █
       │ the same time without any issues in the rendering  █
       │ system.                                            █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
-                                                           █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
+~                                                          █
 [No Name] [+] | Ln 1, Col 157               Palette: Ctrl+P

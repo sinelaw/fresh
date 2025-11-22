@@ -310,6 +310,25 @@ pub fn strip_ansi_codes(text: &str) -> String {
     result
 }
 
+/// Count the number of visible characters in a string, excluding ANSI escape sequences
+/// This is useful for calculating visual width for line wrapping
+pub fn visible_char_count(text: &str) -> usize {
+    if !contains_ansi_codes(text) {
+        return text.chars().count();
+    }
+
+    let mut count = 0;
+    let mut parser = AnsiParser::new();
+
+    for ch in text.chars() {
+        if parser.parse_char(ch).is_some() {
+            count += 1;
+        }
+    }
+
+    count
+}
+
 /// Parse a string with ANSI codes and return segments with their styles
 ///
 /// Returns a vector of (text, style) pairs representing the parsed content.

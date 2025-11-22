@@ -563,13 +563,21 @@
   <text x="397" y="248" fill="#ffffff" class="terminal" style="">&gt;</text>
   <text x="415" y="248" fill="#ffffff" class="terminal" style="">{</text>
   <text x="532" y="248" fill="#6272a4" class="terminal" style="">█</text>
+  <text x="1" y="266" fill="#f1fa8c" class="terminal" style="">~</text>
   <text x="532" y="266" fill="#6272a4" class="terminal" style="">█</text>
+  <text x="1" y="284" fill="#f1fa8c" class="terminal" style="">~</text>
   <text x="532" y="284" fill="#6272a4" class="terminal" style="">█</text>
+  <text x="1" y="302" fill="#f1fa8c" class="terminal" style="">~</text>
   <text x="532" y="302" fill="#6272a4" class="terminal" style="">█</text>
+  <text x="1" y="320" fill="#f1fa8c" class="terminal" style="">~</text>
   <text x="532" y="320" fill="#6272a4" class="terminal" style="">█</text>
+  <text x="1" y="338" fill="#f1fa8c" class="terminal" style="">~</text>
   <text x="532" y="338" fill="#6272a4" class="terminal" style="">█</text>
+  <text x="1" y="356" fill="#f1fa8c" class="terminal" style="">~</text>
   <text x="532" y="356" fill="#6272a4" class="terminal" style="">█</text>
+  <text x="1" y="374" fill="#f1fa8c" class="terminal" style="">~</text>
   <text x="532" y="374" fill="#6272a4" class="terminal" style="">█</text>
+  <text x="1" y="392" fill="#f1fa8c" class="terminal" style="">~</text>
   <text x="532" y="392" fill="#6272a4" class="terminal" style="">█</text>
   <rect x="0" y="396" width="9" height="18" fill="#f1fa8c"/>
   <text x="1" y="410" fill="#000000" class="terminal" style="">[</text>
