@@ -262,20 +262,30 @@ async function fetchGitVersions(filePath: string): Promise<{
   theirs: string;
 } | null> {
   try {
+    // Get the directory of the file for running git commands
+    const fileDir = editor.pathDirname(filePath);
+    // Get relative path for git commands
+    const fileName = editor.pathBasename(filePath);
+
+    editor.debug(`fetchGitVersions: fileDir=${fileDir}, fileName=${fileName}`);
+
     // Get OURS version (--ours or :2:)
     const oursResult = await editor.spawnProcess("git", [
-      "show", `:2:${filePath}`
-    ]);
+      "show", `:2:${fileName}`
+    ], fileDir);
+    editor.debug(`fetchGitVersions: ours exit_code=${oursResult.exit_code}, stdout length=${oursResult.stdout.length}`);
 
     // Get THEIRS version (--theirs or :3:)
     const theirsResult = await editor.spawnProcess("git", [
-      "show", `:3:${filePath}`
-    ]);
+      "show", `:3:${fileName}`
+    ], fileDir);
+    editor.debug(`fetchGitVersions: theirs exit_code=${theirsResult.exit_code}, stdout length=${theirsResult.stdout.length}`);
 
     // Get BASE version (common ancestor, :1:)
     const baseResult = await editor.spawnProcess("git", [
-      "show", `:1:${filePath}`
-    ]);
+      "show", `:1:${fileName}`
+    ], fileDir);
+    editor.debug(`fetchGitVersions: base exit_code=${baseResult.exit_code}, stdout length=${baseResult.stdout.length}`);
 
     return {
       base: baseResult.exit_code === 0 ? baseResult.stdout : "",
@@ -539,8 +549,8 @@ function buildResultFileEntries(): TextPropertyEntry[] {
   for (const conflict of sortedConflicts) {
     let replacement: string;
 
-    if (conflict.resolved && conflict.resolution) {
-      replacement = conflict.resolution;
+    if (conflict.resolved && conflict.resolvedContent !== undefined) {
+      replacement = conflict.resolvedContent;
     } else {
       // Show unresolved conflict with markers
       replacement = `<<<<<<< OURS\n${conflict.ours || ""}\n=======\n${conflict.theirs || ""}\n>>>>>>> THEIRS`;
@@ -904,12 +914,11 @@ function applyHighlighting(): void {
  */
 function highlightPanel(bufferId: number, side: "ours" | "theirs"): void {
   // Build content from entries (same as what we set on the buffer)
-  const entries = side === "ours" ? buildOursEntries() : buildTheirsEntries();
+  const entries = buildFullFileEntries(side);
   const content = entries.map(e => e.text).join("");
   const lines = content.split("\n");
 
   let byteOffset = 0;
-  const headerColor = side === "ours" ? colors.oursHeader : colors.theirsHeader;
   const conflictColor = side === "ours" ? colors.conflictOurs : colors.conflictTheirs;
 
   for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
@@ -917,58 +926,17 @@ function highlightPanel(bufferId: number, side: "ours" | "theirs"): void {
     const lineStart = byteOffset;
     const lineEnd = byteOffset + line.length;
 
-    // Highlight headers
-    if (line.includes("OURS") || line.includes("THEIRS")) {
+    // Highlight conflict header lines
+    if (line.includes("--- Conflict")) {
       editor.addOverlay(
         bufferId,
-        `merge-header-${lineIdx}`,
+        `merge-conflict-header-${lineIdx}`,
         lineStart,
         lineEnd,
-        headerColor[0],
-        headerColor[1],
-        headerColor[2],
+        conflictColor[0],
+        conflictColor[1],
+        conflictColor[2],
         true // underline
-      );
-    }
-
-    // Highlight selected conflict
-    if (line.startsWith("▶ ")) {
-      editor.addOverlay(
-        bufferId,
-        `merge-selected-${lineIdx}`,
-        lineStart,
-        lineEnd,
-        colors.selected[0],
-        colors.selected[1],
-        colors.selected[2],
-        false
-      );
-    }
-
-    // Highlight resolved/pending status
-    if (line.includes("[RESOLVED]")) {
-      const statusStart = lineStart + line.indexOf("[RESOLVED]");
-      editor.addOverlay(
-        bufferId,
-        `merge-resolved-${lineIdx}`,
-        statusStart,
-        statusStart + 10,
-        colors.resolved[0],
-        colors.resolved[1],
-        colors.resolved[2],
-        false
-      );
-    } else if (line.includes("[PENDING]")) {
-      const statusStart = lineStart + line.indexOf("[PENDING]");
-      editor.addOverlay(
-        bufferId,
-        `merge-pending-${lineIdx}`,
-        statusStart,
-        statusStart + 9,
-        colors.unresolved[0],
-        colors.unresolved[1],
-        colors.unresolved[2],
-        false
       );
     }
 
@@ -982,7 +950,7 @@ function highlightPanel(bufferId: number, side: "ours" | "theirs"): void {
  */
 function highlightResultPanel(bufferId: number): void {
   // Build content from entries (same as what we set on the buffer)
-  const entries = buildResultEntries();
+  const entries = buildResultFileEntries();
   const content = entries.map(e => e.text).join("");
   const lines = content.split("\n");
 
@@ -993,88 +961,17 @@ function highlightResultPanel(bufferId: number): void {
     const lineStart = byteOffset;
     const lineEnd = byteOffset + line.length;
 
-    // Highlight header
-    if (line.includes("RESULT")) {
+    // Highlight conflict markers
+    if (line.startsWith("<<<<<<<") || line.startsWith("=======") || line.startsWith(">>>>>>>")) {
       editor.addOverlay(
         bufferId,
-        `merge-header-${lineIdx}`,
-        lineStart,
-        lineEnd,
-        colors.resultHeader[0],
-        colors.resultHeader[1],
-        colors.resultHeader[2],
-        true // underline
-      );
-    }
-
-    // Highlight selected conflict
-    if (line.startsWith("▶ ")) {
-      editor.addOverlay(
-        bufferId,
-        `merge-selected-${lineIdx}`,
-        lineStart,
-        lineEnd,
-        colors.selected[0],
-        colors.selected[1],
-        colors.selected[2],
-        false
-      );
-    }
-
-    // Highlight individual clickable buttons (highlight based on bracket patterns)
-    // Find and highlight each [x] Button pattern
-    const buttonPatterns = [
-      { pattern: /\[u\] Accept Ours/g, name: "accept-ours" },
-      { pattern: /\[t\] Accept Theirs/g, name: "accept-theirs" },
-      { pattern: /\[b\] Both/g, name: "both" },
-      { pattern: /\[n\] Next/g, name: "next" },
-      { pattern: /\[p\] Prev/g, name: "prev" },
-      { pattern: /\[u\] Use Ours/g, name: "use-ours" },
-      { pattern: /\[t\] Take Theirs/g, name: "take-theirs" },
-      { pattern: /\[s\] Save & Exit/g, name: "save" },
-      { pattern: /\[q\] Abort/g, name: "abort" },
-    ];
-
-    for (const { pattern, name } of buttonPatterns) {
-      let match;
-      while ((match = pattern.exec(line)) !== null) {
-        const btnStart = lineStart + match.index;
-        const btnEnd = btnStart + match[0].length;
-        editor.addOverlay(
-          bufferId,
-          `merge-btn-${name}-${lineIdx}-${match.index}`,
-          btnStart,
-          btnEnd,
-          colors.button[0],
-          colors.button[1],
-          colors.button[2],
-          true // underline to indicate clickable
-        );
-      }
-    }
-
-    // Highlight warning/success messages
-    if (line.includes("conflict(s) remaining")) {
-      editor.addOverlay(
-        bufferId,
-        `merge-warning-${lineIdx}`,
+        `merge-marker-${lineIdx}`,
         lineStart,
         lineEnd,
         colors.unresolved[0],
         colors.unresolved[1],
         colors.unresolved[2],
-        false
-      );
-    } else if (line.includes("All conflicts resolved")) {
-      editor.addOverlay(
-        bufferId,
-        `merge-success-${lineIdx}`,
-        lineStart,
-        lineEnd,
-        colors.resolved[0],
-        colors.resolved[1],
-        colors.resolved[2],
-        false
+        true // underline
       );
     }
 
@@ -1087,15 +984,15 @@ function highlightResultPanel(bufferId: number): void {
  */
 function updateViews(): void {
   if (mergeState.oursPanelId !== null) {
-    editor.setVirtualBufferContent(mergeState.oursPanelId, buildOursEntries());
+    editor.setVirtualBufferContent(mergeState.oursPanelId, buildFullFileEntries("ours"));
   }
 
   if (mergeState.theirsPanelId !== null) {
-    editor.setVirtualBufferContent(mergeState.theirsPanelId, buildTheirsEntries());
+    editor.setVirtualBufferContent(mergeState.theirsPanelId, buildFullFileEntries("theirs"));
   }
 
   if (mergeState.resultPanelId !== null) {
-    editor.setVirtualBufferContent(mergeState.resultPanelId, buildResultEntries());
+    editor.setVirtualBufferContent(mergeState.resultPanelId, buildResultFileEntries());
   }
 
   applyHighlighting();
