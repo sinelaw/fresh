@@ -1029,7 +1029,11 @@ async function createMergePanels(): Promise<void> {
 // =============================================================================
 
 globalThis.merge_next_conflict = function(): void {
-  if (!mergeState.isActive || mergeState.conflicts.length === 0) return;
+  if (!mergeState.isActive) {
+    editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
+    return;
+  }
+  if (mergeState.conflicts.length === 0) return;
 
   // Find next unresolved conflict (or wrap around)
   let startIndex = mergeState.selectedIndex;
@@ -1051,7 +1055,11 @@ globalThis.merge_next_conflict = function(): void {
 };
 
 globalThis.merge_prev_conflict = function(): void {
-  if (!mergeState.isActive || mergeState.conflicts.length === 0) return;
+  if (!mergeState.isActive) {
+    editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
+    return;
+  }
+  if (mergeState.conflicts.length === 0) return;
 
   // Find previous unresolved conflict (or wrap around)
   let startIndex = mergeState.selectedIndex;
@@ -1077,7 +1085,10 @@ globalThis.merge_prev_conflict = function(): void {
 // =============================================================================
 
 globalThis.merge_use_ours = function(): void {
-  if (!mergeState.isActive) return;
+  if (!mergeState.isActive) {
+    editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
+    return;
+  }
 
   const conflict = mergeState.conflicts[mergeState.selectedIndex];
   if (!conflict) return;
@@ -1094,7 +1105,10 @@ globalThis.merge_use_ours = function(): void {
 };
 
 globalThis.merge_take_theirs = function(): void {
-  if (!mergeState.isActive) return;
+  if (!mergeState.isActive) {
+    editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
+    return;
+  }
 
   const conflict = mergeState.conflicts[mergeState.selectedIndex];
   if (!conflict) return;
@@ -1111,7 +1125,10 @@ globalThis.merge_take_theirs = function(): void {
 };
 
 globalThis.merge_use_both = function(): void {
-  if (!mergeState.isActive) return;
+  if (!mergeState.isActive) {
+    editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
+    return;
+  }
 
   const conflict = mergeState.conflicts[mergeState.selectedIndex];
   if (!conflict) return;
@@ -1150,7 +1167,10 @@ function moveToNextUnresolved(): void {
 // =============================================================================
 
 globalThis.merge_save_and_exit = async function(): Promise<void> {
-  if (!mergeState.isActive) return;
+  if (!mergeState.isActive) {
+    editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
+    return;
+  }
 
   const unresolvedCount = mergeState.conflicts.filter(c => !c.resolved).length;
 
@@ -1197,7 +1217,10 @@ globalThis.merge_save_and_exit = async function(): Promise<void> {
 };
 
 globalThis.merge_abort = function(): void {
-  if (!mergeState.isActive) return;
+  if (!mergeState.isActive) {
+    editor.setStatus("No active merge - nothing to abort");
+    return;
+  }
 
   // TODO: Add confirmation prompt if there are resolutions
 

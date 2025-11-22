@@ -11,6 +11,7 @@ pub mod line_wrapping;
 pub mod lsp;
 pub mod margin;
 pub mod markdown_compose;
+pub mod merge_conflict;
 pub mod menu_bar;
 pub mod mouse;
 pub mod movement;
