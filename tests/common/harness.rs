@@ -47,10 +47,36 @@ pub mod layout {
 use fresh::fs::{BackendMetrics, FsBackend, LocalFsBackend, SlowFsBackend, SlowFsConfig};
 use fresh::{config::Config, editor::Editor};
 use ratatui::{backend::TestBackend, Terminal};
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
+
+/// A wrapper that captures CrosstermBackend output for vt100 parsing
+struct CaptureBuffer {
+    data: Vec<u8>,
+}
+
+impl CaptureBuffer {
+    fn new() -> Self {
+        Self { data: Vec::new() }
+    }
+
+    fn take(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.data)
+    }
+}
+
+impl Write for CaptureBuffer {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.data.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
 
 /// Virtual editor environment for testing
 /// Captures all rendering output without displaying to actual terminal
@@ -80,6 +106,14 @@ pub struct EditorTestHarness {
     /// Whether to enable shadow buffer validation (off by default)
     /// Enable this only in tests that focus on simple text editing operations
     enable_shadow_validation: bool,
+
+    /// VT100 parser for testing real ANSI terminal output
+    /// This simulates how a real terminal would interpret the escape sequences
+    vt100_parser: vt100::Parser,
+
+    /// Terminal dimensions for vt100
+    term_width: u16,
+    term_height: u16,
 }
 
 impl EditorTestHarness {
@@ -106,6 +140,9 @@ impl EditorTestHarness {
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
+            vt100_parser: vt100::Parser::new(height, width, 0),
+            term_width: width,
+            term_height: height,
         })
     }
 
@@ -129,6 +166,9 @@ impl EditorTestHarness {
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
+            vt100_parser: vt100::Parser::new(height, width, 0),
+            term_width: width,
+            term_height: height,
         })
     }
 
@@ -161,6 +201,9 @@ impl EditorTestHarness {
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
+            vt100_parser: vt100::Parser::new(height, width, 0),
+            term_width: width,
+            term_height: height,
         })
     }
 
@@ -190,6 +233,9 @@ impl EditorTestHarness {
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
+            vt100_parser: vt100::Parser::new(height, width, 0),
+            term_width: width,
+            term_height: height,
         })
     }
 
@@ -230,6 +276,9 @@ impl EditorTestHarness {
             shadow_string: String::new(),
             shadow_cursor: 0,
             enable_shadow_validation: false,
+            vt100_parser: vt100::Parser::new(height, width, 0),
+            term_width: width,
+            term_height: height,
         })
     }
 
@@ -440,6 +489,162 @@ impl EditorTestHarness {
             self.editor.render(frame);
         })?;
         Ok(())
+    }
+
+    /// Render through the real CrosstermBackend and parse with vt100
+    /// This tests the actual ANSI escape sequences, not just the buffer contents
+    /// Returns the screen content as parsed by a real terminal emulator
+    pub fn render_real(&mut self) -> io::Result<()> {
+        // Generate ANSI escape sequences manually
+
+        // First render to TestBackend to get the buffer
+        self.render()?;
+
+        // Now manually generate ANSI sequences from the buffer
+        // This simulates what CrosstermBackend would do without needing a real terminal
+        let buffer = self.terminal.backend().buffer();
+        let mut ansi_output = Vec::new();
+
+        // Clear screen and move to home position
+        ansi_output.extend_from_slice(b"\x1b[2J\x1b[H");
+
+        // Render each cell
+        for y in 0..buffer.area.height {
+            // Move to start of line
+            ansi_output.extend_from_slice(format!("\x1b[{};1H", y + 1).as_bytes());
+
+            for x in 0..buffer.area.width {
+                let idx = buffer.index_of(x, y);
+                if let Some(cell) = buffer.content.get(idx) {
+                    let symbol = cell.symbol();
+                    ansi_output.extend_from_slice(symbol.as_bytes());
+                }
+            }
+        }
+
+        // Feed to vt100 parser
+        self.vt100_parser.process(&ansi_output);
+
+        Ok(())
+    }
+
+    /// Alternative: Render using ratatui's diff-based rendering to capture incremental updates
+    /// This more closely matches what happens in the real application
+    pub fn render_real_incremental(&mut self) -> io::Result<()> {
+        use ratatui::backend::CrosstermBackend;
+
+        // Create a buffer to capture ANSI output
+        let mut capture = CaptureBuffer::new();
+
+        // Use a scope to ensure backend is dropped before we take the buffer
+        {
+            // Create CrosstermBackend with our capture buffer
+            // Note: This may fail if crossterm tries to query terminal state
+            let mut backend = CrosstermBackend::new(&mut capture);
+
+            // Manually render cells without using Terminal::draw which does extra setup
+            let buffer = self.terminal.backend().buffer();
+
+            // Write clear screen
+            use std::io::Write;
+            write!(backend, "\x1b[2J\x1b[H")?;
+
+            // Write each cell manually
+            for y in 0..buffer.area.height {
+                write!(backend, "\x1b[{};1H", y + 1)?;
+                for x in 0..buffer.area.width {
+                    let idx = buffer.index_of(x, y);
+                    if let Some(cell) = buffer.content.get(idx) {
+                        write!(backend, "{}", cell.symbol())?;
+                    }
+                }
+            }
+            backend.flush()?;
+        }
+
+        // Get the captured output and feed to vt100
+        let ansi_output = capture.take();
+        self.vt100_parser.process(&ansi_output);
+
+        // Also render to TestBackend
+        self.render()?;
+
+        Ok(())
+    }
+
+    /// Get the screen content as parsed by vt100 (simulating real terminal)
+    /// This is what a real terminal would show after processing ANSI sequences
+    pub fn vt100_screen_to_string(&self) -> String {
+        let screen = self.vt100_parser.screen();
+        let mut result = String::new();
+
+        for row in 0..self.term_height {
+            for col in 0..self.term_width {
+                let cell = screen.cell(row, col);
+                if let Some(cell) = cell {
+                    result.push_str(&cell.contents());
+                } else {
+                    result.push(' ');
+                }
+            }
+            if row < self.term_height - 1 {
+                result.push('\n');
+            }
+        }
+
+        result
+    }
+
+    /// Compare TestBackend output with vt100-parsed output
+    /// Returns a list of differences if any, or empty vec if they match
+    pub fn compare_test_vs_real(&self) -> Vec<String> {
+        let test_screen = self.screen_to_string();
+        let vt100_screen = self.vt100_screen_to_string();
+
+        let test_lines: Vec<&str> = test_screen.lines().collect();
+        let vt100_lines: Vec<&str> = vt100_screen.lines().collect();
+
+        let mut differences = Vec::new();
+
+        for (row, (test_line, vt100_line)) in test_lines.iter().zip(vt100_lines.iter()).enumerate() {
+            if test_line != vt100_line {
+                differences.push(format!(
+                    "Row {}: TestBackend vs VT100 mismatch:\n  Test:  {:?}\n  VT100: {:?}",
+                    row, test_line, vt100_line
+                ));
+
+                // Character-by-character comparison for debugging
+                let test_chars: Vec<char> = test_line.chars().collect();
+                let vt100_chars: Vec<char> = vt100_line.chars().collect();
+                for (col, (tc, vc)) in test_chars.iter().zip(vt100_chars.iter()).enumerate() {
+                    if tc != vc {
+                        differences.push(format!("    Col {}: '{}' vs '{}'", col, tc, vc));
+                    }
+                }
+            }
+        }
+
+        differences
+    }
+
+    /// Assert that TestBackend and vt100 show the same content
+    /// This catches bugs in ANSI escape sequence generation
+    pub fn assert_test_matches_real(&self) {
+        let differences = self.compare_test_vs_real();
+        if !differences.is_empty() {
+            panic!(
+                "TestBackend and VT100 output differ!\n{}\n\nTestBackend:\n{}\n\nVT100:\n{}",
+                differences.join("\n"),
+                self.screen_to_string(),
+                self.vt100_screen_to_string()
+            );
+        }
+    }
+
+    /// Get a specific cell from the vt100-parsed screen
+    pub fn vt100_get_cell(&self, col: u16, row: u16) -> Option<String> {
+        let screen = self.vt100_parser.screen();
+        screen.cell(row, col).map(|cell| cell.contents().to_string())
     }
 
     /// Get the current terminal buffer (what would be displayed)

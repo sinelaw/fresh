@@ -1,0 +1,47 @@
+
+static int lfs_migrate_to_dom(int fd_src, int fd_dst, char *name,
+			      __u64 migration_flags,
+			      unsigned long long bandwidth_bytes_sec,
+			      long stats_interval_sec);
+
+struct pool_to_id_cbdata {
+	const char *pool;
+	__u32 id;
+};
+
+static int find_comp_id_by_pool(struct llapi_layout *layout, void *cbdata);
+static int find_mirror_id_by_pool(struct llapi_layout *layout, void *cbdata);
+
+enum setstripe_origin {
+	SO_SETSTRIPE,
+	SO_MIGRATE,
+	SO_MIGRATE_MDT,
+	SO_MIRROR_CREATE,
+	SO_MIRROR_EXTEND,
+	SO_MIRROR_SPLIT,
+	SO_MIRROR_DELETE,
+};
+
+static int lfs_setstripe_internal(int argc, char **argv,
+				  enum setstripe_origin opc);
+
+static inline int lfs_setstripe(int argc, char **argv)
+{
+	return lfs_setstripe_internal(argc, argv, SO_SETSTRIPE);
+}
+
+static inline int lfs_setstripe_migrate(int argc, char **argv)
+{
+	return lfs_setstripe_internal(argc, argv, SO_MIGRATE);
+}
+
+static inline int lfs_mirror_create(int argc, char **argv)
+{
+	return lfs_setstripe_internal(argc, argv, SO_MIRROR_CREATE);
+}
+
+static inline int lfs_mirror_extend(int argc, char **argv)
+{
+	return lfs_setstripe_internal(argc, argv, SO_MIRROR_EXTEND);
+}
+

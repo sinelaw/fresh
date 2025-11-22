@@ -45,6 +45,8 @@ struct ViewLine {
 struct ViewData {
     mapping: Vec<Option<usize>>,
     lines: Vec<ViewLine>,
+    /// View positions that are the START of a tab expansion (first space of expanded tab)
+    tab_starts: HashSet<usize>,
 }
 
 struct ViewAnchor {
@@ -104,6 +106,8 @@ struct LineRenderInput<'a> {
     theme: &'a crate::theme::Theme,
     view_lines: &'a [ViewLine],
     view_mapping: &'a [Option<usize>],
+    /// View positions that are the START of a tab expansion (for cursor positioning and tab indicator)
+    tab_starts: &'a HashSet<usize>,
     view_anchor: ViewAnchor,
     render_area: Rect,
     gutter_width: usize,
@@ -567,11 +571,12 @@ impl SplitRenderer {
         }
 
         // Convert tokens to text + mapping
-        let (text, mapping) = flatten_tokens(&tokens);
+        let flattened = flatten_tokens(&tokens);
 
         ViewData {
-            lines: Self::build_view_lines(&text),
-            mapping,
+            lines: Self::build_view_lines(&flattened.text),
+            mapping: flattened.mapping,
+            tab_starts: flattened.tab_starts,
         }
     }
 
@@ -1003,6 +1008,7 @@ impl SplitRenderer {
             theme,
             view_lines,
             view_mapping,
+            tab_starts,
             view_anchor,
             render_area,
             gutter_width,
@@ -1222,9 +1228,24 @@ impl SplitRenderer {
 
                 // Skip characters before left_column
                 if col_offset >= left_col as usize {
+                    // Check if this view position is the START of a tab expansion
+                    let is_tab_start = tab_starts.contains(&view_idx);
+
                     // Check if this character is at a cursor position
+                    // For tab expansions: only show cursor on the FIRST space (the tab_start position)
+                    // This prevents cursor from appearing on all 8 expanded spaces
                     let is_cursor = byte_pos
-                        .map(|bp| bp < state.buffer.len() && cursor_positions.contains(&bp))
+                        .map(|bp| {
+                            if !cursor_positions.contains(&bp) || bp >= state.buffer.len() {
+                                return false;
+                            }
+                            // If this byte maps to a tab character, only show cursor at tab_start
+                            // Check if this is part of a tab expansion by looking at surrounding positions
+                            let prev_view_idx = view_idx.saturating_sub(1);
+                            let prev_byte_pos = view_mapping.get(prev_view_idx).copied().flatten();
+                            // Show cursor if: this is start of line, OR previous char had different byte pos
+                            col_offset == 0 || prev_byte_pos != Some(bp)
+                        })
                         .unwrap_or(false);
 
                     // Check if this character is in any selection range (but not at cursor position)
@@ -1347,14 +1368,22 @@ impl SplitRenderer {
                         style = style.fg(theme.editor_fg).bg(theme.inactive_cursor);
                     }
 
-                    let display_char = if is_cursor && lsp_waiting && is_active {
+                    // Determine display character (tabs already expanded in flatten_tokens)
+                    // Show tab indicator (→) at the start of tab expansions
+                    let tab_indicator: String;
+                    let display_char: &str = if is_cursor && lsp_waiting && is_active {
                         "⋯"
                     } else if is_cursor && is_active && ch == '\n' {
                         ""
                     } else if ch == '\n' {
                         ""
+                    } else if is_tab_start {
+                        // Visual indicator for tab: show → at the first position
+                        tab_indicator = "→".to_string();
+                        &tab_indicator
                     } else {
-                        &ch.to_string()
+                        tab_indicator = ch.to_string();
+                        &tab_indicator
                     };
 
                     if let Some(bp) = byte_pos {
@@ -1520,7 +1549,9 @@ impl SplitRenderer {
                 for (screen_x, source_offset) in line_view_map.iter().enumerate() {
                     if let Some(src) = source_offset {
                         // Check if this is the primary cursor position
-                        if *src == primary_cursor_position {
+                        // Only set cursor on the FIRST screen position that maps to cursor byte
+                        // (important for tabs where multiple spaces map to same byte)
+                        if *src == primary_cursor_position && !have_cursor {
                             cursor_screen_x = screen_x as u16;
                             cursor_screen_y = current_y;
                             have_cursor = true;
@@ -1573,8 +1604,15 @@ impl SplitRenderer {
             }
         }
 
+        // Fill remaining rows with tilde characters to indicate EOF (like vim/neovim).
+        // This also ensures proper clearing in differential rendering because tildes
+        // are guaranteed to differ from previous content, forcing ratatui to update.
+        // See: https://github.com/ratatui/ratatui/issues/1606
+        let eof_style = Style::default().fg(theme.line_number_fg).add_modifier(ratatui::style::Modifier::DIM);
         while lines.len() < render_area.height as usize {
-            lines.push(Line::raw(""));
+            // Show tilde with dim styling, padded with spaces to fill the line
+            let tilde_line = format!("~{}", " ".repeat(render_area.width.saturating_sub(1) as usize));
+            lines.push(Line::styled(tilde_line, eof_style));
         }
 
         LineRenderOutput {
@@ -1709,6 +1747,7 @@ impl SplitRenderer {
             theme,
             view_lines: &view_data.lines,
             view_mapping: &view_data.mapping,
+            tab_starts: &view_data.tab_starts,
             view_anchor,
             render_area,
             gutter_width,
@@ -1949,6 +1988,7 @@ mod tests {
             theme: &Theme::default(),
             view_lines: &view_data.lines,
             view_mapping: &view_data.mapping,
+            tab_starts: &view_data.tab_starts,
             view_anchor,
             render_area,
             gutter_width,
