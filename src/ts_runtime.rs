@@ -3149,6 +3149,19 @@ impl TypeScriptPluginManager {
                     "tokens": tokens_json,
                 })
             }
+            HookArgs::MouseClick {
+                column,
+                row,
+                button,
+                modifiers,
+            } => {
+                serde_json::json!({
+                    "column": column,
+                    "row": row,
+                    "button": button,
+                    "modifiers": modifiers,
+                })
+            }
         };
 
         serde_json::to_string(&json_value)

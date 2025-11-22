@@ -2767,6 +2767,32 @@ impl Editor {
                 target_position = line_start;
             }
 
+            // Check for onClick text property at this position
+            // This enables clickable UI elements in virtual buffers
+            let onclick_action = state
+                .text_properties
+                .get_at(target_position)
+                .iter()
+                .find_map(|prop| {
+                    prop.get("onClick")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                });
+
+            if let Some(action_name) = onclick_action {
+                // Execute the action associated with this clickable element
+                tracing::debug!(
+                    "onClick triggered at position {}: action={}",
+                    target_position,
+                    action_name
+                );
+                let empty_args = std::collections::HashMap::new();
+                if let Some(action) = Action::from_str(&action_name, &empty_args) {
+                    return self.handle_action(action);
+                }
+                return Ok(());
+            }
+
             // Move the primary cursor to this position
             let primary_cursor_id = state.cursors.primary_id();
             let event = Event::MoveCursor {

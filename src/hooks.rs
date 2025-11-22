@@ -149,6 +149,19 @@ pub enum HookArgs {
         /// Base tokens (Text, Newline, Space) from the source
         tokens: Vec<ViewTokenWire>,
     },
+
+    /// Mouse click event - fired when user clicks in the editor viewport
+    /// Plugins can use this to implement clickable UI elements
+    MouseClick {
+        /// Column (x coordinate) in screen cells
+        column: u16,
+        /// Row (y coordinate) in screen cells
+        row: u16,
+        /// Mouse button: "left", "right", "middle"
+        button: String,
+        /// Modifier keys: "shift", "ctrl", "alt", or combinations like "shift+ctrl"
+        modifiers: String,
+    },
 }
 
 /// Information about a single line for the LinesChanged hook

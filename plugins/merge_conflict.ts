@@ -616,13 +616,47 @@ function buildResultEntries(): TextPropertyEntry[] {
         });
       }
     } else {
-      // Show action prompt
+      // Show clickable action buttons
+      // Each button is a separate entry with onClick for mouse support
       entries.push({
-        text: "  << [u] Accept Ours | [t] Accept Theirs | [b] Both >>\n",
+        text: "  << ",
+        properties: { type: "action-prefix" },
+      });
+      entries.push({
+        text: "[u] Accept Ours",
         properties: {
-          type: "action-buttons",
+          type: "action-button",
           conflictIndex: conflict.index,
+          onClick: "merge_use_ours",
         },
+      });
+      entries.push({
+        text: " | ",
+        properties: { type: "action-separator" },
+      });
+      entries.push({
+        text: "[t] Accept Theirs",
+        properties: {
+          type: "action-button",
+          conflictIndex: conflict.index,
+          onClick: "merge_take_theirs",
+        },
+      });
+      entries.push({
+        text: " | ",
+        properties: { type: "action-separator" },
+      });
+      entries.push({
+        text: "[b] Both",
+        properties: {
+          type: "action-button",
+          conflictIndex: conflict.index,
+          onClick: "merge_use_both",
+        },
+      });
+      entries.push({
+        text: " >>\n",
+        properties: { type: "action-suffix" },
       });
     }
 
@@ -632,14 +666,69 @@ function buildResultEntries(): TextPropertyEntry[] {
     });
   }
 
-  // Help bar
+  // Help bar with clickable buttons
   entries.push({
     text: "\n",
     properties: { type: "blank" },
   });
+  // Navigation
   entries.push({
-    text: "[n] Next [p] Prev | [u] Use Ours [t] Take Theirs [b] Both | [s] Save & Exit [q] Abort\n",
-    properties: { type: "help-bar" },
+    text: "[n] Next",
+    properties: { type: "help-button", onClick: "merge_next_conflict" },
+  });
+  entries.push({
+    text: " ",
+    properties: { type: "help-separator" },
+  });
+  entries.push({
+    text: "[p] Prev",
+    properties: { type: "help-button", onClick: "merge_prev_conflict" },
+  });
+  entries.push({
+    text: " | ",
+    properties: { type: "help-separator" },
+  });
+  // Resolution
+  entries.push({
+    text: "[u] Use Ours",
+    properties: { type: "help-button", onClick: "merge_use_ours" },
+  });
+  entries.push({
+    text: " ",
+    properties: { type: "help-separator" },
+  });
+  entries.push({
+    text: "[t] Take Theirs",
+    properties: { type: "help-button", onClick: "merge_take_theirs" },
+  });
+  entries.push({
+    text: " ",
+    properties: { type: "help-separator" },
+  });
+  entries.push({
+    text: "[b] Both",
+    properties: { type: "help-button", onClick: "merge_use_both" },
+  });
+  entries.push({
+    text: " | ",
+    properties: { type: "help-separator" },
+  });
+  // Completion
+  entries.push({
+    text: "[s] Save & Exit",
+    properties: { type: "help-button", onClick: "merge_save_and_exit" },
+  });
+  entries.push({
+    text: " ",
+    properties: { type: "help-separator" },
+  });
+  entries.push({
+    text: "[q] Abort",
+    properties: { type: "help-button", onClick: "merge_abort" },
+  });
+  entries.push({
+    text: "\n",
+    properties: { type: "help-newline" },
   });
 
   return entries;
@@ -787,32 +876,36 @@ function highlightResultPanel(bufferId: number): void {
       );
     }
 
-    // Highlight action buttons
-    if (line.includes("<<") && line.includes(">>")) {
-      editor.addOverlay(
-        bufferId,
-        `merge-buttons-${lineIdx}`,
-        lineStart,
-        lineEnd,
-        colors.button[0],
-        colors.button[1],
-        colors.button[2],
-        false
-      );
-    }
+    // Highlight individual clickable buttons (highlight based on bracket patterns)
+    // Find and highlight each [x] Button pattern
+    const buttonPatterns = [
+      { pattern: /\[u\] Accept Ours/g, name: "accept-ours" },
+      { pattern: /\[t\] Accept Theirs/g, name: "accept-theirs" },
+      { pattern: /\[b\] Both/g, name: "both" },
+      { pattern: /\[n\] Next/g, name: "next" },
+      { pattern: /\[p\] Prev/g, name: "prev" },
+      { pattern: /\[u\] Use Ours/g, name: "use-ours" },
+      { pattern: /\[t\] Take Theirs/g, name: "take-theirs" },
+      { pattern: /\[s\] Save & Exit/g, name: "save" },
+      { pattern: /\[q\] Abort/g, name: "abort" },
+    ];
 
-    // Highlight help bar
-    if (line.includes("[n] Next") && line.includes("[s] Save")) {
-      editor.addOverlay(
-        bufferId,
-        `merge-help-${lineIdx}`,
-        lineStart,
-        lineEnd,
-        colors.button[0],
-        colors.button[1],
-        colors.button[2],
-        false
-      );
+    for (const { pattern, name } of buttonPatterns) {
+      let match;
+      while ((match = pattern.exec(line)) !== null) {
+        const btnStart = lineStart + match.index;
+        const btnEnd = btnStart + match[0].length;
+        editor.addOverlay(
+          bufferId,
+          `merge-btn-${name}-${lineIdx}-${match.index}`,
+          btnStart,
+          btnEnd,
+          colors.button[0],
+          colors.button[1],
+          colors.button[2],
+          true // underline to indicate clickable
+        );
+      }
     }
 
     // Highlight warning/success messages
