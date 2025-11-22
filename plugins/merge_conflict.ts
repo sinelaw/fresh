@@ -1465,13 +1465,16 @@ globalThis.onMergeBufferActivated = async function(data: { buffer_id: number }):
   const info = editor.getBufferInfo(data.buffer_id);
   if (!info || !info.path) return;
 
+  // Get the directory of the file for running git commands
+  const fileDir = editor.pathDirname(info.path);
+
   // Check if we're in a git repo first
   try {
-    const gitCheck = await editor.spawnProcess("git", ["rev-parse", "--is-inside-work-tree"]);
+    const gitCheck = await editor.spawnProcess("git", ["rev-parse", "--is-inside-work-tree"], fileDir);
     if (gitCheck.exit_code !== 0) return;
 
     // Check for unmerged entries
-    const lsFiles = await editor.spawnProcess("git", ["ls-files", "-u", info.path]);
+    const lsFiles = await editor.spawnProcess("git", ["ls-files", "-u", info.path], fileDir);
     if (lsFiles.exit_code === 0 && lsFiles.stdout.trim().length > 0) {
       editor.setStatus(`Conflicts detected! Use 'Merge: Start Resolution' or run start_merge_conflict`);
     }
@@ -1487,13 +1490,16 @@ globalThis.onMergeAfterFileOpen = async function(data: { buffer_id: number; path
   // Don't trigger if already in merge mode
   if (mergeState.isActive) return;
 
+  // Get the directory of the file for running git commands
+  const fileDir = editor.pathDirname(data.path);
+
   // Check if we're in a git repo first
   try {
-    const gitCheck = await editor.spawnProcess("git", ["rev-parse", "--is-inside-work-tree"]);
+    const gitCheck = await editor.spawnProcess("git", ["rev-parse", "--is-inside-work-tree"], fileDir);
     if (gitCheck.exit_code !== 0) return;
 
     // Check for unmerged entries
-    const lsFiles = await editor.spawnProcess("git", ["ls-files", "-u", data.path]);
+    const lsFiles = await editor.spawnProcess("git", ["ls-files", "-u", data.path], fileDir);
     if (lsFiles.exit_code === 0 && lsFiles.stdout.trim().length > 0) {
       editor.setStatus(`⚠ Merge conflicts detected in ${data.path} - Use 'Merge: Start Resolution'`);
     }
