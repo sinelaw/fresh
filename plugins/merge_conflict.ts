@@ -997,9 +997,16 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
   const bufferLength = editor.getBufferLength(bufferId);
   const content = editor.getBufferText(bufferId, 0, bufferLength);
 
+  // Debug: log content info
+  editor.debug(`Merge: checking file ${info.path}, length=${bufferLength}`);
+  editor.debug(`Merge: has <<<<<<<: ${content.includes("<<<<<<<")}`);
+  editor.debug(`Merge: has =======: ${content.includes("=======")}`);
+  editor.debug(`Merge: has >>>>>>>: ${content.includes(">>>>>>>")}`);
+
   // Check for conflict markers
   if (!hasConflictMarkers(content)) {
     editor.setStatus("No conflict markers found in this file");
+    editor.debug(`Merge: content preview (first 500 chars): ${content.substring(0, 500)}`);
     return;
   }
 
@@ -1013,8 +1020,14 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
   // Parse conflicts
   mergeState.conflicts = parseConflicts(content);
 
+  // Debug: log parse results
+  editor.debug(`Merge: parseConflicts found ${mergeState.conflicts.length} conflicts`);
+
   if (mergeState.conflicts.length === 0) {
     editor.setStatus("Failed to parse conflict markers");
+    // Log more detail for debugging
+    editor.debug(`Merge: regex failed, content has <<<<<<< at index ${content.indexOf("<<<<<<<")}`);
+    editor.debug(`Merge: content around <<<<<<< : ${content.substring(content.indexOf("<<<<<<<") - 20, content.indexOf("<<<<<<<") + 100)}`);
     return;
   }
 
