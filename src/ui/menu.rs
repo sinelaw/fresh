@@ -15,6 +15,7 @@ pub struct CheckboxStates {
     pub line_wrap: bool,
     pub compose_mode: bool,
     pub file_explorer: bool,
+    pub mouse_capture: bool,
 }
 
 fn is_menu_item_enabled(item: &MenuItem, selection_active: bool) -> bool {
@@ -33,6 +34,7 @@ fn is_checkbox_checked(checkbox: &Option<String>, states: &CheckboxStates) -> bo
         Some("line_wrap") => states.line_wrap,
         Some("compose_mode") => states.compose_mode,
         Some("file_explorer") => states.file_explorer,
+        Some("mouse_capture") => states.mouse_capture,
         _ => false,
     }
 }

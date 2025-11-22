@@ -377,11 +377,12 @@ impl Editor {
             Action::PromptCopy => {
                 if let Some(prompt) = &self.prompt {
                     // If there's a selection, copy selected text; otherwise copy entire input
-                    self.clipboard = if let Some(selected) = prompt.selected_text() {
+                    let text = if let Some(selected) = prompt.selected_text() {
                         selected
                     } else {
                         prompt.get_text()
                     };
+                    self.clipboard.copy(text);
                     self.set_status_message("Copied".to_string());
                 }
             }
@@ -397,7 +398,7 @@ impl Editor {
                     String::new()
                 };
                 // Update clipboard before taking mutable borrow
-                self.clipboard = text;
+                self.clipboard.copy(text);
                 // Now cut the text (delete selection or clear entire input)
                 if let Some(prompt) = self.prompt_mut() {
                     if prompt.has_selection() {
@@ -410,7 +411,7 @@ impl Editor {
                 self.update_prompt_suggestions();
             }
             Action::PromptPaste => {
-                let text = self.clipboard.clone();
+                let text = self.clipboard.paste().unwrap_or_default();
                 if let Some(prompt) = self.prompt_mut() {
                     prompt.insert_str(&text);
                 }
@@ -911,6 +912,7 @@ impl Editor {
             Action::DecreaseSplitSize => self.adjust_split_size(-0.05),
             Action::ToggleFileExplorer => self.toggle_file_explorer(),
             Action::ToggleLineNumbers => self.toggle_line_numbers(),
+            Action::ToggleMouseCapture => self.toggle_mouse_capture(),
             Action::FocusFileExplorer => self.focus_file_explorer(),
             Action::FocusEditor => self.focus_editor(),
             Action::FileExplorerUp => self.file_explorer_navigate_up(),

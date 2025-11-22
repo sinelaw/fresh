@@ -1586,6 +1586,7 @@ pub fn action_to_events(
         | Action::LspRestart
         | Action::ToggleInlayHints
         | Action::ToggleLineNumbers
+        | Action::ToggleMouseCapture
         | Action::DumpConfig
         | Action::Search
         | Action::FindInSelection

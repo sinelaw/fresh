@@ -394,6 +394,7 @@ impl Editor {
                 .map(|state| state.view_mode == crate::state::ViewMode::Compose)
                 .unwrap_or(false),
             file_explorer: self.file_explorer.is_some(),
+            mouse_capture: self.mouse_enabled,
         };
 
         crate::ui::MenuRenderer::render(

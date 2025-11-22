@@ -330,6 +330,7 @@ pub enum Action {
 
     // View toggles
     ToggleLineNumbers,
+    ToggleMouseCapture,
     SetBackground,
     SetBackgroundBlend,
 
@@ -595,6 +596,7 @@ impl Action {
             "toggle_inlay_hints" => Some(Action::ToggleInlayHints),
 
             "toggle_line_numbers" => Some(Action::ToggleLineNumbers),
+            "toggle_mouse_capture" => Some(Action::ToggleMouseCapture),
             "set_background" => Some(Action::SetBackground),
             "set_background_blend" => Some(Action::SetBackgroundBlend),
 
@@ -1352,6 +1354,7 @@ impl KeybindingResolver {
             Action::LspRestart => "LSP: Restart server for current language".to_string(),
             Action::ToggleInlayHints => "Toggle inlay hints".to_string(),
             Action::ToggleLineNumbers => "Toggle line numbers".to_string(),
+            Action::ToggleMouseCapture => "Toggle mouse support".to_string(),
             Action::SetBackground => "Set ANSI background file".to_string(),
             Action::SetBackgroundBlend => "Set background blend ratio".to_string(),
             Action::DumpConfig => "Dump config to file".to_string(),

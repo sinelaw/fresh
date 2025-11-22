@@ -724,6 +724,13 @@ impl Config {
                         when: None,
                         checkbox: Some("line_wrap".to_string()),
                     },
+                    MenuItem::Action {
+                        label: "Mouse Support".to_string(),
+                        action: "toggle_mouse_capture".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some("mouse_capture".to_string()),
+                    },
                     // Note: Compose Mode removed from menu - markdown_compose plugin provides this
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {

@@ -299,6 +299,12 @@ pub fn get_all_commands() -> Vec<Command> {
             action: Action::ToggleLineNumbers,
             contexts: vec![KeyContext::Normal],
         },
+        Command {
+            name: "Toggle Mouse Support".to_string(),
+            description: "Enable or disable mouse capture".to_string(),
+            action: Action::ToggleMouseCapture,
+            contexts: vec![KeyContext::Normal],
+        },
         // File explorer
         Command {
             name: "Toggle File Explorer".to_string(),
