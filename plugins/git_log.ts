@@ -113,6 +113,13 @@ const colors = {
   tag: [255, 255, 100] as [number, number, number],       // Yellow for tags
   remote: [255, 130, 100] as [number, number, number],    // Orange for remotes
   graph: [150, 150, 150] as [number, number, number],     // Gray for graph
+  // Syntax highlighting colors
+  syntaxKeyword: [200, 120, 220] as [number, number, number],  // Purple for keywords
+  syntaxString: [180, 220, 140] as [number, number, number],   // Light green for strings
+  syntaxComment: [120, 120, 120] as [number, number, number],  // Gray for comments
+  syntaxNumber: [220, 180, 120] as [number, number, number],   // Orange for numbers
+  syntaxFunction: [100, 180, 255] as [number, number, number], // Blue for functions
+  syntaxType: [80, 200, 180] as [number, number, number],      // Teal for types
 };
 
 // =============================================================================
@@ -229,19 +236,19 @@ async function fetchCommitDiff(hash: string): Promise<string> {
 
 function formatCommitRow(commit: GitCommit): string {
   // Build a structured line for consistent parsing and highlighting
-  // Format: shortHash | refs | author | relativeDate | subject
+  // Format: shortHash (author, relativeDate) subject [refs]
   let line = commit.shortHash;
-
-  // Add refs if present and enabled
-  if (gitLogState.options.showRefs && commit.refs) {
-    line += " " + commit.refs;
-  }
 
   // Add author in parentheses
   line += " (" + commit.author + ", " + commit.relativeDate + ")";
 
   // Add subject
   line += " " + commit.subject;
+
+  // Add refs at the end if present and enabled
+  if (gitLogState.options.showRefs && commit.refs) {
+    line += " " + commit.refs;
+  }
 
   return line + "\n";
 }
@@ -367,7 +374,7 @@ function applyGitLogHighlighting(): void {
       );
     }
 
-    // Parse the line format: "shortHash refs (author, relativeDate) subject"
+    // Parse the line format: "shortHash (author, relativeDate) subject [refs]"
     // Highlight hash (first 7+ chars until space)
     const hashEnd = commit.shortHash.length;
     editor.addOverlay(
@@ -382,36 +389,6 @@ function applyGitLogHighlighting(): void {
       false, // bold
       false  // italic
     );
-
-    // Highlight refs (branches/tags) if present
-    if (gitLogState.options.showRefs && commit.refs) {
-      const refsStartInLine = line.indexOf(commit.refs);
-      if (refsStartInLine >= 0) {
-        const refsStart = lineStart + refsStartInLine;
-        const refsEnd = refsStart + commit.refs.length;
-
-        // Determine color based on ref type
-        let refColor = colors.branch;
-        if (commit.refs.includes("tag:")) {
-          refColor = colors.tag;
-        } else if (commit.refs.includes("origin/") || commit.refs.includes("remote")) {
-          refColor = colors.remote;
-        }
-
-        editor.addOverlay(
-          bufferId,
-          `gitlog-refs-${lineIdx}`,
-          refsStart,
-          refsEnd,
-          refColor[0],
-          refColor[1],
-          refColor[2],
-          false, // underline
-          false, // bold
-          false  // italic
-        );
-      }
-    }
 
     // Highlight author name (inside parentheses)
     const authorPattern = "(" + commit.author + ",";
@@ -451,6 +428,36 @@ function applyGitLogHighlighting(): void {
         false, // bold
         false  // italic
       );
+    }
+
+    // Highlight refs (branches/tags) at end of line if present
+    if (gitLogState.options.showRefs && commit.refs) {
+      const refsStartInLine = line.lastIndexOf(commit.refs);
+      if (refsStartInLine >= 0) {
+        const refsStart = lineStart + refsStartInLine;
+        const refsEnd = refsStart + commit.refs.length;
+
+        // Determine color based on ref type
+        let refColor = colors.branch;
+        if (commit.refs.includes("tag:")) {
+          refColor = colors.tag;
+        } else if (commit.refs.includes("origin/") || commit.refs.includes("remote")) {
+          refColor = colors.remote;
+        }
+
+        editor.addOverlay(
+          bufferId,
+          `gitlog-refs-${lineIdx}`,
+          refsStart,
+          refsEnd,
+          refColor[0],
+          refColor[1],
+          refColor[2],
+          false, // underline
+          true,  // bold (make refs stand out)
+          false  // italic
+        );
+      }
     }
 
     byteOffset += line.length + 1;
@@ -880,7 +887,7 @@ globalThis.git_log_show_commit = async function(): Promise<void> {
     read_only: true,
     entries: entries,
     split_id: gitLogState.splitId!,
-    show_line_numbers: true, // Enable line numbers for diff navigation
+    show_line_numbers: false, // Disable line numbers for cleaner diff view
     show_cursors: true,
     editing_disabled: true,
   });
@@ -993,6 +1000,164 @@ async function fetchFileAtCommit(commitHash: string, filePath: string): Promise<
   return result.stdout;
 }
 
+// Get language type from file extension
+function getLanguageFromPath(filePath: string): string {
+  const ext = editor.pathExtname(filePath).toLowerCase();
+  const extMap: Record<string, string> = {
+    ".rs": "rust",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".py": "python",
+    ".go": "go",
+    ".c": "c",
+    ".cpp": "cpp",
+    ".h": "c",
+    ".hpp": "cpp",
+    ".java": "java",
+    ".rb": "ruby",
+    ".sh": "shell",
+    ".bash": "shell",
+    ".zsh": "shell",
+    ".toml": "toml",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".json": "json",
+    ".md": "markdown",
+    ".css": "css",
+    ".html": "html",
+    ".xml": "xml",
+  };
+  return extMap[ext] || "text";
+}
+
+// Keywords for different languages
+const languageKeywords: Record<string, string[]> = {
+  rust: ["fn", "let", "mut", "const", "pub", "use", "mod", "struct", "enum", "impl", "trait", "for", "while", "loop", "if", "else", "match", "return", "async", "await", "move", "self", "Self", "super", "crate", "where", "type", "static", "unsafe", "extern", "ref", "dyn", "as", "in", "true", "false"],
+  typescript: ["function", "const", "let", "var", "class", "interface", "type", "extends", "implements", "import", "export", "from", "async", "await", "return", "if", "else", "for", "while", "do", "switch", "case", "break", "continue", "new", "this", "super", "null", "undefined", "true", "false", "try", "catch", "finally", "throw", "typeof", "instanceof", "void", "delete", "in", "of", "static", "readonly", "private", "public", "protected", "abstract", "enum"],
+  javascript: ["function", "const", "let", "var", "class", "extends", "import", "export", "from", "async", "await", "return", "if", "else", "for", "while", "do", "switch", "case", "break", "continue", "new", "this", "super", "null", "undefined", "true", "false", "try", "catch", "finally", "throw", "typeof", "instanceof", "void", "delete", "in", "of", "static"],
+  python: ["def", "class", "if", "elif", "else", "for", "while", "try", "except", "finally", "with", "as", "import", "from", "return", "yield", "raise", "pass", "break", "continue", "and", "or", "not", "in", "is", "lambda", "None", "True", "False", "global", "nonlocal", "async", "await", "self"],
+  go: ["func", "var", "const", "type", "struct", "interface", "map", "chan", "if", "else", "for", "range", "switch", "case", "default", "break", "continue", "return", "go", "defer", "select", "import", "package", "nil", "true", "false", "make", "new", "len", "cap", "append", "copy", "delete", "panic", "recover"],
+};
+
+// Apply basic syntax highlighting to file view
+function applyFileViewHighlighting(bufferId: number, content: string, filePath: string): void {
+  const language = getLanguageFromPath(filePath);
+  const keywords = languageKeywords[language] || [];
+  const lines = content.split("\n");
+
+  // Clear existing overlays
+  editor.removeOverlaysByPrefix(bufferId, "syntax-");
+
+  let byteOffset = 0;
+  let inMultilineComment = false;
+  let inMultilineString = false;
+
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+    const line = lines[lineIdx];
+    const lineStart = byteOffset;
+
+    // Skip empty lines
+    if (line.trim() === "") {
+      byteOffset += line.length + 1;
+      continue;
+    }
+
+    // Check for multiline comment start/end
+    if (language === "rust" || language === "c" || language === "cpp" || language === "java" || language === "javascript" || language === "typescript" || language === "go") {
+      if (line.includes("/*") && !line.includes("*/")) {
+        inMultilineComment = true;
+      }
+      if (inMultilineComment) {
+        editor.addOverlay(bufferId, `syntax-comment-${lineIdx}`, lineStart, lineStart + line.length, colors.syntaxComment[0], colors.syntaxComment[1], colors.syntaxComment[2], false, false, true);
+        if (line.includes("*/")) {
+          inMultilineComment = false;
+        }
+        byteOffset += line.length + 1;
+        continue;
+      }
+    }
+
+    // Python multiline strings
+    if (language === "python" && (line.includes('"""') || line.includes("'''"))) {
+      const tripleQuote = line.includes('"""') ? '"""' : "'''";
+      const firstIdx = line.indexOf(tripleQuote);
+      const secondIdx = line.indexOf(tripleQuote, firstIdx + 3);
+      if (firstIdx >= 0 && secondIdx < 0) {
+        inMultilineString = !inMultilineString;
+      }
+    }
+    if (inMultilineString) {
+      editor.addOverlay(bufferId, `syntax-string-${lineIdx}`, lineStart, lineStart + line.length, colors.syntaxString[0], colors.syntaxString[1], colors.syntaxString[2], false, false, false);
+      byteOffset += line.length + 1;
+      continue;
+    }
+
+    // Single-line comment detection
+    let commentStart = -1;
+    if (language === "rust" || language === "c" || language === "cpp" || language === "java" || language === "javascript" || language === "typescript" || language === "go") {
+      commentStart = line.indexOf("//");
+    } else if (language === "python" || language === "shell" || language === "ruby" || language === "yaml" || language === "toml") {
+      commentStart = line.indexOf("#");
+    }
+
+    if (commentStart >= 0) {
+      editor.addOverlay(bufferId, `syntax-comment-${lineIdx}`, lineStart + commentStart, lineStart + line.length, colors.syntaxComment[0], colors.syntaxComment[1], colors.syntaxComment[2], false, false, true);
+    }
+
+    // String highlighting (simple: find "..." and '...')
+    let i = 0;
+    let stringCount = 0;
+    while (i < line.length) {
+      const ch = line[i];
+      if (ch === '"' || ch === "'") {
+        const quote = ch;
+        const start = i;
+        i++;
+        while (i < line.length && line[i] !== quote) {
+          if (line[i] === '\\') i++; // Skip escaped chars
+          i++;
+        }
+        if (i < line.length) i++; // Include closing quote
+        const end = i;
+        if (commentStart < 0 || start < commentStart) {
+          editor.addOverlay(bufferId, `syntax-string-${lineIdx}-${stringCount++}`, lineStart + start, lineStart + end, colors.syntaxString[0], colors.syntaxString[1], colors.syntaxString[2], false, false, false);
+        }
+      } else {
+        i++;
+      }
+    }
+
+    // Keyword highlighting
+    for (const keyword of keywords) {
+      const regex = new RegExp(`\\b${keyword}\\b`, "g");
+      let match;
+      while ((match = regex.exec(line)) !== null) {
+        const kwStart = match.index;
+        const kwEnd = kwStart + keyword.length;
+        // Don't highlight if inside comment
+        if (commentStart < 0 || kwStart < commentStart) {
+          editor.addOverlay(bufferId, `syntax-kw-${lineIdx}-${kwStart}`, lineStart + kwStart, lineStart + kwEnd, colors.syntaxKeyword[0], colors.syntaxKeyword[1], colors.syntaxKeyword[2], false, true, false);
+        }
+      }
+    }
+
+    // Number highlighting
+    const numberRegex = /\b\d+(\.\d+)?\b/g;
+    let numMatch;
+    while ((numMatch = numberRegex.exec(line)) !== null) {
+      const numStart = numMatch.index;
+      const numEnd = numStart + numMatch[0].length;
+      if (commentStart < 0 || numStart < commentStart) {
+        editor.addOverlay(bufferId, `syntax-num-${lineIdx}-${numStart}`, lineStart + numStart, lineStart + numEnd, colors.syntaxNumber[0], colors.syntaxNumber[1], colors.syntaxNumber[2], false, false, false);
+      }
+    }
+
+    byteOffset += line.length + 1;
+  }
+}
+
 // Open file at the current diff line position - shows file as it was at that commit
 globalThis.git_commit_detail_open_file = async function(): Promise<void> {
   if (!commitDetailState.isOpen || commitDetailState.bufferId === null) {
@@ -1053,6 +1218,9 @@ globalThis.git_commit_detail_open_file = async function(): Promise<void> {
         fileViewState.splitId = commitDetailState.splitId;
         fileViewState.filePath = file;
         fileViewState.commitHash = commit.hash;
+
+        // Apply syntax highlighting based on file type
+        applyFileViewHighlighting(bufferId, content, file);
 
         const targetLine = line || 1;
         editor.setStatus(`${file} @ ${commit.shortHash} (read-only) | Target: line ${targetLine} | q: back`);
