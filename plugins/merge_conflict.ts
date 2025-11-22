@@ -759,10 +759,12 @@ function applyHighlighting(): void {
 
 /**
  * Highlight a side panel (OURS or THEIRS)
+ * Note: We compute content from our entries since getBufferText was removed
  */
 function highlightPanel(bufferId: number, side: "ours" | "theirs"): void {
-  const bufferLength = editor.getBufferLength(bufferId);
-  const content = editor.getBufferText(bufferId, 0, bufferLength);
+  // Build content from entries (same as what we set on the buffer)
+  const entries = side === "ours" ? buildOursEntries() : buildTheirsEntries();
+  const content = entries.map(e => e.text).join("");
   const lines = content.split("\n");
 
   let byteOffset = 0;
@@ -835,10 +837,12 @@ function highlightPanel(bufferId: number, side: "ours" | "theirs"): void {
 
 /**
  * Highlight the RESULT panel
+ * Note: We compute content from our entries since getBufferText was removed
  */
 function highlightResultPanel(bufferId: number): void {
-  const bufferLength = editor.getBufferLength(bufferId);
-  const content = editor.getBufferText(bufferId, 0, bufferLength);
+  // Build content from entries (same as what we set on the buffer)
+  const entries = buildResultEntries();
+  const content = entries.map(e => e.text).join("");
   const lines = content.split("\n");
 
   let byteOffset = 0;
@@ -993,35 +997,20 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
     return;
   }
 
-  // Get buffer content
-  const bufferLength = editor.getBufferLength(bufferId);
-  const content = editor.getBufferText(bufferId, 0, bufferLength);
+  // Read file content from disk (working tree has conflict markers)
+  const content = await editor.readFile(info.path);
 
-  // Debug: log content info
-  editor.debug(`Merge: checking file ${info.path}, length=${bufferLength}`);
-  editor.debug(`Merge: content type: ${typeof content}, actual length: ${content?.length}`);
-  editor.debug(`Merge: has <<<<<<<: ${content.includes("<<<<<<<")}`);
-  editor.debug(`Merge: has =======: ${content.includes("=======")}`);
-  editor.debug(`Merge: has >>>>>>>: ${content.includes(">>>>>>>")}`);
-
-  // Show first 200 chars with char codes for debugging
-  if (bufferLength > 0 && content) {
-    const preview = content.substring(0, Math.min(200, content.length));
-    editor.debug(`Merge: first 200 chars: ${JSON.stringify(preview)}`);
-    // Show char codes of first 50 chars
-    const charCodes = [];
-    for (let i = 0; i < Math.min(50, content.length); i++) {
-      charCodes.push(content.charCodeAt(i));
-    }
-    editor.debug(`Merge: first 50 char codes: ${charCodes.join(",")}`);
-  } else {
-    editor.debug(`Merge: content is empty or null!`);
+  if (!content) {
+    editor.setStatus("Failed to read file content");
+    return;
   }
 
-  // Check for conflict markers
-  if (!hasConflictMarkers(content)) {
+  // Check for conflict markers in content
+  const hasMarkers = hasConflictMarkers(content);
+  editor.debug(`Merge: file has conflict markers: ${hasMarkers}`);
+
+  if (!hasMarkers) {
     editor.setStatus("No conflict markers found in this file");
-    editor.debug(`Merge: content preview (first 500 chars): ${content.substring(0, 500)}`);
     return;
   }
 
@@ -1427,7 +1416,7 @@ globalThis.merge_show_help = function(): void {
 /**
  * Handle buffer activation - check for conflict markers
  */
-globalThis.onMergeBufferActivated = function(data: { buffer_id: number }): void {
+globalThis.onMergeBufferActivated = async function(data: { buffer_id: number }): Promise<void> {
   // Don't trigger if already in merge mode
   if (mergeState.isActive) return;
 
@@ -1435,28 +1424,32 @@ globalThis.onMergeBufferActivated = function(data: { buffer_id: number }): void 
   const info = editor.getBufferInfo(data.buffer_id);
   if (!info || !info.path) return;
 
-  // Check for conflict markers
-  const bufferLength = editor.getBufferLength(data.buffer_id);
-  const content = editor.getBufferText(data.buffer_id, 0, Math.min(bufferLength, 10000));
-
-  if (hasConflictMarkers(content)) {
-    editor.setStatus(`Conflicts detected! Use 'Merge: Start Resolution' or run start_merge_conflict`);
+  // Check for conflict markers by reading the file
+  try {
+    const content = await editor.readFile(info.path);
+    if (content && hasConflictMarkers(content)) {
+      editor.setStatus(`Conflicts detected! Use 'Merge: Start Resolution' or run start_merge_conflict`);
+    }
+  } catch (e) {
+    // File might not exist yet, ignore
   }
 };
 
 /**
  * Handle file open - check for conflict markers
  */
-globalThis.onMergeAfterFileOpen = function(data: { buffer_id: number; path: string }): void {
+globalThis.onMergeAfterFileOpen = async function(data: { buffer_id: number; path: string }): Promise<void> {
   // Don't trigger if already in merge mode
   if (mergeState.isActive) return;
 
-  // Check for conflict markers
-  const bufferLength = editor.getBufferLength(data.buffer_id);
-  const content = editor.getBufferText(data.buffer_id, 0, Math.min(bufferLength, 10000));
-
-  if (hasConflictMarkers(content)) {
-    editor.setStatus(`⚠ Merge conflicts detected in ${data.path} - Use 'Merge: Start Resolution'`);
+  // Check for conflict markers by reading the file
+  try {
+    const content = await editor.readFile(data.path);
+    if (content && hasConflictMarkers(content)) {
+      editor.setStatus(`⚠ Merge conflicts detected in ${data.path} - Use 'Merge: Start Resolution'`);
+    }
+  } catch (e) {
+    // File might not exist yet, ignore
   }
 };
 

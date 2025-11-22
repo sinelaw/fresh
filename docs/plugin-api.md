@@ -324,7 +324,7 @@ debug(message: string): void
 
 Get the buffer ID of the focused editor pane
 Returns 0 if no buffer is active (rare edge case).
-Use this ID with other buffer operations like getBufferText or insertText.
+Use this ID with other buffer operations like insertText.
 
 ```typescript
 getActiveBufferId(): number
@@ -361,8 +361,7 @@ getBufferPath(buffer_id: number): string
 #### `getBufferLength`
 
 Get the total byte length of a buffer's content
-Returns 0 if buffer doesn't exist. Use with getBufferText to read
-the full buffer: getBufferText(id, 0, getBufferLength(id)).
+Returns 0 if buffer doesn't exist.
 
 ```typescript
 getBufferLength(buffer_id: number): number
@@ -399,26 +398,6 @@ to manage split layouts.
 ```typescript
 getActiveSplitId(): number
 ```
-
-#### `getBufferText`
-
-Extract text from a buffer by byte range
-DEPRECATED: Use the view_transform hook instead, which receives tokens
-from core during render. This avoids pulling buffer content and works
-with huge files.
-Returns empty string - plugins should use streaming transforms.
-
-```typescript
-getBufferText(_buffer_id: number, _start: number, _end: number): string
-```
-
-**Parameters:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `_buffer_id` | `number` | - |
-| `_start` | `number` | - |
-| `_end` | `number` | - |
 
 #### `getCursorLine`
 
