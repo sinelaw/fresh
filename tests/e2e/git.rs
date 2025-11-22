@@ -912,3 +912,329 @@ fn test_git_grep_cursor_position_accuracy() {
         "BUG: Screen should show the line with MARKER"
     );
 }
+
+// =============================================================================
+// Git Log Tests
+// =============================================================================
+
+/// Helper to trigger git log via command palette
+fn trigger_git_log(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Git Log").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
+
+/// Test git log opens and shows commits
+#[test]
+fn test_git_log_shows_commits() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_git_log_plugin();
+
+    // Change to repo directory so git commands work correctly
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Trigger git log
+    trigger_git_log(&mut harness);
+
+    // Wait for git log to load
+    let found = harness
+        .wait_for_async(
+            |h| {
+                let screen = h.screen_to_string();
+                // Should show "Commits:" header and at least one commit hash
+                screen.contains("Commits:") && screen.contains("Initial commit")
+            },
+            3000,
+        )
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Git log screen:\n{screen}");
+
+    assert!(found, "Git log should show commits. Screen:\n{screen}");
+    assert!(screen.contains("Commits:"), "Should show Commits: header");
+}
+
+/// Test git log cursor navigation
+#[test]
+fn test_git_log_cursor_navigation() {
+    let repo = GitTestRepo::new();
+
+    // Create multiple commits for navigation testing
+    repo.create_file("file1.txt", "Content 1");
+    repo.git_add(&["file1.txt"]);
+    repo.git_commit("First commit");
+
+    repo.create_file("file2.txt", "Content 2");
+    repo.git_add(&["file2.txt"]);
+    repo.git_commit("Second commit");
+
+    repo.create_file("file3.txt", "Content 3");
+    repo.git_add(&["file3.txt"]);
+    repo.git_commit("Third commit");
+
+    repo.setup_git_log_plugin();
+
+    // Change to repo directory so git commands work correctly
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Trigger git log
+    trigger_git_log(&mut harness);
+
+    // Wait for git log to load
+    harness
+        .wait_for_async(|h| h.screen_to_string().contains("Commits:"), 3000)
+        .unwrap();
+
+    // Navigate down using j key (should work via inherited normal mode)
+    harness.send_key(KeyCode::Char('j'), KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Navigate down using Down arrow
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Navigate up using k key
+    harness.send_key(KeyCode::Char('k'), KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("After navigation:\n{screen}");
+
+    // Git log should still be visible
+    assert!(screen.contains("Commits:"));
+}
+
+/// Test git log show commit detail with Enter
+#[test]
+fn test_git_log_show_commit_detail() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_git_log_plugin();
+
+    // Change to repo directory so git commands work correctly
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Trigger git log
+    trigger_git_log(&mut harness);
+
+    // Wait for git log to load
+    harness
+        .wait_for_async(|h| h.screen_to_string().contains("Commits:"), 3000)
+        .unwrap();
+
+    // Move cursor to a commit line (down from header)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Press Enter to show commit detail
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Wait for commit detail to load
+    let found = harness
+        .wait_for_async(
+            |h| {
+                let screen = h.screen_to_string();
+                // git show output includes "commit", "Author:", "Date:"
+                screen.contains("Author:") && screen.contains("Date:")
+            },
+            3000,
+        )
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Commit detail screen:\n{screen}");
+
+    assert!(found, "Should show commit detail. Screen:\n{screen}");
+}
+
+/// Test going back from commit detail to git log
+#[test]
+fn test_git_log_back_from_commit_detail() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_git_log_plugin();
+
+    // Change to repo directory so git commands work correctly
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Trigger git log
+    trigger_git_log(&mut harness);
+
+    // Wait for git log to load
+    harness
+        .wait_for_async(|h| h.screen_to_string().contains("Commits:"), 3000)
+        .unwrap();
+
+    // Move to commit and show detail
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Wait for commit detail
+    harness
+        .wait_for_async(|h| h.screen_to_string().contains("Author:"), 3000)
+        .unwrap();
+
+    let screen_detail = harness.screen_to_string();
+    println!("Commit detail:\n{screen_detail}");
+
+    // Press q to go back to git log
+    harness.send_key(KeyCode::Char('q'), KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Wait for git log to reappear
+    let back_to_log = harness
+        .wait_for_async(|h| h.screen_to_string().contains("Commits:"), 2000)
+        .unwrap();
+
+    let screen_log = harness.screen_to_string();
+    println!("Back to git log:\n{screen_log}");
+
+    assert!(back_to_log, "Should return to git log view. Screen:\n{screen_log}");
+}
+
+/// Test closing git log with q
+#[test]
+fn test_git_log_close() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_git_log_plugin();
+
+    // Change to repo directory so git commands work correctly
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Trigger git log
+    trigger_git_log(&mut harness);
+
+    // Wait for git log to load
+    harness
+        .wait_for_async(|h| h.screen_to_string().contains("Commits:"), 3000)
+        .unwrap();
+
+    let screen_before = harness.screen_to_string();
+    assert!(screen_before.contains("Commits:"));
+
+    // Press q to close git log
+    harness.send_key(KeyCode::Char('q'), KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Git log should be closed
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    let screen_after = harness.screen_to_string();
+    println!("After closing:\n{screen_after}");
+
+    // Should no longer show git log
+    harness.assert_screen_not_contains("Commits:");
+}
+
+/// Test diff coloring in commit detail
+#[test]
+fn test_git_log_diff_coloring() {
+    // Use the typical project setup which creates files and commits
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_git_log_plugin();
+
+    // Change to repo directory so git commands work correctly
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Trigger git log
+    trigger_git_log(&mut harness);
+
+    // Wait for git log to load
+    harness
+        .wait_for_async(|h| h.screen_to_string().contains("Commits:"), 3000)
+        .unwrap();
+
+    // Move to the commit and show detail
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Wait for commit detail (git show output includes Author:)
+    let found = harness
+        .wait_for_async(
+            |h| {
+                let screen = h.screen_to_string();
+                screen.contains("Author:")
+            },
+            3000,
+        )
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Commit detail with diff:\n{screen}");
+
+    assert!(found, "Should show commit detail. Screen:\n{screen}");
+
+    // The commit detail should show commit info from git show output
+    // Note: The exact coloring is applied via overlays which aren't visible in screen text
+    assert!(
+        screen.contains("Author:") || screen.contains("Date:"),
+        "Should show commit info"
+    );
+}

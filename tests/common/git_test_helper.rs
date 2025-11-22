@@ -280,6 +280,25 @@ A sample project for testing.
             )
         });
     }
+
+    /// Set up git log plugin by copying it from the project's plugins directory
+    pub fn setup_git_log_plugin(&self) {
+        // Create plugins directory in the test repo
+        let plugins_dir = self.path.join("plugins");
+        fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
+
+        // Get the project root
+        let project_root = std::env::var("CARGO_MANIFEST_DIR")
+            .map(PathBuf::from)
+            .expect("CARGO_MANIFEST_DIR not set");
+
+        // Copy git_log.ts plugin
+        let git_log_src = project_root.join("plugins/git_log.ts");
+        let git_log_dst = plugins_dir.join("git_log.ts");
+        fs::copy(&git_log_src, &git_log_dst).unwrap_or_else(|e| {
+            panic!("Failed to copy git_log.ts from {:?}: {}", git_log_src, e)
+        });
+    }
 }
 
 /// Helper to restore original directory
