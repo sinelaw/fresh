@@ -1185,12 +1185,8 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
 /**
  * Create the multi-panel merge UI (JetBrains-style: OURS | RESULT | THEIRS)
  *
- * Split ratio semantics: ratio = proportion kept by FIRST (existing) pane
- *
- * To get equal thirds:
- * 1. Create OURS in current view (100%)
- * 2. Create THEIRS with ratio 0.667 -> OURS keeps 66.7%, THEIRS gets 33.3%
- * 3. Create RESULT from OURS with ratio 0.5 -> OURS keeps 33.3%, RESULT gets 33.3%
+ * Creates three vertical splits and then calls distributeSplitsEvenly()
+ * to ensure all panels get equal width.
  */
 async function createMergePanels(): Promise<void> {
   // Get the source file's extension for syntax highlighting
@@ -1220,13 +1216,12 @@ async function createMergePanels(): Promise<void> {
   }
 
   // Create THEIRS panel to the right (vertical split)
-  // ratio=0.667 means OURS keeps 66.7%, THEIRS gets 33.3%
   const theirsId = await editor.createVirtualBufferInSplit({
     name: `*THEIRS*${sourceExt}`,
     mode: "merge-conflict",
     read_only: true,
     entries: buildFullFileEntries("theirs"),
-    ratio: 0.667,
+    ratio: 0.5,  // Will be equalized by distributeSplitsEvenly
     direction: "vertical",
     panel_id: "merge-theirs",
     show_line_numbers: true,
@@ -1240,7 +1235,6 @@ async function createMergePanels(): Promise<void> {
   }
 
   // Focus back on OURS and create RESULT in the middle
-  // ratio=0.5 means OURS keeps 50% of its 66.7% = 33.3%, RESULT gets 33.3%
   if (mergeState.oursSplitId !== null) {
     editor.focusSplit(mergeState.oursSplitId);
   }
@@ -1250,7 +1244,7 @@ async function createMergePanels(): Promise<void> {
     mode: "merge-result",
     read_only: false,
     entries: buildResultFileEntries(),
-    ratio: 0.5,
+    ratio: 0.5,  // Will be equalized by distributeSplitsEvenly
     direction: "vertical",
     panel_id: "merge-result",
     show_line_numbers: true,
@@ -1262,6 +1256,9 @@ async function createMergePanels(): Promise<void> {
     mergeState.resultPanelId = resultId;
     mergeState.resultSplitId = editor.getActiveSplitId();
   }
+
+  // Distribute splits evenly so all three panels get equal width
+  editor.distributeSplitsEvenly();
 
   // Focus the RESULT panel since that's where the user will resolve conflicts
   if (mergeState.resultSplitId !== null) {

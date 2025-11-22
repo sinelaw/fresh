@@ -4193,6 +4193,12 @@ impl Editor {
                     }
                 }
             }
+            PluginCommand::DistributeSplitsEvenly { split_ids: _ } => {
+                // The split_ids parameter is currently ignored - we distribute ALL splits evenly
+                // A future enhancement could distribute only the specified splits
+                self.split_manager.distribute_splits_evenly();
+                tracing::debug!("Distributed splits evenly");
+            }
             PluginCommand::SendLspRequest {
                 language,
                 method,

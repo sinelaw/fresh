@@ -668,6 +668,36 @@ impl SplitManager {
         }
     }
 
+    /// Distribute all visible splits evenly
+    /// This sets the ratios of all container splits so that leaf splits get equal space
+    pub fn distribute_splits_evenly(&mut self) {
+        Self::distribute_node_evenly(&mut self.root);
+    }
+
+    /// Recursively distribute a node's splits evenly
+    /// Returns the number of leaves in this subtree
+    fn distribute_node_evenly(node: &mut SplitNode) -> usize {
+        match node {
+            SplitNode::Leaf { .. } => 1,
+            SplitNode::Split {
+                first,
+                second,
+                ratio,
+                ..
+            } => {
+                let first_leaves = Self::distribute_node_evenly(first);
+                let second_leaves = Self::distribute_node_evenly(second);
+                let total_leaves = first_leaves + second_leaves;
+
+                // Set ratio so each leaf gets equal space
+                // ratio = proportion for first pane
+                *ratio = (first_leaves as f32 / total_leaves as f32).clamp(0.1, 0.9);
+
+                total_leaves
+            }
+        }
+    }
+
     /// Navigate to the next split (circular)
     pub fn next_split(&mut self) {
         let leaf_ids = self.root.leaf_split_ids();

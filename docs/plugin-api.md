@@ -698,6 +698,15 @@ setSplitRatio(split_id: number, ratio: number): boolean
 | `split_id` | `number` | ID of the split |
 | `ratio` | `number` | Ratio between 0.0 and 1.0 (0.5 = equal split) |
 
+#### `distributeSplitsEvenly`
+
+Distribute all visible splits evenly
+This adjusts the ratios of all container splits so each leaf split gets equal space
+
+```typescript
+distributeSplitsEvenly(): boolean
+```
+
 ### Async Operations
 
 #### `spawnProcess`

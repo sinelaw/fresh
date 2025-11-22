@@ -450,6 +450,12 @@ pub enum PluginCommand {
         ratio: f32,
     },
 
+    /// Distribute splits evenly - make all given splits equal size
+    DistributeSplitsEvenly {
+        /// Split IDs to distribute evenly
+        split_ids: Vec<SplitId>,
+    },
+
     /// Send an arbitrary LSP request and return the raw JSON response
     SendLspRequest {
         language: String,
