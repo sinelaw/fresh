@@ -4183,6 +4183,16 @@ impl Editor {
                     }
                 }
             }
+            PluginCommand::SetSplitRatio { split_id, ratio } => {
+                match self.split_manager.set_ratio(split_id, ratio) {
+                    Ok(()) => {
+                        tracing::debug!("Set split {:?} ratio to {}", split_id, ratio);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to set split ratio {:?}: {}", split_id, e);
+                    }
+                }
+            }
             PluginCommand::SendLspRequest {
                 language,
                 method,

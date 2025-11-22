@@ -443,6 +443,13 @@ pub enum PluginCommand {
     /// Close a split (if not the last one)
     CloseSplit { split_id: SplitId },
 
+    /// Set the ratio of a split container
+    SetSplitRatio {
+        split_id: SplitId,
+        /// Ratio between 0.0 and 1.0 (0.5 = equal split)
+        ratio: f32,
+    },
+
     /// Send an arbitrary LSP request and return the raw JSON response
     SendLspRequest {
         language: String,

@@ -1162,6 +1162,11 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
 
 /**
  * Create the multi-panel merge UI (JetBrains-style: OURS | RESULT | THEIRS)
+ *
+ * To get equal thirds:
+ * 1. Create OURS in current view (100%)
+ * 2. Create THEIRS with ratio 0.33 -> OURS gets 67%, THEIRS gets 33%
+ * 3. Create RESULT from OURS with ratio 0.5 -> OURS gets 33%, RESULT gets 33%, THEIRS gets 33%
  */
 async function createMergePanels(): Promise<void> {
   // Close the source buffer's split to give us full screen
@@ -1184,13 +1189,13 @@ async function createMergePanels(): Promise<void> {
     mergeState.oursSplitId = editor.getActiveSplitId();
   }
 
-  // Create THEIRS panel to the right (vertical split)
+  // Create THEIRS panel to the right (vertical split) - gets 1/3 of space
   const theirsId = await editor.createVirtualBufferInSplit({
     name: "*THEIRS*",
     mode: "merge-conflict",
     read_only: true,
     entries: buildFullFileEntries("theirs"),
-    ratio: 0.5,
+    ratio: 0.333,  // THEIRS gets 33.3%, leaves 66.7% for OURS
     direction: "vertical",
     panel_id: "merge-theirs",
     show_line_numbers: true,
@@ -1203,7 +1208,7 @@ async function createMergePanels(): Promise<void> {
     mergeState.theirsSplitId = editor.getActiveSplitId();
   }
 
-  // Focus back on OURS and create RESULT in the middle
+  // Focus back on OURS and create RESULT in the middle - splits OURS in half
   if (mergeState.oursSplitId !== null) {
     editor.focusSplit(mergeState.oursSplitId);
   }
@@ -1213,7 +1218,7 @@ async function createMergePanels(): Promise<void> {
     mode: "merge-result",
     read_only: false,
     entries: buildResultFileEntries(),
-    ratio: 0.5,
+    ratio: 0.5,  // Split remaining 66.7% into two 33.3% portions
     direction: "vertical",
     panel_id: "merge-result",
     show_line_numbers: true,
@@ -1224,6 +1229,11 @@ async function createMergePanels(): Promise<void> {
   if (resultId !== null) {
     mergeState.resultPanelId = resultId;
     mergeState.resultSplitId = editor.getActiveSplitId();
+  }
+
+  // Focus the RESULT panel since that's where the user will resolve conflicts
+  if (mergeState.resultSplitId !== null) {
+    editor.focusSplit(mergeState.resultSplitId);
   }
 }
 

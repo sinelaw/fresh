@@ -683,6 +683,21 @@ sendLspRequest(language: string, method: string, params?: unknown | null): Promi
 | `method` | `string` | Full LSP method (e.g., "textDocument/switchSourceHeader") |
 | `params` | `unknown | null` (optional) | Optional request payload |
 
+#### `setSplitRatio`
+
+Set the ratio of a split container
+
+```typescript
+setSplitRatio(split_id: number, ratio: number): boolean
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `split_id` | `number` | ID of the split |
+| `ratio` | `number` | Ratio between 0.0 and 1.0 (0.5 = equal split) |
+
 ### Async Operations
 
 #### `spawnProcess`

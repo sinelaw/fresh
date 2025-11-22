@@ -2018,6 +2018,25 @@ fn op_fresh_close_split(state: &mut OpState, split_id: u32) -> bool {
     false
 }
 
+/// Set the ratio of a split container
+/// @param split_id - ID of the split
+/// @param ratio - Ratio between 0.0 and 1.0 (0.5 = equal split)
+/// @returns true if the ratio was set successfully
+#[op2(fast)]
+fn op_fresh_set_split_ratio(state: &mut OpState, split_id: u32, ratio: f64) -> bool {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let result = runtime_state
+            .command_sender
+            .send(PluginCommand::SetSplitRatio {
+                split_id: crate::event::SplitId(split_id as usize),
+                ratio: ratio as f32,
+            });
+        return result.is_ok();
+    }
+    false
+}
+
 /// Get text properties at the cursor position in a buffer
 /// @param buffer_id - ID of the buffer to query
 /// @returns Array of property objects for text ranges containing the cursor
@@ -2160,6 +2179,7 @@ extension!(
         op_fresh_focus_split,
         op_fresh_set_split_buffer,
         op_fresh_close_split,
+        op_fresh_set_split_ratio,
         op_fresh_get_text_properties_at_cursor,
         op_fresh_set_virtual_buffer_content,
     ],
@@ -2456,6 +2476,9 @@ impl TypeScriptRuntime {
                     },
                     closeSplit(splitId) {
                         return core.ops.op_fresh_close_split(splitId);
+                    },
+                    setSplitRatio(splitId, ratio) {
+                        return core.ops.op_fresh_set_split_ratio(splitId, ratio);
                     },
                     getTextPropertiesAtCursor(bufferId) {
                         return core.ops.op_fresh_get_text_properties_at_cursor(bufferId);
