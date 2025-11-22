@@ -38,10 +38,8 @@ interface GitLogState {
   isOpen: boolean;
   bufferId: number | null;
   splitId: number | null; // The split where git log is displayed
-  sourceSplitId: number | null; // The split where source code is displayed
-  sourceBufferId: number | null; // The buffer that was in the source split (to restore later)
+  sourceBufferId: number | null; // The buffer that was open before git log (to restore on close)
   commits: GitCommit[];
-  selectedIndex: number;
   options: GitLogOptions;
 }
 
@@ -60,10 +58,8 @@ const gitLogState: GitLogState = {
   isOpen: false,
   bufferId: null,
   splitId: null,
-  sourceSplitId: null,
   sourceBufferId: null,
   commits: [],
-  selectedIndex: 0,
   options: {
     showGraph: false,  // Disabled by default - graph interferes with format parsing
     showRefs: true,
@@ -103,23 +99,14 @@ const colors = {
 // Mode Definitions
 // =============================================================================
 
-// Define git-log mode with navigation keybindings
+// Define git-log mode with minimal keybindings
+// Navigation uses normal cursor movement (arrows, j/k work naturally via parent mode)
 editor.defineMode(
   "git-log",
-  null, // no parent mode
+  "normal", // inherit from normal mode for cursor movement
   [
     ["Return", "git_log_show_commit"],
     ["Tab", "git_log_show_commit"],
-    ["j", "git_log_next"],
-    ["k", "git_log_prev"],
-    ["n", "git_log_next"],
-    ["p", "git_log_prev"],
-    ["Down", "git_log_next"],
-    ["Up", "git_log_prev"],
-    ["g", "git_log_first"],
-    ["M-<", "git_log_first"],
-    ["G", "git_log_last"],
-    ["M->", "git_log_last"],
     ["q", "git_log_close"],
     ["Escape", "git_log_close"],
     ["r", "git_log_refresh"],
@@ -129,18 +116,14 @@ editor.defineMode(
 );
 
 // Define git-commit-detail mode for viewing commit details
+// Inherits from normal mode for natural cursor movement
 editor.defineMode(
   "git-commit-detail",
-  null,
+  "normal", // inherit from normal mode for cursor movement
   [
+    ["Return", "git_commit_detail_open_file"],
     ["q", "git_commit_detail_close"],
     ["Escape", "git_commit_detail_close"],
-    ["j", "move_down"],
-    ["k", "move_up"],
-    ["Down", "move_down"],
-    ["Up", "move_up"],
-    ["C-d", "scroll_half_page_down"],
-    ["C-u", "scroll_half_page_up"],
   ],
   true // read-only
 );
@@ -213,11 +196,9 @@ async function fetchCommitDiff(hash: string): Promise<string> {
 // Git Log View
 // =============================================================================
 
-function formatCommitRow(commit: GitCommit, index: number): string {
-  const marker = index === gitLogState.selectedIndex ? "* " : "  ";
-
+function formatCommitRow(commit: GitCommit): string {
   // Build the line parts
-  let line = marker;
+  let line = "";
 
   // Add hash
   line += commit.shortHash + " ";
@@ -252,7 +233,7 @@ function buildGitLogEntries(): TextPropertyEntry[] {
     for (let i = 0; i < gitLogState.commits.length; i++) {
       const commit = gitLogState.commits[i];
       entries.push({
-        text: formatCommitRow(commit, i),
+        text: formatCommitRow(commit),
         properties: {
           type: "commit",
           index: i,
@@ -274,7 +255,7 @@ function buildGitLogEntries(): TextPropertyEntry[] {
     properties: { type: "blank" },
   });
   entries.push({
-    text: `${gitLogState.commits.length} commits | RET: show | j/k/n/p: nav | g/G: first/last | y: yank hash | r: refresh | q: quit\n`,
+    text: `${gitLogState.commits.length} commits | ↑/↓/j/k: navigate | RET: show | y: yank hash | r: refresh | q: quit\n`,
     properties: { type: "footer" },
   });
 
@@ -294,8 +275,11 @@ function applyGitLogHighlighting(): void {
   const content = editor.getBufferText(bufferId, 0, bufferLength);
   const lines = content.split("\n");
 
-  let byteOffset = 0;
+  // Get cursor line to highlight current row
+  const cursorLine = editor.getCursorLine();
   const headerLines = 1; // Just "Commits:" header
+
+  let byteOffset = 0;
 
   for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
     const line = lines[lineIdx];
@@ -316,12 +300,6 @@ function applyGitLogHighlighting(): void {
       continue;
     }
 
-    // Skip non-commit lines
-    if (lineIdx < headerLines || (!line.startsWith("  ") && !line.startsWith("* "))) {
-      byteOffset += line.length + 1;
-      continue;
-    }
-
     const commitIndex = lineIdx - headerLines;
     if (commitIndex < 0 || commitIndex >= gitLogState.commits.length) {
       byteOffset += line.length + 1;
@@ -329,10 +307,25 @@ function applyGitLogHighlighting(): void {
     }
 
     const commit = gitLogState.commits[commitIndex];
-    const isSelected = commitIndex === gitLogState.selectedIndex;
+    const isCurrentLine = lineIdx === cursorLine;
+
+    // Highlight entire line if cursor is on it (using selected color with underline)
+    if (isCurrentLine) {
+      editor.addOverlay(
+        bufferId,
+        `gitlog-cursorline-${lineIdx}`,
+        byteOffset,
+        byteOffset + line.length,
+        colors.selected[0],
+        colors.selected[1],
+        colors.selected[2],
+        true, // underline to make it visible
+        true  // bold
+      );
+    }
 
     // Find and highlight different parts of the line
-    let pos = 2; // Skip marker
+    let pos = 0;
 
     // Highlight hash
     const hashStart = byteOffset + pos;
@@ -372,21 +365,6 @@ function applyGitLogHighlighting(): void {
         refColor[2],
         false
       );
-      pos += commit.refs.length + 1;
-    }
-
-    // Highlight selection marker
-    if (isSelected) {
-      editor.addOverlay(
-        bufferId,
-        `gitlog-selected-${lineIdx}`,
-        byteOffset,
-        byteOffset + 1,
-        colors.header[0],
-        colors.header[1],
-        colors.header[2],
-        true // underline
-      );
     }
 
     byteOffset += line.length + 1;
@@ -405,92 +383,118 @@ function updateGitLogView(): void {
 // Commit Detail View
 // =============================================================================
 
-function buildCommitDetailEntries(commit: GitCommit, diff: string): TextPropertyEntry[] {
+// Parse diff line to extract file and line information
+interface DiffContext {
+  currentFile: string | null;
+  currentHunkNewStart: number;
+  currentHunkNewLine: number;  // Current line within the new file
+}
+
+function buildCommitDetailEntries(commit: GitCommit, showOutput: string): TextPropertyEntry[] {
   const entries: TextPropertyEntry[] = [];
+  const lines = showOutput.split("\n");
 
-  // Header
-  entries.push({
-    text: "══════════════════════════════════════════════════════════════════════════════\n",
-    properties: { type: "separator" },
-  });
-  entries.push({
-    text: `  Commit: ${commit.hash}\n`,
-    properties: { type: "header", hash: commit.hash },
-  });
-  entries.push({
-    text: "══════════════════════════════════════════════════════════════════════════════\n",
-    properties: { type: "separator" },
-  });
+  // Track diff context for file/line navigation
+  const diffContext: DiffContext = {
+    currentFile: null,
+    currentHunkNewStart: 0,
+    currentHunkNewLine: 0,
+  };
 
-  // Commit metadata
-  entries.push({
-    text: `Author: ${commit.author} <${commit.authorEmail}>\n`,
-    properties: { type: "meta", field: "author" },
-  });
-  entries.push({
-    text: `Date:   ${commit.date} (${commit.relativeDate})\n`,
-    properties: { type: "meta", field: "date" },
-  });
-  entries.push({
-    text: "\n",
-    properties: { type: "blank" },
-  });
+  for (const line of lines) {
+    let lineType = "text";
+    const properties: Record<string, unknown> = { type: lineType };
 
-  // Subject and body
-  entries.push({
-    text: `    ${commit.subject}\n`,
-    properties: { type: "subject" },
-  });
-
-  if (commit.body) {
-    entries.push({
-      text: "\n",
-      properties: { type: "blank" },
-    });
-    for (const line of commit.body.split("\n")) {
-      entries.push({
-        text: `    ${line}\n`,
-        properties: { type: "body" },
-      });
-    }
-  }
-
-  // Diff section
-  entries.push({
-    text: "\n",
-    properties: { type: "blank" },
-  });
-  entries.push({
-    text: "──────────────────────────────────────────────────────────────────────────────\n",
-    properties: { type: "separator" },
-  });
-
-  // Parse and add diff lines
-  for (const line of diff.split("\n")) {
-    let lineType = "diff";
-    if (line.startsWith("+") && !line.startsWith("+++")) {
-      lineType = "diff-add";
-    } else if (line.startsWith("-") && !line.startsWith("---")) {
-      lineType = "diff-del";
-    } else if (line.startsWith("@@")) {
-      lineType = "diff-hunk";
-    } else if (line.startsWith("diff --git") || line.startsWith("index ")) {
+    // Detect diff file header: diff --git a/path b/path
+    const diffHeaderMatch = line.match(/^diff --git a\/(.+) b\/(.+)$/);
+    if (diffHeaderMatch) {
+      diffContext.currentFile = diffHeaderMatch[2]; // Use the 'b' (new) file path
+      diffContext.currentHunkNewStart = 0;
+      diffContext.currentHunkNewLine = 0;
       lineType = "diff-header";
+      properties.type = lineType;
+      properties.file = diffContext.currentFile;
+    }
+    // Detect +++ line (new file path)
+    else if (line.startsWith("+++ b/")) {
+      diffContext.currentFile = line.slice(6);
+      lineType = "diff-header";
+      properties.type = lineType;
+      properties.file = diffContext.currentFile;
+    }
+    // Detect hunk header: @@ -old,count +new,count @@
+    else if (line.startsWith("@@")) {
+      lineType = "diff-hunk";
+      const hunkMatch = line.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (hunkMatch) {
+        diffContext.currentHunkNewStart = parseInt(hunkMatch[1], 10);
+        diffContext.currentHunkNewLine = diffContext.currentHunkNewStart;
+      }
+      properties.type = lineType;
+      properties.file = diffContext.currentFile;
+      properties.line = diffContext.currentHunkNewStart;
+    }
+    // Addition line
+    else if (line.startsWith("+") && !line.startsWith("+++")) {
+      lineType = "diff-add";
+      properties.type = lineType;
+      properties.file = diffContext.currentFile;
+      properties.line = diffContext.currentHunkNewLine;
+      diffContext.currentHunkNewLine++;
+    }
+    // Deletion line
+    else if (line.startsWith("-") && !line.startsWith("---")) {
+      lineType = "diff-del";
+      properties.type = lineType;
+      properties.file = diffContext.currentFile;
+      // Deletion lines don't advance the new file line counter
+    }
+    // Context line (unchanged)
+    else if (line.startsWith(" ") && diffContext.currentFile && diffContext.currentHunkNewLine > 0) {
+      lineType = "diff-context";
+      properties.type = lineType;
+      properties.file = diffContext.currentFile;
+      properties.line = diffContext.currentHunkNewLine;
+      diffContext.currentHunkNewLine++;
+    }
+    // Other diff header lines
+    else if (line.startsWith("index ") || line.startsWith("--- ")) {
+      lineType = "diff-header";
+      properties.type = lineType;
+    }
+    // Commit header lines
+    else if (line.startsWith("commit ")) {
+      lineType = "header";
+      properties.type = lineType;
+      const hashMatch = line.match(/^commit ([a-f0-9]+)/);
+      if (hashMatch) {
+        properties.hash = hashMatch[1];
+      }
+    }
+    else if (line.startsWith("Author:")) {
+      lineType = "meta";
+      properties.type = lineType;
+      properties.field = "author";
+    }
+    else if (line.startsWith("Date:")) {
+      lineType = "meta";
+      properties.type = lineType;
+      properties.field = "date";
     }
 
     entries.push({
       text: `${line}\n`,
-      properties: { type: lineType },
+      properties: properties,
     });
   }
 
-  // Footer
+  // Footer with help
   entries.push({
-    text: "──────────────────────────────────────────────────────────────────────────────\n",
-    properties: { type: "separator" },
+    text: "\n",
+    properties: { type: "blank" },
   });
   entries.push({
-    text: "  j/k: scroll | q: close\n",
+    text: `↑/↓/j/k: navigate | RET: open file at line | q: back to log\n`,
     properties: { type: "footer" },
   });
 
@@ -517,7 +521,7 @@ function applyCommitDetailHighlighting(): void {
     const lineStart = byteOffset;
     const lineEnd = byteOffset + line.length;
 
-    // Highlight diff additions
+    // Highlight diff additions (green)
     if (line.startsWith("+") && !line.startsWith("+++")) {
       editor.addOverlay(
         bufferId,
@@ -530,7 +534,7 @@ function applyCommitDetailHighlighting(): void {
         false
       );
     }
-    // Highlight diff deletions
+    // Highlight diff deletions (red)
     else if (line.startsWith("-") && !line.startsWith("---")) {
       editor.addOverlay(
         bufferId,
@@ -543,7 +547,7 @@ function applyCommitDetailHighlighting(): void {
         false
       );
     }
-    // Highlight hunk headers
+    // Highlight hunk headers (blue)
     else if (line.startsWith("@@")) {
       editor.addOverlay(
         bufferId,
@@ -556,29 +560,29 @@ function applyCommitDetailHighlighting(): void {
         false
       );
     }
-    // Highlight commit hash in header
-    else if (line.includes("Commit:")) {
-      const hashMatch = line.match(/([a-f0-9]{40})/);
+    // Highlight commit hash in "commit <hash>" line (git show format)
+    else if (line.startsWith("commit ")) {
+      const hashMatch = line.match(/^commit ([a-f0-9]+)/);
       if (hashMatch) {
-        const hashPos = line.indexOf(hashMatch[1]);
+        const hashStart = lineStart + 7; // "commit " is 7 chars
         editor.addOverlay(
           bufferId,
           `gitdetail-hash-${lineIdx}`,
-          lineStart + hashPos,
-          lineStart + hashPos + hashMatch[1].length,
+          hashStart,
+          hashStart + hashMatch[1].length,
           colors.hash[0],
           colors.hash[1],
           colors.hash[2],
-          false
+          true // bold
         );
       }
     }
-    // Highlight author
+    // Highlight author line
     else if (line.startsWith("Author:")) {
       editor.addOverlay(
         bufferId,
         `gitdetail-author-${lineIdx}`,
-        lineStart + 8,
+        lineStart + 8, // "Author: " is 8 chars
         lineEnd,
         colors.author[0],
         colors.author[1],
@@ -586,17 +590,30 @@ function applyCommitDetailHighlighting(): void {
         false
       );
     }
-    // Highlight date
+    // Highlight date line
     else if (line.startsWith("Date:")) {
       editor.addOverlay(
         bufferId,
         `gitdetail-date-${lineIdx}`,
-        lineStart + 8,
+        lineStart + 6, // "Date: " is 6 chars (with trailing spaces it's 8)
         lineEnd,
         colors.date[0],
         colors.date[1],
         colors.date[2],
         false
+      );
+    }
+    // Highlight diff file headers
+    else if (line.startsWith("diff --git")) {
+      editor.addOverlay(
+        bufferId,
+        `gitdetail-diffheader-${lineIdx}`,
+        lineStart,
+        lineEnd,
+        colors.header[0],
+        colors.header[1],
+        colors.header[2],
+        true // bold
       );
     }
 
@@ -616,31 +633,29 @@ globalThis.show_git_log = async function(): Promise<void> {
 
   editor.setStatus("Loading git log...");
 
-  // Store the current split ID and buffer ID before creating the panel
-  gitLogState.sourceSplitId = editor.getActiveSplitId();
+  // Store the current split ID and buffer ID before opening git log
+  gitLogState.splitId = editor.getActiveSplitId();
   gitLogState.sourceBufferId = editor.getActiveBufferId();
 
   // Fetch commits
   gitLogState.commits = await fetchGitLog();
-  gitLogState.selectedIndex = 0;
 
   if (gitLogState.commits.length === 0) {
     editor.setStatus("No commits found or not a git repository");
-    gitLogState.sourceSplitId = null;
+    gitLogState.splitId = null;
     return;
   }
 
   // Build entries
   const entries = buildGitLogEntries();
 
-  // Create virtual buffer in split
-  const bufferId = await editor.createVirtualBufferInSplit({
+  // Create virtual buffer in the current split (replacing current buffer)
+  const bufferId = await editor.createVirtualBufferInExistingSplit({
     name: "*Git Log*",
     mode: "git-log",
     read_only: true,
     entries: entries,
-    ratio: 0.6, // Original takes 60%, git log takes 40%
-    panel_id: "git-log-panel",
+    split_id: gitLogState.splitId!,
     show_line_numbers: false,
     show_cursors: true,
     editing_disabled: true,
@@ -649,15 +664,14 @@ globalThis.show_git_log = async function(): Promise<void> {
   if (bufferId !== null) {
     gitLogState.isOpen = true;
     gitLogState.bufferId = bufferId;
-    gitLogState.splitId = editor.getActiveSplitId(); // Capture the git log's split ID
 
     // Apply syntax highlighting
     applyGitLogHighlighting();
 
-    editor.setStatus(`Git log: ${gitLogState.commits.length} commits | Press ? for help`);
+    editor.setStatus(`Git log: ${gitLogState.commits.length} commits | ↑/↓: navigate | RET: show | q: quit`);
     editor.debug("Git log panel opened");
   } else {
-    gitLogState.sourceSplitId = null;
+    gitLogState.splitId = null;
     editor.setStatus("Failed to open git log panel");
   }
 };
@@ -667,94 +681,101 @@ globalThis.git_log_close = function(): void {
     return;
   }
 
-  // Close the git log buffer first
-  if (gitLogState.bufferId !== null) {
-    editor.closeBuffer(gitLogState.bufferId);
+  // Restore the original buffer in the split
+  if (gitLogState.splitId !== null && gitLogState.sourceBufferId !== null) {
+    editor.setSplitBuffer(gitLogState.splitId, gitLogState.sourceBufferId);
   }
 
-  // Close the git log split (this will focus the remaining split)
-  if (gitLogState.splitId !== null) {
-    editor.closeSplit(gitLogState.splitId);
+  // Close the git log buffer (it's no longer displayed)
+  if (gitLogState.bufferId !== null) {
+    editor.closeBuffer(gitLogState.bufferId);
   }
 
   gitLogState.isOpen = false;
   gitLogState.bufferId = null;
   gitLogState.splitId = null;
-  gitLogState.sourceSplitId = null;
   gitLogState.sourceBufferId = null;
   gitLogState.commits = [];
-  gitLogState.selectedIndex = 0;
   editor.setStatus("Git log closed");
 };
 
-globalThis.git_log_next = function(): void {
-  if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
+// Cursor moved handler for git log - update highlighting and status
+globalThis.on_git_log_cursor_moved = function(data: {
+  buffer_id: number;
+  cursor_id: number;
+  old_position: number;
+  new_position: number;
+}): void {
+  // Only handle cursor movement in our git log buffer
+  if (gitLogState.bufferId === null || data.buffer_id !== gitLogState.bufferId) {
+    return;
+  }
 
-  gitLogState.selectedIndex = Math.min(
-    gitLogState.selectedIndex + 1,
-    gitLogState.commits.length - 1
-  );
-  updateGitLogView();
-  editor.setStatus(`Commit ${gitLogState.selectedIndex + 1}/${gitLogState.commits.length}`);
+  // Re-apply highlighting to update cursor line highlight
+  applyGitLogHighlighting();
+
+  // Get cursor line to show status
+  const cursorLine = editor.getCursorLine();
+  const headerLines = 1;
+  const commitIndex = cursorLine - headerLines;
+
+  if (commitIndex >= 0 && commitIndex < gitLogState.commits.length) {
+    editor.setStatus(`Commit ${commitIndex + 1}/${gitLogState.commits.length}`);
+  }
 };
 
-globalThis.git_log_prev = function(): void {
-  if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
-
-  gitLogState.selectedIndex = Math.max(gitLogState.selectedIndex - 1, 0);
-  updateGitLogView();
-  editor.setStatus(`Commit ${gitLogState.selectedIndex + 1}/${gitLogState.commits.length}`);
-};
-
-globalThis.git_log_first = function(): void {
-  if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
-
-  gitLogState.selectedIndex = 0;
-  updateGitLogView();
-  editor.setStatus(`Commit 1/${gitLogState.commits.length}`);
-};
-
-globalThis.git_log_last = function(): void {
-  if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
-
-  gitLogState.selectedIndex = gitLogState.commits.length - 1;
-  updateGitLogView();
-  editor.setStatus(`Commit ${gitLogState.commits.length}/${gitLogState.commits.length}`);
-};
+// Register cursor movement handler
+editor.on("cursor_moved", "on_git_log_cursor_moved");
 
 globalThis.git_log_refresh = async function(): Promise<void> {
   if (!gitLogState.isOpen) return;
 
   editor.setStatus("Refreshing git log...");
   gitLogState.commits = await fetchGitLog();
-  gitLogState.selectedIndex = Math.min(gitLogState.selectedIndex, gitLogState.commits.length - 1);
   updateGitLogView();
   editor.setStatus(`Git log refreshed: ${gitLogState.commits.length} commits`);
 };
 
+// Helper function to get commit at current cursor position
+function getCommitAtCursor(): GitCommit | null {
+  if (gitLogState.bufferId === null) return null;
+
+  const cursorLine = editor.getCursorLine();
+  const headerLines = 1;
+  const commitIndex = cursorLine - headerLines;
+
+  if (commitIndex >= 0 && commitIndex < gitLogState.commits.length) {
+    return gitLogState.commits[commitIndex];
+  }
+  return null;
+}
+
 globalThis.git_log_show_commit = async function(): Promise<void> {
   if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
-  if (gitLogState.sourceSplitId === null) return;
+  if (gitLogState.splitId === null) return;
 
-  const commit = gitLogState.commits[gitLogState.selectedIndex];
-  if (!commit) return;
+  const commit = getCommitAtCursor();
+  if (!commit) {
+    editor.setStatus("Move cursor to a commit line");
+    return;
+  }
 
   editor.setStatus(`Loading commit ${commit.shortHash}...`);
 
-  // Fetch diff
-  const diff = await fetchCommitDiff(commit.hash);
+  // Fetch full commit info using git show (includes header and diff)
+  const showOutput = await fetchCommitDiff(commit.hash);
 
-  // Build entries
-  const entries = buildCommitDetailEntries(commit, diff);
+  // Build entries using raw git show output
+  const entries = buildCommitDetailEntries(commit, showOutput);
 
-  // Create virtual buffer in the source split (upper split)
+  // Create virtual buffer in the current split (replacing git log view)
   const bufferId = await editor.createVirtualBufferInExistingSplit({
     name: `*Commit: ${commit.shortHash}*`,
     mode: "git-commit-detail",
     read_only: true,
     entries: entries,
-    split_id: gitLogState.sourceSplitId,
-    show_line_numbers: false,
+    split_id: gitLogState.splitId!,
+    show_line_numbers: true, // Enable line numbers for diff navigation
     show_cursors: true,
     editing_disabled: true,
   });
@@ -762,13 +783,13 @@ globalThis.git_log_show_commit = async function(): Promise<void> {
   if (bufferId !== null) {
     commitDetailState.isOpen = true;
     commitDetailState.bufferId = bufferId;
-    commitDetailState.splitId = gitLogState.sourceSplitId;
+    commitDetailState.splitId = gitLogState.splitId;
     commitDetailState.commit = commit;
 
     // Apply syntax highlighting
     applyCommitDetailHighlighting();
 
-    editor.setStatus(`Commit ${commit.shortHash} by ${commit.author}`);
+    editor.setStatus(`Commit ${commit.shortHash} | ↑/↓: navigate | RET: open file | q: back`);
   } else {
     editor.setStatus("Failed to open commit details");
   }
@@ -777,8 +798,11 @@ globalThis.git_log_show_commit = async function(): Promise<void> {
 globalThis.git_log_copy_hash = function(): void {
   if (!gitLogState.isOpen || gitLogState.commits.length === 0) return;
 
-  const commit = gitLogState.commits[gitLogState.selectedIndex];
-  if (!commit) return;
+  const commit = getCommitAtCursor();
+  if (!commit) {
+    editor.setStatus("Move cursor to a commit line");
+    return;
+  }
 
   // Use spawn to copy to clipboard (works on most systems)
   // Try xclip first (Linux), then pbcopy (macOS), then xsel
@@ -801,12 +825,14 @@ globalThis.git_commit_detail_close = function(): void {
     return;
   }
 
-  // First, restore the original buffer to the source split before closing the commit detail buffer
-  if (commitDetailState.splitId !== null && gitLogState.sourceBufferId !== null) {
-    editor.setSplitBuffer(commitDetailState.splitId, gitLogState.sourceBufferId);
+  // Go back to the git log view by restoring the git log buffer
+  if (commitDetailState.splitId !== null && gitLogState.bufferId !== null) {
+    editor.setSplitBuffer(commitDetailState.splitId, gitLogState.bufferId);
+    // Re-apply highlighting since we're switching back
+    applyGitLogHighlighting();
   }
 
-  // Now close the commit detail buffer (it's no longer displayed anywhere)
+  // Close the commit detail buffer (it's no longer displayed)
   if (commitDetailState.bufferId !== null) {
     editor.closeBuffer(commitDetailState.bufferId);
   }
@@ -816,12 +842,42 @@ globalThis.git_commit_detail_close = function(): void {
   commitDetailState.splitId = null;
   commitDetailState.commit = null;
 
-  // Return focus to the git log split
-  if (gitLogState.splitId !== null) {
-    editor.focusSplit(gitLogState.splitId);
+  editor.setStatus(`Git log: ${gitLogState.commits.length} commits | ↑/↓: navigate | RET: show | q: quit`);
+};
+
+// Open file at the current diff line position
+globalThis.git_commit_detail_open_file = function(): void {
+  if (!commitDetailState.isOpen || commitDetailState.bufferId === null) {
+    return;
   }
 
-  editor.setStatus("Commit details closed");
+  // Get text properties at cursor position to find file/line info
+  const props = editor.getTextPropertiesAtCursor(commitDetailState.bufferId);
+
+  if (props.length > 0) {
+    const file = props[0].file as string | undefined;
+    const line = props[0].line as number | undefined;
+
+    if (file) {
+      // Construct full path relative to cwd
+      const cwd = editor.getCwd();
+      const fullPath = file.startsWith("/") ? file : `${cwd}/${file}`;
+
+      // Open the file at the specified line
+      const targetLine = line || 1;
+      const success = editor.openFile(fullPath, targetLine, 1);
+
+      if (success) {
+        editor.setStatus(`Opened ${file}:${targetLine}`);
+      } else {
+        editor.setStatus(`Failed to open ${file}`);
+      }
+    } else {
+      editor.setStatus("Move cursor to a diff line with file context");
+    }
+  } else {
+    editor.setStatus("Move cursor to a diff line");
+  }
 };
 
 // =============================================================================
