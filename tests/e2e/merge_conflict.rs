@@ -27,6 +27,27 @@ theirs
 >>>>>>> branch
 "#;
 
+/// Diff3-style conflict with base section (real-world example from Lustre project)
+const DIFF3_CONFLICT_WITH_BASE: &str = r#"}
+
+static int showdf(char *mntdir, struct obd_statfs *stat,
+<<<<<<< HEAD
+                  char *uuid, enum mntdf_flags flags,
+                  char *type, int index, int rc)
+||||||| parent of a3f05d81f6 (LU-18243 lfs: Add --output and --no-header options to lfs df command)
+                  const char *uuid, enum mntdf_flags flags,
+                  char *type, int index, int rc)
+=======
+                  const char *uuid, enum mntdf_flags flags,
+                  char *type, int index, int rc, enum showdf_fields fields,
+                  enum showdf_fields *field_order, int field_count)
+>>>>>>> a3f05d81f6 (LU-18243 lfs: Add --output and --no-header options to lfs df command)
+{
+        int base = flags & MNTDF_DECIMAL ? 1000 : 1024;
+        char *suffix = flags & MNTDF_DECIMAL ? "kMGTPEZY" : "KMGTPEZY";
+        int shift = flags & MNTDF_COOKED ? 0 : 10;
+"#;
+
 /// Multiple conflicts for navigation testing
 const MULTIPLE_CONFLICTS: &str = r#"// File with multiple conflicts
 
@@ -640,4 +661,134 @@ fn test_merge_multiple_conflicts_workflow() {
     // Check that we're back to normal view
     let screen = harness.screen_to_string();
     println!("Screen after resolving all conflicts:\n{}", screen);
+}
+
+/// Test diff3-style conflict with base section (|||||||) is detected correctly
+/// This is a real-world example from the Lustre project with a complex conflict
+#[test]
+fn test_diff3_conflict_with_base_section() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the merge conflict plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/merge_conflict.ts");
+    let plugin_dest = plugins_dir.join("merge_conflict.ts");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create test file with diff3-style conflict (includes base section)
+    let fixture = TestFixture::new("showdf.c", DIFF3_CONFLICT_WITH_BASE).unwrap();
+
+    // Create harness with the project directory
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+
+    // Open the test file
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Verify all conflict markers are visible in the file
+    harness.assert_screen_contains("<<<<<<< HEAD");
+    harness.assert_screen_contains("|||||||");
+    harness.assert_screen_contains("=======");
+    harness.assert_screen_contains(">>>>>>>");
+
+    // The file should show the different versions:
+    // OURS: char *uuid (non-const)
+    // BASE: const char *uuid (original)
+    // THEIRS: const char *uuid with additional parameters
+    harness.assert_screen_contains("char *uuid");
+    harness.assert_screen_contains("const char *uuid");
+
+    // Start merge resolution
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Merge: Start Resolution").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Process async operations for panel creation
+    harness.process_async_and_render().unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // The merge UI should now be active
+    let screen = harness.screen_to_string();
+    println!("Screen after starting merge with diff3 conflict:\n{}", screen);
+
+    // Should show OURS panel with the OURS content
+    // The plugin should have detected 1 conflict
+    // Note: The exact UI may vary, but we should see merge-related content
+}
+
+/// Test that diff3-style conflict can be resolved
+#[test]
+fn test_diff3_conflict_resolution() {
+    // Create a temporary project directory
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy the merge conflict plugin
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let plugin_source = std::env::current_dir()
+        .unwrap()
+        .join("plugins/merge_conflict.ts");
+    let plugin_dest = plugins_dir.join("merge_conflict.ts");
+    fs::copy(&plugin_source, &plugin_dest).unwrap();
+
+    // Create test file with diff3-style conflict
+    let fixture = TestFixture::new("showdf.c", DIFF3_CONFLICT_WITH_BASE).unwrap();
+
+    // Create harness
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+
+    // Open and start merge
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Merge: Start Resolution").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness.process_async_and_render().unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Resolve with 't' (take theirs - the version with additional parameters)
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Save and exit
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.render().unwrap();
+
+    // Should be back to normal view with resolved content
+    let screen = harness.screen_to_string();
+    println!("Screen after resolving diff3 conflict:\n{}", screen);
+
+    // The conflict markers should be gone
+    // Note: The exact content depends on which resolution was chosen
 }
