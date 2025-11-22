@@ -3872,6 +3872,7 @@ impl Editor {
                 read_only,
                 entries,
                 ratio,
+                direction,
                 panel_id,
                 show_line_numbers,
                 show_cursors,
@@ -3963,12 +3964,14 @@ impl Editor {
                 // Save current split's view state
                 self.save_current_split_view_state();
 
-                // Create a horizontal split with the new buffer
-                match self.split_manager.split_active(
-                    crate::event::SplitDirection::Horizontal,
-                    buffer_id,
-                    ratio,
-                ) {
+                // Determine split direction
+                let split_dir = match direction.as_deref() {
+                    Some("vertical") => crate::event::SplitDirection::Vertical,
+                    _ => crate::event::SplitDirection::Horizontal,
+                };
+
+                // Create a split with the new buffer
+                match self.split_manager.split_active(split_dir, buffer_id, ratio) {
                     Ok(new_split_id) => {
                         // Create independent view state for the new split with the buffer in tabs
                         let mut view_state = SplitViewState::with_buffer(
@@ -3984,7 +3987,8 @@ impl Editor {
                         self.active_buffer = buffer_id;
 
                         tracing::info!(
-                            "Created horizontal split with virtual buffer {:?}",
+                            "Created {:?} split with virtual buffer {:?}",
+                            split_dir,
                             buffer_id
                         );
                     }

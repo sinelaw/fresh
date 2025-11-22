@@ -1512,8 +1512,10 @@ struct CreateVirtualBufferOptions {
     read_only: bool,
     /// Content with embedded metadata
     entries: Vec<TsTextPropertyEntry>,
-    /// Split ratio (0.3 = new pane gets 30% of height)
+    /// Split ratio (0.3 = new pane gets 30% of space)
     ratio: f32,
+    /// Split direction: "horizontal" (below) or "vertical" (side-by-side). Default: horizontal
+    direction: Option<String>,
     /// If set and panel exists, update content instead of creating new buffer
     panel_id: Option<String>,
     /// Show line numbers gutter (default: true)
@@ -1601,6 +1603,7 @@ async fn op_fresh_create_virtual_buffer_in_split(
                 read_only: options.read_only,
                 entries,
                 ratio: options.ratio,
+                direction: options.direction,
                 panel_id: options.panel_id,
                 show_line_numbers: options.show_line_numbers.unwrap_or(true),
                 show_cursors: options.show_cursors.unwrap_or(true),

@@ -371,6 +371,8 @@ pub enum PluginCommand {
         entries: Vec<crate::text_property::TextPropertyEntry>,
         /// Split ratio (0.0 to 1.0, where 0.5 = equal split)
         ratio: f32,
+        /// Split direction ("horizontal" or "vertical"), default horizontal
+        direction: Option<String>,
         /// Optional panel ID for idempotent operations (if panel exists, update content)
         panel_id: Option<String>,
         /// Whether to show line numbers in the buffer (default true)

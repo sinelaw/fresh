@@ -430,11 +430,152 @@ function computeWordDiff(a: string, b: string): Array<{
 }
 
 // =============================================================================
-// View Rendering
+// View Rendering - Full File Content (JetBrains-style)
 // =============================================================================
 
 /**
- * Build entries for OURS panel
+ * Build entries showing the full file content for OURS or THEIRS
+ * This displays the complete file from git, highlighting conflict regions
+ */
+function buildFullFileEntries(side: "ours" | "theirs"): TextPropertyEntry[] {
+  const entries: TextPropertyEntry[] = [];
+  const content = side === "ours" ? mergeState.oursContent : mergeState.theirsContent;
+
+  // If we don't have the git version, fall back to showing conflict regions only
+  if (!content) {
+    entries.push({
+      text: `(Git version not available - showing conflict regions only)\n\n`,
+      properties: { type: "warning" },
+    });
+
+    // Show conflict regions from parsed conflicts
+    for (const conflict of mergeState.conflicts) {
+      const conflictContent = side === "ours" ? conflict.ours : conflict.theirs;
+      const isSelected = conflict.index === mergeState.selectedIndex;
+
+      entries.push({
+        text: `--- Conflict ${conflict.index + 1} ---\n`,
+        properties: {
+          type: "conflict-header",
+          conflictIndex: conflict.index,
+          selected: isSelected,
+        },
+      });
+
+      entries.push({
+        text: (conflictContent || "(empty)") + "\n",
+        properties: {
+          type: "conflict-content",
+          conflictIndex: conflict.index,
+          side: side,
+        },
+      });
+    }
+    return entries;
+  }
+
+  // Show full file content with conflict regions highlighted
+  // The content from git is the clean version without markers
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Check if this line is in a conflict region
+    const inConflict = isLineInConflict(i, side);
+
+    entries.push({
+      text: line + (i < lines.length - 1 ? "\n" : ""),
+      properties: {
+        type: inConflict ? "conflict-line" : "normal-line",
+        lineNumber: i + 1,
+        side: side,
+        ...(inConflict ? { conflictIndex: getConflictIndexForLine(i, side) } : {}),
+      },
+    });
+  }
+
+  return entries;
+}
+
+/**
+ * Check if a line number falls within a conflict region
+ */
+function isLineInConflict(_lineNumber: number, _side: "ours" | "theirs"): boolean {
+  // For now, we don't have line mapping from git versions to original file
+  // This would require proper diff/alignment between versions
+  // TODO: Implement proper line-to-conflict mapping
+  return false;
+}
+
+/**
+ * Get the conflict index for a line number
+ */
+function getConflictIndexForLine(_lineNumber: number, _side: "ours" | "theirs"): number {
+  return 0;
+}
+
+/**
+ * Build entries showing the merged result content
+ * This shows the file with resolved/unresolved conflict regions
+ */
+function buildResultFileEntries(): TextPropertyEntry[] {
+  const entries: TextPropertyEntry[] = [];
+
+  // Build the result by combining non-conflict regions with resolved conflicts
+  const originalContent = mergeState.originalContent;
+  if (!originalContent) {
+    entries.push({
+      text: "(No content available)\n",
+      properties: { type: "error" },
+    });
+    return entries;
+  }
+
+  // Parse the original content and replace conflict regions with resolutions
+  let result = originalContent;
+
+  // Process conflicts in reverse order to maintain correct positions
+  const sortedConflicts = [...mergeState.conflicts].sort((a, b) => b.startOffset - a.startOffset);
+
+  for (const conflict of sortedConflicts) {
+    let replacement: string;
+
+    if (conflict.resolved && conflict.resolution) {
+      replacement = conflict.resolution;
+    } else {
+      // Show unresolved conflict with markers
+      replacement = `<<<<<<< OURS\n${conflict.ours || ""}\n=======\n${conflict.theirs || ""}\n>>>>>>> THEIRS`;
+    }
+
+    // Replace the conflict region in the result
+    const before = result.substring(0, conflict.startOffset);
+    const after = result.substring(conflict.endOffset);
+    result = before + replacement + after;
+  }
+
+  // Now display the result content
+  const lines = result.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isConflictMarker = line.startsWith("<<<<<<<") || line.startsWith("=======") || line.startsWith(">>>>>>>");
+
+    entries.push({
+      text: line + (i < lines.length - 1 ? "\n" : ""),
+      properties: {
+        type: isConflictMarker ? "conflict-marker" : "result-line",
+        lineNumber: i + 1,
+      },
+    });
+  }
+
+  return entries;
+}
+
+// =============================================================================
+// View Rendering - Summary Style (Legacy)
+// =============================================================================
+
+/**
+ * Build entries for OURS panel (summary style)
  */
 function buildOursEntries(): TextPropertyEntry[] {
   const entries: TextPropertyEntry[] = [];
@@ -1123,18 +1264,20 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
 };
 
 /**
- * Create the multi-panel merge UI
+ * Create the multi-panel merge UI (JetBrains-style: OURS | RESULT | THEIRS)
  */
 async function createMergePanels(): Promise<void> {
-  // Create OURS panel (top-left)
-  const oursId = await editor.createVirtualBufferInSplit({
-    name: "*Merge: OURS*",
+  // Close the source buffer's split to give us full screen
+  const sourceSplitId = editor.getActiveSplitId();
+
+  // Create OURS panel first (takes over current view)
+  const oursId = await editor.createVirtualBuffer({
+    name: "*OURS*",
     mode: "merge-conflict",
     read_only: true,
-    entries: buildOursEntries(),
-    ratio: 0.5,
+    entries: buildFullFileEntries("ours"),
     panel_id: "merge-ours",
-    show_line_numbers: false,
+    show_line_numbers: true,
     show_cursors: true,
     editing_disabled: true,
   });
@@ -1144,15 +1287,16 @@ async function createMergePanels(): Promise<void> {
     mergeState.oursSplitId = editor.getActiveSplitId();
   }
 
-  // Create THEIRS panel (right of OURS) - using horizontal split
+  // Create THEIRS panel to the right (vertical split)
   const theirsId = await editor.createVirtualBufferInSplit({
-    name: "*Merge: THEIRS*",
+    name: "*THEIRS*",
     mode: "merge-conflict",
     read_only: true,
-    entries: buildTheirsEntries(),
+    entries: buildFullFileEntries("theirs"),
     ratio: 0.5,
+    direction: "vertical",
     panel_id: "merge-theirs",
-    show_line_numbers: false,
+    show_line_numbers: true,
     show_cursors: true,
     editing_disabled: true,
   });
@@ -1162,17 +1306,22 @@ async function createMergePanels(): Promise<void> {
     mergeState.theirsSplitId = editor.getActiveSplitId();
   }
 
-  // Create RESULT panel (bottom, full width)
+  // Focus back on OURS and create RESULT in the middle
+  if (mergeState.oursSplitId !== null) {
+    editor.focusSplit(mergeState.oursSplitId);
+  }
+
   const resultId = await editor.createVirtualBufferInSplit({
-    name: "*Merge: RESULT*",
-    mode: "merge-conflict",
-    read_only: true,
-    entries: buildResultEntries(),
-    ratio: 0.4,
+    name: "*RESULT*",
+    mode: "merge-result",
+    read_only: false,
+    entries: buildResultFileEntries(),
+    ratio: 0.5,
+    direction: "vertical",
     panel_id: "merge-result",
-    show_line_numbers: false,
+    show_line_numbers: true,
     show_cursors: true,
-    editing_disabled: true,
+    editing_disabled: false,
   });
 
   if (resultId !== null) {

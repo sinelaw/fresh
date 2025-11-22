@@ -209,6 +209,7 @@ interface CreateVirtualBufferOptions {
   read_only: boolean;
   entries: TextPropertyEntry[];
   ratio: number;
+  direction?: string | null;
   panel_id?: string | null;
   show_line_numbers?: boolean | null;
   show_cursors?: boolean | null;
@@ -222,7 +223,8 @@ interface CreateVirtualBufferOptions {
 | `mode` | Mode for keybindings; define with defineMode first |
 | `read_only` | Prevent text modifications |
 | `entries` | Content with embedded metadata |
-| `ratio` | Split ratio (0.3 = new pane gets 30% of height) |
+| `ratio` | Split ratio (0.3 = new pane gets 30% of space) |
+| `direction` | Split direction: "horizontal" (below) or "vertical" (side-by-side). Default: horizontal |
 | `panel_id` | If set and panel exists, update content instead of creating new buffer |
 | `show_line_numbers` | Show line numbers gutter (default: true) |
 | `show_cursors` | Show cursor in buffer (default: true) |
