@@ -5,6 +5,7 @@ pub mod ansi;
 pub mod ansi_background;
 pub mod async_bridge;
 pub mod buffer_mode;
+pub mod clipboard;
 pub mod command_registry;
 pub mod commands;
 pub mod config;
