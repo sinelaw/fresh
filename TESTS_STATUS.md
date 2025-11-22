@@ -8,12 +8,12 @@
 | Metric | Count |
 |--------|-------|
 | Total tests | 1312 |
-| Passed | 1244 |
-| Failed | 45 |
+| Passed | 1248 |
+| Failed | 41 |
 | Timed out | 3 |
 | Skipped/Ignored | 20 |
 
-**Pass rate:** 94.9% (improved from 93.4% - fixed 20 tests)
+**Pass rate:** 95.2% (improved from 93.4% - fixed 24 tests)
 
 ## Recent Fixes (This Session)
 
@@ -25,6 +25,11 @@
    - Fix tests expecting "Open File" first when actual first is "Add Cursor Above"
    - Simplify pagination tests to verify movement without specific end-of-list commands
 5. **scrolling tests** - Fixed viewport height calculation for terminal-3 instead of terminal-2
+6. **plugin tests** - Fixed 4 tests (TODO highlighter and color highlighter):
+   - Fix tests to check foreground color instead of background (overlay system sets foreground)
+   - Add process_async_and_render() calls for async plugin commands
+   - Properly count color swatches excluding scrollbar characters
+   - Handle multi-byte character indexing correctly
 
 ## Prerequisites
 
@@ -102,14 +107,14 @@ cargo insta accept --all  # Accept all pending snapshots
 
 | Category | Failures | Issue |
 |----------|----------|-------|
-| plugin | 11 + 2 timeout | Plugin system integration, requires external tools (clangd) |
-| search | 7 | Search functionality (cursor position after find) |
-| prompt | 6 | Prompt handling (missing render, file operations) |
-| prompt_editing | 5 | Prompt text editing |
-| smart_editing | 5 | jump_to_error (LSP-related) |
-| git | 5 | Git integration |
+| plugin | 7 + 2 timeout | Plugin async message processing, clangd integration |
+| search | 8 | Search state not preserved after prompt closes (find_next issue) |
+| prompt | 6 | Prompt handling (file operations) |
+| prompt_editing | 5 | Prompt text editing (selection, copy/paste) |
+| smart_editing | 5 | jump_to_error (LSP diagnostics) |
+| git | 5 | Git integration (file finder, grep) |
 | scrolling | 2 | Viewport calculations |
-| lsp | 3 | LSP server setup |
+| lsp | 3 | LSP server setup, crash detection, find references |
 | rendering | 1 | Cursor position with large line numbers |
 | split_view | 1 | Split view cursor visibility |
 | file_explorer | 1 | Scroll behavior |

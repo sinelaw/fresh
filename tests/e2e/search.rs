@@ -30,18 +30,11 @@ fn test_basic_search_forward() {
     harness.type_text("hello").unwrap();
     harness.render().unwrap();
 
-    // Confirm search
-    harness
-        .editor_mut()
-        .active_state_mut()
-        .cursors
-        .primary_mut()
-        .clear_selection();
-
+    // Confirm search - Enter moves to first match
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    harness.process_async_and_render().unwrap();
 
     // Cursor should move to the first match ("hello" at position 0)
     let cursor_pos = harness.cursor_position();
@@ -52,7 +45,7 @@ fn test_basic_search_forward() {
 
     // Find next match with F3
     harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    harness.process_async_and_render().unwrap();
 
     // Cursor should move to second match ("hello" at line 3)
     let cursor_pos = harness.cursor_position();
