@@ -1,4 +1,5 @@
 use super::*;
+use super::normalize_path;
 use crate::hooks::HookArgs;
 impl Editor {
     /// Determine the current keybinding context based on UI state
@@ -1211,9 +1212,9 @@ impl Editor {
                         PromptType::OpenFile => {
                             let input_path = Path::new(&input);
                             let resolved_path = if input_path.is_absolute() {
-                                input_path.to_path_buf()
+                                normalize_path(input_path)
                             } else {
-                                self.working_dir.join(input_path)
+                                normalize_path(&self.working_dir.join(input_path))
                             };
 
                             if let Err(e) = self.open_file(&resolved_path) {
@@ -1226,9 +1227,9 @@ impl Editor {
                             // Resolve path: if relative, make it relative to working_dir
                             let input_path = Path::new(&input);
                             let full_path = if input_path.is_absolute() {
-                                input_path.to_path_buf()
+                                normalize_path(input_path)
                             } else {
-                                self.working_dir.join(input_path)
+                                normalize_path(&self.working_dir.join(input_path))
                             };
 
                             // Save the buffer to the new file

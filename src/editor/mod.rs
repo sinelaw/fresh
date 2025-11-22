@@ -3,6 +3,40 @@ mod input;
 mod render;
 mod types;
 
+use std::path::Component;
+
+/// Normalize a path by resolving `.` and `..` components without requiring the path to exist.
+/// This is similar to canonicalize but works on paths that don't exist yet.
+pub(crate) fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
+    let mut components = Vec::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {
+                // Skip "." components
+            }
+            Component::ParentDir => {
+                // Pop the last component if it's a normal component
+                if let Some(Component::Normal(_)) = components.last() {
+                    components.pop();
+                } else {
+                    // Keep ".." if we can't go up further (for relative paths)
+                    components.push(component);
+                }
+            }
+            _ => {
+                components.push(component);
+            }
+        }
+    }
+
+    if components.is_empty() {
+        std::path::PathBuf::from(".")
+    } else {
+        components.iter().collect()
+    }
+}
+
 use self::types::{
     Bookmark, CachedLayout, InteractiveReplaceState, LspMessageEntry, LspProgressInfo,
     MacroRecordingState, MouseState, SearchState, DEFAULT_BACKGROUND_FILE,
@@ -2160,9 +2194,8 @@ impl Editor {
             })
             .unwrap_or_default();
 
-        if directory.is_empty() {
-            directory = "./".into();
-        } else if !directory.ends_with('/') {
+        // Only add trailing slash if we have a non-empty directory
+        if !directory.is_empty() && !directory.ends_with('/') {
             directory.push('/');
         }
 

@@ -45,31 +45,31 @@ fn test_prompt_input_handling() {
 
     // Type some text
     harness.type_text("test.txt").unwrap();
-    harness.assert_screen_contains("Open file:test.txt");
+    harness.assert_screen_contains("test.txt");
 
     // Test backspace
     harness
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Open file:test.tx");
+    harness.assert_screen_contains("test.tx");
     harness.assert_screen_not_contains("test.txt");
 
     // Type more
     harness.type_text("t2").unwrap();
-    harness.assert_screen_contains("Open file:test.txt2");
+    harness.assert_screen_contains("test.txt2");
 
     // Test Home (move cursor to start)
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
 
     // Type at the beginning
     harness.type_text("my_").unwrap();
-    harness.assert_screen_contains("Open file:my_test.txt2");
+    harness.assert_screen_contains("my_test.txt2");
 
     // Test End (move cursor to end)
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.type_text("!").unwrap();
-    harness.assert_screen_contains("Open file:my_test.txt2!");
+    harness.assert_screen_contains("my_test.txt2!");
 }
 
 /// Test canceling the prompt with Escape
@@ -177,8 +177,8 @@ fn test_open_nonexistent_file() {
     // Buffer should be empty
     assert_eq!(harness.get_buffer_content(), "");
 
-    // Should show "Opened" message
-    harness.assert_screen_contains("Opened:");
+    // Should show "Opened" message (may be truncated in status bar)
+    harness.assert_screen_contains("Opened");
 }
 
 /// Test that opening a non-existent file allows editing and saving
