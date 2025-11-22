@@ -264,26 +264,48 @@ async function fetchGitVersions(filePath: string): Promise<{
   try {
     // Get the directory of the file for running git commands
     const fileDir = editor.pathDirname(filePath);
-    // Get relative path for git commands
-    const fileName = editor.pathBasename(filePath);
 
-    editor.debug(`fetchGitVersions: fileDir=${fileDir}, fileName=${fileName}`);
+    // Get the git repository root
+    const repoRootResult = await editor.spawnProcess("git", [
+      "rev-parse", "--show-toplevel"
+    ], fileDir);
+
+    if (repoRootResult.exit_code !== 0) {
+      editor.debug(`fetchGitVersions: failed to get repo root`);
+      return null;
+    }
+
+    const repoRoot = repoRootResult.stdout.trim();
+
+    // Compute the relative path from repo root to the file
+    // filePath is absolute, repoRoot is absolute
+    let relativePath = filePath;
+    if (filePath.startsWith(repoRoot + "/")) {
+      relativePath = filePath.substring(repoRoot.length + 1);
+    } else if (filePath.startsWith(repoRoot)) {
+      relativePath = filePath.substring(repoRoot.length);
+      if (relativePath.startsWith("/")) {
+        relativePath = relativePath.substring(1);
+      }
+    }
+
+    editor.debug(`fetchGitVersions: repoRoot=${repoRoot}, relativePath=${relativePath}`);
 
     // Get OURS version (--ours or :2:)
     const oursResult = await editor.spawnProcess("git", [
-      "show", `:2:${fileName}`
+      "show", `:2:${relativePath}`
     ], fileDir);
     editor.debug(`fetchGitVersions: ours exit_code=${oursResult.exit_code}, stdout length=${oursResult.stdout.length}`);
 
     // Get THEIRS version (--theirs or :3:)
     const theirsResult = await editor.spawnProcess("git", [
-      "show", `:3:${fileName}`
+      "show", `:3:${relativePath}`
     ], fileDir);
     editor.debug(`fetchGitVersions: theirs exit_code=${theirsResult.exit_code}, stdout length=${theirsResult.stdout.length}`);
 
     // Get BASE version (common ancestor, :1:)
     const baseResult = await editor.spawnProcess("git", [
-      "show", `:1:${fileName}`
+      "show", `:1:${relativePath}`
     ], fileDir);
     editor.debug(`fetchGitVersions: base exit_code=${baseResult.exit_code}, stdout length=${baseResult.stdout.length}`);
 
@@ -1163,18 +1185,26 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
 /**
  * Create the multi-panel merge UI (JetBrains-style: OURS | RESULT | THEIRS)
  *
+ * Split ratio semantics: ratio = proportion kept by FIRST (existing) pane
+ *
  * To get equal thirds:
  * 1. Create OURS in current view (100%)
- * 2. Create THEIRS with ratio 0.33 -> OURS gets 67%, THEIRS gets 33%
- * 3. Create RESULT from OURS with ratio 0.5 -> OURS gets 33%, RESULT gets 33%, THEIRS gets 33%
+ * 2. Create THEIRS with ratio 0.667 -> OURS keeps 66.7%, THEIRS gets 33.3%
+ * 3. Create RESULT from OURS with ratio 0.5 -> OURS keeps 33.3%, RESULT gets 33.3%
  */
 async function createMergePanels(): Promise<void> {
-  // Close the source buffer's split to give us full screen
-  const sourceSplitId = editor.getActiveSplitId();
+  // Get the source file's extension for syntax highlighting
+  // Tree-sitter uses filename extension to determine language
+  const sourceExt = mergeState.sourcePath
+    ? mergeState.sourcePath.substring(mergeState.sourcePath.lastIndexOf("."))
+    : "";
+
+  editor.debug(`Merge: source extension '${sourceExt}' for syntax highlighting`);
 
   // Create OURS panel first (takes over current view)
+  // Include extension in name so tree-sitter can apply highlighting
   const oursId = await editor.createVirtualBuffer({
-    name: "*OURS*",
+    name: `*OURS*${sourceExt}`,
     mode: "merge-conflict",
     read_only: true,
     entries: buildFullFileEntries("ours"),
@@ -1189,13 +1219,14 @@ async function createMergePanels(): Promise<void> {
     mergeState.oursSplitId = editor.getActiveSplitId();
   }
 
-  // Create THEIRS panel to the right (vertical split) - gets 1/3 of space
+  // Create THEIRS panel to the right (vertical split)
+  // ratio=0.667 means OURS keeps 66.7%, THEIRS gets 33.3%
   const theirsId = await editor.createVirtualBufferInSplit({
-    name: "*THEIRS*",
+    name: `*THEIRS*${sourceExt}`,
     mode: "merge-conflict",
     read_only: true,
     entries: buildFullFileEntries("theirs"),
-    ratio: 0.333,  // THEIRS gets 33.3%, leaves 66.7% for OURS
+    ratio: 0.667,
     direction: "vertical",
     panel_id: "merge-theirs",
     show_line_numbers: true,
@@ -1208,17 +1239,18 @@ async function createMergePanels(): Promise<void> {
     mergeState.theirsSplitId = editor.getActiveSplitId();
   }
 
-  // Focus back on OURS and create RESULT in the middle - splits OURS in half
+  // Focus back on OURS and create RESULT in the middle
+  // ratio=0.5 means OURS keeps 50% of its 66.7% = 33.3%, RESULT gets 33.3%
   if (mergeState.oursSplitId !== null) {
     editor.focusSplit(mergeState.oursSplitId);
   }
 
   const resultId = await editor.createVirtualBufferInSplit({
-    name: "*RESULT*",
+    name: `*RESULT*${sourceExt}`,
     mode: "merge-result",
     read_only: false,
     entries: buildResultFileEntries(),
-    ratio: 0.5,  // Split remaining 66.7% into two 33.3% portions
+    ratio: 0.5,
     direction: "vertical",
     panel_id: "merge-result",
     show_line_numbers: true,
