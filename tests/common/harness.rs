@@ -740,15 +740,18 @@ impl EditorTestHarness {
     }
 
     /// Get the content area row range on screen (start_row, end_row inclusive)
-    /// This accounts for menu bar, tab bar, and status bar
+    /// This accounts for menu bar, tab bar, status bar, and prompt line
     pub fn content_area_rows(&self) -> (usize, usize) {
+        // Layout: [menu_bar, main_content, status_bar, prompt_line]
         // Menu bar: row 0
-        // Tab bar: row 1
-        // Content: rows 2 to (terminal_height - 2)
-        // Status bar: row (terminal_height - 1)
+        // Main content area: rows 1 to (terminal_height - 3)
+        //   - Tab bar: row 1 (within split)
+        //   - Content + scrollbar: rows 2 to (terminal_height - 3)
+        // Status bar: row (terminal_height - 2)
+        // Prompt line: row (terminal_height - 1)
         let terminal_height = self.terminal.size().unwrap().height as usize;
         let content_first_row = 2; // After menu bar and tab bar
-        let content_last_row = terminal_height.saturating_sub(2); // Before status bar
+        let content_last_row = terminal_height.saturating_sub(3); // Before status bar and prompt line
         (content_first_row, content_last_row)
     }
 

@@ -117,6 +117,7 @@ fn test_command_palette_cancel() {
 fn test_command_palette_execute() {
     use crossterm::event::{KeyCode, KeyModifiers};
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
 
     // Verify line numbers are shown initially (default config)
     harness.assert_screen_contains("1 │");
@@ -273,13 +274,14 @@ fn test_command_palette_enter_uses_selection() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Type partial text "new" which will match "New File"
-    harness.type_text("new").unwrap();
+    // Type "new file" which will specifically match "New File"
+    // (using just "new" may match other commands like "Navigate Forward")
+    harness.type_text("new file").unwrap();
 
     // The first suggestion should be "New File" (selected by default)
     harness.assert_screen_contains("New File");
 
-    // Press Enter - should execute "New File" command, not try to find "new" command
+    // Press Enter - should execute "New File" command, not try to find "new file" command
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
