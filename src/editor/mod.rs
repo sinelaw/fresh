@@ -1050,6 +1050,9 @@ impl Editor {
         );
         state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
 
+        // Set syntax highlighting based on buffer name (e.g., "*OURS*.c" will get C highlighting)
+        state.set_language_from_name(&name);
+
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
 

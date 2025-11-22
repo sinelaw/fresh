@@ -161,9 +161,9 @@ editor.defineMode(
   "merge-result",
   "normal", // inherit from normal mode for editing
   [
-    // Navigation (override in result panel)
-    ["C-n", "merge_next_conflict"],
-    ["C-p", "merge_prev_conflict"],
+    // Navigation - use C-j/C-k to avoid conflicting with C-p (command palette)
+    ["C-j", "merge_next_conflict"],
+    ["C-k", "merge_prev_conflict"],
 
     // Resolution shortcuts
     ["C-u", "merge_use_ours"],
@@ -1271,11 +1271,20 @@ async function createMergePanels(): Promise<void> {
 // =============================================================================
 
 globalThis.merge_next_conflict = function(): void {
+  editor.debug(`merge_next_conflict called, isActive=${mergeState.isActive}, conflicts=${mergeState.conflicts.length}`);
+
   if (!mergeState.isActive) {
     editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
     return;
   }
-  if (mergeState.conflicts.length === 0) return;
+  if (mergeState.conflicts.length === 0) {
+    editor.setStatus("No conflicts to navigate");
+    return;
+  }
+  if (mergeState.conflicts.length === 1) {
+    editor.setStatus("Only one conflict - already selected");
+    return;
+  }
 
   // Find next unresolved conflict (or wrap around)
   let startIndex = mergeState.selectedIndex;
@@ -1285,23 +1294,34 @@ globalThis.merge_next_conflict = function(): void {
   while (index !== startIndex) {
     if (!mergeState.conflicts[index].resolved) {
       mergeState.selectedIndex = index;
+      editor.setStatus(`Conflict ${index + 1} of ${mergeState.conflicts.length}`);
       updateViews();
       return;
     }
     index = (index + 1) % mergeState.conflicts.length;
   }
 
-  // If all resolved (or only one), just move to next
+  // If all resolved, just move to next
   mergeState.selectedIndex = (mergeState.selectedIndex + 1) % mergeState.conflicts.length;
+  editor.setStatus(`Conflict ${mergeState.selectedIndex + 1} of ${mergeState.conflicts.length} (all resolved)`);
   updateViews();
 };
 
 globalThis.merge_prev_conflict = function(): void {
+  editor.debug(`merge_prev_conflict called, isActive=${mergeState.isActive}, conflicts=${mergeState.conflicts.length}`);
+
   if (!mergeState.isActive) {
     editor.setStatus("No active merge - use 'Merge: Start Resolution' first");
     return;
   }
-  if (mergeState.conflicts.length === 0) return;
+  if (mergeState.conflicts.length === 0) {
+    editor.setStatus("No conflicts to navigate");
+    return;
+  }
+  if (mergeState.conflicts.length === 1) {
+    editor.setStatus("Only one conflict - already selected");
+    return;
+  }
 
   // Find previous unresolved conflict (or wrap around)
   let startIndex = mergeState.selectedIndex;
@@ -1311,14 +1331,16 @@ globalThis.merge_prev_conflict = function(): void {
   while (index !== startIndex) {
     if (!mergeState.conflicts[index].resolved) {
       mergeState.selectedIndex = index;
+      editor.setStatus(`Conflict ${index + 1} of ${mergeState.conflicts.length}`);
       updateViews();
       return;
     }
     index = (index - 1 + mergeState.conflicts.length) % mergeState.conflicts.length;
   }
 
-  // If all resolved (or only one), just move to previous
+  // If all resolved, just move to previous
   mergeState.selectedIndex = (mergeState.selectedIndex - 1 + mergeState.conflicts.length) % mergeState.conflicts.length;
+  editor.setStatus(`Conflict ${mergeState.selectedIndex + 1} of ${mergeState.conflicts.length} (all resolved)`);
   updateViews();
 };
 

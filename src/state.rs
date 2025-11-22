@@ -137,6 +137,24 @@ impl EditorState {
         }
     }
 
+    /// Set the syntax highlighting language based on a filename or extension
+    /// This allows virtual buffers to get highlighting even without a real file path
+    pub fn set_language_from_name(&mut self, name: &str) {
+        let path = std::path::Path::new(name);
+        if let Some(language) = Language::from_path(path) {
+            match Highlighter::new(language) {
+                Ok(highlighter) => {
+                    self.highlighter = Some(highlighter);
+                    self.semantic_highlighter.set_language(&language);
+                    tracing::debug!("Set highlighter for virtual buffer based on name: {}", name);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to create highlighter for {}: {}", name, e);
+                }
+            }
+        }
+    }
+
     /// Create an editor state from a file
     pub fn from_file(
         path: &std::path::Path,
