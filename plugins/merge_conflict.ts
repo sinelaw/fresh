@@ -999,9 +999,24 @@ globalThis.start_merge_conflict = async function(): Promise<void> {
 
   // Debug: log content info
   editor.debug(`Merge: checking file ${info.path}, length=${bufferLength}`);
+  editor.debug(`Merge: content type: ${typeof content}, actual length: ${content?.length}`);
   editor.debug(`Merge: has <<<<<<<: ${content.includes("<<<<<<<")}`);
   editor.debug(`Merge: has =======: ${content.includes("=======")}`);
   editor.debug(`Merge: has >>>>>>>: ${content.includes(">>>>>>>")}`);
+
+  // Show first 200 chars with char codes for debugging
+  if (bufferLength > 0 && content) {
+    const preview = content.substring(0, Math.min(200, content.length));
+    editor.debug(`Merge: first 200 chars: ${JSON.stringify(preview)}`);
+    // Show char codes of first 50 chars
+    const charCodes = [];
+    for (let i = 0; i < Math.min(50, content.length); i++) {
+      charCodes.push(content.charCodeAt(i));
+    }
+    editor.debug(`Merge: first 50 char codes: ${charCodes.join(",")}`);
+  } else {
+    editor.debug(`Merge: content is empty or null!`);
+  }
 
   // Check for conflict markers
   if (!hasConflictMarkers(content)) {
