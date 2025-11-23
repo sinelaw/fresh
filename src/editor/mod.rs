@@ -318,6 +318,10 @@ pub struct Editor {
     /// Pending chord sequence for multi-key bindings (e.g., C-x C-s in Emacs)
     /// Stores the keys pressed so far in a chord sequence
     chord_state: Vec<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
+
+    /// Pending LSP confirmation - language name awaiting user confirmation
+    /// When Some, a confirmation popup is shown asking user to approve LSP spawn
+    pending_lsp_confirmation: Option<String>,
 }
 
 impl Editor {
@@ -585,6 +589,7 @@ impl Editor {
             pending_plugin_actions: Vec::new(),
             plugin_render_requested: false,
             chord_state: Vec::new(),
+            pending_lsp_confirmation: None,
         })
     }
 

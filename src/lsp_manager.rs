@@ -13,6 +13,18 @@ use lsp_types::Uri;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+/// Result of attempting to spawn an LSP server
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LspSpawnResult {
+    /// Server was spawned or already running
+    Spawned,
+    /// User confirmation is required before spawning
+    /// Contains the language name that needs confirmation
+    NeedsConfirmation(String),
+    /// Server spawn failed or is disabled
+    Failed,
+}
+
 /// Constants for restart behavior
 const MAX_RESTARTS_IN_WINDOW: usize = 5;
 const RESTART_WINDOW_SECS: u64 = 180; // 3 minutes
@@ -43,6 +55,14 @@ pub struct LspManager {
 
     /// Scheduled restart times (language -> when to restart)
     pending_restarts: HashMap<String, Instant>,
+
+    /// Languages that have been approved for auto-spawning by the user
+    /// If a language is in this set, it will spawn without confirmation
+    allowed_languages: HashSet<String>,
+
+    /// Whether to require confirmation before spawning LSP servers
+    /// When true, LSP servers won't auto-spawn until user approves
+    require_confirmation: bool,
 }
 
 impl LspManager {
@@ -57,6 +77,77 @@ impl LspManager {
             restart_attempts: HashMap::new(),
             restart_cooldown: HashSet::new(),
             pending_restarts: HashMap::new(),
+            allowed_languages: HashSet::new(),
+            require_confirmation: true, // Require confirmation by default
+        }
+    }
+
+    /// Enable or disable LSP spawn confirmation requirement
+    pub fn set_require_confirmation(&mut self, require: bool) {
+        self.require_confirmation = require;
+    }
+
+    /// Check if LSP spawn confirmation is required
+    pub fn requires_confirmation(&self) -> bool {
+        self.require_confirmation
+    }
+
+    /// Check if a language is allowed to spawn without confirmation
+    pub fn is_language_allowed(&self, language: &str) -> bool {
+        !self.require_confirmation || self.allowed_languages.contains(language)
+    }
+
+    /// Allow a language to spawn LSP server (permanently for this session)
+    pub fn allow_language(&mut self, language: &str) {
+        self.allowed_languages.insert(language.to_string());
+        tracing::info!("LSP language '{}' allowed for auto-spawn", language);
+    }
+
+    /// Get the set of allowed languages
+    pub fn allowed_languages(&self) -> &HashSet<String> {
+        &self.allowed_languages
+    }
+
+    /// Get the configuration for a specific language
+    pub fn get_config(&self, language: &str) -> Option<&LspServerConfig> {
+        self.config.get(language)
+    }
+
+    /// Try to spawn an LSP server, returning whether confirmation is needed
+    ///
+    /// This is the main entry point for spawning LSP servers when confirmation
+    /// might be required. It returns:
+    /// - `LspSpawnResult::Spawned` if the server was spawned or already running
+    /// - `LspSpawnResult::NeedsConfirmation(language)` if user confirmation is needed
+    /// - `LspSpawnResult::Failed` if spawn failed or language is disabled
+    pub fn try_spawn(&mut self, language: &str) -> LspSpawnResult {
+        // If handle already exists, return success
+        if self.handles.contains_key(language) {
+            return LspSpawnResult::Spawned;
+        }
+
+        // Check if language is configured and enabled
+        let config = match self.config.get(language) {
+            Some(c) if c.enabled => c,
+            Some(_) => return LspSpawnResult::Failed, // Disabled
+            None => return LspSpawnResult::Failed,    // Not configured
+        };
+
+        // Check if we have runtime and bridge
+        if self.runtime.is_none() || self.async_bridge.is_none() {
+            return LspSpawnResult::Failed;
+        }
+
+        // Check if confirmation is required
+        if self.require_confirmation && !self.allowed_languages.contains(language) {
+            return LspSpawnResult::NeedsConfirmation(language.to_string());
+        }
+
+        // Spawn the server
+        if self.get_or_spawn(language).is_some() {
+            LspSpawnResult::Spawned
+        } else {
+            LspSpawnResult::Failed
         }
     }
 

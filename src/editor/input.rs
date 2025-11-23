@@ -1536,6 +1536,33 @@ impl Editor {
                 }
             }
             Action::PopupConfirm => {
+                // Check if this is an LSP confirmation popup
+                let lsp_confirmation_action = if let Some(popup) = self.active_state().popups.top()
+                {
+                    if let Some(title) = &popup.title {
+                        if title.starts_with("Start LSP Server:") {
+                            if let Some(item) = popup.selected_item() {
+                                item.data.clone()
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Handle LSP confirmation if present
+                if let Some(action) = lsp_confirmation_action {
+                    self.hide_popup();
+                    self.handle_lsp_confirmation_response(&action);
+                    return Ok(());
+                }
+
                 // If it's a completion popup, insert the selected item
                 let completion_text = if let Some(popup) = self.active_state().popups.top() {
                     if let Some(title) = &popup.title {
@@ -1610,6 +1637,11 @@ impl Editor {
                 self.hide_popup();
             }
             Action::PopupCancel => {
+                // Clear pending LSP confirmation if cancelling that popup
+                if self.pending_lsp_confirmation.is_some() {
+                    self.pending_lsp_confirmation = None;
+                    self.set_status_message("LSP server startup cancelled".to_string());
+                }
                 self.hide_popup();
             }
             Action::InsertChar(c) => {

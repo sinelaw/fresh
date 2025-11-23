@@ -600,6 +600,152 @@ impl Editor {
         self.apply_event_to_active_buffer(&event);
     }
 
+    // === LSP Confirmation Popup ===
+
+    /// Show the LSP confirmation popup for a language server
+    ///
+    /// This displays a centered popup asking the user to confirm whether
+    /// they want to start the LSP server for the given language.
+    pub fn show_lsp_confirmation_popup(&mut self, language: &str) {
+        use crate::event::{PopupContentData, PopupData, PopupListItemData, PopupPositionData};
+
+        // Store the pending confirmation
+        self.pending_lsp_confirmation = Some(language.to_string());
+
+        // Get the server command for display
+        let server_info = if let Some(lsp) = &self.lsp {
+            if let Some(config) = lsp.get_config(language) {
+                format!("{} ({})", language, config.command)
+            } else {
+                language.to_string()
+            }
+        } else {
+            language.to_string()
+        };
+
+        let popup = PopupData {
+            title: Some(format!("Start LSP Server: {}?", server_info)),
+            content: PopupContentData::List {
+                items: vec![
+                    PopupListItemData {
+                        text: "Allow this time".to_string(),
+                        detail: Some("Start the LSP server for this session".to_string()),
+                        icon: None,
+                        data: Some("allow_once".to_string()),
+                    },
+                    PopupListItemData {
+                        text: "Always allow".to_string(),
+                        detail: Some("Always start this LSP server automatically".to_string()),
+                        icon: None,
+                        data: Some("allow_always".to_string()),
+                    },
+                    PopupListItemData {
+                        text: "Don't start".to_string(),
+                        detail: Some("Cancel LSP server startup".to_string()),
+                        icon: None,
+                        data: Some("deny".to_string()),
+                    },
+                ],
+                selected: 0,
+            },
+            position: PopupPositionData::Centered,
+            width: 50,
+            max_height: 8,
+            bordered: true,
+        };
+
+        self.show_popup(popup);
+    }
+
+    /// Handle the LSP confirmation popup response
+    ///
+    /// This is called when the user confirms their selection in the LSP
+    /// confirmation popup. It processes the response and starts the LSP
+    /// server if approved.
+    ///
+    /// Returns true if a response was handled, false if there was no pending confirmation.
+    pub fn handle_lsp_confirmation_response(&mut self, action: &str) -> bool {
+        let Some(language) = self.pending_lsp_confirmation.take() else {
+            return false;
+        };
+
+        match action {
+            "allow_once" => {
+                // Spawn the LSP server just this once (don't add to always-allowed)
+                if let Some(lsp) = &mut self.lsp {
+                    // Temporarily allow this language for spawning
+                    lsp.allow_language(&language);
+                    if lsp.get_or_spawn(&language).is_some() {
+                        tracing::info!("LSP server for {} started (allowed once)", language);
+                        self.set_status_message(format!("LSP server for {} started", language));
+                    } else {
+                        self.set_status_message(format!(
+                            "Failed to start LSP server for {}",
+                            language
+                        ));
+                    }
+                }
+            }
+            "allow_always" => {
+                // Spawn the LSP server and remember the preference
+                if let Some(lsp) = &mut self.lsp {
+                    lsp.allow_language(&language);
+                    if lsp.get_or_spawn(&language).is_some() {
+                        tracing::info!("LSP server for {} started (always allowed)", language);
+                        self.set_status_message(format!(
+                            "LSP server for {} started (will auto-start in future)",
+                            language
+                        ));
+                    } else {
+                        self.set_status_message(format!(
+                            "Failed to start LSP server for {}",
+                            language
+                        ));
+                    }
+                }
+            }
+            "deny" | _ => {
+                // User declined - don't start the server
+                tracing::info!("LSP server for {} startup declined by user", language);
+                self.set_status_message(format!("LSP server for {} startup cancelled", language));
+            }
+        }
+
+        true
+    }
+
+    /// Check if there's a pending LSP confirmation
+    pub fn has_pending_lsp_confirmation(&self) -> bool {
+        self.pending_lsp_confirmation.is_some()
+    }
+
+    /// Try to get or spawn an LSP handle, showing confirmation popup if needed
+    ///
+    /// This is the recommended way to access LSP functionality. It checks if
+    /// confirmation is required and shows the popup if so.
+    ///
+    /// Returns:
+    /// - `Some(true)` if LSP is ready (handle was already available or spawned)
+    /// - `Some(false)` if confirmation popup was shown (user needs to respond)
+    /// - `None` if LSP is not available (disabled, not configured, or failed to spawn)
+    pub fn try_get_lsp_with_confirmation(&mut self, language: &str) -> Option<bool> {
+        use crate::lsp_manager::LspSpawnResult;
+
+        let result = {
+            let lsp = self.lsp.as_mut()?;
+            lsp.try_spawn(language)
+        };
+
+        match result {
+            LspSpawnResult::Spawned => Some(true),
+            LspSpawnResult::NeedsConfirmation(lang) => {
+                self.show_lsp_confirmation_popup(&lang);
+                Some(false)
+            }
+            LspSpawnResult::Failed => None,
+        }
+    }
+
     /// Navigate popup selection (next item)
     pub fn popup_select_next(&mut self) {
         let event = Event::PopupSelectNext;
