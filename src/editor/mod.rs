@@ -4210,7 +4210,7 @@ impl Editor {
                 let splits = self.split_manager.splits_for_buffer(buffer_id);
                 let active_split = self.split_manager.active_split();
 
-                tracing::info!(
+                tracing::debug!(
                     "SetBufferCursor: buffer_id={:?}, position={}, found {} splits: {:?}, active={:?}",
                     buffer_id,
                     position,
@@ -4234,7 +4234,7 @@ impl Editor {
                             // Ensure the cursor is visible by scrolling the split's viewport
                             let cursor = view_state.cursors.primary().clone();
                             view_state.viewport.ensure_visible(&mut state.buffer, &cursor);
-                            tracing::info!(
+                            tracing::debug!(
                                 "SetBufferCursor: updated split {:?} (active={}) viewport top_byte={}",
                                 split_id,
                                 is_active,
@@ -4246,9 +4246,6 @@ impl Editor {
                             if is_active {
                                 state.cursors.primary_mut().move_to(position, false);
                                 state.viewport = view_state.viewport.clone();
-                                tracing::info!(
-                                    "SetBufferCursor: also updated buffer state for active split"
-                                );
                             }
                         } else {
                             tracing::warn!(

@@ -1052,12 +1052,9 @@ function scrollToSelectedConflict(): void {
   const conflict = mergeState.conflicts[mergeState.selectedIndex];
   if (!conflict) return;
 
-  editor.debug(`scrollToSelectedConflict: conflict ${conflict.index}, oursPanelId=${mergeState.oursPanelId}, theirsPanelId=${mergeState.theirsPanelId}, resultPanelId=${mergeState.resultPanelId}`);
-
   // Scroll OURS panel
   if (mergeState.oursPanelId !== null) {
     const oursOffset = computeConflictOffset("ours", conflict.index);
-    editor.debug(`scrollToSelectedConflict: OURS offset=${oursOffset}`);
     if (oursOffset >= 0) {
       editor.setBufferCursor(mergeState.oursPanelId, oursOffset);
     }
@@ -1066,7 +1063,6 @@ function scrollToSelectedConflict(): void {
   // Scroll THEIRS panel
   if (mergeState.theirsPanelId !== null) {
     const theirsOffset = computeConflictOffset("theirs", conflict.index);
-    editor.debug(`scrollToSelectedConflict: THEIRS offset=${theirsOffset}`);
     if (theirsOffset >= 0) {
       editor.setBufferCursor(mergeState.theirsPanelId, theirsOffset);
     }
@@ -1075,7 +1071,6 @@ function scrollToSelectedConflict(): void {
   // Scroll RESULT panel
   if (mergeState.resultPanelId !== null) {
     const resultOffset = computeResultConflictOffset(conflict.index);
-    editor.debug(`scrollToSelectedConflict: RESULT offset=${resultOffset}`);
     if (resultOffset >= 0) {
       editor.setBufferCursor(mergeState.resultPanelId, resultOffset);
     }
@@ -1102,7 +1097,6 @@ function computeConflictOffset(side: "ours" | "theirs", conflictIndex: number): 
     if (trimmedText.length > 0) {
       const pos = gitContent.indexOf(trimmedText);
       if (pos >= 0) {
-        editor.debug(`computeConflictOffset(${side}): found exact match at ${pos}`);
         return pos;
       }
     }
@@ -1112,7 +1106,6 @@ function computeConflictOffset(side: "ours" | "theirs", conflictIndex: number): 
     if (firstLine && firstLine.length > 5) {
       const pos = gitContent.indexOf(firstLine);
       if (pos >= 0) {
-        editor.debug(`computeConflictOffset(${side}): found first line match at ${pos}`);
         return pos;
       }
     }
@@ -1121,9 +1114,7 @@ function computeConflictOffset(side: "ours" | "theirs", conflictIndex: number): 
     const originalLength = mergeState.originalContent.length;
     if (originalLength > 0) {
       const ratio = conflict.startOffset / originalLength;
-      const pos = Math.floor(ratio * gitContent.length);
-      editor.debug(`computeConflictOffset(${side}): using ratio fallback at ${pos}`);
-      return pos;
+      return Math.floor(ratio * gitContent.length);
     }
   }
 
@@ -1158,7 +1149,6 @@ function computeResultConflictOffset(conflictIndex: number): number {
     if (markerPos === -1) break;
 
     if (conflictCount === conflictIndex) {
-      editor.debug(`computeResultConflictOffset: found conflict ${conflictIndex} at position ${markerPos}`);
       return markerPos;
     }
 
@@ -1170,12 +1160,8 @@ function computeResultConflictOffset(conflictIndex: number): number {
   const conflict = mergeState.conflicts[conflictIndex];
   if (conflict && mergeState.originalContent.length > 0) {
     const ratio = conflict.startOffset / mergeState.originalContent.length;
-    const estimatedPos = Math.floor(ratio * content.length);
-    editor.debug(`computeResultConflictOffset: using ratio fallback, estimated position ${estimatedPos}`);
-    return estimatedPos;
+    return Math.floor(ratio * content.length);
   }
-
-  editor.debug(`computeResultConflictOffset: returning 0 (no markers found)`);
   return 0;
 }
 
