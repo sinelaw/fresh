@@ -933,6 +933,12 @@ function applyHighlighting(): void {
 /**
  * Highlight a side panel (OURS or THEIRS)
  * Note: We compute content from our entries since getBufferText was removed
+ *
+ * TODO: Implement proper conflict region highlighting:
+ * - Find actual conflict regions in git content by searching for conflict.ours/conflict.theirs text
+ * - Highlight each conflict region with appropriate color (conflictOurs/conflictTheirs)
+ * - Use different highlight for selected conflict vs unselected
+ * - Consider using line-based highlighting for better visual effect
  */
 function highlightPanel(bufferId: number, side: "ours" | "theirs"): void {
   // Build content from entries (same as what we set on the buffer)
@@ -1045,9 +1051,12 @@ function scrollToSelectedConflict(): void {
   const conflict = mergeState.conflicts[mergeState.selectedIndex];
   if (!conflict) return;
 
+  editor.debug(`scrollToSelectedConflict: conflict ${conflict.index}, oursPanelId=${mergeState.oursPanelId}, theirsPanelId=${mergeState.theirsPanelId}, resultPanelId=${mergeState.resultPanelId}`);
+
   // Scroll OURS panel
   if (mergeState.oursPanelId !== null) {
     const oursOffset = computeConflictOffset("ours", conflict.index);
+    editor.debug(`scrollToSelectedConflict: OURS offset=${oursOffset}`);
     if (oursOffset >= 0) {
       editor.setBufferCursor(mergeState.oursPanelId, oursOffset);
     }
@@ -1056,6 +1065,7 @@ function scrollToSelectedConflict(): void {
   // Scroll THEIRS panel
   if (mergeState.theirsPanelId !== null) {
     const theirsOffset = computeConflictOffset("theirs", conflict.index);
+    editor.debug(`scrollToSelectedConflict: THEIRS offset=${theirsOffset}`);
     if (theirsOffset >= 0) {
       editor.setBufferCursor(mergeState.theirsPanelId, theirsOffset);
     }
@@ -1064,6 +1074,7 @@ function scrollToSelectedConflict(): void {
   // Scroll RESULT panel
   if (mergeState.resultPanelId !== null) {
     const resultOffset = computeResultConflictOffset(conflict.index);
+    editor.debug(`scrollToSelectedConflict: RESULT offset=${resultOffset}`);
     if (resultOffset >= 0) {
       editor.setBufferCursor(mergeState.resultPanelId, resultOffset);
     }
