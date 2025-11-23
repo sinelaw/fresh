@@ -49,7 +49,7 @@ anyhow = "1.0.100"
 dirs = "5.0"  # For XDG/platform-specific directory detection
 pulldown-cmark = "0.12"  # Markdown parsing for LSP hover docs
 arboard = "3.4"  # Cross-platform system clipboard access
-notify = "7.0"  # File system watcher for auto-revert
+notify = "8.2.0"
 # tree-sitter-markdown = "0.7.1"  # Disabled due to tree-sitter version conflict (uses 0.19.5 instead of 0.25.x)
 
 [dev-dependencies]
