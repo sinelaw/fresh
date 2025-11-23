@@ -380,6 +380,28 @@ impl LspManager {
             .unwrap_or(0)
     }
 
+    /// Get a list of currently running LSP server languages
+    pub fn running_servers(&self) -> Vec<String> {
+        self.handles.keys().cloned().collect()
+    }
+
+    /// Shutdown a specific language server
+    ///
+    /// Returns true if the server was found and shutdown, false otherwise
+    pub fn shutdown_server(&mut self, language: &str) -> bool {
+        if let Some(handle) = self.handles.remove(language) {
+            tracing::info!("Shutting down LSP server for {}", language);
+            let _ = handle.shutdown();
+            // Also remove from allowed languages so it will require confirmation again
+            // if user tries to start it later
+            self.allowed_languages.remove(language);
+            true
+        } else {
+            tracing::warn!("No running LSP server found for {}", language);
+            false
+        }
+    }
+
     /// Shutdown all language servers
     pub fn shutdown_all(&mut self) {
         for (language, handle) in self.handles.iter() {

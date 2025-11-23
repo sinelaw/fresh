@@ -1584,6 +1584,7 @@ pub fn action_to_events(
         | Action::LspSignatureHelp
         | Action::LspCodeActions
         | Action::LspRestart
+        | Action::LspStop
         | Action::ToggleInlayHints
         | Action::ToggleLineNumbers
         | Action::ToggleMouseCapture

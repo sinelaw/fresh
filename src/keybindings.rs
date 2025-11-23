@@ -326,6 +326,7 @@ pub enum Action {
     LspSignatureHelp,
     LspCodeActions,
     LspRestart,
+    LspStop,
     ToggleInlayHints,
 
     // View toggles
@@ -593,6 +594,7 @@ impl Action {
             "lsp_signature_help" => Some(Action::LspSignatureHelp),
             "lsp_code_actions" => Some(Action::LspCodeActions),
             "lsp_restart" => Some(Action::LspRestart),
+            "lsp_stop" => Some(Action::LspStop),
             "toggle_inlay_hints" => Some(Action::ToggleInlayHints),
 
             "toggle_line_numbers" => Some(Action::ToggleLineNumbers),
@@ -1352,6 +1354,7 @@ impl KeybindingResolver {
             Action::LspSignatureHelp => "LSP: Show signature help".to_string(),
             Action::LspCodeActions => "LSP: Show code actions".to_string(),
             Action::LspRestart => "LSP: Restart server for current language".to_string(),
+            Action::LspStop => "LSP: Stop a running server".to_string(),
             Action::ToggleInlayHints => "Toggle inlay hints".to_string(),
             Action::ToggleLineNumbers => "Toggle line numbers".to_string(),
             Action::ToggleMouseCapture => "Toggle mouse support".to_string(),

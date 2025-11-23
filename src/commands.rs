@@ -469,6 +469,12 @@ pub fn get_all_commands() -> Vec<Command> {
             contexts: vec![KeyContext::Normal],
         },
         Command {
+            name: "Stop LSP Server".to_string(),
+            description: "Stop a running LSP server (select from list)".to_string(),
+            action: Action::LspStop,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
             name: "Navigate Back".to_string(),
             description: "Go back in navigation history".to_string(),
             action: Action::NavigateBack,

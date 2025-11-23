@@ -826,6 +826,21 @@ impl Editor {
                     }
                 }
             }
+            Action::LspStop => {
+                // Get list of running LSP servers and show selection popup
+                let running_servers = if let Some(lsp) = &self.lsp {
+                    lsp.running_servers()
+                } else {
+                    Vec::new()
+                };
+
+                if running_servers.is_empty() {
+                    self.set_status_message("No LSP servers are currently running".to_string());
+                } else {
+                    // Show popup with running servers to select from
+                    self.show_lsp_stop_popup(&running_servers);
+                }
+            }
             Action::ToggleInlayHints => {
                 self.toggle_inlay_hints();
             }
@@ -1560,6 +1575,32 @@ impl Editor {
                 if let Some(action) = lsp_confirmation_action {
                     self.hide_popup();
                     self.handle_lsp_confirmation_response(&action);
+                    return Ok(());
+                }
+
+                // Check if this is an LSP stop popup
+                let lsp_stop_action = if let Some(popup) = self.active_state().popups.top() {
+                    if let Some(title) = &popup.title {
+                        if title == "Stop LSP Server" {
+                            if let Some(item) = popup.selected_item() {
+                                item.data.clone()
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Handle LSP stop if present
+                if let Some(action) = lsp_stop_action {
+                    self.hide_popup();
+                    self.handle_lsp_stop_response(&action);
                     return Ok(());
                 }
 
