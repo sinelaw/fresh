@@ -129,17 +129,18 @@ const colors = {
 // =============================================================================
 
 // Define merge-conflict mode with keybindings
+// Inherits from "normal" so cursor movement (hjkl) works
+// Uses ] and [ for conflict navigation to avoid overriding j/k
 editor.defineMode(
   "merge-conflict",
-  null, // no parent mode
+  "normal", // inherit from normal mode for cursor movement
   [
-    // Navigation
+    // Conflict navigation (use ] and [ to avoid overriding j/k cursor movement)
+    ["]", "merge_next_conflict"],
+    ["[", "merge_prev_conflict"],
+    // Also support n/p for navigation
     ["n", "merge_next_conflict"],
-    ["j", "merge_next_conflict"],
-    ["Down", "merge_next_conflict"],
     ["p", "merge_prev_conflict"],
-    ["k", "merge_prev_conflict"],
-    ["Up", "merge_prev_conflict"],
 
     // Resolution actions
     ["u", "merge_use_ours"],      // Use ours

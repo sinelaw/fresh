@@ -4209,29 +4209,41 @@ impl Editor {
                 // Find all splits that display this buffer and update their view states
                 let splits = self.split_manager.splits_for_buffer(buffer_id);
 
+                tracing::info!(
+                    "SetBufferCursor: buffer_id={:?}, position={}, found {} splits: {:?}",
+                    buffer_id,
+                    position,
+                    splits.len(),
+                    splits
+                );
+
                 if splits.is_empty() {
                     tracing::warn!("No splits found for buffer {:?}", buffer_id);
-                } else {
-                    // Get the buffer for ensure_visible
-                    if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                        for split_id in splits {
-                            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
-                                // Set cursor position in the split's view state
-                                view_state.cursors.primary_mut().move_to(position, false);
-                                // Ensure the cursor is visible by scrolling the split's viewport
-                                let cursor = view_state.cursors.primary().clone();
-                                view_state.viewport.ensure_visible(&mut state.buffer, &cursor);
-                                tracing::debug!(
-                                    "Set cursor position to {} in split {:?} for buffer {:?}",
-                                    position,
-                                    split_id,
-                                    buffer_id
-                                );
-                            }
+                }
+
+                // Get the buffer for ensure_visible
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    for split_id in &splits {
+                        if let Some(view_state) = self.split_view_states.get_mut(split_id) {
+                            // Set cursor position in the split's view state
+                            view_state.cursors.primary_mut().move_to(position, false);
+                            // Ensure the cursor is visible by scrolling the split's viewport
+                            let cursor = view_state.cursors.primary().clone();
+                            view_state.viewport.ensure_visible(&mut state.buffer, &cursor);
+                            tracing::info!(
+                                "SetBufferCursor: updated split {:?} viewport top_byte={}",
+                                split_id,
+                                view_state.viewport.top_byte
+                            );
+                        } else {
+                            tracing::warn!(
+                                "SetBufferCursor: split {:?} not found in split_view_states",
+                                split_id
+                            );
                         }
-                    } else {
-                        tracing::warn!("Buffer {:?} not found for SetBufferCursor", buffer_id);
                     }
+                } else {
+                    tracing::warn!("Buffer {:?} not found for SetBufferCursor", buffer_id);
                 }
             }
             PluginCommand::SendLspRequest {
