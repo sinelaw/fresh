@@ -596,6 +596,13 @@ impl Config {
                         when: None,
                         checkbox: None,
                     },
+                    MenuItem::Action {
+                        label: "Revert".to_string(),
+                        action: "revert".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
                         label: "Close Buffer".to_string(),

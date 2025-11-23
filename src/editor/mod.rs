@@ -600,7 +600,7 @@ impl Editor {
             plugin_render_requested: false,
             chord_state: Vec::new(),
             pending_lsp_confirmation: None,
-            auto_revert_enabled: false,
+            auto_revert_enabled: true,
             file_watcher: None,
             file_mod_times: HashMap::new(),
         })
@@ -2325,6 +2325,10 @@ impl Editor {
 
         // Add to watcher if auto-revert is enabled
         if self.auto_revert_enabled {
+            // Start file watcher if not already running
+            if self.file_watcher.is_none() {
+                self.start_file_watcher();
+            }
             if let Some(watcher) = &mut self.file_watcher {
                 if let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive) {
                     tracing::warn!("Failed to watch file {:?}: {}", path, e);
