@@ -53,7 +53,7 @@ use crate::fs::{FsBackend, FsManager, LocalFsBackend};
 use crate::keybindings::{Action, KeyContext, KeybindingResolver};
 use crate::lsp::LspServerConfig;
 use crate::lsp_diagnostics;
-use crate::lsp_manager::{detect_language, LspManager};
+use crate::lsp_manager::{detect_language, LspManager, LspSpawnResult};
 use crate::multi_cursor::{
     add_cursor_above, add_cursor_at_next_match, add_cursor_below, AddCursorResult,
 };
@@ -879,87 +879,107 @@ impl Editor {
                             String::new()
                         };
 
-                        // Spawn or get existing LSP client (non-blocking now)
+                        // Try to spawn LSP client, respecting confirmation settings
                         tracing::debug!(
-                            "Attempting to get or spawn LSP client for language: {}",
+                            "Attempting to spawn LSP client for language: {}",
                             language
                         );
-                        if let Some(client) = lsp.get_or_spawn(&language) {
-                            tracing::info!("Sending didOpen to LSP for: {}", uri.as_str());
-                            if let Err(e) = client.did_open(uri.clone(), text, language) {
-                                tracing::warn!("Failed to send didOpen to LSP: {}", e);
-                            } else {
-                                tracing::info!("Successfully sent didOpen to LSP");
-
-                                // Request pull diagnostics after opening the file
-                                // Get previous result_id if we have one (for incremental updates)
-                                let previous_result_id =
-                                    self.diagnostic_result_ids.get(uri.as_str()).cloned();
-                                let request_id = self.next_lsp_request_id;
-                                self.next_lsp_request_id += 1;
-
-                                if let Err(e) = client.document_diagnostic(
-                                    request_id,
-                                    uri.clone(),
-                                    previous_result_id,
-                                ) {
-                                    tracing::debug!(
-                                        "Failed to request pull diagnostics (server may not support): {}",
-                                        e
-                                    );
-                                } else {
+                        let spawn_result = lsp.try_spawn(&language);
+                        match spawn_result {
+                            LspSpawnResult::Spawned => {
+                                // LSP is ready, get the handle and notify it about the file
+                                if let Some(client) = lsp.get_or_spawn(&language) {
                                     tracing::info!(
-                                        "Requested pull diagnostics for {} (request_id={})",
-                                        uri.as_str(),
-                                        request_id
+                                        "Sending didOpen to LSP for: {}",
+                                        uri.as_str()
                                     );
-                                }
-
-                                // Request inlay hints for the entire file (if enabled)
-                                if self.config.editor.enable_inlay_hints {
-                                    let request_id = self.next_lsp_request_id;
-                                    self.next_lsp_request_id += 1;
-                                    self.pending_inlay_hints_request = Some(request_id);
-
-                                    // Get buffer line count for range
-                                    // LSP uses 0-indexed lines, so last line is line_count - 1
-                                    let (last_line, last_char) = if let Some(state) =
-                                        self.buffers.get(&self.active_buffer)
-                                    {
-                                        let line_count = state.buffer.line_count().unwrap_or(1000);
-                                        // Use a large character value to include the entire last line
-                                        (line_count.saturating_sub(1) as u32, 10000)
+                                    if let Err(e) = client.did_open(uri.clone(), text, language) {
+                                        tracing::warn!("Failed to send didOpen to LSP: {}", e);
                                     } else {
-                                        (999, 10000) // Default fallback
-                                    };
+                                        tracing::info!("Successfully sent didOpen to LSP");
 
-                                    if let Err(e) = client.inlay_hints(
-                                        request_id,
-                                        uri.clone(),
-                                        0,
-                                        0, // start
-                                        last_line,
-                                        last_char, // end - last line with large char to include all content
-                                    ) {
-                                        tracing::debug!(
-                                            "Failed to request inlay hints (server may not support): {}",
-                                            e
-                                        );
-                                        self.pending_inlay_hints_request = None;
-                                    } else {
-                                        tracing::info!(
-                                            "Requested inlay hints for {} (request_id={})",
-                                            uri.as_str(),
-                                            request_id
-                                        );
+                                        // Request pull diagnostics after opening the file
+                                        // Get previous result_id if we have one (for incremental updates)
+                                        let previous_result_id =
+                                            self.diagnostic_result_ids.get(uri.as_str()).cloned();
+                                        let request_id = self.next_lsp_request_id;
+                                        self.next_lsp_request_id += 1;
+
+                                        if let Err(e) = client.document_diagnostic(
+                                            request_id,
+                                            uri.clone(),
+                                            previous_result_id,
+                                        ) {
+                                            tracing::debug!(
+                                                "Failed to request pull diagnostics (server may not support): {}",
+                                                e
+                                            );
+                                        } else {
+                                            tracing::info!(
+                                                "Requested pull diagnostics for {} (request_id={})",
+                                                uri.as_str(),
+                                                request_id
+                                            );
+                                        }
+
+                                        // Request inlay hints for the entire file (if enabled)
+                                        if self.config.editor.enable_inlay_hints {
+                                            let request_id = self.next_lsp_request_id;
+                                            self.next_lsp_request_id += 1;
+                                            self.pending_inlay_hints_request = Some(request_id);
+
+                                            // Get buffer line count for range
+                                            // LSP uses 0-indexed lines, so last line is line_count - 1
+                                            let (last_line, last_char) = if let Some(state) =
+                                                self.buffers.get(&self.active_buffer)
+                                            {
+                                                let line_count =
+                                                    state.buffer.line_count().unwrap_or(1000);
+                                                // Use a large character value to include the entire last line
+                                                (line_count.saturating_sub(1) as u32, 10000)
+                                            } else {
+                                                (999, 10000) // Default fallback
+                                            };
+
+                                            if let Err(e) = client.inlay_hints(
+                                                request_id,
+                                                uri.clone(),
+                                                0,
+                                                0, // start
+                                                last_line,
+                                                last_char, // end - last line with large char to include all content
+                                            ) {
+                                                tracing::debug!(
+                                                    "Failed to request inlay hints (server may not support): {}",
+                                                    e
+                                                );
+                                                self.pending_inlay_hints_request = None;
+                                            } else {
+                                                tracing::info!(
+                                                    "Requested inlay hints for {} (request_id={})",
+                                                    uri.as_str(),
+                                                    request_id
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        } else {
-                            tracing::warn!(
-                                "Failed to get or spawn LSP client for language: {}",
-                                language
-                            );
+                            LspSpawnResult::NeedsConfirmation(lang) => {
+                                // Show confirmation popup - this is done after the lsp borrow ends
+                                tracing::info!(
+                                    "LSP for {} needs user confirmation before starting",
+                                    lang
+                                );
+                                // Store the language for showing the popup after exiting this scope
+                                self.pending_lsp_confirmation = Some(lang);
+                            }
+                            LspSpawnResult::Failed => {
+                                tracing::warn!(
+                                    "Failed to spawn LSP client for language: {}",
+                                    language
+                                );
+                            }
                         }
                     }
                 } else {
@@ -973,6 +993,15 @@ impl Editor {
             }
         } else {
             tracing::debug!("No LSP manager available");
+        }
+
+        // Show LSP confirmation popup if one was queued during file open
+        // (this needs to happen outside the lsp borrow)
+        if self.pending_lsp_confirmation.is_some() {
+            // Take the language temporarily to avoid borrow issues
+            if let Some(lang) = self.pending_lsp_confirmation.take() {
+                self.show_lsp_confirmation_popup(&lang);
+            }
         }
 
         // Store metadata for this buffer

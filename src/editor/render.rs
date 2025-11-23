@@ -685,6 +685,8 @@ impl Editor {
                         ));
                     }
                 }
+                // Notify LSP about the current file
+                self.notify_lsp_current_file_opened(&language);
             }
             "allow_always" => {
                 // Spawn the LSP server and remember the preference
@@ -703,6 +705,8 @@ impl Editor {
                         ));
                     }
                 }
+                // Notify LSP about the current file
+                self.notify_lsp_current_file_opened(&language);
             }
             "deny" | _ => {
                 // User declined - don't start the server
@@ -712,6 +716,137 @@ impl Editor {
         }
 
         true
+    }
+
+    /// Notify LSP about the currently open file
+    ///
+    /// This is called after an LSP server is started to notify it about
+    /// the current file so it can provide features like diagnostics.
+    fn notify_lsp_current_file_opened(&mut self, language: &str) {
+        // Get buffer metadata for the active buffer
+        let metadata = match self.buffer_metadata.get(&self.active_buffer) {
+            Some(m) => m,
+            None => {
+                tracing::debug!(
+                    "notify_lsp_current_file_opened: no metadata for buffer {:?}",
+                    self.active_buffer
+                );
+                return;
+            }
+        };
+
+        if !metadata.lsp_enabled {
+            tracing::debug!("notify_lsp_current_file_opened: LSP disabled for this buffer");
+            return;
+        }
+
+        // Get the URI (computed once in with_file)
+        let uri = match metadata.file_uri() {
+            Some(u) => u.clone(),
+            None => {
+                tracing::debug!(
+                    "notify_lsp_current_file_opened: no URI for buffer (not a file or URI creation failed)"
+                );
+                return;
+            }
+        };
+
+        // Get the file path and verify language matches
+        let path = match metadata.file_path() {
+            Some(p) => p,
+            None => {
+                tracing::debug!("notify_lsp_current_file_opened: no file path for buffer");
+                return;
+            }
+        };
+
+        let file_language = match detect_language(path) {
+            Some(l) => l,
+            None => {
+                tracing::debug!(
+                    "notify_lsp_current_file_opened: no language detected for {:?}",
+                    path
+                );
+                return;
+            }
+        };
+
+        // Only notify if the file's language matches the LSP server we just started
+        if file_language != language {
+            tracing::debug!(
+                "notify_lsp_current_file_opened: file language {} doesn't match server {}",
+                file_language,
+                language
+            );
+            return;
+        }
+
+        // Get the buffer text
+        let text = if let Some(state) = self.buffers.get(&self.active_buffer) {
+            state.buffer.to_string()
+        } else {
+            tracing::debug!("notify_lsp_current_file_opened: no buffer state");
+            return;
+        };
+
+        // Send didOpen to LSP
+        if let Some(lsp) = &mut self.lsp {
+            if let Some(client) = lsp.get_or_spawn(language) {
+                tracing::info!(
+                    "Sending didOpen to newly started LSP for: {}",
+                    uri.as_str()
+                );
+                if let Err(e) = client.did_open(uri.clone(), text, file_language) {
+                    tracing::warn!("Failed to send didOpen to LSP: {}", e);
+                } else {
+                    tracing::info!("Successfully sent didOpen to LSP after confirmation");
+
+                    // Request pull diagnostics
+                    let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
+                    let request_id = self.next_lsp_request_id;
+                    self.next_lsp_request_id += 1;
+
+                    if let Err(e) =
+                        client.document_diagnostic(request_id, uri.clone(), previous_result_id)
+                    {
+                        tracing::debug!(
+                            "Failed to request pull diagnostics (server may not support): {}",
+                            e
+                        );
+                    }
+
+                    // Request inlay hints if enabled
+                    if self.config.editor.enable_inlay_hints {
+                        let request_id = self.next_lsp_request_id;
+                        self.next_lsp_request_id += 1;
+                        self.pending_inlay_hints_request = Some(request_id);
+
+                        let (last_line, last_char) =
+                            if let Some(state) = self.buffers.get(&self.active_buffer) {
+                                let line_count = state.buffer.line_count().unwrap_or(1000);
+                                (line_count.saturating_sub(1) as u32, 10000)
+                            } else {
+                                (999, 10000)
+                            };
+
+                        if let Err(e) = client.inlay_hints(
+                            request_id,
+                            uri.clone(),
+                            0,
+                            0,
+                            last_line,
+                            last_char,
+                        ) {
+                            tracing::debug!(
+                                "Failed to request inlay hints (server may not support): {}",
+                                e
+                            );
+                            self.pending_inlay_hints_request = None;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Check if there's a pending LSP confirmation
