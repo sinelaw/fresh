@@ -2374,10 +2374,13 @@ impl Editor {
     pub fn confirm_prompt(&mut self) -> Option<(String, PromptType, Option<usize>)> {
         if let Some(prompt) = self.prompt.take() {
             let selected_index = prompt.selected_suggestion;
-            // For command and file prompts, prefer the selected suggestion over raw input
+            // For command, file, and LSP stop prompts, prefer the selected suggestion over raw input
             let final_input = if matches!(
                 prompt.prompt_type,
-                PromptType::Command | PromptType::OpenFile | PromptType::SaveFileAs
+                PromptType::Command
+                    | PromptType::OpenFile
+                    | PromptType::SaveFileAs
+                    | PromptType::StopLspServer
             ) {
                 // Use the selected suggestion if any
                 if let Some(selected_idx) = prompt.selected_suggestion {
@@ -2401,6 +2404,23 @@ impl Editor {
             } else {
                 prompt.input.clone()
             };
+
+            // For StopLspServer, validate that the input matches a running server
+            if matches!(prompt.prompt_type, PromptType::StopLspServer) {
+                let is_valid = prompt
+                    .suggestions
+                    .iter()
+                    .any(|s| s.text == final_input || s.get_value() == final_input);
+                if !is_valid {
+                    // Restore the prompt and don't confirm
+                    self.prompt = Some(prompt);
+                    self.set_status_message(format!(
+                        "No running LSP server matches '{}'",
+                        final_input
+                    ));
+                    return None;
+                }
+            }
 
             // Add to appropriate history based on prompt type
             match prompt.prompt_type {

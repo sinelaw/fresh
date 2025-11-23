@@ -863,10 +863,20 @@ impl Editor {
                         PromptType::StopLspServer,
                         suggestions,
                     ));
-                    // Auto-select first suggestion
-                    if let Some(prompt) = self.prompt.as_mut() {
-                        if !prompt.suggestions.is_empty() {
+
+                    // If only one server, pre-fill the input with it
+                    if running_servers.len() == 1 {
+                        if let Some(prompt) = self.prompt.as_mut() {
+                            prompt.input = running_servers[0].clone();
+                            prompt.cursor_pos = prompt.input.len();
                             prompt.selected_suggestion = Some(0);
+                        }
+                    } else {
+                        // Auto-select first suggestion
+                        if let Some(prompt) = self.prompt.as_mut() {
+                            if !prompt.suggestions.is_empty() {
+                                prompt.selected_suggestion = Some(0);
+                            }
                         }
                     }
                 }
