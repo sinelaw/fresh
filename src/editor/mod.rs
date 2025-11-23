@@ -2229,6 +2229,9 @@ impl Editor {
             *event_log = EventLog::new();
         }
 
+        // Clear seen_byte_ranges so plugins get notified of all visible lines
+        self.seen_byte_ranges.remove(&buffer_id);
+
         // Update the file modification time
         if let Ok(metadata) = std::fs::metadata(&path) {
             if let Ok(mtime) = metadata.modified() {
