@@ -18,9 +18,9 @@ use std::time::{Duration, Instant};
 pub enum LspSpawnResult {
     /// Server was spawned or already running
     Spawned,
-    /// User confirmation is required before spawning
-    /// Contains the language name that needs confirmation
-    NeedsConfirmation(String),
+    /// Server is not configured for auto-start
+    /// The server can still be started manually via command palette
+    NotAutoStart,
     /// Server spawn failed or is disabled
     Failed,
 }
@@ -56,13 +56,9 @@ pub struct LspManager {
     /// Scheduled restart times (language -> when to restart)
     pending_restarts: HashMap<String, Instant>,
 
-    /// Languages that have been approved for auto-spawning by the user
-    /// If a language is in this set, it will spawn without confirmation
+    /// Languages that have been manually started by the user
+    /// If a language is in this set, it will spawn even if auto_start=false in config
     allowed_languages: HashSet<String>,
-
-    /// Whether to require confirmation before spawning LSP servers
-    /// When true, LSP servers won't auto-spawn until user approves
-    require_confirmation: bool,
 
     /// Languages that have been explicitly disabled/stopped by the user
     /// These will not auto-restart until user manually restarts them
@@ -82,33 +78,22 @@ impl LspManager {
             restart_cooldown: HashSet::new(),
             pending_restarts: HashMap::new(),
             allowed_languages: HashSet::new(),
-            require_confirmation: true, // Require confirmation by default
             disabled_languages: HashSet::new(),
         }
     }
 
-    /// Enable or disable LSP spawn confirmation requirement
-    pub fn set_require_confirmation(&mut self, require: bool) {
-        self.require_confirmation = require;
-    }
-
-    /// Check if LSP spawn confirmation is required
-    pub fn requires_confirmation(&self) -> bool {
-        self.require_confirmation
-    }
-
-    /// Check if a language is allowed to spawn without confirmation
+    /// Check if a language has been manually enabled (allowing spawn even if auto_start=false)
     pub fn is_language_allowed(&self, language: &str) -> bool {
-        !self.require_confirmation || self.allowed_languages.contains(language)
+        self.allowed_languages.contains(language)
     }
 
-    /// Allow a language to spawn LSP server (permanently for this session)
+    /// Allow a language to spawn LSP server (used by manual start command)
     pub fn allow_language(&mut self, language: &str) {
         self.allowed_languages.insert(language.to_string());
-        tracing::info!("LSP language '{}' allowed for auto-spawn", language);
+        tracing::info!("LSP language '{}' manually enabled", language);
     }
 
-    /// Get the set of allowed languages
+    /// Get the set of manually enabled languages
     pub fn allowed_languages(&self) -> &HashSet<String> {
         &self.allowed_languages
     }
@@ -118,12 +103,12 @@ impl LspManager {
         self.config.get(language)
     }
 
-    /// Try to spawn an LSP server, returning whether confirmation is needed
+    /// Try to spawn an LSP server, checking auto_start configuration
     ///
-    /// This is the main entry point for spawning LSP servers when confirmation
-    /// might be required. It returns:
+    /// This is the main entry point for spawning LSP servers on file open.
+    /// It returns:
     /// - `LspSpawnResult::Spawned` if the server was spawned or already running
-    /// - `LspSpawnResult::NeedsConfirmation(language)` if user confirmation is needed
+    /// - `LspSpawnResult::NotAutoStart` if auto_start is false and not manually allowed
     /// - `LspSpawnResult::Failed` if spawn failed or language is disabled
     pub fn try_spawn(&mut self, language: &str) -> LspSpawnResult {
         // If handle already exists, return success
@@ -143,9 +128,9 @@ impl LspManager {
             return LspSpawnResult::Failed;
         }
 
-        // Check if confirmation is required
-        if self.require_confirmation && !self.allowed_languages.contains(language) {
-            return LspSpawnResult::NeedsConfirmation(language.to_string());
+        // Check if auto_start is enabled or language was manually allowed
+        if !config.auto_start && !self.allowed_languages.contains(language) {
+            return LspSpawnResult::NotAutoStart;
         }
 
         // Spawn the server
@@ -355,7 +340,10 @@ impl LspManager {
         tracing::info!("Cleared restart cooldown for {}", language);
     }
 
-    /// Manually restart a language server (bypasses cooldown and re-enables auto-restart)
+    /// Manually restart/start a language server (bypasses cooldown and auto_start check)
+    ///
+    /// This is used both to restart a crashed server and to manually start a server
+    /// that has auto_start=false in its configuration.
     ///
     /// Returns (success, message) tuple
     pub fn manual_restart(&mut self, language: &str) -> (bool, String) {
@@ -365,6 +353,9 @@ impl LspManager {
         // Re-enable the language (remove from disabled set)
         self.disabled_languages.remove(language);
 
+        // Add to allowed languages so it stays active even if auto_start=false
+        self.allowed_languages.insert(language.to_string());
+
         // Remove existing handle
         if let Some(handle) = self.handles.remove(language) {
             let _ = handle.shutdown();
@@ -372,11 +363,11 @@ impl LspManager {
 
         // Spawn new server
         if self.get_or_spawn(language).is_some() {
-            let message = format!("LSP server for {} restarted manually", language);
+            let message = format!("LSP server for {} started", language);
             tracing::info!("{}", message);
             (true, message)
         } else {
-            let message = format!("Failed to manually restart LSP server for {}", language);
+            let message = format!("Failed to start LSP server for {}", language);
             tracing::error!("{}", message);
             (false, message)
         }

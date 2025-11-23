@@ -459,6 +459,7 @@ impl Config {
                 command: "rust-analyzer".to_string(),
                 args: vec!["--log-file".to_string(), ra_log_path],
                 enabled: true,
+                auto_start: false,
                 process_limits: crate::process_limits::ProcessLimits::default(),
             },
         );
@@ -470,6 +471,7 @@ impl Config {
                 command: "pylsp".to_string(),
                 args: vec![],
                 enabled: true,
+                auto_start: false,
                 process_limits: crate::process_limits::ProcessLimits::default(),
             },
         );
@@ -479,6 +481,7 @@ impl Config {
             command: "typescript-language-server".to_string(),
             args: vec!["--stdio".to_string()],
             enabled: true,
+            auto_start: false,
             process_limits: crate::process_limits::ProcessLimits::default(),
         };
         lsp.insert("javascript".to_string(), ts_lsp.clone());
@@ -491,6 +494,7 @@ impl Config {
                 command: "vscode-html-languageserver-bin".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
+                auto_start: false,
                 process_limits: crate::process_limits::ProcessLimits::default(),
             },
         );
@@ -502,6 +506,7 @@ impl Config {
                 command: "vscode-css-languageserver-bin".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
+                auto_start: false,
                 process_limits: crate::process_limits::ProcessLimits::default(),
             },
         );
@@ -513,6 +518,7 @@ impl Config {
                 command: "clangd".to_string(),
                 args: vec![],
                 enabled: true,
+                auto_start: false,
                 process_limits: crate::process_limits::ProcessLimits::default(),
             },
         );
@@ -522,6 +528,7 @@ impl Config {
                 command: "clangd".to_string(),
                 args: vec![],
                 enabled: true,
+                auto_start: false,
                 process_limits: crate::process_limits::ProcessLimits::default(),
             },
         );
@@ -533,6 +540,7 @@ impl Config {
                 command: "gopls".to_string(),
                 args: vec![],
                 enabled: true,
+                auto_start: false,
                 process_limits: crate::process_limits::ProcessLimits::default(),
             },
         );
@@ -544,6 +552,7 @@ impl Config {
                 command: "vscode-json-languageserver".to_string(),
                 args: vec!["--stdio".to_string()],
                 enabled: true,
+                auto_start: false,
                 process_limits: crate::process_limits::ProcessLimits::default(),
             },
         );

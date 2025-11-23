@@ -862,7 +862,7 @@ impl Editor {
     /// Returns:
     /// - `Some(true)` if LSP is ready (handle was already available or spawned)
     /// - `Some(false)` if confirmation popup was shown (user needs to respond)
-    /// - `None` if LSP is not available (disabled, not configured, or failed to spawn)
+    /// - `None` if LSP is not available (disabled, not configured, not auto-start, or failed)
     pub fn try_get_lsp_with_confirmation(&mut self, language: &str) -> Option<bool> {
         use crate::lsp_manager::LspSpawnResult;
 
@@ -873,10 +873,7 @@ impl Editor {
 
         match result {
             LspSpawnResult::Spawned => Some(true),
-            LspSpawnResult::NeedsConfirmation(lang) => {
-                self.show_lsp_confirmation_popup(&lang);
-                Some(false)
-            }
+            LspSpawnResult::NotAutoStart => None, // Not configured for auto-start
             LspSpawnResult::Failed => None,
         }
     }

@@ -965,14 +965,13 @@ impl Editor {
                                     }
                                 }
                             }
-                            LspSpawnResult::NeedsConfirmation(lang) => {
-                                // Show confirmation popup - this is done after the lsp borrow ends
-                                tracing::info!(
-                                    "LSP for {} needs user confirmation before starting",
-                                    lang
+                            LspSpawnResult::NotAutoStart => {
+                                // LSP is not configured for auto-start
+                                // User can start it manually via command palette
+                                tracing::debug!(
+                                    "LSP for {} not auto-starting (auto_start=false). Use command palette to start manually.",
+                                    language
                                 );
-                                // Store the language for showing the popup after exiting this scope
-                                self.pending_lsp_confirmation = Some(lang);
                             }
                             LspSpawnResult::Failed => {
                                 tracing::warn!(
@@ -993,15 +992,6 @@ impl Editor {
             }
         } else {
             tracing::debug!("No LSP manager available");
-        }
-
-        // Show LSP confirmation popup if one was queued during file open
-        // (this needs to happen outside the lsp borrow)
-        if self.pending_lsp_confirmation.is_some() {
-            // Take the language temporarily to avoid borrow issues
-            if let Some(lang) = self.pending_lsp_confirmation.take() {
-                self.show_lsp_confirmation_popup(&lang);
-            }
         }
 
         // Store metadata for this buffer

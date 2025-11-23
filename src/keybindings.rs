@@ -1353,7 +1353,7 @@ impl KeybindingResolver {
             Action::LspHover => "LSP: Show hover documentation".to_string(),
             Action::LspSignatureHelp => "LSP: Show signature help".to_string(),
             Action::LspCodeActions => "LSP: Show code actions".to_string(),
-            Action::LspRestart => "LSP: Restart server for current language".to_string(),
+            Action::LspRestart => "LSP: Start/restart server for current language".to_string(),
             Action::LspStop => "LSP: Stop a running server".to_string(),
             Action::ToggleInlayHints => "Toggle inlay hints".to_string(),
             Action::ToggleLineNumbers => "Toggle line numbers".to_string(),

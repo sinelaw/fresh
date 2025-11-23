@@ -454,6 +454,11 @@ pub struct LspServerConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
 
+    /// Whether to auto-start this LSP server when opening matching files
+    /// If false (default), the server must be started manually via command palette
+    #[serde(default)]
+    pub auto_start: bool,
+
     /// Process resource limits (memory and CPU)
     #[serde(default)]
     pub process_limits: ProcessLimits,
