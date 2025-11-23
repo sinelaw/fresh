@@ -1084,26 +1084,46 @@ function scrollToSelectedConflict(): void {
 
 /**
  * Compute the byte offset where a conflict appears in the OURS or THEIRS panel content.
- * This is based on the full file content from git, where the conflict region
- * corresponds to where the original conflict markers were in the working tree.
+ * We search for the actual conflict text (conflict.ours or conflict.theirs) in the
+ * git content to find the exact position.
  */
 function computeConflictOffset(side: "ours" | "theirs", conflictIndex: number): number {
-  const content = side === "ours" ? mergeState.oursContent : mergeState.theirsContent;
+  const gitContent = side === "ours" ? mergeState.oursContent : mergeState.theirsContent;
+  const conflict = mergeState.conflicts[conflictIndex];
 
-  // If we have the full git content, we need to find where the conflict would be
-  // The conflicts array has startOffset/endOffset in the original file with markers
-  // But the git versions don't have markers, so we need to estimate position
-  if (content) {
-    // Simple approach: use the conflict's start offset ratio to estimate position
-    // This isn't perfect but gives a reasonable scroll position
-    const conflict = mergeState.conflicts[conflictIndex];
-    if (conflict) {
-      // Calculate ratio of conflict position in original file
-      const originalLength = mergeState.originalContent.length;
-      if (originalLength > 0) {
-        const ratio = conflict.startOffset / originalLength;
-        return Math.floor(ratio * content.length);
+  if (!conflict) return 0;
+
+  // Get the conflict text for this side
+  const conflictText = side === "ours" ? conflict.ours : conflict.theirs;
+
+  if (gitContent && conflictText) {
+    // Strategy 1: Search for the exact conflict text (trimmed)
+    const trimmedText = conflictText.trim();
+    if (trimmedText.length > 0) {
+      const pos = gitContent.indexOf(trimmedText);
+      if (pos >= 0) {
+        editor.debug(`computeConflictOffset(${side}): found exact match at ${pos}`);
+        return pos;
       }
+    }
+
+    // Strategy 2: Search for the first line of the conflict
+    const firstLine = conflictText.split("\n")[0]?.trim();
+    if (firstLine && firstLine.length > 5) {
+      const pos = gitContent.indexOf(firstLine);
+      if (pos >= 0) {
+        editor.debug(`computeConflictOffset(${side}): found first line match at ${pos}`);
+        return pos;
+      }
+    }
+
+    // Strategy 3: Ratio-based fallback
+    const originalLength = mergeState.originalContent.length;
+    if (originalLength > 0) {
+      const ratio = conflict.startOffset / originalLength;
+      const pos = Math.floor(ratio * gitContent.length);
+      editor.debug(`computeConflictOffset(${side}): using ratio fallback at ${pos}`);
+      return pos;
     }
   }
 
