@@ -4208,13 +4208,15 @@ impl Editor {
             } => {
                 // Find all splits that display this buffer and update their view states
                 let splits = self.split_manager.splits_for_buffer(buffer_id);
+                let active_split = self.split_manager.active_split();
 
                 tracing::info!(
-                    "SetBufferCursor: buffer_id={:?}, position={}, found {} splits: {:?}",
+                    "SetBufferCursor: buffer_id={:?}, position={}, found {} splits: {:?}, active={:?}",
                     buffer_id,
                     position,
                     splits.len(),
-                    splits
+                    splits,
+                    active_split
                 );
 
                 if splits.is_empty() {
@@ -4224,6 +4226,8 @@ impl Editor {
                 // Get the buffer for ensure_visible
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     for split_id in &splits {
+                        let is_active = *split_id == active_split;
+
                         if let Some(view_state) = self.split_view_states.get_mut(split_id) {
                             // Set cursor position in the split's view state
                             view_state.cursors.primary_mut().move_to(position, false);
@@ -4231,10 +4235,21 @@ impl Editor {
                             let cursor = view_state.cursors.primary().clone();
                             view_state.viewport.ensure_visible(&mut state.buffer, &cursor);
                             tracing::info!(
-                                "SetBufferCursor: updated split {:?} viewport top_byte={}",
+                                "SetBufferCursor: updated split {:?} (active={}) viewport top_byte={}",
                                 split_id,
+                                is_active,
                                 view_state.viewport.top_byte
                             );
+
+                            // For the active split, also update the buffer state directly
+                            // (rendering uses buffer state for active split, split_view_states for others)
+                            if is_active {
+                                state.cursors.primary_mut().move_to(position, false);
+                                state.viewport = view_state.viewport.clone();
+                                tracing::info!(
+                                    "SetBufferCursor: also updated buffer state for active split"
+                                );
+                            }
                         } else {
                             tracing::warn!(
                                 "SetBufferCursor: split {:?} not found in split_view_states",
