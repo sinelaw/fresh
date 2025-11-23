@@ -503,7 +503,17 @@ impl Editor {
 
         match action {
             Action::Quit => self.quit(),
-            Action::Save => self.save()?,
+            Action::Save => {
+                // Check if file was modified externally since we opened/saved it
+                if self.check_save_conflict().is_some() {
+                    self.start_prompt(
+                        "File changed on disk. Overwrite? (y/n): ".to_string(),
+                        PromptType::ConfirmSaveConflict,
+                    );
+                } else {
+                    self.save()?;
+                }
+            }
             Action::SaveAs => {
                 // Get current filename as default suggestion
                 let current_path = self
@@ -539,6 +549,23 @@ impl Editor {
                 } else {
                     self.set_status_message("Buffer closed".to_string());
                 }
+            }
+            Action::Revert => {
+                // Check if buffer has unsaved changes - prompt for confirmation
+                if self.active_state().buffer.is_modified() {
+                    self.start_prompt(
+                        "Buffer has unsaved changes. Revert anyway? (y/n): ".to_string(),
+                        PromptType::ConfirmRevert,
+                    );
+                } else {
+                    // No local changes, just revert
+                    if let Err(e) = self.revert_file() {
+                        self.set_status_message(format!("Failed to revert: {}", e));
+                    }
+                }
+            }
+            Action::ToggleAutoRevert => {
+                self.toggle_auto_revert();
             }
             Action::Copy => self.copy_selection(),
             Action::Cut => {
@@ -1576,6 +1603,27 @@ impl Editor {
 
                             if let Some(ref ts_manager) = self.ts_plugin_manager {
                                 ts_manager.run_hook("prompt_confirmed", hook_args);
+                            }
+                        }
+                        PromptType::ConfirmRevert => {
+                            let input_lower = input.trim().to_lowercase();
+                            if input_lower == "y" || input_lower == "yes" {
+                                if let Err(e) = self.revert_file() {
+                                    self.set_status_message(format!("Failed to revert: {}", e));
+                                }
+                            } else {
+                                self.set_status_message("Revert cancelled".to_string());
+                            }
+                        }
+                        PromptType::ConfirmSaveConflict => {
+                            let input_lower = input.trim().to_lowercase();
+                            if input_lower == "y" || input_lower == "yes" {
+                                // Force save despite conflict
+                                if let Err(e) = self.save() {
+                                    self.set_status_message(format!("Failed to save: {}", e));
+                                }
+                            } else {
+                                self.set_status_message("Save cancelled".to_string());
                             }
                         }
                         PromptType::LspRename {

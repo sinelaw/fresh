@@ -120,6 +120,18 @@ pub fn get_all_commands() -> Vec<Command> {
             contexts: vec![KeyContext::Normal],
         },
         Command {
+            name: "Revert File".to_string(),
+            description: "Discard changes and reload from disk".to_string(),
+            action: Action::Revert,
+            contexts: vec![KeyContext::Normal],
+        },
+        Command {
+            name: "Toggle Auto-Revert".to_string(),
+            description: "Toggle automatic reloading when files change on disk".to_string(),
+            action: Action::ToggleAutoRevert,
+            contexts: vec![],
+        },
+        Command {
             name: "Quit".to_string(),
             description: "Exit the editor".to_string(),
             action: Action::Quit,

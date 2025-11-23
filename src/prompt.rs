@@ -51,6 +51,10 @@ pub enum PromptType {
     SetComposeWidth,
     /// Stop a running LSP server (select from list)
     StopLspServer,
+    /// Confirm reverting a modified file
+    ConfirmRevert,
+    /// Confirm saving over a file that changed on disk
+    ConfirmSaveConflict,
 }
 
 /// Prompt state for the minibuffer

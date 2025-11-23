@@ -1607,7 +1607,9 @@ pub fn action_to_events(
         | Action::PluginAction(_)
         | Action::None
         | Action::ScrollTabsLeft
-        | Action::ScrollTabsRight => return None,
+        | Action::ScrollTabsRight
+        | Action::Revert
+        | Action::ToggleAutoRevert => return None,
 
         // Block/rectangular selection actions
         Action::BlockSelectLeft => {

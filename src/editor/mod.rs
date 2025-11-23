@@ -322,6 +322,16 @@ pub struct Editor {
     /// Pending LSP confirmation - language name awaiting user confirmation
     /// When Some, a confirmation popup is shown asking user to approve LSP spawn
     pending_lsp_confirmation: Option<String>,
+    
+    /// Whether auto-revert mode is enabled (automatically reload files when changed on disk)
+    auto_revert_enabled: bool,
+
+    /// File watcher for auto-revert functionality
+    file_watcher: Option<notify::RecommendedWatcher>,
+
+    /// Last known modification times for watched files (for conflict detection)
+    /// Maps file path to last known modification time
+    file_mod_times: HashMap<PathBuf, std::time::SystemTime>,
 }
 
 impl Editor {
@@ -590,6 +600,9 @@ impl Editor {
             plugin_render_requested: false,
             chord_state: Vec::new(),
             pending_lsp_confirmation: None,
+            auto_revert_enabled: false,
+            file_watcher: None,
+            file_mod_times: HashMap::new(),
         })
     }
 
@@ -1027,6 +1040,9 @@ impl Editor {
                 "buffer_id": buffer_id.0
             }),
         );
+
+        // Track file for auto-revert and conflict detection
+        self.watch_file(path);
 
         Ok(buffer_id)
     }
@@ -2151,6 +2167,15 @@ impl Editor {
         self.active_state_mut().buffer.save()?;
         self.status_message = Some("Saved".to_string());
 
+        // Update file modification time after save
+        if let Some(ref p) = path {
+            if let Ok(metadata) = std::fs::metadata(p) {
+                if let Ok(mtime) = metadata.modified() {
+                    self.file_mod_times.insert(p.clone(), mtime);
+                }
+            }
+        }
+
         // Notify LSP of save
         self.notify_lsp_save();
 
@@ -2165,6 +2190,266 @@ impl Editor {
         }
 
         Ok(())
+    }
+
+    /// Revert the active buffer to the last saved version on disk
+    /// Returns Ok(true) if reverted, Ok(false) if no file path, Err on failure
+    pub fn revert_file(&mut self) -> io::Result<bool> {
+        let path = match self.active_state().buffer.file_path() {
+            Some(p) => p.to_path_buf(),
+            None => {
+                self.status_message = Some("Buffer has no file to revert to".to_string());
+                return Ok(false);
+            }
+        };
+
+        if !path.exists() {
+            self.status_message = Some(format!("File does not exist: {}", path.display()));
+            return Ok(false);
+        }
+
+        // Load the file content fresh from disk
+        let new_state = EditorState::from_file(
+            &path,
+            self.terminal_width,
+            self.terminal_height,
+            self.config.editor.large_file_threshold_bytes as usize,
+        )?;
+
+        // Replace the current buffer with the new state
+        let buffer_id = self.active_buffer;
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            *state = new_state;
+            // Apply line wrap setting from config
+            state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+        }
+
+        // Clear the undo/redo history for this buffer
+        if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+            *event_log = EventLog::new();
+        }
+
+        // Update the file modification time
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            if let Ok(mtime) = metadata.modified() {
+                self.file_mod_times.insert(path.clone(), mtime);
+            }
+        }
+
+        // Notify LSP that the file was changed
+        self.notify_lsp_file_changed(&path);
+
+        self.status_message = Some("Reverted to saved file".to_string());
+        Ok(true)
+    }
+
+    /// Toggle auto-revert mode
+    pub fn toggle_auto_revert(&mut self) {
+        self.auto_revert_enabled = !self.auto_revert_enabled;
+
+        if self.auto_revert_enabled {
+            // Start file watcher if not already running
+            self.start_file_watcher();
+            self.status_message = Some("Auto-revert enabled".to_string());
+        } else {
+            // Stop file watcher
+            self.file_watcher = None;
+            self.status_message = Some("Auto-revert disabled".to_string());
+        }
+    }
+
+    /// Start the file watcher for auto-revert functionality
+    fn start_file_watcher(&mut self) {
+        use notify::{RecursiveMode, Watcher};
+
+        // Get the sender for async messages
+        let sender = match &self.async_bridge {
+            Some(bridge) => bridge.sender(),
+            None => {
+                tracing::warn!("Cannot start file watcher: no async bridge available");
+                return;
+            }
+        };
+
+        // Create a new watcher
+        let watcher_result = notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+            match res {
+                Ok(event) => {
+                    // Only handle modify and create events
+                    if matches!(event.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_)) {
+                        for path in event.paths {
+                            if let Err(e) = sender.send(AsyncMessage::FileChanged {
+                                path: path.display().to_string(),
+                            }) {
+                                tracing::error!("Failed to send file change notification: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("File watcher error: {}", e);
+                }
+            }
+        });
+
+        match watcher_result {
+            Ok(mut watcher) => {
+                // Watch all currently open files
+                for state in self.buffers.values() {
+                    if let Some(path) = state.buffer.file_path() {
+                        if let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive) {
+                            tracing::warn!("Failed to watch file {:?}: {}", path, e);
+                        }
+                    }
+                }
+                self.file_watcher = Some(watcher);
+                tracing::info!("File watcher started");
+            }
+            Err(e) => {
+                tracing::error!("Failed to create file watcher: {}", e);
+                self.status_message = Some(format!("Failed to start file watcher: {}", e));
+            }
+        }
+    }
+
+    /// Add a file to the file watcher (called when opening files)
+    fn watch_file(&mut self, path: &Path) {
+        use notify::{RecursiveMode, Watcher};
+
+        // Record current modification time
+        if let Ok(metadata) = std::fs::metadata(path) {
+            if let Ok(mtime) = metadata.modified() {
+                self.file_mod_times.insert(path.to_path_buf(), mtime);
+            }
+        }
+
+        // Add to watcher if auto-revert is enabled
+        if self.auto_revert_enabled {
+            if let Some(watcher) = &mut self.file_watcher {
+                if let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive) {
+                    tracing::warn!("Failed to watch file {:?}: {}", path, e);
+                }
+            }
+        }
+    }
+
+    /// Notify LSP that a file's contents changed (e.g., after revert)
+    fn notify_lsp_file_changed(&mut self, path: &Path) {
+        if let Some(lsp) = &mut self.lsp {
+            if let Ok(uri) = url::Url::from_file_path(path) {
+                if let Ok(lsp_uri) = uri.as_str().parse::<lsp_types::Uri>() {
+                    // Detect language for this file
+                    if let Some(language) = detect_language(path) {
+                        // Get the new content
+                        let content = self.buffers.values()
+                            .find(|s| s.buffer.file_path() == Some(path))
+                            .map(|state| state.buffer.to_string())
+                            .unwrap_or_default();
+
+                        // Use full document sync - send the entire new content
+                        if let Some(client) = lsp.get_or_spawn(&language) {
+                            let content_change = TextDocumentContentChangeEvent {
+                                range: None,  // None means full document replacement
+                                range_length: None,
+                                text: content,
+                            };
+                            if let Err(e) = client.did_change(lsp_uri, vec![content_change]) {
+                                tracing::warn!("Failed to notify LSP of file change: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handle a file change notification (from file watcher)
+    pub fn handle_file_changed(&mut self, changed_path: &str) {
+        let path = PathBuf::from(changed_path);
+
+        // Find buffers that have this file open
+        let buffer_ids: Vec<BufferId> = self.buffers.iter()
+            .filter(|(_, state)| state.buffer.file_path() == Some(&path))
+            .map(|(id, _)| *id)
+            .collect();
+
+        if buffer_ids.is_empty() {
+            return;
+        }
+
+        for buffer_id in buffer_ids {
+            let state = match self.buffers.get(&buffer_id) {
+                Some(s) => s,
+                None => continue,
+            };
+
+            // Check if the file actually changed (compare mod times)
+            let file_changed = if let Ok(metadata) = std::fs::metadata(&path) {
+                if let Ok(new_mtime) = metadata.modified() {
+                    match self.file_mod_times.get(&path) {
+                        Some(old_mtime) => new_mtime > *old_mtime,
+                        None => true,
+                    }
+                } else {
+                    true
+                }
+            } else {
+                false
+            };
+
+            if !file_changed {
+                continue;
+            }
+
+            // If buffer has local modifications, show a warning (don't auto-revert)
+            if state.buffer.is_modified() {
+                self.status_message = Some(format!(
+                    "File {} changed on disk (buffer has unsaved changes)",
+                    path.display()
+                ));
+                continue;
+            }
+
+            // Auto-revert if enabled and buffer is not modified
+            if self.auto_revert_enabled {
+                // Temporarily switch to this buffer to revert it
+                let current_active = self.active_buffer;
+                self.active_buffer = buffer_id;
+
+                if let Err(e) = self.revert_file() {
+                    tracing::error!("Failed to auto-revert file {:?}: {}", path, e);
+                } else {
+                    tracing::info!("Auto-reverted file: {:?}", path);
+                }
+
+                // Switch back to original buffer
+                self.active_buffer = current_active;
+            }
+        }
+    }
+
+    /// Check if saving would overwrite changes made by another process
+    /// Returns Some(current_mtime) if there's a conflict, None otherwise
+    pub fn check_save_conflict(&self) -> Option<std::time::SystemTime> {
+        let path = match self.active_state().buffer.file_path() {
+            Some(p) => p,
+            None => return None,
+        };
+
+        // Get current file modification time
+        let current_mtime = match std::fs::metadata(path).and_then(|m| m.modified()) {
+            Ok(mtime) => mtime,
+            Err(_) => return None, // File doesn't exist or can't read metadata
+        };
+
+        // Compare with our recorded modification time
+        match self.file_mod_times.get(path) {
+            Some(recorded_mtime) if current_mtime > *recorded_mtime => {
+                // File was modified externally since we last loaded/saved it
+                Some(current_mtime)
+            }
+            _ => None,
+        }
     }
 
     /// Check if the editor should quit
@@ -2835,7 +3120,7 @@ impl Editor {
                 }
                 AsyncMessage::FileChanged { path } => {
                     tracing::info!("File changed externally: {}", path);
-                    // TODO: Handle external file changes
+                    self.handle_file_changed(&path);
                 }
                 AsyncMessage::GitStatusChanged { status } => {
                     tracing::info!("Git status changed: {}", status);

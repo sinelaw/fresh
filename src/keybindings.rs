@@ -186,6 +186,8 @@ pub enum Action {
     New,
     Close,
     Quit,
+    Revert,
+    ToggleAutoRevert,
 
     // Navigation
     GotoLine,
@@ -441,6 +443,8 @@ impl Action {
             "new" => Some(Action::New),
             "close" => Some(Action::Close),
             "quit" => Some(Action::Quit),
+            "revert" => Some(Action::Revert),
+            "toggle_auto_revert" => Some(Action::ToggleAutoRevert),
             "goto_line" => Some(Action::GotoLine),
             "goto_matching_bracket" => Some(Action::GoToMatchingBracket),
             "jump_to_next_error" => Some(Action::JumpToNextError),
@@ -1246,6 +1250,8 @@ impl KeybindingResolver {
             Action::New => "New file".to_string(),
             Action::Close => "Close file".to_string(),
             Action::Quit => "Quit editor".to_string(),
+            Action::Revert => "Revert to saved file".to_string(),
+            Action::ToggleAutoRevert => "Toggle auto-revert mode".to_string(),
             Action::GotoLine => "Go to line number".to_string(),
             Action::GoToMatchingBracket => "Go to matching bracket".to_string(),
             Action::JumpToNextError => "Jump to next error/diagnostic".to_string(),
