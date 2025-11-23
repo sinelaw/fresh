@@ -235,3 +235,45 @@ fn test_auto_revert_rapid_changes() {
 
     harness.assert_buffer_content("v10");
 }
+
+/// Test auto-revert with temp+rename save pattern (like vim, vscode, etc.)
+/// This specifically tests the inode change scenario on Linux where inotify
+/// watches inodes rather than paths. When a file is saved via temp+rename,
+/// the inode changes and the watch can become stale.
+#[test]
+fn test_auto_revert_with_temp_rename_save() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("temp_rename_test.txt");
+
+    // Create initial file
+    fs::write(&file_path, "Initial content v1").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.assert_buffer_content("Initial content v1");
+
+    // Simulate multiple save cycles using the temp+rename pattern
+    // This is how many editors (vim, vscode, etc.) save files
+    for version in 2..=5 {
+        let new_content = format!("Updated content v{}", version);
+
+        thread::sleep(Duration::from_millis(50));
+
+        // Write to a temp file first, then rename (atomic save pattern)
+        // This changes the file's inode, which can break inotify watches
+        let temp_path = temp_dir.path().join(format!(".temp_rename_test.txt.{}", version));
+        fs::write(&temp_path, &new_content).unwrap();
+        fs::rename(&temp_path, &file_path).unwrap();
+
+        // Wait for the buffer to update
+        let expected = new_content.clone();
+        harness
+            .wait_until(|h| h.get_buffer_content() == expected)
+            .expect(&format!(
+                "Auto-revert should detect temp+rename save for version {}",
+                version
+            ));
+
+        harness.assert_buffer_content(&new_content);
+    }
+}

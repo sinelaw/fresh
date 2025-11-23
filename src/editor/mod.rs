@@ -72,7 +72,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     Frame,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -328,6 +328,10 @@ pub struct Editor {
 
     /// File watcher for auto-revert functionality
     file_watcher: Option<notify::RecommendedWatcher>,
+
+    /// Directories currently being watched (to avoid duplicate watches)
+    /// We watch directories instead of files to handle atomic saves (temp+rename)
+    watched_dirs: HashSet<PathBuf>,
 
     /// Last known modification times for watched files (for conflict detection)
     /// Maps file path to last known modification time
@@ -602,6 +606,7 @@ impl Editor {
             pending_lsp_confirmation: None,
             auto_revert_enabled: true,
             file_watcher: None,
+            watched_dirs: HashSet::new(),
             file_mod_times: HashMap::new(),
         })
     }
@@ -2257,6 +2262,7 @@ impl Editor {
         } else {
             // Stop file watcher
             self.file_watcher = None;
+            self.watched_dirs.clear();
             self.status_message = Some("Auto-revert disabled".to_string());
         }
     }
@@ -2275,11 +2281,20 @@ impl Editor {
         };
 
         // Create a new watcher
+        // We watch directories (not files) to handle atomic saves where editors
+        // write to a temp file and rename it, which changes the file's inode
         let watcher_result = notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
             match res {
                 Ok(event) => {
-                    // Only handle modify and create events
-                    if matches!(event.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_)) {
+                    // Handle modify, create, and rename events
+                    // Rename is important for atomic saves (temp file + rename)
+                    let dominated = matches!(
+                        event.kind,
+                        notify::EventKind::Modify(_)
+                            | notify::EventKind::Create(_)
+                            | notify::EventKind::Remove(_)
+                    );
+                    if dominated {
                         for path in event.paths {
                             if let Err(e) = sender.send(AsyncMessage::FileChanged {
                                 path: path.display().to_string(),
@@ -2297,11 +2312,17 @@ impl Editor {
 
         match watcher_result {
             Ok(mut watcher) => {
-                // Watch all currently open files
+                // Watch parent directories of all currently open files
                 for state in self.buffers.values() {
                     if let Some(path) = state.buffer.file_path() {
-                        if let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive) {
-                            tracing::warn!("Failed to watch file {:?}: {}", path, e);
+                        if let Some(parent) = path.parent() {
+                            if !self.watched_dirs.contains(parent) {
+                                if let Err(e) = watcher.watch(parent, RecursiveMode::NonRecursive) {
+                                    tracing::warn!("Failed to watch directory {:?}: {}", parent, e);
+                                } else {
+                                    self.watched_dirs.insert(parent.to_path_buf());
+                                }
+                            }
                         }
                     }
                 }
@@ -2316,6 +2337,8 @@ impl Editor {
     }
 
     /// Add a file to the file watcher (called when opening files)
+    /// We watch the parent directory instead of the file itself to handle
+    /// atomic saves (temp file + rename) which change the file's inode
     fn watch_file(&mut self, path: &Path) {
         use notify::{RecursiveMode, Watcher};
 
@@ -2326,15 +2349,22 @@ impl Editor {
             }
         }
 
-        // Add to watcher if auto-revert is enabled
+        // Add parent directory to watcher if auto-revert is enabled
         if self.auto_revert_enabled {
             // Start file watcher if not already running
             if self.file_watcher.is_none() {
                 self.start_file_watcher();
             }
-            if let Some(watcher) = &mut self.file_watcher {
-                if let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive) {
-                    tracing::warn!("Failed to watch file {:?}: {}", path, e);
+            // Watch the parent directory if not already watched
+            if let Some(parent) = path.parent() {
+                if !self.watched_dirs.contains(parent) {
+                    if let Some(watcher) = &mut self.file_watcher {
+                        if let Err(e) = watcher.watch(parent, RecursiveMode::NonRecursive) {
+                            tracing::warn!("Failed to watch directory {:?}: {}", parent, e);
+                        } else {
+                            self.watched_dirs.insert(parent.to_path_buf());
+                        }
+                    }
                 }
             }
         }
@@ -2432,8 +2462,7 @@ impl Editor {
                 // Switch back to original buffer
                 self.active_buffer = current_active;
 
-                // Re-watch the file in case the inode changed (e.g., file was replaced)
-                // This is necessary on Linux with inotify which watches inodes, not paths
+                // Update the modification time tracking for this file
                 self.watch_file(&path);
             }
         }
