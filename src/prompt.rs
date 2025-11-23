@@ -49,6 +49,8 @@ pub enum PromptType {
     JumpToBookmark,
     /// Set compose width (empty clears to viewport)
     SetComposeWidth,
+    /// Stop a running LSP server (select from list)
+    StopLspServer,
 }
 
 /// Prompt state for the minibuffer

@@ -827,8 +827,8 @@ impl Editor {
                 }
             }
             Action::LspStop => {
-                // Get list of running LSP servers and show selection popup
-                let running_servers = if let Some(lsp) = &self.lsp {
+                // Get list of running LSP servers
+                let running_servers: Vec<String> = if let Some(lsp) = &self.lsp {
                     lsp.running_servers()
                 } else {
                     Vec::new()
@@ -837,8 +837,38 @@ impl Editor {
                 if running_servers.is_empty() {
                     self.set_status_message("No LSP servers are currently running".to_string());
                 } else {
-                    // Show popup with running servers to select from
-                    self.show_lsp_stop_popup(&running_servers);
+                    // Create suggestions from running servers
+                    let suggestions: Vec<crate::commands::Suggestion> = running_servers
+                        .iter()
+                        .map(|lang| {
+                            let description = if let Some(lsp) = &self.lsp {
+                                lsp.get_config(lang)
+                                    .map(|c| format!("Command: {}", c.command))
+                            } else {
+                                None
+                            };
+                            crate::commands::Suggestion {
+                                text: lang.clone(),
+                                description,
+                                value: Some(lang.clone()),
+                                disabled: false,
+                                keybinding: None,
+                            }
+                        })
+                        .collect();
+
+                    // Start prompt with suggestions
+                    self.prompt = Some(crate::prompt::Prompt::with_suggestions(
+                        "Stop LSP server: ".to_string(),
+                        PromptType::StopLspServer,
+                        suggestions,
+                    ));
+                    // Auto-select first suggestion
+                    if let Some(prompt) = self.prompt.as_mut() {
+                        if !prompt.suggestions.is_empty() {
+                            prompt.selected_suggestion = Some(0);
+                        }
+                    }
                 }
             }
             Action::ToggleInlayHints => {
@@ -1547,6 +1577,25 @@ impl Editor {
                             // Perform LSP rename with the new name from the prompt input
                             self.perform_lsp_rename(input, original_text, start_pos, overlay_handle);
                         }
+                        PromptType::StopLspServer => {
+                            // Stop the selected LSP server
+                            let language = input.trim();
+                            if !language.is_empty() {
+                                if let Some(lsp) = &mut self.lsp {
+                                    if lsp.shutdown_server(language) {
+                                        self.set_status_message(format!(
+                                            "LSP server for '{}' stopped (use 'Restart LSP Server' to re-enable)",
+                                            language
+                                        ));
+                                    } else {
+                                        self.set_status_message(format!(
+                                            "No running LSP server found for '{}'",
+                                            language
+                                        ));
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1575,32 +1624,6 @@ impl Editor {
                 if let Some(action) = lsp_confirmation_action {
                     self.hide_popup();
                     self.handle_lsp_confirmation_response(&action);
-                    return Ok(());
-                }
-
-                // Check if this is an LSP stop popup
-                let lsp_stop_action = if let Some(popup) = self.active_state().popups.top() {
-                    if let Some(title) = &popup.title {
-                        if title == "Stop LSP Server" {
-                            if let Some(item) = popup.selected_item() {
-                                item.data.clone()
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                // Handle LSP stop if present
-                if let Some(action) = lsp_stop_action {
-                    self.hide_popup();
-                    self.handle_lsp_stop_response(&action);
                     return Ok(());
                 }
 

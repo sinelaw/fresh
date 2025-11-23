@@ -63,6 +63,10 @@ pub struct LspManager {
     /// Whether to require confirmation before spawning LSP servers
     /// When true, LSP servers won't auto-spawn until user approves
     require_confirmation: bool,
+
+    /// Languages that have been explicitly disabled/stopped by the user
+    /// These will not auto-restart until user manually restarts them
+    disabled_languages: HashSet<String>,
 }
 
 impl LspManager {
@@ -79,6 +83,7 @@ impl LspManager {
             pending_restarts: HashMap::new(),
             allowed_languages: HashSet::new(),
             require_confirmation: true, // Require confirmation by default
+            disabled_languages: HashSet::new(),
         }
     }
 
@@ -224,6 +229,15 @@ impl LspManager {
             let _ = handle.shutdown(); // Best-effort cleanup
         }
 
+        // Check if server was explicitly disabled by user (via stop command)
+        // Don't auto-restart disabled servers
+        if self.disabled_languages.contains(language) {
+            return format!(
+                "LSP server for {} stopped. Use 'Restart LSP Server' command to start it again.",
+                language
+            );
+        }
+
         // Check if we're in cooldown
         if self.restart_cooldown.contains(language) {
             return format!(
@@ -341,12 +355,15 @@ impl LspManager {
         tracing::info!("Cleared restart cooldown for {}", language);
     }
 
-    /// Manually restart a language server (bypasses cooldown)
+    /// Manually restart a language server (bypasses cooldown and re-enables auto-restart)
     ///
     /// Returns (success, message) tuple
     pub fn manual_restart(&mut self, language: &str) -> (bool, String) {
         // Clear any existing state
         self.clear_cooldown(language);
+
+        // Re-enable the language (remove from disabled set)
+        self.disabled_languages.remove(language);
 
         // Remove existing handle
         if let Some(handle) = self.handles.remove(language) {
@@ -387,11 +404,20 @@ impl LspManager {
 
     /// Shutdown a specific language server
     ///
+    /// This marks the server as disabled, preventing auto-restart until the user
+    /// explicitly restarts it using the restart command.
+    ///
     /// Returns true if the server was found and shutdown, false otherwise
     pub fn shutdown_server(&mut self, language: &str) -> bool {
         if let Some(handle) = self.handles.remove(language) {
-            tracing::info!("Shutting down LSP server for {}", language);
+            tracing::info!("Shutting down LSP server for {} (disabled until manual restart)", language);
             let _ = handle.shutdown();
+            // Mark as disabled to prevent auto-restart
+            self.disabled_languages.insert(language.to_string());
+            // Cancel any pending restarts
+            self.pending_restarts.remove(language);
+            // Remove from restart cooldown
+            self.restart_cooldown.remove(language);
             // Also remove from allowed languages so it will require confirmation again
             // if user tries to start it later
             self.allowed_languages.remove(language);

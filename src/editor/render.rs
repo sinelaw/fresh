@@ -746,66 +746,6 @@ impl Editor {
         }
     }
 
-    // === LSP Stop Popup ===
-
-    /// Show a popup to select which LSP server to stop
-    pub fn show_lsp_stop_popup(&mut self, running_servers: &[String]) {
-        use crate::event::{PopupContentData, PopupData, PopupListItemData, PopupPositionData};
-
-        let items: Vec<PopupListItemData> = running_servers
-            .iter()
-            .map(|lang| {
-                // Get the command name for display if available
-                let detail = if let Some(lsp) = &self.lsp {
-                    lsp.get_config(lang)
-                        .map(|c| format!("Running: {}", c.command))
-                } else {
-                    None
-                };
-
-                PopupListItemData {
-                    text: format!("{} LSP Server", lang),
-                    detail,
-                    icon: None,
-                    data: Some(format!("stop:{}", lang)),
-                }
-            })
-            .collect();
-
-        let popup = PopupData {
-            title: Some("Stop LSP Server".to_string()),
-            content: PopupContentData::List { items, selected: 0 },
-            position: PopupPositionData::Centered,
-            width: 50,
-            max_height: 15,
-            bordered: true,
-        };
-
-        self.show_popup(popup);
-    }
-
-    /// Handle the LSP stop popup response
-    ///
-    /// Returns true if a stop action was handled, false otherwise.
-    pub fn handle_lsp_stop_response(&mut self, action: &str) -> bool {
-        // Check if this is a stop action
-        if let Some(language) = action.strip_prefix("stop:") {
-            if let Some(lsp) = &mut self.lsp {
-                if lsp.shutdown_server(language) {
-                    self.set_status_message(format!("LSP server for {} stopped", language));
-                } else {
-                    self.set_status_message(format!(
-                        "Failed to stop LSP server for {} (not running)",
-                        language
-                    ));
-                }
-            }
-            true
-        } else {
-            false
-        }
-    }
-
     /// Navigate popup selection (next item)
     pub fn popup_select_next(&mut self) {
         let event = Event::PopupSelectNext;
