@@ -2431,6 +2431,10 @@ impl Editor {
 
                 // Switch back to original buffer
                 self.active_buffer = current_active;
+
+                // Re-watch the file in case the inode changed (e.g., file was replaced)
+                // This is necessary on Linux with inotify which watches inodes, not paths
+                self.watch_file(&path);
             }
         }
     }
