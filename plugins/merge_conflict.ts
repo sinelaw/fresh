@@ -1122,22 +1122,40 @@ function computeConflictOffset(side: "ours" | "theirs", conflictIndex: number): 
 
 /**
  * Compute the byte offset where a conflict appears in the RESULT panel content.
- * This is based on the result file entries which include conflict markers or resolved content.
+ * The RESULT panel shows the original file with conflict markers (<<<<<<< OURS, etc.)
+ * We need to find the Nth <<<<<<< marker.
  */
 function computeResultConflictOffset(conflictIndex: number): number {
   const entries = buildResultFileEntries();
-  let offset = 0;
+  const content = entries.map(e => e.text).join("");
 
-  for (const entry of entries) {
-    // Look for the conflict's marker (either unresolved markers or "Conflict N" header)
-    if (entry.text.includes(`Conflict ${conflictIndex + 1}`)) {
-      return offset;
+  // Find the Nth occurrence of <<<<<<< marker
+  let searchPos = 0;
+  let conflictCount = 0;
+
+  while (searchPos < content.length) {
+    const markerPos = content.indexOf("<<<<<<<", searchPos);
+    if (markerPos === -1) break;
+
+    if (conflictCount === conflictIndex) {
+      editor.debug(`computeResultConflictOffset: found conflict ${conflictIndex} at position ${markerPos}`);
+      return markerPos;
     }
-    // Also check for <<<<<<< OURS markers that correspond to this conflict
-    // by tracking which conflict we're in
-    offset += entry.text.length;
+
+    conflictCount++;
+    searchPos = markerPos + 7; // Skip past "<<<<<<<" to continue searching
   }
 
+  // Fallback: use ratio-based estimation like we do for OURS/THEIRS
+  const conflict = mergeState.conflicts[conflictIndex];
+  if (conflict && mergeState.originalContent.length > 0) {
+    const ratio = conflict.startOffset / mergeState.originalContent.length;
+    const estimatedPos = Math.floor(ratio * content.length);
+    editor.debug(`computeResultConflictOffset: using ratio fallback, estimated position ${estimatedPos}`);
+    return estimatedPos;
+  }
+
+  editor.debug(`computeResultConflictOffset: returning 0 (no markers found)`);
   return 0;
 }
 
