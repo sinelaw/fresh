@@ -336,8 +336,8 @@ pub struct Editor {
     file_mod_times: HashMap<PathBuf, std::time::SystemTime>,
 
     /// Tracks rapid file change events for debouncing
-    /// Maps file path to (last event time, event count)
-    file_rapid_change_counts: HashMap<PathBuf, (std::time::Instant, u32)>,
+    /// Maps file path to (window_start, last_event_time, revert_count)
+    file_rapid_change_counts: HashMap<PathBuf, (std::time::Instant, std::time::Instant, u32)>,
 }
 
 impl Editor {
@@ -3396,8 +3396,13 @@ impl Editor {
                 }
                 AsyncMessage::FileChanged { path } => {
                     use std::time::Duration;
+                    // Window in which we count reverts
                     const DEBOUNCE_WINDOW: Duration = Duration::from_secs(10);
-                    const RAPID_REVERT_THRESHOLD: u32 = 10; // Require 10 reverts in 10 seconds to disable
+                    // Minimum time between events to count as separate reverts
+                    // (file watchers emit multiple events per save - coalesce them)
+                    const EVENT_COALESCE_TIME: Duration = Duration::from_millis(500);
+                    // Require 10 distinct reverts in 10 seconds to disable
+                    const RAPID_REVERT_THRESHOLD: u32 = 10;
 
                     // Skip if auto-revert is disabled
                     if !self.auto_revert_enabled {
@@ -3421,12 +3426,25 @@ impl Editor {
                         continue;
                     }
 
+                    let now = std::time::Instant::now();
+
                     // Track rapid file change events - only disable after many reverts in short window
-                    if let Some((window_start, count)) =
+                    if let Some((window_start, last_event, count)) =
                         self.file_rapid_change_counts.get_mut(&path_buf)
                     {
                         if window_start.elapsed() < DEBOUNCE_WINDOW {
-                            *count += 1;
+                            // Only count as a new revert if enough time passed since last event
+                            // This coalesces multiple events from a single save operation
+                            if last_event.elapsed() >= EVENT_COALESCE_TIME {
+                                *count += 1;
+                                tracing::debug!(
+                                    "Auto-revert count for {:?}: {} (threshold: {})",
+                                    path_buf,
+                                    count,
+                                    RAPID_REVERT_THRESHOLD
+                                );
+                            }
+                            *last_event = now;
 
                             if *count >= RAPID_REVERT_THRESHOLD {
                                 // Disable auto-revert and stop the file watcher
@@ -3448,12 +3466,13 @@ impl Editor {
                         } else {
                             // Reset counter - start a new window
                             *count = 1;
-                            *window_start = std::time::Instant::now();
+                            *window_start = now;
+                            *last_event = now;
                         }
                     } else {
                         // First event for this file
                         self.file_rapid_change_counts
-                            .insert(path_buf.clone(), (std::time::Instant::now(), 1));
+                            .insert(path_buf.clone(), (now, now, 1));
                     }
 
                     tracing::info!("File changed externally: {}", path);
