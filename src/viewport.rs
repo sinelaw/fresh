@@ -160,18 +160,27 @@ impl Viewport {
         }
     }
 
-    /// Find the view line index that best matches a source byte position
+    /// Find the view line index that contains a source byte position
+    /// Returns the line where the byte falls within its range, not just the first line
+    /// starting at or after the byte.
     fn find_view_line_for_byte(&self, view_lines: &[ViewLine], target_byte: usize) -> usize {
+        // Find the line that contains the target byte by checking if target is
+        // between this line's start and the next line's start
+        let mut best_match = 0;
+
         for (idx, line) in view_lines.iter().enumerate() {
-            // Find the first source offset in this line
             if let Some(first_source) = line.char_mappings.iter().find_map(|m| *m) {
-                if first_source >= target_byte {
-                    return idx;
+                if first_source <= target_byte {
+                    // This line starts at or before target, so it might contain it
+                    best_match = idx;
+                } else {
+                    // This line starts after target, so previous line contains it
+                    break;
                 }
             }
         }
-        // If not found, return the last valid index
-        view_lines.len().saturating_sub(1)
+
+        best_match
     }
 
     /// Get the source byte position for a view line index
@@ -249,10 +258,11 @@ impl Viewport {
         // Handle horizontal scrolling for cursor column
         if cursor_view_line < view_lines.len() {
             let line = &view_lines[cursor_view_line];
-            let cursor_col = line.char_mappings
-                .iter()
-                .position(|m| *m == Some(cursor.position))
-                .unwrap_or(0);
+            // Get the byte position of the first character in this line
+            // Then calculate cursor column as offset from line start
+            // This correctly handles the cursor being at end-of-line (past last char)
+            let line_start = line.char_mappings.iter().find_map(|m| *m).unwrap_or(0);
+            let cursor_col = cursor.position.saturating_sub(line_start);
             let line_length = line.text.trim_end_matches('\n').chars().count();
             self.ensure_column_visible_simple(cursor_col, line_length, gutter_width);
         }
