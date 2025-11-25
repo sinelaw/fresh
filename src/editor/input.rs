@@ -2066,6 +2066,8 @@ impl Editor {
                 self.mouse_state.dragging_separator = None;
                 self.mouse_state.drag_start_position = None;
                 self.mouse_state.drag_start_ratio = None;
+                self.mouse_state.dragging_file_explorer = false;
+                self.mouse_state.drag_start_explorer_width = None;
             }
             MouseEventKind::Moved => {
                 self.update_hover_target(col, row);
@@ -2167,6 +2169,19 @@ impl Editor {
                         Some(HoverTarget::MenuDropdownItem(active_idx, item_idx));
                     return;
                 }
+            }
+        }
+
+        // Check file explorer border (for resize)
+        if let Some(explorer_area) = self.cached_layout.file_explorer_area {
+            // The border is at the right edge of the file explorer area
+            let border_x = explorer_area.x + explorer_area.width;
+            if col == border_x
+                && row >= explorer_area.y
+                && row < explorer_area.y + explorer_area.height
+            {
+                self.mouse_state.hover_target = Some(HoverTarget::FileExplorerBorder);
+                return;
             }
         }
 
@@ -2415,6 +2430,21 @@ impl Editor {
             return Ok(());
         }
 
+        // Check if click is on file explorer border (for drag resizing)
+        if let Some(explorer_area) = self.cached_layout.file_explorer_area {
+            let border_x = explorer_area.x + explorer_area.width;
+            if col == border_x
+                && row >= explorer_area.y
+                && row < explorer_area.y + explorer_area.height
+            {
+                // Start file explorer border drag
+                self.mouse_state.dragging_file_explorer = true;
+                self.mouse_state.drag_start_position = Some((col, row));
+                self.mouse_state.drag_start_explorer_width = Some(self.file_explorer_width_percent);
+                return Ok(());
+            }
+        }
+
         // Check if click is on a split separator (for drag resizing)
         for (split_id, direction, sep_x, sep_y, sep_length) in &self.cached_layout.separator_areas {
             let is_on_separator = match direction {
@@ -2581,6 +2611,36 @@ impl Editor {
         if let Some((split_id, direction)) = self.mouse_state.dragging_separator {
             self.handle_separator_drag(col, row, split_id, direction)?;
             return Ok(());
+        }
+
+        // If dragging file explorer border, update width
+        if self.mouse_state.dragging_file_explorer {
+            self.handle_file_explorer_border_drag(col)?;
+            return Ok(());
+        }
+
+        Ok(())
+    }
+
+    /// Handle file explorer border drag for resizing
+    pub(super) fn handle_file_explorer_border_drag(&mut self, col: u16) -> std::io::Result<()> {
+        let Some((start_col, _start_row)) = self.mouse_state.drag_start_position else {
+            return Ok(());
+        };
+        let Some(start_width) = self.mouse_state.drag_start_explorer_width else {
+            return Ok(());
+        };
+
+        // Calculate the delta in screen space
+        let delta = col as i32 - start_col as i32;
+        let total_width = self.terminal_width as i32;
+
+        if total_width > 0 {
+            // Convert screen delta to percentage delta
+            let percent_delta = delta as f32 / total_width as f32;
+            // Clamp the new width between 10% and 50%
+            let new_width = (start_width + percent_delta).clamp(0.1, 0.5);
+            self.file_explorer_width_percent = new_width;
         }
 
         Ok(())

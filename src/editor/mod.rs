@@ -172,6 +172,10 @@ pub struct Editor {
     /// Whether file explorer is visible
     file_explorer_visible: bool,
 
+    /// File explorer width as percentage (0.0 to 1.0)
+    /// This is the runtime value that can be modified by dragging the border
+    file_explorer_width_percent: f32,
+
     /// Whether mouse capture is enabled
     mouse_enabled: bool,
 
@@ -534,6 +538,9 @@ impl Editor {
             }
         }
 
+        // Extract config values before moving config into the struct
+        let file_explorer_width = config.file_explorer.width;
+
         Ok(Editor {
             buffers,
             active_buffer: buffer_id,
@@ -562,6 +569,7 @@ impl Editor {
             file_explorer: None,
             fs_manager,
             file_explorer_visible: false,
+            file_explorer_width_percent: file_explorer_width,
             mouse_enabled: true,
             key_context: KeyContext::Normal,
             menu_state: crate::ui::MenuState::new(),
@@ -1854,14 +1862,13 @@ impl Editor {
 
     /// Calculate the effective width available for tabs.
     ///
-    /// When the file explorer is visible, tabs only get approximately 70% of the terminal width.
-    /// This matches the layout calculation in render.rs where editor content gets 70% when
-    /// the file explorer is open.
+    /// When the file explorer is visible, tabs only get a portion of the terminal width
+    /// based on `file_explorer_width_percent`. This matches the layout calculation in render.rs.
     fn effective_tabs_width(&self) -> u16 {
         if self.file_explorer_visible && self.file_explorer.is_some() {
-            // When file explorer is visible, tabs only get 70% of the width
-            // This matches the Constraint::Percentage(70) in render.rs
-            (self.terminal_width as u32 * 70 / 100) as u16
+            // When file explorer is visible, tabs get (1 - explorer_width) of the terminal width
+            let editor_percent = 1.0 - self.file_explorer_width_percent;
+            (self.terminal_width as f32 * editor_percent) as u16
         } else {
             self.terminal_width
         }

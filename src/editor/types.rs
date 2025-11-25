@@ -235,6 +235,8 @@ pub enum HoverTarget {
     PopupListItem(usize, usize),
     /// Hovering over a suggestion item (item_index)
     SuggestionItem(usize),
+    /// Hovering over the file explorer border (for resize)
+    FileExplorerBorder,
 }
 
 /// Mouse state tracking
@@ -256,6 +258,10 @@ pub(super) struct MouseState {
     pub drag_start_position: Option<(u16, u16)>,
     /// Initial split ratio when starting to drag a separator
     pub drag_start_ratio: Option<f32>,
+    /// Whether we're currently dragging the file explorer border
+    pub dragging_file_explorer: bool,
+    /// Initial file explorer width percentage when starting to drag
+    pub drag_start_explorer_width: Option<f32>,
     /// Current hover target (if any)
     pub hover_target: Option<HoverTarget>,
 }

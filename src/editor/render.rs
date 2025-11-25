@@ -49,11 +49,14 @@ impl Editor {
 
         if self.file_explorer_visible && self.file_explorer.is_some() {
             // Split horizontally: [file_explorer | editor]
+            // Convert f32 percentage (0.0-1.0) to u16 percentage (0-100)
+            let explorer_percent = (self.file_explorer_width_percent * 100.0) as u16;
+            let editor_percent = 100 - explorer_percent;
             let horizontal_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Percentage(30), // File explorer
-                    Constraint::Percentage(70), // Editor area
+                    Constraint::Percentage(explorer_percent), // File explorer
+                    Constraint::Percentage(editor_percent),   // Editor area
                 ])
                 .split(main_content_area);
 
@@ -493,6 +496,25 @@ impl Editor {
                                 ),
                             );
                         }
+                    }
+                }
+            }
+            Some(HoverTarget::FileExplorerBorder) => {
+                // Highlight the file explorer border for resize
+                if let Some(explorer_area) = self.cached_layout.file_explorer_area {
+                    let hover_style = Style::default().fg(self.theme.split_separator_hover_fg);
+                    let border_x = explorer_area.x + explorer_area.width;
+                    for row_offset in 0..explorer_area.height {
+                        let paragraph = Paragraph::new(Span::styled("│", hover_style));
+                        frame.render_widget(
+                            paragraph,
+                            ratatui::layout::Rect::new(
+                                border_x,
+                                explorer_area.y + row_offset,
+                                1,
+                                1,
+                            ),
+                        );
                     }
                 }
             }
