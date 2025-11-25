@@ -58,6 +58,65 @@ fn test_basic_search_forward() {
     );
 }
 
+/// Test that Ctrl+Shift+N works as an alternative for Shift+F3 (find previous)
+/// This is important because many terminals don't properly capture Shift+F3
+#[test]
+fn test_find_previous_with_ctrl_shift_n() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Create a test file with searchable content
+    std::fs::write(&file_path, "hello world\nfoo bar\nhello again\nhello final").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Trigger search with Ctrl+F
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Type search query
+    harness.type_text("hello").unwrap();
+    harness.render().unwrap();
+
+    // Confirm search - moves to first match
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Should be at first "hello" (position 0)
+    let first_match_pos = harness.cursor_position();
+    assert_eq!(first_match_pos, 0, "Should start at first 'hello'");
+
+    // Find next match with F3
+    harness.send_key(KeyCode::F(3), KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Now at second "hello" (in "hello again")
+    let second_match_pos = harness.cursor_position();
+    assert!(
+        second_match_pos > first_match_pos,
+        "F3 should move to next match"
+    );
+
+    // Find previous with Ctrl+Shift+N (alternative for Shift+F3)
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Should be back at first match
+    let back_to_first = harness.cursor_position();
+    assert_eq!(
+        back_to_first, first_match_pos,
+        "Ctrl+Shift+N should go back to previous match"
+    );
+}
+
 /// Test that selecting a word pre-populates the search prompt and find next keeps working
 #[test]
 fn test_find_next_prefills_from_selection() {

@@ -241,6 +241,90 @@ fn test_auto_revert_rapid_changes() {
     harness.assert_buffer_content("v10");
 }
 
+/// Test that auto-revert preserves cursor position when file content changes
+#[test]
+fn test_auto_revert_preserves_cursor_position() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("cursor_preserve.txt");
+
+    // Create a file with some lines
+    let content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5";
+    fs::write(&file_path, content).unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor to a specific position (end of line 3, which is "Line 3")
+    use crossterm::event::{KeyCode, KeyModifiers};
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap(); // Now on line 3
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Record cursor position - should be at end of "Line 3" which is at byte offset 20
+    let cursor_before = harness.cursor_position();
+    assert!(cursor_before > 0, "Cursor should have moved from start");
+
+    // Modify the file externally (but keep same structure so cursor position is valid)
+    thread::sleep(Duration::from_millis(50));
+    let modified_content = "Line 1\nLine 2\nLine X\nLine 4\nLine 5"; // Same length, just changed content
+    fs::write(&file_path, modified_content).unwrap();
+
+    // Wait for auto-revert
+    let expected = modified_content.to_string();
+    harness
+        .wait_until(|h| h.get_buffer_content() == expected)
+        .expect("Auto-revert should update buffer");
+
+    // Cursor position should be preserved (or clamped to valid range)
+    let cursor_after = harness.cursor_position();
+    assert_eq!(
+        cursor_before, cursor_after,
+        "Cursor position should be preserved after auto-revert"
+    );
+}
+
+/// Test that auto-revert is not disabled by a single save operation
+/// Previously, saving the file would immediately trigger auto-revert disable
+/// because the file change event would come too quickly after the previous event
+#[test]
+fn test_auto_revert_not_disabled_by_external_save() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("save_test.txt");
+
+    fs::write(&file_path, "Initial content").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.assert_buffer_content("Initial content");
+
+    // Simulate an external save (like when another process saves the file)
+    thread::sleep(Duration::from_millis(50));
+    fs::write(&file_path, "Changed by external save").unwrap();
+
+    // Wait for auto-revert
+    harness
+        .wait_until(|h| h.get_buffer_content() == "Changed by external save")
+        .expect("Auto-revert should update buffer after external save");
+
+    // Small delay, then make another change
+    thread::sleep(Duration::from_millis(600)); // Beyond debounce window
+
+    // Make another external change - auto-revert should still be enabled
+    fs::write(&file_path, "Second external change").unwrap();
+
+    // This should also be auto-reverted (auto-revert should not have been disabled)
+    harness
+        .wait_until(|h| h.get_buffer_content() == "Second external change")
+        .expect("Auto-revert should still work after previous external save");
+
+    harness.assert_buffer_content("Second external change");
+}
+
 /// Test auto-revert with temp+rename save pattern (like vim, vscode, etc.)
 /// This specifically tests the inode change scenario on Linux where inotify
 /// watches inodes rather than paths. When a file is saved via temp+rename,

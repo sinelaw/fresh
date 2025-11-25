@@ -335,9 +335,9 @@ pub struct Editor {
     /// Maps file path to last known modification time
     file_mod_times: HashMap<PathBuf, std::time::SystemTime>,
 
-    /// Last time each file was auto-reverted (for debouncing rapid file changes)
-    /// Maps file path to the last revert time
-    file_last_revert_times: HashMap<PathBuf, std::time::Instant>,
+    /// Tracks rapid file change events for debouncing
+    /// Maps file path to (last event time, event count)
+    file_rapid_change_counts: HashMap<PathBuf, (std::time::Instant, u32)>,
 }
 
 impl Editor {
@@ -637,7 +637,7 @@ impl Editor {
             file_watcher: None,
             watched_dirs: HashSet::new(),
             file_mod_times: HashMap::new(),
-            file_last_revert_times: HashMap::new(),
+            file_rapid_change_counts: HashMap::new(),
         })
     }
 
@@ -2417,9 +2417,10 @@ impl Editor {
             return Ok(false);
         }
 
-        // Save scroll position before reloading
+        // Save scroll position and cursor positions before reloading
         let old_top_byte = self.active_state().viewport.top_byte;
         let old_left_column = self.active_state().viewport.left_column;
+        let old_cursors = self.active_state().cursors.clone();
 
         // Load the file content fresh from disk
         let mut new_state = EditorState::from_file(
@@ -2433,6 +2434,15 @@ impl Editor {
         let new_file_size = new_state.buffer.len();
         new_state.viewport.top_byte = old_top_byte.min(new_file_size);
         new_state.viewport.left_column = old_left_column;
+
+        // Restore cursor positions (clamped to valid range for new file size)
+        let mut restored_cursors = old_cursors;
+        restored_cursors.map(|cursor| {
+            cursor.position = cursor.position.min(new_file_size);
+            // Clear selection since the content may have changed
+            cursor.clear_selection();
+        });
+        new_state.cursors = restored_cursors;
 
         // Replace the current buffer with the new state
         let buffer_id = self.active_buffer;
@@ -3386,7 +3396,8 @@ impl Editor {
                 }
                 AsyncMessage::FileChanged { path } => {
                     use std::time::Duration;
-                    const DEBOUNCE_DURATION: Duration = Duration::from_secs(1);
+                    const DEBOUNCE_DURATION: Duration = Duration::from_millis(500);
+                    const RAPID_REVERT_THRESHOLD: u32 = 3; // Require 3 rapid events to disable
 
                     // Skip if auto-revert is disabled
                     if !self.auto_revert_enabled {
@@ -3395,31 +3406,55 @@ impl Editor {
 
                     let path_buf = PathBuf::from(&path);
 
-                    // If we received an event within the debounce window, the file is updating
-                    // too frequently - disable auto-revert
-                    if let Some(last_time) = self.file_last_revert_times.get(&path_buf) {
-                        if last_time.elapsed() < DEBOUNCE_DURATION {
-                            // Disable auto-revert and stop the file watcher
-                            self.auto_revert_enabled = false;
-                            self.file_watcher = None;
-                            self.watched_dirs.clear();
-                            self.status_message = Some(format!(
-                                "Auto-revert disabled: {} is updating too frequently (use Ctrl+Shift+R to re-enable)",
-                                path_buf.file_name().unwrap_or_default().to_string_lossy()
-                            ));
-                            tracing::info!(
-                                "Auto-revert disabled for {:?} (file updating faster than 1/sec)",
-                                path_buf
-                            );
-                            continue;
-                        }
+                    // Only track events for files that are actually open in the editor
+                    let is_file_open = self
+                        .buffers
+                        .iter()
+                        .any(|(_, state)| state.buffer.file_path() == Some(&path_buf));
+
+                    if !is_file_open {
+                        // Ignore events for files that aren't open (e.g., vim temp files like "4913")
+                        tracing::debug!(
+                            "Ignoring file change event for non-open file: {}",
+                            path
+                        );
+                        continue;
                     }
 
-                    // Record the event time before processing
-                    self.file_last_revert_times
-                        .insert(path_buf, std::time::Instant::now());
+                    // Track rapid file change events - only disable after multiple rapid reverts
+                    if let Some((last_time, count)) =
+                        self.file_rapid_change_counts.get_mut(&path_buf)
+                    {
+                        if last_time.elapsed() < DEBOUNCE_DURATION {
+                            *count += 1;
+                            *last_time = std::time::Instant::now();
 
-                    // TODO: preserve cursor position across auto-revert (currently only viewport is preserved)
+                            if *count >= RAPID_REVERT_THRESHOLD {
+                                // Disable auto-revert and stop the file watcher
+                                self.auto_revert_enabled = false;
+                                self.file_watcher = None;
+                                self.watched_dirs.clear();
+                                self.status_message = Some(format!(
+                                    "Auto-revert disabled: {} is updating too frequently (use Ctrl+Shift+R to re-enable)",
+                                    path_buf.file_name().unwrap_or_default().to_string_lossy()
+                                ));
+                                tracing::info!(
+                                    "Auto-revert disabled for {:?} (file updating faster than debounce threshold)",
+                                    path_buf
+                                );
+                                continue;
+                            }
+                        } else {
+                            // Reset counter if enough time has passed
+                            *count = 1;
+                            *last_time = std::time::Instant::now();
+                        }
+                    } else {
+                        // First event for this file
+                        self.file_rapid_change_counts
+                            .insert(path_buf.clone(), (std::time::Instant::now(), 1));
+                    }
+
                     tracing::info!("File changed externally: {}", path);
                     self.handle_file_changed(&path);
                 }

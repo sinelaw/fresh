@@ -272,6 +272,27 @@ pub fn action_to_events(
             // Now process insertions
             for (cursor_id, insert_position, line_start, only_spaces, char_after) in insertion_data
             {
+                // Skip-over logic for closing brackets/quotes
+                // When the user types a closing bracket and the cursor is right before that bracket,
+                // just move the cursor forward instead of inserting a duplicate
+                if auto_indent && matches!(ch, ')' | ']' | '}' | '"' | '\'' | '`') {
+                    if let Some(next_byte) = char_after {
+                        if next_byte == ch as u8 {
+                            // Just move cursor forward, don't insert
+                            events.push(Event::MoveCursor {
+                                cursor_id,
+                                old_position: insert_position,
+                                new_position: insert_position + 1,
+                                old_anchor: None,
+                                new_anchor: None,
+                                old_sticky_column: 0,
+                                new_sticky_column: 0,
+                            });
+                            continue;
+                        }
+                    }
+                }
+
                 // Auto-dedent logic for closing delimiters
                 if is_closing_delimiter
                     && auto_indent

@@ -480,6 +480,14 @@
       "when": "normal"
     },
     {
+      "comment": "Alternative for Shift-F3 (works in more terminals)",
+      "key": "n",
+      "modifiers": ["ctrl", "shift"],
+      "action": "find_previous",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Normal context - Error navigation",
       "key": "F8",
       "modifiers": [],

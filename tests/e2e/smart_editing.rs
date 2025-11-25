@@ -216,6 +216,155 @@ fn test_no_auto_close_when_config_disabled() {
 }
 
 // =============================================================================
+// Bracket Skip-Over Tests
+// =============================================================================
+
+/// Test that typing a closing paren when cursor is before one just moves cursor
+#[test]
+fn test_skip_over_closing_parenthesis() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Type an opening paren - should auto-close to "()"
+    harness.type_text("(").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content();
+    assert_eq!(content, "()", "Opening paren should auto-close");
+
+    // Cursor should be between parens, at position 1
+    assert_eq!(harness.cursor_position(), 1, "Cursor should be between parens");
+
+    // Type a closing paren - should skip over the existing one, not insert another
+    harness.type_text(")").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content();
+    assert_eq!(
+        content, "()",
+        "Typing closing paren should skip over existing one, not create ()))"
+    );
+
+    // Cursor should now be after the closing paren
+    assert_eq!(harness.cursor_position(), 2, "Cursor should be after the paren");
+}
+
+/// Test that typing a closing bracket when cursor is before one just moves cursor
+#[test]
+fn test_skip_over_closing_bracket() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Type an opening bracket - should auto-close to "[]"
+    harness.type_text("[").unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(harness.get_buffer_content(), "[]");
+    assert_eq!(harness.cursor_position(), 1);
+
+    // Type a closing bracket - should skip over existing one
+    harness.type_text("]").unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        harness.get_buffer_content(),
+        "[]",
+        "Typing closing bracket should skip over existing one"
+    );
+    assert_eq!(harness.cursor_position(), 2);
+}
+
+/// Test that typing a closing brace when cursor is before one just moves cursor
+#[test]
+fn test_skip_over_closing_brace() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Type an opening brace - should auto-close to "{}"
+    harness.type_text("{").unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(harness.get_buffer_content(), "{}");
+    assert_eq!(harness.cursor_position(), 1);
+
+    // Type a closing brace - should skip over existing one
+    harness.type_text("}").unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        harness.get_buffer_content(),
+        "{}",
+        "Typing closing brace should skip over existing one"
+    );
+    assert_eq!(harness.cursor_position(), 2);
+}
+
+/// Test that typing a closing quote when cursor is before one just moves cursor
+#[test]
+fn test_skip_over_closing_quote() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Type an opening quote - should auto-close to "\"\""
+    harness.type_text("\"").unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(harness.get_buffer_content(), "\"\"");
+    assert_eq!(harness.cursor_position(), 1);
+
+    // Type a closing quote - should skip over existing one
+    harness.type_text("\"").unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        harness.get_buffer_content(),
+        "\"\"",
+        "Typing closing quote should skip over existing one"
+    );
+    assert_eq!(harness.cursor_position(), 2);
+}
+
+/// Test that typing a closing delimiter does NOT skip if the char isn't a match
+#[test]
+fn test_no_skip_when_different_char() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "(x").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Move cursor to position 1 (before 'x')
+    harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+
+    // Type a closing paren - should insert because next char is 'x', not ')'
+    harness.type_text(")").unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        harness.get_buffer_content(),
+        "()x",
+        "Should insert closing paren when next char is not the same"
+    );
+}
+
+// =============================================================================
 // Auto-Pair Deletion Tests
 // =============================================================================
 
