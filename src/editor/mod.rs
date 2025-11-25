@@ -1594,7 +1594,8 @@ impl Editor {
         // Restore cursor and viewport from split view state
         self.sync_split_view_state_to_editor_state();
         // Ensure the active tab is visible in the newly active split
-        self.ensure_active_tab_visible(split_id, self.active_buffer, self.terminal_width);
+        // Use effective_tabs_width() to account for file explorer taking 30% of width
+        self.ensure_active_tab_visible(split_id, self.active_buffer, self.effective_tabs_width());
     }
 
     /// Sync SplitViewState's cursors and viewport to EditorState
@@ -1851,6 +1852,21 @@ impl Editor {
         }
     }
 
+    /// Calculate the effective width available for tabs.
+    ///
+    /// When the file explorer is visible, tabs only get approximately 70% of the terminal width.
+    /// This matches the layout calculation in render.rs where editor content gets 70% when
+    /// the file explorer is open.
+    fn effective_tabs_width(&self) -> u16 {
+        if self.file_explorer_visible && self.file_explorer.is_some() {
+            // When file explorer is visible, tabs only get 70% of the width
+            // This matches the Constraint::Percentage(70) in render.rs
+            (self.terminal_width as u32 * 70 / 100) as u16
+        } else {
+            self.terminal_width
+        }
+    }
+
     /// Set the active buffer and trigger all necessary side effects
     ///
     /// This is the centralized method for switching buffers. It:
@@ -1878,7 +1894,8 @@ impl Editor {
         }
 
         // Ensure the newly active tab is visible
-        self.ensure_active_tab_visible(active_split, buffer_id, self.terminal_width);
+        // Use effective_tabs_width() to account for file explorer taking 30% of width
+        self.ensure_active_tab_visible(active_split, buffer_id, self.effective_tabs_width());
 
         // Sync file explorer to the new active file (if visible and applicable)
         self.sync_file_explorer_to_active_file();
