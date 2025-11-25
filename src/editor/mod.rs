@@ -3396,8 +3396,8 @@ impl Editor {
                 }
                 AsyncMessage::FileChanged { path } => {
                     use std::time::Duration;
-                    const DEBOUNCE_DURATION: Duration = Duration::from_millis(500);
-                    const RAPID_REVERT_THRESHOLD: u32 = 3; // Require 3 rapid events to disable
+                    const DEBOUNCE_WINDOW: Duration = Duration::from_secs(10);
+                    const RAPID_REVERT_THRESHOLD: u32 = 10; // Require 10 reverts in 10 seconds to disable
 
                     // Skip if auto-revert is disabled
                     if !self.auto_revert_enabled {
@@ -3421,13 +3421,12 @@ impl Editor {
                         continue;
                     }
 
-                    // Track rapid file change events - only disable after multiple rapid reverts
-                    if let Some((last_time, count)) =
+                    // Track rapid file change events - only disable after many reverts in short window
+                    if let Some((window_start, count)) =
                         self.file_rapid_change_counts.get_mut(&path_buf)
                     {
-                        if last_time.elapsed() < DEBOUNCE_DURATION {
+                        if window_start.elapsed() < DEBOUNCE_WINDOW {
                             *count += 1;
-                            *last_time = std::time::Instant::now();
 
                             if *count >= RAPID_REVERT_THRESHOLD {
                                 // Disable auto-revert and stop the file watcher
@@ -3439,15 +3438,17 @@ impl Editor {
                                     path_buf.file_name().unwrap_or_default().to_string_lossy()
                                 ));
                                 tracing::info!(
-                                    "Auto-revert disabled for {:?} (file updating faster than debounce threshold)",
-                                    path_buf
+                                    "Auto-revert disabled for {:?} ({} reverts in {:?})",
+                                    path_buf,
+                                    count,
+                                    DEBOUNCE_WINDOW
                                 );
                                 continue;
                             }
                         } else {
-                            // Reset counter if enough time has passed
+                            // Reset counter - start a new window
                             *count = 1;
-                            *last_time = std::time::Instant::now();
+                            *window_start = std::time::Instant::now();
                         }
                     } else {
                         // First event for this file
