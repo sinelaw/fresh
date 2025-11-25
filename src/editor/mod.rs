@@ -2129,14 +2129,20 @@ impl Editor {
             if let Some(tokens) = view_transform_tokens {
                 // Use view-aware scrolling with the transform's tokens
                 let view_lines: Vec<_> = ViewLineIterator::new(&tokens).collect();
-                view_state.viewport.scroll_view_lines(&view_lines, line_offset);
+                view_state
+                    .viewport
+                    .scroll_view_lines(&view_lines, line_offset);
             } else {
                 // No view transform - use traditional buffer-based scrolling
                 // Still use SplitViewState's viewport (not EditorState's)
                 if line_offset > 0 {
-                    view_state.viewport.scroll_down(buffer, line_offset as usize);
+                    view_state
+                        .viewport
+                        .scroll_down(buffer, line_offset as usize);
                 } else {
-                    view_state.viewport.scroll_up(buffer, line_offset.unsigned_abs());
+                    view_state
+                        .viewport
+                        .scroll_up(buffer, line_offset.unsigned_abs());
                 }
             }
         }
@@ -2148,10 +2154,7 @@ impl Editor {
         let buffer_id = self.active_buffer;
 
         // Get mutable references to both buffer and view state
-        let buffer = self
-            .buffers
-            .get_mut(&buffer_id)
-            .map(|s| &mut s.buffer);
+        let buffer = self.buffers.get_mut(&buffer_id).map(|s| &mut s.buffer);
         let view_state = self.split_view_states.get_mut(&active_split);
 
         if let (Some(buffer), Some(view_state)) = (buffer, view_state) {
@@ -2221,7 +2224,9 @@ impl Editor {
                 // which updates EditorState's viewport
                 tracing::trace!(
                     "sync_editor_to_split: EditorState top_byte={} -> split {:?} top_byte={}",
-                    buffer_state.viewport.top_byte, split_id, view_state.viewport.top_byte
+                    buffer_state.viewport.top_byte,
+                    split_id,
+                    view_state.viewport.top_byte
                 );
                 view_state.viewport = buffer_state.viewport.clone();
             }
@@ -2818,7 +2823,10 @@ impl Editor {
             let msg = if modified_count == 1 {
                 "1 buffer has unsaved changes. Quit anyway? (y/n): ".to_string()
             } else {
-                format!("{} buffers have unsaved changes. Quit anyway? (y/n): ", modified_count)
+                format!(
+                    "{} buffers have unsaved changes. Quit anyway? (y/n): ",
+                    modified_count
+                )
             };
             self.start_prompt(msg, PromptType::ConfirmQuitWithModified);
         } else {

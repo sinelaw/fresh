@@ -1367,9 +1367,13 @@ impl Editor {
                                     );
 
                                     // Check if we should close the buffer after saving
-                                    if let Some(buffer_to_close) = self.pending_close_buffer.take() {
+                                    if let Some(buffer_to_close) = self.pending_close_buffer.take()
+                                    {
                                         if let Err(e) = self.force_close_buffer(buffer_to_close) {
-                                            self.set_status_message(format!("Saved, but cannot close buffer: {}", e));
+                                            self.set_status_message(format!(
+                                                "Saved, but cannot close buffer: {}",
+                                                e
+                                            ));
                                         } else {
                                             self.set_status_message("Saved and closed".to_string());
                                         }
@@ -1689,14 +1693,20 @@ impl Editor {
                                         let old_active = self.active_buffer;
                                         self.set_active_buffer(buffer_id);
                                         if let Err(e) = self.save() {
-                                            self.set_status_message(format!("Failed to save: {}", e));
+                                            self.set_status_message(format!(
+                                                "Failed to save: {}",
+                                                e
+                                            ));
                                             self.set_active_buffer(old_active);
                                             return Ok(());
                                         }
                                         self.set_active_buffer(old_active);
                                         // Now close the buffer
                                         if let Err(e) = self.force_close_buffer(buffer_id) {
-                                            self.set_status_message(format!("Cannot close buffer: {}", e));
+                                            self.set_status_message(format!(
+                                                "Cannot close buffer: {}",
+                                                e
+                                            ));
                                         } else {
                                             self.set_status_message("Saved and closed".to_string());
                                         }
@@ -1714,9 +1724,14 @@ impl Editor {
                                 Some('d') => {
                                     // Discard and close
                                     if let Err(e) = self.force_close_buffer(buffer_id) {
-                                        self.set_status_message(format!("Cannot close buffer: {}", e));
+                                        self.set_status_message(format!(
+                                            "Cannot close buffer: {}",
+                                            e
+                                        ));
                                     } else {
-                                        self.set_status_message("Buffer closed (changes discarded)".to_string());
+                                        self.set_status_message(
+                                            "Buffer closed (changes discarded)".to_string(),
+                                        );
                                     }
                                 }
                                 _ => {
@@ -2490,50 +2505,51 @@ impl Editor {
 
             // Determine which tab was clicked and if it was the close button
             // Get the open buffers for this split
-            let (clicked_buffer, clicked_close) = if let Some(view_state) = self.split_view_states.get(&split_id) {
-                let relative_x = col.saturating_sub(tabs_x) as usize;
-                let mut current_x = 0usize;
+            let (clicked_buffer, clicked_close) =
+                if let Some(view_state) = self.split_view_states.get(&split_id) {
+                    let relative_x = col.saturating_sub(tabs_x) as usize;
+                    let mut current_x = 0usize;
 
-                let mut found_buffer = None;
-                let mut found_close = false;
-                for buffer_id in &view_state.open_buffers {
-                    // Calculate tab width: " {name}{modified} × " + separator " "
-                    let tab_width = if let Some(state) = self.buffers.get(buffer_id) {
-                        let name = if let Some(metadata) = self.buffer_metadata.get(buffer_id) {
-                            metadata.display_name.as_str()
+                    let mut found_buffer = None;
+                    let mut found_close = false;
+                    for buffer_id in &view_state.open_buffers {
+                        // Calculate tab width: " {name}{modified} × " + separator " "
+                        let tab_width = if let Some(state) = self.buffers.get(buffer_id) {
+                            let name = if let Some(metadata) = self.buffer_metadata.get(buffer_id) {
+                                metadata.display_name.as_str()
+                            } else {
+                                state
+                                    .buffer
+                                    .file_path()
+                                    .and_then(|p| p.file_name())
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("[No Name]")
+                            };
+                            let modified = if state.buffer.is_modified() { 1 } else { 0 };
+                            // " {name}{modified} × " = 2 + name.len() + modified + 3 (for " × ")
+                            2 + name.chars().count() + modified + 3
                         } else {
-                            state
-                                .buffer
-                                .file_path()
-                                .and_then(|p| p.file_name())
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("[No Name]")
+                            continue;
                         };
-                        let modified = if state.buffer.is_modified() { 1 } else { 0 };
-                        // " {name}{modified} × " = 2 + name.len() + modified + 3 (for " × ")
-                        2 + name.chars().count() + modified + 3
-                    } else {
-                        continue;
-                    };
 
-                    if relative_x >= current_x && relative_x < current_x + tab_width {
-                        found_buffer = Some(*buffer_id);
-                        // Check if click is on the close button (last 2 characters: "× ")
-                        // The close button is at position tab_width - 2 within the tab
-                        let pos_in_tab = relative_x - current_x;
-                        if pos_in_tab >= tab_width.saturating_sub(3) {
-                            found_close = true;
+                        if relative_x >= current_x && relative_x < current_x + tab_width {
+                            found_buffer = Some(*buffer_id);
+                            // Check if click is on the close button (last 2 characters: "× ")
+                            // The close button is at position tab_width - 2 within the tab
+                            let pos_in_tab = relative_x - current_x;
+                            if pos_in_tab >= tab_width.saturating_sub(3) {
+                                found_close = true;
+                            }
+                            break;
                         }
-                        break;
-                    }
 
-                    // Move past this tab and separator (1 char)
-                    current_x += tab_width + 1;
-                }
-                (found_buffer, found_close)
-            } else {
-                (None, false)
-            };
+                        // Move past this tab and separator (1 char)
+                        current_x += tab_width + 1;
+                    }
+                    (found_buffer, found_close)
+                } else {
+                    (None, false)
+                };
 
             // Handle close button click
             if clicked_close {
@@ -2759,7 +2775,9 @@ impl Editor {
                 // Use view-aware scrolling with the transform's tokens
                 use crate::ui::view_pipeline::ViewLineIterator;
                 let view_lines: Vec<_> = ViewLineIterator::new(&tokens).collect();
-                view_state.viewport.scroll_view_lines(&view_lines, delta as isize);
+                view_state
+                    .viewport
+                    .scroll_view_lines(&view_lines, delta as isize);
             } else {
                 // No view transform - use traditional buffer-based scrolling
                 if delta < 0 {

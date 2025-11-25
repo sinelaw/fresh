@@ -1975,9 +1975,7 @@ fn test_git_blame_scroll_with_many_virtual_lines() {
 
     // Scroll down repeatedly with Down arrow; should make progress even with many virtual lines
     for _ in 0..40 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.process_async_and_render().unwrap();
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -2031,9 +2029,7 @@ fn trigger_test_view_marker_interleaved(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    harness
-        .type_text("Test View Marker (Interleaved)")
-        .unwrap();
+    harness.type_text("Test View Marker (Interleaved)").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -2157,7 +2153,8 @@ fn test_view_transform_scroll_with_many_virtual_lines() {
     // Open the test file (so the virtual buffer has a split to attach to)
     let file_path = repo.path.join("test.txt");
     harness.open_file(&file_path).unwrap();
-    harness.wait_until(|h| !h.get_buffer_content().is_empty())
+    harness
+        .wait_until(|h| !h.get_buffer_content().is_empty())
         .unwrap();
 
     // Launch the view marker that injects many virtual lines (120 pads + header before Line 1)
@@ -2167,21 +2164,25 @@ fn test_view_transform_scroll_with_many_virtual_lines() {
     // The cursor starts at Line 1 (byte 0), which is view line 121 (after 120 virtual pads + 1 header)
     // Auto-scroll should bring the cursor into view, showing the source lines
     let source_visible = harness
-        .wait_for_async(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("Line 1") || screen.contains("Line 2") || screen.contains("Line 3")
-        }, 5000)
+        .wait_for_async(
+            |h| {
+                let screen = h.screen_to_string();
+                screen.contains("Line 1") || screen.contains("Line 2") || screen.contains("Line 3")
+            },
+            5000,
+        )
         .unwrap();
-    assert!(source_visible, "Source content should be visible after auto-scroll to cursor");
+    assert!(
+        source_visible,
+        "Source content should be visible after auto-scroll to cursor"
+    );
 
     let initial_screen = harness.screen_to_string();
     println!("Initial screen (auto-scrolled to cursor):\n{initial_screen}");
 
     // Now scroll UP to verify we can see the virtual lines
     for _ in 0..150 {
-        harness
-            .send_key(KeyCode::Up, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
         harness.process_async_and_render().unwrap();
     }
     harness.render().unwrap();
@@ -2191,8 +2192,7 @@ fn test_view_transform_scroll_with_many_virtual_lines() {
 
     // After scrolling up, we should see the header or virtual pads
     assert!(
-        screen_after_up.contains("HEADER AT BYTE 0")
-            || screen_after_up.contains("Virtual pad"),
+        screen_after_up.contains("HEADER AT BYTE 0") || screen_after_up.contains("Virtual pad"),
         "Scrolling up should reveal header or virtual pad lines"
     );
 }
@@ -2220,7 +2220,8 @@ fn test_view_transform_scroll_with_single_virtual_line() {
     // Open the test file
     let file_path = repo.path.join("test.txt");
     harness.open_file(&file_path).unwrap();
-    harness.wait_until(|h| !h.get_buffer_content().is_empty())
+    harness
+        .wait_until(|h| !h.get_buffer_content().is_empty())
         .unwrap();
 
     // Launch the view marker that injects just a header (no pads)
@@ -2250,7 +2251,10 @@ fn test_view_transform_scroll_with_single_virtual_line() {
     println!("Content lines: {content_lines:?}");
 
     // Should have at least 4 lines: header, Line 1, Line 2, Line 3
-    assert!(content_lines.len() >= 4, "Expected at least 4 content lines");
+    assert!(
+        content_lines.len() >= 4,
+        "Expected at least 4 content lines"
+    );
 
     // Line 0: Header (no line number, just separator)
     assert!(

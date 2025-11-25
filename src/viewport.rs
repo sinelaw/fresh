@@ -216,7 +216,12 @@ impl Viewport {
     /// * `gutter_width` - Width of the gutter (for cursor positioning)
     ///
     /// Returns true if scrolling occurred.
-    pub fn ensure_visible_in_layout(&mut self, view_lines: &[ViewLine], cursor: &Cursor, gutter_width: usize) -> bool {
+    pub fn ensure_visible_in_layout(
+        &mut self,
+        view_lines: &[ViewLine],
+        cursor: &Cursor,
+        gutter_width: usize,
+    ) -> bool {
         let viewport_height = self.visible_line_count();
         if view_lines.is_empty() || viewport_height == 0 {
             return false;
@@ -230,7 +235,8 @@ impl Viewport {
         let effective_bottom = effective_top + viewport_height;
 
         // Check if cursor is within visible range
-        let cursor_is_visible = cursor_view_line >= effective_top && cursor_view_line < effective_bottom;
+        let cursor_is_visible =
+            cursor_view_line >= effective_top && cursor_view_line < effective_bottom;
 
         if !cursor_is_visible {
             // Cursor is outside visible range - scroll to make it visible
@@ -248,7 +254,9 @@ impl Viewport {
 
             tracing::trace!(
                 "ensure_visible_in_layout: scrolling from offset {} to {}, cursor_view_line={}",
-                self.top_view_line_offset, new_offset, cursor_view_line
+                self.top_view_line_offset,
+                new_offset,
+                cursor_view_line
             );
 
             self.top_view_line_offset = new_offset;
@@ -271,7 +279,12 @@ impl Viewport {
     }
 
     /// Simple column visibility check (doesn't need buffer)
-    fn ensure_column_visible_simple(&mut self, column: usize, line_length: usize, gutter_width: usize) {
+    fn ensure_column_visible_simple(
+        &mut self,
+        column: usize,
+        line_length: usize,
+        gutter_width: usize,
+    ) {
         // Skip if line wrapping is enabled (all columns visible via wrapping)
         if self.line_wrap_enabled {
             self.left_column = 0;
@@ -294,7 +307,9 @@ impl Viewport {
         if column < ideal_left {
             self.left_column = column.saturating_sub(effective_offset);
         } else if column >= ideal_right {
-            let target_position = visible_width.saturating_sub(effective_offset).saturating_sub(1);
+            let target_position = visible_width
+                .saturating_sub(effective_offset)
+                .saturating_sub(1);
             self.left_column = column.saturating_sub(target_position);
         }
 
@@ -474,7 +489,10 @@ impl Viewport {
 
         tracing::trace!(
             "ensure_visible: cursor={}, top_byte={}, viewport_lines={}, line_wrap={}",
-            cursor.position, self.top_byte, viewport_lines, self.line_wrap_enabled
+            cursor.position,
+            self.top_byte,
+            viewport_lines,
+            self.line_wrap_enabled
         );
 
         // CRITICAL: Load data around cursor position explicitly before using iterators
@@ -590,7 +608,9 @@ impl Viewport {
                     && lines_from_top < viewport_lines.saturating_sub(effective_offset);
                 tracing::trace!(
                     "ensure_visible (no wrap): lines_from_top={}, effective_offset={}, visible={}",
-                    lines_from_top, effective_offset, visible
+                    lines_from_top,
+                    effective_offset,
+                    visible
                 );
                 visible
             }
@@ -598,7 +618,8 @@ impl Viewport {
 
         tracing::trace!(
             "ensure_visible: cursor_line_start={}, cursor_is_visible={}",
-            cursor_line_start, cursor_is_visible
+            cursor_line_start,
+            cursor_is_visible
         );
 
         // If cursor is not visible, scroll to make it visible

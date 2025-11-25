@@ -1820,7 +1820,10 @@ impl SplitRenderer {
         // Ensure cursor is visible using Layout-aware check (handles virtual lines)
         // This detects when cursor is beyond the rendered view_lines and scrolls
         let primary = *state.cursors.primary();
-        let scrolled = state.viewport.ensure_visible_in_layout(&view_data.lines, &primary, gutter_width);
+        let scrolled =
+            state
+                .viewport
+                .ensure_visible_in_layout(&view_data.lines, &primary, gutter_width);
 
         // If we scrolled, rebuild view_data from new position WITH the view_transform
         // This ensures virtual lines are included in the rebuilt view
@@ -1884,11 +1887,12 @@ impl SplitRenderer {
 
         // Apply top_view_line_offset to skip virtual lines when scrolling through them
         let view_line_offset = state.viewport.top_view_line_offset;
-        let view_lines_to_render = if view_line_offset > 0 && view_line_offset < view_data.lines.len() {
-            &view_data.lines[view_line_offset..]
-        } else {
-            &view_data.lines
-        };
+        let view_lines_to_render =
+            if view_line_offset > 0 && view_line_offset < view_data.lines.len() {
+                &view_data.lines[view_line_offset..]
+            } else {
+                &view_data.lines
+            };
 
         let render_output = Self::render_view_lines(LineRenderInput {
             state,

@@ -94,10 +94,7 @@ fn test_quit_with_confirmation_yes() {
     harness.render().unwrap();
 
     // Editor should quit
-    assert!(
-        harness.should_quit(),
-        "Editor should quit after confirming"
-    );
+    assert!(harness.should_quit(), "Editor should quit after confirming");
 }
 
 /// Test that quitting with confirmation (n) cancels quit
@@ -249,10 +246,7 @@ fn test_tabs_show_close_button() {
 
     // The tab bar should contain the × character for close button
     // Tab format is " {name}{modified} × "
-    assert!(
-        screen.contains('×'),
-        "Tab bar should show close button (×)"
-    );
+    assert!(screen.contains('×'), "Tab bar should show close button (×)");
 }
 
 /// Test clicking the X button on a tab closes the buffer
@@ -268,12 +262,18 @@ fn test_click_tab_close_button() {
 
     // Find the × character position in the tab bar (row 1)
     let screen = harness.screen_to_string();
-    let tab_row: String = screen.lines().nth(layout::TAB_BAR_ROW).unwrap_or("").to_string();
+    let tab_row: String = screen
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
 
     // Find the position of the first × in the tab bar
     if let Some(x_pos) = tab_row.find('×') {
         // Click on the × button
-        harness.mouse_click(x_pos as u16, layout::TAB_BAR_ROW as u16).unwrap();
+        harness
+            .mouse_click(x_pos as u16, layout::TAB_BAR_ROW as u16)
+            .unwrap();
         harness.render().unwrap();
 
         // Should close the buffer (show "closed" message)
@@ -302,7 +302,11 @@ fn test_click_tab_close_button_modified_buffer() {
 
     // Find the × character position in the tab bar for the active (modified) tab
     let screen = harness.screen_to_string();
-    let tab_row: String = screen.lines().nth(layout::TAB_BAR_ROW).unwrap_or("").to_string();
+    let tab_row: String = screen
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
 
     // The active tab should have * before × - find the × that has * before it
     // Tab format: " [No Name]* × "
@@ -311,7 +315,9 @@ fn test_click_tab_close_button_modified_buffer() {
         if let Some(x_pos) = tab_row[star_pos..].find('×') {
             let actual_x_pos = star_pos + x_pos;
             // Click on the × button
-            harness.mouse_click(actual_x_pos as u16, layout::TAB_BAR_ROW as u16).unwrap();
+            harness
+                .mouse_click(actual_x_pos as u16, layout::TAB_BAR_ROW as u16)
+                .unwrap();
             harness.render().unwrap();
 
             // Should show confirmation prompt for modified buffer
@@ -343,20 +349,30 @@ fn test_click_tab_close_modified_discard() {
 
     // Find and click the × button for the modified tab
     let screen = harness.screen_to_string();
-    let tab_row: String = screen.lines().nth(layout::TAB_BAR_ROW).unwrap_or("").to_string();
+    let tab_row: String = screen
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
 
     if let Some(star_pos) = tab_row.find('*') {
         if let Some(x_pos) = tab_row[star_pos..].find('×') {
             let actual_x_pos = star_pos + x_pos;
-            harness.mouse_click(actual_x_pos as u16, layout::TAB_BAR_ROW as u16).unwrap();
+            harness
+                .mouse_click(actual_x_pos as u16, layout::TAB_BAR_ROW as u16)
+                .unwrap();
             harness.render().unwrap();
 
             // Should show prompt
             harness.assert_screen_contains("Buffer modified");
 
             // Press 'd' to discard and Enter to confirm
-            harness.send_key(KeyCode::Char('d'), KeyModifiers::NONE).unwrap();
-            harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+            harness
+                .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
+                .unwrap();
+            harness
+                .send_key(KeyCode::Enter, KeyModifiers::NONE)
+                .unwrap();
             harness.render().unwrap();
 
             // Should show discarded message
@@ -385,20 +401,30 @@ fn test_click_tab_close_modified_cancel() {
 
     // Find and click the × button for the modified tab
     let screen = harness.screen_to_string();
-    let tab_row: String = screen.lines().nth(layout::TAB_BAR_ROW).unwrap_or("").to_string();
+    let tab_row: String = screen
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
 
     if let Some(star_pos) = tab_row.find('*') {
         if let Some(x_pos) = tab_row[star_pos..].find('×') {
             let actual_x_pos = star_pos + x_pos;
-            harness.mouse_click(actual_x_pos as u16, layout::TAB_BAR_ROW as u16).unwrap();
+            harness
+                .mouse_click(actual_x_pos as u16, layout::TAB_BAR_ROW as u16)
+                .unwrap();
             harness.render().unwrap();
 
             // Should show prompt
             harness.assert_screen_contains("Buffer modified");
 
             // Press 'c' to cancel and Enter to confirm
-            harness.send_key(KeyCode::Char('c'), KeyModifiers::NONE).unwrap();
-            harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+            harness
+                .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
+                .unwrap();
+            harness
+                .send_key(KeyCode::Enter, KeyModifiers::NONE)
+                .unwrap();
             harness.render().unwrap();
 
             // Should show cancelled message

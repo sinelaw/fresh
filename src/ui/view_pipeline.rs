@@ -217,7 +217,11 @@ pub fn should_show_line_number(line: &ViewLine) -> bool {
         );
     }
 
-    let first_char_is_source = line.char_mappings.first().map(|m| m.is_some()).unwrap_or(false);
+    let first_char_is_source = line
+        .char_mappings
+        .first()
+        .map(|m| m.is_some())
+        .unwrap_or(false);
 
     if !first_char_is_source {
         // Injected line (header, etc.) - no line number
@@ -277,10 +281,7 @@ impl Layout {
 
         // Estimate total view lines (for now, just use what we have)
         let total_view_lines = lines.len();
-        let total_injected_lines = lines
-            .iter()
-            .filter(|l| !should_show_line_number(l))
-            .count();
+        let total_injected_lines = lines.iter().filter(|l| !should_show_line_number(l)).count();
 
         Self {
             lines,
