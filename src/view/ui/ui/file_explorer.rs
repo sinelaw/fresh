@@ -1,7 +1,7 @@
 use crate::view::file_tree::{FileTreeView, NodeId};
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
@@ -66,17 +66,29 @@ impl FileExplorerRenderer {
             " File Explorer ".to_string()
         };
 
+        // Title style: bold and bright when focused
+        let (title_style, border_style) = if is_focused {
+            (
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Cyan),
+            )
+        } else {
+            (
+                Style::default().fg(Color::DarkGray),
+                Style::default(),
+            )
+        };
+
         // Create the list widget
         let list = List::new(items)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title(title)
-                    .border_style(if is_focused {
-                        Style::default().fg(Color::Cyan)
-                    } else {
-                        Style::default()
-                    }),
+                    .title_style(title_style)
+                    .border_style(border_style),
             )
             .highlight_style(if is_focused {
                 Style::default().bg(Color::DarkGray).fg(Color::White)
@@ -95,6 +107,28 @@ impl FileExplorerRenderer {
         }
 
         frame.render_stateful_widget(list, area, &mut list_state);
+
+        // When focused, show a blinking cursor indicator at the selected row
+        // We render a cursor indicator character and position the hardware cursor there
+        // The hardware cursor provides efficient terminal-native blinking
+        if is_focused {
+            if let Some(selected) = selected_index {
+                if selected >= scroll_offset && selected < scroll_offset + viewport_height {
+                    // Position at the left edge of the selected row (after border)
+                    let cursor_x = area.x + 1;
+                    let cursor_y = area.y + 1 + (selected - scroll_offset) as u16;
+
+                    // Render a cursor indicator character that the hardware cursor will blink over
+                    let cursor_indicator = ratatui::widgets::Paragraph::new("▌")
+                        .style(Style::default().fg(Color::Cyan));
+                    let cursor_area = Rect::new(cursor_x, cursor_y, 1, 1);
+                    frame.render_widget(cursor_indicator, cursor_area);
+
+                    // Position hardware cursor here for blinking effect
+                    frame.set_cursor_position((cursor_x, cursor_y));
+                }
+            }
+        }
     }
 
     /// Render a single tree node as a ListItem

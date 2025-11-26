@@ -110,6 +110,8 @@ struct LineRenderInput<'a> {
     is_active: bool,
     line_wrap: bool,
     estimated_lines: usize,
+    /// Whether to dim visual cursor indicators (e.g., when file explorer is focused)
+    dim_cursors: bool,
 }
 
 /// Renders split panes and their content
@@ -130,7 +132,8 @@ impl SplitRenderer {
     /// * `large_file_threshold_bytes` - Threshold for using constant scrollbar thumb size
     /// * `line_wrap` - Whether line wrapping is enabled
     /// * `estimated_line_length` - Estimated average line length for large file line estimation
-    /// * `hide_cursor` - Whether to hide the hardware cursor (e.g., when menu is open)
+    /// * `hide_cursor` - Whether to hide the hardware cursor and dim visual cursor indicators
+    ///                   (e.g., when menu is open or file explorer is focused)
     ///
     /// # Returns
     /// * Vec of (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end) for mouse handling
@@ -1125,6 +1128,7 @@ impl SplitRenderer {
             is_active,
             line_wrap,
             estimated_lines,
+            dim_cursors,
         } = input;
 
         let selection_ranges = &selection.ranges;
@@ -1515,23 +1519,31 @@ impl SplitRenderer {
 
                     // Cursor styling - make secondary cursors visible with reversed colors
                     // Don't apply REVERSED to primary cursor to preserve terminal cursor visibility
-                    // For inactive splits, ALL cursors use a less pronounced color (no hardware cursor)
+                    // For inactive splits or dimmed cursors, ALL cursors use a pronounced visual style
                     let is_secondary_cursor =
                         is_cursor && byte_pos != Some(primary_cursor_position);
-                    if is_active {
+                    if is_active && !dim_cursors {
                         if is_secondary_cursor {
                             style = style.add_modifier(Modifier::REVERSED);
                         }
                     } else if is_cursor {
-                        style = style.fg(theme.editor_fg).bg(theme.inactive_cursor);
+                        // Use inactive/dimmed cursor style when not active or when dimmed
+                        // Use REVERSED for ALL cursors so they're clearly visible
+                        style = style
+                            .fg(theme.editor_fg)
+                            .bg(theme.inactive_cursor)
+                            .add_modifier(Modifier::REVERSED);
                     }
 
                     // Determine display character (tabs already expanded in ViewLineIterator)
                     // Show tab indicator (→) at the start of tab expansions
                     let tab_indicator: String;
-                    let display_char: &str = if is_cursor && lsp_waiting && is_active {
+                    let display_char: &str = if is_cursor && lsp_waiting && is_active && !dim_cursors
+                    {
                         "⋯"
-                    } else if is_cursor && is_active && ch == '\n' {
+                    } else if is_cursor && is_active && !dim_cursors && ch == '\n' {
+                        // Only skip rendering newline for primary cursor when NOT dimmed
+                        // (relies on hardware cursor for visibility)
                         ""
                     } else if ch == '\n' {
                         ""
@@ -1591,15 +1603,17 @@ impl SplitRenderer {
                     }
 
                     if is_cursor && ch == '\n' {
+                        // Show cursor indicator for secondary cursors (active split) or all cursors (inactive/dimmed)
                         let should_add_indicator =
-                            if is_active { is_secondary_cursor } else { true };
+                            if is_active && !dim_cursors { is_secondary_cursor } else { true };
                         if should_add_indicator {
-                            let cursor_style = if is_active {
+                            let cursor_style = if is_active && !dim_cursors {
                                 Style::default()
                                     .fg(theme.editor_fg)
                                     .bg(theme.editor_bg)
                                     .add_modifier(Modifier::REVERSED)
                             } else {
+                                // Dimmed/inactive cursor style
                                 Style::default()
                                     .fg(theme.editor_fg)
                                     .bg(theme.inactive_cursor)
@@ -1675,14 +1689,15 @@ impl SplitRenderer {
                         have_cursor = true;
                     }
 
-                    let should_add_indicator = if is_active { !is_primary_at_end } else { true };
+                    let should_add_indicator = if is_active && !dim_cursors { !is_primary_at_end } else { true };
                     if should_add_indicator {
-                        let cursor_style = if is_active {
+                        let cursor_style = if is_active && !dim_cursors {
                             Style::default()
                                 .fg(theme.editor_fg)
                                 .bg(theme.editor_bg)
                                 .add_modifier(Modifier::REVERSED)
                         } else {
+                            // Dimmed/inactive cursor style
                             Style::default()
                                 .fg(theme.editor_fg)
                                 .bg(theme.inactive_cursor)
@@ -2016,6 +2031,7 @@ impl SplitRenderer {
             is_active,
             line_wrap,
             estimated_lines,
+            dim_cursors: hide_cursor,
         });
 
         let mut lines = render_output.lines;

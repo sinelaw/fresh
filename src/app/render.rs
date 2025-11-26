@@ -209,6 +209,12 @@ impl Editor {
         let lsp_waiting = self.pending_completion_request.is_some()
             || self.pending_goto_definition_request.is_some();
 
+        // Hide the hardware cursor when menu is open or file explorer is focused
+        // (the file explorer will set its own cursor position when focused)
+        // This also causes visual cursor indicators in the editor to be dimmed
+        let hide_cursor =
+            self.menu_state.active_menu.is_some() || self.key_context == KeyContext::FileExplorer;
+
         let split_areas = SplitRenderer::render_content(
             frame,
             editor_content_area,
@@ -224,7 +230,7 @@ impl Editor {
             self.config.editor.line_wrap,
             self.config.editor.estimated_line_length,
             Some(&self.split_view_states),
-            self.menu_state.active_menu.is_some(),
+            hide_cursor,
         );
         self.cached_layout.split_areas = split_areas;
         self.cached_layout.separator_areas = self
