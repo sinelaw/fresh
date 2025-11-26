@@ -368,4 +368,104 @@ impl StatusBarRenderer {
 
         frame.render_widget(status_line, area);
     }
+
+    /// Render the search options bar (shown when search prompt is active)
+    ///
+    /// Displays checkboxes for search options with their keyboard shortcuts:
+    /// - Case Sensitive (Alt+C)
+    /// - Whole Word (Alt+W)
+    pub fn render_search_options(
+        frame: &mut Frame,
+        area: Rect,
+        case_sensitive: bool,
+        whole_word: bool,
+        theme: &crate::view::theme::Theme,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+    ) {
+        let base_style = Style::default()
+            .fg(theme.status_bar_fg)
+            .bg(theme.status_bar_bg);
+
+        // Get keybindings for search options (look up in Prompt context first, then Global)
+        let case_shortcut = keybindings
+            .get_keybinding_for_action(
+                &crate::input::keybindings::Action::ToggleSearchCaseSensitive,
+                crate::input::keybindings::KeyContext::Prompt,
+            )
+            .or_else(|| {
+                keybindings.get_keybinding_for_action(
+                    &crate::input::keybindings::Action::ToggleSearchCaseSensitive,
+                    crate::input::keybindings::KeyContext::Global,
+                )
+            })
+            .unwrap_or_else(|| "Alt+C".to_string());
+
+        let word_shortcut = keybindings
+            .get_keybinding_for_action(
+                &crate::input::keybindings::Action::ToggleSearchWholeWord,
+                crate::input::keybindings::KeyContext::Prompt,
+            )
+            .or_else(|| {
+                keybindings.get_keybinding_for_action(
+                    &crate::input::keybindings::Action::ToggleSearchWholeWord,
+                    crate::input::keybindings::KeyContext::Global,
+                )
+            })
+            .unwrap_or_else(|| "Alt+W".to_string());
+
+        // Build the options display with checkboxes
+        let case_checkbox = if case_sensitive { "[x]" } else { "[ ]" };
+        let word_checkbox = if whole_word { "[x]" } else { "[ ]" };
+
+        // Style for active (checked) options - slightly highlighted
+        let active_style = Style::default()
+            .fg(theme.help_indicator_fg)
+            .bg(theme.status_bar_bg);
+
+        // Style for keyboard shortcuts
+        let shortcut_style = Style::default()
+            .fg(ratatui::style::Color::DarkGray)
+            .bg(theme.status_bar_bg);
+
+        let mut spans = Vec::new();
+
+        // Left padding
+        spans.push(Span::styled(" ", base_style));
+
+        // Case Sensitive option
+        spans.push(Span::styled(
+            case_checkbox,
+            if case_sensitive {
+                active_style
+            } else {
+                base_style
+            },
+        ));
+        spans.push(Span::styled(" Case Sensitive ", base_style));
+        spans.push(Span::styled(format!("({})", case_shortcut), shortcut_style));
+
+        // Separator
+        spans.push(Span::styled("   ", base_style));
+
+        // Whole Word option
+        spans.push(Span::styled(
+            word_checkbox,
+            if whole_word { active_style } else { base_style },
+        ));
+        spans.push(Span::styled(" Whole Word ", base_style));
+        spans.push(Span::styled(format!("({})", word_shortcut), shortcut_style));
+
+        // Fill remaining space
+        let current_width: usize = spans.iter().map(|s| s.content.len()).sum();
+        let available_width = area.width as usize;
+        if current_width < available_width {
+            spans.push(Span::styled(
+                " ".repeat(available_width.saturating_sub(current_width)),
+                base_style,
+            ));
+        }
+
+        let options_line = Paragraph::new(Line::from(spans));
+        frame.render_widget(options_line, area);
+    }
 }

@@ -1174,6 +1174,21 @@
       "when": "prompt"
     },
     {
+      "comment": "Prompt context - Search options",
+      "key": "c",
+      "modifiers": ["alt"],
+      "action": "toggle_search_case_sensitive",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "w",
+      "modifiers": ["alt"],
+      "action": "toggle_search_whole_word",
+      "args": {},
+      "when": "prompt"
+    },
+    {
       "comment": "Popup context - Navigation",
       "key": "Up",
       "modifiers": [],

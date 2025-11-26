@@ -24,13 +24,32 @@ impl Editor {
             self.update_search_highlights(&query);
         }
 
-        // Build main vertical layout: [menu_bar, main_content, status_bar, prompt_line]
-        // Suggestions popup now overlays instead of resizing the layout
-        // Prompt line is always reserved to prevent layout shifting
+        // Determine if we need to show search options bar
+        let show_search_options = self.prompt.as_ref().map_or(false, |p| {
+            matches!(
+                p.prompt_type,
+                PromptType::Search
+                    | PromptType::ReplaceSearch
+                    | PromptType::Replace { .. }
+                    | PromptType::QueryReplaceSearch
+                    | PromptType::QueryReplace { .. }
+            )
+        });
+
+        // Hide status bar when suggestions popup is shown
+        let has_suggestions = self
+            .prompt
+            .as_ref()
+            .map_or(false, |p| !p.suggestions.is_empty());
+
+        // Build main vertical layout: [menu_bar, main_content, status_bar, search_options, prompt_line]
+        // Status bar is hidden when suggestions popup is shown
+        // Search options bar is shown when in search prompt
         let constraints = vec![
-            Constraint::Length(1), // Menu bar
-            Constraint::Min(0),    // Main content area
-            Constraint::Length(1), // Status bar
+            Constraint::Length(1),                                       // Menu bar
+            Constraint::Min(0),                                          // Main content area
+            Constraint::Length(if has_suggestions { 0 } else { 1 }), // Status bar (hidden with suggestions)
+            Constraint::Length(if show_search_options { 1 } else { 0 }), // Search options bar
             Constraint::Length(1), // Prompt line (always reserved)
         ];
 
@@ -42,7 +61,8 @@ impl Editor {
         let menu_bar_area = main_chunks[0];
         let main_content_area = main_chunks[1];
         let status_bar_idx = 2;
-        let prompt_line_idx = 3;
+        let search_options_idx = 3;
+        let prompt_line_idx = 4;
 
         // Split main content area based on file explorer visibility
         let editor_content_area;
@@ -265,7 +285,6 @@ impl Editor {
             }
         }
 
-        // Render status bar (always visible now)
         // Clone all immutable values before the mutable borrow
         let display_name = self
             .buffer_metadata
@@ -280,19 +299,33 @@ impl Editor {
         let keybindings_cloned = self.keybindings.clone(); // Clone the keybindings
         let chord_state_cloned = self.chord_state.clone(); // Clone the chord state
 
-        // Always render status bar
-        StatusBarRenderer::render_status_bar(
-            frame,
-            main_chunks[status_bar_idx],
-            self.active_state_mut(), // Use the mutable reference
-            &status_message,
-            &plugin_status_message,
-            &lsp_status,
-            &theme,
-            &display_name,
-            &keybindings_cloned, // Pass the cloned keybindings
-            &chord_state_cloned, // Pass the cloned chord state
-        );
+        // Render status bar (hidden when suggestions popup is shown)
+        if !has_suggestions {
+            StatusBarRenderer::render_status_bar(
+                frame,
+                main_chunks[status_bar_idx],
+                self.active_state_mut(), // Use the mutable reference
+                &status_message,
+                &plugin_status_message,
+                &lsp_status,
+                &theme,
+                &display_name,
+                &keybindings_cloned, // Pass the cloned keybindings
+                &chord_state_cloned, // Pass the cloned chord state
+            );
+        }
+
+        // Render search options bar when in search prompt
+        if show_search_options {
+            StatusBarRenderer::render_search_options(
+                frame,
+                main_chunks[search_options_idx],
+                self.search_case_sensitive,
+                self.search_whole_word,
+                &theme,
+                &keybindings_cloned,
+            );
+        }
 
         // Render prompt line if active
         if let Some(prompt) = &prompt {
