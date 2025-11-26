@@ -382,9 +382,10 @@ impl StatusBarRenderer {
         theme: &crate::view::theme::Theme,
         keybindings: &crate::input::keybindings::KeybindingResolver,
     ) {
+        // Use menu dropdown background (dark gray) for the options bar
         let base_style = Style::default()
-            .fg(theme.status_bar_fg)
-            .bg(theme.status_bar_bg);
+            .fg(theme.menu_dropdown_fg)
+            .bg(theme.menu_dropdown_bg);
 
         // Get keybindings for search options (look up in Prompt context first, then Global)
         let case_shortcut = keybindings
@@ -417,15 +418,15 @@ impl StatusBarRenderer {
         let case_checkbox = if case_sensitive { "[x]" } else { "[ ]" };
         let word_checkbox = if whole_word { "[x]" } else { "[ ]" };
 
-        // Style for active (checked) options - slightly highlighted
+        // Style for active (checked) options - highlighted with menu highlight colors
         let active_style = Style::default()
-            .fg(theme.help_indicator_fg)
-            .bg(theme.status_bar_bg);
+            .fg(theme.menu_highlight_fg)
+            .bg(theme.menu_dropdown_bg);
 
-        // Style for keyboard shortcuts
+        // Style for keyboard shortcuts - use a lighter gray that's visible on dark background
         let shortcut_style = Style::default()
-            .fg(ratatui::style::Color::DarkGray)
-            .bg(theme.status_bar_bg);
+            .fg(ratatui::style::Color::Rgb(140, 140, 140))
+            .bg(theme.menu_dropdown_bg);
 
         let mut spans = Vec::new();
 
