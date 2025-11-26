@@ -374,11 +374,13 @@ impl StatusBarRenderer {
     /// Displays checkboxes for search options with their keyboard shortcuts:
     /// - Case Sensitive (Alt+C)
     /// - Whole Word (Alt+W)
+    /// - Regex (Alt+R)
     pub fn render_search_options(
         frame: &mut Frame,
         area: Rect,
         case_sensitive: bool,
         whole_word: bool,
+        use_regex: bool,
         theme: &crate::view::theme::Theme,
         keybindings: &crate::input::keybindings::KeybindingResolver,
     ) {
@@ -414,9 +416,23 @@ impl StatusBarRenderer {
             })
             .unwrap_or_else(|| "Alt+W".to_string());
 
+        let regex_shortcut = keybindings
+            .get_keybinding_for_action(
+                &crate::input::keybindings::Action::ToggleSearchRegex,
+                crate::input::keybindings::KeyContext::Prompt,
+            )
+            .or_else(|| {
+                keybindings.get_keybinding_for_action(
+                    &crate::input::keybindings::Action::ToggleSearchRegex,
+                    crate::input::keybindings::KeyContext::Global,
+                )
+            })
+            .unwrap_or_else(|| "Alt+R".to_string());
+
         // Build the options display with checkboxes
         let case_checkbox = if case_sensitive { "[x]" } else { "[ ]" };
         let word_checkbox = if whole_word { "[x]" } else { "[ ]" };
+        let regex_checkbox = if use_regex { "[x]" } else { "[ ]" };
 
         // Style for active (checked) options - highlighted with menu highlight colors
         let active_style = Style::default()
@@ -455,6 +471,20 @@ impl StatusBarRenderer {
         ));
         spans.push(Span::styled(" Whole Word ", base_style));
         spans.push(Span::styled(format!("({})", word_shortcut), shortcut_style));
+
+        // Separator
+        spans.push(Span::styled("   ", base_style));
+
+        // Regex option
+        spans.push(Span::styled(
+            regex_checkbox,
+            if use_regex { active_style } else { base_style },
+        ));
+        spans.push(Span::styled(" Regex ", base_style));
+        spans.push(Span::styled(
+            format!("({})", regex_shortcut),
+            shortcut_style,
+        ));
 
         // Fill remaining space
         let current_width: usize = spans.iter().map(|s| s.content.len()).sum();

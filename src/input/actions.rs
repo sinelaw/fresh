@@ -1572,6 +1572,7 @@ pub fn action_to_events(
         | Action::ListBookmarks
         | Action::ToggleSearchCaseSensitive
         | Action::ToggleSearchWholeWord
+        | Action::ToggleSearchRegex
         | Action::StartMacroRecording
         | Action::StopMacroRecording
         | Action::PlayMacro(_)

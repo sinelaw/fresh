@@ -211,6 +211,7 @@ pub enum Action {
     // Search options
     ToggleSearchCaseSensitive,
     ToggleSearchWholeWord,
+    ToggleSearchRegex,
 
     // Macros
     StartMacroRecording,
@@ -483,6 +484,7 @@ impl Action {
 
             "toggle_search_case_sensitive" => Some(Action::ToggleSearchCaseSensitive),
             "toggle_search_whole_word" => Some(Action::ToggleSearchWholeWord),
+            "toggle_search_regex" => Some(Action::ToggleSearchRegex),
 
             "start_macro_recording" => Some(Action::StartMacroRecording),
             "stop_macro_recording" => Some(Action::StopMacroRecording),
@@ -1269,6 +1271,7 @@ impl KeybindingResolver {
             Action::ListBookmarks => "List all bookmarks".to_string(),
             Action::ToggleSearchCaseSensitive => "Toggle search case sensitivity".to_string(),
             Action::ToggleSearchWholeWord => "Toggle search whole word matching".to_string(),
+            Action::ToggleSearchRegex => "Toggle search regex mode".to_string(),
             Action::StartMacroRecording => "Start macro recording".to_string(),
             Action::StopMacroRecording => "Stop macro recording".to_string(),
             Action::PlayMacro(c) => format!("Play macro '{}'", c),

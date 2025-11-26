@@ -1214,10 +1214,20 @@ impl Editor {
                     "disabled"
                 };
                 self.set_status_message(format!("Case-sensitive search {}", state));
-                // Re-run search if active
+                // Re-run search if active, or update incremental highlights if in search prompt
                 if let Some(search_state) = &self.search_state {
                     let query = search_state.query.clone();
                     self.perform_search(&query);
+                } else if let Some(prompt) = &self.prompt {
+                    if matches!(
+                        prompt.prompt_type,
+                        PromptType::Search
+                            | PromptType::ReplaceSearch
+                            | PromptType::QueryReplaceSearch
+                    ) {
+                        let query = prompt.input.clone();
+                        self.update_search_highlights(&query);
+                    }
                 }
             }
             Action::ToggleSearchWholeWord => {
@@ -1228,10 +1238,44 @@ impl Editor {
                     "disabled"
                 };
                 self.set_status_message(format!("Whole word search {}", state));
-                // Re-run search if active
+                // Re-run search if active, or update incremental highlights if in search prompt
                 if let Some(search_state) = &self.search_state {
                     let query = search_state.query.clone();
                     self.perform_search(&query);
+                } else if let Some(prompt) = &self.prompt {
+                    if matches!(
+                        prompt.prompt_type,
+                        PromptType::Search
+                            | PromptType::ReplaceSearch
+                            | PromptType::QueryReplaceSearch
+                    ) {
+                        let query = prompt.input.clone();
+                        self.update_search_highlights(&query);
+                    }
+                }
+            }
+            Action::ToggleSearchRegex => {
+                self.search_use_regex = !self.search_use_regex;
+                let state = if self.search_use_regex {
+                    "enabled"
+                } else {
+                    "disabled"
+                };
+                self.set_status_message(format!("Regex search {}", state));
+                // Re-run search if active, or update incremental highlights if in search prompt
+                if let Some(search_state) = &self.search_state {
+                    let query = search_state.query.clone();
+                    self.perform_search(&query);
+                } else if let Some(prompt) = &self.prompt {
+                    if matches!(
+                        prompt.prompt_type,
+                        PromptType::Search
+                            | PromptType::ReplaceSearch
+                            | PromptType::QueryReplaceSearch
+                    ) {
+                        let query = prompt.input.clone();
+                        self.update_search_highlights(&query);
+                    }
                 }
             }
             Action::StartMacroRecording => {

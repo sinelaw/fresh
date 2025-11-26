@@ -302,6 +302,7 @@ pub struct Editor {
     /// Global search options (persist across searches)
     search_case_sensitive: bool,
     search_whole_word: bool,
+    search_use_regex: bool,
 
     /// Macro storage (key -> list of recorded actions)
     macros: HashMap<char, Vec<Action>>,
@@ -644,6 +645,7 @@ impl Editor {
             bookmarks: HashMap::new(),
             search_case_sensitive: true,
             search_whole_word: false,
+            search_use_regex: false,
             macros: HashMap::new(),
             macro_recording: None,
             last_macro_register: None,

@@ -1189,6 +1189,13 @@
       "when": "prompt"
     },
     {
+      "key": "r",
+      "modifiers": ["alt"],
+      "action": "toggle_search_regex",
+      "args": {},
+      "when": "prompt"
+    },
+    {
       "comment": "Popup context - Navigation",
       "key": "Up",
       "modifiers": [],

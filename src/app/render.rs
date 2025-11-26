@@ -322,6 +322,7 @@ impl Editor {
                 main_chunks[search_options_idx],
                 self.search_case_sensitive,
                 self.search_whole_word,
+                self.search_use_regex,
                 &theme,
                 &keybindings_cloned,
             );
@@ -1235,7 +1236,39 @@ impl Editor {
         let search_bg = self.theme.search_match_bg;
         let search_fg = self.theme.search_match_fg;
         let case_sensitive = self.search_case_sensitive;
+        let whole_word = self.search_whole_word;
+        let use_regex = self.search_use_regex;
         let ns = self.search_namespace.clone();
+
+        // Build regex pattern if regex mode is enabled, or escape for literal search
+        let regex_pattern = if use_regex {
+            if whole_word {
+                format!(r"\b{}\b", query)
+            } else {
+                query.to_string()
+            }
+        } else {
+            let escaped = regex::escape(query);
+            if whole_word {
+                format!(r"\b{}\b", escaped)
+            } else {
+                escaped
+            }
+        };
+
+        // Build regex with case sensitivity
+        let regex = regex::RegexBuilder::new(&regex_pattern)
+            .case_insensitive(!case_sensitive)
+            .build();
+
+        let regex = match regex {
+            Ok(r) => r,
+            Err(_) => {
+                // Invalid regex, clear highlights and return
+                self.clear_search_highlights();
+                return;
+            }
+        };
 
         let state = self.active_state_mut();
 
@@ -1268,23 +1301,16 @@ impl Editor {
         // Get the visible text
         let visible_text = state.get_text_range(visible_start, visible_end);
 
-        // Prepare search strings based on case sensitivity
-        let (search_text, search_query) = if case_sensitive {
-            (visible_text.clone(), query.to_string())
-        } else {
-            (visible_text.to_lowercase(), query.to_lowercase())
-        };
-
-        let mut match_count = 0;
-        let mut start = 0;
-        while let Some(pos) = search_text[start..].find(&search_query) {
-            let absolute_pos = visible_start + start + pos;
+        // Find all matches using regex
+        for mat in regex.find_iter(&visible_text) {
+            let absolute_pos = visible_start + mat.start();
+            let match_len = mat.end() - mat.start();
 
             // Add overlay for this match
             let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
             let overlay = crate::view::overlay::Overlay::with_namespace(
                 &mut state.marker_list,
-                absolute_pos..(absolute_pos + query.len()),
+                absolute_pos..(absolute_pos + match_len),
                 crate::view::overlay::OverlayFace::Style {
                     style: search_style,
                 },
@@ -1293,9 +1319,6 @@ impl Editor {
             .with_priority_value(10); // Priority - above syntax highlighting
 
             state.overlays.add(overlay);
-
-            match_count += 1;
-            start = start + pos + 1; // Move past this match
         }
     }
 
@@ -1323,9 +1346,7 @@ impl Editor {
         // Get search settings
         let case_sensitive = self.search_case_sensitive;
         let whole_word = self.search_whole_word;
-
-        // Find all matches
-        let mut matches = Vec::new();
+        let use_regex = self.search_use_regex;
 
         // Determine search boundaries
         let (search_start, search_end) = if let Some(ref range) = search_range {
@@ -1334,51 +1355,41 @@ impl Editor {
             (0, buffer_content.len())
         };
 
-        // Prepare search strings based on case sensitivity
-        let (search_buffer, search_query) = if case_sensitive {
-            (buffer_content.clone(), query.to_string())
+        // Build regex pattern
+        let regex_pattern = if use_regex {
+            if whole_word {
+                format!(r"\b{}\b", query)
+            } else {
+                query.to_string()
+            }
         } else {
-            (buffer_content.to_lowercase(), query.to_lowercase())
+            let escaped = regex::escape(query);
+            if whole_word {
+                format!(r"\b{}\b", escaped)
+            } else {
+                escaped
+            }
         };
 
-        // Helper function to check if position is a word boundary
-        let is_word_boundary = |pos: usize, at_start: bool| -> bool {
-            if !whole_word {
-                return true;
-            }
-            if at_start {
-                pos == 0
-                    || !buffer_content
-                        .chars()
-                        .nth(pos.saturating_sub(1))
-                        .map(|c| c.is_alphanumeric() || c == '_')
-                        .unwrap_or(false)
-            } else {
-                pos >= buffer_content.len()
-                    || !buffer_content
-                        .chars()
-                        .nth(pos)
-                        .map(|c| c.is_alphanumeric() || c == '_')
-                        .unwrap_or(false)
+        // Build regex with case sensitivity
+        let regex = match regex::RegexBuilder::new(&regex_pattern)
+            .case_insensitive(!case_sensitive)
+            .build()
+        {
+            Ok(r) => r,
+            Err(e) => {
+                self.search_state = None;
+                self.set_status_message(format!("Invalid regex: {}", e));
+                return;
             }
         };
 
         // Find all matches within the search range
-        let mut start = search_start;
-        while start < search_end {
-            if let Some(pos) = search_buffer[start..search_end].find(&search_query) {
-                let absolute_pos = start + pos;
-                let end_pos = absolute_pos + query.len();
-
-                // Check word boundaries if whole word matching is enabled
-                if is_word_boundary(absolute_pos, true) && is_word_boundary(end_pos, false) {
-                    matches.push(absolute_pos);
-                }
-                start = absolute_pos + 1;
-            } else {
-                break;
-            }
-        }
+        let search_slice = &buffer_content[search_start..search_end];
+        let matches: Vec<usize> = regex
+            .find_iter(search_slice)
+            .map(|m| search_start + m.start())
+            .collect();
 
         if matches.is_empty() {
             self.search_state = None;
