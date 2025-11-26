@@ -180,6 +180,11 @@ impl EditorTestHarness {
     ///
     /// Creates a subdirectory named "project_root" for deterministic paths in snapshots.
     pub fn with_temp_project(width: u16, height: u16) -> io::Result<Self> {
+        Self::with_temp_project_and_config(width, height, Config::default())
+    }
+
+    /// Create a test harness with a temporary project directory and custom config
+    pub fn with_temp_project_and_config(width: u16, height: u16, config: Config) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
 
         // Create a subdirectory with a constant name for deterministic paths
@@ -189,7 +194,6 @@ impl EditorTestHarness {
         // Create editor with explicit working directory (no global state modification!)
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
-        let config = Config::default();
         let editor = Editor::with_working_dir(config, width, height, Some(project_root))?;
 
         Ok(EditorTestHarness {

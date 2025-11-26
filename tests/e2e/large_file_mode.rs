@@ -1,6 +1,5 @@
 use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
-use crate::common::visual_testing::VisualFlow;
 use crossterm::event::{KeyCode, KeyModifiers};
 
 /// Test cursor positioning when moving down in large file mode
@@ -14,21 +13,10 @@ fn test_large_file_cursor_down_movement() {
     harness.open_file(&big_txt_path).unwrap();
     harness.render().unwrap();
 
-    let mut flow = VisualFlow::new(
-        "Large File Cursor Movement",
-        "Large File Mode",
-        "Testing cursor movement with Down arrow in large file mode",
-    );
-
-    // Step 1: Initial state at top of file
-    harness
-        .capture_visual_step(&mut flow, "initial", "File opened at top")
-        .unwrap();
-
     let initial_pos = harness.cursor_position();
     assert_eq!(initial_pos, 0, "Should start at position 0");
 
-    // Step 2: Move down line by line and verify cursor keeps moving forward
+    // Move down line by line and verify cursor keeps moving forward
     let mut prev_pos = initial_pos;
 
     for i in 1..=50 {
@@ -54,25 +42,8 @@ fn test_large_file_cursor_down_movement() {
             i
         );
 
-        // Visual checkpoints at key moments
-        if i == 5 {
-            harness
-                .capture_visual_step(&mut flow, "after_5_down", "After pressing Down 5 times")
-                .unwrap();
-        } else if i == 25 {
-            harness
-                .capture_visual_step(&mut flow, "after_25_down", "After pressing Down 25 times")
-                .unwrap();
-        } else if i == 50 {
-            harness
-                .capture_visual_step(&mut flow, "after_50_down", "After pressing Down 50 times")
-                .unwrap();
-        }
-
         prev_pos = cursor_pos;
     }
-
-    flow.finalize();
 }
 
 /// Test typing characters in large file mode
@@ -86,32 +57,14 @@ fn test_large_file_typing() {
     harness.open_file(&big_txt_path).unwrap();
     harness.render().unwrap();
 
-    let mut flow = VisualFlow::new(
-        "Large File Typing",
-        "Large File Mode",
-        "Testing that typed characters appear at cursor position in large file mode",
-    );
-
-    // Step 1: Initial state
-    harness
-        .capture_visual_step(&mut flow, "initial", "File opened at top")
-        .unwrap();
-
-    // Step 2: Move down several lines to test typing deeper in the file
+    // Move down several lines to test typing deeper in the file
     for _ in 0..10 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
 
     let cursor_pos_before_typing = harness.cursor_position();
-    harness
-        .capture_visual_step(
-            &mut flow,
-            "before_typing",
-            "Positioned at line 10 before typing",
-        )
-        .unwrap();
 
-    // Step 3: Type some characters
+    // Type some characters
     let text_to_type = "HELLO";
     harness.type_text(text_to_type).unwrap();
 
@@ -139,11 +92,7 @@ fn test_large_file_typing() {
         "Screen cursor Y position should be within terminal height"
     );
 
-    harness
-        .capture_visual_step(&mut flow, "after_typing", "After typing 'HELLO'")
-        .unwrap();
-
-    // Step 4: Continue to move down and type more to verify consistency throughout the file
+    // Continue to move down and type more to verify consistency throughout the file
     for _ in 0..20 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
@@ -160,16 +109,6 @@ fn test_large_file_typing() {
         cursor_pos_before_second + 5,
         "After typing 'WORLD' deeper in file, cursor should advance by 5 bytes"
     );
-
-    harness
-        .capture_visual_step(
-            &mut flow,
-            "after_second_typing",
-            "After typing more text deeper in file",
-        )
-        .unwrap();
-
-    flow.finalize();
 }
 
 /// Test cursor positioning when rapidly moving down in large file
@@ -272,7 +211,6 @@ fn test_large_file_cursor_movement_and_typing() {
 }
 
 /// Test that cursor screen position matches logical position in large files
-/// This is a visual regression test to ensure the cursor is rendered at the right location
 #[test]
 fn test_large_file_cursor_screen_position_accuracy() {
     let big_txt_path = TestFixture::big_txt_for_test("cursor_screen_position").unwrap();
@@ -281,19 +219,9 @@ fn test_large_file_cursor_screen_position_accuracy() {
     harness.open_file(&big_txt_path).unwrap();
     harness.render().unwrap();
 
-    let mut flow = VisualFlow::new(
-        "Large File Cursor Screen Position",
-        "Large File Mode",
-        "Verifying cursor screen position matches logical position",
-    );
-
-    // Capture initial state
-    harness
-        .capture_visual_step(&mut flow, "line_0", "Cursor at line 0")
-        .unwrap();
     let initial_screen_y = harness.screen_cursor_position().1;
 
-    // Move down and capture screen positions
+    // Move down and verify screen positions
     for i in 1..=10 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
 
@@ -316,20 +244,7 @@ fn test_large_file_cursor_screen_position_accuracy() {
                 "Screen cursor Y should increase when moving down within viewport"
             );
         }
-
-        // Take a visual snapshot every 5 lines
-        if i % 5 == 0 {
-            harness
-                .capture_visual_step(
-                    &mut flow,
-                    &format!("line_{}", i),
-                    &format!("Cursor at line {}", i),
-                )
-                .unwrap();
-        }
     }
-
-    flow.finalize();
 }
 
 /// Test load-edit-save flow for both small and large file modes
