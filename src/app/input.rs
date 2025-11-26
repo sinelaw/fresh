@@ -1214,11 +1214,9 @@ impl Editor {
                     "disabled"
                 };
                 self.set_status_message(format!("Case-sensitive search {}", state));
-                // Re-run search if active, or update incremental highlights if in search prompt
-                if let Some(search_state) = &self.search_state {
-                    let query = search_state.query.clone();
-                    self.perform_search(&query);
-                } else if let Some(prompt) = &self.prompt {
+                // Update incremental highlights if in search prompt, otherwise re-run completed search
+                // Check prompt FIRST since we want to use current prompt input, not stale search_state
+                if let Some(prompt) = &self.prompt {
                     if matches!(
                         prompt.prompt_type,
                         PromptType::Search
@@ -1228,6 +1226,9 @@ impl Editor {
                         let query = prompt.input.clone();
                         self.update_search_highlights(&query);
                     }
+                } else if let Some(search_state) = &self.search_state {
+                    let query = search_state.query.clone();
+                    self.perform_search(&query);
                 }
             }
             Action::ToggleSearchWholeWord => {
@@ -1238,11 +1239,9 @@ impl Editor {
                     "disabled"
                 };
                 self.set_status_message(format!("Whole word search {}", state));
-                // Re-run search if active, or update incremental highlights if in search prompt
-                if let Some(search_state) = &self.search_state {
-                    let query = search_state.query.clone();
-                    self.perform_search(&query);
-                } else if let Some(prompt) = &self.prompt {
+                // Update incremental highlights if in search prompt, otherwise re-run completed search
+                // Check prompt FIRST since we want to use current prompt input, not stale search_state
+                if let Some(prompt) = &self.prompt {
                     if matches!(
                         prompt.prompt_type,
                         PromptType::Search
@@ -1252,6 +1251,9 @@ impl Editor {
                         let query = prompt.input.clone();
                         self.update_search_highlights(&query);
                     }
+                } else if let Some(search_state) = &self.search_state {
+                    let query = search_state.query.clone();
+                    self.perform_search(&query);
                 }
             }
             Action::ToggleSearchRegex => {
@@ -1262,11 +1264,9 @@ impl Editor {
                     "disabled"
                 };
                 self.set_status_message(format!("Regex search {}", state));
-                // Re-run search if active, or update incremental highlights if in search prompt
-                if let Some(search_state) = &self.search_state {
-                    let query = search_state.query.clone();
-                    self.perform_search(&query);
-                } else if let Some(prompt) = &self.prompt {
+                // Update incremental highlights if in search prompt, otherwise re-run completed search
+                // Check prompt FIRST since we want to use current prompt input, not stale search_state
+                if let Some(prompt) = &self.prompt {
                     if matches!(
                         prompt.prompt_type,
                         PromptType::Search
@@ -1276,6 +1276,9 @@ impl Editor {
                         let query = prompt.input.clone();
                         self.update_search_highlights(&query);
                     }
+                } else if let Some(search_state) = &self.search_state {
+                    let query = search_state.query.clone();
+                    self.perform_search(&query);
                 }
             }
             Action::StartMacroRecording => {
