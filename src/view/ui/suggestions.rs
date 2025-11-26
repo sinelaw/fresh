@@ -77,20 +77,23 @@ impl SuggestionsRenderer {
 
         let end_idx = (start_idx + visible_count).min(prompt.suggestions.len());
 
-        // Calculate column widths for visible suggestions
-        let visible_suggestions = &prompt.suggestions[start_idx..end_idx];
-
-        let max_name_width = visible_suggestions
+        // Calculate column widths from ALL suggestions (not just visible) to keep layout stable
+        // as user types and filters the list
+        let max_name_width = prompt
+            .suggestions
             .iter()
             .map(|s| s.text.len())
             .max()
             .unwrap_or(0);
 
-        let max_keybinding_width = visible_suggestions
+        let max_keybinding_width = prompt
+            .suggestions
             .iter()
             .filter_map(|s| s.keybinding.as_ref().map(|k| k.len()))
             .max()
             .unwrap_or(0);
+
+        let visible_suggestions = &prompt.suggestions[start_idx..end_idx];
 
         // Column layout: "  Name  |  Keybinding  |  Description"
         let left_margin = 2;
