@@ -87,6 +87,7 @@ impl Editor {
                     &files_with_unsaved_changes,
                     &self.keybindings,
                     self.key_context,
+                    &self.theme,
                 );
             }
         } else {

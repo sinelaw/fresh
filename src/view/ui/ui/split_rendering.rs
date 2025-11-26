@@ -2279,6 +2279,7 @@ mod tests {
             is_active: true,
             line_wrap: state.viewport.line_wrap_enabled,
             estimated_lines,
+            dim_cursors: false,
         });
 
         (

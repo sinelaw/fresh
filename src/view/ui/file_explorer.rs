@@ -1,7 +1,8 @@
 use crate::view::file_tree::{FileTreeView, NodeId};
+use crate::view::theme::Theme;
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
@@ -22,6 +23,7 @@ impl FileExplorerRenderer {
         files_with_unsaved_changes: &HashSet<PathBuf>,
         keybinding_resolver: &crate::input::keybindings::KeybindingResolver,
         current_context: crate::input::keybindings::KeyContext,
+        theme: &Theme,
     ) {
         // Update viewport height for scrolling calculations
         // Account for borders (top + bottom = 2)
@@ -52,6 +54,7 @@ impl FileExplorerRenderer {
                     is_selected,
                     is_focused,
                     files_with_unsaved_changes,
+                    theme,
                 )
             })
             .collect();
@@ -66,22 +69,35 @@ impl FileExplorerRenderer {
             " File Explorer ".to_string()
         };
 
+        // Title style: inverted colors (dark on light) when focused using theme colors
+        let (title_style, border_style) = if is_focused {
+            (
+                Style::default()
+                    .fg(theme.editor_bg)
+                    .bg(theme.editor_fg)
+                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.cursor),
+            )
+        } else {
+            (
+                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.split_separator_fg),
+            )
+        };
+
         // Create the list widget
         let list = List::new(items)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title(title)
-                    .border_style(if is_focused {
-                        Style::default().fg(Color::Cyan)
-                    } else {
-                        Style::default()
-                    }),
+                    .title_style(title_style)
+                    .border_style(border_style),
             )
             .highlight_style(if is_focused {
-                Style::default().bg(Color::DarkGray).fg(Color::White)
+                Style::default().bg(theme.selection_bg).fg(theme.editor_fg)
             } else {
-                Style::default().bg(Color::DarkGray)
+                Style::default().bg(theme.current_line_bg)
             });
 
         // Create list state for scrolling
@@ -95,6 +111,28 @@ impl FileExplorerRenderer {
         }
 
         frame.render_stateful_widget(list, area, &mut list_state);
+
+        // When focused, show a blinking cursor indicator at the selected row
+        // We render a cursor indicator character and position the hardware cursor there
+        // The hardware cursor provides efficient terminal-native blinking
+        if is_focused {
+            if let Some(selected) = selected_index {
+                if selected >= scroll_offset && selected < scroll_offset + viewport_height {
+                    // Position at the left edge of the selected row (after border)
+                    let cursor_x = area.x + 1;
+                    let cursor_y = area.y + 1 + (selected - scroll_offset) as u16;
+
+                    // Render a cursor indicator character that the hardware cursor will blink over
+                    let cursor_indicator = ratatui::widgets::Paragraph::new("▌")
+                        .style(Style::default().fg(theme.cursor));
+                    let cursor_area = ratatui::layout::Rect::new(cursor_x, cursor_y, 1, 1);
+                    frame.render_widget(cursor_indicator, cursor_area);
+
+                    // Position hardware cursor here for blinking effect
+                    frame.set_cursor_position((cursor_x, cursor_y));
+                }
+            }
+        }
     }
 
     /// Render a single tree node as a ListItem
@@ -105,6 +143,7 @@ impl FileExplorerRenderer {
         is_selected: bool,
         is_focused: bool,
         files_with_unsaved_changes: &HashSet<PathBuf>,
+        theme: &Theme,
     ) -> ListItem<'static> {
         let node = view.tree().get_node(node_id).expect("Node should exist");
 
@@ -127,19 +166,25 @@ impl FileExplorerRenderer {
             } else {
                 "! "
             };
-            spans.push(Span::styled(indicator, Style::default().fg(Color::Yellow)));
+            spans.push(Span::styled(
+                indicator,
+                Style::default().fg(theme.diagnostic_warning_fg),
+            ));
         } else {
             // For files, show unsaved change indicator if applicable
             if files_with_unsaved_changes.contains(&node.entry.path) {
-                spans.push(Span::styled("● ", Style::default().fg(Color::Yellow)));
+                spans.push(Span::styled(
+                    "● ",
+                    Style::default().fg(theme.diagnostic_warning_fg),
+                ));
             } else {
                 spans.push(Span::raw("  "));
             }
         }
 
-        // Name (no file type icons anymore)
+        // Name styling using theme colors
         let name_style = if is_selected && is_focused {
-            Style::default().fg(Color::White)
+            Style::default().fg(theme.editor_fg)
         } else if node
             .entry
             .metadata
@@ -147,11 +192,11 @@ impl FileExplorerRenderer {
             .map(|m| m.is_hidden)
             .unwrap_or(false)
         {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(theme.line_number_fg)
         } else if node.is_dir() {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(theme.syntax_keyword)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(theme.editor_fg)
         };
 
         spans.push(Span::styled(node.entry.name.clone(), name_style));
@@ -161,14 +206,20 @@ impl FileExplorerRenderer {
             if let Some(metadata) = &node.entry.metadata {
                 if let Some(size) = metadata.size {
                     let size_str = format!(" ({})", Self::format_size(size));
-                    spans.push(Span::styled(size_str, Style::default().fg(Color::DarkGray)));
+                    spans.push(Span::styled(
+                        size_str,
+                        Style::default().fg(theme.line_number_fg),
+                    ));
                 }
             }
         }
 
         // Error indicator
         if node.is_error() {
-            spans.push(Span::styled(" [Error]", Style::default().fg(Color::Red)));
+            spans.push(Span::styled(
+                " [Error]",
+                Style::default().fg(theme.diagnostic_error_fg),
+            ));
         }
 
         ListItem::new(Line::from(spans))
