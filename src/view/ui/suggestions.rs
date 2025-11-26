@@ -77,8 +77,6 @@ impl SuggestionsRenderer {
 
         let end_idx = (start_idx + visible_count).min(prompt.suggestions.len());
 
-        // Calculate column widths from ALL suggestions (not just visible) to keep layout stable
-        // as user types and filters the list
         let max_name_width = prompt
             .suggestions
             .iter()
