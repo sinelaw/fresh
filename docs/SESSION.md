@@ -37,6 +37,15 @@ pub struct Session {
     /// File explorer state
     pub file_explorer: FileExplorerState,
 
+    /// Input histories (search, replace, command palette, etc.)
+    pub histories: SessionHistories,
+
+    /// Search options (persist across searches within session)
+    pub search_options: SearchOptions,
+
+    /// Bookmarks (character key -> file position)
+    pub bookmarks: HashMap<char, SerializedBookmark>,
+
     /// Timestamp when session was saved
     pub saved_at: u64,
 }
@@ -89,30 +98,32 @@ pub struct SerializedSplitViewState {
 /// Per-file state within a split
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedFileState {
-    /// Primary cursor position (line, column)
+    /// Primary cursor position (byte offset)
     pub cursor: SerializedCursor,
 
     /// Additional cursors for multi-cursor
     pub additional_cursors: Vec<SerializedCursor>,
 
-    /// Scroll position
+    /// Scroll position (byte offset)
     pub scroll: SerializedScroll,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedCursor {
-    /// Line number (1-indexed)
-    pub line: usize,
-    /// Column number (0-indexed, in characters)
-    pub column: usize,
-    /// Selection anchor (line, column) if selection active
-    pub anchor: Option<(usize, usize)>,
+    /// Cursor position as byte offset from start of file
+    pub position: usize,
+    /// Selection anchor as byte offset (if selection active)
+    pub anchor: Option<usize>,
+    /// Sticky column for vertical movement (character column)
+    pub sticky_column: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedScroll {
-    /// Top visible line (1-indexed)
-    pub top_line: usize,
+    /// Top visible position as byte offset
+    pub top_byte: usize,
+    /// Virtual line offset within the top line (for wrapped lines)
+    pub top_view_line_offset: usize,
     /// Left column offset (for horizontal scroll)
     pub left_column: usize,
 }
@@ -148,6 +159,49 @@ pub struct FileExplorerState {
     pub expanded_dirs: Vec<PathBuf>,
     /// Scroll offset
     pub scroll_offset: usize,
+}
+
+/// Per-session input histories
+/// These override the global histories when working in this project
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SessionHistories {
+    /// Search history (find in file)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub search: Vec<String>,
+
+    /// Replace history (find & replace)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replace: Vec<String>,
+
+    /// Command palette history (recently used commands)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command_palette: Vec<String>,
+
+    /// Goto line history
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub goto_line: Vec<String>,
+
+    /// Open file prompt history
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open_file: Vec<String>,
+}
+
+/// Search options that persist across searches within a session
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SearchOptions {
+    pub case_sensitive: bool,
+    pub whole_word: bool,
+    pub use_regex: bool,
+    pub confirm_each: bool,
+}
+
+/// Serialized bookmark (file path + byte offset)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedBookmark {
+    /// File path (relative to working_dir)
+    pub file_path: PathBuf,
+    /// Byte offset position in the file
+    pub position: usize,
 }
 ```
 
@@ -306,6 +360,20 @@ impl Session {
                 expanded_dirs: editor.file_explorer.expanded_dirs(),
                 scroll_offset: editor.file_explorer.scroll_offset(),
             },
+            histories: SessionHistories {
+                search: editor.search_history.items().to_vec(),
+                replace: editor.replace_history.items().to_vec(),
+                command_palette: editor.command_registry.command_history().to_vec(),
+                goto_line: Vec::new(), // TODO: add goto_line_history to Editor
+                open_file: Vec::new(), // TODO: add open_file_history to Editor
+            },
+            search_options: SearchOptions {
+                case_sensitive: editor.search_case_sensitive,
+                whole_word: editor.search_whole_word,
+                use_regex: editor.search_use_regex,
+                confirm_each: editor.search_confirm_each,
+            },
+            bookmarks: serialize_bookmarks(&editor.bookmarks, &editor.buffer_metadata, &editor.working_dir),
             saved_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -334,6 +402,26 @@ impl Session {
             &self.file_explorer.expanded_dirs,
             self.file_explorer.scroll_offset,
         );
+
+        // 6. Restore input histories (merge with global, session takes precedence)
+        if !self.histories.search.is_empty() {
+            editor.search_history = InputHistory::from_items(self.histories.search.clone());
+        }
+        if !self.histories.replace.is_empty() {
+            editor.replace_history = InputHistory::from_items(self.histories.replace.clone());
+        }
+        if !self.histories.command_palette.is_empty() {
+            editor.command_registry.restore_history(&self.histories.command_palette);
+        }
+
+        // 7. Restore search options
+        editor.search_case_sensitive = self.search_options.case_sensitive;
+        editor.search_whole_word = self.search_options.whole_word;
+        editor.search_use_regex = self.search_options.use_regex;
+        editor.search_confirm_each = self.search_options.confirm_each;
+
+        // 8. Restore bookmarks
+        editor.bookmarks = deserialize_bookmarks(&self.bookmarks, &buffer_mapping)?;
 
         Ok(())
     }
@@ -488,9 +576,9 @@ struct Args {
       "active_file_index": 0,
       "file_states": {
         "src/main.rs": {
-          "cursor": { "line": 42, "column": 15, "anchor": null },
+          "cursor": { "position": 1842, "anchor": null, "sticky_column": 15 },
           "additional_cursors": [],
-          "scroll": { "top_line": 30, "left_column": 0 }
+          "scroll": { "top_byte": 1200, "top_view_line_offset": 0, "left_column": 0 }
         }
       },
       "tab_scroll_offset": 0,
@@ -506,6 +594,21 @@ struct Args {
     "width": 30,
     "expanded_dirs": ["src", "src/app"],
     "scroll_offset": 0
+  },
+  "histories": {
+    "search": ["handleAuth", "TODO", "unwrap()"],
+    "replace": ["expect(\"failed\")"],
+    "command_palette": ["save", "toggle_line_wrap", "split_vertical"]
+  },
+  "search_options": {
+    "case_sensitive": false,
+    "whole_word": false,
+    "use_regex": false,
+    "confirm_each": true
+  },
+  "bookmarks": {
+    "a": { "file_path": "src/main.rs", "position": 1842 },
+    "b": { "file_path": "src/lib.rs", "position": 500 }
   },
   "saved_at": 1700000000
 }
@@ -697,13 +800,16 @@ SerializedSplitViewState.file_states: HashMap<PathBuf, SerializedFileState>
 
 | | Line/Column | Byte Offset |
 |-|-------------|-------------|
-| **Pros** | Survives minor edits, human-readable | Exact position, simpler code |
-| **Cons** | Invalid if lines deleted, requires line counting | Invalid after any edit, opaque |
+| **Pros** | Survives minor edits, human-readable | Exact position, O(1) lookup, works for huge files |
+| **Cons** | O(n) to compute for large files, requires line counting | Invalid after any edit, opaque |
 
-**Decision**: Line/column positions. If the file changed externally:
-- Line/column has a chance of being approximately correct
-- Byte offset would point to garbage
-- We clamp to valid positions on restore
+**Decision**: Byte offsets. Rationale:
+- Fresh already uses byte offsets internally (`Cursor::position`, `Viewport::top_byte`)
+- No conversion needed during save/restore - direct mapping to internal state
+- O(1) position lookup regardless of file size (critical for multi-GB files)
+- Line/column would require expensive line counting for large files
+- If file changed externally, we clamp byte offset to file length (cursor goes to EOF)
+- Users who edit files outside Fresh expect cursor reset anyway
 
 ### What NOT to Persist
 
@@ -711,8 +817,21 @@ Explicitly excluded from session state:
 - **Undo history**: Too large, complex serialization, low value after restart
 - **Buffer content**: Already on disk (for file-backed buffers)
 - **LSP state**: Transient, reconstructed from language servers
-- **Search/replace history**: Already persisted globally in `~/.local/share/fresh/`
 - **Unsaved changes**: User should be prompted to save, not silently restored
+
+### Global vs Per-Session History
+
+| History Type | Storage | Rationale |
+|--------------|---------|-----------|
+| Search/Replace | Per-session | Project-specific terms (function names, patterns) |
+| Command palette | Per-session | Different workflows per project |
+| Goto line | Per-session | Line numbers only meaningful in context |
+| Open file | Per-session | File paths relative to project |
+
+**Alternative considered**: Keep histories global (current behavior).
+**Rejected because**: Search terms like `handleUserAuth` or `DATABASE_URL` are project-specific. Users switching between projects don't want cross-contamination.
+
+**Fallback behavior**: If session history is empty, fall back to global history. This gives new projects useful defaults while established projects get isolation.
 
 ---
 
