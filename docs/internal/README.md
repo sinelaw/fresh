@@ -1,20 +1,17 @@
 # Internal Documentation
 
-This directory contains internal planning documents, design specifications, and development notes. These are **not** user-facing documentation.
+This directory contains pending work tracking. Completed plans have been removed.
 
 ## Documents
 
-| Document | Status | Description |
-|----------|--------|-------------|
-| [ORGANIZE.md](ORGANIZE.md) | **Completed** | Source code reorganization plan |
-| [HELP.md](HELP.md) | **Completed** | Help/Manual plugin plan |
-| [MERGE.md](MERGE.md) | **Implemented** | 3-way merge conflict resolution specification |
-| [MARKDOWN.md](MARKDOWN.md) | **Partial** | Markdown semi-WYSIWYG view pipeline design |
-| [CR.md](CR.md) | **Ongoing** | Code review and refactoring tracking |
+| Document | Description |
+|----------|-------------|
+| [MARKDOWN.md](MARKDOWN.md) | Markdown compose mode remaining work |
+| [CR.md](CR.md) | Code quality improvements to address |
 
 ## User-Facing Documentation
 
-For user documentation, see the parent [docs/](../) directory:
+See the parent [docs/](../) directory:
 - [USER_GUIDE.md](../USER_GUIDE.md) - User guide
 - [PLUGIN_DEVELOPMENT.md](../PLUGIN_DEVELOPMENT.md) - Plugin development guide
 - [plugin-api.md](../plugin-api.md) - Full plugin API reference

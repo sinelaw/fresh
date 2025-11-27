@@ -1,22 +1,6 @@
 # Code Review
 
-> **STATUS: ONGOING** - This document tracks code quality issues and refactoring tasks. Items in the "Completed" section have been addressed. Items under "Large Functions" and "Test Code" are pending improvements.
-
-## Completed
-- ~~src/app/mod.rs:4121 — `handle_plugin_command` ~1.1k lines~~ → Refactored into `src/app/plugin_commands.rs` with 43 domain-grouped handlers
-- ~~src/services/plugins/runtime.rs:3299 and thread.rs:738 — duplicate `hook_args_to_json`~~ → Consolidated into `src/services/plugins/hooks.rs`
-- ~~src/app/mod.rs:3284 — `process_async_messages` ~680 lines~~ → Refactored into `src/app/async_messages.rs` with domain-grouped handlers (LSP, file system, file explorer, plugins)
-- ~~src/input/multi_cursor.rs — duplicate add-cursor helpers~~ → Extracted shared helpers (get_cursor_line_info, cursor_position_on_line, success_result, adjust_position_for_newline)
-- ~~src/input/actions.rs:1400+ — repeated collect-and-apply patterns~~ → Extracted `apply_deletions` helper (eliminated 8 duplicate 7-line blocks)
-- ~~src/primitives/highlighter.rs:530 — `highlight_color` ~150 lines~~ → Converted to data-driven lookup with `DEFAULT_HIGHLIGHT_COLORS` and `TYPESCRIPT_HIGHLIGHT_COLORS` arrays
-- ~~src/primitives/ansi.rs:135 — `parse_sgr_params` ~150 lines~~ → Refactored with `STANDARD_COLORS`/`BRIGHT_COLORS` arrays and extracted `parse_extended_color` helper
-- ~~src/app/mod.rs:826 — `open_file` ~300 lines~~ → Extracted `notify_lsp_file_opened` helper (307→157 lines)
-- ~~src/state.rs:223 — `apply` ~330 lines~~ → Extracted `apply_insert` and `apply_delete` helpers
-- ~~src/services/lsp/async_handler.rs:1543 — `run` ~490 lines~~ → Extracted `spawn_stdout_reader` and `replay_pending_commands` helpers (490→396 lines)
-- ~~src/view/ui/split_rendering.rs:1135 — `render_view_lines` ~750 lines~~ → Extracted `compute_char_style` and `render_left_margin` helpers (~750→~570 lines)
-- ~~src/app/mod.rs:5181 — `handle_rename_response` ~280 lines~~ → Extracted `apply_lsp_text_edits` helper (~280→~140 lines)
-- ~~src/app/file_explorer.rs — duplicate path/timestamp logic~~ → Extracted `get_parent_dir_path` and `timestamp_suffix` helpers
-- ~~src/app/plugin_commands.rs — duplicate menu lookup pattern~~ → Extracted `find_menu_by_label_mut` helper
+Pending code quality improvements and refactoring opportunities.
 
 ## Large Functions
 - src/app/render.rs:5 — top-level `render` runs ~450 lines covering layout calculation, plugin hook firing, file explorer rendering, and status/prompt UI. The amount of responsibility in one function hurts readability and testing; factoring into helpers (layout, plugin hook prep, explorer rendering, status/prompt rendering) would make regressions easier to spot.
