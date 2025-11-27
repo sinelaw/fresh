@@ -1,5 +1,7 @@
 # 3-Way Merge Conflict Resolution: Specification
 
+> **STATUS: IMPLEMENTED** - This feature has been implemented as `plugins/merge_conflict.ts`. This document is retained as the design specification.
+
 ## 1. Implementation Strategy: Plugin-First
 
 To keep the editor core lean and encourage extensibility, this feature **SHOULD** be implemented as a self-contained **TypeScript plugin**. This approach decouples the complex UI and state management of the merge tool from the editor's core functionality.

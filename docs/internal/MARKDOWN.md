@@ -1,5 +1,7 @@
 # Markdown Semi-WYSIWYG (Unified View Pipeline)
 
+> **STATUS: PARTIALLY IMPLEMENTED** - Core view transform infrastructure is complete. Plugin exists at `plugins/markdown_compose.ts`. Some features like visual-line navigation and column guides are still pending.
+
 Goal: keep Markdown source intact and visible, render a semi-WYSIWYG view (styles, flow, structure) without mutating the buffer, and let plugins drive presentation through a single, unified view pipeline. Prefer simplicity and determinism over heuristics.
 
 ## Principles
@@ -53,21 +55,21 @@ Goal: keep Markdown source intact and visible, render a semi-WYSIWYG view (style
 ## Implementation Status
 
 ### ✅ Completed
-- **Per-split view state** (`src/split.rs:68-146`): view mode, compose width, column guides, transforms
-- **View transform API** (`src/ts_runtime.rs`, `src/editor/mod.rs:3376-3390`): `op_fresh_submit_view_transform()` with buffer_id + split_id
-- **View token types** (`src/plugin_api.rs:76-99`): `Text`, `Newline`, `Space` wire format with per-char source mapping
-- **View pipeline infrastructure** (`src/ui/split_rendering.rs:542-607`): `build_view_data()` constructs view from transform or identity
-- **Compose mode toggle** (`src/editor/input.rs:605-655`): per-split Source/Compose switching with line number hiding
-- **Compose width setting** (`src/editor/input.rs:656-667, 1365-1388`): prompt-based width configuration
-- **Compose layout & centering** (`src/ui/split_rendering.rs:634-693`): centered column with tinted margins
-- **Layout hints API** (`src/plugin_api.rs:68-74`, `src/editor/mod.rs:3360-3375`): `SetLayoutHints` for compose width and column guides
-- **Cursor mapping** (`src/ui/split_rendering.rs:609-632, 821-1471`): source → view → screen mapping with fallback logic (19 commits fixing edge cases)
-- **Token flattening** (`src/view.rs:114-145`): `flatten_tokens()` converts wire format to view lines
-- **Disable renderer wrapping in Compose** (`src/editor/input.rs:626-632, 653-656`): builtin `line_wrap_enabled` is disabled in Compose mode so plugin Break tokens control wrapping
+- **Per-split view state** (`src/view/split.rs`): view mode, compose width, column guides, transforms
+- **View transform API** (`src/services/plugins/runtime.rs`, `src/app/mod.rs`): `op_fresh_submit_view_transform()` with buffer_id + split_id
+- **View token types** (`src/services/plugins/api.rs`): `Text`, `Newline`, `Space` wire format with per-char source mapping
+- **View pipeline infrastructure** (`src/view/ui/split_rendering.rs`): `build_view_data()` constructs view from transform or identity
+- **Compose mode toggle** (`src/app/input.rs`): per-split Source/Compose switching with line number hiding
+- **Compose width setting** (`src/app/input.rs`): prompt-based width configuration
+- **Compose layout & centering** (`src/view/ui/split_rendering.rs`): centered column with tinted margins
+- **Layout hints API** (`src/services/plugins/api.rs`, `src/app/mod.rs`): `SetLayoutHints` for compose width and column guides
+- **Cursor mapping** (`src/view/ui/split_rendering.rs`): source → view → screen mapping with fallback logic
+- **Token flattening** (`src/view/stream.rs`): `flatten_tokens()` converts wire format to view lines
+- **Disable renderer wrapping in Compose** (`src/app/input.rs`): builtin `line_wrap_enabled` is disabled in Compose mode so plugin Break tokens control wrapping
 - **Markdown plugin image handling** (`plugins/markdown_compose.ts`): image lines are treated as hard breaks to prevent incorrect merging
 
 ### 🚧 Partially Implemented
-- **Wrapping as transform**: wrapping happens in renderer (`split_rendering.rs:1305-1393`), not as a token-inserting transform step. Plugins cannot control wrapping strategy.
+- **Wrapping as transform**: wrapping happens in renderer (`src/view/ui/split_rendering.rs`), not as a token-inserting transform step. Plugins cannot control wrapping strategy.
 - **Base token stream**: identity view uses raw string, not token format. Only plugin transforms use tokens. No unified token pipeline.
 
 ### ❌ Not Yet Started

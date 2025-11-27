@@ -1,5 +1,7 @@
 # Code Review
 
+> **STATUS: ONGOING** - This document tracks code quality issues and refactoring tasks. Items in the "Completed" section have been addressed. Items under "Large Functions" and "Test Code" are pending improvements.
+
 ## Completed
 - ~~src/app/mod.rs:4121 — `handle_plugin_command` ~1.1k lines~~ → Refactored into `src/app/plugin_commands.rs` with 43 domain-grouped handlers
 - ~~src/services/plugins/runtime.rs:3299 and thread.rs:738 — duplicate `hook_args_to_json`~~ → Consolidated into `src/services/plugins/hooks.rs`

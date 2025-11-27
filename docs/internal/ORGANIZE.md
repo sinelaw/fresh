@@ -1,5 +1,7 @@
 # Proposal for Source Code Reorganization
 
+> **STATUS: COMPLETED** - This reorganization has been fully implemented. The `src/` directory now follows the structure outlined below. This document is retained for historical reference.
+
 This document outlines a plan to reorganize the `src/` directory to better reflect the application's architecture. The goal is to make the codebase easier to navigate and understand for new and existing developers.
 
 ## Motivation
