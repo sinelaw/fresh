@@ -2,7 +2,7 @@ use super::backend::{FsBackend, FsEntry, FsMetadata};
 use std::collections::HashMap;
 use std::fmt;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex};
 
@@ -83,8 +83,15 @@ impl FsManager {
             result
         } else {
             // Wait for the other request to complete
-            rx.await
-                .unwrap_or_else(|_| Err(io::Error::new(io::ErrorKind::Other, "Request cancelled")))
+            rx.await.unwrap_or_else(|_| {
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "Directory listing request cancelled (path: {})",
+                        path.display()
+                    ),
+                ))
+            })
         }
     }
 
@@ -97,12 +104,17 @@ impl FsManager {
     }
 
     /// Get metadata for a single path
-    pub async fn get_single_metadata(&self, path: &PathBuf) -> io::Result<FsMetadata> {
-        let results = self.backend.get_metadata_batch(&[path.clone()]).await;
-        results
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| Err(io::Error::new(io::ErrorKind::Other, "No result returned")))
+    pub async fn get_single_metadata(&self, path: &Path) -> io::Result<FsMetadata> {
+        let results = self.backend.get_metadata_batch(&[path.to_path_buf()]).await;
+        results.into_iter().next().unwrap_or_else(|| {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "Metadata batch returned empty results for path: {}",
+                    path.display()
+                ),
+            ))
+        })
     }
 
     /// Check if a path exists

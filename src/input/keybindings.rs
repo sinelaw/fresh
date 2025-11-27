@@ -82,11 +82,13 @@ impl KeyContext {
     }
 
     /// Parse context from a "when" string
+    /// Accepts both snake_case and camelCase for backwards compatibility
     pub fn from_when_clause(when: &str) -> Option<Self> {
         match when.trim() {
             "global" => Some(KeyContext::Global),
             "prompt" => Some(KeyContext::Prompt),
             "popup" => Some(KeyContext::Popup),
+            // Accept both formats for backwards compatibility, normalize to snake_case
             "fileExplorer" | "file_explorer" => Some(KeyContext::FileExplorer),
             "normal" => Some(KeyContext::Normal),
             "menu" => Some(KeyContext::Menu),
@@ -94,14 +96,14 @@ impl KeyContext {
         }
     }
 
-    /// Convert context to "when" clause string
+    /// Convert context to "when" clause string (uses snake_case for consistency)
     pub fn to_when_clause(self) -> &'static str {
         match self {
             KeyContext::Global => "global",
             KeyContext::Normal => "normal",
             KeyContext::Prompt => "prompt",
             KeyContext::Popup => "popup",
-            KeyContext::FileExplorer => "fileExplorer",
+            KeyContext::FileExplorer => "file_explorer",
             KeyContext::Menu => "menu",
         }
     }

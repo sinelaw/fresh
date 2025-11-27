@@ -459,7 +459,7 @@ pub struct LspServerConfig {
     pub args: Vec<String>,
 
     /// Whether the server is enabled
-    #[serde(default = "default_true")]
+    #[serde(default = "default_enabled")]
     pub enabled: bool,
 
     /// Whether to auto-start this LSP server when opening matching files
@@ -472,7 +472,8 @@ pub struct LspServerConfig {
     pub process_limits: ProcessLimits,
 }
 
-fn default_true() -> bool {
+/// Default value `true` for the `enabled` field
+fn default_enabled() -> bool {
     true
 }
 

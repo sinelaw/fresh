@@ -21,11 +21,12 @@ pub struct ProcessLimits {
     pub max_cpu_percent: Option<u32>,
 
     /// Enable resource limiting (can be disabled per-platform)
-    #[serde(default = "default_true")]
+    #[serde(default = "default_enabled")]
     pub enabled: bool,
 }
 
-fn default_true() -> bool {
+/// Default value `true` for the `enabled` field
+fn default_enabled() -> bool {
     true
 }
 

@@ -52,22 +52,22 @@ pub struct EditorConfig {
     #[serde(default = "default_tab_size")]
     pub tab_size: usize,
 
-    #[serde(default = "default_true")]
+    #[serde(default = "default_enabled")]
     pub auto_indent: bool,
 
-    #[serde(default = "default_true")]
+    #[serde(default = "default_enabled")]
     pub line_numbers: bool,
 
-    #[serde(default = "default_false")]
+    #[serde(default = "default_disabled")]
     pub relative_line_numbers: bool,
 
     #[serde(default = "default_scroll_offset")]
     pub scroll_offset: usize,
 
-    #[serde(default = "default_true")]
+    #[serde(default = "default_enabled")]
     pub syntax_highlighting: bool,
 
-    #[serde(default = "default_true")]
+    #[serde(default = "default_enabled")]
     pub line_wrap: bool,
 
     #[serde(default = "default_highlight_timeout")]
@@ -91,7 +91,7 @@ pub struct EditorConfig {
     pub estimated_line_length: usize,
 
     /// Whether to enable LSP inlay hints (type hints, parameter hints, etc.)
-    #[serde(default = "default_true")]
+    #[serde(default = "default_enabled")]
     pub enable_inlay_hints: bool,
 }
 
@@ -108,11 +108,15 @@ fn default_large_file_threshold() -> u64 {
     LARGE_FILE_THRESHOLD_BYTES
 }
 
-fn default_true() -> bool {
+/// Default value `true` for boolean config fields
+/// Used for: auto_indent, line_numbers, syntax_highlighting, line_wrap, enable_inlay_hints, respect_gitignore
+fn default_enabled() -> bool {
     true
 }
 
-fn default_false() -> bool {
+/// Default value `false` for boolean config fields
+/// Used for: relative_line_numbers, show_hidden, show_gitignored
+fn default_disabled() -> bool {
     false
 }
 
@@ -155,15 +159,15 @@ impl Default for EditorConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileExplorerConfig {
     /// Whether to respect .gitignore files
-    #[serde(default = "default_true")]
+    #[serde(default = "default_enabled")]
     pub respect_gitignore: bool,
 
     /// Whether to show hidden files (starting with .) by default
-    #[serde(default = "default_false")]
+    #[serde(default = "default_disabled")]
     pub show_hidden: bool,
 
     /// Whether to show gitignored files by default
-    #[serde(default = "default_false")]
+    #[serde(default = "default_disabled")]
     pub show_gitignored: bool,
 
     /// Custom patterns to ignore (in addition to .gitignore)
@@ -255,7 +259,7 @@ pub struct LanguageConfig {
     pub comment_prefix: Option<String>,
 
     /// Whether to auto-indent
-    #[serde(default = "default_true")]
+    #[serde(default = "default_enabled")]
     pub auto_indent: bool,
 }
 
