@@ -3142,22 +3142,15 @@ impl Editor {
 
     /// Pre-fill the Open File prompt input with the current buffer directory
     fn prefill_open_file_prompt(&mut self) {
-        let initial_text = self.open_file_prompt_directory_hint();
-        let needs_update = if let Some(prompt) = self.prompt.as_mut() {
+        // With the native file browser, the directory is shown from file_open_state.current_dir
+        // in the prompt rendering. The prompt.input is just the filter/filename, so we
+        // start with an empty input.
+        if let Some(prompt) = self.prompt.as_mut() {
             if prompt.prompt_type == PromptType::OpenFile {
-                prompt.input = initial_text.clone();
-                prompt.cursor_pos = initial_text.len();
+                prompt.input.clear();
+                prompt.cursor_pos = 0;
                 prompt.selection_anchor = None;
-                true
-            } else {
-                false
             }
-        } else {
-            false
-        };
-
-        if needs_update {
-            self.update_prompt_suggestions();
         }
     }
 

@@ -51,20 +51,8 @@ impl Editor {
                 }
                 true
             }
-            Action::PromptMoveStart => {
-                // Go to first entry (Ctrl+Home or similar)
-                if let Some(state) = &mut self.file_open_state {
-                    state.select_first();
-                }
-                true
-            }
-            Action::PromptMoveEnd => {
-                // Go to last entry (Ctrl+End or similar)
-                if let Some(state) = &mut self.file_open_state {
-                    state.select_last();
-                }
-                true
-            }
+            // Let Home/End pass through to normal prompt cursor handling
+            // PromptMoveStart and PromptMoveEnd are NOT intercepted here
 
             // Enter to confirm selection
             Action::PromptConfirm => {
@@ -72,10 +60,32 @@ impl Editor {
                 true
             }
 
-            // Tab to switch sections (navigation vs file list)
+            // Tab to autocomplete to selected item (and navigate into dir if it's a directory)
             Action::PromptAcceptSuggestion => {
-                if let Some(state) = &mut self.file_open_state {
-                    state.switch_section();
+                // Get the selected entry info
+                let selected_info = self.file_open_state.as_ref().and_then(|s| {
+                    s.selected_index.and_then(|idx| s.entries.get(idx)).map(|e| {
+                        (
+                            e.fs_entry.name.clone(),
+                            e.fs_entry.is_dir(),
+                            e.fs_entry.path.clone(),
+                        )
+                    })
+                });
+
+                if let Some((name, is_dir, path)) = selected_info {
+                    if is_dir {
+                        // Navigate into the directory
+                        self.file_open_navigate_to(path);
+                    } else {
+                        // Just autocomplete the filename
+                        if let Some(prompt) = &mut self.prompt {
+                            prompt.input = name;
+                            prompt.cursor_pos = prompt.input.len();
+                        }
+                        // Update the filter to match
+                        self.update_file_open_filter();
+                    }
                 }
                 true
             }
@@ -116,6 +126,36 @@ impl Editor {
 
     /// Confirm selection in file open dialog
     fn file_open_confirm(&mut self) {
+        // First, check if the prompt input is an absolute path
+        let prompt_input = self
+            .prompt
+            .as_ref()
+            .map(|p| p.input.clone())
+            .unwrap_or_default();
+
+        // If the input looks like an absolute path, try to open/navigate to it directly
+        if prompt_input.starts_with('/') || prompt_input.starts_with('~') {
+            let expanded_path = if prompt_input.starts_with('~') {
+                if let Some(home) = dirs::home_dir() {
+                    home.join(&prompt_input[1..].trim_start_matches('/'))
+                } else {
+                    std::path::PathBuf::from(&prompt_input)
+                }
+            } else {
+                std::path::PathBuf::from(&prompt_input)
+            };
+
+            if expanded_path.is_dir() {
+                self.file_open_navigate_to(expanded_path);
+                return;
+            } else if expanded_path.exists() || !expanded_path.to_string_lossy().ends_with('/') {
+                // Open the file (exists or will be created as new buffer)
+                self.file_open_open_file(expanded_path);
+                return;
+            }
+        }
+
+        // Otherwise, use the selected entry from the file list
         let (path, is_dir) = {
             let state = match &self.file_open_state {
                 Some(s) => s,
@@ -281,7 +321,7 @@ impl Editor {
                 if let Some(state) = &mut self.file_open_state {
                     state.active_section = FileOpenSection::Files;
                     if index < state.entries.len() {
-                        state.selected_index = index;
+                        state.selected_index = Some(index);
                     }
                 }
 

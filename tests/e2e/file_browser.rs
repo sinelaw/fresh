@@ -44,7 +44,7 @@ fn test_file_browser_popup_appears() {
     let screen = harness.screen_to_string();
 
     // Should show the prompt
-    assert!(screen.contains("Open file:"), "Prompt should be visible");
+    assert!(screen.contains("Open:"), "Prompt should be visible");
 
     // Should show navigation shortcuts
     assert!(
@@ -224,6 +224,9 @@ fn test_file_browser_open_file() {
         .wait_until(|h| h.screen_to_string().contains("target.txt"))
         .expect("File should be listed");
 
+    // Type filter to select the file (no selection by default)
+    harness.type_text("target").unwrap();
+
     // Press Enter to open the selected file
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -264,6 +267,9 @@ fn test_file_browser_navigate_directory() {
     harness
         .wait_until(|h| h.screen_to_string().contains("subdir"))
         .expect("Subdir should be listed");
+
+    // Type filter to select the directory (no selection by default)
+    harness.type_text("subdir").unwrap();
 
     // Press Enter to navigate into subdirectory
     harness
@@ -774,9 +780,9 @@ fn test_file_browser_click_updates_prompt() {
         .wait_until(|h| h.screen_to_string().contains("selected_file.txt"))
         .expect("File should be listed");
 
-    // The prompt line should show "Open file:" initially
+    // The prompt line should show "Open:" initially
     let screen = harness.screen_to_string();
-    assert!(screen.contains("Open file:"), "Prompt should be visible");
+    assert!(screen.contains("Open:"), "Prompt should be visible");
 
     // Click on the file entry (it should be in the file list area)
     // The file list starts after navigation (2 rows) and header (1 row), plus border
@@ -799,5 +805,86 @@ fn test_file_browser_click_updates_prompt() {
     assert!(
         screen_after.contains("Navigation:"),
         "File browser should remain open after click"
+    );
+}
+
+/// Test that opening file browser with a buffer in a subdir shows correct prompt path
+#[test]
+fn test_file_browser_prompt_shows_buffer_directory() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_root = temp_dir.path().to_path_buf();
+
+    // Create a nested directory structure with a file
+    let subdir = project_root.join("src").join("components");
+    fs::create_dir_all(&subdir).unwrap();
+    let file_path = subdir.join("button.rs");
+    fs::write(&file_path, "// Button component").unwrap();
+
+    // Also create a sibling file in the same directory
+    fs::write(subdir.join("input.rs"), "// Input component").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+
+    // Open the file in the subdirectory
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Navigation:"))
+        .expect("File browser should appear");
+
+    // Type the full path to open the file
+    let path_str = file_path.to_str().unwrap();
+    harness.type_text(path_str).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for file to open
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Button component"))
+        .expect("File should open");
+
+    // Now open the file browser again
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Navigation:"))
+        .expect("File browser should appear again");
+
+    // The prompt should show the directory path of the open file
+    // Format: "Open: /path/to/src/components/"
+    let expected_dir = format!("{}/", subdir.to_string_lossy());
+    let expected_prompt = format!("Open: {}", expected_dir);
+
+    // Get prompt line using harness helper (knows screen layout)
+    let prompt_line = harness.get_prompt_line();
+    let prompt_line = prompt_line.trim();
+
+    assert_eq!(
+        prompt_line,
+        expected_prompt,
+        "Prompt line should exactly match the directory path.\nExpected: '{}'\nActual: '{}'",
+        expected_prompt,
+        prompt_line,
+    );
+
+    // The sibling file should be visible in the file list
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("input.rs"),
+        "Should show sibling files in the same directory"
+    );
+    assert!(
+        screen.contains("button.rs"),
+        "Should show the current file in the list"
     );
 }

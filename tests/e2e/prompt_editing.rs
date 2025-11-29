@@ -229,7 +229,7 @@ fn test_open_file_delete_word_backward() {
     harness.render().unwrap();
 
     // Should show find file prompt
-    harness.assert_screen_contains("Open file:");
+    harness.assert_screen_contains("Open:");
 
     // Type a file path
     harness.type_text("src/editor.rs").unwrap();

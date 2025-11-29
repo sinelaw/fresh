@@ -4,7 +4,7 @@
 //! It renders a structured popup above the prompt with sortable columns,
 //! navigation shortcuts, and filtering.
 
-use crate::services::fs::FsEntry;
+use crate::services::fs::{FsEntry, FsEntryType};
 use std::cmp::Ordering;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -70,8 +70,8 @@ pub struct FileOpenState {
     /// Sort direction (true = ascending)
     pub sort_ascending: bool,
 
-    /// Selected index in the current section
-    pub selected_index: usize,
+    /// Selected index in the current section (None = no selection)
+    pub selected_index: Option<usize>,
 
     /// Scroll offset for file list
     pub scroll_offset: usize,
@@ -103,7 +103,7 @@ impl FileOpenState {
             error: None,
             sort_mode: SortMode::Name,
             sort_ascending: true,
-            selected_index: 0,
+            selected_index: None,
             scroll_offset: 0,
             active_section: FileOpenSection::Files,
             filter: String::new(),
@@ -189,19 +189,39 @@ impl FileOpenState {
 
     /// Set entries from filesystem and apply initial sort
     pub fn set_entries(&mut self, entries: Vec<FsEntry>) {
-        self.entries = entries
-            .into_iter()
-            .filter(|e| self.show_hidden || !Self::is_hidden(&e.name))
-            .map(|fs_entry| FileOpenEntry {
-                fs_entry,
+        let mut result: Vec<FileOpenEntry> = Vec::new();
+
+        // Add ".." entry for parent directory navigation (unless at root)
+        if let Some(parent) = self.current_dir.parent() {
+            let parent_entry = FsEntry::new(
+                parent.to_path_buf(),
+                "..".to_string(),
+                FsEntryType::Directory,
+            );
+            result.push(FileOpenEntry {
+                fs_entry: parent_entry,
                 matches_filter: true,
-            })
-            .collect();
+            });
+        }
+
+        // Add filtered entries
+        result.extend(
+            entries
+                .into_iter()
+                .filter(|e| self.show_hidden || !Self::is_hidden(&e.name))
+                .map(|fs_entry| FileOpenEntry {
+                    fs_entry,
+                    matches_filter: true,
+                }),
+        );
+
+        self.entries = result;
         self.loading = false;
         self.error = None;
         self.apply_filter_internal();
         self.sort_entries();
-        self.selected_index = 0;
+        // No selection by default - user must type or navigate to select
+        self.selected_index = None;
         self.scroll_offset = 0;
     }
 
@@ -223,12 +243,20 @@ impl FileOpenState {
         self.apply_filter_internal();
         self.sort_entries();
 
-        // Try to keep selection on a matching entry
-        if !self.entries.is_empty() && !self.entries[self.selected_index].matches_filter {
-            if let Some(first_match) = self.entries.iter().position(|e| e.matches_filter) {
-                self.selected_index = first_match;
+        // When filter is non-empty, select first matching entry (skip "..")
+        if !filter.is_empty() {
+            let first_match = self.entries.iter().position(|e| {
+                e.matches_filter && e.fs_entry.name != ".."
+            });
+            if let Some(idx) = first_match {
+                self.selected_index = Some(idx);
                 self.ensure_selected_visible();
+            } else {
+                self.selected_index = None;
             }
+        } else {
+            // No filter = no selection
+            self.selected_index = None;
         }
     }
 
@@ -246,6 +274,16 @@ impl FileOpenState {
         let ascending = self.sort_ascending;
 
         self.entries.sort_by(|a, b| {
+            // ".." always stays at top
+            let a_is_parent = a.fs_entry.name == "..";
+            let b_is_parent = b.fs_entry.name == "..";
+            match (a_is_parent, b_is_parent) {
+                (true, false) => return Ordering::Less,
+                (false, true) => return Ordering::Greater,
+                (true, true) => return Ordering::Equal,
+                _ => {}
+            }
+
             // Matching entries first
             match (a.matches_filter, b.matches_filter) {
                 (true, false) => return Ordering::Less,
@@ -340,8 +378,14 @@ impl FileOpenState {
                 }
             }
             FileOpenSection::Files => {
-                if self.selected_index > 0 {
-                    self.selected_index -= 1;
+                if let Some(idx) = self.selected_index {
+                    if idx > 0 {
+                        self.selected_index = Some(idx - 1);
+                        self.ensure_selected_visible();
+                    }
+                } else if !self.entries.is_empty() {
+                    // No selection, select last entry
+                    self.selected_index = Some(self.entries.len() - 1);
                     self.ensure_selected_visible();
                 }
             }
@@ -357,8 +401,14 @@ impl FileOpenState {
                 }
             }
             FileOpenSection::Files => {
-                if self.selected_index + 1 < self.entries.len() {
-                    self.selected_index += 1;
+                if let Some(idx) = self.selected_index {
+                    if idx + 1 < self.entries.len() {
+                        self.selected_index = Some(idx + 1);
+                        self.ensure_selected_visible();
+                    }
+                } else if !self.entries.is_empty() {
+                    // No selection, select first entry
+                    self.selected_index = Some(0);
                     self.ensure_selected_visible();
                 }
             }
@@ -368,16 +418,24 @@ impl FileOpenState {
     /// Page up
     pub fn page_up(&mut self, page_size: usize) {
         if self.active_section == FileOpenSection::Files {
-            self.selected_index = self.selected_index.saturating_sub(page_size);
-            self.ensure_selected_visible();
+            if let Some(idx) = self.selected_index {
+                self.selected_index = Some(idx.saturating_sub(page_size));
+                self.ensure_selected_visible();
+            } else if !self.entries.is_empty() {
+                self.selected_index = Some(0);
+            }
         }
     }
 
     /// Page down
     pub fn page_down(&mut self, page_size: usize) {
         if self.active_section == FileOpenSection::Files {
-            self.selected_index = (self.selected_index + page_size).min(self.entries.len().saturating_sub(1));
-            self.ensure_selected_visible();
+            if let Some(idx) = self.selected_index {
+                self.selected_index = Some((idx + page_size).min(self.entries.len().saturating_sub(1)));
+                self.ensure_selected_visible();
+            } else if !self.entries.is_empty() {
+                self.selected_index = Some(self.entries.len().saturating_sub(1));
+            }
         }
     }
 
@@ -386,8 +444,10 @@ impl FileOpenState {
         match self.active_section {
             FileOpenSection::Navigation => self.selected_shortcut = 0,
             FileOpenSection::Files => {
-                self.selected_index = 0;
-                self.scroll_offset = 0;
+                if !self.entries.is_empty() {
+                    self.selected_index = Some(0);
+                    self.scroll_offset = 0;
+                }
             }
         }
     }
@@ -399,30 +459,34 @@ impl FileOpenState {
                 self.selected_shortcut = self.shortcuts.len().saturating_sub(1);
             }
             FileOpenSection::Files => {
-                self.selected_index = self.entries.len().saturating_sub(1);
-                self.ensure_selected_visible();
+                if !self.entries.is_empty() {
+                    self.selected_index = Some(self.entries.len() - 1);
+                    self.ensure_selected_visible();
+                }
             }
         }
     }
 
     /// Ensure selected item is visible in viewport
     fn ensure_selected_visible(&mut self) {
+        let Some(idx) = self.selected_index else { return };
         // This will be called with actual visible_rows from renderer
         // For now, use a reasonable default
         let visible_rows = 15;
-        if self.selected_index < self.scroll_offset {
-            self.scroll_offset = self.selected_index;
-        } else if self.selected_index >= self.scroll_offset + visible_rows {
-            self.scroll_offset = self.selected_index.saturating_sub(visible_rows - 1);
+        if idx < self.scroll_offset {
+            self.scroll_offset = idx;
+        } else if idx >= self.scroll_offset + visible_rows {
+            self.scroll_offset = idx.saturating_sub(visible_rows - 1);
         }
     }
 
     /// Update scroll offset based on visible rows
     pub fn update_scroll_for_visible_rows(&mut self, visible_rows: usize) {
-        if self.selected_index < self.scroll_offset {
-            self.scroll_offset = self.selected_index;
-        } else if self.selected_index >= self.scroll_offset + visible_rows {
-            self.scroll_offset = self.selected_index.saturating_sub(visible_rows - 1);
+        let Some(idx) = self.selected_index else { return };
+        if idx < self.scroll_offset {
+            self.scroll_offset = idx;
+        } else if idx >= self.scroll_offset + visible_rows {
+            self.scroll_offset = idx.saturating_sub(visible_rows - 1);
         }
     }
 
@@ -437,7 +501,7 @@ impl FileOpenState {
     /// Get the currently selected entry (file or directory)
     pub fn selected_entry(&self) -> Option<&FileOpenEntry> {
         if self.active_section == FileOpenSection::Files {
-            self.entries.get(self.selected_index)
+            self.selected_index.and_then(|idx| self.entries.get(idx))
         } else {
             None
         }
@@ -460,8 +524,8 @@ impl FileOpenState {
                 .get(self.selected_shortcut)
                 .map(|s| s.path.clone()),
             FileOpenSection::Files => self
-                .entries
-                .get(self.selected_index)
+                .selected_index
+                .and_then(|idx| self.entries.get(idx))
                 .map(|e| e.fs_entry.path.clone()),
         }
     }
@@ -471,8 +535,8 @@ impl FileOpenState {
         match self.active_section {
             FileOpenSection::Navigation => true, // Shortcuts are always directories
             FileOpenSection::Files => self
-                .entries
-                .get(self.selected_index)
+                .selected_index
+                .and_then(|idx| self.entries.get(idx))
                 .map(|e| e.fs_entry.is_dir())
                 .unwrap_or(false),
         }
@@ -567,7 +631,8 @@ mod tests {
 
     #[test]
     fn test_sort_by_name() {
-        let mut state = FileOpenState::new(PathBuf::from("/test"));
+        // Use root path so no ".." entry is added
+        let mut state = FileOpenState::new(PathBuf::from("/"));
         state.set_entries(vec![
             make_entry("zebra.txt", false),
             make_entry("alpha.txt", false),
@@ -581,7 +646,8 @@ mod tests {
 
     #[test]
     fn test_sort_by_size() {
-        let mut state = FileOpenState::new(PathBuf::from("/test"));
+        // Use root path so no ".." entry is added
+        let mut state = FileOpenState::new(PathBuf::from("/"));
         state.sort_mode = SortMode::Size;
         state.set_entries(vec![
             make_entry_with_size("big.txt", 1000),
@@ -596,7 +662,8 @@ mod tests {
 
     #[test]
     fn test_filter() {
-        let mut state = FileOpenState::new(PathBuf::from("/test"));
+        // Use root path so no ".." entry is added
+        let mut state = FileOpenState::new(PathBuf::from("/"));
         state.set_entries(vec![
             make_entry("foo.txt", false),
             make_entry("bar.txt", false),
@@ -615,7 +682,8 @@ mod tests {
 
     #[test]
     fn test_filter_case_insensitive() {
-        let mut state = FileOpenState::new(PathBuf::from("/test"));
+        // Use root path so no ".." entry is added
+        let mut state = FileOpenState::new(PathBuf::from("/"));
         state.set_entries(vec![
             make_entry("README.md", false),
             make_entry("readme.txt", false),
@@ -631,7 +699,8 @@ mod tests {
 
     #[test]
     fn test_hidden_files() {
-        let mut state = FileOpenState::new(PathBuf::from("/test"));
+        // Use root path so no ".." entry is added
+        let mut state = FileOpenState::new(PathBuf::from("/"));
         state.show_hidden = false;
         state.set_entries(vec![
             make_entry(".hidden", false),
@@ -654,31 +723,37 @@ mod tests {
 
     #[test]
     fn test_navigation() {
-        let mut state = FileOpenState::new(PathBuf::from("/test"));
+        // Use root path so no ".." entry is added
+        let mut state = FileOpenState::new(PathBuf::from("/"));
         state.set_entries(vec![
             make_entry("a.txt", false),
             make_entry("b.txt", false),
             make_entry("c.txt", false),
         ]);
 
-        assert_eq!(state.selected_index, 0);
+        // Initially no selection
+        assert_eq!(state.selected_index, None);
+
+        // First down selects first entry
+        state.select_next();
+        assert_eq!(state.selected_index, Some(0));
 
         state.select_next();
-        assert_eq!(state.selected_index, 1);
+        assert_eq!(state.selected_index, Some(1));
 
         state.select_next();
-        assert_eq!(state.selected_index, 2);
+        assert_eq!(state.selected_index, Some(2));
 
         state.select_next(); // Should stay at last
-        assert_eq!(state.selected_index, 2);
+        assert_eq!(state.selected_index, Some(2));
 
         state.select_prev();
-        assert_eq!(state.selected_index, 1);
+        assert_eq!(state.selected_index, Some(1));
 
         state.select_first();
-        assert_eq!(state.selected_index, 0);
+        assert_eq!(state.selected_index, Some(0));
 
         state.select_last();
-        assert_eq!(state.selected_index, 2);
+        assert_eq!(state.selected_index, Some(2));
     }
 }

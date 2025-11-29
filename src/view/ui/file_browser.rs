@@ -354,7 +354,7 @@ impl FileBrowserRenderer {
 
         for (view_idx, entry) in visible_entries.iter().enumerate() {
             let actual_idx = state.scroll_offset + view_idx;
-            let is_selected = is_files_active && actual_idx == state.selected_index;
+            let is_selected = is_files_active && state.selected_index == Some(actual_idx);
             let is_hovered = matches!(hover_target, Some(HoverTarget::FileBrowserEntry(i)) if *i == actual_idx);
 
             // Base style based on selection, hover, and filter match

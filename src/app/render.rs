@@ -361,7 +361,22 @@ impl Editor {
 
         // Render prompt line if active
         if let Some(prompt) = &prompt {
-            StatusBarRenderer::render_prompt(frame, main_chunks[prompt_line_idx], prompt, &theme);
+            // Use specialized renderer for file open prompt to show colorized path
+            if prompt.prompt_type == crate::view::prompt::PromptType::OpenFile {
+                if let Some(file_open_state) = &self.file_open_state {
+                    StatusBarRenderer::render_file_open_prompt(
+                        frame,
+                        main_chunks[prompt_line_idx],
+                        prompt,
+                        file_open_state,
+                        &theme,
+                    );
+                } else {
+                    StatusBarRenderer::render_prompt(frame, main_chunks[prompt_line_idx], prompt, &theme);
+                }
+            } else {
+                StatusBarRenderer::render_prompt(frame, main_chunks[prompt_line_idx], prompt, &theme);
+            }
         }
 
         // Render popups from the active buffer state

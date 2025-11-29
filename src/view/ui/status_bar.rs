@@ -104,6 +104,51 @@ impl StatusBarRenderer {
         }
     }
 
+    /// Render the file open prompt with colorized path
+    /// Shows: "Open: /path/to/current/dir/filename" where the directory part is dimmed
+    pub fn render_file_open_prompt(
+        frame: &mut Frame,
+        area: Rect,
+        prompt: &Prompt,
+        file_open_state: &crate::app::file_open::FileOpenState,
+        theme: &crate::view::theme::Theme,
+    ) {
+        let base_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
+        let dir_style = Style::default()
+            .fg(theme.help_separator_fg)
+            .bg(theme.prompt_bg);
+
+        let mut spans = Vec::new();
+
+        // "Open: " prefix
+        spans.push(Span::styled("Open: ", base_style));
+
+        // Current directory path (dimmed)
+        let dir_path = file_open_state.current_dir.to_string_lossy();
+        let dir_display = if dir_path.ends_with('/') || dir_path.ends_with('\\') {
+            dir_path.to_string()
+        } else {
+            format!("{}/", dir_path)
+        };
+        spans.push(Span::styled(dir_display.clone(), dir_style));
+
+        // User input (the filename part) - normal color
+        spans.push(Span::styled(prompt.input.clone(), base_style));
+
+        let line = Line::from(spans);
+        let prompt_line = Paragraph::new(line).style(base_style);
+
+        frame.render_widget(prompt_line, area);
+
+        // Set cursor position in the prompt
+        // Cursor should be at: "Open: ".len() + dir_display.len() + cursor_pos
+        let prefix_len = 6 + dir_display.len(); // "Open: " = 6 chars
+        let cursor_x = (prefix_len + prompt.cursor_pos) as u16;
+        if cursor_x < area.width {
+            frame.set_cursor_position((area.x + cursor_x, area.y));
+        }
+    }
+
     /// Render the normal status bar
     fn render_status(
         frame: &mut Frame,
