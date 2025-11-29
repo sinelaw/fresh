@@ -389,14 +389,11 @@ impl SplitRenderer {
             &HashMap<crate::model::event::SplitId, crate::view::split::SplitViewState>,
         >,
         hide_cursor: bool,
-    ) -> Vec<(
-        crate::model::event::SplitId,
-        BufferId,
-        Rect,
-        Rect,
-        usize,
-        usize,
-    )> {
+        hovered_tab: Option<(BufferId, crate::model::event::SplitId, bool)>, // (buffer_id, split_id, is_close_button)
+    ) -> (
+        Vec<(crate::model::event::SplitId, BufferId, Rect, Rect, usize, usize)>,
+        Vec<(crate::model::event::SplitId, BufferId, u16, u16, u16, u16)>,
+    ) {
         let _span = tracing::trace_span!("render_content").entered();
 
         // Get all visible splits with their areas
@@ -405,6 +402,7 @@ impl SplitRenderer {
 
         // Collect areas for mouse handling
         let mut split_areas = Vec::new();
+        let mut all_tab_areas = Vec::new();
 
         // Render each split
         for (split_id, buffer_id, split_area) in visible_buffers {
@@ -414,8 +412,17 @@ impl SplitRenderer {
             let (split_buffers, tab_scroll_offset) =
                 Self::split_buffers_for_tabs(split_view_states, split_id, buffer_id);
 
-            // Render tabs for this split
-            TabsRenderer::render_for_split(
+            // Determine hover state for this split's tabs
+            let tab_hover_for_split = hovered_tab.and_then(|(hover_buf, hover_split, is_close)| {
+                if hover_split == split_id {
+                    Some((hover_buf, is_close))
+                } else {
+                    None
+                }
+            });
+
+            // Render tabs for this split and collect hit areas
+            let tab_hit_areas = TabsRenderer::render_for_split(
                 frame,
                 layout.tabs_rect,
                 &split_buffers,
@@ -425,7 +432,14 @@ impl SplitRenderer {
                 theme,
                 is_active,
                 tab_scroll_offset,
+                tab_hover_for_split,
             );
+
+            // Add tab row to hit areas (all tabs share the same row)
+            let tab_row = layout.tabs_rect.y;
+            for (buf_id, start_col, end_col, close_start) in tab_hit_areas {
+                all_tab_areas.push((split_id, buf_id, tab_row, start_col, end_col, close_start));
+            }
 
             // Get references separately to avoid double borrow
             let state_opt = buffers.get_mut(&buffer_id);
@@ -497,7 +511,7 @@ impl SplitRenderer {
             Self::render_separator(frame, direction, x, y, length, theme);
         }
 
-        split_areas
+        (split_areas, all_tab_areas)
     }
 
     /// Render a split separator line

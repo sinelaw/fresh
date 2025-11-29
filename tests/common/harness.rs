@@ -438,6 +438,19 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// Simulate a mouse move (hover) at specific coordinates
+    pub fn mouse_move(&mut self, col: u16, row: u16) -> io::Result<()> {
+        let mouse_event = MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        };
+        self.send_mouse(mouse_event)?;
+        self.render()?;
+        Ok(())
+    }
+
     /// Simulate a mouse drag from one position to another
     pub fn mouse_drag(
         &mut self,

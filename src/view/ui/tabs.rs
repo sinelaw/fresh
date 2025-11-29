@@ -98,6 +98,11 @@ impl TabsRenderer {
     /// * `active_buffer` - The currently active buffer ID for this split
     /// * `theme` - The active theme for colors
     /// * `is_active_split` - Whether this split is the active one
+    /// * `hovered_tab` - Optional (buffer_id, is_close_button) if a tab is being hovered
+    ///
+    /// # Returns
+    /// Vec of (buffer_id, tab_start_col, tab_end_col, close_start_col) for each visible tab.
+    /// These are absolute screen column positions for hit testing.
     pub fn render_for_split(
         frame: &mut Frame,
         area: Rect,
@@ -108,13 +113,14 @@ impl TabsRenderer {
         theme: &crate::view::theme::Theme,
         is_active_split: bool,
         tab_scroll_offset: usize,
-    ) {
+        hovered_tab: Option<(BufferId, bool)>, // (buffer_id, is_close_button)
+    ) -> Vec<(BufferId, u16, u16, u16)> {
         const SCROLL_INDICATOR_LEFT: &str = "<";
         const SCROLL_INDICATOR_RIGHT: &str = ">";
         const SCROLL_INDICATOR_WIDTH: usize = 1; // Width of "<" or ">"
 
         let mut all_tab_spans: Vec<(Span, usize)> = Vec::new(); // Store (Span, display_width)
-        let mut tab_ranges: Vec<(usize, usize)> = Vec::new(); // (start, end) positions for each tab (content only)
+        let mut tab_ranges: Vec<(usize, usize, usize)> = Vec::new(); // (start, end, close_start) positions for each tab
         let mut rendered_buffer_ids: Vec<BufferId> = Vec::new(); // Track which buffers actually got rendered
 
         // First, build all spans and calculate their display widths
@@ -138,13 +144,17 @@ impl TabsRenderer {
             } else {
                 ""
             };
-            // Include close button (×) on each tab
-            let tab_text = format!(" {name}{modified}{binary_indicator} × ");
-            let display_width = tab_text.chars().count();
 
             let is_active = *id == active_buffer;
 
-            let style = if is_active {
+            // Check hover state for this tab
+            let (is_hovered_name, is_hovered_close) = match hovered_tab {
+                Some((hover_buf, is_close)) if hover_buf == *id => (!is_close, is_close),
+                _ => (false, false),
+            };
+
+            // Determine base style
+            let base_style = if is_active {
                 if is_active_split {
                     Style::default()
                         .fg(theme.tab_active_fg)
@@ -156,17 +166,44 @@ impl TabsRenderer {
                         .bg(theme.tab_inactive_bg)
                         .add_modifier(Modifier::BOLD)
                 }
+            } else if is_hovered_name {
+                // Non-active tab with name hovered - use hover background
+                Style::default()
+                    .fg(theme.tab_inactive_fg)
+                    .bg(theme.tab_hover_bg)
             } else {
                 Style::default()
                     .fg(theme.tab_inactive_fg)
                     .bg(theme.tab_inactive_bg)
             };
 
-            let start_pos = all_tab_spans.iter().map(|(_, w)| w).sum();
-            let end_pos = start_pos + display_width;
-            tab_ranges.push((start_pos, end_pos));
+            // Style for the close button
+            let close_style = if is_hovered_close {
+                // Close button hovered - use hover color
+                base_style.fg(theme.tab_close_hover_fg)
+            } else {
+                base_style
+            };
 
-            all_tab_spans.push((Span::styled(tab_text, style), display_width));
+            // Build tab content: " {name}{modified}{binary_indicator} "
+            let tab_name_text = format!(" {name}{modified}{binary_indicator} ");
+            let tab_name_width = tab_name_text.chars().count();
+
+            // Close button: "× "
+            let close_text = "× ";
+            let close_width = close_text.chars().count();
+
+            let total_width = tab_name_width + close_width;
+
+            let start_pos: usize = all_tab_spans.iter().map(|(_, w)| w).sum();
+            let close_start_pos = start_pos + tab_name_width;
+            let end_pos = start_pos + total_width;
+            tab_ranges.push((start_pos, end_pos, close_start_pos));
+
+            // Add name span
+            all_tab_spans.push((Span::styled(tab_name_text, base_style), tab_name_width));
+            // Add close button span (can have different style when hovered)
+            all_tab_spans.push((Span::styled(close_text.to_string(), close_style), close_width));
 
             // Add a small separator between tabs if it's not the last tab
             if idx < split_buffers.len() - 1 {
@@ -188,7 +225,7 @@ impl TabsRenderer {
             .position(|id| *id == active_buffer);
 
         let mut tab_widths: Vec<usize> = Vec::new();
-        for (start, end) in &tab_ranges {
+        for (start, end, _close_start) in &tab_ranges {
             tab_widths.push(end.saturating_sub(*start));
         }
 
@@ -210,7 +247,7 @@ impl TabsRenderer {
             .saturating_sub((show_left as usize + show_right as usize) * SCROLL_INDICATOR_WIDTH);
 
         if let Some(active_idx) = active_tab_idx {
-            let (start, end) = tab_ranges[active_idx];
+            let (start, end, _close_start) = tab_ranges[active_idx];
             let active_width = end.saturating_sub(start);
             if start == 0 && active_width >= max_width {
                 show_left = false;
@@ -309,6 +346,57 @@ impl TabsRenderer {
         let block = Block::default().style(Style::default().bg(theme.tab_separator_bg));
         let paragraph = Paragraph::new(line).block(block);
         frame.render_widget(paragraph, area);
+
+        // Compute and return hit areas for mouse interaction
+        // We need to map the logical tab positions to screen positions accounting for:
+        // 1. The scroll offset
+        // 2. The left scroll indicator (if shown)
+        // 3. The base area.x position
+        let left_indicator_offset = if show_left { SCROLL_INDICATOR_WIDTH } else { 0 };
+
+        let mut hit_areas = Vec::new();
+        for (idx, buffer_id) in rendered_buffer_ids.iter().enumerate() {
+            let (logical_start, logical_end, logical_close_start) = tab_ranges[idx];
+
+            // Convert logical positions to screen positions
+            // Screen position = area.x + left_indicator_offset + (logical_pos - scroll_offset)
+            // But we need to clamp to visible area
+            let visible_start = offset;
+            let visible_end = offset + available;
+
+            // Skip tabs that are completely scrolled out of view
+            if logical_end <= visible_start || logical_start >= visible_end {
+                continue;
+            }
+
+            // Calculate visible portion of this tab
+            let screen_start = if logical_start >= visible_start {
+                area.x + left_indicator_offset as u16 + (logical_start - visible_start) as u16
+            } else {
+                area.x + left_indicator_offset as u16
+            };
+
+            let screen_end = if logical_end <= visible_end {
+                area.x + left_indicator_offset as u16 + (logical_end - visible_start) as u16
+            } else {
+                area.x + left_indicator_offset as u16 + available as u16
+            };
+
+            // Close button position (if visible)
+            let screen_close_start = if logical_close_start >= visible_start && logical_close_start < visible_end {
+                area.x + left_indicator_offset as u16 + (logical_close_start - visible_start) as u16
+            } else if logical_close_start < visible_start {
+                // Close button is partially/fully scrolled off left - use screen_start
+                screen_start
+            } else {
+                // Close button is scrolled off right
+                screen_end
+            };
+
+            hit_areas.push((*buffer_id, screen_start, screen_end, screen_close_start));
+        }
+
+        hit_areas
     }
 
     /// Legacy render function for backward compatibility
@@ -336,6 +424,7 @@ impl TabsRenderer {
             theme,
             true, // Legacy behavior: always treat as active
             0,    // Default tab_scroll_offset for legacy render
+            None, // No hover state for legacy render
         );
     }
 }

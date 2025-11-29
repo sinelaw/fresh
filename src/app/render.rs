@@ -238,7 +238,18 @@ impl Editor {
         let hide_cursor =
             self.menu_state.active_menu.is_some() || self.key_context == KeyContext::FileExplorer;
 
-        let split_areas = SplitRenderer::render_content(
+        // Convert HoverTarget to tab hover info for rendering
+        let hovered_tab = match &self.mouse_state.hover_target {
+            Some(HoverTarget::TabName(buffer_id, split_id)) => {
+                Some((*buffer_id, *split_id, false))
+            }
+            Some(HoverTarget::TabCloseButton(buffer_id, split_id)) => {
+                Some((*buffer_id, *split_id, true))
+            }
+            _ => None,
+        };
+
+        let (split_areas, tab_areas) = SplitRenderer::render_content(
             frame,
             editor_content_area,
             &self.split_manager,
@@ -254,8 +265,10 @@ impl Editor {
             self.config.editor.estimated_line_length,
             Some(&self.split_view_states),
             hide_cursor,
+            hovered_tab,
         );
         self.cached_layout.split_areas = split_areas;
+        self.cached_layout.tab_areas = tab_areas;
         self.cached_layout.separator_areas = self
             .split_manager
             .get_separators_with_ids(editor_content_area);

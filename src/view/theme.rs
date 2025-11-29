@@ -74,6 +74,10 @@ struct UiColors {
     tab_inactive_fg: ColorDef,
     tab_inactive_bg: ColorDef,
     tab_separator_bg: ColorDef,
+    #[serde(default = "default_tab_close_hover_fg")]
+    tab_close_hover_fg: ColorDef,
+    #[serde(default = "default_tab_hover_bg")]
+    tab_hover_bg: ColorDef,
     #[serde(default = "default_menu_bg")]
     menu_bg: ColorDef,
     #[serde(default = "default_menu_fg")]
@@ -133,6 +137,14 @@ struct UiColors {
     compose_margin_bg: ColorDef,
     #[serde(default = "default_semantic_highlight_bg")]
     semantic_highlight_bg: ColorDef,
+}
+
+// Default tab close hover color (for backward compatibility with existing themes)
+fn default_tab_close_hover_fg() -> ColorDef {
+    ColorDef::Rgb(255, 100, 100) // Red-ish color for close button hover
+}
+fn default_tab_hover_bg() -> ColorDef {
+    ColorDef::Rgb(70, 70, 75) // Slightly lighter than inactive tab bg for hover
 }
 
 // Default menu colors (for backward compatibility with existing themes)
@@ -250,6 +262,8 @@ pub struct Theme {
     pub tab_inactive_fg: Color,
     pub tab_inactive_bg: Color,
     pub tab_separator_bg: Color,
+    pub tab_close_hover_fg: Color,
+    pub tab_hover_bg: Color,
 
     // Menu bar colors
     pub menu_bg: Color,
@@ -348,6 +362,8 @@ impl From<ThemeFile> for Theme {
             tab_inactive_fg: file.ui.tab_inactive_fg.into(),
             tab_inactive_bg: file.ui.tab_inactive_bg.into(),
             tab_separator_bg: file.ui.tab_separator_bg.into(),
+            tab_close_hover_fg: file.ui.tab_close_hover_fg.into(),
+            tab_hover_bg: file.ui.tab_hover_bg.into(),
             menu_bg: file.ui.menu_bg.into(),
             menu_fg: file.ui.menu_fg.into(),
             menu_active_bg: file.ui.menu_active_bg.into(),
@@ -459,6 +475,8 @@ impl Theme {
             tab_inactive_fg: Color::White,
             tab_inactive_bg: Color::DarkGray,
             tab_separator_bg: Color::Rgb(45, 45, 48),
+            tab_close_hover_fg: Color::Rgb(255, 100, 100),
+            tab_hover_bg: Color::Rgb(70, 70, 75),
 
             // Menu bar colors
             menu_bg: Color::Rgb(60, 60, 65),
@@ -561,6 +579,8 @@ impl Theme {
             tab_inactive_fg: Color::Rgb(100, 100, 100),
             tab_inactive_bg: Color::Rgb(230, 230, 230),
             tab_separator_bg: Color::Rgb(200, 200, 200),
+            tab_close_hover_fg: Color::Rgb(220, 50, 50),
+            tab_hover_bg: Color::Rgb(210, 210, 210),
 
             // Menu bar colors - dark text on light backgrounds
             menu_bg: Color::Rgb(245, 245, 245),
@@ -663,6 +683,8 @@ impl Theme {
             tab_inactive_fg: Color::White,
             tab_inactive_bg: Color::Black,
             tab_separator_bg: Color::Rgb(30, 30, 35),
+            tab_close_hover_fg: Color::Rgb(249, 38, 114), // Monokai pink for hover
+            tab_hover_bg: Color::Rgb(50, 50, 55),
 
             // Menu bar colors
             menu_bg: Color::Rgb(50, 50, 55),
@@ -789,6 +811,8 @@ impl Theme {
             tab_inactive_fg: Color::Rgb(255, 255, 85),
             tab_inactive_bg: Color::Rgb(0, 0, 128),
             tab_separator_bg: Color::Rgb(0, 0, 170),
+            tab_close_hover_fg: Color::Rgb(255, 85, 85), // Bright red for close hover
+            tab_hover_bg: Color::Rgb(0, 0, 200), // Slightly brighter blue for hover
 
             // Menu bar colors - classic DOS menu style
             menu_bg: Color::Rgb(170, 170, 170),

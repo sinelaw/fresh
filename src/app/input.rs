@@ -2323,6 +2323,20 @@ impl Editor {
             }
         }
 
+        // Check tab areas using cached hit regions (computed during rendering)
+        for (split_id, buffer_id, tab_row, start_col, end_col, close_start) in
+            &self.cached_layout.tab_areas
+        {
+            if row == *tab_row && col >= *start_col && col < *end_col {
+                // Check if hovering over the close button
+                if col >= *close_start {
+                    return Some(HoverTarget::TabCloseButton(*buffer_id, *split_id));
+                }
+                // Otherwise, return TabName for hover effect on tab name
+                return Some(HoverTarget::TabName(*buffer_id, *split_id));
+            }
+        }
+
         // Check scrollbars
         for (split_id, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
             &self.cached_layout.split_areas
@@ -2596,100 +2610,49 @@ impl Editor {
             }
         }
 
-        // Check if click is in tab bar area (1 row above content_rect)
-        let tab_hit = self.cached_layout.split_areas.iter().find_map(
-            |(split_id, buffer_id, content_rect, scrollbar_rect, _thumb_start, _thumb_end)| {
-                // Tab bar is 1 row high, above content_rect, spanning content + scrollbar width
-                let tabs_y = content_rect.y.saturating_sub(1);
-                let tabs_width = content_rect.width + scrollbar_rect.width;
-                if row == tabs_y && col >= content_rect.x && col < content_rect.x + tabs_width {
-                    Some((*split_id, *buffer_id, content_rect.x))
+        // Check if click is on a tab using cached hit areas (computed during rendering)
+        let tab_click = self.cached_layout.tab_areas.iter().find_map(
+            |(split_id, buffer_id, tab_row, start_col, end_col, close_start)| {
+                if row == *tab_row && col >= *start_col && col < *end_col {
+                    let is_close_button = col >= *close_start;
+                    Some((*split_id, *buffer_id, is_close_button))
                 } else {
                     None
                 }
             },
         );
 
-        if let Some((split_id, _current_buffer_id, tabs_x)) = tab_hit {
+        if let Some((split_id, clicked_buffer, clicked_close)) = tab_click {
             // Focus this split when clicking on its tab bar
             self.split_manager.set_active_split(split_id);
 
-            // Determine which tab was clicked and if it was the close button
-            // Get the open buffers for this split
-            let (clicked_buffer, clicked_close) =
-                if let Some(view_state) = self.split_view_states.get(&split_id) {
-                    let relative_x = col.saturating_sub(tabs_x) as usize;
-                    let mut current_x = 0usize;
-
-                    let mut found_buffer = None;
-                    let mut found_close = false;
-                    for buffer_id in &view_state.open_buffers {
-                        // Calculate tab width: " {name}{modified} × " + separator " "
-                        let tab_width = if let Some(state) = self.buffers.get(buffer_id) {
-                            let name = if let Some(metadata) = self.buffer_metadata.get(buffer_id) {
-                                metadata.display_name.as_str()
-                            } else {
-                                state
-                                    .buffer
-                                    .file_path()
-                                    .and_then(|p| p.file_name())
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("[No Name]")
-                            };
-                            let modified = if state.buffer.is_modified() { 1 } else { 0 };
-                            // " {name}{modified} × " = 2 + name.len() + modified + 3 (for " × ")
-                            2 + name.chars().count() + modified + 3
-                        } else {
-                            continue;
-                        };
-
-                        if relative_x >= current_x && relative_x < current_x + tab_width {
-                            found_buffer = Some(*buffer_id);
-                            // Check if click is on the close button (last 2 characters: "× ")
-                            // The close button is at position tab_width - 2 within the tab
-                            let pos_in_tab = relative_x - current_x;
-                            if pos_in_tab >= tab_width.saturating_sub(3) {
-                                found_close = true;
-                            }
-                            break;
-                        }
-
-                        // Move past this tab and separator (1 char)
-                        current_x += tab_width + 1;
-                    }
-                    (found_buffer, found_close)
-                } else {
-                    (None, false)
-                };
-
             // Handle close button click
             if clicked_close {
-                if let Some(buffer_id) = clicked_buffer {
-                    // Check if it's the last buffer
-                    if self.buffers.len() == 1 {
-                        self.set_status_message("Cannot close last buffer".to_string());
-                    } else if let Some(state) = self.buffers.get(&buffer_id) {
-                        if state.buffer.is_modified() {
-                            // Buffer has unsaved changes - prompt for confirmation
-                            self.start_prompt(
-                                "Buffer modified. (s)ave, (d)iscard, (c)ancel? ".to_string(),
-                                PromptType::ConfirmCloseBuffer { buffer_id },
-                            );
-                        } else if let Err(e) = self.force_close_buffer(buffer_id) {
-                            self.set_status_message(format!("Cannot close buffer: {}", e));
-                        } else {
-                            self.set_status_message("Buffer closed".to_string());
-                        }
+                // Check if it's the last buffer
+                if self.buffers.len() == 1 {
+                    self.set_status_message("Cannot close last buffer".to_string());
+                } else if let Some(state) = self.buffers.get(&clicked_buffer) {
+                    if state.buffer.is_modified() {
+                        // Buffer has unsaved changes - prompt for confirmation
+                        self.start_prompt(
+                            "Buffer modified. (s)ave, (d)iscard, (c)ancel? ".to_string(),
+                            PromptType::ConfirmCloseBuffer {
+                                buffer_id: clicked_buffer,
+                            },
+                        );
+                    } else if let Err(e) = self.force_close_buffer(clicked_buffer) {
+                        self.set_status_message(format!("Cannot close buffer: {}", e));
+                    } else {
+                        self.set_status_message("Buffer closed".to_string());
                     }
                 }
                 return Ok(());
             }
 
-            // Switch to the clicked buffer if found, otherwise just focus the split
-            let target_buffer = clicked_buffer.unwrap_or(_current_buffer_id);
-            if target_buffer != self.active_buffer {
+            // Switch to the clicked buffer
+            if clicked_buffer != self.active_buffer {
                 self.position_history.commit_pending_movement();
-                self.set_active_buffer(target_buffer);
+                self.set_active_buffer(clicked_buffer);
             }
             return Ok(());
         }

@@ -253,6 +253,10 @@ pub enum HoverTarget {
     FileBrowserHeader(SortMode),
     /// Hovering over the file browser scrollbar
     FileBrowserScrollbar,
+    /// Hovering over a tab name (buffer_id, split_id) - for non-active tabs
+    TabName(BufferId, SplitId),
+    /// Hovering over a tab close button (buffer_id, split_id)
+    TabCloseButton(BufferId, SplitId),
 }
 
 /// Mouse state tracking
@@ -301,4 +305,8 @@ pub(super) struct CachedLayout {
     /// Suggestions area for mouse hit testing
     /// (inner_rect, scroll_start_idx, visible_count, total_count)
     pub suggestions_area: Option<(Rect, usize, usize, usize)>,
+    /// Tab hit areas for mouse interaction
+    /// (split_id, buffer_id, tab_row, tab_start_col, tab_end_col, close_button_start_col)
+    /// The close button spans from close_button_start_col to tab_end_col
+    pub tab_areas: Vec<(SplitId, BufferId, u16, u16, u16, u16)>,
 }

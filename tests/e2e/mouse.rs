@@ -979,3 +979,211 @@ fn test_split_separator_drag_respects_limits() {
         "Ratio should be close to minimum after extreme drag up, got {min_ratio}"
     );
 }
+
+/// Test that hovering over a tab close button changes its color
+#[test]
+fn test_tab_close_button_hover_changes_color() {
+    use crate::common::harness::layout;
+    use ratatui::style::Color;
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create a second buffer so we have two tabs
+    harness.new_buffer().unwrap();
+    harness.render().unwrap();
+
+    // Get the tab row content to find the × position
+    let screen = harness.screen_to_string();
+    let tab_row: String = screen
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
+
+    println!("Tab row content: '{}'", tab_row);
+    println!("Tab row length: {}", tab_row.len());
+
+    // Find the position of the first × in the tab bar
+    let x_pos = tab_row.find('×').expect("Could not find × close button in tab bar");
+    println!("Found × at position: {}", x_pos);
+
+    // Get the color of the × before hovering
+    let style_before = harness.get_cell_style(x_pos as u16, layout::TAB_BAR_ROW as u16);
+    let fg_before = style_before.and_then(|s| s.fg);
+    println!("Color before hover: {:?}", fg_before);
+
+    // Now hover over the × position
+    harness.mouse_move(x_pos as u16, layout::TAB_BAR_ROW as u16).unwrap();
+
+    // Get the color after hovering
+    let style_after = harness.get_cell_style(x_pos as u16, layout::TAB_BAR_ROW as u16);
+    let fg_after = style_after.and_then(|s| s.fg);
+    println!("Color after hover: {:?}", fg_after);
+
+    // The hover color should be the tab_close_hover_fg (red-ish: RGB(255, 100, 100))
+    // At minimum, the color should have changed
+    assert_ne!(
+        fg_before, fg_after,
+        "Tab close button color should change on hover. Before: {:?}, After: {:?}",
+        fg_before, fg_after
+    );
+
+    // Verify it's the expected hover color (red-ish)
+    match fg_after {
+        Some(Color::Rgb(r, g, b)) => {
+            assert!(
+                r > 200 && g < 150 && b < 150,
+                "Expected red-ish hover color, got RGB({}, {}, {})",
+                r, g, b
+            );
+        }
+        other => panic!("Expected RGB color for hover, got {:?}", other),
+    }
+}
+
+/// Test that tab hover detection matches the actual tab positions on screen
+/// This test verifies that when you hover at various X positions in the tab bar,
+/// the hover detection correctly identifies which tab (if any) is under the cursor
+#[test]
+fn test_tab_hover_position_accuracy() {
+    use crate::common::harness::layout;
+    use ratatui::style::Color;
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Create two buffers
+    harness.new_buffer().unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let tab_row: String = screen
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
+
+    println!("Tab row: '{}'", tab_row);
+
+    // Find all × positions (there should be 2, one for each tab)
+    let x_positions: Vec<usize> = tab_row.match_indices('×').map(|(i, _)| i).collect();
+    println!("× positions: {:?}", x_positions);
+    assert_eq!(x_positions.len(), 2, "Expected 2 close buttons (one per tab)");
+
+    // For each close button position, verify that hovering there:
+    // 1. Changes the color at that position (hover is detected)
+    // 2. Does NOT change the color at the other close button position (hover is position-specific)
+    for (idx, &x_pos) in x_positions.iter().enumerate() {
+        println!("\n--- Testing close button {} at position {} ---", idx, x_pos);
+
+        // Reset by moving mouse away
+        harness.mouse_move(0, 0).unwrap();
+
+        // Get colors of both × before hovering
+        let colors_before: Vec<_> = x_positions
+            .iter()
+            .map(|&pos| harness.get_cell_style(pos as u16, layout::TAB_BAR_ROW as u16).and_then(|s| s.fg))
+            .collect();
+        println!("Colors before hover: {:?}", colors_before);
+
+        // Hover over the current close button
+        harness.mouse_move(x_pos as u16, layout::TAB_BAR_ROW as u16).unwrap();
+
+        // Get colors of both × after hovering
+        let colors_after: Vec<_> = x_positions
+            .iter()
+            .map(|&pos| harness.get_cell_style(pos as u16, layout::TAB_BAR_ROW as u16).and_then(|s| s.fg))
+            .collect();
+        println!("Colors after hover: {:?}", colors_after);
+
+        // The hovered button should have changed to red
+        let hovered_color = colors_after[idx];
+        match hovered_color {
+            Some(Color::Rgb(r, g, b)) => {
+                assert!(
+                    r > 200 && g < 150 && b < 150,
+                    "Close button {} at position {} should be red when hovered, got RGB({}, {}, {})",
+                    idx, x_pos, r, g, b
+                );
+            }
+            other => panic!("Expected RGB color for hovered button {}, got {:?}", idx, other),
+        }
+
+        // The other button should NOT have changed to red (should still be the original color)
+        for (other_idx, &other_color) in colors_after.iter().enumerate() {
+            if other_idx != idx {
+                // It should NOT be the hover color
+                if let Some(Color::Rgb(r, g, b)) = other_color {
+                    assert!(
+                        !(r > 200 && g < 150 && b < 150),
+                        "Close button {} should NOT be red when button {} is hovered, but got RGB({}, {}, {})",
+                        other_idx, idx, r, g, b
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Test tab hover with real files (which have line numbers, actual filenames, etc.)
+/// This more closely matches real-world usage
+#[test]
+fn test_tab_hover_with_real_files() {
+    use crate::common::harness::layout;
+    use ratatui::style::Color;
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Load real files (creates line numbers, actual filename in tab)
+    let fixture1 = TestFixture::new("test1.txt", "Hello from file 1\nLine 2\n").unwrap();
+    let fixture2 = TestFixture::new("test2.txt", "Hello from file 2\nLine 2\n").unwrap();
+
+    harness.open_file(&fixture1.path).unwrap();
+    harness.open_file(&fixture2.path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Full screen:\n{}", screen);
+
+    let tab_row: String = screen
+        .lines()
+        .nth(layout::TAB_BAR_ROW)
+        .unwrap_or("")
+        .to_string();
+
+    println!("\nTab row: '{}'", tab_row);
+
+    // Find all × positions
+    let x_positions: Vec<usize> = tab_row.match_indices('×').map(|(i, _)| i).collect();
+    println!("× positions: {:?}", x_positions);
+    assert_eq!(x_positions.len(), 2, "Expected 2 close buttons");
+
+    // Test hovering on the first close button
+    let first_x = x_positions[0];
+    println!("\nHovering at position {} (first ×)", first_x);
+
+    // Get color before hover
+    let style_before = harness.get_cell_style(first_x as u16, layout::TAB_BAR_ROW as u16);
+    let fg_before = style_before.and_then(|s| s.fg);
+    println!("Color before: {:?}", fg_before);
+
+    // Hover
+    harness.mouse_move(first_x as u16, layout::TAB_BAR_ROW as u16).unwrap();
+
+    // Get color after hover
+    let style_after = harness.get_cell_style(first_x as u16, layout::TAB_BAR_ROW as u16);
+    let fg_after = style_after.and_then(|s| s.fg);
+    println!("Color after: {:?}", fg_after);
+
+    // Should have changed to red
+    assert_ne!(fg_before, fg_after, "Color should change on hover");
+    match fg_after {
+        Some(Color::Rgb(r, g, b)) => {
+            assert!(
+                r > 200 && g < 150 && b < 150,
+                "Expected red-ish hover color, got RGB({}, {}, {})",
+                r, g, b
+            );
+        }
+        other => panic!("Expected RGB color, got {:?}", other),
+    }
+}
