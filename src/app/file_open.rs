@@ -238,10 +238,12 @@ impl FileOpenState {
     }
 
     /// Apply filter text to entries
+    /// Note: Does not re-sort entries - just marks which ones match the filter.
+    /// Non-matching entries are de-emphasized visually but stay in place.
     pub fn apply_filter(&mut self, filter: &str) {
         self.filter = filter.to_string();
         self.apply_filter_internal();
-        self.sort_entries();
+        // Don't re-sort - entries stay in their original sorted position
 
         // When filter is non-empty, select first matching entry (skip "..")
         if !filter.is_empty() {
@@ -284,12 +286,8 @@ impl FileOpenState {
                 _ => {}
             }
 
-            // Matching entries first
-            match (a.matches_filter, b.matches_filter) {
-                (true, false) => return Ordering::Less,
-                (false, true) => return Ordering::Greater,
-                _ => {}
-            }
+            // Don't reorder based on filter match - just de-emphasize non-matching
+            // entries visually. Keep original sort order.
 
             // Directories before files
             match (a.fs_entry.is_dir(), b.fs_entry.is_dir()) {
@@ -672,10 +670,16 @@ mod tests {
 
         state.apply_filter("foo");
 
-        // Matching entries should come first
-        assert!(state.entries[0].matches_filter);
-        assert!(state.entries[1].matches_filter);
-        assert!(!state.entries[2].matches_filter);
+        // Entries stay in sorted order (alphabetical), filter just marks matches
+        // bar.txt, foo.txt, foobar.txt
+        assert_eq!(state.entries[0].fs_entry.name, "bar.txt");
+        assert!(!state.entries[0].matches_filter); // bar doesn't match "foo"
+
+        assert_eq!(state.entries[1].fs_entry.name, "foo.txt");
+        assert!(state.entries[1].matches_filter); // foo matches
+
+        assert_eq!(state.entries[2].fs_entry.name, "foobar.txt");
+        assert!(state.entries[2].matches_filter); // foobar matches
 
         assert_eq!(state.matching_count(), 2);
     }
@@ -692,9 +696,16 @@ mod tests {
 
         state.apply_filter("readme");
 
-        assert!(state.entries[0].matches_filter);
+        // Entries stay in sorted order, filter just marks matches
+        // other.txt, README.md, readme.txt (case-insensitive alphabetical)
+        assert_eq!(state.entries[0].fs_entry.name, "other.txt");
+        assert!(!state.entries[0].matches_filter);
+
+        assert_eq!(state.entries[1].fs_entry.name, "README.md");
         assert!(state.entries[1].matches_filter);
-        assert!(!state.entries[2].matches_filter);
+
+        assert_eq!(state.entries[2].fs_entry.name, "readme.txt");
+        assert!(state.entries[2].matches_filter);
     }
 
     #[test]
