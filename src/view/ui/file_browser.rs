@@ -11,7 +11,7 @@ use crate::app::file_open::{
     format_modified, format_size, FileOpenSection, FileOpenState, SortMode,
 };
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
@@ -27,6 +27,7 @@ impl FileBrowserRenderer {
     /// * `area` - The rectangular area for the popup (above the prompt)
     /// * `state` - The file open dialog state
     /// * `theme` - The active theme for colors
+    /// * `hover_target` - Current mouse hover target (for highlighting)
     ///
     /// # Returns
     /// Information for mouse hit testing (scrollbar area, thumb positions, etc.)
@@ -35,6 +36,7 @@ impl FileBrowserRenderer {
         area: Rect,
         state: &FileOpenState,
         theme: &crate::view::theme::Theme,
+        hover_target: &Option<crate::app::HoverTarget>,
     ) -> Option<FileBrowserLayout> {
         if area.height < 5 || area.width < 20 {
             return None;
@@ -94,18 +96,26 @@ impl FileBrowserRenderer {
             list_height,
         );
 
-        // Render each section
-        Self::render_navigation(frame, nav_area, state, theme);
-        Self::render_header(frame, header_area, state, theme);
-        let visible_rows = Self::render_file_list(frame, list_area, state, theme);
+        // Render each section with hover state
+        Self::render_navigation(frame, nav_area, state, theme, hover_target);
+        Self::render_header(frame, header_area, state, theme, hover_target);
+        let visible_rows = Self::render_file_list(frame, list_area, state, theme, hover_target);
 
-        // Render scrollbar
+        // Render scrollbar with theme colors (hover-aware)
         let scrollbar_state = ScrollbarState::new(
             state.entries.len(),
             visible_rows,
             state.scroll_offset,
         );
-        let colors = ScrollbarColors::active();
+        let is_scrollbar_hovered = matches!(
+            hover_target,
+            Some(crate::app::HoverTarget::FileBrowserScrollbar)
+        );
+        let colors = if is_scrollbar_hovered {
+            ScrollbarColors::from_theme_hover(theme)
+        } else {
+            ScrollbarColors::from_theme(theme)
+        };
         let (thumb_start, thumb_end) = render_scrollbar(frame, scrollbar_area, &scrollbar_state, &colors);
 
         Some(FileBrowserLayout {
@@ -125,7 +135,10 @@ impl FileBrowserRenderer {
         area: Rect,
         state: &FileOpenState,
         theme: &crate::view::theme::Theme,
+        hover_target: &Option<crate::app::HoverTarget>,
     ) {
+        use crate::app::HoverTarget;
+
         let is_nav_active = state.active_section == FileOpenSection::Navigation;
 
         let mut spans = Vec::new();
@@ -138,12 +151,17 @@ impl FileBrowserRenderer {
 
         for (idx, shortcut) in state.shortcuts.iter().enumerate() {
             let is_selected = is_nav_active && idx == state.selected_shortcut;
+            let is_hovered = matches!(hover_target, Some(HoverTarget::FileBrowserNavShortcut(i)) if *i == idx);
 
             let style = if is_selected {
                 Style::default()
                     .fg(theme.popup_text_fg)
                     .bg(theme.suggestion_selected_bg)
                     .add_modifier(Modifier::BOLD)
+            } else if is_hovered {
+                Style::default()
+                    .fg(theme.menu_hover_fg)
+                    .bg(theme.menu_hover_bg)
             } else {
                 Style::default()
                     .fg(theme.help_key_fg)
@@ -182,7 +200,10 @@ impl FileBrowserRenderer {
         area: Rect,
         state: &FileOpenState,
         theme: &crate::view::theme::Theme,
+        hover_target: &Option<crate::app::HoverTarget>,
     ) {
+        use crate::app::HoverTarget;
+
         let width = area.width as usize;
 
         // Column widths
@@ -200,6 +221,11 @@ impl FileBrowserRenderer {
             .bg(theme.menu_dropdown_bg)
             .add_modifier(Modifier::BOLD);
 
+        let hover_header_style = Style::default()
+            .fg(theme.menu_hover_fg)
+            .bg(theme.menu_hover_bg)
+            .add_modifier(Modifier::BOLD);
+
         // Sort indicator
         let sort_arrow = if state.sort_ascending { "▲" } else { "▼" };
 
@@ -207,8 +233,11 @@ impl FileBrowserRenderer {
 
         // Name column
         let name_header = format!(" Name{}", if state.sort_mode == SortMode::Name { sort_arrow } else { " " });
+        let is_name_hovered = matches!(hover_target, Some(HoverTarget::FileBrowserHeader(SortMode::Name)));
         let name_style = if state.sort_mode == SortMode::Name {
             active_header_style
+        } else if is_name_hovered {
+            hover_header_style
         } else {
             header_style
         };
@@ -225,8 +254,11 @@ impl FileBrowserRenderer {
             format!("Size{}", if state.sort_mode == SortMode::Size { sort_arrow } else { " " }),
             width = size_col_width
         );
+        let is_size_hovered = matches!(hover_target, Some(HoverTarget::FileBrowserHeader(SortMode::Size)));
         let size_style = if state.sort_mode == SortMode::Size {
             active_header_style
+        } else if is_size_hovered {
+            hover_header_style
         } else {
             header_style
         };
@@ -241,8 +273,11 @@ impl FileBrowserRenderer {
             format!("Modified{}", if state.sort_mode == SortMode::Modified { sort_arrow } else { " " }),
             width = date_col_width
         );
+        let is_modified_hovered = matches!(hover_target, Some(HoverTarget::FileBrowserHeader(SortMode::Modified)));
         let modified_style = if state.sort_mode == SortMode::Modified {
             active_header_style
+        } else if is_modified_hovered {
+            hover_header_style
         } else {
             header_style
         };
@@ -261,7 +296,10 @@ impl FileBrowserRenderer {
         area: Rect,
         state: &FileOpenState,
         theme: &crate::view::theme::Theme,
+        hover_target: &Option<crate::app::HoverTarget>,
     ) -> usize {
+        use crate::app::HoverTarget;
+
         let visible_rows = area.height as usize;
         let width = area.width as usize;
 
@@ -290,7 +328,7 @@ impl FileBrowserRenderer {
             let error_line = Line::from(Span::styled(
                 format!(" Error: {}", error),
                 Style::default()
-                    .fg(Color::Red)
+                    .fg(theme.diagnostic_error_fg)
                     .bg(theme.popup_bg),
             ));
             let paragraph = Paragraph::new(vec![error_line]);
@@ -317,15 +355,21 @@ impl FileBrowserRenderer {
         for (view_idx, entry) in visible_entries.iter().enumerate() {
             let actual_idx = state.scroll_offset + view_idx;
             let is_selected = is_files_active && actual_idx == state.selected_index;
+            let is_hovered = matches!(hover_target, Some(HoverTarget::FileBrowserEntry(i)) if *i == actual_idx);
 
-            // Base style based on selection and filter match
+            // Base style based on selection, hover, and filter match
             let base_style = if is_selected {
                 Style::default()
                     .fg(theme.popup_text_fg)
                     .bg(theme.suggestion_selected_bg)
-            } else if !entry.matches_filter {
+            } else if is_hovered && entry.matches_filter {
                 Style::default()
-                    .fg(Color::DarkGray)
+                    .fg(theme.menu_hover_fg)
+                    .bg(theme.menu_hover_bg)
+            } else if !entry.matches_filter {
+                // Non-matching items are dimmed using the separator color
+                Style::default()
+                    .fg(theme.help_separator_fg)
                     .bg(theme.popup_bg)
                     .add_modifier(Modifier::DIM)
             } else {
@@ -336,17 +380,14 @@ impl FileBrowserRenderer {
 
             let mut spans = Vec::new();
 
-            // File type indicator
-            let type_indicator = if entry.fs_entry.is_dir() {
-                "/"
+            // Name column with trailing type indicator (dirs get /, symlinks get @)
+            let name_with_indicator = if entry.fs_entry.is_dir() {
+                format!("{}/", entry.fs_entry.name)
             } else if entry.fs_entry.is_symlink() {
-                "@"
+                format!("{}@", entry.fs_entry.name)
             } else {
-                " "
+                entry.fs_entry.name.clone()
             };
-
-            // Name column with type indicator
-            let name_with_indicator = format!("{}{}", type_indicator, entry.fs_entry.name);
             let name_display = if name_with_indicator.len() < name_col_width {
                 format!("{:<width$}", name_with_indicator, width = name_col_width)
             } else {
@@ -453,6 +494,36 @@ impl FileBrowserLayout {
             && x < self.nav_area.x + self.nav_area.width
             && y >= self.nav_area.y
             && y < self.nav_area.y + self.nav_area.height
+    }
+
+    /// Determine which navigation shortcut was clicked based on x position
+    /// The layout is: " Navigation: " (13 chars) then for each shortcut: " {label} " + " │ " separator
+    pub fn nav_shortcut_at(&self, x: u16, shortcut_labels: &[&str]) -> Option<usize> {
+        let rel_x = x.saturating_sub(self.nav_area.x) as usize;
+
+        // Skip " Navigation: " prefix
+        let prefix_len = 13;
+        if rel_x < prefix_len {
+            return None;
+        }
+
+        let mut current_x = prefix_len;
+        for (idx, label) in shortcut_labels.iter().enumerate() {
+            // Each shortcut: " {label} " = label.len() + 2
+            let shortcut_width = label.chars().count() + 2;
+
+            if rel_x >= current_x && rel_x < current_x + shortcut_width {
+                return Some(idx);
+            }
+            current_x += shortcut_width;
+
+            // Separator: " │ " = 3 chars
+            if idx < shortcut_labels.len() - 1 {
+                current_x += 3;
+            }
+        }
+
+        None
     }
 
     /// Check if a position is in the header area (for sorting)

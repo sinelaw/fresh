@@ -2157,20 +2157,30 @@ impl Editor {
                 needs_render = hover_changed;
             }
             MouseEventKind::ScrollUp => {
-                // Dismiss hover/signature help popups on scroll
-                self.dismiss_transient_popups();
-                self.handle_mouse_scroll(col, row, -3)?;
-                // Sync viewport from SplitViewState to EditorState so rendering sees the scroll
-                self.sync_split_view_state_to_editor_state();
-                needs_render = true;
+                // Check if file browser is active and should handle scroll
+                if self.is_file_open_active() && self.handle_file_open_scroll(-3) {
+                    needs_render = true;
+                } else {
+                    // Dismiss hover/signature help popups on scroll
+                    self.dismiss_transient_popups();
+                    self.handle_mouse_scroll(col, row, -3)?;
+                    // Sync viewport from SplitViewState to EditorState so rendering sees the scroll
+                    self.sync_split_view_state_to_editor_state();
+                    needs_render = true;
+                }
             }
             MouseEventKind::ScrollDown => {
-                // Dismiss hover/signature help popups on scroll
-                self.dismiss_transient_popups();
-                self.handle_mouse_scroll(col, row, 3)?;
-                // Sync viewport from SplitViewState to EditorState so rendering sees the scroll
-                self.sync_split_view_state_to_editor_state();
-                needs_render = true;
+                // Check if file browser is active and should handle scroll
+                if self.is_file_open_active() && self.handle_file_open_scroll(3) {
+                    needs_render = true;
+                } else {
+                    // Dismiss hover/signature help popups on scroll
+                    self.dismiss_transient_popups();
+                    self.handle_mouse_scroll(col, row, 3)?;
+                    // Sync viewport from SplitViewState to EditorState so rendering sees the scroll
+                    self.sync_split_view_state_to_editor_state();
+                    needs_render = true;
+                }
             }
             _ => {
                 // Ignore other mouse events for now
@@ -2241,6 +2251,13 @@ impl Editor {
                 if item_idx < *num_items {
                     return Some(HoverTarget::PopupListItem(*popup_idx, item_idx));
                 }
+            }
+        }
+
+        // Check file browser popup
+        if self.is_file_open_active() {
+            if let Some(hover) = self.compute_file_browser_hover(col, row) {
+                return Some(hover);
             }
         }
 
@@ -2382,6 +2399,13 @@ impl Editor {
                     // Execute the popup selection (same as pressing Enter)
                     return self.handle_action(Action::PopupConfirm);
                 }
+            }
+        }
+
+        // Check if click is on the file browser popup
+        if self.is_file_open_active() {
+            if self.handle_file_open_click(col, row) {
+                return Ok(());
             }
         }
 

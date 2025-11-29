@@ -285,6 +285,7 @@ impl Editor {
                         popup_area,
                         file_open_state,
                         &self.theme,
+                        &self.mouse_state.hover_target,
                     );
                 }
             } else if !prompt.suggestions.is_empty() {

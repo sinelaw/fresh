@@ -1,3 +1,4 @@
+use crate::app::file_open::SortMode;
 use crate::input::keybindings::Action;
 use crate::model::event::{BufferId, SplitDirection, SplitId};
 use crate::services::async_bridge::LspMessageType;
@@ -244,6 +245,14 @@ pub enum HoverTarget {
     SuggestionItem(usize),
     /// Hovering over the file explorer border (for resize)
     FileExplorerBorder,
+    /// Hovering over a file browser navigation shortcut
+    FileBrowserNavShortcut(usize),
+    /// Hovering over a file browser file/directory entry
+    FileBrowserEntry(usize),
+    /// Hovering over a file browser column header
+    FileBrowserHeader(SortMode),
+    /// Hovering over the file browser scrollbar
+    FileBrowserScrollbar,
 }
 
 /// Mouse state tracking

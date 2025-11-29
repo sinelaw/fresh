@@ -214,6 +214,43 @@ impl Editor {
         }
     }
 
+    /// Handle mouse wheel scroll in file browser
+    /// Returns true if the scroll was handled
+    pub fn handle_file_open_scroll(&mut self, delta: i32) -> bool {
+        if !self.is_file_open_active() {
+            return false;
+        }
+
+        let visible_rows = self
+            .file_browser_layout
+            .as_ref()
+            .map(|l| l.visible_rows)
+            .unwrap_or(10);
+
+        if let Some(state) = &mut self.file_open_state {
+            let total_entries = state.entries.len();
+            if total_entries <= visible_rows {
+                // No scrolling needed if all entries fit
+                return true;
+            }
+
+            let max_scroll = total_entries.saturating_sub(visible_rows);
+
+            if delta < 0 {
+                // Scroll up
+                let scroll_amount = (-delta) as usize;
+                state.scroll_offset = state.scroll_offset.saturating_sub(scroll_amount);
+            } else {
+                // Scroll down
+                let scroll_amount = delta as usize;
+                state.scroll_offset = (state.scroll_offset + scroll_amount).min(max_scroll);
+            }
+            return true;
+        }
+
+        false
+    }
+
     /// Handle mouse click in file browser
     pub fn handle_file_open_click(&mut self, x: u16, y: u16) -> bool {
         if !self.is_file_open_active() {
@@ -234,10 +271,25 @@ impl Editor {
                 .unwrap_or(0);
 
             if let Some(index) = layout.click_to_index(y, scroll_offset) {
+                // Get the entry name before mutating state
+                let entry_name = self
+                    .file_open_state
+                    .as_ref()
+                    .and_then(|s| s.entries.get(index))
+                    .map(|e| e.fs_entry.name.clone());
+
                 if let Some(state) = &mut self.file_open_state {
                     state.active_section = FileOpenSection::Files;
                     if index < state.entries.len() {
                         state.selected_index = index;
+                    }
+                }
+
+                // Update prompt text to show the selected entry name
+                if let Some(name) = entry_name {
+                    if let Some(prompt) = &mut self.prompt {
+                        prompt.input = name;
+                        prompt.cursor_pos = prompt.input.len();
                     }
                 }
             }
@@ -246,9 +298,33 @@ impl Editor {
 
         // Check if click is in navigation area
         if layout.is_in_nav(x, y) {
-            if let Some(state) = &mut self.file_open_state {
-                state.active_section = FileOpenSection::Navigation;
-                // TODO: Calculate which shortcut was clicked based on x position
+            // Get shortcut labels for hit testing
+            let shortcut_labels: Vec<&str> = self
+                .file_open_state
+                .as_ref()
+                .map(|s| s.shortcuts.iter().map(|sc| sc.label.as_str()).collect())
+                .unwrap_or_default();
+
+            if let Some(shortcut_idx) = layout.nav_shortcut_at(x, &shortcut_labels) {
+                // Get the path from the shortcut and navigate there
+                let target_path = self
+                    .file_open_state
+                    .as_ref()
+                    .and_then(|s| s.shortcuts.get(shortcut_idx))
+                    .map(|sc| sc.path.clone());
+
+                if let Some(path) = target_path {
+                    if let Some(state) = &mut self.file_open_state {
+                        state.active_section = FileOpenSection::Navigation;
+                        state.selected_shortcut = shortcut_idx;
+                    }
+                    self.file_open_navigate_to(path);
+                }
+            } else {
+                // Clicked in nav area but not on a shortcut
+                if let Some(state) = &mut self.file_open_state {
+                    state.active_section = FileOpenSection::Navigation;
+                }
             }
             return true;
         }
@@ -263,7 +339,21 @@ impl Editor {
 
         // Check if click is in scrollbar
         if layout.is_in_scrollbar(x, y) {
-            // TODO: Handle scrollbar click/drag
+            // Calculate scroll offset based on click position
+            let rel_y = y.saturating_sub(layout.scrollbar_area.y) as usize;
+            let track_height = layout.scrollbar_area.height as usize;
+
+            if let Some(state) = &mut self.file_open_state {
+                let total_items = state.entries.len();
+                let visible_items = layout.visible_rows;
+
+                if total_items > visible_items && track_height > 0 {
+                    let max_scroll = total_items.saturating_sub(visible_items);
+                    let click_ratio = rel_y as f64 / track_height as f64;
+                    let new_offset = (click_ratio * max_scroll as f64) as usize;
+                    state.scroll_offset = new_offset.min(max_scroll);
+                }
+            }
             return true;
         }
 
@@ -288,5 +378,64 @@ impl Editor {
         }
 
         false
+    }
+
+    /// Compute hover target for file browser
+    pub fn compute_file_browser_hover(
+        &self,
+        x: u16,
+        y: u16,
+    ) -> Option<super::types::HoverTarget> {
+        use super::types::HoverTarget;
+
+        let layout = self.file_browser_layout.as_ref()?;
+
+        // Check navigation shortcuts
+        if layout.is_in_nav(x, y) {
+            let shortcut_labels: Vec<&str> = self
+                .file_open_state
+                .as_ref()
+                .map(|s| s.shortcuts.iter().map(|sc| sc.label.as_str()).collect())
+                .unwrap_or_default();
+
+            if let Some(idx) = layout.nav_shortcut_at(x, &shortcut_labels) {
+                return Some(HoverTarget::FileBrowserNavShortcut(idx));
+            }
+        }
+
+        // Check column headers
+        if layout.is_in_header(x, y) {
+            if let Some(mode) = layout.header_column_at(x) {
+                return Some(HoverTarget::FileBrowserHeader(mode));
+            }
+        }
+
+        // Check file list entries
+        if layout.is_in_list(x, y) {
+            let scroll_offset = self
+                .file_open_state
+                .as_ref()
+                .map(|s| s.scroll_offset)
+                .unwrap_or(0);
+
+            if let Some(idx) = layout.click_to_index(y, scroll_offset) {
+                let total_entries = self
+                    .file_open_state
+                    .as_ref()
+                    .map(|s| s.entries.len())
+                    .unwrap_or(0);
+
+                if idx < total_entries {
+                    return Some(HoverTarget::FileBrowserEntry(idx));
+                }
+            }
+        }
+
+        // Check scrollbar
+        if layout.is_in_scrollbar(x, y) {
+            return Some(HoverTarget::FileBrowserScrollbar);
+        }
+
+        None
     }
 }

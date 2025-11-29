@@ -127,6 +127,22 @@ impl ScrollbarColors {
             thumb: Color::DarkGray,
         }
     }
+
+    /// Create from theme colors
+    pub fn from_theme(theme: &crate::view::theme::Theme) -> Self {
+        Self {
+            track: theme.scrollbar_track_fg,
+            thumb: theme.scrollbar_thumb_fg,
+        }
+    }
+
+    /// Create from theme colors with hover
+    pub fn from_theme_hover(theme: &crate::view::theme::Theme) -> Self {
+        Self {
+            track: theme.scrollbar_track_hover_fg,
+            thumb: theme.scrollbar_thumb_hover_fg,
+        }
+    }
 }
 
 /// Render a vertical scrollbar
