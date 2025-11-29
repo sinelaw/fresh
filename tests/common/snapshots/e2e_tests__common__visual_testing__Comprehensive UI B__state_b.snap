@@ -1,6 +1,5 @@
 ---
 source: tests/common/visual_testing.rs
-assertion_line: 69
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   Help                                                                             
@@ -30,6 +29,6 @@ expression: "&screen_text"
 ~                                                                                                                      █
 ~                                                                                                                      █
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│  Show Signature Help  Show function parameter hints                                                                  │
+│  Show Signature Help                           Show function parameter hints                                         │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 Command: help

@@ -332,8 +332,8 @@ A sample project for testing.
             .map(PathBuf::from)
             .expect("CARGO_MANIFEST_DIR not set");
 
-        // Copy test_view_marker.ts plugin
-        let src = project_root.join("plugins/test_view_marker.ts");
+        // Copy test_view_marker.ts plugin from tests/plugins/
+        let src = project_root.join("tests/plugins/test_view_marker.ts");
         let dst = plugins_dir.join("test_view_marker.ts");
         fs::copy(&src, &dst)
             .unwrap_or_else(|e| panic!("Failed to copy test_view_marker.ts from {:?}: {}", src, e));
