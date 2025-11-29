@@ -77,26 +77,16 @@ impl SuggestionsRenderer {
 
         let end_idx = (start_idx + visible_count).min(prompt.suggestions.len());
 
-        let max_name_width = prompt
-            .suggestions
-            .iter()
-            .map(|s| s.text.len())
-            .max()
-            .unwrap_or(0);
-
-        let max_keybinding_width = prompt
-            .suggestions
-            .iter()
-            .filter_map(|s| s.keybinding.as_ref().map(|k| k.len()))
-            .max()
-            .unwrap_or(0);
-
         let visible_suggestions = &prompt.suggestions[start_idx..end_idx];
 
-        // Column layout: "  Name  |  Keybinding  |  Description"
+        // Fixed column layout: "  Name  |  Keybinding  |  Description"
         let left_margin = 2;
         let column_spacing = 2;
         let available_width = inner_area.width as usize;
+
+        // Fixed column widths for consistent layout
+        let name_column_width = 30; // Fixed width for command names
+        let keybinding_column_width = 12; // Fixed width for keybindings (e.g., "Ctrl+Shift+P")
 
         for (idx, suggestion) in visible_suggestions.iter().enumerate() {
             let actual_idx = start_idx + idx;
@@ -142,10 +132,19 @@ impl SuggestionsRenderer {
             // Left margin
             spans.push(Span::styled(" ".repeat(left_margin), base_style));
 
-            // Column 1: Command name (padded to max_name_width)
+            // Column 1: Command name (fixed width, truncate if too long)
             let name = &suggestion.text;
-            spans.push(Span::styled(name.clone(), base_style));
-            let name_padding = max_name_width.saturating_sub(name.len());
+            let name_char_count = name.chars().count();
+            let name_text = if name_char_count > name_column_width {
+                // Truncate name if too long
+                let truncated: String = name.chars().take(name_column_width - 1).collect();
+                format!("{}…", truncated)
+            } else {
+                name.clone()
+            };
+            spans.push(Span::styled(name_text.clone(), base_style));
+            let name_display_width = name_text.chars().count();
+            let name_padding = name_column_width.saturating_sub(name_display_width);
             if name_padding > 0 {
                 spans.push(Span::styled(" ".repeat(name_padding), base_style));
             }
@@ -153,42 +152,52 @@ impl SuggestionsRenderer {
             // Spacing before keybinding column
             spans.push(Span::styled(" ".repeat(column_spacing), base_style));
 
-            // Column 2: Keyboard shortcut (padded to max_keybinding_width)
-            if max_keybinding_width > 0 {
-                let keybinding_style = if suggestion.disabled {
-                    base_style
-                } else if is_selected {
-                    Style::default()
-                        .fg(theme.help_key_fg)
-                        .bg(theme.suggestion_selected_bg)
+            // Column 2: Keyboard shortcut (fixed width)
+            let keybinding_style = if suggestion.disabled {
+                base_style
+            } else if is_selected {
+                Style::default()
+                    .fg(theme.help_key_fg)
+                    .bg(theme.suggestion_selected_bg)
+            } else if is_hovered {
+                Style::default()
+                    .fg(theme.help_key_fg)
+                    .bg(theme.menu_hover_bg)
+            } else {
+                Style::default()
+                    .fg(theme.line_number_fg)
+                    .bg(theme.suggestion_bg)
+            };
+
+            if let Some(keybinding) = &suggestion.keybinding {
+                let kb_char_count = keybinding.chars().count();
+                let kb_text = if kb_char_count > keybinding_column_width {
+                    // Truncate keybinding if too long (unlikely but safe)
+                    keybinding.chars().take(keybinding_column_width).collect()
                 } else {
-                    Style::default()
-                        .fg(theme.line_number_fg)
-                        .bg(theme.suggestion_bg)
+                    keybinding.clone()
                 };
-
-                if let Some(keybinding) = &suggestion.keybinding {
-                    spans.push(Span::styled(keybinding.clone(), keybinding_style));
-                    let keybinding_padding = max_keybinding_width.saturating_sub(keybinding.len());
-                    if keybinding_padding > 0 {
-                        spans.push(Span::styled(" ".repeat(keybinding_padding), base_style));
-                    }
-                } else {
-                    // No keybinding for this command, pad the column
-                    spans.push(Span::styled(" ".repeat(max_keybinding_width), base_style));
+                spans.push(Span::styled(kb_text.clone(), keybinding_style));
+                let kb_display_width = kb_text.chars().count();
+                let kb_padding = keybinding_column_width.saturating_sub(kb_display_width);
+                if kb_padding > 0 {
+                    spans.push(Span::styled(" ".repeat(kb_padding), base_style));
                 }
-
-                // Spacing before description column
-                spans.push(Span::styled(" ".repeat(column_spacing), base_style));
+            } else {
+                // No keybinding for this command, pad the column
+                spans.push(Span::styled(" ".repeat(keybinding_column_width), base_style));
             }
+
+            // Spacing before description column
+            spans.push(Span::styled(" ".repeat(column_spacing), base_style));
 
             // Column 3: Description (takes remaining space)
             if let Some(desc) = &suggestion.description {
                 // Calculate how much space we've used so far
                 let used_width = left_margin
-                    + max_name_width
+                    + name_column_width
                     + column_spacing
-                    + max_keybinding_width
+                    + keybinding_column_width
                     + column_spacing;
 
                 // Only show description if we have enough space
