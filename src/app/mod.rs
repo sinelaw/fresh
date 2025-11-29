@@ -1915,6 +1915,24 @@ impl Editor {
         self.buffers.get_mut(&self.active_buffer).unwrap()
     }
 
+    /// Get the display name for a buffer (filename or virtual buffer name)
+    pub fn get_buffer_display_name(&self, buffer_id: BufferId) -> String {
+        self.buffer_metadata
+            .get(&buffer_id)
+            .map(|m| m.display_name.clone())
+            .or_else(|| {
+                self.buffers.get(&buffer_id).and_then(|state| {
+                    state
+                        .buffer
+                        .file_path()
+                        .and_then(|p| p.file_name())
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                })
+            })
+            .unwrap_or_else(|| "[No Name]".to_string())
+    }
+
     /// Apply an event to the active buffer with all cross-cutting concerns.
     /// This is the centralized method that automatically handles:
     /// - Event application to buffer

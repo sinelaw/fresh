@@ -577,8 +577,9 @@ impl Editor {
                     self.set_status_message("Cannot close last buffer".to_string());
                 } else if self.active_state().buffer.is_modified() {
                     // Buffer has unsaved changes - prompt for confirmation
+                    let name = self.get_buffer_display_name(buffer_id);
                     self.start_prompt(
-                        "Buffer modified. (s)ave, (d)iscard, (c)ancel? ".to_string(),
+                        format!("'{}' modified. (s)ave, (d)iscard, (C)ancel? ", name),
                         PromptType::ConfirmCloseBuffer { buffer_id },
                     );
                 } else if let Err(e) = self.close_buffer(buffer_id) {
@@ -2634,8 +2635,9 @@ impl Editor {
                 } else if let Some(state) = self.buffers.get(&clicked_buffer) {
                     if state.buffer.is_modified() {
                         // Buffer has unsaved changes - prompt for confirmation
+                        let name = self.get_buffer_display_name(clicked_buffer);
                         self.start_prompt(
-                            "Buffer modified. (s)ave, (d)iscard, (c)ancel? ".to_string(),
+                            format!("'{}' modified. (s)ave, (d)iscard, (C)ancel? ", name),
                             PromptType::ConfirmCloseBuffer {
                                 buffer_id: clicked_buffer,
                             },

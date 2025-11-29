@@ -321,10 +321,7 @@ fn test_click_tab_close_button_modified_buffer() {
             harness.render().unwrap();
 
             // Should show confirmation prompt for modified buffer
-            harness.assert_screen_contains("Buffer modified");
-            harness.assert_screen_contains("(s)ave");
-            harness.assert_screen_contains("(d)iscard");
-            harness.assert_screen_contains("(c)ancel");
+            harness.assert_screen_contains("modified. (s)ave, (d)iscard, (C)ancel");
         } else {
             panic!("Could not find × close button after * in tab bar");
         }
@@ -364,7 +361,7 @@ fn test_click_tab_close_modified_discard() {
             harness.render().unwrap();
 
             // Should show prompt
-            harness.assert_screen_contains("Buffer modified");
+            harness.assert_screen_contains("modified. (s)ave, (d)iscard, (C)ancel");
 
             // Press 'd' to discard and Enter to confirm
             harness
@@ -416,7 +413,7 @@ fn test_click_tab_close_modified_cancel() {
             harness.render().unwrap();
 
             // Should show prompt
-            harness.assert_screen_contains("Buffer modified");
+            harness.assert_screen_contains("modified. (s)ave, (d)iscard, (C)ancel");
 
             // Press 'c' to cancel and Enter to confirm
             harness
