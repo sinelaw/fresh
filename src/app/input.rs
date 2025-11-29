@@ -142,6 +142,11 @@ impl Editor {
             }
         }
 
+        // Handle file open dialog actions first (when active)
+        if self.handle_file_open_action(&action) {
+            return Ok(());
+        }
+
         // Handle the action
         match action {
             // Prompt mode actions - delegate to handle_action
@@ -559,6 +564,7 @@ impl Editor {
             Action::Open => {
                 self.start_prompt("Open file: ".to_string(), PromptType::OpenFile);
                 self.prefill_open_file_prompt();
+                self.init_file_open_state();
             }
             Action::GotoLine => self.start_prompt("Go to line: ".to_string(), PromptType::GotoLine),
             Action::New => {

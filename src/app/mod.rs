@@ -1,5 +1,7 @@
 mod async_messages;
 mod file_explorer;
+pub mod file_open;
+mod file_open_input;
 mod help;
 mod input;
 mod plugin_commands;
@@ -353,6 +355,12 @@ pub struct Editor {
     /// Tracks rapid file change events for debouncing
     /// Maps file path to (last event time, event count)
     file_rapid_change_counts: HashMap<PathBuf, (std::time::Instant, u32)>,
+
+    /// File open dialog state (when PromptType::OpenFile is active)
+    file_open_state: Option<file_open::FileOpenState>,
+
+    /// Cached layout for file browser (for mouse hit testing)
+    file_browser_layout: Option<crate::view::ui::FileBrowserLayout>,
 }
 
 impl Editor {
@@ -676,6 +684,8 @@ impl Editor {
             watched_dirs: HashSet::new(),
             file_mod_times: HashMap::new(),
             file_rapid_change_counts: HashMap::new(),
+            file_open_state: None,
+            file_browser_layout: None,
         })
     }
 
@@ -3151,6 +3161,76 @@ impl Editor {
         }
     }
 
+    /// Initialize the file open dialog state
+    ///
+    /// Called when the Open File prompt is started. Determines the initial directory
+    /// (from current buffer's directory or working directory) and triggers async
+    /// directory loading.
+    fn init_file_open_state(&mut self) {
+        // Determine initial directory
+        let initial_dir = self
+            .active_state()
+            .buffer
+            .file_path()
+            .and_then(|path| path.parent())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.working_dir.clone());
+
+        // Create the file open state
+        self.file_open_state = Some(file_open::FileOpenState::new(initial_dir.clone()));
+
+        // Start async directory loading
+        self.load_file_open_directory(initial_dir);
+    }
+
+    /// Load directory contents for the file open dialog
+    fn load_file_open_directory(&mut self, path: PathBuf) {
+        // Update state to loading
+        if let Some(state) = &mut self.file_open_state {
+            state.current_dir = path.clone();
+            state.loading = true;
+            state.error = None;
+            state.update_shortcuts();
+        }
+
+        // Use tokio runtime to load directory
+        if let Some(ref runtime) = self.tokio_runtime {
+            let fs_manager = self.fs_manager.clone();
+            let sender = self.async_bridge.as_ref().map(|b| b.sender());
+
+            runtime.spawn(async move {
+                let result = fs_manager.list_dir_with_metadata(path).await;
+                if let Some(sender) = sender {
+                    let _ = sender.send(AsyncMessage::FileOpenDirectoryLoaded(result));
+                }
+            });
+        } else {
+            // No runtime, set error
+            if let Some(state) = &mut self.file_open_state {
+                state.set_error("Async runtime not available".to_string());
+            }
+        }
+    }
+
+    /// Handle file open directory load result
+    pub(super) fn handle_file_open_directory_loaded(
+        &mut self,
+        result: std::io::Result<Vec<crate::services::fs::FsEntry>>,
+    ) {
+        match result {
+            Ok(entries) => {
+                if let Some(state) = &mut self.file_open_state {
+                    state.set_entries(entries);
+                }
+            }
+            Err(e) => {
+                if let Some(state) = &mut self.file_open_state {
+                    state.set_error(e.to_string());
+                }
+            }
+        }
+    }
+
     /// Cancel the current prompt and return to normal mode
     pub fn cancel_prompt(&mut self) {
         // Determine prompt type and reset appropriate history navigation
@@ -3181,6 +3261,11 @@ impl Editor {
                         handle: overlay_handle.clone(),
                     };
                     self.apply_event_to_active_buffer(&remove_overlay_event);
+                }
+                PromptType::OpenFile => {
+                    // Clear file browser state
+                    self.file_open_state = None;
+                    self.file_browser_layout = None;
                 }
                 _ => {}
             }
@@ -3336,19 +3421,18 @@ impl Editor {
                 // Update incremental search highlights as user types
                 self.update_search_highlights(&input);
             }
-            PromptType::OpenFile | PromptType::SaveFileAs => {
+            PromptType::OpenFile => {
+                // For OpenFile, update the file browser filter (native implementation)
+                self.update_file_open_filter();
+            }
+            PromptType::SaveFileAs => {
                 // Fire plugin hook for file path completion.
                 // The hook is processed asynchronously by the plugin thread.
                 // Commands (SetPromptSuggestions) will be picked up by the main loop's
                 // process_async_messages() -> process_plugin_commands() on the next frame.
                 use crate::services::plugins::hooks::HookArgs;
-                let prompt_type_str = match prompt_type {
-                    PromptType::OpenFile => "open-file",
-                    PromptType::SaveFileAs => "save-file-as",
-                    _ => unreachable!(),
-                };
                 let hook_args = HookArgs::PromptChanged {
-                    prompt_type: prompt_type_str.to_string(),
+                    prompt_type: "save-file-as".to_string(),
                     input,
                 };
 
@@ -3529,6 +3613,9 @@ impl Editor {
                 }
                 AsyncMessage::LspStatusUpdate { language, status } => {
                     self.handle_lsp_status_update(language, status);
+                }
+                AsyncMessage::FileOpenDirectoryLoaded(result) => {
+                    self.handle_file_open_directory_loaded(result);
                 }
             }
         }

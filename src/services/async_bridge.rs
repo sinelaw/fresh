@@ -173,6 +173,9 @@ pub enum AsyncMessage {
         request_id: u64,
         result: Result<Value, String>,
     },
+
+    /// File open dialog: directory listing completed
+    FileOpenDirectoryLoaded(std::io::Result<Vec<crate::services::fs::FsEntry>>),
 }
 
 /// LSP progress value types

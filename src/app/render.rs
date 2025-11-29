@@ -264,10 +264,31 @@ impl Editor {
         // Render hover highlights for separators and scrollbars
         self.render_hover_highlights(frame);
 
-        // Render suggestions as overlay if present (same for both layouts)
+        // Render file browser popup for OpenFile prompt, or suggestions for other prompts
         self.cached_layout.suggestions_area = None;
+        self.file_browser_layout = None;
         if let Some(prompt) = &self.prompt {
-            if !prompt.suggestions.is_empty() {
+            // For OpenFile prompt, render the file browser popup
+            if prompt.prompt_type == PromptType::OpenFile {
+                if let Some(file_open_state) = &self.file_open_state {
+                    // Calculate popup area: position above prompt line
+                    let max_height = main_chunks[prompt_line_idx].y.saturating_sub(2).min(20);
+                    let popup_area = ratatui::layout::Rect {
+                        x: 0,
+                        y: main_chunks[prompt_line_idx].y.saturating_sub(max_height + 1),
+                        width: size.width,
+                        height: max_height,
+                    };
+
+                    self.file_browser_layout = crate::view::ui::FileBrowserRenderer::render(
+                        frame,
+                        popup_area,
+                        file_open_state,
+                        &self.theme,
+                    );
+                }
+            } else if !prompt.suggestions.is_empty() {
+                // For other prompts, render suggestions as before
                 // Calculate overlay area: position above prompt line (which is below status bar)
                 let suggestion_count = prompt.suggestions.len().min(10);
                 let height = suggestion_count as u16 + 2; // +2 for borders
