@@ -1,19 +1,31 @@
 # Fresh
 
+[Visit the official Fresh website](https://sinelaw.github.io/fresh/)
+
 A terminal-based text editor.
 
-This is a completely free and open source project, not owned by any commerical company.
+## Discovery & Ease of Use
 
-**Status:** Alpha preview, early adopters version -0.1
+Fresh is designed for discovery. It features native UIs, a full Menu system, and a powerful Command Palette. With full mouse support, transitioning from graphical editors is seamless.
 
-## Features
+## Modern Extensibility
 
-- **Easy** - Intuitive out of the box with command palette and discoverable menus
-- **Huge file support** - Opens multi-gigabyte files in milliseconds
-- **Lightweight** - Low memory footprint, minimal CPU usage, instant startup
-- **TypeScript plugins** - Extend the editor with plugins that run in a sandboxed Deno environment
-- **LSP integration** - Diagnostics, completion, and go-to-definition out of the box
-- **Powerful editing** - Multi-cursor support, macros, split views, etc.
+Extend Fresh easily using modern tools. Plugins are written in TypeScript and run securely in a sandboxed Deno environment, providing access to a modern JavaScript ecosystem without compromising stability.
+
+## Zero-Latency Performance
+
+Fresh is engineered for speed. It delivers a near zero-latency experience, with text appearing instantly. The editor is designed to be light and fast, reliably opening and editing huge files up to multi-gigabyte sizes without slowdown.
+
+## Comprehensive Feature Set
+
+- **File Management**: open/save/new/close, file explorer, tabs, auto-revert, git file finder
+- **Editing**: undo/redo, multi-cursor, block selection, smart indent, comments, clipboard
+- **Search & Replace**: incremental search, find in selection, query replace, git grep
+- **Navigation**: go to line/bracket, word movement, position history, bookmarks, error navigation
+- **Views & Layout**: split panes, line numbers, line wrap, backgrounds, markdown preview
+- **Language Server (LSP)**: go to definition, references, hover, code actions, rename, diagnostics, autocompletion
+- **Productivity**: command palette, menu bar, keyboard macros, git log, diagnostics panel
+- **Plugins & Extensibility**: TypeScript plugins, color highlighter, TODO highlighter, merge conflicts, path complete, keymaps
 
 ![Fresh Screenshot](docs/screenshot1.png)
 ![Fresh Screenshot](docs/screenshot2.png)
@@ -21,15 +33,26 @@ This is a completely free and open source project, not owned by any commerical c
 
 ## Installation
 
-### Pre-built binaries (recommended)
+### Via npm (recommended)
 
-Download the latest release for your platform from the [releases page](https://github.com/sinelaw/fresh/releases).
+```bash
+npm install -g @fresh-editor/fresh-editor
+```
+
+### Via npx (for a quick test)
+
+```bash
+npx @fresh-editor/fresh-editor
+```
+
+### Pre-built binaries
+
+Download the latest release for your platform from the [releases page](httpss://github.com/sinelaw/fresh/releases).
 
 ### From crates.io
 
 ```bash
 cargo install fresh-editor
-fresh [file]
 ```
 
 ### From source
