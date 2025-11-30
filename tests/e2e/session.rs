@@ -817,7 +817,32 @@ fn test_session_cursor_visible_in_splits_after_restore() {
         .unwrap();
 
         harness.editor_mut().try_restore_session().unwrap();
+
+        // Get cursor and scroll BEFORE first render
+        let cursor_before_render = harness.cursor_position();
+        let viewport_before = harness.editor().active_state().viewport.clone();
+        eprintln!(
+            "[TEST] Before render: cursor={}, top_byte={}, top_view_line_offset={}",
+            cursor_before_render, viewport_before.top_byte, viewport_before.top_view_line_offset
+        );
+
         harness.render().unwrap();
+
+        // Get cursor and scroll AFTER render
+        let cursor_after_render = harness.cursor_position();
+        let viewport_after = harness.editor().active_state().viewport.clone();
+        eprintln!(
+            "[TEST] After render: cursor={}, top_byte={}, top_view_line_offset={}",
+            cursor_after_render, viewport_after.top_byte, viewport_after.top_view_line_offset
+        );
+
+        // Check if scroll position changed
+        if viewport_before.top_byte != viewport_after.top_byte {
+            eprintln!(
+                "[TEST] WARNING: Scroll changed during render! {} -> {}",
+                viewport_before.top_byte, viewport_after.top_byte
+            );
+        }
 
         // Right split line 31 should be visible
         harness.assert_screen_contains("Right Line 031");
