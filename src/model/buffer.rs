@@ -3245,6 +3245,60 @@ mod tests {
         let output = TextBuffer::normalize_line_endings(input);
         assert_eq!(output, Vec::<u8>::new());
     }
+
+    /// Regression test: get_all_text() returns empty for large files with unloaded regions
+    ///
+    /// This was the root cause of a bug where recovery auto-save would save 0 bytes
+    /// for large files, causing data loss on crash recovery.
+    ///
+    /// The fix is to use get_text_range_mut() which handles lazy loading.
+    #[test]
+    fn test_get_all_text_returns_empty_for_unloaded_buffers() {
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("large_test.txt");
+
+        // Create a 50KB file
+        let original_content = "X".repeat(50_000);
+        std::fs::write(&file_path, &original_content).unwrap();
+
+        // Load with small threshold to trigger large file mode
+        let mut buffer = TextBuffer::load_from_file(&file_path, 1024).unwrap();
+        assert!(buffer.large_file, "Should be in large file mode");
+        assert!(!buffer.buffers[0].is_loaded(), "Buffer should be unloaded");
+
+        // Make a small edit
+        buffer.insert_bytes(0, b"EDITED: ".to_vec());
+
+        // BUG DEMONSTRATION: get_all_text() returns empty because the original
+        // content is still unloaded. This is the crate-private method that was
+        // being used by auto_save_dirty_buffers, causing 0 bytes to be saved.
+        let content_immutable = buffer.get_all_text();
+
+        // NOTE: This assertion documents the BUG behavior!
+        // get_all_text() returns empty because it uses get_text_range() which
+        // doesn't handle lazy loading.
+        assert!(
+            content_immutable.is_empty(),
+            "BUG: get_all_text() returns empty for large files with unloaded regions. \
+             Got {} bytes instead of 0. If this assertion fails, the bug may be fixed \
+             or the test setup changed.",
+            content_immutable.len()
+        );
+
+        // CORRECT BEHAVIOR: get_text_range_mut() handles lazy loading
+        let total = buffer.total_bytes();
+        let content_lazy = buffer.get_text_range_mut(0, total).unwrap();
+        assert_eq!(
+            content_lazy.len(),
+            50_000 + 8,
+            "get_text_range_mut() should return all content with lazy loading"
+        );
+        assert!(
+            String::from_utf8_lossy(&content_lazy).starts_with("EDITED: "),
+            "Content should start with our edit"
+        );
+    }
 }
 
 #[cfg(test)]

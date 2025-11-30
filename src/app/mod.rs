@@ -3272,9 +3272,23 @@ impl Editor {
         let mut saved_count = 0;
 
         for (buffer_id, recovery_id, path) in buffer_info {
-            if let Some(state) = self.buffers.get(&buffer_id) {
-                // Get buffer content
-                let content = state.buffer.get_all_text();
+            // Use get_mut to allow lazy loading via get_text_range_mut
+            // This is necessary for large files with unloaded regions
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                // Get buffer content using get_text_range_mut which handles lazy loading
+                // get_all_text() uses the non-lazy get_text_range() which returns empty
+                // for large files with unloaded regions!
+                let total_bytes = state.buffer.total_bytes();
+                let content = match state.buffer.get_text_range_mut(0, total_bytes) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to get buffer content for recovery save: {}",
+                            e
+                        );
+                        continue;
+                    }
+                };
                 let line_count = state.buffer.line_count();
 
                 // Save to recovery
@@ -3285,12 +3299,10 @@ impl Editor {
                     None,
                     line_count,
                 )?;
-                saved_count += 1;
-            }
 
-            // Clear recovery_pending flag after successful save
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                // Clear recovery_pending flag after successful save
                 state.buffer.set_recovery_pending(false);
+                saved_count += 1;
             }
         }
 
