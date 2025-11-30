@@ -764,10 +764,11 @@ fn test_session_cursor_visible_in_splits_after_restore() {
     std::fs::write(&file2, &content2).unwrap();
 
     // First session: create split and move cursor to line 150
+    // Using user's terminal size: 158 columns x 42 lines
     {
         let mut harness = EditorTestHarness::with_config_and_working_dir(
-            80,
-            24,
+            158,
+            42,
             Config::default(),
             project_dir.clone(),
         )
@@ -792,6 +793,17 @@ fn test_session_cursor_visible_in_splits_after_restore() {
         harness.render().unwrap();
         harness.assert_screen_contains("Right Line 150");
 
+        // Scroll viewport DOWN so cursor at line 150 moves UP on screen
+        // This simulates user scrolling to look at content below cursor
+        for _ in 0..10 {
+            harness
+                .send_key(KeyCode::Down, KeyModifiers::CONTROL)
+                .unwrap();
+        }
+        harness.render().unwrap();
+
+        eprintln!("[TEST] After scrolling: cursor still at line 150, viewport scrolled down");
+
         // Verify cursor is visible before save
         {
             let (_, cursor_y) = harness.screen_cursor_position();
@@ -809,8 +821,8 @@ fn test_session_cursor_visible_in_splits_after_restore() {
     // Second session: restore and verify cursor is visible in active split
     {
         let mut harness = EditorTestHarness::with_config_and_working_dir(
-            80,
-            24,
+            158,
+            42,
             Config::default(),
             project_dir.clone(),
         )
@@ -818,7 +830,7 @@ fn test_session_cursor_visible_in_splits_after_restore() {
 
         harness.editor_mut().try_restore_session().unwrap();
 
-        // Get cursor and scroll BEFORE first render
+        // Get cursor and scroll BEFORE first render from EditorState
         let cursor_before_render = harness.cursor_position();
         let viewport_before = harness.editor().active_state().viewport.clone();
         let (line_before, _) = harness
@@ -826,6 +838,7 @@ fn test_session_cursor_visible_in_splits_after_restore() {
             .active_state()
             .buffer
             .position_to_line_col(cursor_before_render);
+
         eprintln!(
             "[TEST] Before render: cursor={} (line {}), top_byte={}, top_view_line_offset={}",
             cursor_before_render, line_before + 1, viewport_before.top_byte, viewport_before.top_view_line_offset
