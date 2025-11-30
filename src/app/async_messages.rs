@@ -423,7 +423,7 @@ impl Editor {
             .any(|(_, state)| state.buffer.file_path() == Some(&path_buf));
 
         if !is_file_open {
-            tracing::debug!("Ignoring file change event for non-open file: {}", path);
+            tracing::trace!("Ignoring file change event for non-open file: {}", path);
             return false;
         }
 

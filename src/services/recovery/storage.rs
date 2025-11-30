@@ -37,7 +37,6 @@ impl RecoveryStorage {
     }
 
     /// Create a recovery storage with a custom directory (for testing)
-    #[cfg(test)]
     pub fn with_dir(recovery_dir: PathBuf) -> Self {
         Self { recovery_dir }
     }

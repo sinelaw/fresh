@@ -4,6 +4,7 @@ use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::model::event::{CursorId, Event};
+use fresh::services::recovery::{RecoveryChunk, RecoveryStorage};
 
 /// Test that typing text marks the buffer as recovery-dirty
 /// This ensures the recovery auto-save will trigger after edits
@@ -254,4 +255,180 @@ fn test_undo_returns_to_saved_state_not_original() {
         harness.editor().active_state().buffer.is_modified(),
         "After undoing PAST saved state, buffer SHOULD be modified (content differs from saved file)"
     );
+}
+
+/// Test chunked recovery reconstruction from original file + chunks
+///
+/// This tests the core chunked recovery mechanism:
+/// 1. Create an original file with known content
+/// 2. Save chunked recovery data representing modifications
+/// 3. Reconstruct the full content from original + chunks
+/// 4. Verify the reconstructed content matches expected result
+#[test]
+fn test_chunked_recovery_reconstruction() {
+    use tempfile::TempDir;
+
+    // Create a temp directory for recovery storage
+    let temp_dir = TempDir::new().unwrap();
+    let storage = RecoveryStorage::with_dir(temp_dir.path().to_path_buf());
+    storage.ensure_dir().unwrap();
+
+    // Create an original file with known content
+    let original_content = b"Hello, World! This is a test file with some content.";
+    let original_file = temp_dir.path().join("original.txt");
+    std::fs::write(&original_file, original_content).unwrap();
+
+    // Create chunks that represent modifications:
+    // - Replace "World" with "Universe" (at offset 7, original_len 5)
+    // - Replace "test" with "sample" (at offset 24, original_len 4)
+    // "Hello, World! This is a test file with some content."
+    //        ^                  ^
+    //        7                  24
+    let chunks = vec![
+        RecoveryChunk::new(7, 5, b"Universe".to_vec()),  // "World" -> "Universe"
+        RecoveryChunk::new(24, 4, b"sample".to_vec()),   // "test" -> "sample"
+    ];
+
+    // Save chunked recovery
+    let id = "test-chunked-recovery";
+    let original_size = original_content.len();
+    // Calculate final size: original - replaced + new
+    // "Hello, World! This is a test file with some content."
+    // "Hello, Universe! This is a sample file with some content."
+    let final_size = original_size - 5 + 8 - 4 + 6; // -5 (World) +8 (Universe) -4 (test) +6 (sample)
+
+    storage
+        .save_chunked_recovery(
+            id,
+            chunks,
+            Some(&original_file),
+            Some("test buffer"),
+            Some(1),
+            original_size,
+            final_size,
+        )
+        .unwrap();
+
+    // Verify metadata was saved correctly
+    let metadata = storage.read_metadata(id).unwrap().unwrap();
+    assert!(metadata.is_chunked());
+    assert_eq!(metadata.chunk_count, Some(2));
+    assert_eq!(metadata.original_file_size, Some(original_size));
+
+    // Reconstruct content from chunks + original
+    let reconstructed = storage.reconstruct_from_chunks(id, &original_file).unwrap();
+    let reconstructed_str = String::from_utf8(reconstructed).unwrap();
+
+    // Verify the reconstruction
+    assert_eq!(
+        reconstructed_str,
+        "Hello, Universe! This is a sample file with some content."
+    );
+}
+
+/// Test chunked recovery with insertion (new content longer than replaced)
+#[test]
+fn test_chunked_recovery_with_insertion() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let storage = RecoveryStorage::with_dir(temp_dir.path().to_path_buf());
+    storage.ensure_dir().unwrap();
+
+    // Original: "AB"
+    let original_content = b"AB";
+    let original_file = temp_dir.path().join("original_insert.txt");
+    std::fs::write(&original_file, original_content).unwrap();
+
+    // Insert "XYZ" between A and B (replace 0 chars at position 1)
+    let chunks = vec![
+        RecoveryChunk::new(1, 0, b"XYZ".to_vec()),
+    ];
+
+    let id = "test-chunked-insert";
+    storage
+        .save_chunked_recovery(
+            id,
+            chunks,
+            Some(&original_file),
+            None,
+            None,
+            original_content.len(),
+            5, // "AXYZB"
+        )
+        .unwrap();
+
+    let reconstructed = storage.reconstruct_from_chunks(id, &original_file).unwrap();
+    assert_eq!(String::from_utf8(reconstructed).unwrap(), "AXYZB");
+}
+
+/// Test chunked recovery with deletion (replaced content longer than new)
+#[test]
+fn test_chunked_recovery_with_deletion() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let storage = RecoveryStorage::with_dir(temp_dir.path().to_path_buf());
+    storage.ensure_dir().unwrap();
+
+    // Original: "Hello World"
+    let original_content = b"Hello World";
+    let original_file = temp_dir.path().join("original_delete.txt");
+    std::fs::write(&original_file, original_content).unwrap();
+
+    // Delete "llo Wor" (replace 7 chars at position 2 with empty string)
+    let chunks = vec![
+        RecoveryChunk::new(2, 7, b"".to_vec()),
+    ];
+
+    let id = "test-chunked-delete";
+    storage
+        .save_chunked_recovery(
+            id,
+            chunks,
+            Some(&original_file),
+            None,
+            None,
+            original_content.len(),
+            4, // "Held"
+        )
+        .unwrap();
+
+    let reconstructed = storage.reconstruct_from_chunks(id, &original_file).unwrap();
+    assert_eq!(String::from_utf8(reconstructed).unwrap(), "Held");
+}
+
+/// Test chunked recovery fails when original file size mismatches
+#[test]
+fn test_chunked_recovery_size_mismatch() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let storage = RecoveryStorage::with_dir(temp_dir.path().to_path_buf());
+    storage.ensure_dir().unwrap();
+
+    // Create recovery with a certain original size expectation
+    let original_file = temp_dir.path().join("original_mismatch.txt");
+    std::fs::write(&original_file, b"Short").unwrap();
+
+    let chunks = vec![RecoveryChunk::new(0, 1, b"X".to_vec())];
+
+    let id = "test-size-mismatch";
+    storage
+        .save_chunked_recovery(
+            id,
+            chunks,
+            Some(&original_file),
+            None,
+            None,
+            100, // Wrong size - file is only 5 bytes
+            100,
+        )
+        .unwrap();
+
+    // Reconstruction should fail due to size mismatch
+    let result = storage.reconstruct_from_chunks(id, &original_file);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("size mismatch"));
 }
