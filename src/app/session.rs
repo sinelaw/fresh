@@ -148,12 +148,14 @@ impl Editor {
         };
 
         // Capture histories using the items() accessor
+        // Note: Only search and replace histories exist in Editor currently.
+        // Other history fields are placeholders for future features.
         let histories = SessionHistories {
             search: self.search_history.items().to_vec(),
             replace: self.replace_history.items().to_vec(),
-            command_palette: Vec::new(), // TODO: Add command palette history
-            goto_line: Vec::new(),       // TODO: Add goto line history
-            open_file: Vec::new(),       // TODO: Add open file history
+            command_palette: Vec::new(), // Future: when command palette has history
+            goto_line: Vec::new(),       // Future: when goto line prompt has history
+            open_file: Vec::new(),       // Future: when file open prompt has history
         };
         tracing::trace!(
             "Captured histories: {} search, {} replace",
@@ -217,9 +219,6 @@ impl Editor {
     /// Apply a loaded session to the editor
     pub fn apply_session(&mut self, session: &Session) -> Result<(), SessionError> {
         tracing::debug!("Applying session with {} split states", session.split_states.len());
-        eprintln!("[DEBUG] apply_session: {} split states, {:?} file_states_keys",
-            session.split_states.len(),
-            session.split_states.values().map(|s| s.file_states.keys().collect::<Vec<_>>()).collect::<Vec<_>>());
 
         // 1. Apply config overrides
         if let Some(line_numbers) = session.config_overrides.line_numbers {

@@ -363,9 +363,9 @@ impl Session {
             histories: SessionHistories {
                 search: editor.search_history.items().to_vec(),
                 replace: editor.replace_history.items().to_vec(),
-                command_palette: editor.command_registry.command_history().to_vec(),
-                goto_line: Vec::new(), // TODO: add goto_line_history to Editor
-                open_file: Vec::new(), // TODO: add open_file_history to Editor
+                command_palette: Vec::new(), // Future: when command palette has history
+                goto_line: Vec::new(),       // Future: when goto line prompt has history
+                open_file: Vec::new(),       // Future: when file open prompt has history
             },
             search_options: SearchOptions {
                 case_sensitive: editor.search_case_sensitive,
