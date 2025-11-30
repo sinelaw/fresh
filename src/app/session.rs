@@ -14,7 +14,7 @@ use crate::session::{
     SessionError, SessionHistories, SESSION_VERSION,
 };
 use crate::state::ViewMode;
-use crate::view::split::SplitNode;
+use crate::view::split::{SplitNode, SplitViewState};
 
 use super::types::Bookmark;
 use super::Editor;
@@ -290,81 +290,25 @@ impl Editor {
 
         tracing::debug!("Opened {} files from session", path_to_buffer.len());
 
-        // 6. Rebuild split layout using the buffer mappings
-        // Note: This is a simplified approach - full implementation would rebuild
-        // the entire split tree. For now, we restore to the CURRENT editor's active split.
+        // 6. Rebuild split layout from the saved tree
+        // Map old split IDs to new ones as we create splits
+        let mut split_id_map: HashMap<usize, SplitId> = HashMap::new();
+        self.restore_split_node(
+            &session.split_layout,
+            &path_to_buffer,
+            &session.split_states,
+            &mut split_id_map,
+            true, // is_first_leaf - the first leaf reuses the existing split
+        );
 
-        // Get the current editor's active split (new editors have different split IDs)
-        let current_split_id = self.split_manager.active_split();
-        tracing::debug!("Current editor's active split: {:?}", current_split_id);
-
-        // Find the first (or only) split state from the session and apply it to current split
-        if let Some((_saved_split_id, split_state)) = session.split_states.iter().next() {
-            if let Some(view_state) = self.split_view_states.get_mut(&current_split_id) {
-                // Restore open files for this split (in order)
-                for rel_path in &split_state.open_files {
-                    if let Some(&buffer_id) = path_to_buffer.get(rel_path) {
-                        if !view_state.open_buffers.contains(&buffer_id) {
-                            view_state.open_buffers.push(buffer_id);
-                        }
-                    }
+        // Set the active split based on the saved active_split_id
+        if let Some(&new_active_split) = split_id_map.get(&session.active_split_id) {
+            self.split_manager.set_active_split(new_active_split);
+            // Also update active_buffer based on what's in that split
+            if let Some(view_state) = self.split_view_states.get(&new_active_split) {
+                if let Some(&buffer_id) = view_state.open_buffers.first() {
+                    self.active_buffer = buffer_id;
                 }
-
-                // Determine which buffer should be active based on active_file_index
-                let active_file_path = split_state.open_files.get(split_state.active_file_index);
-                let active_buffer_id = active_file_path
-                    .and_then(|rel_path| path_to_buffer.get(rel_path).copied());
-
-                // Restore cursor and scroll for the active file only
-                if let Some(active_id) = active_buffer_id {
-                    // Find the file state for the active buffer
-                    for (rel_path, file_state) in &split_state.file_states {
-                        let buffer_for_path = path_to_buffer.get(rel_path).copied();
-                        if buffer_for_path == Some(active_id) {
-                            if let Some(buffer) = self.buffers.get(&active_id) {
-                                let max_pos = buffer.buffer.len();
-                                let cursor_pos = file_state.cursor.position.min(max_pos);
-
-                                // Set cursor in SplitViewState (for split-specific view)
-                                view_state.cursors.primary_mut().position = cursor_pos;
-                                view_state.cursors.primary_mut().anchor = file_state.cursor.anchor.map(|a| a.min(max_pos));
-                                view_state.cursors.primary_mut().sticky_column = file_state.cursor.sticky_column;
-
-                                // Set scroll position
-                                view_state.viewport.top_byte = file_state.scroll.top_byte.min(max_pos);
-                                view_state.viewport.top_view_line_offset = file_state.scroll.top_view_line_offset;
-                                view_state.viewport.left_column = file_state.scroll.left_column;
-                            }
-
-                            // ALSO set cursor and viewport in EditorState (buffer-level state)
-                            // This is needed because EditorState is authoritative for cursors and scroll
-                            if let Some(editor_state) = self.buffers.get_mut(&active_id) {
-                                let max_pos = editor_state.buffer.len();
-                                let cursor_pos = file_state.cursor.position.min(max_pos);
-                                editor_state.cursors.primary_mut().position = cursor_pos;
-                                editor_state.cursors.primary_mut().anchor = file_state.cursor.anchor.map(|a| a.min(max_pos));
-                                editor_state.cursors.primary_mut().sticky_column = file_state.cursor.sticky_column;
-
-                                // Set viewport in EditorState (authoritative for scroll position)
-                                editor_state.viewport.top_byte = file_state.scroll.top_byte.min(max_pos);
-                                editor_state.viewport.top_view_line_offset = file_state.scroll.top_view_line_offset;
-                                editor_state.viewport.left_column = file_state.scroll.left_column;
-                            }
-                            break;
-                        }
-                    }
-
-                    // Set this buffer as active in the split tree
-                    let _ = self.split_manager.set_split_buffer(current_split_id, active_id);
-                }
-
-                // Restore view mode
-                view_state.view_mode = match split_state.view_mode {
-                    SerializedViewMode::Source => ViewMode::Source,
-                    SerializedViewMode::Compose => ViewMode::Compose,
-                };
-                view_state.compose_width = split_state.compose_width;
-                view_state.tab_scroll_offset = split_state.tab_scroll_offset;
             }
         }
 
@@ -398,6 +342,192 @@ impl Editor {
 
         // File not open, open it using the Editor's open_file method
         self.open_file(path).map_err(SessionError::Io)
+    }
+
+    /// Recursively restore the split layout from a serialized tree
+    fn restore_split_node(
+        &mut self,
+        node: &SerializedSplitNode,
+        path_to_buffer: &HashMap<PathBuf, BufferId>,
+        split_states: &HashMap<usize, SerializedSplitViewState>,
+        split_id_map: &mut HashMap<usize, SplitId>,
+        is_first_leaf: bool,
+    ) {
+        match node {
+            SerializedSplitNode::Leaf { file_path, split_id } => {
+                // Get the buffer for this file, or use the default buffer
+                let buffer_id = file_path
+                    .as_ref()
+                    .and_then(|p| path_to_buffer.get(p).copied())
+                    .unwrap_or(self.active_buffer);
+
+                let current_split_id = if is_first_leaf {
+                    // First leaf reuses the existing split
+                    let split_id_val = self.split_manager.active_split();
+                    let _ = self.split_manager.set_split_buffer(split_id_val, buffer_id);
+                    split_id_val
+                } else {
+                    // This shouldn't happen - leaves after splits are created by split_active
+                    self.split_manager.active_split()
+                };
+
+                // Map old split ID to new one
+                split_id_map.insert(*split_id, current_split_id);
+
+                // Restore the view state for this split
+                self.restore_split_view_state(
+                    current_split_id,
+                    *split_id,
+                    split_states,
+                    path_to_buffer,
+                );
+            }
+            SerializedSplitNode::Split {
+                direction,
+                first,
+                second,
+                ratio,
+                split_id,
+            } => {
+                // First, restore the first child (it uses the current active split)
+                self.restore_split_node(first, path_to_buffer, split_states, split_id_map, is_first_leaf);
+
+                // Get the buffer for the second child's first leaf
+                let second_buffer_id = get_first_leaf_buffer(second, path_to_buffer)
+                    .unwrap_or(self.active_buffer);
+
+                // Convert direction
+                let split_direction = match direction {
+                    SerializedSplitDirection::Horizontal => SplitDirection::Horizontal,
+                    SerializedSplitDirection::Vertical => SplitDirection::Vertical,
+                };
+
+                // Create the split for the second child
+                match self.split_manager.split_active(split_direction, second_buffer_id, *ratio) {
+                    Ok(new_split_id) => {
+                        // Create view state for the new split
+                        let mut view_state = SplitViewState::with_buffer(
+                            self.terminal_width,
+                            self.terminal_height,
+                            second_buffer_id,
+                        );
+                        view_state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
+                        self.split_view_states.insert(new_split_id, view_state);
+
+                        // Map the container split ID (though we mainly care about leaves)
+                        split_id_map.insert(*split_id, new_split_id);
+
+                        // Recursively restore the second child (it's now in the new split)
+                        self.restore_split_node(second, path_to_buffer, split_states, split_id_map, false);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to create split during session restore: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Restore view state for a specific split
+    fn restore_split_view_state(
+        &mut self,
+        current_split_id: SplitId,
+        saved_split_id: usize,
+        split_states: &HashMap<usize, SerializedSplitViewState>,
+        path_to_buffer: &HashMap<PathBuf, BufferId>,
+    ) {
+        // Try to find the saved state for this split
+        let Some(split_state) = split_states.get(&saved_split_id) else {
+            return;
+        };
+
+        let Some(view_state) = self.split_view_states.get_mut(&current_split_id) else {
+            return;
+        };
+
+        // Restore open files for this split (in order)
+        for rel_path in &split_state.open_files {
+            if let Some(&buffer_id) = path_to_buffer.get(rel_path) {
+                if !view_state.open_buffers.contains(&buffer_id) {
+                    view_state.open_buffers.push(buffer_id);
+                }
+            }
+        }
+
+        // Determine which buffer should be active based on active_file_index
+        let active_file_path = split_state.open_files.get(split_state.active_file_index);
+        let active_buffer_id = active_file_path
+            .and_then(|rel_path| path_to_buffer.get(rel_path).copied());
+
+        // Restore cursor and scroll for the active file
+        if let Some(active_id) = active_buffer_id {
+            // Find the file state for the active buffer
+            for (rel_path, file_state) in &split_state.file_states {
+                let buffer_for_path = path_to_buffer.get(rel_path).copied();
+                if buffer_for_path == Some(active_id) {
+                    if let Some(buffer) = self.buffers.get(&active_id) {
+                        let max_pos = buffer.buffer.len();
+                        let cursor_pos = file_state.cursor.position.min(max_pos);
+
+                        // Set cursor in SplitViewState
+                        view_state.cursors.primary_mut().position = cursor_pos;
+                        view_state.cursors.primary_mut().anchor =
+                            file_state.cursor.anchor.map(|a| a.min(max_pos));
+                        view_state.cursors.primary_mut().sticky_column =
+                            file_state.cursor.sticky_column;
+
+                        // Set scroll position
+                        view_state.viewport.top_byte = file_state.scroll.top_byte.min(max_pos);
+                        view_state.viewport.top_view_line_offset =
+                            file_state.scroll.top_view_line_offset;
+                        view_state.viewport.left_column = file_state.scroll.left_column;
+                    }
+
+                    // Also set in EditorState (authoritative)
+                    if let Some(editor_state) = self.buffers.get_mut(&active_id) {
+                        let max_pos = editor_state.buffer.len();
+                        let cursor_pos = file_state.cursor.position.min(max_pos);
+                        editor_state.cursors.primary_mut().position = cursor_pos;
+                        editor_state.cursors.primary_mut().anchor =
+                            file_state.cursor.anchor.map(|a| a.min(max_pos));
+                        editor_state.cursors.primary_mut().sticky_column =
+                            file_state.cursor.sticky_column;
+
+                        editor_state.viewport.top_byte = file_state.scroll.top_byte.min(max_pos);
+                        editor_state.viewport.top_view_line_offset =
+                            file_state.scroll.top_view_line_offset;
+                        editor_state.viewport.left_column = file_state.scroll.left_column;
+                    }
+                    break;
+                }
+            }
+
+            // Set this buffer as active in the split
+            let _ = self.split_manager.set_split_buffer(current_split_id, active_id);
+        }
+
+        // Restore view mode
+        view_state.view_mode = match split_state.view_mode {
+            SerializedViewMode::Source => ViewMode::Source,
+            SerializedViewMode::Compose => ViewMode::Compose,
+        };
+        view_state.compose_width = split_state.compose_width;
+        view_state.tab_scroll_offset = split_state.tab_scroll_offset;
+    }
+}
+
+/// Helper: Get the buffer ID from the first leaf node in a split tree
+fn get_first_leaf_buffer(
+    node: &SerializedSplitNode,
+    path_to_buffer: &HashMap<PathBuf, BufferId>,
+) -> Option<BufferId> {
+    match node {
+        SerializedSplitNode::Leaf { file_path, .. } => {
+            file_path.as_ref().and_then(|p| path_to_buffer.get(p).copied())
+        }
+        SerializedSplitNode::Split { first, .. } => {
+            get_first_leaf_buffer(first, path_to_buffer)
+        }
     }
 }
 

@@ -478,3 +478,106 @@ fn test_session_preserves_active_tab() {
         harness.assert_buffer_content("First file content");
     }
 }
+
+/// Helper: Create a vertical split via command palette
+fn split_vertical(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
+
+/// Helper: Navigate to previous split
+fn prev_split(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("prev split").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
+
+/// Test that session saves and restores split layout
+#[test]
+fn test_session_restores_splits() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("left.txt");
+    let file2 = project_dir.join("right.txt");
+    std::fs::write(&file1, "Left split content").unwrap();
+    std::fs::write(&file2, "Right split content").unwrap();
+
+    // First session: create two splits with different files
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Open first file
+        harness.open_file(&file1).unwrap();
+        harness.assert_buffer_content("Left split content");
+
+        // Create vertical split (both splits show the same buffer initially)
+        split_vertical(&mut harness);
+
+        // Open second file in the new split
+        harness.open_file(&file2).unwrap();
+        harness.assert_buffer_content("Right split content");
+
+        // Verify we have 2 splits by checking that BOTH file contents are visible
+        // on screen at the same time (not just in tabs)
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        assert!(
+            screen.contains("Left split content") && screen.contains("Right split content"),
+            "Both file contents should be visible in split view before save.\nScreen:\n{}",
+            screen
+        );
+
+        harness.editor_mut().save_session().unwrap();
+    }
+
+    // Second session: restore and verify splits are recreated
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        harness.editor_mut().try_restore_session().unwrap();
+        harness.render().unwrap();
+
+        // After restore, BOTH file contents should be visible at the same time
+        // This proves we have 2 splits (not just 2 tabs in 1 split)
+        let screen = harness.screen_to_string();
+        assert!(
+            screen.contains("Left split content") && screen.contains("Right split content"),
+            "Both file contents should be visible in split view after restore.\nScreen:\n{}",
+            screen
+        );
+
+        // The active split should have right file content
+        harness.assert_buffer_content("Right split content");
+
+        // Navigate to other split and verify it has left file
+        prev_split(&mut harness);
+        harness.assert_buffer_content("Left split content");
+    }
+}
