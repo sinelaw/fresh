@@ -758,7 +758,7 @@ impl EditorTestHarness {
 
     /// Get the buffer content (not screen, actual buffer text)
     pub fn get_buffer_content(&self) -> String {
-        self.editor.active_state().buffer.to_string()
+        self.editor.active_state().buffer.to_string().unwrap()
     }
 
     /// Verify buffer content matches expected

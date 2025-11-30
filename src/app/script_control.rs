@@ -711,7 +711,7 @@ impl ScriptControlMode {
 
     /// Handle get buffer command
     fn handle_get_buffer(&self) -> io::Result<ScriptResponse> {
-        let content = self.editor.active_state().buffer.to_string();
+        let content = self.editor.active_state().buffer.to_string().unwrap_or_default();
         Ok(ScriptResponse::Buffer { content })
     }
 
@@ -829,7 +829,7 @@ impl ScriptControlMode {
                 Ok(!screen.contains(text))
             }
             WaitCondition::BufferContains { text } => {
-                let buffer = self.editor.active_state().buffer.to_string();
+                let buffer = self.editor.active_state().buffer.to_string().unwrap_or_default();
                 Ok(buffer.contains(text))
             }
             WaitCondition::PopupVisible => {

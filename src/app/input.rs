@@ -885,7 +885,10 @@ impl Editor {
 
                                     for (buffer_id, buf_path) in buffers_for_language {
                                         if let Some(state) = self.buffers.get(&buffer_id) {
-                                            let content = state.buffer.to_string();
+                                            let content = match state.buffer.to_string() {
+                                                Some(c) => c,
+                                                None => continue, // Skip buffers that aren't fully loaded
+                                            };
                                             let uri: Option<lsp_types::Uri> =
                                                 url::Url::from_file_path(&buf_path).ok().and_then(
                                                     |u| u.as_str().parse::<lsp_types::Uri>().ok(),

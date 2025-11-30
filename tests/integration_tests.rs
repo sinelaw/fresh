@@ -62,7 +62,7 @@ fn test_buffer_cursor_adjustment_on_insert() {
     );
 
     // Buffer content should be correct
-    assert_eq!(state.buffer.to_string(), "INSERTED hello world");
+    assert_eq!(state.buffer.to_string().unwrap(), "INSERTED hello world");
 }
 
 /// Test that cursor positions are correctly adjusted after deletions
@@ -97,7 +97,7 @@ fn test_buffer_cursor_adjustment_on_delete() {
     }
 
     // Buffer content should be correct
-    assert_eq!(state.buffer.to_string(), "hello world");
+    assert_eq!(state.buffer.to_string().unwrap(), "hello world");
 }
 
 /// Test undo/redo with EditorState and EventLog
@@ -133,7 +133,7 @@ fn test_state_eventlog_undo_redo() {
     log.append(event3.clone());
     state.apply(&event3);
 
-    assert_eq!(state.buffer.to_string(), "abc");
+    assert_eq!(state.buffer.to_string().unwrap(), "abc");
 
     // Undo all - log.undo() returns inverse events ready to apply
     while log.can_undo() {
@@ -143,7 +143,7 @@ fn test_state_eventlog_undo_redo() {
         }
     }
 
-    assert_eq!(state.buffer.to_string(), "");
+    assert_eq!(state.buffer.to_string().unwrap(), "");
 
     // Redo all - log.redo() returns the original events to replay
     while log.can_redo() {
@@ -153,7 +153,7 @@ fn test_state_eventlog_undo_redo() {
         }
     }
 
-    assert_eq!(state.buffer.to_string(), "abc");
+    assert_eq!(state.buffer.to_string().unwrap(), "abc");
 }
 
 /// Test that undo/redo maintains cursor positions correctly
@@ -176,7 +176,7 @@ fn test_undo_redo_cursor_positions() {
         state.apply(&event);
     }
 
-    assert_eq!(state.buffer.to_string(), "hello");
+    assert_eq!(state.buffer.to_string().unwrap(), "hello");
     let cursor_after_typing = state.cursors.primary().position;
     assert_eq!(cursor_after_typing, 5);
 
@@ -188,7 +188,7 @@ fn test_undo_redo_cursor_positions() {
         }
     }
 
-    assert_eq!(state.buffer.to_string(), "hel");
+    assert_eq!(state.buffer.to_string().unwrap(), "hel");
     assert_eq!(state.cursors.primary().position, 3);
 
     // Redo twice
@@ -199,7 +199,7 @@ fn test_undo_redo_cursor_positions() {
         }
     }
 
-    assert_eq!(state.buffer.to_string(), "hello");
+    assert_eq!(state.buffer.to_string().unwrap(), "hello");
     assert_eq!(state.cursors.primary().position, 5);
 }
 
@@ -497,7 +497,7 @@ fn test_overlay_undo_redo() {
     }
 
     // After redo: buffer is back and overlay should be back
-    assert_eq!(state.buffer.to_string(), "hello");
+    assert_eq!(state.buffer.to_string().unwrap(), "hello");
     // Note: AddOverlay was redone, so overlay should be back
     assert_eq!(state.overlays.at_position(2, &state.marker_list).len(), 1);
     assert!(

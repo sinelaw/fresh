@@ -18,7 +18,7 @@ fn test_overlay_background_color_direct() {
         cursor_id: CursorId(0),
     });
 
-    println!("Buffer content: {:?}", state.buffer.to_string());
+    println!("Buffer content: {:?}", state.buffer.to_string().unwrap());
     println!("Buffer size: {}", state.buffer.len());
 
     // Directly add an overlay with orange background

@@ -2829,11 +2829,13 @@ impl Editor {
         }
 
         // Get text before borrowing lsp
-        let text = self
-            .buffers
-            .get(&buffer_id)
-            .map(|state| state.buffer.to_string())
-            .unwrap_or_default();
+        let text = match self.buffers.get(&buffer_id).and_then(|state| state.buffer.to_string()) {
+            Some(t) => t,
+            None => {
+                tracing::debug!("Buffer not fully loaded for LSP notification");
+                return;
+            }
+        };
 
         let enable_inlay_hints = self.config.editor.enable_inlay_hints;
         let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
@@ -2974,18 +2976,19 @@ impl Editor {
                             .buffers
                             .values()
                             .find(|s| s.buffer.file_path() == Some(path))
-                            .map(|state| state.buffer.to_string())
-                            .unwrap_or_default();
+                            .and_then(|state| state.buffer.to_string());
 
                         // Use full document sync - send the entire new content
-                        if let Some(client) = lsp.get_or_spawn(&language) {
-                            let content_change = TextDocumentContentChangeEvent {
-                                range: None, // None means full document replacement
-                                range_length: None,
-                                text: content,
-                            };
-                            if let Err(e) = client.did_change(lsp_uri, vec![content_change]) {
-                                tracing::warn!("Failed to notify LSP of file change: {}", e);
+                        if let Some(content) = content {
+                            if let Some(client) = lsp.get_or_spawn(&language) {
+                                let content_change = TextDocumentContentChangeEvent {
+                                    range: None, // None means full document replacement
+                                    range_length: None,
+                                    text: content,
+                                };
+                                if let Err(e) = client.did_change(lsp_uri, vec![content_change]) {
+                                    tracing::warn!("Failed to notify LSP of file change: {}", e);
+                                }
                             }
                         }
                     }
@@ -5327,7 +5330,13 @@ impl Editor {
 
         // Extract the word under cursor for display
         let symbol = {
-            let text = state.buffer.to_string();
+            let text = match state.buffer.to_string() {
+                Some(t) => t,
+                None => {
+                    self.set_status_message("Buffer not fully loaded".to_string());
+                    return Ok(());
+                }
+            };
             let bytes = text.as_bytes();
             let buf_len = bytes.len();
 
@@ -6397,7 +6406,7 @@ mod tests {
         // Paste should work
         editor.paste();
 
-        let content = editor.active_state().buffer.to_string();
+        let content = editor.active_state().buffer.to_string().unwrap();
         assert_eq!(content, "test");
     }
 
@@ -7402,7 +7411,7 @@ mod tests {
         let lsp_changes_after = editor.collect_lsp_changes(&batch);
 
         // Verify buffer was correctly modified
-        let final_content = editor.active_state().buffer.to_string();
+        let final_content = editor.active_state().buffer.to_string().unwrap();
         assert_eq!(
             final_content, "fn foo(value: i32) {\n    value + 1\n}\n",
             "Buffer should have 'value' in both places"
@@ -7501,9 +7510,8 @@ mod tests {
         editor.active_state_mut().cursors.primary_mut().position = original_cursor_pos;
 
         // Verify cursor is at the right position
-        let text_at_cursor = editor.active_state().buffer.to_string()
-            [original_cursor_pos..original_cursor_pos + 3]
-            .to_string();
+        let buffer_text = editor.active_state().buffer.to_string().unwrap();
+        let text_at_cursor = buffer_text[original_cursor_pos..original_cursor_pos + 3].to_string();
         assert_eq!(text_at_cursor, "val", "Cursor should be at 'val'");
 
         // Simulate LSP rename batch: rename "val" to "value" in two places
@@ -7545,7 +7553,7 @@ mod tests {
             .unwrap();
 
         // Verify buffer was correctly modified
-        let final_content = editor.active_state().buffer.to_string();
+        let final_content = editor.active_state().buffer.to_string().unwrap();
         assert_eq!(
             final_content, "fn foo(value: i32) {\n    value + 1\n}\n",
             "Buffer should have 'value' in both places"
@@ -7648,7 +7656,7 @@ mod tests {
             .unwrap();
 
         // Verify buffer after first rename
-        let after_first = editor.active_state().buffer.to_string();
+        let after_first = editor.active_state().buffer.to_string().unwrap();
         assert_eq!(
             after_first, "fn foo(value: i32) {\n    value + 1\n}\n",
             "After first rename"
@@ -7741,7 +7749,7 @@ mod tests {
             .unwrap();
 
         // Verify buffer after second rename
-        let after_second = editor.active_state().buffer.to_string();
+        let after_second = editor.active_state().buffer.to_string().unwrap();
         assert_eq!(
             after_second, "fn foo(x: i32) {\n    x + 1\n}\n",
             "After second rename"

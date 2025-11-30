@@ -1003,7 +1003,7 @@ mod tests {
         // This should trigger tree-sitter parsing
         let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
 
-        println!("Test buffer: {:?}", buffer.to_string());
+        println!("Test buffer: {:?}", buffer.to_string().unwrap());
         println!("Position: {}", position);
         println!("Result indent: {:?}", indent);
 

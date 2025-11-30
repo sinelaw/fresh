@@ -1000,21 +1000,18 @@ impl TextBuffer {
     }
 
     /// Get all text as a single Vec<u8>
-    /// Returns empty vector if any buffers are unloaded
-    /// Get all text from the buffer
-    /// CRATE-PRIVATE: Returns empty if any buffers are unloaded (silently fails!)
-    /// Only use this when you KNOW the data is fully loaded (e.g., during save operations)
-    /// External code should use get_text_range_mut() or DocumentModel methods
-    pub(crate) fn get_all_text(&self) -> Vec<u8> {
+    /// Returns None if any buffers are unloaded (lazy loading)
+    /// CRATE-PRIVATE: External code should use get_text_range_mut() or DocumentModel methods
+    pub(crate) fn get_all_text(&self) -> Option<Vec<u8>> {
         self.get_text_range(0, self.total_bytes())
-            .unwrap_or_default()
     }
 
     /// Get all text as a String
-    /// CRATE-PRIVATE: Returns empty if any buffers are unloaded (silently fails!)
-    /// Only use this when you KNOW the data is fully loaded
-    pub(crate) fn get_all_text_string(&self) -> String {
-        String::from_utf8_lossy(&self.get_all_text()).into_owned()
+    /// Returns None if any buffers are unloaded (lazy loading)
+    /// CRATE-PRIVATE: External code should use get_text_range_mut() or DocumentModel methods
+    pub(crate) fn get_all_text_string(&self) -> Option<String> {
+        self.get_all_text()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Get text from a byte range as bytes
@@ -1027,7 +1024,8 @@ impl TextBuffer {
     }
 
     /// Get all text as a String
-    pub fn to_string(&self) -> String {
+    /// Returns None if any buffers are unloaded (lazy loading)
+    pub fn to_string(&self) -> Option<String> {
         self.get_all_text_string()
     }
 
@@ -2200,7 +2198,7 @@ mod tests {
     #[test]
     fn test_get_all_text() {
         let buffer = TextBuffer::from_bytes(b"hello\nworld".to_vec());
-        assert_eq!(buffer.get_all_text(), b"hello\nworld");
+        assert_eq!(buffer.get_all_text().unwrap(), b"hello\nworld");
     }
 
     #[test]
@@ -2208,7 +2206,7 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"world".to_vec());
         buffer.insert_bytes(0, b"hello ".to_vec());
 
-        assert_eq!(buffer.get_all_text(), b"hello world");
+        assert_eq!(buffer.get_all_text().unwrap(), b"hello world");
         assert_eq!(buffer.total_bytes(), 11);
     }
 
@@ -2217,7 +2215,7 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"helloworld".to_vec());
         buffer.insert_bytes(5, b" ".to_vec());
 
-        assert_eq!(buffer.get_all_text(), b"hello world");
+        assert_eq!(buffer.get_all_text().unwrap(), b"hello world");
         assert_eq!(buffer.total_bytes(), 11);
     }
 
@@ -2226,7 +2224,7 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"hello".to_vec());
         buffer.insert_bytes(5, b" world".to_vec());
 
-        assert_eq!(buffer.get_all_text(), b"hello world");
+        assert_eq!(buffer.get_all_text().unwrap(), b"hello world");
         assert_eq!(buffer.total_bytes(), 11);
     }
 
@@ -2235,7 +2233,7 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"hello".to_vec());
         buffer.insert_bytes(5, b"\nworld\ntest".to_vec());
 
-        assert_eq!(buffer.get_all_text(), b"hello\nworld\ntest");
+        assert_eq!(buffer.get_all_text().unwrap(), b"hello\nworld\ntest");
         assert_eq!(buffer.line_count(), Some(3));
     }
 
@@ -2244,7 +2242,7 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"hello world".to_vec());
         buffer.delete_bytes(0, 6);
 
-        assert_eq!(buffer.get_all_text(), b"world");
+        assert_eq!(buffer.get_all_text().unwrap(), b"world");
         assert_eq!(buffer.total_bytes(), 5);
     }
 
@@ -2253,7 +2251,7 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"hello world".to_vec());
         buffer.delete_bytes(5, 1);
 
-        assert_eq!(buffer.get_all_text(), b"helloworld");
+        assert_eq!(buffer.get_all_text().unwrap(), b"helloworld");
         assert_eq!(buffer.total_bytes(), 10);
     }
 
@@ -2262,7 +2260,7 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"hello world".to_vec());
         buffer.delete_bytes(6, 5);
 
-        assert_eq!(buffer.get_all_text(), b"hello ");
+        assert_eq!(buffer.get_all_text().unwrap(), b"hello ");
         assert_eq!(buffer.total_bytes(), 6);
     }
 
@@ -2271,7 +2269,7 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"hello\nworld\ntest".to_vec());
         buffer.delete_bytes(5, 7); // Delete "\nworld\n"
 
-        assert_eq!(buffer.get_all_text(), b"hellotest");
+        assert_eq!(buffer.get_all_text().unwrap(), b"hellotest");
         assert_eq!(buffer.line_count(), Some(1));
     }
 
@@ -2294,7 +2292,7 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"hello\nworld".to_vec());
         buffer.insert_at_position(Position { line: 1, column: 0 }, b"beautiful ".to_vec());
 
-        assert_eq!(buffer.get_all_text(), b"hello\nbeautiful world");
+        assert_eq!(buffer.get_all_text().unwrap(), b"hello\nbeautiful world");
     }
 
     #[test]
@@ -2305,7 +2303,7 @@ mod tests {
         let end = Position { line: 2, column: 0 };
         buffer.delete_range(start, end);
 
-        assert_eq!(buffer.get_all_text(), b"hellotest");
+        assert_eq!(buffer.get_all_text().unwrap(), b"hellotest");
     }
 
     #[test]
@@ -2331,7 +2329,7 @@ mod tests {
         buffer.insert_bytes(6, b"new\n".to_vec());
         assert_eq!(buffer.line_count(), Some(4));
 
-        let text = buffer.get_all_text();
+        let text = buffer.get_all_text().unwrap();
         assert_eq!(text, b"start\nnew\nline2\nline3");
     }
 
@@ -2349,10 +2347,10 @@ mod tests {
         let mut buffer = TextBuffer::from_bytes(b"hello".to_vec());
 
         buffer.insert_bytes(2, Vec::new());
-        assert_eq!(buffer.get_all_text(), b"hello");
+        assert_eq!(buffer.get_all_text().unwrap(), b"hello");
 
         buffer.delete_bytes(2, 0);
-        assert_eq!(buffer.get_all_text(), b"hello");
+        assert_eq!(buffer.get_all_text().unwrap(), b"hello");
     }
 
     #[test]
@@ -2362,15 +2360,15 @@ mod tests {
 
         // Delete all
         buffer.delete_bytes(0, 12);
-        assert_eq!(buffer.get_all_text(), b"");
+        assert_eq!(buffer.get_all_text().unwrap(), b"");
 
         // Insert 'a' at 0
         buffer.insert_bytes(0, vec![b'a']);
-        assert_eq!(buffer.get_all_text(), b"a");
+        assert_eq!(buffer.get_all_text().unwrap(), b"a");
 
         // Insert 'b' at 0 (should give "ba")
         buffer.insert_bytes(0, vec![b'b']);
-        assert_eq!(buffer.get_all_text(), b"ba");
+        assert_eq!(buffer.get_all_text().unwrap(), b"ba");
     }
 
     // ===== Phase 1-3: Large File Support Tests =====
@@ -2515,7 +2513,7 @@ mod tests {
             assert!(!buffer.large_file);
             assert_eq!(buffer.total_bytes(), test_data.len());
             assert_eq!(buffer.line_count(), Some(2)); // Has line indexing
-            assert_eq!(buffer.get_all_text(), test_data);
+            assert_eq!(buffer.get_all_text().unwrap(), test_data);
 
             // The buffer should be loaded
             assert!(buffer.buffers[0].is_loaded());
@@ -2667,7 +2665,7 @@ mod tests {
             assert_eq!(range_result2, b"line2");
 
             // Test get_all_text (via get_text_range after lazy loading)
-            let all_text = buffer.get_all_text();
+            let all_text = buffer.get_all_text().unwrap();
             assert_eq!(all_text, test_data);
 
             // Test slice_bytes method
@@ -2680,7 +2678,7 @@ mod tests {
             assert!(buffer.is_modified());
 
             // Verify the insertion worked
-            let text_after_insert = buffer.get_all_text();
+            let text_after_insert = buffer.get_all_text().unwrap();
             assert_eq!(&text_after_insert[0..7], b"prefix_");
             assert_eq!(&text_after_insert[7..12], b"line1");
 
@@ -2689,7 +2687,7 @@ mod tests {
             assert_eq!(buffer.total_bytes(), test_data.len());
 
             // Verify deletion worked - should be back to original
-            let text_after_delete = buffer.get_all_text();
+            let text_after_delete = buffer.get_all_text().unwrap();
             assert_eq!(text_after_delete, test_data);
 
             // Insert at end
@@ -2698,7 +2696,7 @@ mod tests {
             assert_eq!(buffer.total_bytes(), test_data.len() + 6);
 
             // Verify end insertion
-            let final_text = buffer.get_all_text();
+            let final_text = buffer.get_all_text().unwrap();
             assert!(final_text.ends_with(b"suffix"));
             assert_eq!(&final_text[0..test_data.len()], test_data);
 
@@ -2716,7 +2714,7 @@ mod tests {
             let replace_result = buffer.replace_range(0..5, "START");
             assert!(replace_result);
 
-            let text_after_replace = buffer.get_all_text();
+            let text_after_replace = buffer.get_all_text().unwrap();
             assert!(text_after_replace.starts_with(b"START"));
         }
 
@@ -3191,7 +3189,7 @@ mod tests {
         buffer.insert_bytes(7, b"value".to_vec()); // Insert "value"
 
         // Buffer is now: "fn foo(value: i32) {\n    value + 1\n}\n"
-        let content = String::from_utf8_lossy(&buffer.get_all_text()).to_string();
+        let content = String::from_utf8_lossy(&buffer.get_all_text().unwrap()).to_string();
         assert_eq!(content, "fn foo(value: i32) {\n    value + 1\n}\n");
 
         // Position 25 is now 'v' of second "value" on line 1
@@ -3270,20 +3268,17 @@ mod tests {
         // Make a small edit
         buffer.insert_bytes(0, b"EDITED: ".to_vec());
 
-        // BUG DEMONSTRATION: get_all_text() returns empty because the original
-        // content is still unloaded. This is the crate-private method that was
-        // being used by auto_save_dirty_buffers, causing 0 bytes to be saved.
+        // get_all_text() now returns None for unloaded buffers instead of empty
+        // This is the correct behavior - it signals that content is not available
         let content_immutable = buffer.get_all_text();
 
-        // NOTE: This assertion documents the BUG behavior!
-        // get_all_text() returns empty because it uses get_text_range() which
-        // doesn't handle lazy loading.
+        // get_all_text() returns None because it uses get_text_range() which
+        // returns None for unloaded regions
         assert!(
-            content_immutable.is_empty(),
-            "BUG: get_all_text() returns empty for large files with unloaded regions. \
-             Got {} bytes instead of 0. If this assertion fails, the bug may be fixed \
-             or the test setup changed.",
-            content_immutable.len()
+            content_immutable.is_none(),
+            "get_all_text() should return None for large files with unloaded regions. \
+             Got Some({} bytes) instead of None.",
+            content_immutable.as_ref().map(|c| c.len()).unwrap_or(0)
         );
 
         // CORRECT BEHAVIOR: get_text_range_mut() handles lazy loading
@@ -3345,7 +3340,7 @@ mod property_tests {
         #[test]
         fn prop_get_all_text_matches_original(text in text_with_newlines()) {
             let buffer = TextBuffer::from_bytes(text.clone());
-            prop_assert_eq!(buffer.get_all_text(), text);
+            prop_assert_eq!(buffer.get_all_text().unwrap(), text);
         }
 
         #[test]
@@ -3400,7 +3395,7 @@ mod property_tests {
             buffer.insert_bytes(offset, insert_text.clone());
             buffer.delete_bytes(offset, insert_text.len());
 
-            prop_assert_eq!(buffer.get_all_text(), text);
+            prop_assert_eq!(buffer.get_all_text().unwrap(), text);
         }
 
         #[test]
@@ -3466,7 +3461,7 @@ mod property_tests {
                 }
             }
 
-            prop_assert_eq!(buffer.get_all_text(), expected_text);
+            prop_assert_eq!(buffer.get_all_text().unwrap(), expected_text);
         }
 
         #[test]

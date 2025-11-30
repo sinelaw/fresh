@@ -1840,7 +1840,7 @@ mod tests {
             cursor_id: CursorId(0),
         });
 
-        assert_eq!(state.buffer.to_string(), "Hello\nWorld");
+        assert_eq!(state.buffer.to_string().unwrap(), "Hello\nWorld");
         assert_eq!(state.cursors.primary().position, 11);
 
         // Move cursor to position 6 (beginning of "World")
@@ -1864,7 +1864,7 @@ mod tests {
             state.apply(&event);
         }
 
-        assert_eq!(state.buffer.to_string(), "HelloWorld");
+        assert_eq!(state.buffer.to_string().unwrap(), "HelloWorld");
         assert_eq!(state.cursors.primary().position, 5);
     }
 
@@ -1933,7 +1933,7 @@ mod tests {
         // Text structure: "Line1\nLine2\nLine3"
         // Positions: 0-4 (Line1), 5 (\n), 6-10 (Line2), 11 (\n), 12-16 (Line3)
         assert_eq!(state.cursors.primary().position, 17);
-        assert_eq!(state.buffer.to_string(), "Line1\nLine2\nLine3");
+        assert_eq!(state.buffer.to_string().unwrap(), "Line1\nLine2\nLine3");
 
         // Move up - cursor is at end of Line3 (position 17, column 5)
         // Should go to end of Line2 (position 11, which is the newline, BUT we want column 5 which is position 11)
@@ -2495,7 +2495,7 @@ mod tests {
 
         // Text structure: "HelloNew Line\nWorld!"
         // Positions: 0-12 (HelloNew Line), 13 (\n), 14-19 (World!)
-        assert_eq!(state.buffer.to_string(), "HelloNew Line\nWorld!");
+        assert_eq!(state.buffer.to_string().unwrap(), "HelloNew Line\nWorld!");
 
         // Move cursor to position 13 (the newline after "HelloNew Line")
         state.apply(&Event::MoveCursor {
@@ -2557,7 +2557,7 @@ mod tests {
 
         // Text structure: "HelloNew Line\nWorld!"
         // Positions: 0-12 (HelloNew Line), 13 (\n), 14-19 (World!)
-        assert_eq!(state.buffer.to_string(), "HelloNew Line\nWorld!");
+        assert_eq!(state.buffer.to_string().unwrap(), "HelloNew Line\nWorld!");
         assert_eq!(state.cursors.primary().position, 20); // End of text
 
         // Move up to first line
@@ -2610,13 +2610,13 @@ mod tests {
             state.apply(event);
         }
 
-        println!("After backspace: buffer = {:?}", state.buffer.to_string());
+        println!("After backspace: buffer = {:?}", state.buffer.to_string().unwrap());
         println!(
             "After backspace: cursor at {}",
             state.cursors.primary().position
         );
         assert_eq!(
-            state.buffer.to_string(),
+            state.buffer.to_string().unwrap(),
             "HelloNew LineWorld!",
             "Lines should be joined"
         );
@@ -2647,7 +2647,7 @@ mod tests {
             state.apply(&event);
         }
 
-        assert_eq!(state.buffer.to_string(), "()");
+        assert_eq!(state.buffer.to_string().unwrap(), "()");
         assert_eq!(
             state.cursors.primary().position,
             1,
@@ -2667,7 +2667,7 @@ mod tests {
             state.apply(&event);
         }
 
-        assert_eq!(state.buffer.to_string(), "{}");
+        assert_eq!(state.buffer.to_string().unwrap(), "{}");
         assert_eq!(
             state.cursors.primary().position,
             1,
@@ -2687,7 +2687,7 @@ mod tests {
             state.apply(&event);
         }
 
-        assert_eq!(state.buffer.to_string(), "[]");
+        assert_eq!(state.buffer.to_string().unwrap(), "[]");
         assert_eq!(state.cursors.primary().position, 1);
     }
 
@@ -2703,7 +2703,7 @@ mod tests {
             state.apply(&event);
         }
 
-        assert_eq!(state.buffer.to_string(), "\"\"");
+        assert_eq!(state.buffer.to_string().unwrap(), "\"\"");
         assert_eq!(state.cursors.primary().position, 1);
     }
 
@@ -2720,7 +2720,7 @@ mod tests {
         }
 
         // Should only insert the opening character, no auto-close
-        assert_eq!(state.buffer.to_string(), "(");
+        assert_eq!(state.buffer.to_string().unwrap(), "(");
         assert_eq!(state.cursors.primary().position, 1);
     }
 
@@ -2755,7 +2755,7 @@ mod tests {
         }
 
         // Should NOT auto-close because 'a' is alphanumeric
-        assert_eq!(state.buffer.to_string(), "(abc");
+        assert_eq!(state.buffer.to_string().unwrap(), "(abc");
         assert_eq!(state.cursors.primary().position, 1);
     }
 
@@ -2807,7 +2807,7 @@ mod tests {
         }
 
         // Both cursors should have auto-closed brackets
-        assert_eq!(state.buffer.to_string(), "foo()\nbar()");
+        assert_eq!(state.buffer.to_string().unwrap(), "foo()\nbar()");
     }
 
     #[test]
@@ -2833,7 +2833,7 @@ mod tests {
             new_sticky_column: 0,
         });
 
-        assert_eq!(state.buffer.to_string(), "()");
+        assert_eq!(state.buffer.to_string().unwrap(), "()");
         assert_eq!(state.cursors.primary().position, 1);
 
         // Delete backward with auto_indent=true - should delete both characters
@@ -2843,7 +2843,7 @@ mod tests {
             state.apply(&event);
         }
 
-        assert_eq!(state.buffer.to_string(), "");
+        assert_eq!(state.buffer.to_string().unwrap(), "");
         assert_eq!(state.cursors.primary().position, 0);
     }
 
@@ -2877,7 +2877,7 @@ mod tests {
             state.apply(&event);
         }
 
-        assert_eq!(state.buffer.to_string(), "");
+        assert_eq!(state.buffer.to_string().unwrap(), "");
     }
 
     #[test]
@@ -2910,7 +2910,7 @@ mod tests {
             state.apply(&event);
         }
 
-        assert_eq!(state.buffer.to_string(), "");
+        assert_eq!(state.buffer.to_string().unwrap(), "");
     }
 
     #[test]
@@ -2943,7 +2943,7 @@ mod tests {
             state.apply(&event);
         }
 
-        assert_eq!(state.buffer.to_string(), ")");
+        assert_eq!(state.buffer.to_string().unwrap(), ")");
         assert_eq!(state.cursors.primary().position, 0);
     }
 
@@ -2977,7 +2977,7 @@ mod tests {
             state.apply(&event);
         }
 
-        assert_eq!(state.buffer.to_string(), "]");
+        assert_eq!(state.buffer.to_string().unwrap(), "]");
         assert_eq!(state.cursors.primary().position, 0);
     }
 
@@ -3011,6 +3011,6 @@ mod tests {
             state.apply(&event);
         }
 
-        assert_eq!(state.buffer.to_string(), "(bc)");
+        assert_eq!(state.buffer.to_string().unwrap(), "(bc)");
     }
 }

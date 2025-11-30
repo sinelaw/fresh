@@ -1186,7 +1186,7 @@ fn test_cursor_visible_when_opening_file() {
     println!("Testing cursor visibility when opening file...");
     println!(
         "Buffer content: {}",
-        harness.editor().active_state().buffer.to_string()
+        harness.editor().active_state().buffer.to_string().unwrap()
     );
     println!(
         "Buffer length: {}",

@@ -239,6 +239,6 @@ mod tests {
 
         // Event should have been applied
         assert!(was_applied);
-        assert_eq!(state.buffer.to_string(), "test");
+        assert_eq!(state.buffer.to_string().unwrap(), "test");
     }
 }
