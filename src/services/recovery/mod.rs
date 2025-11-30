@@ -41,7 +41,7 @@
 //! ```
 
 mod storage;
-mod types;
+pub mod types;
 
 pub use storage::RecoveryStorage;
 pub use types::{

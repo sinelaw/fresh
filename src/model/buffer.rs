@@ -1075,6 +1075,65 @@ impl TextBuffer {
         self.recovery_pending = pending;
     }
 
+    /// Check if this is a large file with lazy loading enabled
+    pub fn is_large_file(&self) -> bool {
+        self.large_file
+    }
+
+    /// Get the original file size (for large files with lazy loading)
+    /// For large files, this is the size of the original file on disk.
+    /// Returns None for small files or if size cannot be determined.
+    pub fn original_file_size(&self) -> Option<usize> {
+        if self.large_file {
+            // For large files, calculate original size from Stored pieces in piece tree
+            // The original file's chunks are referenced by Stored buffer pieces
+            use crate::model::piece_tree::BufferLocation;
+            let total = self.total_bytes();
+            let mut original_size = 0;
+            for piece in self.piece_tree.iter_pieces_in_range(0, total) {
+                if matches!(piece.location, BufferLocation::Stored(_)) {
+                    original_size += piece.bytes;
+                }
+            }
+            Some(original_size)
+        } else {
+            None
+        }
+    }
+
+    /// Get recovery chunks for this buffer (only modified portions)
+    ///
+    /// For large files, this returns only the pieces that come from Added buffers
+    /// (i.e., the modifications), not the original file content. This allows
+    /// efficient incremental recovery without reading/writing the entire file.
+    ///
+    /// Returns: Vec of (doc_offset, data) for each modified chunk
+    pub fn get_recovery_chunks(&self) -> Vec<(usize, Vec<u8>)> {
+        use crate::model::piece_tree::BufferLocation;
+
+        let mut chunks = Vec::new();
+        let total = self.total_bytes();
+
+        for piece in self.piece_tree.iter_pieces_in_range(0, total) {
+            // Only collect pieces from Added buffers (modifications)
+            if let BufferLocation::Added(buffer_id) = piece.location {
+                if let Some(buffer) = self.buffers.iter().find(|b| b.id == buffer_id) {
+                    // Get the data from the buffer if loaded
+                    if let Some(data) = buffer.get_data() {
+                        // Extract just the portion this piece references
+                        let start = piece.buffer_offset;
+                        let end = start + piece.bytes;
+                        if end <= data.len() {
+                            chunks.push((piece.doc_offset, data[start..end].to_vec()));
+                        }
+                    }
+                }
+            }
+        }
+
+        chunks
+    }
+
     /// Check if this buffer contains binary content
     pub fn is_binary(&self) -> bool {
         self.is_binary

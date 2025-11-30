@@ -3275,33 +3275,71 @@ impl Editor {
         let mut saved_count = 0;
 
         for (buffer_id, recovery_id, path) in buffer_info {
-            // Use get_mut to allow lazy loading via get_text_range_mut
-            // This is necessary for large files with unloaded regions
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                // Get buffer content using get_text_range_mut which handles lazy loading
-                // get_all_text() uses the non-lazy get_text_range() which returns empty
-                // for large files with unloaded regions!
-                let total_bytes = state.buffer.total_bytes();
-                let content = match state.buffer.get_text_range_mut(0, total_bytes) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to get buffer content for recovery save: {}",
-                            e
-                        );
-                        continue;
-                    }
-                };
                 let line_count = state.buffer.line_count();
 
-                // Save to recovery
-                self.recovery_service.save_buffer(
-                    &recovery_id,
-                    &content,
-                    path.as_deref(),
-                    None,
-                    line_count,
-                )?;
+                // For large files, use chunked recovery to avoid reading entire file
+                if state.buffer.is_large_file() {
+                    let chunks = state.buffer.get_recovery_chunks();
+
+                    // If no modifications, skip saving (original file is recovery)
+                    if chunks.is_empty() {
+                        state.buffer.set_recovery_pending(false);
+                        continue;
+                    }
+
+                    // Convert to RecoveryChunk format
+                    let recovery_chunks: Vec<_> = chunks
+                        .into_iter()
+                        .map(|(offset, content)| {
+                            crate::services::recovery::types::RecoveryChunk::new(
+                                offset,
+                                0, // For insertions, original_len is 0
+                                content,
+                            )
+                        })
+                        .collect();
+
+                    let original_size = state.buffer.original_file_size().unwrap_or(0);
+                    let final_size = state.buffer.total_bytes();
+
+                    self.recovery_service.save_buffer_chunked(
+                        &recovery_id,
+                        recovery_chunks,
+                        path.as_deref(),
+                        None,
+                        line_count,
+                        original_size,
+                        final_size,
+                    )?;
+
+                    tracing::debug!(
+                        "Saved chunked recovery for large file (original: {} bytes, final: {} bytes)",
+                        original_size,
+                        final_size
+                    );
+                } else {
+                    // For small files, save full content as before
+                    let total_bytes = state.buffer.total_bytes();
+                    let content = match state.buffer.get_text_range_mut(0, total_bytes) {
+                        Ok(bytes) => bytes,
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to get buffer content for recovery save: {}",
+                                e
+                            );
+                            continue;
+                        }
+                    };
+
+                    self.recovery_service.save_buffer(
+                        &recovery_id,
+                        &content,
+                        path.as_deref(),
+                        None,
+                        line_count,
+                    )?;
+                }
 
                 // Clear recovery_pending flag after successful save
                 state.buffer.set_recovery_pending(false);

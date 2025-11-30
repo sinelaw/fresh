@@ -636,3 +636,66 @@ fn test_large_file_get_all_text_with_unloaded_regions() {
         "Should have original content plus edit"
     );
 }
+
+/// Test that recovery files for huge files are small (only contain modifications)
+///
+/// This test verifies that when editing a large file, the recovery file only
+/// contains the modified chunks, not the entire file content. This is essential
+/// for performance with multi-gigabyte files.
+#[test]
+fn test_huge_file_recovery_is_small() {
+    use fresh::model::buffer::TextBuffer;
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("huge_file.txt");
+
+    // Create a "huge" file (1MB to simulate behavior, real use case would be GB+)
+    let file_size = 1_000_000; // 1MB
+    let original_content = "X".repeat(file_size);
+    fs::write(&file_path, &original_content).unwrap();
+
+    // Load with a small threshold to trigger large file mode
+    let threshold = 100; // Very small threshold to force large file mode
+    let mut buffer = TextBuffer::load_from_file(&file_path, threshold).unwrap();
+
+    // Verify it's in large file mode
+    assert!(buffer.is_large_file(), "Should be in large file mode");
+
+    // Make a small edit at the beginning
+    let edit_text = b"SMALL_EDIT: ";
+    buffer.insert_bytes(0, edit_text.to_vec());
+
+    // Get recovery chunks - should be small!
+    let chunks = buffer.get_recovery_chunks();
+
+    // Calculate total recovery data size
+    let recovery_data_size: usize = chunks.iter().map(|(_, data)| data.len()).sum();
+
+    // Verify recovery data is MUCH smaller than original file
+    assert!(
+        recovery_data_size < file_size / 10,
+        "Recovery data ({} bytes) should be much smaller than file size ({} bytes). \
+         Recovery should only contain modifications, not entire file!",
+        recovery_data_size,
+        file_size
+    );
+
+    // Verify chunks contain our edit
+    assert!(!chunks.is_empty(), "Should have at least one recovery chunk");
+
+    // The chunk should contain our edit text
+    let all_chunk_data: Vec<u8> = chunks.into_iter().flat_map(|(_, data)| data).collect();
+    assert!(
+        all_chunk_data.starts_with(edit_text),
+        "Recovery chunks should contain our edit"
+    );
+
+    println!(
+        "SUCCESS: File size {} bytes, recovery data {} bytes ({:.2}% of original)",
+        file_size,
+        recovery_data_size,
+        (recovery_data_size as f64 / file_size as f64) * 100.0
+    );
+}
