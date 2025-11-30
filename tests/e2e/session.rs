@@ -505,6 +505,167 @@ fn prev_split(harness: &mut EditorTestHarness) {
     harness.render().unwrap();
 }
 
+/// Test that session saves and restores cursor position in splits
+#[test]
+fn test_session_restores_cursor_in_splits() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Create files with multiple lines
+    let file1 = project_dir.join("left.txt");
+    let file2 = project_dir.join("right.txt");
+    let content1 = "Left Line 1\nLeft Line 2\nLeft Line 3\nLeft Line 4\nLeft Line 5";
+    let content2 = "Right Line 1\nRight Line 2\nRight Line 3\nRight Line 4\nRight Line 5";
+    std::fs::write(&file1, content1).unwrap();
+    std::fs::write(&file2, content2).unwrap();
+
+    let left_cursor_before;
+    let right_cursor_before;
+
+    // First session: create splits and move cursors
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Open first file and move cursor down
+        harness.open_file(&file1).unwrap();
+        for _ in 0..3 {
+            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        harness.render().unwrap();
+        left_cursor_before = harness.cursor_position();
+        eprintln!("[TEST] Left cursor before: {}", left_cursor_before);
+
+        // Create vertical split
+        split_vertical(&mut harness);
+
+        // Open second file and move cursor down
+        harness.open_file(&file2).unwrap();
+        for _ in 0..2 {
+            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        harness.render().unwrap();
+        right_cursor_before = harness.cursor_position();
+        eprintln!("[TEST] Right cursor before: {}", right_cursor_before);
+
+        harness.editor_mut().save_session().unwrap();
+    }
+
+    // Second session: restore and verify cursor positions
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        harness.editor_mut().try_restore_session().unwrap();
+        harness.render().unwrap();
+
+        // Right split should be active with restored cursor
+        let right_cursor_after = harness.cursor_position();
+        eprintln!("[TEST] Right cursor after: {}", right_cursor_after);
+        assert_eq!(
+            right_cursor_after, right_cursor_before,
+            "Right split cursor should be restored exactly"
+        );
+
+        // Switch to left split and check its cursor
+        prev_split(&mut harness);
+        harness.render().unwrap();
+        let left_cursor_after = harness.cursor_position();
+        eprintln!("[TEST] Left cursor after: {}", left_cursor_after);
+        assert_eq!(
+            left_cursor_after, left_cursor_before,
+            "Left split cursor should be restored exactly"
+        );
+    }
+}
+
+/// Test that session saves and restores scroll position in splits
+#[test]
+fn test_session_restores_scroll_in_splits() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Create files long enough to require scrolling (terminal is 24 lines)
+    let file1 = project_dir.join("left_long.txt");
+    let file2 = project_dir.join("right_long.txt");
+    let content1: String = (1..=100)
+        .map(|i| format!("Left Line {:03}\n", i))
+        .collect();
+    let content2: String = (1..=100)
+        .map(|i| format!("Right Line {:03}\n", i))
+        .collect();
+    std::fs::write(&file1, &content1).unwrap();
+    std::fs::write(&file2, &content2).unwrap();
+
+    // First session: create splits and scroll both
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Open first file and scroll down to line 50
+        harness.open_file(&file1).unwrap();
+        for _ in 0..49 {
+            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        harness.render().unwrap();
+        harness.assert_screen_contains("Left Line 050");
+
+        // Create vertical split
+        split_vertical(&mut harness);
+
+        // Open second file and scroll down to line 30
+        harness.open_file(&file2).unwrap();
+        for _ in 0..29 {
+            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        harness.render().unwrap();
+        harness.assert_screen_contains("Right Line 030");
+
+        harness.editor_mut().save_session().unwrap();
+    }
+
+    // Second session: restore and verify scroll positions
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        harness.editor_mut().try_restore_session().unwrap();
+        harness.render().unwrap();
+
+        // Right split should show line 30
+        harness.assert_screen_contains("Right Line 030");
+
+        // Switch to left split and check its scroll
+        prev_split(&mut harness);
+        harness.render().unwrap();
+
+        // Left split should show line 50
+        harness.assert_screen_contains("Left Line 050");
+    }
+}
+
 /// Test that session saves and restores split layout
 #[test]
 fn test_session_restores_splits() {
