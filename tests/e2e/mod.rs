@@ -34,6 +34,7 @@ pub mod scroll_clearing;
 pub mod scrolling;
 pub mod search;
 pub mod selection;
+pub mod session;
 pub mod slow_filesystem;
 pub mod smart_editing;
 pub mod split_tabs;

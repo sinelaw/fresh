@@ -84,17 +84,30 @@ impl Editor {
             &self.working_dir,
         );
 
+        // Build a map of split_id -> active_buffer_id from the split tree
+        // This tells us which buffer's cursor/scroll to save for each split
+        let active_buffers: HashMap<SplitId, BufferId> = self
+            .split_manager
+            .root()
+            .get_leaves_with_rects(ratatui::layout::Rect::default())
+            .into_iter()
+            .map(|(split_id, buffer_id, _)| (split_id, buffer_id))
+            .collect();
+
         let mut split_states = HashMap::new();
         for (split_id, view_state) in &self.split_view_states {
+            let active_buffer = active_buffers.get(split_id).copied();
             let serialized = serialize_split_view_state(
                 view_state,
                 &self.buffer_metadata,
                 &self.working_dir,
+                active_buffer,
             );
             tracing::trace!(
-                "Split {:?}: {} open files",
+                "Split {:?}: {} open files, active_buffer={:?}",
                 split_id,
-                serialized.open_files.len()
+                serialized.open_files.len(),
+                active_buffer
             );
             split_states.insert(split_id.0, serialized);
         }
@@ -134,16 +147,19 @@ impl Editor {
             mouse_enabled: Some(self.mouse_enabled),
         };
 
-        // Capture histories
-        // Note: InputHistory doesn't expose items directly, so we collect them via iteration
-        // For now, we'll save empty histories - full implementation would add items() accessor
+        // Capture histories using the items() accessor
         let histories = SessionHistories {
-            search: Vec::new(),  // TODO: Add items() accessor to InputHistory
-            replace: Vec::new(), // TODO: Add items() accessor to InputHistory
-            command_palette: Vec::new(),
-            goto_line: Vec::new(),
-            open_file: Vec::new(),
+            search: self.search_history.items().to_vec(),
+            replace: self.replace_history.items().to_vec(),
+            command_palette: Vec::new(), // TODO: Add command palette history
+            goto_line: Vec::new(),       // TODO: Add goto line history
+            open_file: Vec::new(),       // TODO: Add open file history
         };
+        tracing::trace!(
+            "Captured histories: {} search, {} replace",
+            histories.search.len(),
+            histories.replace.len()
+        );
 
         // Capture search options
         let search_options = SearchOptions {
@@ -201,6 +217,9 @@ impl Editor {
     /// Apply a loaded session to the editor
     pub fn apply_session(&mut self, session: &Session) -> Result<(), SessionError> {
         tracing::debug!("Applying session with {} split states", session.split_states.len());
+        eprintln!("[DEBUG] apply_session: {} split states, {:?} file_states_keys",
+            session.split_states.len(),
+            session.split_states.values().map(|s| s.file_states.keys().collect::<Vec<_>>()).collect::<Vec<_>>());
 
         // 1. Apply config overrides
         if let Some(line_numbers) = session.config_overrides.line_numbers {
@@ -229,6 +248,11 @@ impl Editor {
         self.search_confirm_each = session.search_options.confirm_each;
 
         // 3. Restore histories (merge with any existing)
+        tracing::debug!(
+            "Restoring histories: {} search, {} replace",
+            session.histories.search.len(),
+            session.histories.replace.len()
+        );
         for item in &session.histories.search {
             self.search_history.push(item.clone());
         }
@@ -269,14 +293,16 @@ impl Editor {
 
         // 6. Rebuild split layout using the buffer mappings
         // Note: This is a simplified approach - full implementation would rebuild
-        // the entire split tree. For now, we just restore the open files in tabs.
+        // the entire split tree. For now, we restore to the CURRENT editor's active split.
 
-        // For each split state, restore the open buffers and cursor/scroll positions
-        for (split_id_num, split_state) in &session.split_states {
-            let split_id = SplitId(*split_id_num);
+        // Get the current editor's active split (new editors have different split IDs)
+        let current_split_id = self.split_manager.active_split();
+        tracing::debug!("Current editor's active split: {:?}", current_split_id);
 
-            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
-                // Restore open files for this split
+        // Find the first (or only) split state from the session and apply it to current split
+        if let Some((_saved_split_id, split_state)) = session.split_states.iter().next() {
+            if let Some(view_state) = self.split_view_states.get_mut(&current_split_id) {
+                // Restore open files for this split (in order)
                 for rel_path in &split_state.open_files {
                     if let Some(&buffer_id) = path_to_buffer.get(rel_path) {
                         if !view_state.open_buffers.contains(&buffer_id) {
@@ -285,26 +311,52 @@ impl Editor {
                     }
                 }
 
-                // Restore cursor and scroll positions for each file
-                for (rel_path, file_state) in &split_state.file_states {
-                    if let Some(&buffer_id) = path_to_buffer.get(rel_path) {
-                        // If this buffer is currently displayed in this split, restore its state
-                        if view_state.open_buffers.contains(&buffer_id) {
-                            // Restore cursor position (clamped to buffer length)
-                            if let Some(buffer) = self.buffers.get(&buffer_id) {
+                // Determine which buffer should be active based on active_file_index
+                let active_file_path = split_state.open_files.get(split_state.active_file_index);
+                let active_buffer_id = active_file_path
+                    .and_then(|rel_path| path_to_buffer.get(rel_path).copied());
+
+                // Restore cursor and scroll for the active file only
+                if let Some(active_id) = active_buffer_id {
+                    // Find the file state for the active buffer
+                    for (rel_path, file_state) in &split_state.file_states {
+                        let buffer_for_path = path_to_buffer.get(rel_path).copied();
+                        if buffer_for_path == Some(active_id) {
+                            if let Some(buffer) = self.buffers.get(&active_id) {
                                 let max_pos = buffer.buffer.len();
                                 let cursor_pos = file_state.cursor.position.min(max_pos);
+
+                                // Set cursor in SplitViewState (for split-specific view)
                                 view_state.cursors.primary_mut().position = cursor_pos;
                                 view_state.cursors.primary_mut().anchor = file_state.cursor.anchor.map(|a| a.min(max_pos));
                                 view_state.cursors.primary_mut().sticky_column = file_state.cursor.sticky_column;
 
-                                // Restore scroll position
+                                // Set scroll position
                                 view_state.viewport.top_byte = file_state.scroll.top_byte.min(max_pos);
                                 view_state.viewport.top_view_line_offset = file_state.scroll.top_view_line_offset;
                                 view_state.viewport.left_column = file_state.scroll.left_column;
                             }
+
+                            // ALSO set cursor and viewport in EditorState (buffer-level state)
+                            // This is needed because EditorState is authoritative for cursors and scroll
+                            if let Some(editor_state) = self.buffers.get_mut(&active_id) {
+                                let max_pos = editor_state.buffer.len();
+                                let cursor_pos = file_state.cursor.position.min(max_pos);
+                                editor_state.cursors.primary_mut().position = cursor_pos;
+                                editor_state.cursors.primary_mut().anchor = file_state.cursor.anchor.map(|a| a.min(max_pos));
+                                editor_state.cursors.primary_mut().sticky_column = file_state.cursor.sticky_column;
+
+                                // Set viewport in EditorState (authoritative for scroll position)
+                                editor_state.viewport.top_byte = file_state.scroll.top_byte.min(max_pos);
+                                editor_state.viewport.top_view_line_offset = file_state.scroll.top_view_line_offset;
+                                editor_state.viewport.left_column = file_state.scroll.left_column;
+                            }
+                            break;
                         }
                     }
+
+                    // Set this buffer as active in the split tree
+                    let _ = self.split_manager.set_split_buffer(current_split_id, active_id);
                 }
 
                 // Restore view mode
@@ -396,6 +448,7 @@ fn serialize_split_view_state(
     view_state: &crate::view::split::SplitViewState,
     buffer_metadata: &HashMap<BufferId, super::types::BufferMetadata>,
     working_dir: &Path,
+    active_buffer: Option<BufferId>,
 ) -> SerializedSplitViewState {
     // Convert open buffers to relative file paths
     let open_files: Vec<PathBuf> = view_state
@@ -411,16 +464,20 @@ fn serialize_split_view_state(
         })
         .collect();
 
-    // Find active file index
-    let active_file_index = 0; // Simplified - would need to track which buffer is active
+    // Find active file index based on the active_buffer
+    let active_file_index = active_buffer
+        .and_then(|active_id| {
+            view_state.open_buffers.iter().position(|&id| id == active_id)
+        })
+        .unwrap_or(0);
 
-    // Serialize file states (cursor and scroll for each file in this split)
+    // Serialize file states - only save cursor/scroll for the ACTIVE buffer
+    // The cursor/scroll in SplitViewState belongs to the currently displayed buffer
     let mut file_states = HashMap::new();
-    for buffer_id in &view_state.open_buffers {
-        if let Some(meta) = buffer_metadata.get(buffer_id) {
+    if let Some(active_id) = active_buffer {
+        if let Some(meta) = buffer_metadata.get(&active_id) {
             if let Some(abs_path) = meta.file_path() {
                 if let Ok(rel_path) = abs_path.strip_prefix(working_dir) {
-                    // Get cursor state from view_state.cursors
                     let primary_cursor = view_state.cursors.primary();
 
                     file_states.insert(

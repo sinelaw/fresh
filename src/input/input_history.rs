@@ -322,6 +322,25 @@ impl InputHistory {
         self.reset_navigation();
     }
 
+    /// Get a reference to the history items (oldest to newest)
+    ///
+    /// Useful for session persistence.
+    pub fn items(&self) -> &[String] {
+        &self.items
+    }
+
+    /// Create a history from existing items
+    ///
+    /// Useful for session restoration.
+    pub fn from_items(items: Vec<String>) -> Self {
+        let mut history = Self::new();
+        // Add items respecting deduplication rules
+        for item in items {
+            history.push(item);
+        }
+        history
+    }
+
     // ========================================================================
     // Persistence methods
     // ========================================================================
