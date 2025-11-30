@@ -344,7 +344,9 @@ pub fn decode_filename_to_path(encoded: &str) -> Option<PathBuf> {
 
 /// Get the session file path for a working directory
 pub fn get_session_path(working_dir: &Path) -> io::Result<PathBuf> {
-    let canonical = working_dir.canonicalize().unwrap_or_else(|_| working_dir.to_path_buf());
+    let canonical = working_dir
+        .canonicalize()
+        .unwrap_or_else(|_| working_dir.to_path_buf());
     let filename = format!("{}.json", encode_path_for_filename(&canonical));
     Ok(get_sessions_dir()?.join(filename))
 }
@@ -438,13 +440,21 @@ impl Session {
             .unwrap_or_else(|_| session.working_dir.clone());
 
         if expected != found {
-            tracing::warn!("Session working_dir mismatch: expected {:?}, found {:?}", expected, found);
+            tracing::warn!(
+                "Session working_dir mismatch: expected {:?}, found {:?}",
+                expected,
+                found
+            );
             return Err(SessionError::WorkdirMismatch { expected, found });
         }
 
         // Check version compatibility
         if session.version > SESSION_VERSION {
-            tracing::warn!("Session version {} is newer than supported {}", session.version, SESSION_VERSION);
+            tracing::warn!(
+                "Session version {} is newer than supported {}",
+                session.version,
+                SESSION_VERSION
+            );
             return Err(SessionError::VersionTooNew {
                 version: session.version,
                 max_supported: SESSION_VERSION,
@@ -637,7 +647,12 @@ mod tests {
 
         // Verify the restored layout matches
         match restored {
-            SerializedSplitNode::Split { direction, ratio, split_id, .. } => {
+            SerializedSplitNode::Split {
+                direction,
+                ratio,
+                split_id,
+                ..
+            } => {
                 assert!(matches!(direction, SerializedSplitDirection::Vertical));
                 assert_eq!(ratio, 0.5);
                 assert_eq!(split_id, 0);
@@ -654,13 +669,11 @@ mod tests {
                 anchor: Some(1000),
                 sticky_column: 15,
             },
-            additional_cursors: vec![
-                SerializedCursor {
-                    position: 5000,
-                    anchor: None,
-                    sticky_column: 0,
-                },
-            ],
+            additional_cursors: vec![SerializedCursor {
+                position: 5000,
+                anchor: None,
+                sticky_column: 0,
+            }],
             scroll: SerializedScroll {
                 top_byte: 500,
                 top_view_line_offset: 2,
@@ -682,21 +695,30 @@ mod tests {
     #[test]
     fn test_bookmark_serialization() {
         let mut bookmarks = HashMap::new();
-        bookmarks.insert('a', SerializedBookmark {
-            file_path: PathBuf::from("src/main.rs"),
-            position: 1234,
-        });
-        bookmarks.insert('b', SerializedBookmark {
-            file_path: PathBuf::from("src/lib.rs"),
-            position: 5678,
-        });
+        bookmarks.insert(
+            'a',
+            SerializedBookmark {
+                file_path: PathBuf::from("src/main.rs"),
+                position: 1234,
+            },
+        );
+        bookmarks.insert(
+            'b',
+            SerializedBookmark {
+                file_path: PathBuf::from("src/lib.rs"),
+                position: 5678,
+            },
+        );
 
         let json = serde_json::to_string(&bookmarks).unwrap();
         let restored: HashMap<char, SerializedBookmark> = serde_json::from_str(&json).unwrap();
 
         assert_eq!(restored.len(), 2);
         assert_eq!(restored.get(&'a').unwrap().position, 1234);
-        assert_eq!(restored.get(&'b').unwrap().file_path, PathBuf::from("src/lib.rs"));
+        assert_eq!(
+            restored.get(&'b').unwrap().file_path,
+            PathBuf::from("src/lib.rs")
+        );
     }
 
     #[test]
@@ -738,20 +760,26 @@ mod tests {
         session.active_split_id = 1;
 
         // Add split state
-        session.split_states.insert(1, SerializedSplitViewState {
-            open_files: vec![PathBuf::from("README.md"), PathBuf::from("src/lib.rs")],
-            active_file_index: 0,
-            file_states: HashMap::new(),
-            tab_scroll_offset: 0,
-            view_mode: SerializedViewMode::Source,
-            compose_width: None,
-        });
+        session.split_states.insert(
+            1,
+            SerializedSplitViewState {
+                open_files: vec![PathBuf::from("README.md"), PathBuf::from("src/lib.rs")],
+                active_file_index: 0,
+                file_states: HashMap::new(),
+                tab_scroll_offset: 0,
+                view_mode: SerializedViewMode::Source,
+                compose_width: None,
+            },
+        );
 
         // Add bookmarks
-        session.bookmarks.insert('m', SerializedBookmark {
-            file_path: PathBuf::from("src/main.rs"),
-            position: 100,
-        });
+        session.bookmarks.insert(
+            'm',
+            SerializedBookmark {
+                file_path: PathBuf::from("src/main.rs"),
+                position: 100,
+            },
+        );
 
         // Set search options
         session.search_options.case_sensitive = true;
@@ -789,10 +817,13 @@ mod tests {
         // Create a session
         let mut session = Session::new(temp_dir.clone());
         session.search_options.case_sensitive = true;
-        session.bookmarks.insert('x', SerializedBookmark {
-            file_path: PathBuf::from("test.txt"),
-            position: 42,
-        });
+        session.bookmarks.insert(
+            'x',
+            SerializedBookmark {
+                file_path: PathBuf::from("test.txt"),
+                position: 42,
+            },
+        );
 
         // Save it directly to test path
         let content = serde_json::to_string_pretty(&session).unwrap();

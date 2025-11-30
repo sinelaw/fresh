@@ -120,7 +120,10 @@ fn test_session_restores_cursor_line() {
 
         // Cursor should be restored - check it's not at the beginning
         let cursor_pos_after = harness.cursor_position();
-        assert!(cursor_pos_after > 0, "Cursor position should be restored (not at start)");
+        assert!(
+            cursor_pos_after > 0,
+            "Cursor position should be restored (not at start)"
+        );
     }
 }
 
@@ -172,7 +175,10 @@ fn test_session_handles_missing_files() {
 
         // Should not panic/error
         let result = harness.editor_mut().try_restore_session();
-        assert!(result.is_ok(), "Session restore should handle missing files");
+        assert!(
+            result.is_ok(),
+            "Session restore should handle missing files"
+        );
 
         // Surviving file's content should be accessible
         harness.open_file(&file1).unwrap();
@@ -600,9 +606,7 @@ fn test_session_restores_scroll_in_splits() {
     // Create files long enough to require scrolling (terminal is 24 lines)
     let file1 = project_dir.join("left_long.txt");
     let file2 = project_dir.join("right_long.txt");
-    let content1: String = (1..=100)
-        .map(|i| format!("Left Line {:03}\n", i))
-        .collect();
+    let content1: String = (1..=100).map(|i| format!("Left Line {:03}\n", i)).collect();
     let content2: String = (1..=100)
         .map(|i| format!("Right Line {:03}\n", i))
         .collect();
@@ -709,7 +713,9 @@ fn test_session_cursor_visible_after_restore() {
             assert!(
                 cursor_y >= content_start as u16 && cursor_y <= content_end as u16,
                 "Cursor should be visible on screen before save: y={}, content={}..{}",
-                cursor_y, content_start, content_end
+                cursor_y,
+                content_start,
+                content_end
             );
         }
 
@@ -738,7 +744,9 @@ fn test_session_cursor_visible_after_restore() {
         assert!(
             cursor_y >= content_start as u16 && cursor_y <= content_end as u16,
             "BUG: Cursor should be visible after session restore: y={}, content={}..{}",
-            cursor_y, content_start, content_end
+            cursor_y,
+            content_start,
+            content_end
         );
     }
 }
@@ -754,9 +762,7 @@ fn test_session_cursor_visible_in_splits_after_restore() {
     // Create files with 200 lines - cursor will be at line 150 (middle of file)
     let file1 = project_dir.join("left.txt");
     let file2 = project_dir.join("right.txt");
-    let content1: String = (1..=200)
-        .map(|i| format!("Left Line {:03}\n", i))
-        .collect();
+    let content1: String = (1..=200).map(|i| format!("Left Line {:03}\n", i)).collect();
     let content2: String = (1..=200)
         .map(|i| format!("Right Line {:03}\n", i))
         .collect();
@@ -811,7 +817,9 @@ fn test_session_cursor_visible_in_splits_after_restore() {
             assert!(
                 cursor_y >= content_start as u16 && cursor_y <= content_end as u16,
                 "Cursor should be visible before save: y={}, content={}..{}",
-                cursor_y, content_start, content_end
+                cursor_y,
+                content_start,
+                content_end
             );
         }
 
@@ -841,7 +849,10 @@ fn test_session_cursor_visible_in_splits_after_restore() {
 
         eprintln!(
             "[TEST] Before render: cursor={} (line {}), top_byte={}, top_view_line_offset={}",
-            cursor_before_render, line_before + 1, viewport_before.top_byte, viewport_before.top_view_line_offset
+            cursor_before_render,
+            line_before + 1,
+            viewport_before.top_byte,
+            viewport_before.top_view_line_offset
         );
 
         harness.render().unwrap();
@@ -856,7 +867,10 @@ fn test_session_cursor_visible_in_splits_after_restore() {
             .position_to_line_col(cursor_after_render);
         eprintln!(
             "[TEST] After render: cursor={} (line {}), top_byte={}, top_view_line_offset={}",
-            cursor_after_render, line_after + 1, viewport_after.top_byte, viewport_after.top_view_line_offset
+            cursor_after_render,
+            line_after + 1,
+            viewport_after.top_byte,
+            viewport_after.top_view_line_offset
         );
 
         // CRITICAL: Cursor must be on line 150 after restore
@@ -884,7 +898,9 @@ fn test_session_cursor_visible_in_splits_after_restore() {
         assert!(
             cursor_y >= content_start as u16 && cursor_y <= content_end as u16,
             "BUG: Cursor should be visible in split after restore: y={}, content={}..{}",
-            cursor_y, content_start, content_end
+            cursor_y,
+            content_start,
+            content_end
         );
 
         // Also check left split
@@ -900,7 +916,8 @@ fn test_session_cursor_visible_in_splits_after_restore() {
             .position_to_line_col(cursor_left);
         eprintln!(
             "[TEST] Left split: cursor={} (line {})",
-            cursor_left, line_left + 1
+            cursor_left,
+            line_left + 1
         );
 
         // CRITICAL: Left split cursor must also be on line 150
@@ -917,7 +934,9 @@ fn test_session_cursor_visible_in_splits_after_restore() {
         assert!(
             cursor_y >= content_start as u16 && cursor_y <= content_end as u16,
             "BUG: Cursor should be visible in left split after restore: y={}, content={}..{}",
-            cursor_y, content_start, content_end
+            cursor_y,
+            content_start,
+            content_end
         );
     }
 }

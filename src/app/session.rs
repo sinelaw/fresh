@@ -8,10 +8,10 @@ use std::time::Instant;
 
 use crate::model::event::{BufferId, SplitDirection, SplitId};
 use crate::session::{
-    FileExplorerState, SearchOptions, SerializedBookmark, SerializedCursor,
-    SerializedFileState, SerializedScroll, SerializedSplitDirection, SerializedSplitNode,
-    SerializedSplitViewState, SerializedViewMode, Session, SessionConfigOverrides,
-    SessionError, SessionHistories, SESSION_VERSION,
+    FileExplorerState, SearchOptions, SerializedBookmark, SerializedCursor, SerializedFileState,
+    SerializedScroll, SerializedSplitDirection, SerializedSplitNode, SerializedSplitViewState,
+    SerializedViewMode, Session, SessionConfigOverrides, SessionError, SessionHistories,
+    SESSION_VERSION,
 };
 use crate::state::ViewMode;
 use crate::view::split::{SplitNode, SplitViewState};
@@ -172,7 +172,8 @@ impl Editor {
         };
 
         // Capture bookmarks
-        let bookmarks = serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.working_dir);
+        let bookmarks =
+            serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.working_dir);
 
         Session {
             version: SESSION_VERSION,
@@ -218,7 +219,10 @@ impl Editor {
 
     /// Apply a loaded session to the editor
     pub fn apply_session(&mut self, session: &Session) -> Result<(), SessionError> {
-        tracing::debug!("Applying session with {} split states", session.split_states.len());
+        tracing::debug!(
+            "Applying session with {} split states",
+            session.split_states.len()
+        );
 
         // 1. Apply config overrides
         if let Some(line_numbers) = session.config_overrides.line_numbers {
@@ -266,12 +270,20 @@ impl Editor {
         // 5. Open files from the session and build buffer mappings
         // This is done by collecting all unique file paths from the split layout
         let file_paths = collect_file_paths(&session.split_layout);
-        tracing::debug!("Session has {} files to restore: {:?}", file_paths.len(), file_paths);
+        tracing::debug!(
+            "Session has {} files to restore: {:?}",
+            file_paths.len(),
+            file_paths
+        );
         let mut path_to_buffer: HashMap<PathBuf, BufferId> = HashMap::new();
 
         for rel_path in file_paths {
             let abs_path = self.working_dir.join(&rel_path);
-            tracing::trace!("Checking file: {:?} (exists: {})", abs_path, abs_path.exists());
+            tracing::trace!(
+                "Checking file: {:?} (exists: {})",
+                abs_path,
+                abs_path.exists()
+            );
             if abs_path.exists() {
                 // Open the file (this will reuse existing buffer if already open)
                 match self.open_file_internal(&abs_path) {
@@ -318,10 +330,13 @@ impl Editor {
                 // Verify position is valid
                 if let Some(buffer) = self.buffers.get(&buffer_id) {
                     let pos = bookmark.position.min(buffer.buffer.len());
-                    self.bookmarks.insert(*key, Bookmark {
-                        buffer_id,
-                        position: pos,
-                    });
+                    self.bookmarks.insert(
+                        *key,
+                        Bookmark {
+                            buffer_id,
+                            position: pos,
+                        },
+                    );
                 }
             }
         }
@@ -360,7 +375,10 @@ impl Editor {
         is_first_leaf: bool,
     ) {
         match node {
-            SerializedSplitNode::Leaf { file_path, split_id } => {
+            SerializedSplitNode::Leaf {
+                file_path,
+                split_id,
+            } => {
                 // Get the buffer for this file, or use the default buffer
                 let buffer_id = file_path
                     .as_ref()
@@ -396,11 +414,17 @@ impl Editor {
                 split_id,
             } => {
                 // First, restore the first child (it uses the current active split)
-                self.restore_split_node(first, path_to_buffer, split_states, split_id_map, is_first_leaf);
+                self.restore_split_node(
+                    first,
+                    path_to_buffer,
+                    split_states,
+                    split_id_map,
+                    is_first_leaf,
+                );
 
                 // Get the buffer for the second child's first leaf
-                let second_buffer_id = get_first_leaf_buffer(second, path_to_buffer)
-                    .unwrap_or(self.active_buffer);
+                let second_buffer_id =
+                    get_first_leaf_buffer(second, path_to_buffer).unwrap_or(self.active_buffer);
 
                 // Convert direction
                 let split_direction = match direction {
@@ -409,7 +433,10 @@ impl Editor {
                 };
 
                 // Create the split for the second child
-                match self.split_manager.split_active(split_direction, second_buffer_id, *ratio) {
+                match self
+                    .split_manager
+                    .split_active(split_direction, second_buffer_id, *ratio)
+                {
                     Ok(new_split_id) => {
                         // Create view state for the new split
                         let mut view_state = SplitViewState::with_buffer(
@@ -424,7 +451,13 @@ impl Editor {
                         split_id_map.insert(*split_id, new_split_id);
 
                         // Recursively restore the second child (it's now in the new split)
-                        self.restore_split_node(second, path_to_buffer, split_states, split_id_map, false);
+                        self.restore_split_node(
+                            second,
+                            path_to_buffer,
+                            split_states,
+                            split_id_map,
+                            false,
+                        );
                     }
                     Err(e) => {
                         tracing::error!("Failed to create split during session restore: {}", e);
@@ -462,8 +495,8 @@ impl Editor {
 
         // Determine which buffer should be active based on active_file_index
         let active_file_path = split_state.open_files.get(split_state.active_file_index);
-        let active_buffer_id = active_file_path
-            .and_then(|rel_path| path_to_buffer.get(rel_path).copied());
+        let active_buffer_id =
+            active_file_path.and_then(|rel_path| path_to_buffer.get(rel_path).copied());
 
         // Restore cursor and scroll for the active file
         if let Some(active_id) = active_buffer_id {
@@ -493,7 +526,9 @@ impl Editor {
 
                         tracing::trace!(
                             "Restored SplitViewState for {:?}: cursor={}, top_byte={}",
-                            rel_path, cursor_pos, view_state.viewport.top_byte
+                            rel_path,
+                            cursor_pos,
+                            view_state.viewport.top_byte
                         );
                     }
 
@@ -519,7 +554,9 @@ impl Editor {
             }
 
             // Set this buffer as active in the split
-            let _ = self.split_manager.set_split_buffer(current_split_id, active_id);
+            let _ = self
+                .split_manager
+                .set_split_buffer(current_split_id, active_id);
         }
 
         // Restore view mode
@@ -538,12 +575,10 @@ fn get_first_leaf_buffer(
     path_to_buffer: &HashMap<PathBuf, BufferId>,
 ) -> Option<BufferId> {
     match node {
-        SerializedSplitNode::Leaf { file_path, .. } => {
-            file_path.as_ref().and_then(|p| path_to_buffer.get(p).copied())
-        }
-        SerializedSplitNode::Split { first, .. } => {
-            get_first_leaf_buffer(first, path_to_buffer)
-        }
+        SerializedSplitNode::Leaf { file_path, .. } => file_path
+            .as_ref()
+            .and_then(|p| path_to_buffer.get(p).copied()),
+        SerializedSplitNode::Split { first, .. } => get_first_leaf_buffer(first, path_to_buffer),
     }
 }
 
@@ -557,12 +592,18 @@ fn serialize_split_node(
     working_dir: &Path,
 ) -> SerializedSplitNode {
     match node {
-        SplitNode::Leaf { buffer_id, split_id } => {
+        SplitNode::Leaf {
+            buffer_id,
+            split_id,
+        } => {
             let file_path = buffer_metadata
                 .get(buffer_id)
                 .and_then(|meta| meta.file_path())
                 .and_then(|abs_path| {
-                    abs_path.strip_prefix(working_dir).ok().map(|p| p.to_path_buf())
+                    abs_path
+                        .strip_prefix(working_dir)
+                        .ok()
+                        .map(|p| p.to_path_buf())
                 });
 
             SerializedSplitNode::Leaf {
@@ -604,7 +645,10 @@ fn serialize_split_view_state(
                 .get(buffer_id)
                 .and_then(|meta| meta.file_path())
                 .and_then(|abs_path| {
-                    abs_path.strip_prefix(working_dir).ok().map(|p| p.to_path_buf())
+                    abs_path
+                        .strip_prefix(working_dir)
+                        .ok()
+                        .map(|p| p.to_path_buf())
                 })
         })
         .collect();
@@ -612,7 +656,10 @@ fn serialize_split_view_state(
     // Find active file index based on the active_buffer
     let active_file_index = active_buffer
         .and_then(|active_id| {
-            view_state.open_buffers.iter().position(|&id| id == active_id)
+            view_state
+                .open_buffers
+                .iter()
+                .position(|&id| id == active_id)
         })
         .unwrap_or(0);
 
@@ -717,7 +764,10 @@ fn collect_file_paths_recursive(node: &SerializedSplitNode, paths: &mut Vec<Path
 }
 
 /// Get list of expanded directories from a FileTreeView
-fn get_expanded_dirs(explorer: &crate::view::file_tree::FileTreeView, working_dir: &Path) -> Vec<PathBuf> {
+fn get_expanded_dirs(
+    explorer: &crate::view::file_tree::FileTreeView,
+    working_dir: &Path,
+) -> Vec<PathBuf> {
     let mut expanded = Vec::new();
     let tree = explorer.tree();
 
