@@ -9,8 +9,14 @@
 //!
 //! ## Storage
 //!
-//! Sessions are stored in `$XDG_DATA_HOME/fresh/sessions/{hash}.json`
-//! where `{hash}` is derived from the canonical working directory path.
+//! Sessions are stored in `$XDG_DATA_HOME/fresh/sessions/{encoded_path}.json`
+//! where `{encoded_path}` is the working directory path with:
+//! - Path separators (`/`) replaced with underscores (`_`)
+//! - Special characters percent-encoded as `%XX`
+//!
+//! Example: `/home/user/my project` becomes `home_user_my%20project.json`
+//!
+//! The encoding is fully reversible using `decode_filename_to_path()`.
 //!
 //! ## Crash Resistance
 //!
@@ -18,7 +24,6 @@
 //! This ensures the session file is never left in a corrupted state.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -251,13 +256,96 @@ pub fn get_sessions_dir() -> io::Result<PathBuf> {
     Ok(get_data_dir()?.join("sessions"))
 }
 
+/// Encode a path into a filesystem-safe filename using percent encoding
+///
+/// Keeps alphanumeric chars, `-`, `.`, `_` as-is.
+/// Replaces `/` with `_` for readability.
+/// Percent-encodes other special characters as %XX.
+///
+/// Example: `/home/user/my project` -> `home_user_my%20project`
+fn encode_path_for_filename(path: &Path) -> String {
+    let path_str = path.to_string_lossy();
+    let mut result = String::with_capacity(path_str.len() * 2);
+
+    for c in path_str.chars() {
+        match c {
+            // Path separators become underscores for readability
+            '/' | '\\' => result.push('_'),
+            // Safe chars pass through
+            c if c.is_ascii_alphanumeric() => result.push(c),
+            '-' | '.' => result.push(c),
+            // Underscore needs special handling to avoid collision with /
+            '_' => result.push_str("%5F"),
+            // Everything else gets percent-encoded
+            c => {
+                for byte in c.to_string().as_bytes() {
+                    result.push_str(&format!("%{:02X}", byte));
+                }
+            }
+        }
+    }
+
+    // Remove leading underscores (from leading /)
+    let result = result.trim_start_matches('_').to_string();
+
+    // Collapse multiple underscores
+    let mut final_result = String::with_capacity(result.len());
+    let mut last_was_underscore = false;
+    for c in result.chars() {
+        if c == '_' {
+            if !last_was_underscore {
+                final_result.push(c);
+            }
+            last_was_underscore = true;
+        } else {
+            final_result.push(c);
+            last_was_underscore = false;
+        }
+    }
+
+    if final_result.is_empty() {
+        final_result = "root".to_string();
+    }
+
+    final_result
+}
+
+/// Decode a filename back to the original path (for debugging/tooling)
+#[allow(dead_code)]
+pub fn decode_filename_to_path(encoded: &str) -> Option<PathBuf> {
+    if encoded == "root" {
+        return Some(PathBuf::from("/"));
+    }
+
+    let mut result = String::with_capacity(encoded.len() + 1);
+    // Re-add leading slash that was stripped during encoding
+    result.push('/');
+
+    let mut chars = encoded.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            // Read two hex digits
+            let hex: String = chars.by_ref().take(2).collect();
+            if hex.len() == 2 {
+                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                    result.push(byte as char);
+                }
+            }
+        } else if c == '_' {
+            result.push('/');
+        } else {
+            result.push(c);
+        }
+    }
+
+    Some(PathBuf::from(result))
+}
+
 /// Get the session file path for a working directory
 pub fn get_session_path(working_dir: &Path) -> io::Result<PathBuf> {
     let canonical = working_dir.canonicalize().unwrap_or_else(|_| working_dir.to_path_buf());
-    let mut hasher = Sha256::new();
-    hasher.update(canonical.to_string_lossy().as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
-    let filename = format!("{}.json", &hash[..16]);
+    let filename = format!("{}.json", encode_path_for_filename(&canonical));
     Ok(get_sessions_dir()?.join(filename))
 }
 
@@ -432,21 +520,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_session_path_hashing() {
+    fn test_session_path_percent_encoding() {
+        // Test basic path encoding - readable with underscores for separators
+        let encoded = encode_path_for_filename(Path::new("/home/user/project"));
+        assert_eq!(encoded, "home_user_project");
+        assert!(!encoded.contains('/')); // No slashes in encoded output
+
+        // Round-trip: encode then decode should give original path
+        let decoded = decode_filename_to_path(&encoded).unwrap();
+        assert_eq!(decoded, PathBuf::from("/home/user/project"));
+
+        // Different paths should give different encodings
         let path1 = get_session_path(Path::new("/home/user/project")).unwrap();
         let path2 = get_session_path(Path::new("/home/user/other")).unwrap();
-
-        // Different paths should give different hashes
         assert_ne!(path1, path2);
 
-        // Same path should give same hash
+        // Same path should give same encoding
         let path1_again = get_session_path(Path::new("/home/user/project")).unwrap();
         assert_eq!(path1, path1_again);
 
-        // Filename should be 16 hex chars + .json
+        // Filename should end with .json and be readable
         let filename = path1.file_name().unwrap().to_str().unwrap();
         assert!(filename.ends_with(".json"));
-        assert_eq!(filename.len(), 16 + 5); // 16 hex + ".json"
+        assert!(filename.starts_with("home_user_project"));
+    }
+
+    #[test]
+    fn test_percent_encoding_edge_cases() {
+        // Path with dashes (should pass through)
+        let encoded = encode_path_for_filename(Path::new("/home/user/my-project"));
+        assert_eq!(encoded, "home_user_my-project");
+
+        // Path with spaces (percent-encoded)
+        let encoded = encode_path_for_filename(Path::new("/home/user/my project"));
+        assert_eq!(encoded, "home_user_my%20project");
+        let decoded = decode_filename_to_path(&encoded).unwrap();
+        assert_eq!(decoded, PathBuf::from("/home/user/my project"));
+
+        // Path with underscores (percent-encoded to avoid collision with /)
+        let encoded = encode_path_for_filename(Path::new("/home/user/my_project"));
+        assert_eq!(encoded, "home_user_my%5Fproject");
+        let decoded = decode_filename_to_path(&encoded).unwrap();
+        assert_eq!(decoded, PathBuf::from("/home/user/my_project"));
+
+        // Root path
+        let encoded = encode_path_for_filename(Path::new("/"));
+        assert_eq!(encoded, "root");
     }
 
     #[test]
