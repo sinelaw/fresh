@@ -93,6 +93,18 @@ pub struct EditorConfig {
     /// Whether to enable LSP inlay hints (type hints, parameter hints, etc.)
     #[serde(default = "default_true")]
     pub enable_inlay_hints: bool,
+
+    /// Whether to enable file recovery (Emacs-style auto-save)
+    /// When enabled, buffers are periodically saved to recovery files
+    /// so they can be recovered if the editor crashes.
+    #[serde(default = "default_true")]
+    pub recovery_enabled: bool,
+
+    /// Auto-save interval in seconds for file recovery
+    /// Modified buffers are saved to recovery files at this interval.
+    /// Set to 0 to disable periodic auto-save (manual recovery only).
+    #[serde(default = "default_auto_save_interval")]
+    pub auto_save_interval_secs: u32,
 }
 
 fn default_tab_size() -> usize {
@@ -132,6 +144,10 @@ fn default_estimated_line_length() -> usize {
     80
 }
 
+fn default_auto_save_interval() -> u32 {
+    30 // Auto-save every 30 seconds
+}
+
 impl Default for EditorConfig {
     fn default() -> Self {
         Self {
@@ -147,6 +163,8 @@ impl Default for EditorConfig {
             large_file_threshold_bytes: default_large_file_threshold(),
             estimated_line_length: default_estimated_line_length(),
             enable_inlay_hints: true,
+            recovery_enabled: true,
+            auto_save_interval_secs: default_auto_save_interval(),
         }
     }
 }

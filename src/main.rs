@@ -211,8 +211,35 @@ fn main() -> io::Result<()> {
         editor.show_file_explorer();
     }
 
+    // Check for recovery files from a crash
+    if editor.has_recovery_files().unwrap_or(false) {
+        // TODO: Show recovery prompt to user
+        // For now, just log a message
+        tracing::info!("Recovery files found from previous session");
+        if let Ok(entries) = editor.list_recoverable_files() {
+            for entry in &entries {
+                tracing::info!(
+                    "  - {} ({}, {})",
+                    entry.metadata.display_name(),
+                    entry.metadata.format_description(),
+                    entry.age_display()
+                );
+            }
+        }
+    }
+
+    // Start recovery session
+    if let Err(e) = editor.start_recovery_session() {
+        tracing::warn!("Failed to start recovery session: {}", e);
+    }
+
     // Run the editor
     let result = run_event_loop(&mut editor, &mut terminal, session_enabled);
+
+    // End recovery session (clean shutdown)
+    if let Err(e) = editor.end_recovery_session() {
+        tracing::warn!("Failed to end recovery session: {}", e);
+    }
 
     // Clean up terminal
     let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
@@ -263,6 +290,11 @@ fn run_event_loop(
     loop {
         if editor.process_async_messages() {
             needs_render = true;
+        }
+
+        // Periodic auto-save for recovery
+        if let Err(e) = editor.auto_save_dirty_buffers() {
+            tracing::debug!("Auto-save error: {}", e);
         }
 
         if editor.should_quit() {

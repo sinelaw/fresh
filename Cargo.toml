@@ -62,6 +62,7 @@ tree-sitter-lua = "0.2.0"
 anyhow = "1.0.100"
 dirs = "6.0"  # For XDG/platform-specific directory detection
 pulldown-cmark = "0.13"  # Markdown parsing for LSP hover docs
+sha2 = "0.10"  # SHA-256 checksums for recovery file integrity
 arboard = "3.6"  # Cross-platform system clipboard access
 notify = "8.2.0"
 syntect = "5.2"  # TextMate grammar support for syntax highlighting

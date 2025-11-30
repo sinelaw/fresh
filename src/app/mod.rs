@@ -65,6 +65,7 @@ use crate::services::lsp::client::LspServerConfig;
 use crate::services::lsp::manager::{detect_language, LspManager, LspSpawnResult};
 use crate::services::plugins::api::{BufferSavedDiff, PluginCommand};
 use crate::services::plugins::thread::PluginThreadHandle;
+use crate::services::recovery::{RecoveryConfig, RecoveryService};
 use crate::state::EditorState;
 use crate::view::file_tree::{FileTree, FileTreeView};
 use crate::view::prompt::{Prompt, PromptType};
@@ -367,6 +368,12 @@ pub struct Editor {
 
     /// Cached layout for file browser (for mouse hit testing)
     file_browser_layout: Option<crate::view::ui::FileBrowserLayout>,
+
+    /// Recovery service for auto-save and crash recovery
+    recovery_service: RecoveryService,
+
+    /// Last auto-save time for rate limiting
+    last_auto_save: std::time::Instant,
 }
 
 impl Editor {
@@ -584,6 +591,8 @@ impl Editor {
 
         // Extract config values before moving config into the struct
         let file_explorer_width = config.file_explorer.width;
+        let recovery_enabled = config.editor.recovery_enabled;
+        let auto_save_interval_secs = config.editor.auto_save_interval_secs;
 
         Ok(Editor {
             buffers,
@@ -702,6 +711,18 @@ impl Editor {
             file_rapid_change_counts: HashMap::new(),
             file_open_state: None,
             file_browser_layout: None,
+            recovery_service: {
+                let recovery_config = RecoveryConfig {
+                    enabled: recovery_enabled,
+                    auto_save_interval_secs,
+                    ..RecoveryConfig::default()
+                };
+                RecoveryService::with_config(recovery_config).unwrap_or_else(|e| {
+                    tracing::warn!("Failed to initialize recovery service: {}", e);
+                    RecoveryService::default()
+                })
+            },
+            last_auto_save: std::time::Instant::now(),
         })
     }
 
@@ -2569,6 +2590,9 @@ impl Editor {
         // Notify LSP of save
         self.notify_lsp_save();
 
+        // Delete recovery file (buffer is now saved)
+        let _ = self.delete_buffer_recovery(self.active_buffer);
+
         // Emit control event
         if let Some(ref p) = path {
             self.emit_event(
@@ -3101,6 +3125,104 @@ impl Editor {
             .values()
             .filter(|state| state.buffer.is_modified())
             .count()
+    }
+
+    // ========================================================================
+    // Recovery service methods
+    // ========================================================================
+
+    /// Start the recovery session (call on editor startup after recovery check)
+    pub fn start_recovery_session(&mut self) -> io::Result<()> {
+        self.recovery_service.start_session()
+    }
+
+    /// End the recovery session cleanly (call on normal shutdown)
+    pub fn end_recovery_session(&mut self) -> io::Result<()> {
+        self.recovery_service.end_session()
+    }
+
+    /// Check if there are files to recover from a crash
+    pub fn has_recovery_files(&self) -> io::Result<bool> {
+        self.recovery_service.should_offer_recovery()
+    }
+
+    /// Get list of recoverable files
+    pub fn list_recoverable_files(&self) -> io::Result<Vec<crate::services::recovery::RecoveryEntry>> {
+        self.recovery_service.list_recoverable()
+    }
+
+    /// Perform auto-save for all modified buffers if needed
+    /// Returns the number of buffers saved, or an error
+    pub fn auto_save_dirty_buffers(&mut self) -> io::Result<usize> {
+        // Check if enough time has passed since last auto-save
+        let interval = std::time::Duration::from_secs(
+            self.config.editor.auto_save_interval_secs as u64
+        );
+        if self.last_auto_save.elapsed() < interval {
+            return Ok(0);
+        }
+
+        if !self.recovery_service.is_enabled() {
+            return Ok(0);
+        }
+
+        let mut saved_count = 0;
+
+        // Collect buffer info first to avoid borrow issues
+        let buffer_info: Vec<_> = self.buffers.iter()
+            .filter_map(|(buffer_id, state)| {
+                if state.buffer.is_modified() {
+                    let path = state.buffer.file_path().map(|p| p.to_path_buf());
+                    let recovery_id = self.recovery_service.get_buffer_id(path.as_deref());
+                    Some((*buffer_id, recovery_id, path))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (buffer_id, recovery_id, path) in buffer_info {
+            if let Some(state) = self.buffers.get(&buffer_id) {
+                // Get buffer content
+                let content = state.buffer.get_all_text();
+                let line_count = state.buffer.line_count();
+
+                // Save to recovery
+                self.recovery_service.save_buffer(
+                    &recovery_id,
+                    &content,
+                    path.as_deref(),
+                    None,
+                    line_count,
+                )?;
+                saved_count += 1;
+            }
+        }
+
+        if saved_count > 0 {
+            self.last_auto_save = std::time::Instant::now();
+        }
+
+        Ok(saved_count)
+    }
+
+    /// Mark a buffer's recovery as dirty (call after modifications)
+    pub fn mark_recovery_dirty(&mut self, buffer_id: BufferId) {
+        if let Some(state) = self.buffers.get(&buffer_id) {
+            let path = state.buffer.file_path();
+            let recovery_id = self.recovery_service.get_buffer_id(path);
+            self.recovery_service.mark_dirty(&recovery_id);
+        }
+    }
+
+    /// Delete recovery for a buffer (call after saving or closing)
+    pub fn delete_buffer_recovery(&mut self, buffer_id: BufferId) -> io::Result<()> {
+        if let Some(state) = self.buffers.get(&buffer_id) {
+            let path = state.buffer.file_path();
+            let recovery_id = self.recovery_service.get_buffer_id(path);
+            self.recovery_service.delete_buffer_recovery(&recovery_id)?;
+        }
+        Ok(())
     }
 
     /// Resize all buffers to match new terminal size

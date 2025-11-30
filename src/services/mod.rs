@@ -9,4 +9,5 @@ pub mod fs;
 pub mod lsp;
 pub mod plugins;
 pub mod process_limits;
+pub mod recovery;
 pub mod signal_handler;
