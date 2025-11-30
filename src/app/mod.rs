@@ -2046,8 +2046,22 @@ impl Editor {
         self.sync_editor_state_to_split_view_state();
 
         // 1c. Invalidate layouts for all views of this buffer after content changes
-        if matches!(event, Event::Insert { .. } | Event::Delete { .. }) {
-            self.invalidate_layouts_for_buffer(self.active_buffer);
+        // and mark buffer dirty for recovery auto-save
+        match event {
+            Event::Insert { .. } | Event::Delete { .. } => {
+                self.invalidate_layouts_for_buffer(self.active_buffer);
+                self.mark_recovery_dirty(self.active_buffer);
+            }
+            Event::Batch { events, .. } => {
+                let has_edits = events
+                    .iter()
+                    .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
+                if has_edits {
+                    self.invalidate_layouts_for_buffer(self.active_buffer);
+                    self.mark_recovery_dirty(self.active_buffer);
+                }
+            }
+            _ => {}
         }
 
         // 2. Adjust cursors in other splits that share the same buffer
