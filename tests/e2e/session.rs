@@ -666,11 +666,10 @@ fn test_session_restores_scroll_in_splits() {
     }
 }
 
-/// Test that scroll position is preserved even when cursor is NOT at the scroll position
-/// This reproduces the bug where scrolling the viewport (without moving cursor) is reset
-/// after session restore because ensure_visible recenters on the cursor.
+/// Test that cursor remains visible after session restore
+/// This reproduces the bug where cursor was visible before save but not visible after restore
 #[test]
-fn test_session_restores_scroll_without_cursor_movement() {
+fn test_session_cursor_visible_after_restore() {
     let temp_dir = TempDir::new().unwrap();
     let project_dir = temp_dir.path().join("project");
     std::fs::create_dir(&project_dir).unwrap();
@@ -682,7 +681,7 @@ fn test_session_restores_scroll_without_cursor_movement() {
         .collect();
     std::fs::write(&file, &content).unwrap();
 
-    // First session: scroll viewport without moving cursor
+    // First session: move cursor to middle of file (cursor visible, scroll follows)
     {
         let mut harness = EditorTestHarness::with_config_and_working_dir(
             80,
@@ -692,28 +691,32 @@ fn test_session_restores_scroll_without_cursor_movement() {
         )
         .unwrap();
 
-        // Open file - cursor at line 1
         harness.open_file(&file).unwrap();
-        harness.render().unwrap();
-        harness.assert_screen_contains("Line 001");
 
-        // Scroll viewport down using Ctrl+Down (scrolls without moving cursor)
-        // Scroll down 30 lines so we're showing lines 31-50ish
-        for _ in 0..30 {
-            harness
-                .send_key(KeyCode::Down, KeyModifiers::CONTROL)
-                .unwrap();
+        // Move cursor down to line 50 - cursor stays visible as scroll follows
+        for _ in 0..49 {
+            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         }
         harness.render().unwrap();
 
-        // Viewport should now show line 31+ but cursor is still at line 1
-        // Note: Line 001 should NOT be visible now
-        harness.assert_screen_contains("Line 031");
+        // Cursor should be visible - line 50 should be on screen
+        harness.assert_screen_contains("Line 050");
+
+        // Verify cursor is on screen (y within content area)
+        {
+            let (_, cursor_y) = harness.screen_cursor_position();
+            let (content_start, content_end) = harness.content_area_rows();
+            assert!(
+                cursor_y >= content_start as u16 && cursor_y <= content_end as u16,
+                "Cursor should be visible on screen before save: y={}, content={}..{}",
+                cursor_y, content_start, content_end
+            );
+        }
 
         harness.editor_mut().save_session().unwrap();
     }
 
-    // Second session: restore and verify scroll is preserved
+    // Second session: restore and verify cursor is STILL visible
     {
         let mut harness = EditorTestHarness::with_config_and_working_dir(
             80,
@@ -726,9 +729,119 @@ fn test_session_restores_scroll_without_cursor_movement() {
         harness.editor_mut().try_restore_session().unwrap();
         harness.render().unwrap();
 
-        // BUG: Without the fix, scroll gets reset to show cursor at line 1
-        // The scroll position should be preserved showing line 31
-        harness.assert_screen_contains("Line 031");
+        // Line 50 should still be visible (cursor was there)
+        harness.assert_screen_contains("Line 050");
+
+        // CRITICAL: Cursor must be visible on screen after restore
+        let (_, cursor_y) = harness.screen_cursor_position();
+        let (content_start, content_end) = harness.content_area_rows();
+        assert!(
+            cursor_y >= content_start as u16 && cursor_y <= content_end as u16,
+            "BUG: Cursor should be visible after session restore: y={}, content={}..{}",
+            cursor_y, content_start, content_end
+        );
+    }
+}
+
+/// Test that cursor remains visible after session restore in splits
+/// This reproduces the bug where cursor is visible before save but not after restore in splits
+#[test]
+fn test_session_cursor_visible_in_splits_after_restore() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Create files long enough to require scrolling
+    let file1 = project_dir.join("left.txt");
+    let file2 = project_dir.join("right.txt");
+    let content1: String = (1..=100)
+        .map(|i| format!("Left Line {:03}\n", i))
+        .collect();
+    let content2: String = (1..=100)
+        .map(|i| format!("Right Line {:03}\n", i))
+        .collect();
+    std::fs::write(&file1, &content1).unwrap();
+    std::fs::write(&file2, &content2).unwrap();
+
+    // First session: create split and move cursors
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Open first file and move cursor
+        harness.open_file(&file1).unwrap();
+        for _ in 0..40 {
+            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        harness.render().unwrap();
+        harness.assert_screen_contains("Left Line 041");
+
+        // Create split
+        split_vertical(&mut harness);
+
+        // Open second file and move cursor
+        harness.open_file(&file2).unwrap();
+        for _ in 0..30 {
+            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        harness.render().unwrap();
+        harness.assert_screen_contains("Right Line 031");
+
+        // Verify cursor is visible before save
+        {
+            let (_, cursor_y) = harness.screen_cursor_position();
+            let (content_start, content_end) = harness.content_area_rows();
+            assert!(
+                cursor_y >= content_start as u16 && cursor_y <= content_end as u16,
+                "Cursor should be visible before save: y={}, content={}..{}",
+                cursor_y, content_start, content_end
+            );
+        }
+
+        harness.editor_mut().save_session().unwrap();
+    }
+
+    // Second session: restore and verify cursor is visible in active split
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        harness.editor_mut().try_restore_session().unwrap();
+        harness.render().unwrap();
+
+        // Right split line 31 should be visible
+        harness.assert_screen_contains("Right Line 031");
+
+        // CRITICAL: Cursor must be visible after restore
+        let (_, cursor_y) = harness.screen_cursor_position();
+        let (content_start, content_end) = harness.content_area_rows();
+        assert!(
+            cursor_y >= content_start as u16 && cursor_y <= content_end as u16,
+            "BUG: Cursor should be visible in split after restore: y={}, content={}..{}",
+            cursor_y, content_start, content_end
+        );
+
+        // Also check left split
+        prev_split(&mut harness);
+        harness.render().unwrap();
+        harness.assert_screen_contains("Left Line 041");
+
+        let (_, cursor_y) = harness.screen_cursor_position();
+        assert!(
+            cursor_y >= content_start as u16 && cursor_y <= content_end as u16,
+            "BUG: Cursor should be visible in left split after restore: y={}, content={}..{}",
+            cursor_y, content_start, content_end
+        );
     }
 }
 
