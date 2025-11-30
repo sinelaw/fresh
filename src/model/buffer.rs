@@ -138,6 +138,11 @@ pub struct TextBuffer {
 
     /// Line ending format detected from the file (or default for new files)
     line_ending: LineEnding,
+
+    /// The file size on disk after the last save.
+    /// Used for chunked recovery to know the original file size for reconstruction.
+    /// Updated when loading from file or after saving.
+    saved_file_size: Option<usize>,
 }
 
 impl TextBuffer {
@@ -156,6 +161,7 @@ impl TextBuffer {
             large_file: false,
             is_binary: false,
             line_ending: LineEnding::default(),
+            saved_file_size: None,
         }
     }
 
@@ -186,6 +192,7 @@ impl TextBuffer {
             large_file: false,
             is_binary: false,
             line_ending: LineEnding::default(),
+            saved_file_size: Some(bytes), // Treat initial content as "saved" state
         }
     }
 
@@ -209,6 +216,7 @@ impl TextBuffer {
             large_file: false,
             is_binary: false,
             line_ending: LineEnding::default(),
+            saved_file_size: None,
         }
     }
 
@@ -311,6 +319,7 @@ impl TextBuffer {
             large_file: true,
             is_binary,
             line_ending,
+            saved_file_size: Some(file_size),
         })
     }
 
@@ -340,6 +349,7 @@ impl TextBuffer {
             std::fs::File::create(dest_path)?;
             self.file_path = Some(dest_path.to_path_buf());
             self.mark_saved_snapshot();
+            self.saved_file_size = Some(0);
             return Ok(());
         }
 
@@ -411,6 +421,9 @@ impl TextBuffer {
 
         // Atomically replace the original file
         std::fs::rename(&temp_path, dest_path)?;
+
+        // Update saved file size to match the file on disk
+        self.saved_file_size = Some(std::fs::metadata(dest_path)?.len() as usize);
 
         self.file_path = Some(dest_path.to_path_buf());
         self.mark_saved_snapshot();
@@ -1080,25 +1093,13 @@ impl TextBuffer {
         self.large_file
     }
 
-    /// Get the original file size (for large files with lazy loading)
-    /// For large files, this is the size of the original file on disk.
-    /// Returns None for small files or if size cannot be determined.
+    /// Get the saved file size (size of the file on disk after last load/save)
+    /// For large files, this is used during recovery to know the expected original file size.
+    /// Returns None for new unsaved buffers.
     pub fn original_file_size(&self) -> Option<usize> {
-        if self.large_file {
-            // For large files, calculate original size from Stored pieces in piece tree
-            // The original file's chunks are referenced by Stored buffer pieces
-            use crate::model::piece_tree::BufferLocation;
-            let total = self.total_bytes();
-            let mut original_size = 0;
-            for piece in self.piece_tree.iter_pieces_in_range(0, total) {
-                if matches!(piece.location, BufferLocation::Stored(_)) {
-                    original_size += piece.bytes;
-                }
-            }
-            Some(original_size)
-        } else {
-            None
-        }
+        // Return the tracked saved file size - this is updated when the file is
+        // loaded or saved, so it always reflects the current file on disk.
+        self.saved_file_size
     }
 
     /// Get recovery chunks for this buffer (only modified portions)
