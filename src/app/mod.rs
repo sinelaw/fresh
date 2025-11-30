@@ -3303,6 +3303,18 @@ impl Editor {
         }
     }
 
+    /// Check if the active buffer is marked dirty for recovery auto-save
+    /// Used for testing to verify that edits properly trigger recovery tracking
+    pub fn is_active_buffer_recovery_dirty(&self) -> bool {
+        if let Some(state) = self.buffers.get(&self.active_buffer) {
+            let path = state.buffer.file_path();
+            let recovery_id = self.recovery_service.get_buffer_id(path);
+            self.recovery_service.is_dirty(&recovery_id)
+        } else {
+            false
+        }
+    }
+
     /// Delete recovery for a buffer (call after saving or closing)
     pub fn delete_buffer_recovery(&mut self, buffer_id: BufferId) -> io::Result<()> {
         if let Some(state) = self.buffers.get(&buffer_id) {

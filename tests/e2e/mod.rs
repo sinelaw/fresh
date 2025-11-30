@@ -32,6 +32,7 @@ pub mod position_history_debug;
 pub mod position_history_truncate_debug;
 pub mod prompt;
 pub mod prompt_editing;
+pub mod recovery;
 pub mod rendering;
 pub mod scroll_clearing;
 pub mod scrolling;
