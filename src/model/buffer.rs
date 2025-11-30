@@ -124,6 +124,11 @@ pub struct TextBuffer {
     /// Has the buffer been modified since last save?
     modified: bool,
 
+    /// Does the buffer have unsaved changes for recovery auto-save?
+    /// This is separate from `modified` because recovery auto-save doesn't
+    /// clear `modified` (buffer still differs from on-disk file).
+    recovery_pending: bool,
+
     /// Is this a large file (no line indexing, lazy loading enabled)?
     large_file: bool,
 
@@ -147,6 +152,7 @@ impl TextBuffer {
             next_buffer_id: 1,
             file_path: None,
             modified: false,
+            recovery_pending: false,
             large_file: false,
             is_binary: false,
             line_ending: LineEnding::default(),
@@ -176,6 +182,7 @@ impl TextBuffer {
             next_buffer_id: 1,
             file_path: None,
             modified: false,
+            recovery_pending: false,
             large_file: false,
             is_binary: false,
             line_ending: LineEnding::default(),
@@ -198,6 +205,7 @@ impl TextBuffer {
             next_buffer_id: 1,
             file_path: None,
             modified: false,
+            recovery_pending: false,
             large_file: false,
             is_binary: false,
             line_ending: LineEnding::default(),
@@ -299,6 +307,7 @@ impl TextBuffer {
             next_buffer_id: 1,
             file_path: Some(path.to_path_buf()),
             modified: false,
+            recovery_pending: false,
             large_file: true,
             is_binary,
             line_ending,
@@ -582,8 +591,9 @@ impl TextBuffer {
             return self.piece_tree.cursor_at_offset(offset);
         }
 
-        // Mark as modified
+        // Mark as modified and needing recovery
         self.modified = true;
+        self.recovery_pending = true;
 
         // Count line feeds in the text to insert
         let line_feed_cnt = Some(text.iter().filter(|&&b| b == b'\n').count());
@@ -624,8 +634,9 @@ impl TextBuffer {
             return None;
         }
 
-        // Mark as modified
+        // Mark as modified and needing recovery
         self.modified = true;
+        self.recovery_pending = true;
 
         // Find the piece containing the byte just before the insertion point
         // This avoids the saturating_sub issue
@@ -674,8 +685,9 @@ impl TextBuffer {
             return self.piece_tree.cursor_at_offset(offset);
         }
 
-        // Mark as modified
+        // Mark as modified and needing recovery
         self.modified = true;
+        self.recovery_pending = true;
 
         // Count line feeds in the text to insert
         let line_feed_cnt = text.iter().filter(|&&b| b == b'\n').count();
@@ -707,8 +719,9 @@ impl TextBuffer {
         // Update piece tree
         self.piece_tree.delete(offset, bytes, &self.buffers);
 
-        // Mark as modified
+        // Mark as modified and needing recovery
         self.modified = true;
+        self.recovery_pending = true;
     }
 
     /// Delete text in a range
@@ -729,7 +742,9 @@ impl TextBuffer {
             end.column,
             &self.buffers,
         );
+        // Mark as modified and needing recovery
         self.modified = true;
+        self.recovery_pending = true;
     }
 
     /// Get text from a byte offset range
@@ -1052,6 +1067,16 @@ impl TextBuffer {
         self.modified = modified;
     }
 
+    /// Check if buffer has pending changes for recovery auto-save
+    pub fn is_recovery_pending(&self) -> bool {
+        self.recovery_pending
+    }
+
+    /// Mark buffer as needing recovery auto-save (call after edits)
+    pub fn set_recovery_pending(&mut self, pending: bool) {
+        self.recovery_pending = pending;
+    }
+
     /// Check if this buffer contains binary content
     pub fn is_binary(&self) -> bool {
         self.is_binary
@@ -1065,7 +1090,9 @@ impl TextBuffer {
     /// Set the line ending format for this buffer
     pub fn set_line_ending(&mut self, line_ending: LineEnding) {
         self.line_ending = line_ending;
-        self.modified = true; // Changing line endings marks buffer as modified
+        // Changing line endings marks buffer as modified and needing recovery
+        self.modified = true;
+        self.recovery_pending = true;
     }
 
     /// Detect if the given bytes contain binary content.

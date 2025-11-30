@@ -2046,11 +2046,10 @@ impl Editor {
         self.sync_editor_state_to_split_view_state();
 
         // 1c. Invalidate layouts for all views of this buffer after content changes
-        // and mark buffer dirty for recovery auto-save
+        // Note: recovery_pending is set automatically by the buffer on edits
         match event {
             Event::Insert { .. } | Event::Delete { .. } => {
                 self.invalidate_layouts_for_buffer(self.active_buffer);
-                self.mark_recovery_dirty(self.active_buffer);
             }
             Event::Batch { events, .. } => {
                 let has_edits = events
@@ -2058,7 +2057,6 @@ impl Editor {
                     .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
                 if has_edits {
                     self.invalidate_layouts_for_buffer(self.active_buffer);
-                    self.mark_recovery_dirty(self.active_buffer);
                 }
             }
             _ => {}
@@ -3245,14 +3243,15 @@ impl Editor {
         }
 
         // Collect buffer info first to avoid borrow issues
-        // Only include buffers that are both modified AND need recovery save
+        // Only include buffers that have pending recovery changes AND need auto-save
         let buffer_info: Vec<_> = self.buffers.iter()
             .filter_map(|(buffer_id, state)| {
-                if state.buffer.is_modified() {
+                let recovery_pending = state.buffer.is_recovery_pending();
+                if recovery_pending {
                     let path = state.buffer.file_path().map(|p| p.to_path_buf());
                     let recovery_id = self.recovery_service.get_buffer_id(path.as_deref());
-                    // Only save if buffer needs auto-save (dirty flag set)
-                    if self.recovery_service.needs_auto_save(&recovery_id) {
+                    // Only save if enough time has passed since last recovery save
+                    if self.recovery_service.needs_auto_save(&recovery_id, recovery_pending) {
                         Some((*buffer_id, recovery_id, path))
                     } else {
                         None
@@ -3288,28 +3287,22 @@ impl Editor {
                 )?;
                 saved_count += 1;
             }
+
+            // Clear recovery_pending flag after successful save
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                state.buffer.set_recovery_pending(false);
+            }
         }
 
         self.last_auto_save = std::time::Instant::now();
         Ok(saved_count)
     }
 
-    /// Mark a buffer's recovery as dirty (call after modifications)
-    pub fn mark_recovery_dirty(&mut self, buffer_id: BufferId) {
-        if let Some(state) = self.buffers.get(&buffer_id) {
-            let path = state.buffer.file_path();
-            let recovery_id = self.recovery_service.get_buffer_id(path);
-            self.recovery_service.mark_dirty(&recovery_id);
-        }
-    }
-
     /// Check if the active buffer is marked dirty for recovery auto-save
     /// Used for testing to verify that edits properly trigger recovery tracking
     pub fn is_active_buffer_recovery_dirty(&self) -> bool {
         if let Some(state) = self.buffers.get(&self.active_buffer) {
-            let path = state.buffer.file_path();
-            let recovery_id = self.recovery_service.get_buffer_id(path);
-            self.recovery_service.is_dirty(&recovery_id)
+            state.buffer.is_recovery_pending()
         } else {
             false
         }
@@ -3317,10 +3310,12 @@ impl Editor {
 
     /// Delete recovery for a buffer (call after saving or closing)
     pub fn delete_buffer_recovery(&mut self, buffer_id: BufferId) -> io::Result<()> {
-        if let Some(state) = self.buffers.get(&buffer_id) {
-            let path = state.buffer.file_path();
-            let recovery_id = self.recovery_service.get_buffer_id(path);
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let path = state.buffer.file_path().map(|p| p.to_path_buf());
+            let recovery_id = self.recovery_service.get_buffer_id(path.as_deref());
             self.recovery_service.delete_buffer_recovery(&recovery_id)?;
+            // Clear recovery_pending since buffer is now saved
+            state.buffer.set_recovery_pending(false);
         }
         Ok(())
     }

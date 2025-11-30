@@ -50,7 +50,7 @@ pub use types::{
     CHUNKED_RECOVERY_THRESHOLD, MAX_CHUNK_SIZE,
 };
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -88,8 +88,6 @@ pub struct RecoveryService {
     config: RecoveryConfig,
     /// Last auto-save time per buffer
     last_save_times: HashMap<String, Instant>,
-    /// Set of buffer IDs that have been modified since last auto-save
-    dirty_buffers: HashSet<String>,
     /// Session started flag
     session_started: bool,
 }
@@ -101,7 +99,6 @@ impl RecoveryService {
             storage: RecoveryStorage::new()?,
             config: RecoveryConfig::default(),
             last_save_times: HashMap::new(),
-            dirty_buffers: HashSet::new(),
             session_started: false,
         })
     }
@@ -112,7 +109,6 @@ impl RecoveryService {
             storage: RecoveryStorage::new()?,
             config,
             last_save_times: HashMap::new(),
-            dirty_buffers: HashSet::new(),
             session_started: false,
         })
     }
@@ -188,34 +184,18 @@ impl RecoveryService {
     // Buffer tracking
     // ========================================================================
 
-    /// Mark a buffer as dirty (modified since last save)
-    pub fn mark_dirty(&mut self, buffer_id: &str) {
-        if self.config.enabled {
-            self.dirty_buffers.insert(buffer_id.to_string());
-        }
-    }
-
-    /// Mark a buffer as clean (saved or reverted)
-    pub fn mark_clean(&mut self, buffer_id: &str) {
-        self.dirty_buffers.remove(buffer_id);
-    }
-
-    /// Check if a buffer is dirty
-    pub fn is_dirty(&self, buffer_id: &str) -> bool {
-        self.dirty_buffers.contains(buffer_id)
-    }
-
     /// Check if a buffer needs auto-save
     ///
-    /// Returns true if the buffer is dirty AND enough time has passed since
-    /// the last recovery save.
-    pub fn needs_auto_save(&self, buffer_id: &str) -> bool {
+    /// Returns true if recovery_pending is true AND enough time has passed since
+    /// the last recovery save. The recovery_pending flag is now tracked on the
+    /// buffer itself (TextBuffer.recovery_pending) rather than in this service.
+    pub fn needs_auto_save(&self, buffer_id: &str, recovery_pending: bool) -> bool {
         if !self.config.enabled {
             return false;
         }
 
-        // Must be dirty to need auto-save
-        if !self.dirty_buffers.contains(buffer_id) {
+        // Must have pending recovery changes to need auto-save
+        if !recovery_pending {
             return false;
         }
 
@@ -255,7 +235,6 @@ impl RecoveryService {
             .save_recovery(buffer_id, content, original_path, buffer_name, line_count)?;
         self.last_save_times
             .insert(buffer_id.to_string(), Instant::now());
-        self.dirty_buffers.remove(buffer_id);
 
         tracing::debug!(
             "Saved recovery for buffer {} ({} bytes)",
@@ -294,7 +273,6 @@ impl RecoveryService {
         )?;
         self.last_save_times
             .insert(buffer_id.to_string(), Instant::now());
-        self.dirty_buffers.remove(buffer_id);
 
         tracing::debug!(
             "Saved chunked recovery for buffer {} (original: {} bytes)",
@@ -312,7 +290,6 @@ impl RecoveryService {
 
         self.storage.delete_recovery(buffer_id)?;
         self.last_save_times.remove(buffer_id);
-        self.dirty_buffers.remove(buffer_id);
 
         tracing::debug!("Deleted recovery for buffer {}", buffer_id);
         Ok(())
@@ -460,7 +437,6 @@ impl Default for RecoveryService {
             storage: RecoveryStorage::default(),
             config: RecoveryConfig::default(),
             last_save_times: HashMap::new(),
-            dirty_buffers: HashSet::new(),
             session_started: false,
         })
     }
@@ -478,7 +454,6 @@ mod tests {
             storage,
             config: RecoveryConfig::default(),
             last_save_times: HashMap::new(),
-            dirty_buffers: HashSet::new(),
             session_started: false,
         };
         (service, temp_dir)
@@ -498,20 +473,6 @@ mod tests {
     }
 
     #[test]
-    fn test_dirty_tracking() {
-        let (mut service, _temp) = create_test_service();
-
-        let id = "test-buffer";
-        assert!(!service.is_dirty(id));
-
-        service.mark_dirty(id);
-        assert!(service.is_dirty(id));
-
-        service.mark_clean(id);
-        assert!(!service.is_dirty(id));
-    }
-
-    #[test]
     fn test_save_and_recover() {
         let (mut service, _temp) = create_test_service();
         service.start_session().unwrap();
@@ -520,8 +481,7 @@ mod tests {
         let path = Path::new("/test/file.txt");
         let id = service.get_buffer_id(Some(path));
 
-        // Save recovery
-        service.mark_dirty(&id);
+        // Save recovery (recovery_pending would be true on the buffer)
         service
             .save_buffer(&id, content, Some(path), None, Some(1))
             .unwrap();
@@ -547,25 +507,24 @@ mod tests {
 
     #[test]
     fn test_needs_auto_save() {
-        let (mut service, _temp) = create_test_service();
+        let (service, _temp) = create_test_service();
         // Use a very short interval for testing
+        let mut service = service;
         service.config.auto_save_interval_secs = 0;
 
         let id = "test-buffer";
 
-        // Not dirty - doesn't need save
-        assert!(!service.needs_auto_save(id));
+        // Not recovery_pending - doesn't need save
+        assert!(!service.needs_auto_save(id, false));
 
-        // Mark dirty - needs save
-        service.mark_dirty(id);
-        assert!(service.needs_auto_save(id));
+        // recovery_pending=true - needs save
+        assert!(service.needs_auto_save(id, true));
 
-        // After save - doesn't need save anymore
+        // After save, recovery_pending would be false on buffer
         service
             .last_save_times
             .insert(id.to_string(), Instant::now());
-        service.mark_clean(id);
-        assert!(!service.needs_auto_save(id));
+        assert!(!service.needs_auto_save(id, false));
     }
 
     #[test]
@@ -573,12 +532,10 @@ mod tests {
         let (mut service, _temp) = create_test_service();
         service.config.enabled = false;
 
-        // All operations should be no-ops when disabled
-        service.mark_dirty("test");
-        assert!(!service.is_dirty("test")); // Returns false because disabled
+        // needs_auto_save returns false when disabled
+        assert!(!service.needs_auto_save("test", true));
 
-        // Actually it still tracks... let me fix the implementation
-        // For now, just verify save_buffer doesn't error
+        // save_buffer doesn't error when disabled
         service
             .save_buffer("test", b"content", None, None, None)
             .unwrap();
