@@ -61,6 +61,10 @@ struct Args {
     /// Print script control mode command schema and exit
     #[arg(long)]
     script_schema: bool,
+
+    /// Don't restore previous session (start fresh)
+    #[arg(long)]
+    no_session: bool,
 }
 
 fn main() -> io::Result<()> {
@@ -181,7 +185,23 @@ fn main() -> io::Result<()> {
         editor.enable_event_streaming(log_path)?;
     }
 
-    // Open file if provided
+    // Try to restore previous session (unless --no-session flag is set or a file was specified)
+    let session_enabled = !args.no_session && file_to_open.is_none();
+    if session_enabled {
+        match editor.try_restore_session() {
+            Ok(true) => {
+                tracing::info!("Session restored successfully");
+            }
+            Ok(false) => {
+                tracing::debug!("No previous session found");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to restore session: {}", e);
+            }
+        }
+    }
+
+    // Open file if provided (this takes precedence over session)
     if let Some(path) = &file_to_open {
         editor.open_file(path)?;
     }
@@ -192,7 +212,7 @@ fn main() -> io::Result<()> {
     }
 
     // Run the editor
-    let result = run_event_loop(&mut editor, &mut terminal);
+    let result = run_event_loop(&mut editor, &mut terminal, session_enabled);
 
     // Clean up terminal
     let _ = crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture);
@@ -231,6 +251,7 @@ fn run_script_control_mode(args: &Args) -> io::Result<()> {
 fn run_event_loop(
     editor: &mut Editor,
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    session_enabled: bool,
 ) -> io::Result<()> {
     use std::time::Instant;
 
@@ -245,6 +266,14 @@ fn run_event_loop(
         }
 
         if editor.should_quit() {
+            // Save session before quitting (if enabled)
+            if session_enabled {
+                if let Err(e) = editor.save_session() {
+                    tracing::warn!("Failed to save session: {}", e);
+                } else {
+                    tracing::debug!("Session saved successfully");
+                }
+            }
             break;
         }
 

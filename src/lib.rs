@@ -4,6 +4,7 @@ pub mod v8_init;
 
 // Core modules at root level
 pub mod config;
+pub mod session;
 pub mod state;
 
 // Organized modules

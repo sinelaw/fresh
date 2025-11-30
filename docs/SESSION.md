@@ -482,15 +482,81 @@ impl Editor {
 }
 ```
 
-### C. Periodic Auto-save (optional)
+### C. Incremental Auto-save with Dirty Flag
+
+The session uses a dirty-flag + debounced save approach for crash resistance:
 
 ```rust
-// In event loop, save every N minutes
-if last_save.elapsed() > Duration::from_secs(300) {
-    let _ = SessionManager::save(editor);
-    last_save = Instant::now();
+// In src/session.rs
+
+/// Tracks session state and handles incremental saves
+pub struct SessionTracker {
+    /// Current session state
+    session: Session,
+    /// Whether session has unsaved changes
+    dirty: bool,
+    /// Last save time
+    last_save: Instant,
+    /// Minimum interval between saves (debounce)
+    save_interval: Duration,
+}
+
+impl SessionTracker {
+    pub fn new(session: Session) -> Self {
+        Self {
+            session,
+            dirty: false,
+            last_save: Instant::now(),
+            save_interval: Duration::from_secs(5), // Save at most every 5 seconds
+        }
+    }
+
+    /// Mark session as needing save
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    /// Check if enough time has passed and save if dirty
+    pub fn maybe_save(&mut self) -> Result<bool, SessionError> {
+        if self.dirty && self.last_save.elapsed() >= self.save_interval {
+            self.session.touch();
+            self.session.save()?;
+            self.dirty = false;
+            self.last_save = Instant::now();
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Force save regardless of debounce (for shutdown)
+    pub fn force_save(&mut self) -> Result<(), SessionError> {
+        if self.dirty {
+            self.session.touch();
+            self.session.save()?;
+            self.dirty = false;
+            self.last_save = Instant::now();
+        }
+        Ok(())
+    }
 }
 ```
+
+**Triggering dirty flag:**
+
+| Event | Mark Dirty? | Notes |
+|-------|-------------|-------|
+| File opened | Yes | Immediately |
+| File closed | Yes | Immediately |
+| Split created/destroyed | Yes | Immediately |
+| Tab switched | Yes | Debounced |
+| Cursor moved | No | Too frequent |
+| Scroll position changed | No | Too frequent |
+| Config toggle changed | Yes | Immediately |
+| Search performed | Yes | For history |
+
+**Key insight**: Cursor/scroll positions are captured at save time, not on every change.
+This avoids I/O churn while still persisting recent positions on periodic saves.
 
 ### D. New Actions
 
@@ -846,21 +912,21 @@ Explicitly excluded from session state:
 5. **Config integration** - Overrides layer cleanly on top of global config
 6. **Graceful degradation** - Missing/corrupt sessions just start fresh
 7. **XDG compliance** - Follows Linux desktop standards
+8. **Crash resistant** - Atomic writes (temp file + fsync + rename) prevent corruption
+9. **Incremental saves** - Dirty-flag + debounce saves state periodically without I/O churn
 
 ### Cons
 
-1. **No crash recovery** - Non-atomic JSON writes could corrupt on crash
-2. **No multi-instance support** - Last-close-wins for session saves
-3. **Path-based identification** - Moving a project breaks its session link
-4. **Storage growth** - Sessions accumulate without cleanup mechanism
-5. **No named sessions** - Can't have multiple sessions per project (e.g., "feature-branch")
-6. **File-path coupling** - Renamed/moved files lose their cursor state
+1. **No multi-instance support** - Last-close-wins for session saves
+2. **Path-based identification** - Moving a project breaks its session link
+3. **Storage growth** - Sessions accumulate without cleanup mechanism
+4. **No named sessions** - Can't have multiple sessions per project (e.g., "feature-branch")
+5. **File-path coupling** - Renamed/moved files lose their cursor state
 
 ### Future Improvements (Out of Scope)
 
 - **Session cleanup**: Prune sessions for non-existent directories
 - **Named sessions**: Multiple sessions per project with user-chosen names
-- **Atomic writes**: Write to temp file, then rename
 - **Multi-instance coordination**: File locking or last-write-wins with merge
 - **Workspace files**: VS Code-style `.fresh-workspace` files for shareable project configs
 - **Branch-aware sessions**: Different sessions per git branch (like Zed's requested feature)

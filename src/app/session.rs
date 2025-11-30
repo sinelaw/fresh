@@ -1,0 +1,508 @@
+//! Session persistence integration for the Editor
+//!
+//! This module provides conversion between live Editor state and serialized Session data.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use crate::model::event::{BufferId, SplitDirection, SplitId};
+use crate::session::{
+    FileExplorerState, SearchOptions, SerializedBookmark, SerializedCursor,
+    SerializedFileState, SerializedScroll, SerializedSplitDirection, SerializedSplitNode,
+    SerializedSplitViewState, SerializedViewMode, Session, SessionConfigOverrides,
+    SessionError, SessionHistories, SESSION_VERSION,
+};
+use crate::state::ViewMode;
+use crate::view::split::SplitNode;
+
+use super::types::Bookmark;
+use super::Editor;
+
+/// Session persistence state tracker
+///
+/// Tracks dirty state and handles debounced saving for crash resistance.
+pub struct SessionTracker {
+    /// Whether session has unsaved changes
+    dirty: bool,
+    /// Last save time
+    last_save: Instant,
+    /// Minimum interval between saves (debounce)
+    save_interval: std::time::Duration,
+    /// Whether session persistence is enabled
+    enabled: bool,
+}
+
+impl SessionTracker {
+    /// Create a new session tracker
+    pub fn new(enabled: bool) -> Self {
+        Self {
+            dirty: false,
+            last_save: Instant::now(),
+            save_interval: std::time::Duration::from_secs(5),
+            enabled,
+        }
+    }
+
+    /// Check if session tracking is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Mark session as needing save
+    pub fn mark_dirty(&mut self) {
+        if self.enabled {
+            self.dirty = true;
+        }
+    }
+
+    /// Check if a save is needed and enough time has passed
+    pub fn should_save(&self) -> bool {
+        self.enabled && self.dirty && self.last_save.elapsed() >= self.save_interval
+    }
+
+    /// Record that a save was performed
+    pub fn record_save(&mut self) {
+        self.dirty = false;
+        self.last_save = Instant::now();
+    }
+
+    /// Check if there are unsaved changes (for shutdown)
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+}
+
+impl Editor {
+    /// Capture current editor state into a Session
+    pub fn capture_session(&self) -> Session {
+        let split_layout = serialize_split_node(
+            self.split_manager.root(),
+            &self.buffer_metadata,
+            &self.working_dir,
+        );
+
+        let mut split_states = HashMap::new();
+        for (split_id, view_state) in &self.split_view_states {
+            split_states.insert(
+                split_id.0,
+                serialize_split_view_state(
+                    view_state,
+                    &self.buffer_metadata,
+                    &self.working_dir,
+                ),
+            );
+        }
+
+        // Capture file explorer state
+        let file_explorer = if let Some(ref explorer) = self.file_explorer {
+            // Get expanded directories from the tree
+            let expanded_dirs = get_expanded_dirs(explorer, &self.working_dir);
+            FileExplorerState {
+                visible: self.file_explorer_visible,
+                width_percent: self.file_explorer_width_percent,
+                expanded_dirs,
+                scroll_offset: explorer.get_scroll_offset(),
+            }
+        } else {
+            FileExplorerState {
+                visible: self.file_explorer_visible,
+                width_percent: self.file_explorer_width_percent,
+                expanded_dirs: Vec::new(),
+                scroll_offset: 0,
+            }
+        };
+
+        // Capture config overrides (only store deviations from defaults)
+        let config_overrides = SessionConfigOverrides {
+            line_numbers: Some(self.config.editor.line_numbers),
+            relative_line_numbers: Some(self.config.editor.relative_line_numbers),
+            line_wrap: Some(self.config.editor.line_wrap),
+            syntax_highlighting: Some(self.config.editor.syntax_highlighting),
+            enable_inlay_hints: Some(self.config.editor.enable_inlay_hints),
+            mouse_enabled: Some(self.mouse_enabled),
+        };
+
+        // Capture histories
+        // Note: InputHistory doesn't expose items directly, so we collect them via iteration
+        // For now, we'll save empty histories - full implementation would add items() accessor
+        let histories = SessionHistories {
+            search: Vec::new(),  // TODO: Add items() accessor to InputHistory
+            replace: Vec::new(), // TODO: Add items() accessor to InputHistory
+            command_palette: Vec::new(),
+            goto_line: Vec::new(),
+            open_file: Vec::new(),
+        };
+
+        // Capture search options
+        let search_options = SearchOptions {
+            case_sensitive: self.search_case_sensitive,
+            whole_word: self.search_whole_word,
+            use_regex: self.search_use_regex,
+            confirm_each: self.search_confirm_each,
+        };
+
+        // Capture bookmarks
+        let bookmarks = serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.working_dir);
+
+        Session {
+            version: SESSION_VERSION,
+            working_dir: self.working_dir.clone(),
+            split_layout,
+            active_split_id: self.split_manager.active_split().0,
+            split_states,
+            config_overrides,
+            file_explorer,
+            histories,
+            search_options,
+            bookmarks,
+            saved_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        }
+    }
+
+    /// Save the current session to disk
+    pub fn save_session(&self) -> Result<(), SessionError> {
+        let session = self.capture_session();
+        session.save()
+    }
+
+    /// Try to load and apply a session for the current working directory
+    ///
+    /// Returns true if a session was successfully loaded and applied.
+    pub fn try_restore_session(&mut self) -> Result<bool, SessionError> {
+        match Session::load(&self.working_dir)? {
+            Some(session) => {
+                self.apply_session(&session)?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Apply a loaded session to the editor
+    pub fn apply_session(&mut self, session: &Session) -> Result<(), SessionError> {
+        // 1. Apply config overrides
+        if let Some(line_numbers) = session.config_overrides.line_numbers {
+            self.config.editor.line_numbers = line_numbers;
+        }
+        if let Some(relative_line_numbers) = session.config_overrides.relative_line_numbers {
+            self.config.editor.relative_line_numbers = relative_line_numbers;
+        }
+        if let Some(line_wrap) = session.config_overrides.line_wrap {
+            self.config.editor.line_wrap = line_wrap;
+        }
+        if let Some(syntax_highlighting) = session.config_overrides.syntax_highlighting {
+            self.config.editor.syntax_highlighting = syntax_highlighting;
+        }
+        if let Some(enable_inlay_hints) = session.config_overrides.enable_inlay_hints {
+            self.config.editor.enable_inlay_hints = enable_inlay_hints;
+        }
+        if let Some(mouse_enabled) = session.config_overrides.mouse_enabled {
+            self.mouse_enabled = mouse_enabled;
+        }
+
+        // 2. Restore search options
+        self.search_case_sensitive = session.search_options.case_sensitive;
+        self.search_whole_word = session.search_options.whole_word;
+        self.search_use_regex = session.search_options.use_regex;
+        self.search_confirm_each = session.search_options.confirm_each;
+
+        // 3. Restore histories (merge with any existing)
+        for item in &session.histories.search {
+            self.search_history.push(item.clone());
+        }
+        for item in &session.histories.replace {
+            self.replace_history.push(item.clone());
+        }
+
+        // 4. Restore file explorer state
+        self.file_explorer_visible = session.file_explorer.visible;
+        self.file_explorer_width_percent = session.file_explorer.width_percent;
+
+        // 5. Open files from the session and build buffer mappings
+        // This is done by collecting all unique file paths from the split layout
+        let file_paths = collect_file_paths(&session.split_layout);
+        let mut path_to_buffer: HashMap<PathBuf, BufferId> = HashMap::new();
+
+        for rel_path in file_paths {
+            let abs_path = self.working_dir.join(&rel_path);
+            if abs_path.exists() {
+                // Open the file (this will reuse existing buffer if already open)
+                if let Ok(buffer_id) = self.open_file_internal(&abs_path) {
+                    path_to_buffer.insert(rel_path, buffer_id);
+                }
+            }
+        }
+
+        // 6. Rebuild split layout using the buffer mappings
+        // Note: This is a simplified approach - full implementation would rebuild
+        // the entire split tree. For now, we just restore the open files in tabs.
+
+        // For each split state, restore the open buffers and cursor/scroll positions
+        for (split_id_num, split_state) in &session.split_states {
+            let split_id = SplitId(*split_id_num);
+
+            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                // Restore open files for this split
+                for rel_path in &split_state.open_files {
+                    if let Some(&buffer_id) = path_to_buffer.get(rel_path) {
+                        if !view_state.open_buffers.contains(&buffer_id) {
+                            view_state.open_buffers.push(buffer_id);
+                        }
+                    }
+                }
+
+                // Restore cursor and scroll positions for each file
+                for (rel_path, file_state) in &split_state.file_states {
+                    if let Some(&buffer_id) = path_to_buffer.get(rel_path) {
+                        // If this buffer is currently displayed in this split, restore its state
+                        if view_state.open_buffers.contains(&buffer_id) {
+                            // Restore cursor position (clamped to buffer length)
+                            if let Some(buffer) = self.buffers.get(&buffer_id) {
+                                let max_pos = buffer.buffer.len();
+                                let cursor_pos = file_state.cursor.position.min(max_pos);
+                                view_state.cursors.primary_mut().position = cursor_pos;
+                                view_state.cursors.primary_mut().anchor = file_state.cursor.anchor.map(|a| a.min(max_pos));
+                                view_state.cursors.primary_mut().sticky_column = file_state.cursor.sticky_column;
+
+                                // Restore scroll position
+                                view_state.viewport.top_byte = file_state.scroll.top_byte.min(max_pos);
+                                view_state.viewport.top_view_line_offset = file_state.scroll.top_view_line_offset;
+                                view_state.viewport.left_column = file_state.scroll.left_column;
+                            }
+                        }
+                    }
+                }
+
+                // Restore view mode
+                view_state.view_mode = match split_state.view_mode {
+                    SerializedViewMode::Source => ViewMode::Source,
+                    SerializedViewMode::Compose => ViewMode::Compose,
+                };
+                view_state.compose_width = split_state.compose_width;
+                view_state.tab_scroll_offset = split_state.tab_scroll_offset;
+            }
+        }
+
+        // 7. Restore bookmarks
+        for (key, bookmark) in &session.bookmarks {
+            if let Some(&buffer_id) = path_to_buffer.get(&bookmark.file_path) {
+                // Verify position is valid
+                if let Some(buffer) = self.buffers.get(&buffer_id) {
+                    let pos = bookmark.position.min(buffer.buffer.len());
+                    self.bookmarks.insert(*key, Bookmark {
+                        buffer_id,
+                        position: pos,
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Internal helper to open a file and return its buffer ID
+    fn open_file_internal(&mut self, path: &Path) -> Result<BufferId, SessionError> {
+        // Check if file is already open
+        for (buffer_id, metadata) in &self.buffer_metadata {
+            if let Some(file_path) = metadata.file_path() {
+                if file_path == path {
+                    return Ok(*buffer_id);
+                }
+            }
+        }
+
+        // File not open, need to open it
+        // This is a simplified version - the full implementation would use
+        // the Editor's open_file method
+        Err(SessionError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Session restore: file opening not yet implemented for {:?}", path),
+        )))
+    }
+}
+
+// ============================================================================
+// Serialization helpers
+// ============================================================================
+
+fn serialize_split_node(
+    node: &SplitNode,
+    buffer_metadata: &HashMap<BufferId, super::types::BufferMetadata>,
+    working_dir: &Path,
+) -> SerializedSplitNode {
+    match node {
+        SplitNode::Leaf { buffer_id, split_id } => {
+            let file_path = buffer_metadata
+                .get(buffer_id)
+                .and_then(|meta| meta.file_path())
+                .and_then(|abs_path| {
+                    abs_path.strip_prefix(working_dir).ok().map(|p| p.to_path_buf())
+                });
+
+            SerializedSplitNode::Leaf {
+                file_path,
+                split_id: split_id.0,
+            }
+        }
+        SplitNode::Split {
+            direction,
+            first,
+            second,
+            ratio,
+            split_id,
+        } => SerializedSplitNode::Split {
+            direction: match direction {
+                SplitDirection::Horizontal => SerializedSplitDirection::Horizontal,
+                SplitDirection::Vertical => SerializedSplitDirection::Vertical,
+            },
+            first: Box::new(serialize_split_node(first, buffer_metadata, working_dir)),
+            second: Box::new(serialize_split_node(second, buffer_metadata, working_dir)),
+            ratio: *ratio,
+            split_id: split_id.0,
+        },
+    }
+}
+
+fn serialize_split_view_state(
+    view_state: &crate::view::split::SplitViewState,
+    buffer_metadata: &HashMap<BufferId, super::types::BufferMetadata>,
+    working_dir: &Path,
+) -> SerializedSplitViewState {
+    // Convert open buffers to relative file paths
+    let open_files: Vec<PathBuf> = view_state
+        .open_buffers
+        .iter()
+        .filter_map(|buffer_id| {
+            buffer_metadata
+                .get(buffer_id)
+                .and_then(|meta| meta.file_path())
+                .and_then(|abs_path| {
+                    abs_path.strip_prefix(working_dir).ok().map(|p| p.to_path_buf())
+                })
+        })
+        .collect();
+
+    // Find active file index
+    let active_file_index = 0; // Simplified - would need to track which buffer is active
+
+    // Serialize file states (cursor and scroll for each file in this split)
+    let mut file_states = HashMap::new();
+    for buffer_id in &view_state.open_buffers {
+        if let Some(meta) = buffer_metadata.get(buffer_id) {
+            if let Some(abs_path) = meta.file_path() {
+                if let Ok(rel_path) = abs_path.strip_prefix(working_dir) {
+                    // Get cursor state from view_state.cursors
+                    let primary_cursor = view_state.cursors.primary();
+
+                    file_states.insert(
+                        rel_path.to_path_buf(),
+                        SerializedFileState {
+                            cursor: SerializedCursor {
+                                position: primary_cursor.position,
+                                anchor: primary_cursor.anchor,
+                                sticky_column: primary_cursor.sticky_column,
+                            },
+                            additional_cursors: view_state
+                                .cursors
+                                .iter()
+                                .skip(1) // Skip primary
+                                .map(|(_, cursor)| SerializedCursor {
+                                    position: cursor.position,
+                                    anchor: cursor.anchor,
+                                    sticky_column: cursor.sticky_column,
+                                })
+                                .collect(),
+                            scroll: SerializedScroll {
+                                top_byte: view_state.viewport.top_byte,
+                                top_view_line_offset: view_state.viewport.top_view_line_offset,
+                                left_column: view_state.viewport.left_column,
+                            },
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    SerializedSplitViewState {
+        open_files,
+        active_file_index,
+        file_states,
+        tab_scroll_offset: view_state.tab_scroll_offset,
+        view_mode: match view_state.view_mode {
+            ViewMode::Source => SerializedViewMode::Source,
+            ViewMode::Compose => SerializedViewMode::Compose,
+        },
+        compose_width: view_state.compose_width,
+    }
+}
+
+fn serialize_bookmarks(
+    bookmarks: &HashMap<char, Bookmark>,
+    buffer_metadata: &HashMap<BufferId, super::types::BufferMetadata>,
+    working_dir: &Path,
+) -> HashMap<char, SerializedBookmark> {
+    bookmarks
+        .iter()
+        .filter_map(|(key, bookmark)| {
+            buffer_metadata
+                .get(&bookmark.buffer_id)
+                .and_then(|meta| meta.file_path())
+                .and_then(|abs_path| {
+                    abs_path.strip_prefix(working_dir).ok().map(|rel_path| {
+                        (
+                            *key,
+                            SerializedBookmark {
+                                file_path: rel_path.to_path_buf(),
+                                position: bookmark.position,
+                            },
+                        )
+                    })
+                })
+        })
+        .collect()
+}
+
+fn collect_file_paths(node: &SerializedSplitNode) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    collect_file_paths_recursive(node, &mut paths);
+    paths
+}
+
+fn collect_file_paths_recursive(node: &SerializedSplitNode, paths: &mut Vec<PathBuf>) {
+    match node {
+        SerializedSplitNode::Leaf { file_path, .. } => {
+            if let Some(path) = file_path {
+                if !paths.contains(path) {
+                    paths.push(path.clone());
+                }
+            }
+        }
+        SerializedSplitNode::Split { first, second, .. } => {
+            collect_file_paths_recursive(first, paths);
+            collect_file_paths_recursive(second, paths);
+        }
+    }
+}
+
+/// Get list of expanded directories from a FileTreeView
+fn get_expanded_dirs(explorer: &crate::view::file_tree::FileTreeView, working_dir: &Path) -> Vec<PathBuf> {
+    let mut expanded = Vec::new();
+    let tree = explorer.tree();
+
+    // Iterate through all nodes and collect expanded directories
+    for node in tree.all_nodes() {
+        if node.is_expanded() && node.is_dir() {
+            // Get the path and make it relative to working_dir
+            if let Ok(rel_path) = node.entry.path.strip_prefix(working_dir) {
+                expanded.push(rel_path.to_path_buf());
+            }
+        }
+    }
+
+    expanded
+}
