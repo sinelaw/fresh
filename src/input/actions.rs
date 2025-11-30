@@ -2610,7 +2610,10 @@ mod tests {
             state.apply(event);
         }
 
-        println!("After backspace: buffer = {:?}", state.buffer.to_string().unwrap());
+        println!(
+            "After backspace: buffer = {:?}",
+            state.buffer.to_string().unwrap()
+        );
         println!(
             "After backspace: cursor at {}",
             state.cursors.primary().position

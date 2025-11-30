@@ -192,7 +192,9 @@ fn test_undo_returns_to_saved_state_not_original() {
     );
 
     // 3. Save the buffer (Ctrl+S)
-    harness.send_key(KeyCode::Char('s'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
     // Need to render to process the save
     harness.render().unwrap();
 
@@ -213,15 +215,14 @@ fn test_undo_returns_to_saved_state_not_original() {
     );
 
     // Content should now be "Hello World"
-    assert_eq!(
-        harness.get_buffer_content(),
-        "Hello World"
-    );
+    assert_eq!(harness.get_buffer_content(), "Hello World");
 
     // 5. Undo " World" (6 characters) to return to saved state "Hello"
     // Each character is a separate undo step
     for _ in 0..6 {
-        harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+        harness
+            .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+            .unwrap();
     }
 
     // Content should be "Hello" (the saved state)
@@ -240,7 +241,9 @@ fn test_undo_returns_to_saved_state_not_original() {
     // 6. Now undo PAST the saved state (undo "Hello") -> should become modified again
     // because we're now different from the saved file content "Hello"
     for _ in 0..5 {
-        harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+        harness
+            .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+            .unwrap();
     }
 
     // Content should be "" (empty, the original state)
@@ -286,8 +289,8 @@ fn test_chunked_recovery_reconstruction() {
     //        ^                  ^
     //        7                  24
     let chunks = vec![
-        RecoveryChunk::new(7, 5, b"Universe".to_vec()),  // "World" -> "Universe"
-        RecoveryChunk::new(24, 4, b"sample".to_vec()),   // "test" -> "sample"
+        RecoveryChunk::new(7, 5, b"Universe".to_vec()), // "World" -> "Universe"
+        RecoveryChunk::new(24, 4, b"sample".to_vec()),  // "test" -> "sample"
     ];
 
     // Save chunked recovery
@@ -342,9 +345,7 @@ fn test_chunked_recovery_with_insertion() {
     std::fs::write(&original_file, original_content).unwrap();
 
     // Insert "XYZ" between A and B (replace 0 chars at position 1)
-    let chunks = vec![
-        RecoveryChunk::new(1, 0, b"XYZ".to_vec()),
-    ];
+    let chunks = vec![RecoveryChunk::new(1, 0, b"XYZ".to_vec())];
 
     let id = "test-chunked-insert";
     storage
@@ -378,9 +379,7 @@ fn test_chunked_recovery_with_deletion() {
     std::fs::write(&original_file, original_content).unwrap();
 
     // Delete "llo Wor" (replace 7 chars at position 2 with empty string)
-    let chunks = vec![
-        RecoveryChunk::new(2, 7, b"".to_vec()),
-    ];
+    let chunks = vec![RecoveryChunk::new(2, 7, b"".to_vec())];
 
     let id = "test-chunked-delete";
     storage
@@ -566,12 +565,18 @@ fn test_recovery_large_file_content_replacement() {
 
     // Verify buffer has correct size
     let new_size = harness.editor().active_state().buffer.total_bytes();
-    assert_eq!(new_size, 50_000, "Buffer should have new size after replacement");
+    assert_eq!(
+        new_size, 50_000,
+        "Buffer should have new size after replacement"
+    );
 
     // Verify content is accessible
     let content = harness.get_buffer_content();
     assert_eq!(content.len(), 50_000, "Content should be retrievable");
-    assert!(content.chars().all(|c| c == 'Y'), "Content should be all Y's");
+    assert!(
+        content.chars().all(|c| c == 'Y'),
+        "Content should be all Y's"
+    );
 }
 
 /// Test that get_all_text works correctly for large files with unloaded regions
@@ -683,7 +688,10 @@ fn test_huge_file_recovery_is_small() {
     );
 
     // Verify chunks contain our edit
-    assert!(!chunks.is_empty(), "Should have at least one recovery chunk");
+    assert!(
+        !chunks.is_empty(),
+        "Should have at least one recovery chunk"
+    );
 
     // The chunk should contain our edit text
     let all_chunk_data: Vec<u8> = chunks.into_iter().flat_map(|(_, data)| data).collect();
@@ -746,14 +754,13 @@ fn test_large_file_auto_save_creates_small_recovery_file() {
     let entries = storage.list_entries().unwrap();
 
     // Find our file's recovery entry
-    let our_entry = entries
-        .iter()
-        .find(|e| {
-            e.metadata.original_path
-                .as_ref()
-                .map(|p| p.ends_with("large_file.txt"))
-                .unwrap_or(false)
-        });
+    let our_entry = entries.iter().find(|e| {
+        e.metadata
+            .original_path
+            .as_ref()
+            .map(|p| p.ends_with("large_file.txt"))
+            .unwrap_or(false)
+    });
 
     if let Some(entry) = our_entry {
         // Load the recovery data to check its size
@@ -824,7 +831,9 @@ fn test_recovery_after_save_with_size_change() {
     );
 
     // Add content at the end (go to end of file first)
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     let added_content = "NEW_CONTENT_AT_END";
     harness.type_text(added_content).unwrap();
 
@@ -833,7 +842,14 @@ fn test_recovery_after_save_with_size_change() {
 
     // Wait for async save to complete
     harness
-        .wait_for_async(|_h| fs::read_to_string(&file_path).map(|c| c.len() > initial_size).unwrap_or(false), 5000)
+        .wait_for_async(
+            |_h| {
+                fs::read_to_string(&file_path)
+                    .map(|c| c.len() > initial_size)
+                    .unwrap_or(false)
+            },
+            5000,
+        )
         .unwrap();
 
     // Verify file was saved with new content
@@ -865,14 +881,13 @@ fn test_recovery_after_save_with_size_change() {
     let storage = RecoveryStorage::new().unwrap();
     let entries = storage.list_entries().unwrap();
 
-    let our_entry = entries
-        .iter()
-        .find(|e| {
-            e.metadata.original_path
-                .as_ref()
-                .map(|p| p.ends_with("large_file.txt"))
-                .unwrap_or(false)
-        });
+    let our_entry = entries.iter().find(|e| {
+        e.metadata
+            .original_path
+            .as_ref()
+            .map(|p| p.ends_with("large_file.txt"))
+            .unwrap_or(false)
+    });
 
     if let Some(entry) = our_entry {
         // Try to reconstruct content - this should NOT fail with size mismatch
@@ -959,7 +974,9 @@ fn test_recovery_insert_at_end_of_large_file() {
     );
 
     // Go to end of file and insert content
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     harness.type_text("FIRST").unwrap();
 
     // Insert MORE content - this is key to triggering the bug
@@ -978,14 +995,13 @@ fn test_recovery_insert_at_end_of_large_file() {
     let storage = RecoveryStorage::new().unwrap();
     let entries = storage.list_entries().unwrap();
 
-    let our_entry = entries
-        .iter()
-        .find(|e| {
-            e.metadata.original_path
-                .as_ref()
-                .map(|p| p.ends_with("large_file.txt"))
-                .unwrap_or(false)
-        });
+    let our_entry = entries.iter().find(|e| {
+        e.metadata
+            .original_path
+            .as_ref()
+            .map(|p| p.ends_with("large_file.txt"))
+            .unwrap_or(false)
+    });
 
     if let Some(entry) = our_entry {
         // This should NOT panic with "range end index X out of range for slice of length Y"
@@ -999,8 +1015,10 @@ fn test_recovery_insert_at_end_of_large_file() {
                     "Recovered content should end with our insertions. Got: ...{}",
                     &content_str[content_str.len().saturating_sub(50)..]
                 );
-                println!("Recovery successful! Content ends with: ...{}",
-                    &content_str[content_str.len().saturating_sub(20)..]);
+                println!(
+                    "Recovery successful! Content ends with: ...{}",
+                    &content_str[content_str.len().saturating_sub(20)..]
+                );
             }
             Err(e) => {
                 let error_msg = e.to_string();

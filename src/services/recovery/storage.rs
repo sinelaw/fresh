@@ -71,8 +71,8 @@ impl RecoveryStorage {
         self.ensure_dir()?;
 
         let info = SessionInfo::new();
-        let json =
-            serde_json::to_string_pretty(&info).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let json = serde_json::to_string_pretty(&info)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         self.atomic_write(&self.session_lock_path(), json.as_bytes())?;
         Ok(info)
@@ -108,8 +108,8 @@ impl RecoveryStorage {
         }
 
         let content = fs::read_to_string(&path)?;
-        let info: SessionInfo =
-            serde_json::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let info: SessionInfo = serde_json::from_str(&content)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         Ok(Some(info))
     }
 
@@ -136,7 +136,9 @@ impl RecoveryStorage {
     /// Get paths for recovery files
     fn recovery_paths(&self, id: &str) -> (PathBuf, PathBuf) {
         let meta_path = self.recovery_dir.join(format!("{id}.{}", Self::META_EXT));
-        let content_path = self.recovery_dir.join(format!("{id}.{}", Self::CONTENT_EXT));
+        let content_path = self
+            .recovery_dir
+            .join(format!("{id}.{}", Self::CONTENT_EXT));
         (meta_path, content_path)
     }
 
@@ -308,11 +310,7 @@ impl RecoveryStorage {
     ///
     /// This reads the original file and applies the stored chunks to reconstruct
     /// the full modified content.
-    pub fn reconstruct_from_chunks(
-        &self,
-        id: &str,
-        original_file: &Path,
-    ) -> io::Result<Vec<u8>> {
+    pub fn reconstruct_from_chunks(&self, id: &str, original_file: &Path) -> io::Result<Vec<u8>> {
         let chunked_data = self.read_chunked_content(id)?.ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotFound, "Chunked recovery data not found")
         })?;
@@ -341,7 +339,10 @@ impl RecoveryStorage {
             if !chunk.verify() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("Chunk at offset {} failed checksum verification", chunk.offset),
+                    format!(
+                        "Chunk at offset {} failed checksum verification",
+                        chunk.offset
+                    ),
                 ));
             }
 
@@ -396,7 +397,10 @@ impl RecoveryStorage {
         }
 
         let metadata = self.read_metadata(id)?.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "Metadata file exists but couldn't be read")
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "Metadata file exists but couldn't be read",
+            )
         })?;
 
         Ok(Some(RecoveryEntry {

@@ -318,7 +318,9 @@ impl RecoveryService {
             // For chunked recovery, we need the original file
             if let Some(ref original_path) = entry.metadata.original_path {
                 if original_path.exists() {
-                    let content = self.storage.reconstruct_from_chunks(&entry.id, original_path)?;
+                    let content = self
+                        .storage
+                        .reconstruct_from_chunks(&entry.id, original_path)?;
                     return Ok(RecoveryResult::Recovered {
                         original_path: Some(original_path.clone()),
                         content,
@@ -370,7 +372,9 @@ impl RecoveryService {
             });
         }
 
-        let content = self.storage.reconstruct_from_chunks(&entry.id, original_file)?;
+        let content = self
+            .storage
+            .reconstruct_from_chunks(&entry.id, original_file)?;
         Ok(RecoveryResult::Recovered {
             original_path: Some(original_file.to_path_buf()),
             content,

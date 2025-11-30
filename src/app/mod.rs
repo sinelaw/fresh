@@ -2829,7 +2829,11 @@ impl Editor {
         }
 
         // Get text before borrowing lsp
-        let text = match self.buffers.get(&buffer_id).and_then(|state| state.buffer.to_string()) {
+        let text = match self
+            .buffers
+            .get(&buffer_id)
+            .and_then(|state| state.buffer.to_string())
+        {
             Some(t) => t,
             None => {
                 tracing::debug!("Buffer not fully loaded for LSP notification");
@@ -3162,7 +3166,9 @@ impl Editor {
     }
 
     /// Get list of recoverable files
-    pub fn list_recoverable_files(&self) -> io::Result<Vec<crate::services::recovery::RecoveryEntry>> {
+    pub fn list_recoverable_files(
+        &self,
+    ) -> io::Result<Vec<crate::services::recovery::RecoveryEntry>> {
         self.recovery_service.list_recoverable()
     }
 
@@ -3176,7 +3182,10 @@ impl Editor {
 
         for entry in entries {
             match self.recovery_service.accept_recovery(&entry) {
-                Ok(RecoveryResult::Recovered { original_path, content }) => {
+                Ok(RecoveryResult::Recovered {
+                    original_path,
+                    content,
+                }) => {
                     // Convert content to string
                     let text = String::from_utf8_lossy(&content).into_owned();
 
@@ -3238,23 +3247,27 @@ impl Editor {
         }
 
         // Check if enough time has passed since last auto-save
-        let interval = std::time::Duration::from_secs(
-            self.config.editor.auto_save_interval_secs as u64
-        );
+        let interval =
+            std::time::Duration::from_secs(self.config.editor.auto_save_interval_secs as u64);
         if self.last_auto_save.elapsed() < interval {
             return Ok(0);
         }
 
         // Collect buffer info first to avoid borrow issues
         // Only include buffers that have pending recovery changes AND need auto-save
-        let buffer_info: Vec<_> = self.buffers.iter()
+        let buffer_info: Vec<_> = self
+            .buffers
+            .iter()
             .filter_map(|(buffer_id, state)| {
                 let recovery_pending = state.buffer.is_recovery_pending();
                 if recovery_pending {
                     let path = state.buffer.file_path().map(|p| p.to_path_buf());
                     let recovery_id = self.recovery_service.get_buffer_id(path.as_deref());
                     // Only save if enough time has passed since last recovery save
-                    if self.recovery_service.needs_auto_save(&recovery_id, recovery_pending) {
+                    if self
+                        .recovery_service
+                        .needs_auto_save(&recovery_id, recovery_pending)
+                    {
                         Some((*buffer_id, recovery_id, path))
                     } else {
                         None
@@ -3293,8 +3306,7 @@ impl Editor {
                         .into_iter()
                         .map(|(offset, content)| {
                             crate::services::recovery::types::RecoveryChunk::new(
-                                offset,
-                                0, // For insertions, original_len is 0
+                                offset, 0, // For insertions, original_len is 0
                                 content,
                             )
                         })
@@ -3324,10 +3336,7 @@ impl Editor {
                     let content = match state.buffer.get_text_range_mut(0, total_bytes) {
                         Ok(bytes) => bytes,
                         Err(e) => {
-                            tracing::warn!(
-                                "Failed to get buffer content for recovery save: {}",
-                                e
-                            );
+                            tracing::warn!("Failed to get buffer content for recovery save: {}", e);
                             continue;
                         }
                     };
