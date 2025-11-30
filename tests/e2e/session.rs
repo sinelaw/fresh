@@ -751,19 +751,19 @@ fn test_session_cursor_visible_in_splits_after_restore() {
     let project_dir = temp_dir.path().join("project");
     std::fs::create_dir(&project_dir).unwrap();
 
-    // Create files long enough to require scrolling
+    // Create files with 200 lines - cursor will be at line 150 (middle of file)
     let file1 = project_dir.join("left.txt");
     let file2 = project_dir.join("right.txt");
-    let content1: String = (1..=100)
+    let content1: String = (1..=200)
         .map(|i| format!("Left Line {:03}\n", i))
         .collect();
-    let content2: String = (1..=100)
+    let content2: String = (1..=200)
         .map(|i| format!("Right Line {:03}\n", i))
         .collect();
     std::fs::write(&file1, &content1).unwrap();
     std::fs::write(&file2, &content2).unwrap();
 
-    // First session: create split and move cursors
+    // First session: create split and move cursor to line 150
     {
         let mut harness = EditorTestHarness::with_config_and_working_dir(
             80,
@@ -773,24 +773,24 @@ fn test_session_cursor_visible_in_splits_after_restore() {
         )
         .unwrap();
 
-        // Open first file and move cursor
+        // Open first file and move cursor to line 150
         harness.open_file(&file1).unwrap();
-        for _ in 0..40 {
+        for _ in 0..149 {
             harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         }
         harness.render().unwrap();
-        harness.assert_screen_contains("Left Line 041");
+        harness.assert_screen_contains("Left Line 150");
 
         // Create split
         split_vertical(&mut harness);
 
-        // Open second file and move cursor
+        // Open second file and move cursor to line 150
         harness.open_file(&file2).unwrap();
-        for _ in 0..30 {
+        for _ in 0..149 {
             harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         }
         harness.render().unwrap();
-        harness.assert_screen_contains("Right Line 031");
+        harness.assert_screen_contains("Right Line 150");
 
         // Verify cursor is visible before save
         {
@@ -821,9 +821,14 @@ fn test_session_cursor_visible_in_splits_after_restore() {
         // Get cursor and scroll BEFORE first render
         let cursor_before_render = harness.cursor_position();
         let viewport_before = harness.editor().active_state().viewport.clone();
+        let (line_before, _) = harness
+            .editor()
+            .active_state()
+            .buffer
+            .position_to_line_col(cursor_before_render);
         eprintln!(
-            "[TEST] Before render: cursor={}, top_byte={}, top_view_line_offset={}",
-            cursor_before_render, viewport_before.top_byte, viewport_before.top_view_line_offset
+            "[TEST] Before render: cursor={} (line {}), top_byte={}, top_view_line_offset={}",
+            cursor_before_render, line_before + 1, viewport_before.top_byte, viewport_before.top_view_line_offset
         );
 
         harness.render().unwrap();
@@ -831,9 +836,22 @@ fn test_session_cursor_visible_in_splits_after_restore() {
         // Get cursor and scroll AFTER render
         let cursor_after_render = harness.cursor_position();
         let viewport_after = harness.editor().active_state().viewport.clone();
+        let (line_after, _) = harness
+            .editor()
+            .active_state()
+            .buffer
+            .position_to_line_col(cursor_after_render);
         eprintln!(
-            "[TEST] After render: cursor={}, top_byte={}, top_view_line_offset={}",
-            cursor_after_render, viewport_after.top_byte, viewport_after.top_view_line_offset
+            "[TEST] After render: cursor={} (line {}), top_byte={}, top_view_line_offset={}",
+            cursor_after_render, line_after + 1, viewport_after.top_byte, viewport_after.top_view_line_offset
+        );
+
+        // CRITICAL: Cursor must be on line 150 after restore
+        assert_eq!(
+            line_after + 1,
+            150,
+            "BUG: Cursor should be on line 150, but is on line {}",
+            line_after + 1
         );
 
         // Check if scroll position changed
@@ -844,8 +862,8 @@ fn test_session_cursor_visible_in_splits_after_restore() {
             );
         }
 
-        // Right split line 31 should be visible
-        harness.assert_screen_contains("Right Line 031");
+        // Right split line 150 should be visible
+        harness.assert_screen_contains("Right Line 150");
 
         // CRITICAL: Cursor must be visible after restore
         let (_, cursor_y) = harness.screen_cursor_position();
@@ -859,7 +877,28 @@ fn test_session_cursor_visible_in_splits_after_restore() {
         // Also check left split
         prev_split(&mut harness);
         harness.render().unwrap();
-        harness.assert_screen_contains("Left Line 041");
+
+        // Get cursor line in left split
+        let cursor_left = harness.cursor_position();
+        let (line_left, _) = harness
+            .editor()
+            .active_state()
+            .buffer
+            .position_to_line_col(cursor_left);
+        eprintln!(
+            "[TEST] Left split: cursor={} (line {})",
+            cursor_left, line_left + 1
+        );
+
+        // CRITICAL: Left split cursor must also be on line 150
+        assert_eq!(
+            line_left + 1,
+            150,
+            "BUG: Left split cursor should be on line 150, but is on line {}",
+            line_left + 1
+        );
+
+        harness.assert_screen_contains("Left Line 150");
 
         let (_, cursor_y) = harness.screen_cursor_position();
         assert!(
