@@ -3153,7 +3153,18 @@ impl Editor {
 
     /// Perform auto-save for all modified buffers if needed
     /// Returns the number of buffers saved, or an error
+    ///
+    /// This function is designed to be called frequently (every frame) and will:
+    /// - Return immediately if recovery is disabled
+    /// - Return immediately if the auto-save interval hasn't passed
+    /// - Return immediately if no buffers are modified
+    /// - Only save buffers that are marked as needing a save
     pub fn auto_save_dirty_buffers(&mut self) -> io::Result<usize> {
+        // Early exit if disabled
+        if !self.recovery_service.is_enabled() {
+            return Ok(0);
+        }
+
         // Check if enough time has passed since last auto-save
         let interval = std::time::Duration::from_secs(
             self.config.editor.auto_save_interval_secs as u64
@@ -3162,24 +3173,33 @@ impl Editor {
             return Ok(0);
         }
 
-        if !self.recovery_service.is_enabled() {
-            return Ok(0);
-        }
-
-        let mut saved_count = 0;
-
         // Collect buffer info first to avoid borrow issues
+        // Only include buffers that are both modified AND need recovery save
         let buffer_info: Vec<_> = self.buffers.iter()
             .filter_map(|(buffer_id, state)| {
                 if state.buffer.is_modified() {
                     let path = state.buffer.file_path().map(|p| p.to_path_buf());
                     let recovery_id = self.recovery_service.get_buffer_id(path.as_deref());
-                    Some((*buffer_id, recovery_id, path))
+                    // Only save if buffer needs auto-save (dirty flag set)
+                    if self.recovery_service.needs_auto_save(&recovery_id) {
+                        Some((*buffer_id, recovery_id, path))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
             })
             .collect();
+
+        // Early exit if nothing to save
+        if buffer_info.is_empty() {
+            // Still update the timer to avoid checking buffers too frequently
+            self.last_auto_save = std::time::Instant::now();
+            return Ok(0);
+        }
+
+        let mut saved_count = 0;
 
         for (buffer_id, recovery_id, path) in buffer_info {
             if let Some(state) = self.buffers.get(&buffer_id) {
@@ -3199,10 +3219,7 @@ impl Editor {
             }
         }
 
-        if saved_count > 0 {
-            self.last_auto_save = std::time::Instant::now();
-        }
-
+        self.last_auto_save = std::time::Instant::now();
         Ok(saved_count)
     }
 

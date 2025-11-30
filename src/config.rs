@@ -102,6 +102,7 @@ pub struct EditorConfig {
 
     /// Auto-save interval in seconds for file recovery
     /// Modified buffers are saved to recovery files at this interval.
+    /// Default: 2 seconds for fast recovery with minimal data loss.
     /// Set to 0 to disable periodic auto-save (manual recovery only).
     #[serde(default = "default_auto_save_interval")]
     pub auto_save_interval_secs: u32,
@@ -145,7 +146,7 @@ fn default_estimated_line_length() -> usize {
 }
 
 fn default_auto_save_interval() -> u32 {
-    30 // Auto-save every 30 seconds
+    2 // Auto-save every 2 seconds for fast recovery
 }
 
 impl Default for EditorConfig {

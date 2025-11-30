@@ -70,7 +70,7 @@ impl Default for RecoveryConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            auto_save_interval_secs: 30,
+            auto_save_interval_secs: 2,
             max_recovery_age_secs: 7 * 24 * 60 * 60, // 7 days
         }
     }
@@ -206,8 +206,16 @@ impl RecoveryService {
     }
 
     /// Check if a buffer needs auto-save
+    ///
+    /// Returns true if the buffer is dirty AND enough time has passed since
+    /// the last recovery save.
     pub fn needs_auto_save(&self, buffer_id: &str) -> bool {
-        if !self.config.enabled || !self.dirty_buffers.contains(buffer_id) {
+        if !self.config.enabled {
+            return false;
+        }
+
+        // Must be dirty to need auto-save
+        if !self.dirty_buffers.contains(buffer_id) {
             return false;
         }
 
