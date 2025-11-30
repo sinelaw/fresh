@@ -479,4 +479,256 @@ mod tests {
         assert!(json.contains("line_wrap"));
         assert!(!json.contains("line_numbers")); // None values skipped
     }
+
+    #[test]
+    fn test_split_layout_serialization() {
+        // Create a nested split layout
+        let layout = SerializedSplitNode::Split {
+            direction: SerializedSplitDirection::Vertical,
+            first: Box::new(SerializedSplitNode::Leaf {
+                file_path: Some(PathBuf::from("src/main.rs")),
+                split_id: 1,
+            }),
+            second: Box::new(SerializedSplitNode::Leaf {
+                file_path: Some(PathBuf::from("src/lib.rs")),
+                split_id: 2,
+            }),
+            ratio: 0.5,
+            split_id: 0,
+        };
+
+        let json = serde_json::to_string(&layout).unwrap();
+        let restored: SerializedSplitNode = serde_json::from_str(&json).unwrap();
+
+        // Verify the restored layout matches
+        match restored {
+            SerializedSplitNode::Split { direction, ratio, split_id, .. } => {
+                assert!(matches!(direction, SerializedSplitDirection::Vertical));
+                assert_eq!(ratio, 0.5);
+                assert_eq!(split_id, 0);
+            }
+            _ => panic!("Expected Split node"),
+        }
+    }
+
+    #[test]
+    fn test_file_state_serialization() {
+        let file_state = SerializedFileState {
+            cursor: SerializedCursor {
+                position: 1234,
+                anchor: Some(1000),
+                sticky_column: 15,
+            },
+            additional_cursors: vec![
+                SerializedCursor {
+                    position: 5000,
+                    anchor: None,
+                    sticky_column: 0,
+                },
+            ],
+            scroll: SerializedScroll {
+                top_byte: 500,
+                top_view_line_offset: 2,
+                left_column: 10,
+            },
+        };
+
+        let json = serde_json::to_string(&file_state).unwrap();
+        let restored: SerializedFileState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.cursor.position, 1234);
+        assert_eq!(restored.cursor.anchor, Some(1000));
+        assert_eq!(restored.cursor.sticky_column, 15);
+        assert_eq!(restored.additional_cursors.len(), 1);
+        assert_eq!(restored.scroll.top_byte, 500);
+        assert_eq!(restored.scroll.left_column, 10);
+    }
+
+    #[test]
+    fn test_bookmark_serialization() {
+        let mut bookmarks = HashMap::new();
+        bookmarks.insert('a', SerializedBookmark {
+            file_path: PathBuf::from("src/main.rs"),
+            position: 1234,
+        });
+        bookmarks.insert('b', SerializedBookmark {
+            file_path: PathBuf::from("src/lib.rs"),
+            position: 5678,
+        });
+
+        let json = serde_json::to_string(&bookmarks).unwrap();
+        let restored: HashMap<char, SerializedBookmark> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored.get(&'a').unwrap().position, 1234);
+        assert_eq!(restored.get(&'b').unwrap().file_path, PathBuf::from("src/lib.rs"));
+    }
+
+    #[test]
+    fn test_search_options_serialization() {
+        let options = SearchOptions {
+            case_sensitive: true,
+            whole_word: true,
+            use_regex: false,
+            confirm_each: true,
+        };
+
+        let json = serde_json::to_string(&options).unwrap();
+        let restored: SearchOptions = serde_json::from_str(&json).unwrap();
+
+        assert!(restored.case_sensitive);
+        assert!(restored.whole_word);
+        assert!(!restored.use_regex);
+        assert!(restored.confirm_each);
+    }
+
+    #[test]
+    fn test_full_session_round_trip() {
+        let mut session = Session::new(PathBuf::from("/home/user/myproject"));
+
+        // Configure split layout
+        session.split_layout = SerializedSplitNode::Split {
+            direction: SerializedSplitDirection::Horizontal,
+            first: Box::new(SerializedSplitNode::Leaf {
+                file_path: Some(PathBuf::from("README.md")),
+                split_id: 1,
+            }),
+            second: Box::new(SerializedSplitNode::Leaf {
+                file_path: Some(PathBuf::from("Cargo.toml")),
+                split_id: 2,
+            }),
+            ratio: 0.6,
+            split_id: 0,
+        };
+        session.active_split_id = 1;
+
+        // Add split state
+        session.split_states.insert(1, SerializedSplitViewState {
+            open_files: vec![PathBuf::from("README.md"), PathBuf::from("src/lib.rs")],
+            active_file_index: 0,
+            file_states: HashMap::new(),
+            tab_scroll_offset: 0,
+            view_mode: SerializedViewMode::Source,
+            compose_width: None,
+        });
+
+        // Add bookmarks
+        session.bookmarks.insert('m', SerializedBookmark {
+            file_path: PathBuf::from("src/main.rs"),
+            position: 100,
+        });
+
+        // Set search options
+        session.search_options.case_sensitive = true;
+        session.search_options.use_regex = true;
+
+        // Serialize and deserialize
+        let json = serde_json::to_string_pretty(&session).unwrap();
+        let restored: Session = serde_json::from_str(&json).unwrap();
+
+        // Verify everything matches
+        assert_eq!(restored.version, SESSION_VERSION);
+        assert_eq!(restored.working_dir, PathBuf::from("/home/user/myproject"));
+        assert_eq!(restored.active_split_id, 1);
+        assert!(restored.bookmarks.contains_key(&'m'));
+        assert!(restored.search_options.case_sensitive);
+        assert!(restored.search_options.use_regex);
+
+        // Verify split state
+        let split_state = restored.split_states.get(&1).unwrap();
+        assert_eq!(split_state.open_files.len(), 2);
+        assert_eq!(split_state.open_files[0], PathBuf::from("README.md"));
+    }
+
+    #[test]
+    fn test_session_file_save_load() {
+        use std::fs;
+
+        // Create a temporary directory for testing
+        let temp_dir = std::env::temp_dir().join("fresh_session_test");
+        let _ = fs::remove_dir_all(&temp_dir); // Clean up from previous runs
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let session_path = temp_dir.join("test_session.json");
+
+        // Create a session
+        let mut session = Session::new(temp_dir.clone());
+        session.search_options.case_sensitive = true;
+        session.bookmarks.insert('x', SerializedBookmark {
+            file_path: PathBuf::from("test.txt"),
+            position: 42,
+        });
+
+        // Save it directly to test path
+        let content = serde_json::to_string_pretty(&session).unwrap();
+        let temp_path = session_path.with_extension("json.tmp");
+        let mut file = std::fs::File::create(&temp_path).unwrap();
+        std::io::Write::write_all(&mut file, content.as_bytes()).unwrap();
+        file.sync_all().unwrap();
+        std::fs::rename(&temp_path, &session_path).unwrap();
+
+        // Load it back
+        let loaded_content = fs::read_to_string(&session_path).unwrap();
+        let loaded: Session = serde_json::from_str(&loaded_content).unwrap();
+
+        // Verify
+        assert_eq!(loaded.working_dir, temp_dir);
+        assert!(loaded.search_options.case_sensitive);
+        assert_eq!(loaded.bookmarks.get(&'x').unwrap().position, 42);
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_session_version_check() {
+        let session = Session::new(PathBuf::from("/test"));
+        assert_eq!(session.version, SESSION_VERSION);
+
+        // Serialize with a future version number
+        let mut json_value: serde_json::Value = serde_json::to_value(&session).unwrap();
+        json_value["version"] = serde_json::json!(999);
+
+        let json = serde_json::to_string(&json_value).unwrap();
+        let restored: Session = serde_json::from_str(&json).unwrap();
+
+        // Should still deserialize, but version is 999
+        assert_eq!(restored.version, 999);
+    }
+
+    #[test]
+    fn test_empty_session_histories() {
+        let histories = SessionHistories::default();
+        let json = serde_json::to_string(&histories).unwrap();
+
+        // Empty histories should serialize to empty object (due to skip_serializing_if)
+        assert_eq!(json, "{}");
+
+        // But should deserialize back correctly
+        let restored: SessionHistories = serde_json::from_str(&json).unwrap();
+        assert!(restored.search.is_empty());
+        assert!(restored.replace.is_empty());
+    }
+
+    #[test]
+    fn test_file_explorer_state() {
+        let state = FileExplorerState {
+            visible: true,
+            width_percent: 0.25,
+            expanded_dirs: vec![
+                PathBuf::from("src"),
+                PathBuf::from("src/app"),
+                PathBuf::from("tests"),
+            ],
+            scroll_offset: 5,
+        };
+
+        let json = serde_json::to_string(&state).unwrap();
+        let restored: FileExplorerState = serde_json::from_str(&json).unwrap();
+
+        assert!(restored.visible);
+        assert_eq!(restored.width_percent, 0.25);
+        assert_eq!(restored.expanded_dirs.len(), 3);
+        assert_eq!(restored.scroll_offset, 5);
+    }
 }
