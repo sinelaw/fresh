@@ -76,6 +76,8 @@ impl SessionTracker {
 impl Editor {
     /// Capture current editor state into a Session
     pub fn capture_session(&self) -> Session {
+        tracing::debug!("Capturing session for {:?}", self.working_dir);
+
         let split_layout = serialize_split_node(
             self.split_manager.root(),
             &self.buffer_metadata,
@@ -84,15 +86,24 @@ impl Editor {
 
         let mut split_states = HashMap::new();
         for (split_id, view_state) in &self.split_view_states {
-            split_states.insert(
-                split_id.0,
-                serialize_split_view_state(
-                    view_state,
-                    &self.buffer_metadata,
-                    &self.working_dir,
-                ),
+            let serialized = serialize_split_view_state(
+                view_state,
+                &self.buffer_metadata,
+                &self.working_dir,
             );
+            tracing::trace!(
+                "Split {:?}: {} open files",
+                split_id,
+                serialized.open_files.len()
+            );
+            split_states.insert(split_id.0, serialized);
         }
+
+        tracing::debug!(
+            "Captured {} split states, active_split={}",
+            split_states.len(),
+            self.split_manager.active_split().0
+        );
 
         // Capture file explorer state
         let file_explorer = if let Some(ref explorer) = self.file_explorer {
@@ -173,17 +184,24 @@ impl Editor {
     ///
     /// Returns true if a session was successfully loaded and applied.
     pub fn try_restore_session(&mut self) -> Result<bool, SessionError> {
+        tracing::debug!("Attempting to restore session for {:?}", self.working_dir);
         match Session::load(&self.working_dir)? {
             Some(session) => {
+                tracing::info!("Found session, applying...");
                 self.apply_session(&session)?;
                 Ok(true)
             }
-            None => Ok(false),
+            None => {
+                tracing::debug!("No session found for {:?}", self.working_dir);
+                Ok(false)
+            }
         }
     }
 
     /// Apply a loaded session to the editor
     pub fn apply_session(&mut self, session: &Session) -> Result<(), SessionError> {
+        tracing::debug!("Applying session with {} split states", session.split_states.len());
+
         // 1. Apply config overrides
         if let Some(line_numbers) = session.config_overrides.line_numbers {
             self.config.editor.line_numbers = line_numbers;
@@ -225,17 +243,29 @@ impl Editor {
         // 5. Open files from the session and build buffer mappings
         // This is done by collecting all unique file paths from the split layout
         let file_paths = collect_file_paths(&session.split_layout);
+        tracing::debug!("Session has {} files to restore: {:?}", file_paths.len(), file_paths);
         let mut path_to_buffer: HashMap<PathBuf, BufferId> = HashMap::new();
 
         for rel_path in file_paths {
             let abs_path = self.working_dir.join(&rel_path);
+            tracing::trace!("Checking file: {:?} (exists: {})", abs_path, abs_path.exists());
             if abs_path.exists() {
                 // Open the file (this will reuse existing buffer if already open)
-                if let Ok(buffer_id) = self.open_file_internal(&abs_path) {
-                    path_to_buffer.insert(rel_path, buffer_id);
+                match self.open_file_internal(&abs_path) {
+                    Ok(buffer_id) => {
+                        tracing::debug!("Opened file {:?} as buffer {:?}", rel_path, buffer_id);
+                        path_to_buffer.insert(rel_path, buffer_id);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to open file {:?}: {}", abs_path, e);
+                    }
                 }
+            } else {
+                tracing::debug!("Skipping non-existent file: {:?}", abs_path);
             }
         }
+
+        tracing::debug!("Opened {} files from session", path_to_buffer.len());
 
         // 6. Rebuild split layout using the buffer mappings
         // Note: This is a simplified approach - full implementation would rebuild
@@ -315,13 +345,8 @@ impl Editor {
             }
         }
 
-        // File not open, need to open it
-        // This is a simplified version - the full implementation would use
-        // the Editor's open_file method
-        Err(SessionError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("Session restore: file opening not yet implemented for {:?}", path),
-        )))
+        // File not open, open it using the Editor's open_file method
+        self.open_file(path).map_err(SessionError::Io)
     }
 }
 

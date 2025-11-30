@@ -410,12 +410,23 @@ impl Session {
     /// Load session for a working directory (if exists)
     pub fn load(working_dir: &Path) -> Result<Option<Session>, SessionError> {
         let path = get_session_path(working_dir)?;
+        tracing::debug!("Looking for session at {:?}", path);
+
         if !path.exists() {
+            tracing::debug!("Session file does not exist");
             return Ok(None);
         }
 
+        tracing::debug!("Loading session from {:?}", path);
         let content = std::fs::read_to_string(&path)?;
         let session: Session = serde_json::from_str(&content)?;
+
+        tracing::debug!(
+            "Loaded session: version={}, split_states={}, active_split={}",
+            session.version,
+            session.split_states.len(),
+            session.active_split_id
+        );
 
         // Validate working_dir matches (canonicalize both for comparison)
         let expected = working_dir
@@ -427,11 +438,13 @@ impl Session {
             .unwrap_or_else(|_| session.working_dir.clone());
 
         if expected != found {
+            tracing::warn!("Session working_dir mismatch: expected {:?}, found {:?}", expected, found);
             return Err(SessionError::WorkdirMismatch { expected, found });
         }
 
         // Check version compatibility
         if session.version > SESSION_VERSION {
+            tracing::warn!("Session version {} is newer than supported {}", session.version, SESSION_VERSION);
             return Err(SessionError::VersionTooNew {
                 version: session.version,
                 max_supported: SESSION_VERSION,
@@ -449,6 +462,7 @@ impl Session {
     /// 3. Atomically rename to the final path
     pub fn save(&self) -> Result<(), SessionError> {
         let path = get_session_path(&self.working_dir)?;
+        tracing::debug!("Saving session to {:?}", path);
 
         // Ensure directory exists
         if let Some(parent) = path.parent() {
@@ -457,6 +471,7 @@ impl Session {
 
         // Serialize to JSON
         let content = serde_json::to_string_pretty(self)?;
+        tracing::trace!("Session JSON size: {} bytes", content.len());
 
         // Write atomically: temp file + rename
         let temp_path = path.with_extension("json.tmp");
@@ -470,6 +485,7 @@ impl Session {
 
         // Atomic rename
         std::fs::rename(&temp_path, &path)?;
+        tracing::info!("Session saved to {:?}", path);
 
         Ok(())
     }
