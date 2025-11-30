@@ -241,6 +241,12 @@ impl Viewport {
         cursor: &Cursor,
         gutter_width: usize,
     ) -> bool {
+        // Check if we should skip sync due to session restore
+        // This prevents the restored scroll position from being overwritten
+        if self.should_skip_resize_sync() {
+            return false;
+        }
+
         let viewport_height = self.visible_line_count();
         if view_lines.is_empty() || viewport_height == 0 {
             return false;

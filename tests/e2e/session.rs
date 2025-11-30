@@ -666,6 +666,72 @@ fn test_session_restores_scroll_in_splits() {
     }
 }
 
+/// Test that scroll position is preserved even when cursor is NOT at the scroll position
+/// This reproduces the bug where scrolling the viewport (without moving cursor) is reset
+/// after session restore because ensure_visible recenters on the cursor.
+#[test]
+fn test_session_restores_scroll_without_cursor_movement() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Create a file long enough to require scrolling (terminal is 24 lines)
+    let file = project_dir.join("long.txt");
+    let content: String = (1..=100)
+        .map(|i| format!("Line {:03} of the document\n", i))
+        .collect();
+    std::fs::write(&file, &content).unwrap();
+
+    // First session: scroll viewport without moving cursor
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Open file - cursor at line 1
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains("Line 001");
+
+        // Scroll viewport down using Ctrl+Down (scrolls without moving cursor)
+        // Scroll down 30 lines so we're showing lines 31-50ish
+        for _ in 0..30 {
+            harness
+                .send_key(KeyCode::Down, KeyModifiers::CONTROL)
+                .unwrap();
+        }
+        harness.render().unwrap();
+
+        // Viewport should now show line 31+ but cursor is still at line 1
+        // Note: Line 001 should NOT be visible now
+        harness.assert_screen_contains("Line 031");
+
+        harness.editor_mut().save_session().unwrap();
+    }
+
+    // Second session: restore and verify scroll is preserved
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        harness.editor_mut().try_restore_session().unwrap();
+        harness.render().unwrap();
+
+        // BUG: Without the fix, scroll gets reset to show cursor at line 1
+        // The scroll position should be preserved showing line 31
+        harness.assert_screen_contains("Line 031");
+    }
+}
+
 /// Test that session saves and restores split layout
 #[test]
 fn test_session_restores_splits() {
