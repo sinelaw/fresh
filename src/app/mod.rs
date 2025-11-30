@@ -3165,6 +3165,63 @@ impl Editor {
         self.recovery_service.list_recoverable()
     }
 
+    /// Recover all buffers from recovery files
+    /// Returns the number of buffers recovered
+    pub fn recover_all_buffers(&mut self) -> io::Result<usize> {
+        use crate::services::recovery::RecoveryResult;
+
+        let entries = self.recovery_service.list_recoverable()?;
+        let mut recovered_count = 0;
+
+        for entry in entries {
+            match self.recovery_service.accept_recovery(&entry) {
+                Ok(RecoveryResult::Recovered { original_path, content }) => {
+                    // Convert content to string
+                    let text = String::from_utf8_lossy(&content).into_owned();
+
+                    if let Some(path) = original_path {
+                        // Open the file path (this creates the buffer)
+                        if self.open_file(&path).is_ok() {
+                            // Replace buffer content with recovered content
+                            let state = self.active_state_mut();
+                            let total = state.buffer.total_bytes();
+                            state.buffer.delete(0..total);
+                            state.buffer.insert(0, &text);
+                            // Mark as modified since it differs from disk
+                            state.buffer.set_modified(true);
+                            recovered_count += 1;
+                            tracing::info!("Recovered buffer: {}", path.display());
+                        }
+                    } else {
+                        // Unsaved buffer - create new buffer with recovered content
+                        self.new_buffer();
+                        let state = self.active_state_mut();
+                        state.buffer.insert(0, &text);
+                        state.buffer.set_modified(true);
+                        recovered_count += 1;
+                        tracing::info!("Recovered unsaved buffer");
+                    }
+                }
+                Ok(RecoveryResult::Corrupted { id, reason }) => {
+                    tracing::warn!("Recovery file {} corrupted: {}", id, reason);
+                }
+                Ok(RecoveryResult::NotFound { id }) => {
+                    tracing::warn!("Recovery file {} not found", id);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to recover {}: {}", entry.id, e);
+                }
+            }
+        }
+
+        Ok(recovered_count)
+    }
+
+    /// Discard all recovery files without recovering
+    pub fn discard_all_recovery(&mut self) -> io::Result<usize> {
+        self.recovery_service.discard_all_recovery()
+    }
+
     /// Perform auto-save for all modified buffers if needed
     /// Returns the number of buffers saved, or an error
     ///

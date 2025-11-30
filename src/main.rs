@@ -211,19 +211,18 @@ fn main() -> io::Result<()> {
         editor.show_file_explorer();
     }
 
-    // Check for recovery files from a crash
+    // Check for recovery files from a crash and recover them
     if editor.has_recovery_files().unwrap_or(false) {
-        // TODO: Show recovery prompt to user
-        // For now, just log a message
-        tracing::info!("Recovery files found from previous session");
-        if let Ok(entries) = editor.list_recoverable_files() {
-            for entry in &entries {
-                tracing::info!(
-                    "  - {} ({}, {})",
-                    entry.metadata.display_name(),
-                    entry.metadata.format_description(),
-                    entry.age_display()
-                );
+        tracing::info!("Recovery files found from previous session, recovering...");
+        match editor.recover_all_buffers() {
+            Ok(count) if count > 0 => {
+                tracing::info!("Recovered {} buffer(s)", count);
+            }
+            Ok(_) => {
+                tracing::info!("No buffers to recover");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to recover buffers: {}", e);
             }
         }
     }
