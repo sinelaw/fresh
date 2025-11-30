@@ -1108,24 +1108,40 @@ impl TextBuffer {
     /// (i.e., the modifications), not the original file content. This allows
     /// efficient incremental recovery without reading/writing the entire file.
     ///
-    /// Returns: Vec of (doc_offset, data) for each modified chunk
+    /// Returns: Vec of (original_file_offset, data) for each modified chunk
+    /// The offset is the position in the ORIGINAL file where this chunk should be inserted.
     pub fn get_recovery_chunks(&self) -> Vec<(usize, Vec<u8>)> {
         use crate::model::piece_tree::BufferLocation;
 
         let mut chunks = Vec::new();
         let total = self.total_bytes();
 
+        // Track cumulative bytes from Stored pieces as we iterate.
+        // This gives us the original file offset for Added pieces.
+        // The key insight: Added pieces should be inserted at the position
+        // corresponding to where they appear relative to Stored content,
+        // not their position in the current document.
+        let mut stored_bytes_before = 0;
+
         for piece in self.piece_tree.iter_pieces_in_range(0, total) {
-            // Only collect pieces from Added buffers (modifications)
-            if let BufferLocation::Added(buffer_id) = piece.location {
-                if let Some(buffer) = self.buffers.iter().find(|b| b.id == buffer_id) {
-                    // Get the data from the buffer if loaded
-                    if let Some(data) = buffer.get_data() {
-                        // Extract just the portion this piece references
-                        let start = piece.buffer_offset;
-                        let end = start + piece.bytes;
-                        if end <= data.len() {
-                            chunks.push((piece.doc_offset, data[start..end].to_vec()));
+            match piece.location {
+                BufferLocation::Stored(_) => {
+                    // Accumulate stored bytes to track position in original file
+                    stored_bytes_before += piece.bytes;
+                }
+                BufferLocation::Added(buffer_id) => {
+                    if let Some(buffer) = self.buffers.iter().find(|b| b.id == buffer_id) {
+                        // Get the data from the buffer if loaded
+                        if let Some(data) = buffer.get_data() {
+                            // Extract just the portion this piece references
+                            let start = piece.buffer_offset;
+                            let end = start + piece.bytes;
+                            if end <= data.len() {
+                                // Use stored_bytes_before as the original file offset.
+                                // This is where this insertion should go relative to
+                                // the original file content.
+                                chunks.push((stored_bytes_before, data[start..end].to_vec()));
+                            }
                         }
                     }
                 }

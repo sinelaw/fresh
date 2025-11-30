@@ -917,3 +917,108 @@ fn test_recovery_after_save_with_size_change() {
         println!("No chunked recovery entry found - file might be using full content format");
     }
 }
+
+/// Regression test: inserting at the end of a large file should not crash recovery
+///
+/// Bug scenario:
+/// 1. Open large file of size N
+/// 2. Insert content at the end (position N)
+/// 3. Recovery saves chunk with doc_offset = N
+/// 4. On recovery, we try to slice original_content[0..N] which is valid
+/// 5. BUT if another insert happens, its doc_offset becomes N+X where X is previous insert size
+/// 6. Now we try original_content[..N+X] which is out of bounds!
+///
+/// Root cause: get_recovery_chunks() returns doc_offset (position in current document)
+/// but reconstruct_from_chunks() uses it as offset into the ORIGINAL file.
+#[test]
+fn test_recovery_insert_at_end_of_large_file() {
+    use fresh::services::recovery::RecoveryStorage;
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("large_file.txt");
+
+    // Create a large file
+    let file_size = 100_000;
+    let original_content = "X".repeat(file_size);
+    fs::write(&file_path, &original_content).unwrap();
+
+    // Create editor with low threshold to force large file mode
+    let mut config = fresh::config::Config::default();
+    config.editor.large_file_threshold_bytes = 1000;
+    config.editor.auto_save_interval_secs = 0;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    // Open the large file
+    harness.open_file(&file_path).unwrap();
+    assert!(
+        harness.editor().active_state().buffer.is_large_file(),
+        "Should be in large file mode"
+    );
+
+    // Go to end of file and insert content
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    harness.type_text("FIRST").unwrap();
+
+    // Insert MORE content - this is key to triggering the bug
+    // After "FIRST" is inserted, doc positions shift by 5
+    // So the next insert's doc_offset will be file_size + 5 = 100005
+    // But original file is only 100000 bytes!
+    harness.type_text("SECOND").unwrap();
+
+    // Trigger auto-save to create recovery chunks
+    let saved = harness.editor_mut().auto_save_dirty_buffers().unwrap();
+    assert!(saved > 0, "Should have saved recovery");
+
+    // Now simulate restart and recovery - this is where the crash happens
+    drop(harness);
+
+    let storage = RecoveryStorage::new().unwrap();
+    let entries = storage.list_entries().unwrap();
+
+    let our_entry = entries
+        .iter()
+        .find(|e| {
+            e.metadata.original_path
+                .as_ref()
+                .map(|p| p.ends_with("large_file.txt"))
+                .unwrap_or(false)
+        });
+
+    if let Some(entry) = our_entry {
+        // This should NOT panic with "range end index X out of range for slice of length Y"
+        let result = storage.reconstruct_from_chunks(&entry.id, &file_path);
+
+        match result {
+            Ok(content) => {
+                let content_str = String::from_utf8_lossy(&content);
+                assert!(
+                    content_str.ends_with("FIRSTSECOND"),
+                    "Recovered content should end with our insertions. Got: ...{}",
+                    &content_str[content_str.len().saturating_sub(50)..]
+                );
+                println!("Recovery successful! Content ends with: ...{}",
+                    &content_str[content_str.len().saturating_sub(20)..]);
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                if error_msg.contains("range") && error_msg.contains("out of range") {
+                    panic!(
+                        "REGRESSION: Recovery crashed with slice out of bounds!\n\
+                         Error: {}\n\
+                         This happens because get_recovery_chunks() returns doc_offset \
+                         (position in modified document) but reconstruct_from_chunks() \
+                         uses it as offset into the original file.",
+                        error_msg
+                    );
+                } else {
+                    panic!("Recovery failed unexpectedly: {}", e);
+                }
+            }
+        }
+    } else {
+        println!("No chunked recovery entry found");
+    }
+}
