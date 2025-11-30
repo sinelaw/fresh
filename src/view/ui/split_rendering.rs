@@ -652,8 +652,13 @@ impl SplitRenderer {
                 .resize(content_rect.width, content_rect.height);
         }
 
+        // Check if we should skip sync due to session restore
+        // This prevents the restored scroll position from being overwritten
+        let skip_sync = state.viewport.should_skip_resize_sync();
+
         // Sync viewport with cursor if size changed or if marked for sync (cursor moved)
-        if size_changed || state.viewport.needs_sync() {
+        // But skip if this is the first resize after session restore
+        if !skip_sync && (size_changed || state.viewport.needs_sync()) {
             let primary = *state.cursors.primary();
             state.viewport.sync_with_cursor(&mut state.buffer, &primary);
         }

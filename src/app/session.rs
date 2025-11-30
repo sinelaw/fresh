@@ -326,6 +326,12 @@ impl Editor {
             }
         }
 
+        tracing::debug!(
+            "Session restore complete: {} splits, {} buffers",
+            self.split_view_states.len(),
+            self.buffers.len()
+        );
+
         Ok(())
     }
 
@@ -367,7 +373,7 @@ impl Editor {
                     let _ = self.split_manager.set_split_buffer(split_id_val, buffer_id);
                     split_id_val
                 } else {
-                    // This shouldn't happen - leaves after splits are created by split_active
+                    // Non-first leaves use the active split (created by split_active)
                     self.split_manager.active_split()
                 };
 
@@ -481,6 +487,14 @@ impl Editor {
                         view_state.viewport.top_view_line_offset =
                             file_state.scroll.top_view_line_offset;
                         view_state.viewport.left_column = file_state.scroll.left_column;
+                        // Mark viewport to skip sync on first resize after session restore
+                        // This prevents ensure_visible from overwriting the restored scroll position
+                        view_state.viewport.set_skip_resize_sync();
+
+                        tracing::trace!(
+                            "Restored SplitViewState for {:?}: cursor={}, top_byte={}",
+                            rel_path, cursor_pos, view_state.viewport.top_byte
+                        );
                     }
 
                     // Also set in EditorState (authoritative)
@@ -497,6 +511,8 @@ impl Editor {
                         editor_state.viewport.top_view_line_offset =
                             file_state.scroll.top_view_line_offset;
                         editor_state.viewport.left_column = file_state.scroll.left_column;
+                        // Mark viewport to skip sync on first resize after session restore
+                        editor_state.viewport.set_skip_resize_sync();
                     }
                     break;
                 }

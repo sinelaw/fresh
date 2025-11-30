@@ -38,6 +38,11 @@ pub struct Viewport {
     /// When true, ensure_visible needs to be called before rendering
     /// This allows batching multiple cursor movements into a single viewport update
     needs_sync: bool,
+
+    /// Whether to skip viewport sync on next resize
+    /// This is set when restoring a session to prevent the restored scroll position
+    /// from being overwritten by ensure_visible during the first render
+    skip_resize_sync: bool,
 }
 
 impl Viewport {
@@ -53,7 +58,21 @@ impl Viewport {
             horizontal_scroll_offset: 5,
             line_wrap_enabled: false,
             needs_sync: false,
+            skip_resize_sync: false,
         }
+    }
+
+    /// Mark viewport to skip sync on next resize (used after session restore)
+    pub fn set_skip_resize_sync(&mut self) {
+        self.skip_resize_sync = true;
+    }
+
+    /// Check and clear the skip_resize_sync flag
+    /// Returns true if sync should be skipped
+    pub fn should_skip_resize_sync(&mut self) -> bool {
+        let skip = self.skip_resize_sync;
+        self.skip_resize_sync = false;
+        skip
     }
 
     /// Set the scroll offset
