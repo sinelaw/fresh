@@ -78,7 +78,7 @@ proptest! {
         }
 
         // Get final state
-        let buffer_content = harness.get_buffer_content();
+        let buffer_content = harness.get_buffer_content().unwrap();
         let shadow_content = harness.get_shadow_string();
 
         // They should match!

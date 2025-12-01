@@ -332,8 +332,9 @@ impl EditorTestHarness {
         self.editor.open_file(path)?;
         self.render()?;
 
-        // Initialize shadow string with the file content
-        self.shadow_string = self.get_buffer_content();
+        // Initialize shadow string with the file content (if available)
+        // For large files with lazy loading, shadow validation is not supported
+        self.shadow_string = self.get_buffer_content().unwrap_or_default();
         self.shadow_cursor = self.cursor_position();
 
         Ok(())
@@ -757,13 +758,17 @@ impl EditorTestHarness {
     }
 
     /// Get the buffer content (not screen, actual buffer text)
-    pub fn get_buffer_content(&self) -> String {
-        self.editor.active_state().buffer.to_string().unwrap()
+    /// Returns None for large files with unloaded regions (lazy loading)
+    pub fn get_buffer_content(&self) -> Option<String> {
+        self.editor.active_state().buffer.to_string()
     }
 
     /// Verify buffer content matches expected
+    /// Panics if buffer has unloaded regions (large file mode)
     pub fn assert_buffer_content(&self, expected: &str) {
-        let actual = self.get_buffer_content();
+        let actual = self
+            .get_buffer_content()
+            .expect("Cannot assert buffer content: buffer has unloaded regions (large file mode)");
 
         // Also verify shadow string matches to catch discrepancies (only if validation is enabled)
         if self.enable_shadow_validation {
@@ -1212,7 +1217,7 @@ mod tests {
     #[test]
     fn test_buffer_content() {
         let harness = EditorTestHarness::new(80, 24).unwrap();
-        let content = harness.get_buffer_content();
+        let content = harness.get_buffer_content().unwrap();
         assert_eq!(content, ""); // New buffer is empty
     }
 }

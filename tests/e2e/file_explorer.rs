@@ -237,7 +237,7 @@ fn test_file_explorer_open_file() {
     println!("After trying to open:\n{screen_after_open}");
 
     // If a file was opened, buffer should have content
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     if !buffer_content.is_empty() {
         // A file was opened - verify it's our test file
         assert_eq!(

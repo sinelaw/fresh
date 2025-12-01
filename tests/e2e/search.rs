@@ -461,7 +461,7 @@ fn test_interactive_replace_wrap_around() {
     harness.assert_screen_contains("Replaced 2 occ");
 
     // Verify the buffer content has the expected replacements
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
 
     // We replaced:
     // - Third "foo" (at 29) -> "XXX"

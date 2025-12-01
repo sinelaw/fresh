@@ -129,7 +129,7 @@ fn test_crlf_editing() {
     harness.assert_screen_contains("World");
 
     // Verify buffer content has the edit
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(
         buffer_content.contains("Hello there"),
         "Buffer should contain edited text"

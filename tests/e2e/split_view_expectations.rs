@@ -68,14 +68,14 @@ fn test_horizontal_split_shares_same_buffer() {
     harness.type_text("Original content").unwrap();
     harness.render().unwrap();
 
-    let original_content = harness.get_buffer_content();
+    let original_content = harness.get_buffer_content().unwrap();
     assert_eq!(original_content, "Original content");
 
     // Split horizontally
     split_horizontal(&mut harness);
 
     // New split should show the SAME buffer content
-    let new_split_content = harness.get_buffer_content();
+    let new_split_content = harness.get_buffer_content().unwrap();
     assert_eq!(
         new_split_content, "Original content",
         "New split should show the same buffer, got '{}'",
@@ -106,7 +106,7 @@ fn test_vertical_split_shares_same_buffer() {
     split_vertical(&mut harness);
 
     // New split should show the SAME buffer content
-    let new_split_content = harness.get_buffer_content();
+    let new_split_content = harness.get_buffer_content().unwrap();
     assert_eq!(
         new_split_content, "Buffer content",
         "New split should show the same buffer"
@@ -133,7 +133,7 @@ fn test_typing_modifies_shared_buffer() {
     split_vertical(&mut harness);
 
     // Verify new split shows same content
-    assert_eq!(harness.get_buffer_content(), "Hello");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Hello");
 
     // New split has independent cursor at position 0
     // Move cursor to end before typing
@@ -144,7 +144,7 @@ fn test_typing_modifies_shared_buffer() {
     harness.render().unwrap();
 
     // Current buffer should now be "Hello World"
-    assert_eq!(harness.get_buffer_content(), "Hello World");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Hello World");
 
     // Navigate back to first split
     harness
@@ -158,7 +158,7 @@ fn test_typing_modifies_shared_buffer() {
     harness.render().unwrap();
 
     // First split should ALSO show "Hello World" (same buffer)
-    assert_eq!(harness.get_buffer_content(), "Hello World");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Hello World");
 }
 
 /// Test that each split has independent cursor position for the same buffer
@@ -183,7 +183,7 @@ fn test_independent_cursor_positions_same_buffer() {
     harness.render().unwrap();
 
     // New split should show same buffer
-    assert_eq!(harness.get_buffer_content(), "ABCDEFGHIJ");
+    assert_eq!(harness.get_buffer_content().unwrap(), "ABCDEFGHIJ");
 
     // Move cursor in second split to end
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
@@ -295,7 +295,7 @@ fn test_split_navigation_circular() {
     harness.render().unwrap();
 
     // All splits show same buffer, but cursor positions differ
-    assert_eq!(harness.get_buffer_content(), "Shared buffer");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Shared buffer");
 
     // Keep navigating to verify circular behavior
     harness
@@ -347,7 +347,7 @@ fn test_close_split_expands_remaining() {
     harness.assert_screen_contains("Closed split");
 
     // Buffer content should still be accessible
-    assert_eq!(harness.get_buffer_content(), "Buffer content");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Buffer content");
 }
 
 /// Test that each split can open different files
@@ -365,16 +365,16 @@ fn test_split_with_different_files() {
     // Open first file
     harness.open_file(&file1).unwrap();
     harness.render().unwrap();
-    assert_eq!(harness.get_buffer_content(), "Content of file 1");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Content of file 1");
 
     // Create vertical split (initially shows same buffer)
     split_vertical(&mut harness);
-    assert_eq!(harness.get_buffer_content(), "Content of file 1");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Content of file 1");
 
     // Open different file in new split
     harness.open_file(&file2).unwrap();
     harness.render().unwrap();
-    assert_eq!(harness.get_buffer_content(), "Content of file 2");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Content of file 2");
 
     // Verify both file names appear in the UI
     harness.assert_screen_contains("file1.txt");
@@ -392,7 +392,7 @@ fn test_split_with_different_files() {
     harness.render().unwrap();
 
     // First split should still show file1 content
-    assert_eq!(harness.get_buffer_content(), "Content of file 1");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Content of file 1");
 }
 
 /// Test nested splits (3+ levels deep)
@@ -413,7 +413,7 @@ fn test_nested_splits_maintain_hierarchy() {
     split_vertical(&mut harness);
 
     // We should now have 4 splits, all showing same buffer
-    assert_eq!(harness.get_buffer_content(), "Base content");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Base content");
 
     // Navigate through all splits to verify they exist
     for _ in 0..4 {
@@ -428,7 +428,7 @@ fn test_nested_splits_maintain_hierarchy() {
         harness.render().unwrap();
 
         // All splits show same buffer
-        assert_eq!(harness.get_buffer_content(), "Base content");
+        assert_eq!(harness.get_buffer_content().unwrap(), "Base content");
     }
 }
 
@@ -447,7 +447,7 @@ fn test_undo_redo_affects_shared_buffer() {
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
     harness.type_text(" World").unwrap();
     harness.render().unwrap();
-    assert_eq!(harness.get_buffer_content(), "Hello World");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Hello World");
 
     // Undo in second split (affects shared buffer)
     harness
@@ -455,7 +455,7 @@ fn test_undo_redo_affects_shared_buffer() {
         .unwrap();
     harness.render().unwrap();
 
-    let after_undo = harness.get_buffer_content();
+    let after_undo = harness.get_buffer_content().unwrap();
 
     // Navigate back to first split
     harness
@@ -470,7 +470,7 @@ fn test_undo_redo_affects_shared_buffer() {
 
     // First split should also show the undone state (same buffer)
     assert_eq!(
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         after_undo,
         "Both splits should show same buffer state after undo"
     );
@@ -528,7 +528,7 @@ fn test_delete_visible_in_all_splits() {
         .unwrap();
     harness.render().unwrap();
 
-    assert_eq!(harness.get_buffer_content(), "ABC");
+    assert_eq!(harness.get_buffer_content().unwrap(), "ABC");
 
     // Navigate back to first split
     harness
@@ -542,7 +542,7 @@ fn test_delete_visible_in_all_splits() {
     harness.render().unwrap();
 
     // First split should also show "ABC" (same buffer)
-    assert_eq!(harness.get_buffer_content(), "ABC");
+    assert_eq!(harness.get_buffer_content().unwrap(), "ABC");
 }
 
 /// Test that cursor movements don't affect other splits
@@ -609,7 +609,7 @@ fn test_split_with_minimal_height() {
     // Should be able to type in split (modifying shared buffer)
     harness.type_text(" - modified").unwrap();
     harness.render().unwrap();
-    assert!(harness.get_buffer_content().contains("modified"));
+    assert!(harness.get_buffer_content().unwrap().contains("modified"));
 }
 
 /// Test that copy/paste works across splits (shared clipboard)
@@ -640,7 +640,7 @@ fn test_clipboard_shared_across_splits() {
     harness.render().unwrap();
 
     // Should have "CopyThis" + "CopyThis" = "CopyThisCopyThis"
-    assert_eq!(harness.get_buffer_content(), "CopyThisCopyThis");
+    assert_eq!(harness.get_buffer_content().unwrap(), "CopyThisCopyThis");
 }
 
 /// Test that cursor positions in other splits adjust when buffer is edited
@@ -682,7 +682,7 @@ fn test_cursor_adjustment_on_shared_buffer_edit() {
     harness.render().unwrap();
 
     // Buffer is now "XXXABCDEFGHIJ"
-    assert_eq!(harness.get_buffer_content(), "XXXABCDEFGHIJ");
+    assert_eq!(harness.get_buffer_content().unwrap(), "XXXABCDEFGHIJ");
 
     // Navigate back to second split
     harness

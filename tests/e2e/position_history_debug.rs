@@ -16,7 +16,7 @@ fn test_debug_position_history() {
     println!(
         "After Ctrl+N: cursor at {}, content: {:?}",
         harness.cursor_position(),
-        harness.get_buffer_content()
+        harness.get_buffer_content().unwrap()
     );
 
     harness.type_text("Buffer 2").unwrap();
@@ -29,14 +29,14 @@ fn test_debug_position_history() {
     println!(
         "After Ctrl+N: cursor at {}, content: {:?}",
         harness.cursor_position(),
-        harness.get_buffer_content()
+        harness.get_buffer_content().unwrap()
     );
 
     harness.type_text("Buffer 3").unwrap();
     println!(
         "Buffer 3: cursor at {}, content: {:?}",
         harness.cursor_position(),
-        harness.get_buffer_content()
+        harness.get_buffer_content().unwrap()
     );
 
     // Navigate back
@@ -45,11 +45,11 @@ fn test_debug_position_history() {
     println!(
         "After Alt+Left: cursor at {}, content: {:?}",
         harness.cursor_position(),
-        harness.get_buffer_content()
+        harness.get_buffer_content().unwrap()
     );
 
     // Check content
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     println!("Final content: {content:?}");
     assert_eq!(
         content, "Buffer 2",

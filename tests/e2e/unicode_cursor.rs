@@ -83,7 +83,7 @@ fn test_cursor_sync_with_non_ascii_box_drawing_chars() {
     harness.type_text("X").unwrap();
 
     // Verify that 'X' appears at the expected position in the buffer
-    let buffer_content_after = harness.get_buffer_content();
+    let buffer_content_after = harness.get_buffer_content().unwrap();
     println!("Buffer after insert: {:?}", buffer_content_after);
 
     // The 'X' should be inserted at buffer_pos_before_insert

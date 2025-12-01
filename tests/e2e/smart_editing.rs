@@ -30,7 +30,7 @@ fn test_auto_close_parenthesis() {
     harness.type_text("fn main(").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "fn main()",
         "Opening paren should auto-close with closing paren"
@@ -58,7 +58,7 @@ fn test_auto_close_square_bracket() {
     harness.type_text("let arr = [").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(content, "let arr = []", "Opening bracket should auto-close");
 }
 
@@ -76,7 +76,7 @@ fn test_auto_close_curly_brace() {
     harness.type_text("struct Foo {").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(content, "struct Foo {}", "Opening brace should auto-close");
 }
 
@@ -94,7 +94,7 @@ fn test_auto_close_double_quotes() {
     harness.type_text("let s = \"").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "let s = \"\"",
         "Opening double quote should auto-close"
@@ -115,7 +115,7 @@ fn test_auto_close_single_quotes() {
     harness.type_text("let c = '").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "let c = ''",
         "Opening single quote should auto-close"
@@ -136,7 +136,7 @@ fn test_auto_close_backtick() {
     harness.type_text("const template = `").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "const template = ``",
         "Opening backtick should auto-close"
@@ -160,7 +160,7 @@ fn test_no_auto_close_before_alphanumeric() {
     harness.type_text("(").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "(test",
         "Should NOT auto-close when followed by alphanumeric"
@@ -184,7 +184,7 @@ fn test_auto_close_before_whitespace() {
     harness.type_text("(").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "() world",
         "Should auto-close when followed by whitespace"
@@ -208,7 +208,7 @@ fn test_no_auto_close_when_config_disabled() {
     harness.type_text("(").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "(",
         "Should NOT auto-close when auto_indent is disabled"
@@ -233,7 +233,7 @@ fn test_skip_over_closing_parenthesis() {
     harness.type_text("(").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(content, "()", "Opening paren should auto-close");
 
     // Cursor should be between parens, at position 1
@@ -247,7 +247,7 @@ fn test_skip_over_closing_parenthesis() {
     harness.type_text(")").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "()",
         "Typing closing paren should skip over existing one, not create ()))"
@@ -275,7 +275,7 @@ fn test_skip_over_closing_bracket() {
     harness.type_text("[").unwrap();
     harness.render().unwrap();
 
-    assert_eq!(harness.get_buffer_content(), "[]");
+    assert_eq!(harness.get_buffer_content().unwrap(), "[]");
     assert_eq!(harness.cursor_position(), 1);
 
     // Type a closing bracket - should skip over existing one
@@ -283,7 +283,7 @@ fn test_skip_over_closing_bracket() {
     harness.render().unwrap();
 
     assert_eq!(
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         "[]",
         "Typing closing bracket should skip over existing one"
     );
@@ -304,7 +304,7 @@ fn test_skip_over_closing_brace() {
     harness.type_text("{").unwrap();
     harness.render().unwrap();
 
-    assert_eq!(harness.get_buffer_content(), "{}");
+    assert_eq!(harness.get_buffer_content().unwrap(), "{}");
     assert_eq!(harness.cursor_position(), 1);
 
     // Type a closing brace - should skip over existing one
@@ -312,7 +312,7 @@ fn test_skip_over_closing_brace() {
     harness.render().unwrap();
 
     assert_eq!(
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         "{}",
         "Typing closing brace should skip over existing one"
     );
@@ -333,7 +333,7 @@ fn test_skip_over_closing_quote() {
     harness.type_text("\"").unwrap();
     harness.render().unwrap();
 
-    assert_eq!(harness.get_buffer_content(), "\"\"");
+    assert_eq!(harness.get_buffer_content().unwrap(), "\"\"");
     assert_eq!(harness.cursor_position(), 1);
 
     // Type a closing quote - should skip over existing one
@@ -341,7 +341,7 @@ fn test_skip_over_closing_quote() {
     harness.render().unwrap();
 
     assert_eq!(
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         "\"\"",
         "Typing closing quote should skip over existing one"
     );
@@ -368,7 +368,7 @@ fn test_no_skip_when_different_char() {
     harness.render().unwrap();
 
     assert_eq!(
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         "()x",
         "Should insert closing paren when next char is not the same"
     );
@@ -398,7 +398,7 @@ fn test_auto_pair_delete_parentheses() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "fn test",
         "Deleting between matching parens should delete both"
@@ -425,7 +425,7 @@ fn test_auto_pair_delete_square_brackets() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "let arr = ",
         "Deleting between matching brackets should delete both"
@@ -452,7 +452,7 @@ fn test_auto_pair_delete_curly_braces() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "struct Foo ",
         "Deleting between matching braces should delete both"
@@ -479,7 +479,7 @@ fn test_auto_pair_delete_double_quotes() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "let s = ",
         "Deleting between matching double quotes should delete both"
@@ -506,7 +506,7 @@ fn test_auto_pair_delete_single_quotes() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "let c = ",
         "Deleting between matching single quotes should delete both"
@@ -533,7 +533,7 @@ fn test_no_pair_delete_with_content_between() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "fn test()",
         "Should only delete the character when not directly between empty pair"
@@ -623,7 +623,7 @@ fn test_macro_record_and_playback() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     // After recording, line1 should have "!" appended
     assert!(
         content.contains("line1!"),
@@ -637,7 +637,7 @@ fn test_macro_record_and_playback() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     // line2 should now have "!" appended
     assert!(
         content.contains("line2!"),
@@ -651,7 +651,7 @@ fn test_macro_record_and_playback() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     // line3 should now have "!" appended
     assert!(
         content.contains("line3!"),
@@ -740,7 +740,7 @@ fn test_play_nonexistent_macro() {
     );
 
     // Buffer content should be unchanged
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(content, "test", "Content should be unchanged");
 }
 

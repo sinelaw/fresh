@@ -105,7 +105,7 @@ fn test_slow_network_fs_preset() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(content, "Testing slow network filesystem");
 }
 
@@ -117,7 +117,7 @@ fn test_slow_disk_preset() {
 
     // Editor should work normally
     harness.type_text("Testing slow disk").unwrap();
-    assert_eq!(harness.get_buffer_content(), "Testing slow disk");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Testing slow disk");
 }
 
 #[test]
@@ -283,7 +283,7 @@ fn test_common_edit_flow_responsiveness() {
     );
 
     // Verify the content is correct
-    let final_content = harness.get_buffer_content();
+    let final_content = harness.get_buffer_content().unwrap();
     assert!(
         final_content.contains("fn main()"),
         "Main function should be present"
@@ -341,7 +341,7 @@ fn test_buffer_switching_with_slow_fs() {
     );
 
     // Verify content is correct
-    assert_eq!(harness.get_buffer_content(), "Buffer 3 content");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Buffer 3 content");
 }
 
 #[test]
@@ -379,7 +379,7 @@ fn test_large_file_editing_with_slow_fs() {
     let edit_elapsed = edit_start.elapsed();
 
     // Verify content contains our edit
-    let final_content = harness.get_buffer_content();
+    let final_content = harness.get_buffer_content().unwrap();
     assert!(
         final_content.contains("[EDITED]"),
         "Edit should be present in buffer"

@@ -1217,7 +1217,7 @@ fn test_select_up() {
 
     // Verify cursor is at start of line 3
     let cursor_pos = harness.cursor_position();
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert_eq!(&buffer_content[cursor_pos..cursor_pos + 6], "Line 3");
 
     // No selection yet

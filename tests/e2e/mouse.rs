@@ -196,7 +196,7 @@ fn test_mouse_click_switches_split_focus() {
 
     // Type in first split
     harness.type_text("Left content").unwrap();
-    let first_buffer_content = harness.get_buffer_content();
+    let first_buffer_content = harness.get_buffer_content().unwrap();
 
     // Create vertical split via command palette
     harness
@@ -214,7 +214,7 @@ fn test_mouse_click_switches_split_focus() {
     harness.type_text(" plus right").unwrap();
     harness.render().unwrap();
 
-    let second_buffer_content = harness.get_buffer_content();
+    let second_buffer_content = harness.get_buffer_content().unwrap();
 
     // Verify they're different (second one has more content)
     assert!(second_buffer_content.contains("plus right"));

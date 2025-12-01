@@ -92,7 +92,7 @@ fn test_lsp_completion_replaces_word() -> std::io::Result<()> {
     harness.render()?;
 
     // Verify partial word is in buffer
-    let buffer_before = harness.get_buffer_content();
+    let buffer_before = harness.get_buffer_content().unwrap();
     assert_eq!(buffer_before, "test_f");
 
     // Show completion popup
@@ -123,7 +123,7 @@ fn test_lsp_completion_replaces_word() -> std::io::Result<()> {
     harness.render()?;
 
     // Buffer should now contain the full word, not "test_ftest_function"
-    let buffer_after = harness.get_buffer_content();
+    let buffer_after = harness.get_buffer_content().unwrap();
     assert_eq!(
         buffer_after, "test_function",
         "Expected completion to replace 'test_f' with 'test_function', but got '{buffer_after}'"
@@ -233,7 +233,7 @@ fn test_lsp_completion_popup() -> std::io::Result<()> {
     harness.render()?;
 
     // Verify the completion was inserted
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(
         buffer_content.contains("test_variable"),
         "Expected 'test_variable' to be inserted into buffer, got: {buffer_content}"
@@ -391,7 +391,7 @@ fn test_lsp_completion_navigation() -> std::io::Result<()> {
     harness.render()?;
 
     // Verify item3 was inserted
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(
         buffer_content.contains("item3"),
         "Expected 'item3' to be inserted, got: {buffer_content}"
@@ -441,7 +441,7 @@ fn test_lsp_completion_cancel() -> std::io::Result<()> {
     harness.render()?;
 
     // Verify original text is unchanged
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert_eq!(
         buffer_content, "orig",
         "Expected buffer to remain 'orig' after canceling popup"
@@ -503,7 +503,7 @@ fn test_lsp_completion_after_dot() -> std::io::Result<()> {
     harness.render()?;
 
     // Verify "args." is preserved and "len" is appended
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert_eq!(
         buffer_content, "args.len",
         "Expected 'args.len', got: {buffer_content}"
@@ -557,7 +557,7 @@ fn test_lsp_completion_after_dot_with_partial() -> std::io::Result<()> {
     harness.render()?;
 
     // Verify "args." is preserved and "le" is replaced with "length"
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert_eq!(
         buffer_content, "args.length",
         "Expected 'args.length', got: {buffer_content}"
@@ -650,7 +650,7 @@ fn test_lsp_completion_filtering() -> std::io::Result<()> {
     harness.render()?;
 
     // Verify completion replaced "test_" with "test_function"
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert_eq!(
         buffer_content, "test_function",
         "Expected 'test_function', got: {buffer_content}"
@@ -1254,7 +1254,7 @@ edition = "2021"
     harness.render()?;
 
     let cursor_pos = harness.cursor_position();
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     let char_at_cursor = buffer_content.chars().nth(cursor_pos).unwrap_or('?');
     println!(
         "Cursor positioned at byte {}, character: '{}'",
@@ -1287,7 +1287,7 @@ edition = "2021"
     println!("Typed new name 'amount'");
 
     // Get buffer content - should still show original "value" (NOT "amount")
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     println!("Buffer content before Enter:\n{buffer_content}");
 
     // Verify the buffer was NOT modified - it should still contain "value"
@@ -1319,7 +1319,7 @@ edition = "2021"
             println!("LSP response received after {}ms", (i + 1) * 500);
 
             // Check if rename was successful by examining buffer content
-            let buffer_after = harness.get_buffer_content();
+            let buffer_after = harness.get_buffer_content().unwrap();
             if buffer_after.contains("fn calculate(amount: i32)")
                 && buffer_after.contains("println!(\"Value: {}\", amount)")
             {
@@ -1340,7 +1340,7 @@ edition = "2021"
     }
 
     // Get final buffer content
-    let final_buffer = harness.get_buffer_content();
+    let final_buffer = harness.get_buffer_content().unwrap();
     println!("Final buffer content:\n{final_buffer}");
 
     // Verify the rename actually succeeded
@@ -1605,7 +1605,7 @@ fn test_handle_rename_response_with_document_changes() -> std::io::Result<()> {
     harness.render()?;
 
     // Verify the buffer was modified
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     println!("Buffer content after rename:\n{buffer_content}");
 
     assert!(
@@ -1691,7 +1691,7 @@ fn test_lsp_diagnostics_non_blocking() -> std::io::Result<()> {
     harness.render()?;
 
     // Verify the characters were actually inserted immediately
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(
         buffer_content.contains("let x = 42;"),
         "Editor should process typed characters immediately despite stuck LSP! Got:\n{buffer_content}"
@@ -1701,7 +1701,7 @@ fn test_lsp_diagnostics_non_blocking() -> std::io::Result<()> {
     harness.type_text("\n    println!(\"{{x}}\");")?;
     harness.render()?;
 
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(
         buffer_content.contains("println!"),
         "Editor should continue processing input despite stuck LSP! Got:\n{buffer_content}"
@@ -1725,7 +1725,7 @@ fn test_lsp_diagnostics_non_blocking() -> std::io::Result<()> {
     harness.type_text(" // comment")?;
     harness.render()?;
 
-    let final_buffer = harness.get_buffer_content();
+    let final_buffer = harness.get_buffer_content().unwrap();
     assert!(
         final_buffer.contains("// comment"),
         "Editor should handle navigation and typing despite stuck LSP! Got:\n{final_buffer}"
@@ -1878,7 +1878,7 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
     }
     harness.render()?;
 
-    let buffer_before = harness.get_buffer_content();
+    let buffer_before = harness.get_buffer_content().unwrap();
     eprintln!("\nBuffer before rename:\n{buffer_before}");
     eprintln!("Cursor positioned on 'log_line' variable");
 
@@ -1921,7 +1921,7 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
 
     // Get final screen and buffer
     let screen_final = harness.screen_to_string();
-    let buffer_final = harness.get_buffer_content();
+    let buffer_final = harness.get_buffer_content().unwrap();
 
     eprintln!("\n========================================");
     eprintln!("FINAL SCREEN:");
@@ -1997,7 +1997,7 @@ fn test_lsp_rename_consecutive_same_position() -> std::io::Result<()> {
     harness.open_file(&test_file)?;
     harness.render()?;
 
-    let initial_content = harness.get_buffer_content();
+    let initial_content = harness.get_buffer_content().unwrap();
     assert!(initial_content.contains("fn calculate(value: i32)"));
 
     // FIRST RENAME: value -> amount
@@ -2051,7 +2051,7 @@ fn test_lsp_rename_consecutive_same_position() -> std::io::Result<()> {
         .handle_rename_response(1, Ok(first_rename_edit))?;
     harness.render()?;
 
-    let after_first = harness.get_buffer_content();
+    let after_first = harness.get_buffer_content().unwrap();
     assert!(
         after_first.contains("fn calculate(amount: i32)"),
         "First rename failed. Got:\n{after_first}"
@@ -2106,7 +2106,7 @@ fn test_lsp_rename_consecutive_same_position() -> std::io::Result<()> {
         .handle_rename_response(2, Ok(second_rename_edit))?;
     harness.render()?;
 
-    let after_second = harness.get_buffer_content();
+    let after_second = harness.get_buffer_content().unwrap();
     assert!(
         after_second.contains("fn calculate(total: i32)"),
         "Second rename failed. Got:\n{after_second}"
@@ -2245,7 +2245,7 @@ edition = "2021"
     }
     eprintln!("✓ Semantic analysis complete");
 
-    let initial = harness.get_buffer_content();
+    let initial = harness.get_buffer_content().unwrap();
     eprintln!("Initial buffer:\n{}", initial);
     assert!(initial.contains("fn foo(val: i32)"));
 
@@ -2298,7 +2298,7 @@ edition = "2021"
         }
     }
 
-    let after_first = harness.get_buffer_content();
+    let after_first = harness.get_buffer_content().unwrap();
     eprintln!("After first rename:\n{}", after_first);
 
     let first_rename_ok =
@@ -2324,7 +2324,7 @@ edition = "2021"
     }
     harness.render()?;
     let cursor_pos2 = harness.cursor_position();
-    let after_first_content = harness.get_buffer_content();
+    let after_first_content = harness.get_buffer_content().unwrap();
     let char_at_cursor2 = after_first_content.chars().nth(cursor_pos2).unwrap_or('?');
     eprintln!(
         "Cursor positioned at byte {}, char '{}'",
@@ -2364,7 +2364,7 @@ edition = "2021"
         }
     }
 
-    let after_second = harness.get_buffer_content();
+    let after_second = harness.get_buffer_content().unwrap();
     let screen = harness.screen_to_string();
     eprintln!("After second rename:\n{}", after_second);
     eprintln!("Screen:\n{}", screen);
@@ -2674,7 +2674,7 @@ fn test_lsp_crash_detection_and_restart() -> std::io::Result<()> {
     harness.type_text("// comment after crash")?;
     harness.render()?;
 
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(
         buffer_content.contains("// comment after crash"),
         "Editor should remain responsive after LSP crash. Buffer: {}",
@@ -2805,7 +2805,7 @@ fn test_pull_diagnostics_message_handling() -> std::io::Result<()> {
     harness.render()?;
 
     // Verify the diagnostic was applied (check for overlay)
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     eprintln!("Buffer content: {}", buffer_content);
 
     // The diagnostic should have been processed (we can't easily check overlays,
@@ -3570,7 +3570,7 @@ fn test_inlay_hints_position_tracking() -> std::io::Result<()> {
     );
 
     // Buffer should now contain "const let x = 5;"
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(
         buffer_content.contains("const let x"),
         "Buffer should contain inserted text"

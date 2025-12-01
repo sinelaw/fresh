@@ -332,7 +332,8 @@ fn test_load_edit_save_flow_small_and_large_files() {
         harness2.open_file(&small_file_path).unwrap();
         harness2.render().unwrap();
 
-        let reloaded_content = harness2.get_buffer_content();
+        // For small files (below threshold), content is fully loaded
+        let reloaded_content = harness2.get_buffer_content().unwrap();
         assert!(
             reloaded_content.contains("Line 1 EDITED"),
             "Reloaded content should contain edits"
@@ -429,15 +430,9 @@ fn test_load_edit_save_flow_small_and_large_files() {
         harness2.open_file(&large_file_path).unwrap();
         harness2.render().unwrap();
 
-        let reloaded_content = harness2.get_buffer_content();
-        assert!(
-            reloaded_content.contains("[LARGE FILE EDIT]"),
-            "Reloaded content should contain large file edits"
-        );
-        assert!(
-            reloaded_content.contains(">>>"),
-            "Reloaded content should contain prefix edits"
-        );
+        // Note: For large files with lazy loading, get_buffer_content() returns None.
+        // The save was already verified above via fs::read_to_string().
+        // Here we verify the content is accessible in the editor via screen navigation.
 
         // Verify we can navigate to the edited sections
         // Move down to line 5 where we made the first edit

@@ -177,7 +177,7 @@ fn test_cursor_visible_when_scrolling_down_in_large_file() {
 
     // Verify we're at line 16 (0-indexed as line 15)
     let cursor_pos = harness.cursor_position();
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     let lines_before_cursor: Vec<&str> = buffer_content[..cursor_pos].split('\n').collect();
     assert_eq!(
         lines_before_cursor.len(),

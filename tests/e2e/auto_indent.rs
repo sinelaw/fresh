@@ -37,7 +37,7 @@ fn test_rust_auto_indent_after_brace() {
     harness.render().unwrap();
 
     // Should have newline + 4 spaces indent
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("fn main() {\n    "),
         "Expected 4-space indent after opening brace, got: {:?}",
@@ -70,7 +70,7 @@ fn test_python_auto_indent_after_colon() {
     harness.render().unwrap();
 
     // Should have newline + 4 spaces indent
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("def foo():\n    "),
         "Expected 4-space indent after colon, got: {:?}",
@@ -103,7 +103,7 @@ fn test_javascript_auto_indent_after_brace() {
     harness.render().unwrap();
 
     // Should have newline + 4 spaces indent
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("function test() {\n    "),
         "Expected 4-space indent after opening brace, got: {:?}",
@@ -135,7 +135,7 @@ fn test_rust_nested_indent() {
     harness.render().unwrap();
 
     // Should have double indent (8 spaces)
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("if true {\n        "),
         "Expected 8-space indent for nested block, got: {:?}",
@@ -161,7 +161,7 @@ fn test_fallback_copies_previous_indent() {
     harness.render().unwrap();
 
     // Should copy the 4-space indent from previous line
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("    indented line\n    "),
         "Expected fallback to copy 4-space indent, got: {:?}",
@@ -195,7 +195,7 @@ fn test_auto_indent_with_multi_cursor() {
     harness.render().unwrap();
 
     // Both lines should be indented
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("fn foo() {\n    "),
         "First function should have indent, got: {:?}",
@@ -229,7 +229,7 @@ fn test_auto_indent_disabled_by_config() {
     harness.render().unwrap();
 
     // Should have newline but NO indent
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(
         content, "fn main() {\n",
         "Should not indent when auto_indent is disabled, got: {:?}",
@@ -255,7 +255,7 @@ fn test_typescript_interface_indent() {
     harness.render().unwrap();
 
     // Should have indent
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("interface User {\n    "),
         "Expected indent in TypeScript interface, got: {:?}",
@@ -281,7 +281,7 @@ fn test_cpp_class_indent() {
     harness.render().unwrap();
 
     // Should have indent
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("class Foo {\n    "),
         "Expected indent in C++ class, got: {:?}",
@@ -307,7 +307,7 @@ fn test_go_function_indent() {
     harness.render().unwrap();
 
     // Should have indent
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("func main() {\n    "),
         "Expected indent in Go function, got: {:?}",
@@ -333,7 +333,7 @@ fn test_json_object_indent() {
     harness.render().unwrap();
 
     // Should have indent
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("{\n    "),
         "Expected indent in JSON object, got: {:?}",
@@ -361,7 +361,7 @@ fn test_indent_after_typing_on_same_line() {
     harness.render().unwrap();
 
     // Should still indent correctly
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("fn test() {\n    "),
         "Expected indent even after typing complete line, got: {:?}",
@@ -399,7 +399,7 @@ fn test_indent_with_selection_deletes_first() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(!content.contains("old text"), "Selection should be deleted");
     assert!(
         content.contains("fn main() {\n    "),
@@ -432,7 +432,7 @@ fn test_no_indent_after_close_brace() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
 
     // Check that the content is correct
     assert!(
@@ -479,7 +479,7 @@ fn test_auto_dedent_on_close_brace() {
     harness.render().unwrap();
 
     // Should have 4 spaces of indent
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("{\n    "),
         "Should have indent after opening brace"
@@ -489,7 +489,7 @@ fn test_auto_dedent_on_close_brace() {
     harness.type_text("}").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("{\n}") || content.contains("{\n    }"),
         "Closing brace should dedent to column 0, got: {:?}",
@@ -532,7 +532,7 @@ fn test_auto_dedent_nested_blocks() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     println!("Content before typing closing brace:\n{}", content);
 
     // We should be at 12 spaces (3 levels deep: fn, if, if)
@@ -550,7 +550,7 @@ fn test_auto_dedent_nested_blocks() {
     harness.type_text("}").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     println!("Content after typing closing brace:\n{}", content);
 
     let lines: Vec<&str> = content.lines().collect();
@@ -584,7 +584,7 @@ fn test_auto_dedent_with_content_before() {
     harness.render().unwrap();
 
     // Should have 4 spaces of indent
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("{\n    "),
         "Should have indent after opening brace"
@@ -600,7 +600,7 @@ fn test_auto_dedent_with_content_before() {
     harness.render().unwrap();
 
     // Should still have 4 spaces on new line
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(
         content.contains("    hi\n    "),
         "Should have 4 spaces on new line after content"
@@ -610,7 +610,7 @@ fn test_auto_dedent_with_content_before() {
     harness.type_text("}").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
 
     // Count spaces before the closing brace
     let lines: Vec<&str> = content.lines().collect();
@@ -678,7 +678,7 @@ fn test_auto_dedent_nested_with_closed_inner() {
     harness.type_text("}").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
 
     // The last line should have the closing brace at column 0
     let lines: Vec<&str> = content.lines().collect();
@@ -717,7 +717,7 @@ fn test_dedent_with_complete_syntax() {
     harness.type_text("}").unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
 
     // The closing brace on the new line should be at column 0
     let lines: Vec<&str> = content.lines().collect();
@@ -770,7 +770,7 @@ fn test_indent_after_empty_line_in_function_body() {
         .unwrap();
     harness.render().unwrap();
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
 
     // Verify structure: function, content line, empty line (NO spaces), new line (should have 4 spaces)
     let lines: Vec<&str> = content.lines().collect();

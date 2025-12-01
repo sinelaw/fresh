@@ -277,7 +277,7 @@ fn test_multi_cursor_typing() {
     harness.type_text("X").unwrap();
 
     // Each cursor should insert X at its position
-    let result = harness.get_buffer_content();
+    let result = harness.get_buffer_content().unwrap();
 
     // Count how many X's were inserted
     let x_count = result.matches('X').count();
@@ -342,7 +342,7 @@ fn test_multi_cursor_undo_atomic() {
     harness.type_text("X").unwrap();
 
     // Each cursor should insert X at its position
-    let result = harness.get_buffer_content();
+    let result = harness.get_buffer_content().unwrap();
 
     // Count how many X's were inserted
     let x_count = result.matches('X').count();
@@ -358,7 +358,7 @@ fn test_multi_cursor_undo_atomic() {
     harness.render().unwrap();
 
     // All X's should be gone after a single undo
-    let result_after_undo = harness.get_buffer_content();
+    let result_after_undo = harness.get_buffer_content().unwrap();
     let x_count_after_undo = result_after_undo.matches('X').count();
     assert_eq!(
         x_count_after_undo, 0,
@@ -373,7 +373,7 @@ fn test_multi_cursor_undo_atomic() {
     harness.render().unwrap();
 
     // All X's should be back after a single redo
-    let result_after_redo = harness.get_buffer_content();
+    let result_after_redo = harness.get_buffer_content().unwrap();
     let x_count_after_redo = result_after_redo.matches('X').count();
     assert_eq!(
         x_count_after_redo, 3,
@@ -557,7 +557,7 @@ fn test_undo_beyond_cursor_add() {
     harness.type_text("X").unwrap();
 
     // Should have X inserted at both positions
-    let result = harness.get_buffer_content();
+    let result = harness.get_buffer_content().unwrap();
     let x_count = result.matches('X').count();
     assert_eq!(x_count, 2, "Should have 2 X's. Buffer: {result}");
 
@@ -568,7 +568,7 @@ fn test_undo_beyond_cursor_add() {
     harness.render().unwrap();
 
     // X's should be gone, but we should still have 2 cursors
-    let result = harness.get_buffer_content();
+    let result = harness.get_buffer_content().unwrap();
     let x_count = result.matches('X').count();
     assert_eq!(x_count, 0, "Should have 0 X's. Buffer: {result}");
     assert_eq!(harness.editor().active_state().cursors.count(), 2);
@@ -598,7 +598,7 @@ fn test_undo_beyond_cursor_add() {
     harness.render().unwrap();
 
     // X's should be back
-    let result = harness.get_buffer_content();
+    let result = harness.get_buffer_content().unwrap();
     let x_count = result.matches('X').count();
     assert_eq!(x_count, 2, "Should have 2 X's back. Buffer: {result}");
 }
@@ -748,7 +748,7 @@ fn test_multi_cursor_comprehensive_abc_editing() {
     harness.type_text("X").unwrap();
 
     // Each cursor should insert X at its position
-    let result = harness.get_buffer_content();
+    let result = harness.get_buffer_content().unwrap();
 
     // Count how many X's were inserted
     let x_count = result.matches('X').count();
@@ -763,7 +763,7 @@ fn test_multi_cursor_comprehensive_abc_editing() {
         .unwrap();
     harness.render().unwrap();
 
-    let result_after_undo = harness.get_buffer_content();
+    let result_after_undo = harness.get_buffer_content().unwrap();
     let x_count_after_undo = result_after_undo.matches('X').count();
     assert_eq!(
         x_count_after_undo, 0,
@@ -1266,7 +1266,7 @@ fn test_identical_lines_cursor_positions() {
     // Type X
     harness.type_text("X").unwrap();
 
-    let result = harness.get_buffer_content();
+    let result = harness.get_buffer_content().unwrap();
     println!("Buffer after typing X:\n{result}");
 
     let x_count = result.matches('X').count();

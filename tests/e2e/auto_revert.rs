@@ -39,7 +39,7 @@ fn test_auto_revert_multiple_external_edits() {
         // This uses semantic waiting - no arbitrary timeouts
         let expected = new_content.clone();
         harness
-            .wait_until(|h| h.get_buffer_content() == expected)
+            .wait_until(|h| h.get_buffer_content().unwrap() == expected)
             .expect("Auto-revert should update buffer content");
 
         // Verify the buffer was updated correctly
@@ -77,7 +77,7 @@ fn test_auto_revert_file_grows() {
 
         let expected = content.clone();
         harness
-            .wait_until(|h| h.get_buffer_content() == expected)
+            .wait_until(|h| h.get_buffer_content().unwrap() == expected)
             .expect("Auto-revert should handle file growth");
 
         harness.assert_buffer_content(&content);
@@ -114,7 +114,7 @@ fn test_auto_revert_file_shrinks() {
 
         let expected = content.clone();
         harness
-            .wait_until(|h| h.get_buffer_content() == expected)
+            .wait_until(|h| h.get_buffer_content().unwrap() == expected)
             .expect("Auto-revert should handle file shrinking");
 
         harness.assert_buffer_content(&content);
@@ -167,7 +167,7 @@ fn test_auto_revert_preserves_scroll_position() {
     // Wait for auto-revert
     let expected = modified_content.clone();
     harness
-        .wait_until(|h| h.get_buffer_content() == expected)
+        .wait_until(|h| h.get_buffer_content().unwrap() == expected)
         .expect("Auto-revert should update buffer");
 
     harness.assert_buffer_content(&modified_content);
@@ -211,7 +211,7 @@ fn test_auto_revert_skipped_when_buffer_modified() {
     let status = harness.get_status_bar();
     assert!(
         status.contains("changed on disk")
-            || harness.get_buffer_content() == "Original content - local edit",
+            || harness.get_buffer_content().unwrap() == "Original content - local edit",
         "Should either show warning or preserve local changes"
     );
 }
@@ -235,7 +235,7 @@ fn test_auto_revert_rapid_changes() {
 
     // Wait for the final version to appear
     harness
-        .wait_until(|h| h.get_buffer_content() == "v10")
+        .wait_until(|h| h.get_buffer_content().unwrap() == "v10")
         .expect("Should eventually settle on final version");
 
     harness.assert_buffer_content("v10");
@@ -273,7 +273,7 @@ fn test_auto_revert_preserves_cursor_position() {
     // Wait for auto-revert
     let expected = modified_content.to_string();
     harness
-        .wait_until(|h| h.get_buffer_content() == expected)
+        .wait_until(|h| h.get_buffer_content().unwrap() == expected)
         .expect("Auto-revert should update buffer");
 
     // Cursor position should be preserved (or clamped to valid range)
@@ -304,7 +304,7 @@ fn test_auto_revert_not_disabled_by_external_save() {
 
     // Wait for auto-revert
     harness
-        .wait_until(|h| h.get_buffer_content() == "Changed by external save")
+        .wait_until(|h| h.get_buffer_content().unwrap() == "Changed by external save")
         .expect("Auto-revert should update buffer after external save");
 
     // Small delay, then make another change
@@ -315,7 +315,7 @@ fn test_auto_revert_not_disabled_by_external_save() {
 
     // This should also be auto-reverted (auto-revert should not have been disabled)
     harness
-        .wait_until(|h| h.get_buffer_content() == "Second external change")
+        .wait_until(|h| h.get_buffer_content().unwrap() == "Second external change")
         .expect("Auto-revert should still work after previous external save");
 
     harness.assert_buffer_content("Second external change");
@@ -355,7 +355,7 @@ fn test_auto_revert_with_temp_rename_save() {
         // Wait for the buffer to update
         let expected = new_content.clone();
         harness
-            .wait_until(|h| h.get_buffer_content() == expected)
+            .wait_until(|h| h.get_buffer_content().unwrap() == expected)
             .expect(&format!(
                 "Auto-revert should detect temp+rename save for version {}",
                 version

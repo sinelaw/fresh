@@ -38,7 +38,7 @@ fn test_buffer_content_api() {
     harness.open_file(&md_path).unwrap();
 
     // Get buffer content to verify it's not empty
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert!(!content.is_empty(), "Buffer content should not be empty");
     assert!(
         content.contains("# Markdown Compose Mode Test"),
@@ -146,7 +146,7 @@ fn test_markdown_header_rendering() {
     harness.render().unwrap();
 
     // Verify the header is visible in the buffer
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(buffer_content.contains("# Markdown Compose Mode Test"));
     assert!(buffer_content.contains("## Features"));
     assert!(buffer_content.contains("### Code Blocks"));
@@ -167,7 +167,7 @@ fn test_markdown_list_rendering() {
     harness.render().unwrap();
 
     // Verify list items are in the buffer
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(buffer_content.contains("- Soft breaks for paragraph wrapping"));
     assert!(buffer_content.contains("1. First ordered item"));
     assert!(buffer_content.contains("- [ ] Unchecked task"));
@@ -189,7 +189,7 @@ fn test_markdown_code_block_rendering() {
     harness.render().unwrap();
 
     // Verify code blocks are in the buffer
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(buffer_content.contains("```rust"));
     assert!(buffer_content.contains("fn main()"));
     assert!(buffer_content.contains("println!"));
@@ -210,7 +210,7 @@ fn test_markdown_inline_styles() {
     harness.render().unwrap();
 
     // Verify inline styles are in the buffer
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(buffer_content.contains("**bold**"));
     assert!(buffer_content.contains("*italic*"));
     assert!(buffer_content.contains("`inline code`"));
@@ -232,7 +232,7 @@ fn test_markdown_links() {
     harness.render().unwrap();
 
     // Verify links are in the buffer
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(buffer_content.contains("[Links to resources]"));
     assert!(buffer_content.contains("[Fresh Editor]"));
 }
@@ -252,7 +252,7 @@ fn test_markdown_block_quotes() {
     harness.render().unwrap();
 
     // Verify block quotes are in the buffer
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(buffer_content.contains("> This is a block quote."));
 }
 

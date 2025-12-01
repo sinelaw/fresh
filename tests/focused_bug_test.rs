@@ -18,7 +18,7 @@ fn test_enter_after_brace_no_autoindent() {
         .unwrap();
 
     // Should be just "{\n", not "{\n    " (no auto-indent)
-    let buffer = harness.get_buffer_content();
+    let buffer = harness.get_buffer_content().unwrap();
     let shadow = harness.get_shadow_string();
 
     println!("Buffer: {:?}", buffer);
@@ -50,7 +50,7 @@ fn test_simple_sequence_from_e2e() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    let buffer = harness.get_buffer_content();
+    let buffer = harness.get_buffer_content().unwrap();
     let shadow = harness.get_shadow_string();
 
     println!("Buffer: {:?}", buffer);
@@ -76,7 +76,7 @@ fn test_minimal_proptest_failure() {
         .unwrap();
     println!(
         "After Enter: buffer={:?}, cursor={}",
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         harness.cursor_position()
     );
 
@@ -84,7 +84,7 @@ fn test_minimal_proptest_failure() {
     harness.type_text("a0").unwrap();
     println!(
         "After 'a0': buffer={:?}, cursor={}",
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         harness.cursor_position()
     );
 
@@ -92,7 +92,7 @@ fn test_minimal_proptest_failure() {
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     println!(
         "After Left: buffer={:?}, cursor={}",
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         harness.cursor_position()
     );
 
@@ -100,7 +100,7 @@ fn test_minimal_proptest_failure() {
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
     println!(
         "After Home: buffer={:?}, cursor={}",
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         harness.cursor_position()
     );
 
@@ -108,11 +108,11 @@ fn test_minimal_proptest_failure() {
     harness.type_text("b").unwrap();
     println!(
         "After 'b': buffer={:?}, cursor={}",
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         harness.cursor_position()
     );
 
-    let buffer = harness.get_buffer_content();
+    let buffer = harness.get_buffer_content().unwrap();
     let shadow = harness.get_shadow_string();
 
     println!("\n=== Final state ===");

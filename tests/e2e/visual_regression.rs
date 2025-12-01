@@ -287,7 +287,7 @@ fn test_lsp_rename_undo_restores_all() {
     harness.render().unwrap();
 
     // Save the original buffer content
-    let original_content = harness.get_buffer_content();
+    let original_content = harness.get_buffer_content().unwrap();
     assert!(original_content.contains("fn calculate(value: i32)"));
     assert_eq!(original_content.matches("value").count(), 3);
 
@@ -359,7 +359,7 @@ fn test_lsp_rename_undo_restores_all() {
     harness.render().unwrap();
 
     // Verify all occurrences were renamed
-    let renamed_content = harness.get_buffer_content();
+    let renamed_content = harness.get_buffer_content().unwrap();
     assert!(
         renamed_content.contains("fn calculate(amount: i32)"),
         "Parameter should be renamed to 'amount'"
@@ -382,7 +382,7 @@ fn test_lsp_rename_undo_restores_all() {
     harness.render().unwrap();
 
     // Verify ALL occurrences are restored to original in ONE undo step
-    let after_undo_content = harness.get_buffer_content();
+    let after_undo_content = harness.get_buffer_content().unwrap();
     assert_eq!(
         after_undo_content, original_content,
         "Single undo should restore all occurrences to 'value'"
@@ -403,7 +403,7 @@ fn test_lsp_rename_undo_restores_all() {
         .unwrap();
     harness.render().unwrap();
 
-    let after_redo_content = harness.get_buffer_content();
+    let after_redo_content = harness.get_buffer_content().unwrap();
     assert_eq!(
         after_redo_content, renamed_content,
         "Redo should restore the renamed content"

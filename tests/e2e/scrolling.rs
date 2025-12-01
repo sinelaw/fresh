@@ -82,7 +82,7 @@ fn test_edits_persist_through_scrolling() {
     harness.assert_screen_contains("END MARKER");
 
     // Verify both edits exist in the buffer
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     assert!(
         buffer_content.contains("EDITED Line 0"),
         "Edit at beginning should persist"
@@ -128,7 +128,7 @@ fn test_edits_persist_through_scrolling() {
     harness.assert_screen_contains("END MARKER");
 
     // Final verification: all three edits persist in buffer
-    let final_content = harness.get_buffer_content();
+    let final_content = harness.get_buffer_content().unwrap();
     assert!(
         final_content.contains("EDITED Line 0"),
         "Beginning edit persisted through all jumps"
@@ -342,7 +342,7 @@ fn test_cursor_wrap_on_long_line_navigation() {
 
     // After 100 right arrows, we should be at position 100
     // Let's check what's at this position
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     println!("Buffer length: {}", buffer_content.len());
     println!(
         "Character at position 99 (last 'a'): {:?}",
@@ -474,7 +474,7 @@ fn test_cursor_disappears_beyond_long_line_end() {
         let lines: Vec<&str> = screen.lines().collect();
 
         // Get buffer character at this position
-        let buffer_content = harness.get_buffer_content();
+        let buffer_content = harness.get_buffer_content().unwrap();
         let buffer_char = buffer_content.chars().nth(buffer_pos);
 
         // Check if cursor is visible: find where actual line content ends
@@ -1749,7 +1749,7 @@ fn test_last_line_never_above_bottom() {
     harness.render().unwrap();
 
     // Verify cursor is at the end of the file
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     let cursor_pos = harness.cursor_position();
     assert_eq!(
         cursor_pos,
@@ -1970,7 +1970,7 @@ fn test_enter_key_maintains_bottom_line_pinned() {
     let (content_first_row, content_last_row) = harness.content_area_rows();
 
     // Start with an empty buffer
-    let initial_content = harness.get_buffer_content();
+    let initial_content = harness.get_buffer_content().unwrap();
     assert_eq!(initial_content, "", "Buffer should start empty");
 
     // Press Enter many times to create lines
@@ -1992,7 +1992,7 @@ fn test_enter_key_maintains_bottom_line_pinned() {
         let screen_lines: Vec<&str> = screen.lines().collect();
 
         // Count actual buffer lines (number of newlines + 1, or just count lines)
-        let buffer_content = harness.get_buffer_content();
+        let buffer_content = harness.get_buffer_content().unwrap();
         let buffer_line_count = if buffer_content.is_empty() {
             1
         } else {

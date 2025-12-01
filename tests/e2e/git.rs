@@ -655,7 +655,7 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
     .unwrap();
 
     // Verify we start with an empty buffer
-    let initial_content = harness.get_buffer_content();
+    let initial_content = harness.get_buffer_content().unwrap();
     assert!(
         initial_content.is_empty() || initial_content == "\n",
         "Should start with empty buffer"
@@ -686,7 +686,7 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
     let file_loaded = harness
         .wait_for_async(
             |h| {
-                let content = h.get_buffer_content();
+                let content = h.get_buffer_content().unwrap();
                 !content.is_empty() && content != "\n" && content.contains("println")
             },
             3000,
@@ -696,7 +696,7 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
     // CRITICAL CHECKS:
 
     // 1. Buffer content should have changed from empty to the file content
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     println!("Buffer content after selection:\n{buffer_content}");
 
     assert!(
@@ -750,7 +750,7 @@ fn test_git_find_file_actually_opens_file() {
     .unwrap();
 
     // Verify we start with an empty buffer
-    let initial_content = harness.get_buffer_content();
+    let initial_content = harness.get_buffer_content().unwrap();
     assert!(
         initial_content.is_empty() || initial_content == "\n",
         "Should start with empty buffer"
@@ -808,7 +808,7 @@ fn test_git_find_file_actually_opens_file() {
     // CRITICAL CHECKS:
 
     // 1. Buffer content should have changed from empty to lib.rs content
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     println!("Buffer content after selection:\n{buffer_content}");
 
     assert!(
@@ -881,7 +881,7 @@ fn test_git_grep_cursor_position_accuracy() {
     let file_loaded = harness
         .wait_for_async(
             |h| {
-                let content = h.get_buffer_content();
+                let content = h.get_buffer_content().unwrap();
                 content.contains("MARKER")
             },
             3000,
@@ -889,7 +889,7 @@ fn test_git_grep_cursor_position_accuracy() {
         .unwrap();
 
     // Check buffer content
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     println!("Buffer content:\n{buffer_content}");
 
     assert!(
@@ -1449,7 +1449,7 @@ fn test_git_blame_shows_blocks_with_headers() {
     // Wait until file is loaded (logical event)
     harness
         .wait_until(|h| {
-            let content = h.get_buffer_content();
+            let content = h.get_buffer_content().unwrap();
             content.contains("fn main")
         })
         .unwrap();
@@ -1519,7 +1519,7 @@ fn test_git_blame_cursor_navigation() {
 
     // Wait until file is loaded
     harness
-        .wait_until(|h| h.get_buffer_content().contains("Line 1"))
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("Line 1"))
         .unwrap();
 
     // Trigger git blame
@@ -1578,7 +1578,7 @@ fn test_git_blame_close() {
 
     // Wait until file is loaded
     harness
-        .wait_until(|h| h.get_buffer_content().contains("fn main"))
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("fn main"))
         .unwrap();
 
     // Trigger git blame
@@ -1648,7 +1648,7 @@ fn test_git_blame_go_back_in_history() {
 
     // Wait until file is loaded
     harness
-        .wait_until(|h| h.get_buffer_content().contains("line"))
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("line"))
         .unwrap();
 
     // Trigger git blame
@@ -1731,7 +1731,7 @@ fn test_git_blame_shows_different_commits() {
 
     // Wait until file is loaded
     harness
-        .wait_until(|h| h.get_buffer_content().contains("Line from"))
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("Line from"))
         .unwrap();
 
     // Trigger git blame
@@ -1797,7 +1797,7 @@ fn test_git_blame_line_numbers_correct() {
 
     // Wait until file is loaded
     harness
-        .wait_until(|h| h.get_buffer_content().contains("Line 1"))
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("Line 1"))
         .unwrap();
 
     // Trigger git blame
@@ -1879,7 +1879,7 @@ fn test_git_blame_scroll_to_bottom() {
 
     // Wait until file is loaded
     harness
-        .wait_until(|h| h.get_buffer_content().contains("Line 1"))
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("Line 1"))
         .unwrap();
 
     // Trigger git blame
@@ -2084,7 +2084,7 @@ fn test_view_transform_header_at_byte_zero() {
 
     // Wait for file to load
     harness
-        .wait_until(|h| !h.get_buffer_content().is_empty())
+        .wait_until(|h| !h.get_buffer_content().unwrap().is_empty())
         .unwrap();
 
     // Trigger the test view marker command
@@ -2154,7 +2154,7 @@ fn test_view_transform_scroll_with_many_virtual_lines() {
     let file_path = repo.path.join("test.txt");
     harness.open_file(&file_path).unwrap();
     harness
-        .wait_until(|h| !h.get_buffer_content().is_empty())
+        .wait_until(|h| !h.get_buffer_content().unwrap().is_empty())
         .unwrap();
 
     // Launch the view marker that injects many virtual lines (120 pads + header before Line 1)
@@ -2221,7 +2221,7 @@ fn test_view_transform_scroll_with_single_virtual_line() {
     let file_path = repo.path.join("test.txt");
     harness.open_file(&file_path).unwrap();
     harness
-        .wait_until(|h| !h.get_buffer_content().is_empty())
+        .wait_until(|h| !h.get_buffer_content().unwrap().is_empty())
         .unwrap();
 
     // Launch the view marker that injects just a header (no pads)
@@ -2311,7 +2311,7 @@ fn test_git_blame_original_buffer_not_decorated() {
 
     // Wait until file is loaded
     harness
-        .wait_until(|h| h.get_buffer_content().contains("fn main"))
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("fn main"))
         .unwrap();
 
     // Capture screen BEFORE opening blame

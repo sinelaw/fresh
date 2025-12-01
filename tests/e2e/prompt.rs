@@ -175,7 +175,7 @@ fn test_open_nonexistent_file() {
     harness.assert_screen_contains("new_file.txt");
 
     // Buffer should be empty
-    assert_eq!(harness.get_buffer_content(), "");
+    assert_eq!(harness.get_buffer_content().unwrap(), "");
 
     // Should show "Opened" message (may be truncated in status bar)
     harness.assert_screen_contains("Opened");
@@ -217,7 +217,7 @@ fn test_open_nonexistent_file_edit_and_save() {
 
     // Type some content
     harness.type_text("Hello, World!").unwrap();
-    assert_eq!(harness.get_buffer_content(), "Hello, World!");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Hello, World!");
 
     // Save the file with Ctrl+S
     harness
@@ -256,7 +256,7 @@ fn test_spawn_with_nonexistent_file() {
     harness.assert_screen_contains("spawn_test.rs");
 
     // Buffer should be empty
-    assert_eq!(harness.get_buffer_content(), "");
+    assert_eq!(harness.get_buffer_content().unwrap(), "");
 
     // Type content and save
     harness.type_text("fn main() {}").unwrap();
@@ -290,7 +290,7 @@ fn test_save_as_functionality() {
     // Open the original file
     harness.open_file(&original_path).unwrap();
     harness.assert_screen_contains("original.txt");
-    assert_eq!(harness.get_buffer_content(), "Original content");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Original content");
 
     // Trigger command palette with Ctrl+P
     harness

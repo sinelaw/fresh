@@ -101,7 +101,7 @@ fn test_scroll_clearing_at_bottom_of_file() {
     // we should NOT see content from the top of the file unless
     // the file is small enough to fit entirely on screen
 
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     let buffer_lines: Vec<&str> = buffer_content.lines().collect();
     let total_lines = buffer_lines.len();
     let viewport_height = content_last_row - content_first_row + 1;
@@ -305,7 +305,7 @@ fn test_leftover_characters_after_last_line() {
 
     // Get content area bounds
     let (content_first_row, content_last_row) = harness.content_area_rows();
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     let total_file_lines = buffer_content.lines().count();
 
     println!("File has {} lines", total_file_lines);

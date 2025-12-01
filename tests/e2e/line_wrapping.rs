@@ -25,8 +25,8 @@ fn test_line_wrapping_basic_rendering() {
     );
 
     // Buffer content should still be a single line (no newlines added)
-    assert_eq!(harness.get_buffer_content(), long_text);
-    assert!(!harness.get_buffer_content().contains('\n'));
+    assert_eq!(harness.get_buffer_content().unwrap(), long_text);
+    assert!(!harness.get_buffer_content().unwrap().contains('\n'));
 }
 
 /// Test line wrapping can be disabled
@@ -42,8 +42,8 @@ fn test_line_wrapping_disabled() {
     harness.render().unwrap();
 
     // Buffer content should still be a single line
-    assert_eq!(harness.get_buffer_content(), long_text);
-    assert!(!harness.get_buffer_content().contains('\n'));
+    assert_eq!(harness.get_buffer_content().unwrap(), long_text);
+    assert!(!harness.get_buffer_content().unwrap().contains('\n'));
 }
 
 /// Test cursor navigation with wrapped lines - Home key
@@ -138,7 +138,7 @@ fn test_wrapped_line_editing_middle() {
 
     // Verify the text was inserted correctly
     let expected = "This is a very long [INSERTED]line of text that will definitely exceed the terminal width and should wrap.";
-    assert_eq!(harness.get_buffer_content(), expected);
+    assert_eq!(harness.get_buffer_content().unwrap(), expected);
 
     // Cursor should be after the inserted text
     assert_eq!(harness.cursor_position(), 30); // 20 + 10
@@ -166,7 +166,7 @@ fn test_multiple_wrapped_lines() {
 
     harness.render().unwrap();
 
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
 
     // Should have exactly 2 newlines (3 logical lines)
     assert_eq!(buffer_content.matches('\n').count(), 2);
@@ -216,7 +216,7 @@ fn test_wrapped_line_deletion() {
         .type_text("This is a very long line that will wrap to multiple display lines.")
         .unwrap();
 
-    let initial_len = harness.get_buffer_content().len();
+    let initial_len = harness.get_buffer_content().unwrap().len();
 
     // Delete some characters with backspace
     for _ in 0..10 {
@@ -226,9 +226,9 @@ fn test_wrapped_line_deletion() {
     }
 
     // Content should be shorter
-    assert_eq!(harness.get_buffer_content().len(), initial_len - 10);
+    assert_eq!(harness.get_buffer_content().unwrap().len(), initial_len - 10);
 
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
 
     // Should end with "disp" now (removed "lay lines.")
     // Original: "This is a very long line that will wrap to multiple display lines."
@@ -266,7 +266,7 @@ fn test_wrapped_line_numbers() {
     assert!(screen.contains("3"));
 
     // Verify we only have 3 logical lines in the buffer
-    assert_eq!(harness.get_buffer_content().matches('\n').count(), 2);
+    assert_eq!(harness.get_buffer_content().unwrap().matches('\n').count(), 2);
 }
 
 /// Test that horizontal scrolling is disabled when line wrapping is enabled
@@ -570,7 +570,7 @@ fn test_wrapped_line_scrolling_down_past_viewport() {
         .unwrap();
     harness.render().unwrap();
 
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap();
     eprintln!("\n=== Buffer content ===");
     eprintln!("Total buffer length: {} bytes", buffer_content.len());
 

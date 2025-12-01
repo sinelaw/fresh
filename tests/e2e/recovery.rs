@@ -215,7 +215,7 @@ fn test_undo_returns_to_saved_state_not_original() {
     );
 
     // Content should now be "Hello World"
-    assert_eq!(harness.get_buffer_content(), "Hello World");
+    assert_eq!(harness.get_buffer_content().unwrap(), "Hello World");
 
     // 5. Undo " World" (6 characters) to return to saved state "Hello"
     // Each character is a separate undo step
@@ -227,7 +227,7 @@ fn test_undo_returns_to_saved_state_not_original() {
 
     // Content should be "Hello" (the saved state)
     assert_eq!(
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         "Hello",
         "After undo, content should be 'Hello'"
     );
@@ -248,7 +248,7 @@ fn test_undo_returns_to_saved_state_not_original() {
 
     // Content should be "" (empty, the original state)
     assert_eq!(
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         "",
         "After more undos, content should be empty"
     );
@@ -446,7 +446,7 @@ fn test_recovery_content_replacement_flow() {
 
     // Verify original content loaded
     assert_eq!(
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         "original file content here",
         "File should load correctly"
     );
@@ -463,7 +463,7 @@ fn test_recovery_content_replacement_flow() {
 
     // Verify content via get_buffer_content (which uses get_all_text internally)
     assert_eq!(
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         "RECOVERED CONTENT",
         "Buffer should contain recovered content after replacement"
     );
@@ -532,7 +532,7 @@ fn test_full_chunked_recovery_cycle() {
 
     // Verify content is correct
     assert_eq!(
-        harness.get_buffer_content(),
+        harness.get_buffer_content().unwrap(),
         "Hello, Universe! This is the original file content.",
         "Buffer should have recovered content"
     );
@@ -571,7 +571,7 @@ fn test_recovery_large_file_content_replacement() {
     );
 
     // Verify content is accessible
-    let content = harness.get_buffer_content();
+    let content = harness.get_buffer_content().unwrap();
     assert_eq!(content.len(), 50_000, "Content should be retrievable");
     assert!(
         content.chars().all(|c| c == 'Y'),
