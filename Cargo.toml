@@ -43,6 +43,7 @@ libc = "0.2"
 nix = { version = "0.30", features = ["signal", "pthread", "resource"] }
 deno_core = "0.371.0"  # TypeScript plugin runtime (stable version)
 deno_ast = { version = "0.51.0", features = ["transpiling"] }  # TypeScript transpilation
+deno_error = "0.7"  # Error types for deno_core ops (matches deno_core's dependency)
 tree-sitter-python = "0.25.0"
 tree-sitter-javascript = "0.25.0"
 tree-sitter-typescript = "0.23.2"

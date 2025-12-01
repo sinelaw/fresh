@@ -47,9 +47,11 @@ use crate::services::plugins::api::{
 };
 use anyhow::{anyhow, Result};
 use deno_core::{
-    extension, op2, FastString, JsRuntime, ModuleLoadResponse, ModuleSource, ModuleSourceCode,
-    ModuleSpecifier, ModuleType, OpState, RequestedModuleType, ResolutionKind, RuntimeOptions,
+    error::ModuleLoaderError, extension, op2, FastString, JsRuntime, ModuleLoadOptions,
+    ModuleLoadReferrer, ModuleLoadResponse, ModuleSource, ModuleSourceCode, ModuleSpecifier,
+    ModuleType, OpState, ResolutionKind, RuntimeOptions,
 };
+use deno_error::JsErrorBox;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -66,25 +68,25 @@ impl deno_core::ModuleLoader for TypeScriptModuleLoader {
         specifier: &str,
         referrer: &str,
         _kind: ResolutionKind,
-    ) -> Result<ModuleSpecifier, deno_core::error::AnyError> {
-        deno_core::resolve_import(specifier, referrer).map_err(Into::into)
+    ) -> Result<ModuleSpecifier, ModuleLoaderError> {
+        deno_core::resolve_import(specifier, referrer)
+            .map_err(|e| JsErrorBox::generic(e.to_string()))
     }
 
     fn load(
         &self,
         module_specifier: &ModuleSpecifier,
-        _maybe_referrer: Option<&ModuleSpecifier>,
-        _is_dyn_import: bool,
-        _requested_module_type: RequestedModuleType,
+        _maybe_referrer: Option<&ModuleLoadReferrer>,
+        _options: ModuleLoadOptions,
     ) -> ModuleLoadResponse {
         let specifier = module_specifier.clone();
         let module_load = async move {
             let path = specifier
                 .to_file_path()
-                .map_err(|_| anyhow!("Invalid file URL: {}", specifier))?;
+                .map_err(|_| JsErrorBox::generic(format!("Invalid file URL: {}", specifier)))?;
 
             let code = std::fs::read_to_string(&path)
-                .map_err(|e| anyhow!("Failed to read {}: {}", path.display(), e))?;
+                .map_err(|e| JsErrorBox::generic(format!("Failed to read {}: {}", path.display(), e)))?;
 
             // Check if we need to transpile TypeScript
             let (code, module_type) = if path.extension().and_then(|s| s.to_str()) == Some("ts") {
@@ -113,7 +115,7 @@ impl deno_core::ModuleLoader for TypeScriptModuleLoader {
 fn transpile_typescript(
     source: &str,
     specifier: &ModuleSpecifier,
-) -> Result<String, deno_core::error::AnyError> {
+) -> Result<String, JsErrorBox> {
     use deno_ast::{EmitOptions, MediaType, ParseParams, TranspileOptions};
 
     let parsed = deno_ast::parse_module(ParseParams {
@@ -124,7 +126,7 @@ fn transpile_typescript(
         scope_analysis: false,
         maybe_syntax: None,
     })
-    .map_err(|e| anyhow!("TypeScript parse error: {}", e))?;
+    .map_err(|e| JsErrorBox::generic(format!("TypeScript parse error: {}", e)))?;
 
     let transpiled = parsed
         .transpile(
@@ -132,7 +134,7 @@ fn transpile_typescript(
             &Default::default(),
             &EmitOptions::default(),
         )
-        .map_err(|e| anyhow!("TypeScript transpile error: {}", e))?;
+        .map_err(|e| JsErrorBox::generic(format!("TypeScript transpile error: {}", e)))?;
 
     Ok(transpiled.into_source().text.to_string())
 }
@@ -1080,14 +1082,14 @@ async fn op_fresh_spawn_process(
     #[string] command: String,
     #[serde] args: Vec<String>,
     #[string] cwd: Option<String>,
-) -> Result<SpawnResult, deno_core::error::AnyError> {
+) -> Result<SpawnResult, JsErrorBox> {
     use std::process::Stdio;
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::process::Command;
 
     // Check if we're in a tokio runtime context
     if tokio::runtime::Handle::try_current().is_err() {
-        return Err(deno_core::error::generic_error(
+        return Err(JsErrorBox::generic(
             "spawnProcess requires an async runtime context (tokio)",
         ));
     }
@@ -1106,7 +1108,7 @@ async fn op_fresh_spawn_process(
     // Spawn the process
     let mut child = cmd
         .spawn()
-        .map_err(|e| deno_core::error::generic_error(format!("Failed to spawn process: {}", e)))?;
+        .map_err(|e| JsErrorBox::generic(format!("Failed to spawn process: {}", e)))?;
 
     // Capture stdout and stderr
     let stdout_handle = child.stdout.take();
@@ -1191,7 +1193,7 @@ async fn op_fresh_spawn_background_process(
     #[string] command: String,
     #[serde] args: Vec<String>,
     #[string] cwd: Option<String>,
-) -> Result<BackgroundProcessResult, deno_core::error::AnyError> {
+) -> Result<BackgroundProcessResult, JsErrorBox> {
     use std::process::Stdio;
     use tokio::process::Command;
 
@@ -1211,7 +1213,7 @@ async fn op_fresh_spawn_background_process(
     // Spawn the process
     let child = cmd
         .spawn()
-        .map_err(|e| deno_core::error::generic_error(format!("Failed to spawn process: {}", e)))?;
+        .map_err(|e| JsErrorBox::generic(format!("Failed to spawn process: {}", e)))?;
 
     // Get process ID and store the child handle
     let process_id = {
@@ -1229,7 +1231,7 @@ async fn op_fresh_spawn_background_process(
                 .insert(process_id, child);
             process_id
         } else {
-            return Err(deno_core::error::generic_error(
+            return Err(JsErrorBox::generic(
                 "Runtime state not available",
             ));
         }
@@ -1249,7 +1251,7 @@ async fn op_fresh_spawn_background_process(
 async fn op_fresh_kill_process(
     state: Rc<RefCell<OpState>>,
     #[bigint] process_id: u64,
-) -> Result<bool, deno_core::error::AnyError> {
+) -> Result<bool, JsErrorBox> {
     let child_opt = {
         let op_state = state.borrow();
         if let Some(runtime_state) = op_state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
@@ -1679,9 +1681,9 @@ fn op_fresh_set_prompt_suggestions(
 /// @param path - File path (absolute or relative to cwd)
 #[op2(async)]
 #[string]
-async fn op_fresh_read_file(#[string] path: String) -> Result<String, deno_core::error::AnyError> {
+async fn op_fresh_read_file(#[string] path: String) -> Result<String, JsErrorBox> {
     tokio::fs::read_to_string(&path).await.map_err(|e| {
-        deno_core::error::generic_error(format!("Failed to read file {}: {}", path, e))
+        JsErrorBox::generic(format!("Failed to read file {}: {}", path, e))
     })
 }
 
@@ -1695,9 +1697,9 @@ async fn op_fresh_read_file(#[string] path: String) -> Result<String, deno_core:
 async fn op_fresh_write_file(
     #[string] path: String,
     #[string] content: String,
-) -> Result<(), deno_core::error::AnyError> {
+) -> Result<(), JsErrorBox> {
     tokio::fs::write(&path, content).await.map_err(|e| {
-        deno_core::error::generic_error(format!("Failed to write file {}: {}", path, e))
+        JsErrorBox::generic(format!("Failed to write file {}: {}", path, e))
     })
 }
 
@@ -1874,7 +1876,7 @@ struct DirEntry {
 fn op_fresh_read_dir(
     state: &mut OpState,
     #[string] path: String,
-) -> Result<Vec<DirEntry>, deno_core::error::AnyError> {
+) -> Result<Vec<DirEntry>, JsErrorBox> {
     // Resolve relative paths against the editor's working directory
     let resolved_path = if std::path::Path::new(&path).is_absolute() {
         std::path::PathBuf::from(&path)
@@ -1900,17 +1902,17 @@ fn op_fresh_read_dir(
     };
 
     let entries = std::fs::read_dir(&resolved_path).map_err(|e| {
-        deno_core::error::generic_error(format!("Failed to read directory {}: {}", path, e))
+        JsErrorBox::generic(format!("Failed to read directory {}: {}", path, e))
     })?;
 
     let mut result = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|e| {
-            deno_core::error::generic_error(format!("Failed to read directory entry: {}", e))
+            JsErrorBox::generic(format!("Failed to read directory entry: {}", e))
         })?;
 
         let metadata = entry.metadata().map_err(|e| {
-            deno_core::error::generic_error(format!("Failed to get entry metadata: {}", e))
+            JsErrorBox::generic(format!("Failed to get entry metadata: {}", e))
         })?;
 
         result.push(DirEntry {
@@ -1996,13 +1998,13 @@ struct CreateVirtualBufferOptions {
 async fn op_fresh_create_virtual_buffer_in_split(
     state: Rc<RefCell<OpState>>,
     #[serde] options: CreateVirtualBufferOptions,
-) -> Result<CreateVirtualBufferResult, deno_core::error::AnyError> {
+) -> Result<CreateVirtualBufferResult, JsErrorBox> {
     // Get runtime state and create oneshot channel
     let receiver = {
         let state = state.borrow();
         let runtime_state = state
             .try_borrow::<Rc<RefCell<TsRuntimeState>>>()
-            .ok_or_else(|| deno_core::error::generic_error("Failed to get runtime state"))?;
+            .ok_or_else(|| JsErrorBox::generic("Failed to get runtime state"))?;
         let runtime_state = runtime_state.borrow();
 
         // Allocate request ID
@@ -2052,7 +2054,7 @@ async fn op_fresh_create_virtual_buffer_in_split(
                 editing_disabled: options.editing_disabled.unwrap_or(false),
                 request_id: Some(request_id),
             })
-            .map_err(|_| deno_core::error::generic_error("Failed to send command"))?;
+            .map_err(|_| JsErrorBox::generic("Failed to send command"))?;
         tracing::trace!("op_create_virtual_buffer_in_split: command sent, waiting for response");
 
         rx
@@ -2061,7 +2063,7 @@ async fn op_fresh_create_virtual_buffer_in_split(
     // Wait for response
     let response = receiver
         .await
-        .map_err(|_| deno_core::error::generic_error("Response channel closed"))?;
+        .map_err(|_| JsErrorBox::generic("Response channel closed"))?;
 
     // Extract buffer ID and split ID from response
     match response {
@@ -2073,7 +2075,7 @@ async fn op_fresh_create_virtual_buffer_in_split(
             buffer_id: buffer_id.0 as u32,
             split_id: split_id.map(|s| s.0 as u32),
         }),
-        _ => Err(deno_core::error::generic_error(
+        _ => Err(JsErrorBox::generic(
             "Unexpected plugin response for virtual buffer creation",
         )),
     }
@@ -2107,13 +2109,13 @@ struct CreateVirtualBufferInExistingSplitOptions {
 async fn op_fresh_create_virtual_buffer_in_existing_split(
     state: Rc<RefCell<OpState>>,
     #[serde] options: CreateVirtualBufferInExistingSplitOptions,
-) -> Result<u32, deno_core::error::AnyError> {
+) -> Result<u32, JsErrorBox> {
     // Get runtime state and create oneshot channel
     let receiver = {
         let state = state.borrow();
         let runtime_state = state
             .try_borrow::<Rc<RefCell<TsRuntimeState>>>()
-            .ok_or_else(|| deno_core::error::generic_error("Failed to get runtime state"))?;
+            .ok_or_else(|| JsErrorBox::generic("Failed to get runtime state"))?;
         let runtime_state = runtime_state.borrow();
 
         // Allocate request ID
@@ -2157,7 +2159,7 @@ async fn op_fresh_create_virtual_buffer_in_existing_split(
                 editing_disabled: options.editing_disabled.unwrap_or(false),
                 request_id: Some(request_id),
             })
-            .map_err(|_| deno_core::error::generic_error("Failed to send command"))?;
+            .map_err(|_| JsErrorBox::generic("Failed to send command"))?;
 
         rx
     };
@@ -2165,14 +2167,14 @@ async fn op_fresh_create_virtual_buffer_in_existing_split(
     // Wait for response
     let response = receiver
         .await
-        .map_err(|_| deno_core::error::generic_error("Response channel closed"))?;
+        .map_err(|_| JsErrorBox::generic("Response channel closed"))?;
 
     // Extract buffer ID from response
     match response {
         crate::services::plugins::api::PluginResponse::VirtualBufferCreated {
             buffer_id, ..
         } => Ok(buffer_id.0 as u32),
-        _ => Err(deno_core::error::generic_error(
+        _ => Err(JsErrorBox::generic(
             "Unexpected plugin response for virtual buffer creation",
         )),
     }
@@ -2206,13 +2208,13 @@ struct CreateVirtualBufferInCurrentSplitOptions {
 async fn op_fresh_create_virtual_buffer(
     state: Rc<RefCell<OpState>>,
     #[serde] options: CreateVirtualBufferInCurrentSplitOptions,
-) -> Result<u32, deno_core::error::AnyError> {
+) -> Result<u32, JsErrorBox> {
     // Get runtime state and create oneshot channel
     let receiver = {
         let state = state.borrow();
         let runtime_state = state
             .try_borrow::<Rc<RefCell<TsRuntimeState>>>()
-            .ok_or_else(|| deno_core::error::generic_error("Failed to get runtime state"))?;
+            .ok_or_else(|| JsErrorBox::generic("Failed to get runtime state"))?;
         let runtime_state = runtime_state.borrow();
 
         // Allocate request ID
@@ -2255,7 +2257,7 @@ async fn op_fresh_create_virtual_buffer(
                 editing_disabled: options.editing_disabled.unwrap_or(false),
                 request_id: Some(request_id),
             })
-            .map_err(|_| deno_core::error::generic_error("Failed to send command"))?;
+            .map_err(|_| JsErrorBox::generic("Failed to send command"))?;
 
         rx
     };
@@ -2263,14 +2265,14 @@ async fn op_fresh_create_virtual_buffer(
     // Wait for response
     let response = receiver
         .await
-        .map_err(|_| deno_core::error::generic_error("Response channel closed"))?;
+        .map_err(|_| JsErrorBox::generic("Response channel closed"))?;
 
     // Extract buffer ID from response
     match response {
         crate::services::plugins::api::PluginResponse::VirtualBufferCreated {
             buffer_id, ..
         } => Ok(buffer_id.0 as u32),
-        _ => Err(deno_core::error::generic_error(
+        _ => Err(JsErrorBox::generic(
             "Unexpected plugin response for virtual buffer creation",
         )),
     }
@@ -2288,12 +2290,12 @@ async fn op_fresh_send_lsp_request(
     #[string] language: String,
     #[string] method: String,
     #[serde] params: Option<serde_json::Value>,
-) -> Result<serde_json::Value, deno_core::error::AnyError> {
+) -> Result<serde_json::Value, JsErrorBox> {
     let receiver = {
         let state = state.borrow();
         let runtime_state = state
             .try_borrow::<Rc<RefCell<TsRuntimeState>>>()
-            .ok_or_else(|| deno_core::error::generic_error("Failed to get runtime state"))?;
+            .ok_or_else(|| JsErrorBox::generic("Failed to get runtime state"))?;
         let runtime_state = runtime_state.borrow();
 
         let request_id = {
@@ -2323,7 +2325,7 @@ async fn op_fresh_send_lsp_request(
         {
             let mut pending = runtime_state.pending_responses.lock().unwrap();
             pending.remove(&request_id);
-            return Err(deno_core::error::generic_error(
+            return Err(JsErrorBox::generic(
                 "Failed to send plugin LSP request",
             ));
         }
@@ -2333,14 +2335,14 @@ async fn op_fresh_send_lsp_request(
 
     let response = receiver
         .await
-        .map_err(|_| deno_core::error::generic_error("Plugin LSP request cancelled"))?;
+        .map_err(|_| JsErrorBox::generic("Plugin LSP request cancelled"))?;
 
     match response {
         crate::services::plugins::api::PluginResponse::LspRequest { result, .. } => match result {
             Ok(value) => Ok(value),
-            Err(err) => Err(deno_core::error::generic_error(err)),
+            Err(err) => Err(JsErrorBox::generic(err)),
         },
-        _ => Err(deno_core::error::generic_error(
+        _ => Err(JsErrorBox::generic(
             "Unexpected plugin response for LSP request",
         )),
     }
@@ -2738,7 +2740,7 @@ impl TypeScriptRuntime {
 
         let mut js_runtime = JsRuntime::new(RuntimeOptions {
             module_loader: Some(Rc::new(TypeScriptModuleLoader)),
-            extensions: vec![fresh_runtime::init_ops()],
+            extensions: vec![fresh_runtime::init()],
             ..Default::default()
         });
 
@@ -3213,76 +3215,44 @@ impl TypeScriptRuntime {
             }
 
             for handler_name in &handler_names {
-                // Call the pre-compiled event dispatcher directly via V8 API
-                // This avoids the overhead of execute_script (parsing, compiling)
                 let call_start = std::time::Instant::now();
-                let result = {
-                    let scope = &mut self.js_runtime.handle_scope();
-                    let context = scope.get_current_context();
-                    let global = context.global(scope);
 
-                    // Get the __eventDispatcher function
-                    let dispatcher_key =
-                        deno_core::v8::String::new(scope, "__eventDispatcher").unwrap();
-                    let dispatcher_val = global.get(scope, dispatcher_key.into());
+                // Use execute_script to call the event dispatcher
+                // This escapes the handler name and embeds the event data as JSON
+                let script = format!(
+                    "__eventDispatcher({}, {})",
+                    serde_json::to_string(handler_name).unwrap_or_else(|_| "\"\"".to_string()),
+                    event_data
+                );
 
-                    match dispatcher_val {
-                        Some(val) if val.is_function() => {
-                            let dispatcher = unsafe {
-                                deno_core::v8::Local::<deno_core::v8::Function>::cast(val)
-                            };
+                match self.js_runtime.execute_script("<emit>", script) {
+                    Ok(_) => {
+                        let call_elapsed = call_start.elapsed();
 
-                            // Create arguments: handler name and parsed event data
-                            let handler_str =
-                                deno_core::v8::String::new(scope, handler_name).unwrap();
+                        // Run event loop to process any async work (promises)
+                        let event_loop_start = std::time::Instant::now();
+                        self.js_runtime
+                            .run_event_loop(Default::default())
+                            .await
+                            .map_err(|e| anyhow!("Event loop error in emit: {}", e))?;
+                        let event_loop_elapsed = event_loop_start.elapsed();
 
-                            // Parse the event_data JSON string into a V8 value
-                            let event_data_str =
-                                deno_core::v8::String::new(scope, event_data).unwrap();
-                            let event_data_val =
-                                deno_core::v8::json::parse(scope, event_data_str.into());
-
-                            match event_data_val {
-                                Some(data) => {
-                                    let args = [handler_str.into(), data];
-                                    let undefined = deno_core::v8::undefined(scope);
-
-                                    // Call the dispatcher function
-                                    dispatcher.call(scope, undefined.into(), &args)
-                                }
-                                None => {
-                                    tracing::error!(
-                                        "Failed to parse event data JSON for '{}'",
-                                        event_name
-                                    );
-                                    None
-                                }
-                            }
-                        }
-                        _ => {
-                            tracing::error!("__eventDispatcher is not defined or not a function");
-                            None
-                        }
+                        tracing::trace!(
+                            event = event_name,
+                            handler = handler_name,
+                            call_us = call_elapsed.as_micros(),
+                            event_loop_us = event_loop_elapsed.as_micros(),
+                            "emit handler timing"
+                        );
                     }
-                };
-                let call_elapsed = call_start.elapsed();
-
-                if result.is_some() {
-                    // Run event loop to process any async work (promises)
-                    let event_loop_start = std::time::Instant::now();
-                    self.js_runtime
-                        .run_event_loop(Default::default())
-                        .await
-                        .map_err(|e| anyhow!("Event loop error in emit: {}", e))?;
-                    let event_loop_elapsed = event_loop_start.elapsed();
-
-                    tracing::trace!(
-                        event = event_name,
-                        handler = handler_name,
-                        call_us = call_elapsed.as_micros(),
-                        event_loop_us = event_loop_elapsed.as_micros(),
-                        "emit handler timing"
-                    );
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to call event handler '{}' for '{}': {:?}",
+                            handler_name,
+                            event_name,
+                            e
+                        );
+                    }
                 }
             }
         }

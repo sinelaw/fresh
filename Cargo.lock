@@ -1210,6 +1210,7 @@ dependencies = [
  "ctrlc",
  "deno_ast",
  "deno_core",
+ "deno_error",
  "dirs",
  "ignore",
  "insta",

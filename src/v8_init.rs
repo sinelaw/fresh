@@ -22,6 +22,6 @@ static INIT_V8: Once = Once::new();
 /// Safe to call multiple times - only the first call has any effect.
 pub fn init() {
     INIT_V8.call_once(|| {
-        deno_core::JsRuntime::init_platform(None);
+        deno_core::JsRuntime::init_platform(None, false);
     });
 }
