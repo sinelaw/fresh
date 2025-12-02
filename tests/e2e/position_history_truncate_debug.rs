@@ -8,7 +8,10 @@ fn test_debug_truncate() {
     // Create 3 buffers
     println!("Creating Buffer 1");
     harness.type_text("Buffer 1").unwrap();
-    println!("Buffer 1 content: {:?}", harness.get_buffer_content().unwrap());
+    println!(
+        "Buffer 1 content: {:?}",
+        harness.get_buffer_content().unwrap()
+    );
     let hist = &harness.editor().position_history;
     println!(
         "History: len={}, current_idx={:?}, can_back={}, can_fwd={}",
@@ -23,7 +26,10 @@ fn test_debug_truncate() {
         .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
         .unwrap();
     harness.type_text("Buffer 2").unwrap();
-    println!("Buffer 2 content: {:?}", harness.get_buffer_content().unwrap());
+    println!(
+        "Buffer 2 content: {:?}",
+        harness.get_buffer_content().unwrap()
+    );
     let hist = &harness.editor().position_history;
     println!(
         "History: len={}, current_idx={:?}, can_back={}, can_fwd={}",
@@ -38,7 +44,10 @@ fn test_debug_truncate() {
         .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
         .unwrap();
     harness.type_text("Buffer 3").unwrap();
-    println!("Buffer 3 content: {:?}", harness.get_buffer_content().unwrap());
+    println!(
+        "Buffer 3 content: {:?}",
+        harness.get_buffer_content().unwrap()
+    );
     let hist = &harness.editor().position_history;
     println!(
         "History: len={}, current_idx={:?}, can_back={}, can_fwd={}",
@@ -86,7 +95,10 @@ fn test_debug_truncate() {
         .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
         .unwrap();
     harness.type_text("Buffer 4").unwrap();
-    println!("Buffer 4 content: {:?}", harness.get_buffer_content().unwrap());
+    println!(
+        "Buffer 4 content: {:?}",
+        harness.get_buffer_content().unwrap()
+    );
     let hist = &harness.editor().position_history;
     println!(
         "History: len={}, current_idx={:?}, can_back={}, can_fwd={}",

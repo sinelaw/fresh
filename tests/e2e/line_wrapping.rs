@@ -226,7 +226,10 @@ fn test_wrapped_line_deletion() {
     }
 
     // Content should be shorter
-    assert_eq!(harness.get_buffer_content().unwrap().len(), initial_len - 10);
+    assert_eq!(
+        harness.get_buffer_content().unwrap().len(),
+        initial_len - 10
+    );
 
     let content = harness.get_buffer_content().unwrap();
 
@@ -266,7 +269,10 @@ fn test_wrapped_line_numbers() {
     assert!(screen.contains("3"));
 
     // Verify we only have 3 logical lines in the buffer
-    assert_eq!(harness.get_buffer_content().unwrap().matches('\n').count(), 2);
+    assert_eq!(
+        harness.get_buffer_content().unwrap().matches('\n').count(),
+        2
+    );
 }
 
 /// Test that horizontal scrolling is disabled when line wrapping is enabled
