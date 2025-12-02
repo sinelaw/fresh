@@ -16,9 +16,18 @@
 //! ```text
 //! ~/.local/share/fresh/recovery/
 //! ├── session.lock           # Session info (PID, start time)
-//! ├── {hash}.meta.json      # Recovery metadata
-//! └── {hash}.content        # Buffer content
+//! ├── {hash}.meta.json       # Recovery metadata (+ chunk index for large files)
+//! ├── {hash}.content         # Buffer content (Full format, small files)
+//! ├── {hash}.chunk.0         # Chunk 0 binary content (Chunked format, large files)
+//! ├── {hash}.chunk.1         # Chunk 1 binary content
+//! └── ...
 //! ```
+//!
+//! ## Recovery Formats
+//!
+//! - **Full**: For small files, stores entire buffer content in `.content` file
+//! - **Chunked**: For large files (>1MB), stores only modified chunks in separate
+//!   `.chunk.N` files with metadata/index in `.meta.json`
 //!
 //! ## Usage
 //!
@@ -45,9 +54,9 @@ pub mod types;
 
 pub use storage::RecoveryStorage;
 pub use types::{
-    compute_checksum, generate_buffer_id, path_hash, ChunkedRecoveryData, RecoveryChunk,
-    RecoveryEntry, RecoveryFormat, RecoveryMetadata, RecoveryResult, SessionInfo,
-    CHUNKED_RECOVERY_THRESHOLD, MAX_CHUNK_SIZE,
+    compute_checksum, compute_composite_checksum, generate_buffer_id, path_hash, ChunkMeta,
+    ChunkedRecoveryData, ChunkedRecoveryIndex, RecoveryChunk, RecoveryEntry, RecoveryFormat,
+    RecoveryMetadata, RecoveryResult, SessionInfo, MAX_CHUNK_SIZE,
 };
 
 use std::collections::HashMap;
@@ -217,8 +226,8 @@ impl RecoveryService {
 
     /// Save a buffer's content for recovery
     ///
-    /// For small files (< CHUNKED_RECOVERY_THRESHOLD), saves full content.
-    /// For large files, use save_buffer_chunked instead for efficiency.
+    /// For small files, saves full content.
+    /// For large files (is_large_file() == true), use save_buffer_chunked instead.
     pub fn save_buffer(
         &mut self,
         buffer_id: &str,
