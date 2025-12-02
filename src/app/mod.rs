@@ -3212,6 +3212,15 @@ impl Editor {
                         tracing::info!("Recovered unsaved buffer");
                     }
                 }
+                Ok(RecoveryResult::OriginalFileModified { id, original_path }) => {
+                    tracing::warn!(
+                        "Recovery file {} skipped: original file {} was modified",
+                        id,
+                        original_path.display()
+                    );
+                    // Delete the recovery file since it's no longer valid
+                    let _ = self.recovery_service.discard_recovery(&entry);
+                }
                 Ok(RecoveryResult::Corrupted { id, reason }) => {
                     tracing::warn!("Recovery file {} corrupted: {}", id, reason);
                 }

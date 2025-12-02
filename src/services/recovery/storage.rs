@@ -4,8 +4,8 @@
 //! to ensure data integrity even during crashes.
 
 use super::types::{
-    compute_checksum, generate_buffer_id, path_hash, ChunkedRecoveryData, ChunkedRecoveryIndex,
-    RecoveryChunk, RecoveryEntry, RecoveryMetadata, SessionInfo,
+    generate_buffer_id, path_hash, ChunkedRecoveryData, ChunkedRecoveryIndex, RecoveryChunk,
+    RecoveryEntry, RecoveryMetadata, SessionInfo,
 };
 use crate::input::input_history::get_data_dir;
 use std::fs::{self, File};
@@ -218,9 +218,6 @@ impl RecoveryStorage {
         // Create the index (metadata without binary content)
         let index = chunked_data.to_index();
 
-        // Compute composite checksum from chunk checksums
-        let checksum = index.compute_checksum();
-
         // Get original file's mtime if it exists
         let original_mtime = original_path.and_then(|p| {
             fs::metadata(p)
@@ -236,7 +233,6 @@ impl RecoveryStorage {
                 RecoveryMetadata::new(
                     original_path.map(|p| p.to_path_buf()),
                     buffer_name.map(|s| s.to_string()),
-                    checksum.clone(),
                     total_chunk_bytes,
                     line_count,
                     original_mtime,
@@ -248,7 +244,6 @@ impl RecoveryStorage {
             RecoveryMetadata::new(
                 original_path.map(|p| p.to_path_buf()),
                 buffer_name.map(|s| s.to_string()),
-                checksum.clone(),
                 total_chunk_bytes,
                 line_count,
                 original_mtime,
@@ -259,12 +254,7 @@ impl RecoveryStorage {
 
         // Update metadata fields
         metadata.original_file_size = original_file_size;
-        metadata.update(
-            checksum,
-            total_chunk_bytes,
-            line_count,
-            chunked_data.chunks.len(),
-        );
+        metadata.update(total_chunk_bytes, line_count, chunked_data.chunks.len());
 
         // Create combined metadata with embedded chunk index
         #[derive(serde::Serialize)]
@@ -333,23 +323,10 @@ impl RecoveryStorage {
 
             let content = fs::read(&chunk_path)?;
 
-            // Verify checksum
-            let actual_checksum = compute_checksum(&content);
-            if actual_checksum != chunk_meta.checksum {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "Chunk {} checksum mismatch: expected {}, got {}",
-                        i, chunk_meta.checksum, actual_checksum
-                    ),
-                ));
-            }
-
             chunks.push(RecoveryChunk {
                 offset: chunk_meta.offset,
                 original_len: chunk_meta.original_len,
                 content,
-                checksum: chunk_meta.checksum.clone(),
             });
         }
 
@@ -389,17 +366,6 @@ impl RecoveryStorage {
         let mut original_pos = 0;
 
         for chunk in &chunked_data.chunks {
-            // Verify chunk integrity
-            if !chunk.verify() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "Chunk at offset {} failed checksum verification",
-                        chunk.offset
-                    ),
-                ));
-            }
-
             // Copy unchanged content before this chunk
             if chunk.offset > original_pos {
                 result.extend_from_slice(&original_content[original_pos..chunk.offset]);
@@ -691,7 +657,7 @@ mod tests {
         assert_eq!(chunked_data.chunks[0].content, content);
 
         // Verify checksum
-        assert!(entry.verify_checksum().unwrap());
+        
     }
 
     #[test]
@@ -830,7 +796,7 @@ mod tests {
 
         // Load entry and verify
         let entry = storage.load_entry(id).unwrap().unwrap();
-        assert!(entry.verify_checksum().unwrap());
+        
 
         // Test: list entry shows up
         let entries = storage.list_entries().unwrap();
@@ -942,32 +908,6 @@ mod tests {
     }
 
     #[test]
-    fn test_chunked_recovery_checksum_verification() {
-        let (storage, _temp) = create_test_storage();
-
-        let chunks = vec![RecoveryChunk::new(0, 0, b"test_content".to_vec())];
-        let id = "test-checksum";
-
-        storage
-            .save_recovery(id, chunks, None, None, None, 100, 112)
-            .unwrap();
-
-        // Load and verify checksum
-        let entry = storage.load_entry(id).unwrap().unwrap();
-        assert!(entry.verify_checksum().unwrap());
-
-        // Corrupt a chunk file
-        let chunk_path = storage.chunk_path(id, 0);
-        fs::write(&chunk_path, b"corrupted_data").unwrap();
-
-        // Reading should fail due to checksum mismatch
-        let result = storage.read_chunked_content(id);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("checksum mismatch"));
-    }
-
-    #[test]
     fn test_chunked_recovery_cleanup_orphan_chunks() {
         let (storage, _temp) = create_test_storage();
         storage.ensure_dir().unwrap();
@@ -1025,7 +965,7 @@ mod tests {
         assert_eq!(large_entry.metadata.original_file_size, 100);
 
         // Both should have valid checksums
-        assert!(new_entry.verify_checksum().unwrap());
-        assert!(large_entry.verify_checksum().unwrap());
+        
+        
     }
 }

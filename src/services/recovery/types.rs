@@ -27,8 +27,6 @@ pub struct ChunkMeta {
     pub original_len: usize,
     /// Size of the new content in bytes
     pub size: usize,
-    /// SHA-256 checksum of the chunk content
-    pub checksum: String,
 }
 
 /// A chunk with its binary content (used in memory, not serialized directly)
@@ -40,25 +38,16 @@ pub struct RecoveryChunk {
     pub original_len: usize,
     /// The modified content
     pub content: Vec<u8>,
-    /// Checksum of this chunk
-    pub checksum: String,
 }
 
 impl RecoveryChunk {
     /// Create a new recovery chunk
     pub fn new(offset: usize, original_len: usize, content: Vec<u8>) -> Self {
-        let checksum = compute_checksum(&content);
         Self {
             offset,
             original_len,
             content,
-            checksum,
         }
-    }
-
-    /// Verify the chunk's checksum
-    pub fn verify(&self) -> bool {
-        compute_checksum(&self.content) == self.checksum
     }
 
     /// Size of the chunk content in bytes
@@ -72,7 +61,6 @@ impl RecoveryChunk {
             offset: self.offset,
             original_len: self.original_len,
             size: self.content.len(),
-            checksum: self.checksum.clone(),
         }
     }
 }
@@ -119,24 +107,11 @@ impl ChunkedRecoveryData {
     }
 }
 
-impl ChunkedRecoveryIndex {
-    /// Compute a composite checksum from chunk checksums
-    pub fn compute_checksum(&self) -> String {
-        let chunk_checksums: Vec<&str> = self.chunks.iter().map(|c| c.checksum.as_str()).collect();
-        let metadata_str = format!(
-            "{}:{}:{}",
-            self.original_size,
-            self.final_size,
-            self.chunks.len()
-        );
-        compute_composite_checksum(&chunk_checksums, &metadata_str)
-    }
-}
 
 /// Metadata for a recovery file
 ///
 /// This is stored as JSON alongside the chunk files to track
-/// the original file path, timestamps, and content checksum.
+/// the original file path and timestamps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryMetadata {
     /// Original file path (None for unsaved buffers)
@@ -150,9 +125,6 @@ pub struct RecoveryMetadata {
 
     /// Unix timestamp when this recovery file was last updated
     pub updated_at: u64,
-
-    /// Composite checksum for integrity verification
-    pub checksum: String,
 
     /// Total size of chunk content in bytes
     pub content_size: u64,
@@ -183,7 +155,6 @@ impl RecoveryMetadata {
     pub fn new(
         original_path: Option<PathBuf>,
         buffer_name: Option<String>,
-        checksum: String,
         content_size: u64,
         line_count: Option<usize>,
         original_mtime: Option<u64>,
@@ -200,7 +171,6 @@ impl RecoveryMetadata {
             buffer_name,
             created_at: now,
             updated_at: now,
-            checksum,
             content_size,
             line_count,
             original_mtime,
@@ -210,19 +180,12 @@ impl RecoveryMetadata {
         }
     }
 
-    /// Update the timestamp and checksum
-    pub fn update(
-        &mut self,
-        checksum: String,
-        content_size: u64,
-        line_count: Option<usize>,
-        chunk_count: usize,
-    ) {
+    /// Update the timestamp
+    pub fn update(&mut self, content_size: u64, line_count: Option<usize>, chunk_count: usize) {
         self.updated_at = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        self.checksum = checksum;
         self.content_size = content_size;
         self.line_count = line_count;
         self.chunk_count = chunk_count;
@@ -312,30 +275,24 @@ pub struct RecoveryEntry {
 }
 
 impl RecoveryEntry {
-    /// Verify the content checksum matches
-    pub fn verify_checksum(&self) -> std::io::Result<bool> {
-        // Read the chunked index from metadata
-        let meta_content = std::fs::read_to_string(&self.metadata_path)?;
-
-        #[derive(serde::Deserialize)]
-        struct MetadataFile {
-            #[serde(default)]
-            chunked_index: Option<ChunkedRecoveryIndex>,
-        }
-
-        let meta_file: MetadataFile = serde_json::from_str(&meta_content)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-
-        match meta_file.chunked_index {
-            Some(index) => {
-                let actual_checksum = index.compute_checksum();
-                Ok(actual_checksum == self.metadata.checksum)
+    /// Check if the original file has been modified since recovery was saved.
+    /// Returns true if the file was modified (recovery may be invalid).
+    /// Returns false if the file is unchanged or doesn't exist.
+    pub fn original_file_modified(&self) -> bool {
+        if let Some(ref path) = self.metadata.original_path {
+            if let Some(saved_mtime) = self.metadata.original_mtime {
+                if let Ok(metadata) = std::fs::metadata(path) {
+                    if let Ok(mtime) = metadata.modified() {
+                        let current_mtime = mtime
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        return current_mtime != saved_mtime;
+                    }
+                }
             }
-            None => Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Recovery missing chunk index in metadata",
-            )),
         }
+        false
     }
 
     /// Get the age of this recovery file in seconds
@@ -370,7 +327,12 @@ pub enum RecoveryResult {
         original_path: Option<PathBuf>,
         content: Vec<u8>,
     },
-    /// Recovery file was corrupted (checksum mismatch)
+    /// Original file was modified since recovery was saved
+    OriginalFileModified {
+        id: String,
+        original_path: PathBuf,
+    },
+    /// Recovery file was corrupted
     Corrupted { id: String, reason: String },
     /// Recovery file not found
     NotFound { id: String },
@@ -402,27 +364,6 @@ fn is_process_running(_pid: u32) -> bool {
     false
 }
 
-/// Compute SHA-256 checksum of data
-pub fn compute_checksum(data: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    format!("{:x}", hasher.finalize())
-}
-
-/// Compute a composite checksum from individual chunk checksums.
-/// This avoids hashing large amounts of data by combining existing checksums.
-pub fn compute_composite_checksum(chunk_checksums: &[&str], metadata: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    // Include metadata to ensure different chunk arrangements produce different hashes
-    hasher.update(metadata.as_bytes());
-    for checksum in chunk_checksums {
-        hasher.update(checksum.as_bytes());
-    }
-    format!("{:x}", hasher.finalize())
-}
-
 /// Generate a stable hash for a file path (used as recovery file ID)
 pub fn path_hash(path: &std::path::Path) -> String {
     use sha2::{Digest, Sha256};
@@ -447,15 +388,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_compute_checksum() {
-        let data = b"Hello, World!";
-        let checksum = compute_checksum(data);
-        assert!(!checksum.is_empty());
-        // SHA-256 produces 64 hex chars
-        assert_eq!(checksum.len(), 64);
-    }
-
-    #[test]
     fn test_path_hash() {
         let path = std::path::Path::new("/home/user/test.rs");
         let hash = path_hash(path);
@@ -469,7 +401,6 @@ mod tests {
         let meta = RecoveryMetadata::new(
             Some(PathBuf::from("/test/file.rs")),
             None,
-            "abc123".to_string(),
             100,
             Some(10),
             None,
@@ -520,31 +451,5 @@ mod tests {
             assert!(!is_process_running(1));
             assert!(!is_process_running(999999999));
         }
-    }
-
-    #[test]
-    fn test_compute_composite_checksum() {
-        // Test that composite checksum is deterministic
-        let checksums = vec!["abc123", "def456", "ghi789"];
-        let metadata = "100:200:3";
-
-        let hash1 = compute_composite_checksum(&checksums, metadata);
-        let hash2 = compute_composite_checksum(&checksums, metadata);
-        assert_eq!(hash1, hash2);
-        assert_eq!(hash1.len(), 64); // SHA-256 produces 64 hex chars
-
-        // Different metadata produces different hash
-        let hash3 = compute_composite_checksum(&checksums, "100:201:3");
-        assert_ne!(hash1, hash3);
-
-        // Different order of checksums produces different hash
-        let checksums_reordered = vec!["def456", "abc123", "ghi789"];
-        let hash4 = compute_composite_checksum(&checksums_reordered, metadata);
-        assert_ne!(hash1, hash4);
-
-        // Empty checksums should still work
-        let empty_checksums: Vec<&str> = vec![];
-        let hash5 = compute_composite_checksum(&empty_checksums, metadata);
-        assert_eq!(hash5.len(), 64);
     }
 }

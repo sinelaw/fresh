@@ -54,9 +54,8 @@ pub mod types;
 
 pub use storage::RecoveryStorage;
 pub use types::{
-    compute_checksum, compute_composite_checksum, generate_buffer_id, path_hash, ChunkMeta,
-    ChunkedRecoveryData, ChunkedRecoveryIndex, RecoveryChunk, RecoveryEntry, RecoveryMetadata,
-    RecoveryResult, SessionInfo, MAX_CHUNK_SIZE,
+    generate_buffer_id, path_hash, ChunkMeta, ChunkedRecoveryData, ChunkedRecoveryIndex,
+    RecoveryChunk, RecoveryEntry, RecoveryMetadata, RecoveryResult, SessionInfo, MAX_CHUNK_SIZE,
 };
 
 use std::collections::HashMap;
@@ -298,18 +297,18 @@ impl RecoveryService {
     /// For entries with original_file_size > 0, requires the original file to reconstruct.
     /// For new buffer entries (original_file_size == 0), the full content is in the chunks.
     pub fn load_recovery(&self, entry: &RecoveryEntry) -> io::Result<RecoveryResult> {
-        // Verify checksum first
-        if !entry.verify_checksum()? {
-            return Ok(RecoveryResult::Corrupted {
-                id: entry.id.clone(),
-                reason: "Checksum mismatch - file may be corrupted".to_string(),
-            });
-        }
-
         // Check if we need the original file for reconstruction
         if entry.metadata.original_file_size > 0 {
             // Large file recovery - need original file to reconstruct
             if let Some(ref original_path) = entry.metadata.original_path {
+                // Check if original file was modified since recovery was saved
+                if entry.original_file_modified() {
+                    return Ok(RecoveryResult::OriginalFileModified {
+                        id: entry.id.clone(),
+                        original_path: original_path.clone(),
+                    });
+                }
+
                 if original_path.exists() {
                     let content = self
                         .storage
@@ -363,13 +362,6 @@ impl RecoveryService {
         entry: &RecoveryEntry,
         original_file: &Path,
     ) -> io::Result<RecoveryResult> {
-        if !entry.verify_checksum()? {
-            return Ok(RecoveryResult::Corrupted {
-                id: entry.id.clone(),
-                reason: "Checksum mismatch - file may be corrupted".to_string(),
-            });
-        }
-
         let content = self
             .storage
             .reconstruct_from_chunks(&entry.id, original_file)?;
