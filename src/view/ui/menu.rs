@@ -8,6 +8,20 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
+/// Constants for menu context state keys
+/// These are used both in menu item `when` conditions and `checkbox` states
+pub mod context_keys {
+    pub const LINE_NUMBERS: &str = "line_numbers";
+    pub const LINE_WRAP: &str = "line_wrap";
+    pub const COMPOSE_MODE: &str = "compose_mode";
+    pub const FILE_EXPLORER: &str = "file_explorer";
+    pub const FILE_EXPLORER_FOCUSED: &str = "file_explorer_focused";
+    pub const MOUSE_CAPTURE: &str = "mouse_capture";
+    pub const FILE_EXPLORER_SHOW_HIDDEN: &str = "file_explorer_show_hidden";
+    pub const FILE_EXPLORER_SHOW_GITIGNORED: &str = "file_explorer_show_gitignored";
+    pub const HAS_SELECTION: &str = "has_selection";
+}
+
 /// Menu state context - provides named boolean states for menu item conditions
 /// Both `when` conditions and `checkbox` states look up values here
 #[derive(Debug, Clone, Default)]
@@ -680,7 +694,7 @@ mod tests {
                 label: "Find in Selection".to_string(),
                 action: "find_in_selection".to_string(),
                 args: HashMap::new(),
-                when: Some("has_selection".to_string()),
+                when: Some(context_keys::HAS_SELECTION.to_string()),
                 checkbox: None,
             }],
         };
@@ -693,7 +707,7 @@ mod tests {
             .is_none());
 
         // With has_selection set to true, action should be enabled
-        state.context.set("has_selection", true);
+        state.context.set(context_keys::HAS_SELECTION, true);
         assert!(state.get_highlighted_action(&[select_menu]).is_some());
     }
 

@@ -24,7 +24,7 @@ pub mod view_pipeline;
 // Re-export main types for convenience
 pub use file_browser::{FileBrowserLayout, FileBrowserRenderer};
 pub use file_explorer::FileExplorerRenderer;
-pub use menu::{MenuContext, MenuRenderer, MenuState};
+pub use menu::{context_keys, MenuContext, MenuRenderer, MenuState};
 pub use scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 pub use split_rendering::SplitRenderer;
 pub use status_bar::StatusBarRenderer;

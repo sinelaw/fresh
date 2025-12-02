@@ -520,6 +520,7 @@ impl Editor {
         // Render menu bar last so dropdown appears on top of all other content
         // Update menu context with current editor state
         // Collect values first to avoid borrow conflicts
+        use crate::view::ui::context_keys;
         let line_numbers = self
             .buffers
             .get(&self.active_buffer)
@@ -551,15 +552,15 @@ impl Editor {
         let has_selection = self.has_active_selection();
 
         self.menu_state.context
-            .set("line_numbers", line_numbers)
-            .set("line_wrap", line_wrap)
-            .set("compose_mode", compose_mode)
-            .set("file_explorer", file_explorer_exists)
-            .set("file_explorer_focused", file_explorer_focused)
-            .set("mouse_capture", mouse_capture)
-            .set("file_explorer_show_hidden", show_hidden)
-            .set("file_explorer_show_gitignored", show_gitignored)
-            .set("has_selection", has_selection);
+            .set(context_keys::LINE_NUMBERS, line_numbers)
+            .set(context_keys::LINE_WRAP, line_wrap)
+            .set(context_keys::COMPOSE_MODE, compose_mode)
+            .set(context_keys::FILE_EXPLORER, file_explorer_exists)
+            .set(context_keys::FILE_EXPLORER_FOCUSED, file_explorer_focused)
+            .set(context_keys::MOUSE_CAPTURE, mouse_capture)
+            .set(context_keys::FILE_EXPLORER_SHOW_HIDDEN, show_hidden)
+            .set(context_keys::FILE_EXPLORER_SHOW_GITIGNORED, show_gitignored)
+            .set(context_keys::HAS_SELECTION, has_selection);
 
         crate::view::ui::MenuRenderer::render(
             frame,
