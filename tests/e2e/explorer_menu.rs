@@ -1235,7 +1235,9 @@ fn test_focus_returns_after_rename() {
     harness.render().unwrap();
 
     // Press Enter to open the file
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     std::thread::sleep(Duration::from_millis(100));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
