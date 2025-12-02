@@ -965,7 +965,858 @@ mod tests {
         assert_eq!(large_entry.metadata.original_file_size, 100);
 
         // Both should have valid checksums
-        
-        
+
+
+    }
+
+    // ========================================================================
+    // Property tests for recovery persistence/restore layer
+    // ========================================================================
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Generate a random original file content (small sizes for effective testing)
+        fn original_content_strategy() -> impl Strategy<Value = Vec<u8>> {
+            // Use smaller sizes (8-256 bytes) to more effectively test edge cases
+            prop::collection::vec(any::<u8>(), 8..256)
+        }
+
+        /// A modification operation on a buffer
+        #[derive(Debug, Clone)]
+        enum Modification {
+            /// Insert content at a position (offset, content)
+            Insert { offset: usize, content: Vec<u8> },
+            /// Replace content at a position (offset, len_to_replace, new_content)
+            Replace {
+                offset: usize,
+                original_len: usize,
+                content: Vec<u8>,
+            },
+            /// Delete content at a position (offset, len)
+            Delete { offset: usize, len: usize },
+        }
+
+
+        /// Apply a modification to content, returning (new_content, RecoveryChunk)
+        fn apply_modification(content: &[u8], modification: &Modification) -> (Vec<u8>, RecoveryChunk) {
+            match modification {
+                Modification::Insert { offset, content: new_bytes } => {
+                    let offset = (*offset).min(content.len());
+                    let mut new_content = content[..offset].to_vec();
+                    new_content.extend_from_slice(new_bytes);
+                    new_content.extend_from_slice(&content[offset..]);
+                    let chunk = RecoveryChunk::new(offset, 0, new_bytes.clone());
+                    (new_content, chunk)
+                }
+                Modification::Replace {
+                    offset,
+                    original_len,
+                    content: new_bytes,
+                } => {
+                    let offset = (*offset).min(content.len());
+                    let original_len = (*original_len).min(content.len() - offset);
+                    let mut new_content = content[..offset].to_vec();
+                    new_content.extend_from_slice(new_bytes);
+                    new_content.extend_from_slice(&content[offset + original_len..]);
+                    let chunk = RecoveryChunk::new(offset, original_len, new_bytes.clone());
+                    (new_content, chunk)
+                }
+                Modification::Delete { offset, len } => {
+                    let offset = (*offset).min(content.len());
+                    let len = (*len).min(content.len() - offset);
+                    let mut new_content = content[..offset].to_vec();
+                    new_content.extend_from_slice(&content[offset + len..]);
+                    let chunk = RecoveryChunk::new(offset, len, Vec::new());
+                    (new_content, chunk)
+                }
+            }
+        }
+
+        /// Generate modifications at specific positions (beginning, middle, end)
+        fn position_targeted_modification(
+            buffer_size: usize,
+        ) -> impl Strategy<Value = (String, Modification)> {
+            if buffer_size == 0 {
+                Just(("beginning".to_string(), Modification::Insert {
+                    offset: 0,
+                    content: b"inserted".to_vec(),
+                }))
+                .boxed()
+            } else {
+                let middle = buffer_size / 2;
+                let end = buffer_size;
+                prop_oneof![
+                    // Beginning: insert/replace/delete at offset 0
+                    prop_oneof![
+                        prop::collection::vec(any::<u8>(), 1..16)
+                            .prop_map(|content| Modification::Insert { offset: 0, content }),
+                        prop::collection::vec(any::<u8>(), 0..16).prop_map(move |content| {
+                            Modification::Replace {
+                                offset: 0,
+                                original_len: 1.min(buffer_size),
+                                content,
+                            }
+                        }),
+                        Just(Modification::Delete {
+                            offset: 0,
+                            len: 1.min(buffer_size),
+                        }),
+                    ]
+                    .prop_map(|m| ("beginning".to_string(), m)),
+                    // Middle: insert/replace/delete around middle
+                    prop_oneof![
+                        prop::collection::vec(any::<u8>(), 1..16)
+                            .prop_map(move |content| Modification::Insert {
+                                offset: middle,
+                                content
+                            }),
+                        prop::collection::vec(any::<u8>(), 0..16).prop_map(move |content| {
+                            Modification::Replace {
+                                offset: middle,
+                                original_len: 1.min(buffer_size - middle),
+                                content,
+                            }
+                        }),
+                        Just(Modification::Delete {
+                            offset: middle,
+                            len: 1.min(buffer_size - middle),
+                        }),
+                    ]
+                    .prop_map(|m| ("middle".to_string(), m)),
+                    // End: insert at end or modify last bytes
+                    prop_oneof![
+                        prop::collection::vec(any::<u8>(), 1..16)
+                            .prop_map(move |content| Modification::Insert { offset: end, content }),
+                        prop::collection::vec(any::<u8>(), 0..16).prop_map(move |content| {
+                            Modification::Replace {
+                                offset: end.saturating_sub(1),
+                                original_len: 1.min(buffer_size),
+                                content,
+                            }
+                        }),
+                        Just(Modification::Delete {
+                            offset: end.saturating_sub(1),
+                            len: 1.min(buffer_size),
+                        }),
+                    ]
+                    .prop_map(|m| ("end".to_string(), m)),
+                ]
+                .boxed()
+            }
+        }
+
+        proptest! {
+            /// Property: Single modification at any position should round-trip correctly
+            #[test]
+            fn prop_single_modification_roundtrip(
+                original in original_content_strategy(),
+                seed in any::<usize>()
+            ) {
+                let (storage, temp_dir) = create_test_storage();
+
+                // Create original file
+                let original_path = temp_dir.path().join("original.txt");
+                fs::write(&original_path, &original).unwrap();
+
+                // Generate a modification based on content size
+                let modification = if original.is_empty() {
+                    Modification::Insert {
+                        offset: 0,
+                        content: format!("seed{}", seed).into_bytes(),
+                    }
+                } else {
+                    // Use seed to deterministically pick modification type and position
+                    let mod_type = seed % 3;
+                    let offset = seed % (original.len() + 1);
+                    match mod_type {
+                        0 => Modification::Insert {
+                            offset: offset.min(original.len()),
+                            content: format!("ins{}", seed).into_bytes(),
+                        },
+                        1 if offset < original.len() => Modification::Replace {
+                            offset,
+                            original_len: 1.min(original.len() - offset),
+                            content: format!("rep{}", seed).into_bytes(),
+                        },
+                        _ if offset < original.len() => Modification::Delete {
+                            offset,
+                            len: 1.min(original.len() - offset),
+                        },
+                        _ => Modification::Insert {
+                            offset: original.len(),
+                            content: format!("end{}", seed).into_bytes(),
+                        },
+                    }
+                };
+
+                // Apply modification to get expected result
+                let (expected_content, chunk) = apply_modification(&original, &modification);
+
+                // Save recovery
+                let id = "test-prop";
+                storage
+                    .save_recovery(
+                        id,
+                        vec![chunk],
+                        Some(&original_path),
+                        None,
+                        None,
+                        original.len(),
+                        expected_content.len(),
+                    )
+                    .unwrap();
+
+                // Reconstruct and verify
+                let reconstructed = storage.reconstruct_from_chunks(id, &original_path).unwrap();
+                prop_assert_eq!(
+                    reconstructed,
+                    expected_content,
+                    "Reconstructed content doesn't match expected after modification"
+                );
+            }
+
+            /// Property: Multiple non-overlapping modifications should round-trip correctly
+            #[test]
+            fn prop_multiple_modifications_roundtrip(
+                original in prop::collection::vec(any::<u8>(), 32..128),
+                num_mods in 1..5usize,
+                seed in any::<u64>()
+            ) {
+
+                let (storage, temp_dir) = create_test_storage();
+
+                // Create original file
+                let original_path = temp_dir.path().join("original.txt");
+                fs::write(&original_path, &original).unwrap();
+
+                // Generate non-overlapping modification positions
+                // We'll divide the buffer into segments and modify each segment independently
+                let segment_size = original.len() / (num_mods + 1);
+                if segment_size < 2 {
+                    // Buffer too small for multiple non-overlapping mods
+                    return Ok(());
+                }
+
+                let mut expected_content = original.clone();
+                let mut chunks = Vec::new();
+
+                // Track cumulative offset shift for chunk positions
+                let mut offset_shift: isize = 0;
+
+                for i in 0..num_mods {
+                    let segment_start = i * segment_size;
+                    let segment_end = segment_start + segment_size;
+
+                    // Modification within this segment of the ORIGINAL content
+                    let mod_offset_in_original = segment_start + (seed as usize + i) % (segment_size / 2).max(1);
+                    let mod_len = 1.min(segment_end - mod_offset_in_original);
+
+                    let mod_type = (seed as usize + i) % 3;
+                    let new_bytes: Vec<u8> = format!("m{}", i).into_bytes();
+
+                    // Calculate position in current expected_content
+                    let current_offset = (mod_offset_in_original as isize + offset_shift) as usize;
+
+                    match mod_type {
+                        0 => {
+                            // Insert
+                            let insert_pos = current_offset.min(expected_content.len());
+                            expected_content.splice(insert_pos..insert_pos, new_bytes.iter().cloned());
+                            chunks.push(RecoveryChunk::new(
+                                mod_offset_in_original,
+                                0,
+                                new_bytes.clone(),
+                            ));
+                            offset_shift += new_bytes.len() as isize;
+                        }
+                        1 => {
+                            // Replace
+                            if current_offset < expected_content.len() {
+                                let replace_len = mod_len.min(expected_content.len() - current_offset);
+                                expected_content.splice(
+                                    current_offset..current_offset + replace_len,
+                                    new_bytes.iter().cloned(),
+                                );
+                                chunks.push(RecoveryChunk::new(
+                                    mod_offset_in_original,
+                                    replace_len,
+                                    new_bytes.clone(),
+                                ));
+                                offset_shift += new_bytes.len() as isize - replace_len as isize;
+                            }
+                        }
+                        _ => {
+                            // Delete
+                            if current_offset < expected_content.len() {
+                                let delete_len = mod_len.min(expected_content.len() - current_offset);
+                                expected_content.splice(current_offset..current_offset + delete_len, []);
+                                chunks.push(RecoveryChunk::new(mod_offset_in_original, delete_len, Vec::new()));
+                                offset_shift -= delete_len as isize;
+                            }
+                        }
+                    }
+                }
+
+                if chunks.is_empty() {
+                    return Ok(());
+                }
+
+                // Save recovery
+                let id = "test-multi";
+                storage
+                    .save_recovery(
+                        id,
+                        chunks,
+                        Some(&original_path),
+                        None,
+                        None,
+                        original.len(),
+                        expected_content.len(),
+                    )
+                    .unwrap();
+
+                // Reconstruct and verify
+                let reconstructed = storage.reconstruct_from_chunks(id, &original_path).unwrap();
+                prop_assert_eq!(
+                    reconstructed,
+                    expected_content,
+                    "Reconstructed content doesn't match expected after multiple modifications"
+                );
+            }
+
+            /// Property: Modifications at beginning, middle, and end positions
+            #[test]
+            fn prop_position_targeted_modifications(
+                original in prop::collection::vec(any::<u8>(), 16..64),
+                (position_name, modification) in prop::collection::vec(any::<u8>(), 16..64)
+                    .prop_flat_map(|v| position_targeted_modification(v.len()))
+            ) {
+                let (storage, temp_dir) = create_test_storage();
+
+                // Create original file
+                let original_path = temp_dir.path().join("original.txt");
+                fs::write(&original_path, &original).unwrap();
+
+                // Apply modification
+                let (expected_content, chunk) = apply_modification(&original, &modification);
+
+                // Save recovery
+                let id = format!("test-{}", position_name);
+                storage
+                    .save_recovery(
+                        &id,
+                        vec![chunk],
+                        Some(&original_path),
+                        None,
+                        None,
+                        original.len(),
+                        expected_content.len(),
+                    )
+                    .unwrap();
+
+                // Reconstruct and verify
+                let reconstructed = storage.reconstruct_from_chunks(&id, &original_path).unwrap();
+                prop_assert_eq!(
+                    reconstructed,
+                    expected_content,
+                    "Reconstructed content doesn't match expected for {} modification",
+                    position_name
+                );
+            }
+
+            /// Property: Empty modifications (no change) should return original content
+            #[test]
+            fn prop_empty_modification(original in original_content_strategy()) {
+                if original.is_empty() {
+                    return Ok(());
+                }
+
+                let (storage, temp_dir) = create_test_storage();
+
+                // Create original file
+                let original_path = temp_dir.path().join("original.txt");
+                fs::write(&original_path, &original).unwrap();
+
+                // Replace 0 bytes with 0 bytes (no-op)
+                let chunk = RecoveryChunk::new(0, 0, Vec::new());
+
+                // Save recovery
+                let id = "test-empty";
+                storage
+                    .save_recovery(
+                        id,
+                        vec![chunk],
+                        Some(&original_path),
+                        None,
+                        None,
+                        original.len(),
+                        original.len(),
+                    )
+                    .unwrap();
+
+                // Reconstruct and verify
+                let reconstructed = storage.reconstruct_from_chunks(id, &original_path).unwrap();
+                prop_assert_eq!(
+                    reconstructed,
+                    original,
+                    "Empty modification should return original content"
+                );
+            }
+
+            /// Property: Full replacement should work correctly
+            #[test]
+            fn prop_full_replacement(
+                original in prop::collection::vec(any::<u8>(), 8..64),
+                replacement in prop::collection::vec(any::<u8>(), 1..64)
+            ) {
+                let (storage, temp_dir) = create_test_storage();
+
+                // Create original file
+                let original_path = temp_dir.path().join("original.txt");
+                fs::write(&original_path, &original).unwrap();
+
+                // Replace entire content
+                let chunk = RecoveryChunk::new(0, original.len(), replacement.clone());
+
+                // Save recovery
+                let id = "test-full-replace";
+                storage
+                    .save_recovery(
+                        id,
+                        vec![chunk],
+                        Some(&original_path),
+                        None,
+                        None,
+                        original.len(),
+                        replacement.len(),
+                    )
+                    .unwrap();
+
+                // Reconstruct and verify
+                let reconstructed = storage.reconstruct_from_chunks(id, &original_path).unwrap();
+                prop_assert_eq!(
+                    reconstructed,
+                    replacement,
+                    "Full replacement should return new content"
+                );
+            }
+
+            /// Property: Prepend (insert at beginning) should work correctly
+            #[test]
+            fn prop_prepend(
+                original in prop::collection::vec(any::<u8>(), 1..64),
+                prefix in prop::collection::vec(any::<u8>(), 1..32)
+            ) {
+                let (storage, temp_dir) = create_test_storage();
+
+                // Create original file
+                let original_path = temp_dir.path().join("original.txt");
+                fs::write(&original_path, &original).unwrap();
+
+                // Insert at beginning (offset=0, original_len=0)
+                let chunk = RecoveryChunk::new(0, 0, prefix.clone());
+
+                // Expected: prefix + original
+                let mut expected = prefix.clone();
+                expected.extend_from_slice(&original);
+
+                // Save recovery
+                let id = "test-prepend";
+                storage
+                    .save_recovery(
+                        id,
+                        vec![chunk],
+                        Some(&original_path),
+                        None,
+                        None,
+                        original.len(),
+                        expected.len(),
+                    )
+                    .unwrap();
+
+                // Reconstruct and verify
+                let reconstructed = storage.reconstruct_from_chunks(id, &original_path).unwrap();
+                prop_assert_eq!(reconstructed, expected, "Prepend should work correctly");
+            }
+
+            /// Property: Append (insert at end) should work correctly
+            #[test]
+            fn prop_append(
+                original in prop::collection::vec(any::<u8>(), 1..64),
+                suffix in prop::collection::vec(any::<u8>(), 1..32)
+            ) {
+                let (storage, temp_dir) = create_test_storage();
+
+                // Create original file
+                let original_path = temp_dir.path().join("original.txt");
+                fs::write(&original_path, &original).unwrap();
+
+                // Insert at end
+                let chunk = RecoveryChunk::new(original.len(), 0, suffix.clone());
+
+                // Expected: original + suffix
+                let mut expected = original.clone();
+                expected.extend_from_slice(&suffix);
+
+                // Save recovery
+                let id = "test-append";
+                storage
+                    .save_recovery(
+                        id,
+                        vec![chunk],
+                        Some(&original_path),
+                        None,
+                        None,
+                        original.len(),
+                        expected.len(),
+                    )
+                    .unwrap();
+
+                // Reconstruct and verify
+                let reconstructed = storage.reconstruct_from_chunks(id, &original_path).unwrap();
+                prop_assert_eq!(reconstructed, expected, "Append should work correctly");
+            }
+
+            /// Property: Delete all content should result in empty
+            #[test]
+            fn prop_delete_all(original in prop::collection::vec(any::<u8>(), 1..64)) {
+                let (storage, temp_dir) = create_test_storage();
+
+                // Create original file
+                let original_path = temp_dir.path().join("original.txt");
+                fs::write(&original_path, &original).unwrap();
+
+                // Delete all content
+                let chunk = RecoveryChunk::new(0, original.len(), Vec::new());
+
+                // Save recovery
+                let id = "test-delete-all";
+                storage
+                    .save_recovery(
+                        id,
+                        vec![chunk],
+                        Some(&original_path),
+                        None,
+                        None,
+                        original.len(),
+                        0,
+                    )
+                    .unwrap();
+
+                // Reconstruct and verify
+                let reconstructed = storage.reconstruct_from_chunks(id, &original_path).unwrap();
+                prop_assert!(reconstructed.is_empty(), "Delete all should result in empty content");
+            }
+
+            /// Property: Save and load cycle preserves chunk metadata
+            #[test]
+            fn prop_chunk_metadata_preserved(
+                offset in 0..1000usize,
+                original_len in 0..100usize,
+                content in prop::collection::vec(any::<u8>(), 0..64)
+            ) {
+                let (storage, _temp) = create_test_storage();
+
+                let chunk = RecoveryChunk::new(offset, original_len, content.clone());
+
+                // Save recovery
+                let id = "test-metadata";
+                storage
+                    .save_recovery(id, vec![chunk], None, None, None, 1000, 1000 - original_len + content.len())
+                    .unwrap();
+
+                // Load and verify chunk metadata
+                let chunked_data = storage.read_chunked_content(id).unwrap().unwrap();
+                prop_assert_eq!(chunked_data.chunks.len(), 1);
+                prop_assert_eq!(chunked_data.chunks[0].offset, offset);
+                prop_assert_eq!(chunked_data.chunks[0].original_len, original_len);
+                prop_assert_eq!(&chunked_data.chunks[0].content, &content);
+            }
+
+            /// Property: Multiple chunks in order are preserved
+            #[test]
+            fn prop_multiple_chunks_order_preserved(
+                chunks_data in prop::collection::vec(
+                    (0..100usize, 0..10usize, prop::collection::vec(any::<u8>(), 0..16)),
+                    1..5
+                )
+            ) {
+                let (storage, _temp) = create_test_storage();
+
+                // Create chunks with increasing offsets
+                let mut offset = 0;
+                let mut chunks = Vec::new();
+                for (delta, original_len, content) in chunks_data {
+                    offset += delta;
+                    chunks.push(RecoveryChunk::new(offset, original_len, content));
+                    offset += original_len.max(1); // Ensure non-overlapping
+                }
+
+                // Save recovery
+                let id = "test-order";
+                let original_size = offset + 100; // Ensure original is large enough
+                storage
+                    .save_recovery(id, chunks.clone(), None, None, None, original_size, original_size)
+                    .unwrap();
+
+                // Load and verify order
+                let chunked_data = storage.read_chunked_content(id).unwrap().unwrap();
+                prop_assert_eq!(chunked_data.chunks.len(), chunks.len());
+
+                for (i, (saved, loaded)) in chunks.iter().zip(chunked_data.chunks.iter()).enumerate() {
+                    prop_assert_eq!(
+                        saved.offset, loaded.offset,
+                        "Chunk {} offset mismatch", i
+                    );
+                    prop_assert_eq!(
+                        saved.original_len, loaded.original_len,
+                        "Chunk {} original_len mismatch", i
+                    );
+                    prop_assert_eq!(
+                        &saved.content, &loaded.content,
+                        "Chunk {} content mismatch", i
+                    );
+                }
+            }
+        }
+
+        // Non-proptest regression tests for specific edge cases
+        #[test]
+        fn test_insert_at_every_position() {
+            let (storage, temp_dir) = create_test_storage();
+            let original = b"ABCDEFGH";
+
+            for insert_pos in 0..=original.len() {
+                let original_path = temp_dir.path().join(format!("original_{}.txt", insert_pos));
+                fs::write(&original_path, original).unwrap();
+
+                let insert_content = b"XYZ".to_vec();
+                let chunk = RecoveryChunk::new(insert_pos, 0, insert_content.clone());
+
+                let mut expected = original[..insert_pos].to_vec();
+                expected.extend_from_slice(&insert_content);
+                expected.extend_from_slice(&original[insert_pos..]);
+
+                let id = format!("insert-{}", insert_pos);
+                storage
+                    .save_recovery(
+                        &id,
+                        vec![chunk],
+                        Some(&original_path),
+                        None,
+                        None,
+                        original.len(),
+                        expected.len(),
+                    )
+                    .unwrap();
+
+                let reconstructed = storage.reconstruct_from_chunks(&id, &original_path).unwrap();
+                assert_eq!(
+                    reconstructed, expected,
+                    "Insert at position {} failed",
+                    insert_pos
+                );
+            }
+        }
+
+        #[test]
+        fn test_delete_at_every_position() {
+            let (storage, temp_dir) = create_test_storage();
+            let original = b"ABCDEFGH";
+
+            for delete_pos in 0..original.len() {
+                let original_path = temp_dir.path().join(format!("original_{}.txt", delete_pos));
+                fs::write(&original_path, original).unwrap();
+
+                let chunk = RecoveryChunk::new(delete_pos, 1, Vec::new());
+
+                let mut expected = original[..delete_pos].to_vec();
+                expected.extend_from_slice(&original[delete_pos + 1..]);
+
+                let id = format!("delete-{}", delete_pos);
+                storage
+                    .save_recovery(
+                        &id,
+                        vec![chunk],
+                        Some(&original_path),
+                        None,
+                        None,
+                        original.len(),
+                        expected.len(),
+                    )
+                    .unwrap();
+
+                let reconstructed = storage.reconstruct_from_chunks(&id, &original_path).unwrap();
+                assert_eq!(
+                    reconstructed, expected,
+                    "Delete at position {} failed",
+                    delete_pos
+                );
+            }
+        }
+
+        #[test]
+        fn test_replace_at_every_position() {
+            let (storage, temp_dir) = create_test_storage();
+            let original = b"ABCDEFGH";
+
+            for replace_pos in 0..original.len() {
+                let original_path = temp_dir.path().join(format!("original_{}.txt", replace_pos));
+                fs::write(&original_path, original).unwrap();
+
+                let replace_content = b"XY".to_vec();
+                let replace_len = 1;
+                let chunk = RecoveryChunk::new(replace_pos, replace_len, replace_content.clone());
+
+                let mut expected = original[..replace_pos].to_vec();
+                expected.extend_from_slice(&replace_content);
+                expected.extend_from_slice(&original[replace_pos + replace_len..]);
+
+                let id = format!("replace-{}", replace_pos);
+                storage
+                    .save_recovery(
+                        &id,
+                        vec![chunk],
+                        Some(&original_path),
+                        None,
+                        None,
+                        original.len(),
+                        expected.len(),
+                    )
+                    .unwrap();
+
+                let reconstructed = storage.reconstruct_from_chunks(&id, &original_path).unwrap();
+                assert_eq!(
+                    reconstructed, expected,
+                    "Replace at position {} failed",
+                    replace_pos
+                );
+            }
+        }
+
+        #[test]
+        fn test_combined_beginning_middle_end_modifications() {
+            let (storage, temp_dir) = create_test_storage();
+            let original = b"0123456789ABCDEF";
+
+            let original_path = temp_dir.path().join("original.txt");
+            fs::write(&original_path, original).unwrap();
+
+            // Three chunks:
+            // 1. Insert "PRE-" at beginning (offset 0, len 0)
+            // 2. Replace "567" with "XXX" at position 5 (offset 5, len 3)
+            // 3. Insert "-POST" at end (offset 16, len 0)
+            let chunks = vec![
+                RecoveryChunk::new(0, 0, b"PRE-".to_vec()),
+                RecoveryChunk::new(5, 3, b"XXX".to_vec()),
+                RecoveryChunk::new(16, 0, b"-POST".to_vec()),
+            ];
+
+            // Expected: "PRE-01234XXX89ABCDEF-POST"
+            // Original: 0123456789ABCDEF
+            // After chunk 1 (insert at 0): PRE- + 0123456789ABCDEF = PRE-0123456789ABCDEF
+            // After chunk 2 (replace 567): PRE-01234XXX89ABCDEF
+            // After chunk 3 (insert at 16): PRE-01234XXX89ABCDEF-POST
+            let expected = b"PRE-01234XXX89ABCDEF-POST";
+
+            let id = "combined";
+            storage
+                .save_recovery(
+                    id,
+                    chunks,
+                    Some(&original_path),
+                    None,
+                    None,
+                    original.len(),
+                    expected.len(),
+                )
+                .unwrap();
+
+            let reconstructed = storage.reconstruct_from_chunks(id, &original_path).unwrap();
+            assert_eq!(reconstructed, expected.to_vec());
+        }
+
+        #[test]
+        fn test_adjacent_modifications() {
+            let (storage, temp_dir) = create_test_storage();
+            let original = b"AABBCCDD";
+
+            let original_path = temp_dir.path().join("original.txt");
+            fs::write(&original_path, original).unwrap();
+
+            // Adjacent modifications: replace AA with X, then BB with Y
+            // These should not overlap in the original positions
+            let chunks = vec![
+                RecoveryChunk::new(0, 2, b"X".to_vec()),   // Replace AA with X
+                RecoveryChunk::new(2, 2, b"Y".to_vec()),   // Replace BB with Y
+            ];
+
+            // Original: AABBCCDD
+            // After applying chunks: X + Y + CCDD
+            let expected = b"XYCCDD";
+
+            let id = "adjacent";
+            storage
+                .save_recovery(
+                    id,
+                    chunks,
+                    Some(&original_path),
+                    None,
+                    None,
+                    original.len(),
+                    expected.len(),
+                )
+                .unwrap();
+
+            let reconstructed = storage.reconstruct_from_chunks(id, &original_path).unwrap();
+            assert_eq!(reconstructed, expected.to_vec());
+        }
+
+        #[test]
+        fn test_single_byte_operations() {
+            let (storage, temp_dir) = create_test_storage();
+            let original = b"A";
+
+            // Insert before single byte
+            {
+                let original_path = temp_dir.path().join("single_insert.txt");
+                fs::write(&original_path, original).unwrap();
+                let chunk = RecoveryChunk::new(0, 0, b"X".to_vec());
+                let id = "single-insert";
+                storage
+                    .save_recovery(id, vec![chunk], Some(&original_path), None, None, 1, 2)
+                    .unwrap();
+                let reconstructed = storage.reconstruct_from_chunks(id, &original_path).unwrap();
+                assert_eq!(reconstructed, b"XA".to_vec());
+            }
+
+            // Replace single byte
+            {
+                let original_path = temp_dir.path().join("single_replace.txt");
+                fs::write(&original_path, original).unwrap();
+                let chunk = RecoveryChunk::new(0, 1, b"X".to_vec());
+                let id = "single-replace";
+                storage
+                    .save_recovery(id, vec![chunk], Some(&original_path), None, None, 1, 1)
+                    .unwrap();
+                let reconstructed = storage.reconstruct_from_chunks(id, &original_path).unwrap();
+                assert_eq!(reconstructed, b"X".to_vec());
+            }
+
+            // Delete single byte
+            {
+                let original_path = temp_dir.path().join("single_delete.txt");
+                fs::write(&original_path, original).unwrap();
+                let chunk = RecoveryChunk::new(0, 1, Vec::new());
+                let id = "single-delete";
+                storage
+                    .save_recovery(id, vec![chunk], Some(&original_path), None, None, 1, 0)
+                    .unwrap();
+                let reconstructed = storage.reconstruct_from_chunks(id, &original_path).unwrap();
+                assert!(reconstructed.is_empty());
+            }
+        }
     }
 }
