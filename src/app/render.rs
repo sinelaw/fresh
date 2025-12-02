@@ -518,36 +518,48 @@ impl Editor {
         }
 
         // Render menu bar last so dropdown appears on top of all other content
-        // Prepare checkbox states from editor state
-        let checkbox_states = crate::view::ui::CheckboxStates {
-            line_numbers: self
-                .buffers
-                .get(&self.active_buffer)
-                .map(|state| state.margins.show_line_numbers)
-                .unwrap_or(true),
-            line_wrap: self
-                .buffers
-                .get(&self.active_buffer)
-                .map(|state| state.viewport.line_wrap_enabled)
-                .unwrap_or(false),
-            compose_mode: self
-                .buffers
-                .get(&self.active_buffer)
-                .map(|state| state.view_mode == crate::state::ViewMode::Compose)
-                .unwrap_or(false),
-            file_explorer: self.file_explorer.is_some(),
-            mouse_capture: self.mouse_enabled,
-            file_explorer_show_hidden: self
-                .file_explorer
-                .as_ref()
-                .map(|fe| fe.ignore_patterns().show_hidden())
-                .unwrap_or(false),
-            file_explorer_show_gitignored: self
-                .file_explorer
-                .as_ref()
-                .map(|fe| fe.ignore_patterns().show_gitignored())
-                .unwrap_or(false),
-        };
+        // Update menu context with current editor state
+        // Collect values first to avoid borrow conflicts
+        let line_numbers = self
+            .buffers
+            .get(&self.active_buffer)
+            .map(|state| state.margins.show_line_numbers)
+            .unwrap_or(true);
+        let line_wrap = self
+            .buffers
+            .get(&self.active_buffer)
+            .map(|state| state.viewport.line_wrap_enabled)
+            .unwrap_or(false);
+        let compose_mode = self
+            .buffers
+            .get(&self.active_buffer)
+            .map(|state| state.view_mode == crate::state::ViewMode::Compose)
+            .unwrap_or(false);
+        let file_explorer_exists = self.file_explorer.is_some();
+        let file_explorer_focused = self.key_context == crate::input::keybindings::KeyContext::FileExplorer;
+        let mouse_capture = self.mouse_enabled;
+        let show_hidden = self
+            .file_explorer
+            .as_ref()
+            .map(|fe| fe.ignore_patterns().show_hidden())
+            .unwrap_or(false);
+        let show_gitignored = self
+            .file_explorer
+            .as_ref()
+            .map(|fe| fe.ignore_patterns().show_gitignored())
+            .unwrap_or(false);
+        let has_selection = self.has_active_selection();
+
+        self.menu_state.context
+            .set("line_numbers", line_numbers)
+            .set("line_wrap", line_wrap)
+            .set("compose_mode", compose_mode)
+            .set("file_explorer", file_explorer_exists)
+            .set("file_explorer_focused", file_explorer_focused)
+            .set("mouse_capture", mouse_capture)
+            .set("file_explorer_show_hidden", show_hidden)
+            .set("file_explorer_show_gitignored", show_gitignored)
+            .set("has_selection", has_selection);
 
         crate::view::ui::MenuRenderer::render(
             frame,
@@ -557,8 +569,6 @@ impl Editor {
             &self.keybindings,
             &self.theme,
             self.mouse_state.hover_target.as_ref(),
-            self.has_active_selection(),
-            &checkbox_states,
         );
     }
 

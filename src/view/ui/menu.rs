@@ -8,38 +8,54 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-/// Checkbox states for menu items
+/// Menu state context - provides named boolean states for menu item conditions
+/// Both `when` conditions and `checkbox` states look up values here
 #[derive(Debug, Clone, Default)]
-pub struct CheckboxStates {
-    pub line_numbers: bool,
-    pub line_wrap: bool,
-    pub compose_mode: bool,
-    pub file_explorer: bool,
-    pub mouse_capture: bool,
-    pub file_explorer_show_hidden: bool,
-    pub file_explorer_show_gitignored: bool,
+pub struct MenuContext {
+    states: std::collections::HashMap<String, bool>,
 }
 
-fn is_menu_item_enabled(item: &MenuItem, selection_active: bool) -> bool {
+impl MenuContext {
+    pub fn new() -> Self {
+        Self {
+            states: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Set a named boolean state
+    pub fn set(&mut self, name: impl Into<String>, value: bool) -> &mut Self {
+        self.states.insert(name.into(), value);
+        self
+    }
+
+    /// Get a named boolean state (defaults to false if not set)
+    pub fn get(&self, name: &str) -> bool {
+        self.states.get(name).copied().unwrap_or(false)
+    }
+
+    /// Builder-style setter
+    pub fn with(mut self, name: impl Into<String>, value: bool) -> Self {
+        self.set(name, value);
+        self
+    }
+}
+
+fn is_menu_item_enabled(item: &MenuItem, context: &MenuContext) -> bool {
     match item {
-        MenuItem::Action { when, .. } => match when.as_deref() {
-            Some("has_selection") | Some("selection") => selection_active,
-            _ => true,
-        },
+        MenuItem::Action { when, .. } => {
+            match when.as_deref() {
+                Some(condition) => context.get(condition),
+                None => true, // No condition means always enabled
+            }
+        }
         _ => true,
     }
 }
 
-fn is_checkbox_checked(checkbox: &Option<String>, states: &CheckboxStates) -> bool {
+fn is_checkbox_checked(checkbox: &Option<String>, context: &MenuContext) -> bool {
     match checkbox.as_deref() {
-        Some("line_numbers") => states.line_numbers,
-        Some("line_wrap") => states.line_wrap,
-        Some("compose_mode") => states.compose_mode,
-        Some("file_explorer") => states.file_explorer,
-        Some("mouse_capture") => states.mouse_capture,
-        Some("file_explorer_show_hidden") => states.file_explorer_show_hidden,
-        Some("file_explorer_show_gitignored") => states.file_explorer_show_gitignored,
-        _ => false,
+        Some(name) => context.get(name),
+        None => false,
     }
 }
 
@@ -52,6 +68,8 @@ pub struct MenuState {
     pub highlighted_item: Option<usize>,
     /// Runtime menu additions from plugins
     pub plugin_menus: Vec<Menu>,
+    /// Context containing named boolean states for conditions and checkboxes
+    pub context: MenuContext,
 }
 
 impl MenuState {
@@ -116,7 +134,6 @@ impl MenuState {
     pub fn get_highlighted_action(
         &self,
         menus: &[Menu],
-        selection_active: bool,
     ) -> Option<(String, std::collections::HashMap<String, serde_json::Value>)> {
         let active_menu = self.active_menu?;
         let highlighted_item = self.highlighted_item?;
@@ -126,7 +143,7 @@ impl MenuState {
 
         match item {
             MenuItem::Action { action, args, .. } => {
-                if is_menu_item_enabled(item, selection_active) {
+                if is_menu_item_enabled(item, &self.context) {
                     Some((action.clone(), args.clone()))
                 } else {
                     None
@@ -187,12 +204,10 @@ impl MenuRenderer {
     /// * `frame` - The ratatui frame to render to
     /// * `area` - The rectangular area to render the menu bar in
     /// * `menu_config` - The menu configuration
-    /// * `menu_state` - Current menu state (which menu/item is active)
+    /// * `menu_state` - Current menu state (which menu/item is active, and context)
     /// * `keybindings` - Keybinding resolver for displaying shortcuts
     /// * `theme` - The active theme for colors
     /// * `hover_target` - The currently hovered UI element (if any)
-    /// * `selection_active` - Whether there is an active selection
-    /// * `checkbox_states` - Current state of checkbox menu items
     pub fn render(
         frame: &mut Frame,
         area: Rect,
@@ -201,8 +216,6 @@ impl MenuRenderer {
         keybindings: &crate::input::keybindings::KeybindingResolver,
         theme: &Theme,
         hover_target: Option<&crate::app::HoverTarget>,
-        selection_active: bool,
-        checkbox_states: &CheckboxStates,
     ) {
         // Combine config menus with plugin menus
         let all_menus: Vec<&Menu> = menu_config
@@ -279,8 +292,7 @@ impl MenuRenderer {
                     keybindings,
                     theme,
                     hover_target,
-                    selection_active,
-                    checkbox_states,
+                    &menu_state.context,
                 );
             }
         }
@@ -297,8 +309,7 @@ impl MenuRenderer {
         keybindings: &crate::input::keybindings::KeybindingResolver,
         theme: &Theme,
         hover_target: Option<&crate::app::HoverTarget>,
-        selection_active: bool,
-        checkbox_states: &CheckboxStates,
+        context: &MenuContext,
     ) {
         // Calculate the x position of the dropdown based on menu index
         let mut x_offset = 0;
@@ -381,7 +392,7 @@ impl MenuRenderer {
                 hover_target,
                 Some(crate::app::HoverTarget::MenuDropdownItem(mi, ii)) if *mi == menu_index && *ii == idx
             );
-            let enabled = is_menu_item_enabled(item, selection_active);
+            let enabled = is_menu_item_enabled(item, context);
 
             let line = match item {
                 MenuItem::Action {
@@ -419,7 +430,7 @@ impl MenuRenderer {
 
                     // Determine checkbox icon if checkbox is present
                     let checkbox_icon = if checkbox.is_some() {
-                        if is_checkbox_checked(checkbox, checkbox_states) {
+                        if is_checkbox_checked(checkbox, context) {
                             "☑ "
                         } else {
                             "☐ "
@@ -654,7 +665,7 @@ mod tests {
         state.open_menu(0);
         state.highlighted_item = Some(2); // Save action
 
-        let action = state.get_highlighted_action(&menus, false);
+        let action = state.get_highlighted_action(&menus);
         assert!(action.is_some());
         let (action_name, _args) = action.unwrap();
         assert_eq!(action_name, "save");
@@ -676,17 +687,21 @@ mod tests {
         state.open_menu(0);
         state.highlighted_item = Some(0);
 
+        // Without has_selection set, action should be disabled
         assert!(state
-            .get_highlighted_action(&[select_menu.clone()], false)
+            .get_highlighted_action(&[select_menu.clone()])
             .is_none());
-        assert!(state.get_highlighted_action(&[select_menu], true).is_some());
+
+        // With has_selection set to true, action should be enabled
+        state.context.set("has_selection", true);
+        assert!(state.get_highlighted_action(&[select_menu]).is_some());
     }
 
     #[test]
     fn test_get_highlighted_action_none_when_closed() {
         let state = MenuState::new();
         let menus = create_test_menus();
-        assert!(state.get_highlighted_action(&menus, false).is_none());
+        assert!(state.get_highlighted_action(&menus).is_none());
     }
 
     #[test]
@@ -696,7 +711,7 @@ mod tests {
         state.open_menu(0);
         state.highlighted_item = Some(1); // Separator
 
-        assert!(state.get_highlighted_action(&menus, false).is_none());
+        assert!(state.get_highlighted_action(&menus).is_none());
     }
 
     #[test]

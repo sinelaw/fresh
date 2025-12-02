@@ -1162,9 +1162,14 @@ impl Editor {
                     .cloned()
                     .collect();
 
+                // Update context before checking if action is enabled
+                self.menu_state.context
+                    .set("has_selection", self.has_active_selection())
+                    .set("file_explorer_focused", self.key_context == crate::input::keybindings::KeyContext::FileExplorer);
+
                 if let Some((action_name, args)) = self
                     .menu_state
-                    .get_highlighted_action(&all_menus, self.has_active_selection())
+                    .get_highlighted_action(&all_menus)
                 {
                     // Close the menu
                     self.menu_state.close_menu();
