@@ -294,12 +294,13 @@ impl RecoveryService {
 
     /// Load recovery content for a specific entry
     ///
-    /// For entries with original_file_size > 0, requires the original file to reconstruct.
+    /// For entries with original_file_size > 0, returns RecoveredChunks so the caller
+    /// can apply chunks directly to the buffer (more efficient than full reconstruction).
     /// For new buffer entries (original_file_size == 0), the full content is in the chunks.
     pub fn load_recovery(&self, entry: &RecoveryEntry) -> io::Result<RecoveryResult> {
         // Check if we need the original file for reconstruction
         if entry.metadata.original_file_size > 0 {
-            // Large file recovery - need original file to reconstruct
+            // Large file recovery - return chunks to apply on top of original
             if let Some(ref original_path) = entry.metadata.original_path {
                 // Check if original file was modified since recovery was saved
                 if entry.original_file_modified() {
@@ -309,15 +310,7 @@ impl RecoveryService {
                     });
                 }
 
-                if original_path.exists() {
-                    let content = self
-                        .storage
-                        .reconstruct_from_chunks(&entry.id, original_path)?;
-                    return Ok(RecoveryResult::Recovered {
-                        original_path: Some(original_path.clone()),
-                        content,
-                    });
-                } else {
+                if !original_path.exists() {
                     return Ok(RecoveryResult::Corrupted {
                         id: entry.id.clone(),
                         reason: format!(
@@ -326,6 +319,17 @@ impl RecoveryService {
                         ),
                     });
                 }
+
+                // Load chunks and return them for direct application
+                let chunked_data =
+                    self.storage.read_chunked_content(&entry.id)?.ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::NotFound, "Chunk content not found")
+                    })?;
+
+                return Ok(RecoveryResult::RecoveredChunks {
+                    original_path: original_path.clone(),
+                    chunks: chunked_data.chunks,
+                });
             } else {
                 return Ok(RecoveryResult::Corrupted {
                     id: entry.id.clone(),
@@ -535,5 +539,54 @@ mod tests {
         service
             .save_buffer("test", chunks, None, None, None, 0, 7)
             .unwrap();
+    }
+
+    #[test]
+    fn test_load_recovery_returns_chunks_for_large_files() {
+        use std::fs;
+
+        let (mut service, temp_dir) = create_test_service();
+        service.start_session().unwrap();
+
+        // Create an original file
+        let original_content = b"Hello, this is the original content!";
+        let original_path = temp_dir.path().join("original.txt");
+        fs::write(&original_path, original_content).unwrap();
+
+        let id = service.get_buffer_id(Some(&original_path));
+
+        // Save recovery with original_file_size > 0 (simulating large file recovery)
+        // Chunk: insert "PREFIX: " at offset 0
+        let chunks = vec![RecoveryChunk::new(0, 0, b"PREFIX: ".to_vec())];
+        service
+            .save_buffer(
+                &id,
+                chunks,
+                Some(&original_path),
+                None,
+                Some(1),
+                original_content.len(), // original_file_size > 0
+                original_content.len() + 8,
+            )
+            .unwrap();
+
+        // Load recovery - should return RecoveredChunks, not Recovered
+        let entries = service.list_recoverable().unwrap();
+        assert_eq!(entries.len(), 1);
+
+        let result = service.load_recovery(&entries[0]).unwrap();
+        match result {
+            RecoveryResult::RecoveredChunks {
+                original_path: path,
+                chunks,
+            } => {
+                assert_eq!(path, original_path);
+                assert_eq!(chunks.len(), 1);
+                assert_eq!(chunks[0].offset, 0);
+                assert_eq!(chunks[0].original_len, 0);
+                assert_eq!(chunks[0].content, b"PREFIX: ");
+            }
+            _ => panic!("Expected RecoveredChunks result, got {:?}", result),
+        }
     }
 }

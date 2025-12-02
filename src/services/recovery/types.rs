@@ -322,10 +322,16 @@ impl RecoveryEntry {
 /// Result of a recovery operation
 #[derive(Debug)]
 pub enum RecoveryResult {
-    /// Successfully recovered the buffer content
+    /// Successfully recovered the buffer content (full content for new/small buffers)
     Recovered {
         original_path: Option<PathBuf>,
         content: Vec<u8>,
+    },
+    /// Recovery with chunks to apply on top of original file (for large files)
+    /// The caller should open the original file and apply these chunks.
+    RecoveredChunks {
+        original_path: PathBuf,
+        chunks: Vec<RecoveryChunk>,
     },
     /// Original file was modified since recovery was saved
     OriginalFileModified {

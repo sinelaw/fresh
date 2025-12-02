@@ -3186,7 +3186,7 @@ impl Editor {
                     original_path,
                     content,
                 }) => {
-                    // Convert content to string
+                    // Full content recovery (new/small buffers)
                     let text = String::from_utf8_lossy(&content).into_owned();
 
                     if let Some(path) = original_path {
@@ -3210,6 +3210,35 @@ impl Editor {
                         state.buffer.set_modified(true);
                         recovered_count += 1;
                         tracing::info!("Recovered unsaved buffer");
+                    }
+                }
+                Ok(RecoveryResult::RecoveredChunks {
+                    original_path,
+                    chunks,
+                }) => {
+                    // Chunked recovery for large files - apply chunks directly
+                    if self.open_file(&original_path).is_ok() {
+                        let state = self.active_state_mut();
+
+                        // Apply chunks in reverse order to preserve offsets
+                        // Each chunk: delete original_len bytes at offset, then insert content
+                        for chunk in chunks.into_iter().rev() {
+                            let text = String::from_utf8_lossy(&chunk.content).into_owned();
+                            if chunk.original_len > 0 {
+                                state
+                                    .buffer
+                                    .delete(chunk.offset..chunk.offset + chunk.original_len);
+                            }
+                            state.buffer.insert(chunk.offset, &text);
+                        }
+
+                        // Mark as modified since it differs from disk
+                        state.buffer.set_modified(true);
+                        recovered_count += 1;
+                        tracing::info!(
+                            "Recovered buffer with chunks: {}",
+                            original_path.display()
+                        );
                     }
                 }
                 Ok(RecoveryResult::OriginalFileModified { id, original_path }) => {
