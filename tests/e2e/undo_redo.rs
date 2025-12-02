@@ -290,7 +290,7 @@ fn test_undo_after_save_as_marks_buffer_unmodified() {
     // We typed " world" which is 6 characters, each would be an event
     // But they might be batched. Let's undo until we hit "hello"
     for _ in 0..10 {
-        let content = harness.get_buffer_content();
+        let content = harness.get_buffer_content().unwrap_or_default();
         if content == "hello" {
             break;
         }
@@ -316,7 +316,7 @@ fn test_undo_after_save_as_marks_buffer_unmodified() {
         .unwrap();
 
     // Content should have changed from "hello"
-    let content_after_extra_undo = harness.get_buffer_content();
+    let content_after_extra_undo = harness.get_buffer_content().unwrap_or_default();
     if content_after_extra_undo != "hello" {
         // If content changed, buffer should now be modified (we're before the save point)
         assert!(
@@ -479,7 +479,7 @@ fn test_undo_to_empty_after_save_as() {
     // Step 5: Undo repeatedly until empty
     // First undo back to save point
     for i in 0..20 {
-        let content = harness.get_buffer_content();
+        let content = harness.get_buffer_content().unwrap_or_default();
         println!(
             "Undo iteration {}: content='{}', modified={}",
             i,
@@ -497,7 +497,7 @@ fn test_undo_to_empty_after_save_as() {
     }
 
     // Should be back to empty
-    let final_content = harness.get_buffer_content();
+    let final_content = harness.get_buffer_content().unwrap_or_default();
     assert!(
         final_content.is_empty(),
         "Should be able to undo all the way back to empty buffer, but got: '{}'",

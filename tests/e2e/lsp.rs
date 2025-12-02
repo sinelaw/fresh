@@ -3691,7 +3691,7 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> std::io::Result<()> {
     );
 
     // Verify the editor still works fine (buffer has our edits)
-    let buffer_content = harness.get_buffer_content();
+    let buffer_content = harness.get_buffer_content().unwrap_or_default();
     assert!(
         buffer_content.contains("This edit should NOT restart the LSP"),
         "Buffer should contain our edits. Content: {}",
