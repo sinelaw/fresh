@@ -302,7 +302,7 @@ fn test_chunked_recovery_reconstruction() {
     let final_size = original_size - 5 + 8 - 4 + 6; // -5 (World) +8 (Universe) -4 (test) +6 (sample)
 
     storage
-        .save_chunked_recovery(
+        .save_recovery(
             id,
             chunks,
             Some(&original_file),
@@ -315,9 +315,8 @@ fn test_chunked_recovery_reconstruction() {
 
     // Verify metadata was saved correctly
     let metadata = storage.read_metadata(id).unwrap().unwrap();
-    assert!(metadata.is_chunked());
-    assert_eq!(metadata.chunk_count, Some(2));
-    assert_eq!(metadata.original_file_size, Some(original_size));
+    assert_eq!(metadata.chunk_count, 2);
+    assert_eq!(metadata.original_file_size, original_size);
 
     // Reconstruct content from chunks + original
     let reconstructed = storage.reconstruct_from_chunks(id, &original_file).unwrap();
@@ -349,7 +348,7 @@ fn test_chunked_recovery_with_insertion() {
 
     let id = "test-chunked-insert";
     storage
-        .save_chunked_recovery(
+        .save_recovery(
             id,
             chunks,
             Some(&original_file),
@@ -383,7 +382,7 @@ fn test_chunked_recovery_with_deletion() {
 
     let id = "test-chunked-delete";
     storage
-        .save_chunked_recovery(
+        .save_recovery(
             id,
             chunks,
             Some(&original_file),
@@ -415,7 +414,7 @@ fn test_chunked_recovery_size_mismatch() {
 
     let id = "test-size-mismatch";
     storage
-        .save_chunked_recovery(
+        .save_recovery(
             id,
             chunks,
             Some(&original_file),
@@ -485,13 +484,13 @@ fn test_full_chunked_recovery_cycle() {
     let original_file = temp_dir.path().join("test_file.txt");
     std::fs::write(&original_file, original_content).unwrap();
 
-    // Simulate saving chunked recovery (as if user edited and we saved chunks)
+    // Simulate saving recovery (as if user edited and we saved chunks)
     let chunks = vec![
         RecoveryChunk::new(7, 5, b"Universe".to_vec()), // "World" -> "Universe"
     ];
     let id = "test-full-cycle";
     storage
-        .save_chunked_recovery(
+        .save_recovery(
             id,
             chunks,
             Some(&original_file),
@@ -502,9 +501,9 @@ fn test_full_chunked_recovery_cycle() {
         )
         .unwrap();
 
-    // Verify metadata shows chunked format
+    // Verify metadata
     let metadata = storage.read_metadata(id).unwrap().unwrap();
-    assert!(metadata.is_chunked());
+    assert_eq!(metadata.original_file_size, original_content.len());
 
     // Reconstruct the content (this is what load_recovery does for chunked)
     let reconstructed = storage.reconstruct_from_chunks(id, &original_file).unwrap();
@@ -763,31 +762,30 @@ fn test_large_file_auto_save_creates_small_recovery_file() {
     });
 
     if let Some(entry) = our_entry {
-        // Load the recovery data to check its size
-        let recovery_content = entry.load_content().unwrap();
+        // Check content_size from metadata - this is the total chunk content size
+        let recovery_size = entry.metadata.content_size as usize;
 
         // Recovery file should be MUCH smaller than original
         // If the bug existed, this would be ~500KB. With the fix, it should be tiny.
         let max_acceptable_size = file_size / 10; // Less than 10% of original
 
         assert!(
-            recovery_content.len() < max_acceptable_size,
+            recovery_size < max_acceptable_size,
             "REGRESSION: Recovery file is {} bytes, but should be less than {} bytes (10% of {} byte file). \
              This suggests the entire file content is being saved instead of just modifications!",
-            recovery_content.len(),
+            recovery_size,
             max_acceptable_size,
             file_size
         );
 
         println!(
             "Recovery file size: {} bytes ({:.2}% of {} byte file)",
-            recovery_content.len(),
-            (recovery_content.len() as f64 / file_size as f64) * 100.0,
+            recovery_size,
+            (recovery_size as f64 / file_size as f64) * 100.0,
             file_size
         );
     } else {
-        // If no recovery entry found, that's also acceptable (might be chunked format)
-        println!("No simple recovery entry found - likely using chunked format (good!)");
+        panic!("Expected a recovery entry for large_file.txt");
     }
 }
 

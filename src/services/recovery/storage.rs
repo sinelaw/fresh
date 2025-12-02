@@ -5,7 +5,7 @@
 
 use super::types::{
     compute_checksum, generate_buffer_id, path_hash, ChunkedRecoveryData, ChunkedRecoveryIndex,
-    RecoveryChunk, RecoveryEntry, RecoveryFormat, RecoveryMetadata, SessionInfo,
+    RecoveryChunk, RecoveryEntry, RecoveryMetadata, SessionInfo,
 };
 use crate::input::input_history::get_data_dir;
 use std::fs::{self, File};
@@ -177,82 +177,17 @@ impl RecoveryStorage {
         Ok(())
     }
 
-    /// Save a buffer's content to recovery storage
+    /// Save recovery data for a buffer
     ///
-    /// This performs an atomic write: write to temp files, fsync, then rename.
-    pub fn save_recovery(
-        &self,
-        id: &str,
-        content: &[u8],
-        original_path: Option<&Path>,
-        buffer_name: Option<&str>,
-        line_count: Option<usize>,
-    ) -> io::Result<RecoveryMetadata> {
-        self.ensure_dir()?;
-
-        let (meta_path, content_path) = self.recovery_paths(id);
-        let checksum = compute_checksum(content);
-
-        // Get original file's mtime if it exists
-        let original_mtime = original_path.and_then(|p| {
-            fs::metadata(p)
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-        });
-
-        // Check if we already have metadata (update vs create)
-        let metadata = if meta_path.exists() {
-            let existing = self.read_metadata(id)?;
-            let mut meta = existing.unwrap_or_else(|| {
-                RecoveryMetadata::new(
-                    original_path.map(|p| p.to_path_buf()),
-                    buffer_name.map(|s| s.to_string()),
-                    checksum.clone(),
-                    content.len() as u64,
-                    line_count,
-                    original_mtime,
-                )
-            });
-            meta.update(checksum, content.len() as u64, line_count);
-            meta
-        } else {
-            RecoveryMetadata::new(
-                original_path.map(|p| p.to_path_buf()),
-                buffer_name.map(|s| s.to_string()),
-                checksum,
-                content.len() as u64,
-                line_count,
-                original_mtime,
-            )
-        };
-
-        // Write content first (larger, more likely to fail)
-        self.atomic_write(&content_path, content)?;
-
-        // Write metadata
-        let meta_json = serde_json::to_string_pretty(&metadata)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        self.atomic_write(&meta_path, meta_json.as_bytes())?;
-
-        Ok(metadata)
-    }
-
-    /// Save chunked recovery data for large files
+    /// Stores chunks to separate files with metadata in JSON.
+    /// For small files/new buffers, pass a single chunk with the full content.
+    /// For large files, pass only the modified chunks.
     ///
-    /// Instead of saving the entire file content, this saves only the modified
-    /// chunks with their positions. This is essential for multi-gigabyte files.
+    /// ## File Layout
     ///
-    /// ## New Format (v2)
-    ///
-    /// The new format stores:
     /// - `{id}.meta.json` - Contains RecoveryMetadata with embedded ChunkedRecoveryIndex
     /// - `{id}.chunk.0`, `{id}.chunk.1`, ... - Raw binary content for each chunk
-    ///
-    /// This avoids JSON serialization overhead for binary data and allows
-    /// efficient incremental reads/writes.
-    pub fn save_chunked_recovery(
+    pub fn save_recovery(
         &self,
         id: &str,
         chunks: Vec<RecoveryChunk>,
@@ -298,7 +233,7 @@ impl RecoveryStorage {
         // Create or update metadata
         let mut metadata = if meta_path.exists() {
             self.read_metadata(id)?.unwrap_or_else(|| {
-                RecoveryMetadata::new_chunked(
+                RecoveryMetadata::new(
                     original_path.map(|p| p.to_path_buf()),
                     buffer_name.map(|s| s.to_string()),
                     checksum.clone(),
@@ -310,7 +245,7 @@ impl RecoveryStorage {
                 )
             })
         } else {
-            RecoveryMetadata::new_chunked(
+            RecoveryMetadata::new(
                 original_path.map(|p| p.to_path_buf()),
                 buffer_name.map(|s| s.to_string()),
                 checksum.clone(),
@@ -323,9 +258,8 @@ impl RecoveryStorage {
         };
 
         // Update metadata fields
-        metadata.format = RecoveryFormat::Chunked;
-        metadata.original_file_size = Some(original_file_size);
-        metadata.update_chunked(
+        metadata.original_file_size = original_file_size;
+        metadata.update(
             checksum,
             total_chunk_bytes,
             line_count,
@@ -523,20 +457,10 @@ impl RecoveryStorage {
             )
         })?;
 
-        // For Full format, require content file
-        // For Chunked format, require chunk files
-        match metadata.format {
-            RecoveryFormat::Full => {
-                if !content_path.exists() {
-                    return Ok(None);
-                }
-            }
-            RecoveryFormat::Chunked => {
-                let chunk_paths = self.list_chunk_paths(id)?;
-                if chunk_paths.is_empty() {
-                    return Ok(None);
-                }
-            }
+        // Require at least one chunk file
+        let chunk_paths = self.list_chunk_paths(id)?;
+        if chunk_paths.is_empty() {
+            return Ok(None);
         }
 
         Ok(Some(RecoveryEntry {
@@ -634,17 +558,14 @@ impl RecoveryStorage {
                 }
                 seen_ids.insert(id.clone());
 
-                let (meta_path, content_path) = self.recovery_paths(&id);
+                let (meta_path, _content_path) = self.recovery_paths(&id);
                 let chunk_paths = self.list_chunk_paths(&id).unwrap_or_default();
-                let has_chunks = !chunk_paths.is_empty();
 
-                // For chunked format: need meta + chunk files
-                // For full format: need meta + content
-                let is_valid = meta_path.exists() && (content_path.exists() || has_chunks);
+                // Need meta + chunk files
+                let is_valid = meta_path.exists() && !chunk_paths.is_empty();
 
                 if !is_valid {
                     let _ = fs::remove_file(&meta_path);
-                    let _ = fs::remove_file(&content_path);
                     let _ = self.delete_chunk_files(&id);
                     cleaned += 1;
                 }
@@ -751,9 +672,10 @@ mod tests {
         let path = Path::new("/test/file.rs");
         let id = storage.get_buffer_id(Some(path));
 
-        // Save recovery
+        // Save recovery - single chunk for full content
+        let chunks = vec![RecoveryChunk::new(0, 0, content.to_vec())];
         let metadata = storage
-            .save_recovery(&id, content, Some(path), None, Some(1))
+            .save_recovery(&id, chunks, Some(path), None, Some(1), 0, content.len())
             .unwrap();
 
         assert_eq!(metadata.content_size, content.len() as u64);
@@ -763,9 +685,10 @@ mod tests {
         let entry = storage.load_entry(&id).unwrap().unwrap();
         assert_eq!(entry.id, id);
 
-        // Verify content
-        let loaded_content = storage.read_content(&id).unwrap().unwrap();
-        assert_eq!(loaded_content, content);
+        // Verify chunked content
+        let chunked_data = storage.read_chunked_content(&id).unwrap().unwrap();
+        assert_eq!(chunked_data.chunks.len(), 1);
+        assert_eq!(chunked_data.chunks[0].content, content);
 
         // Verify checksum
         assert!(entry.verify_checksum().unwrap());
@@ -776,11 +699,13 @@ mod tests {
         let (storage, _temp) = create_test_storage();
 
         // Save multiple entries
+        let chunks1 = vec![RecoveryChunk::new(0, 0, b"content1".to_vec())];
         storage
-            .save_recovery("id1", b"content1", None, Some("Buffer 1"), None)
+            .save_recovery("id1", chunks1, None, Some("Buffer 1"), None, 0, 8)
             .unwrap();
+        let chunks2 = vec![RecoveryChunk::new(0, 0, b"content2".to_vec())];
         storage
-            .save_recovery("id2", b"content2", None, Some("Buffer 2"), None)
+            .save_recovery("id2", chunks2, None, Some("Buffer 2"), None, 0, 8)
             .unwrap();
 
         let entries = storage.list_entries().unwrap();
@@ -792,8 +717,9 @@ mod tests {
         let (storage, _temp) = create_test_storage();
 
         let id = "test-id";
+        let chunks = vec![RecoveryChunk::new(0, 0, b"content".to_vec())];
         storage
-            .save_recovery(id, b"content", None, Some("Test"), None)
+            .save_recovery(id, chunks, None, Some("Test"), None, 0, 7)
             .unwrap();
 
         // Verify it exists
@@ -816,8 +742,9 @@ mod tests {
         fs::write(&orphan_content, b"orphan").unwrap();
 
         // Create a complete entry
+        let chunks = vec![RecoveryChunk::new(0, 0, b"content".to_vec())];
         storage
-            .save_recovery("complete", b"content", None, Some("Test"), None)
+            .save_recovery("complete", chunks, None, Some("Test"), None, 0, 7)
             .unwrap();
 
         // Cleanup should remove the orphan
@@ -865,9 +792,9 @@ mod tests {
         let original_size = 1000;
         let final_size = original_size + 17 - 10 + 8; // inserted 17, replaced 10 with 8
 
-        // Save chunked recovery
+        // Save recovery
         let metadata = storage
-            .save_chunked_recovery(
+            .save_recovery(
                 id,
                 chunks,
                 Some(original_path),
@@ -879,9 +806,8 @@ mod tests {
             .unwrap();
 
         // Verify metadata
-        assert_eq!(metadata.format, RecoveryFormat::Chunked);
-        assert_eq!(metadata.chunk_count, Some(2));
-        assert_eq!(metadata.original_file_size, Some(original_size));
+        assert_eq!(metadata.chunk_count, 2);
+        assert_eq!(metadata.original_file_size, original_size);
 
         // Verify chunk files exist
         assert!(storage.chunk_path(id, 0).exists());
@@ -904,7 +830,6 @@ mod tests {
 
         // Load entry and verify
         let entry = storage.load_entry(id).unwrap().unwrap();
-        assert_eq!(entry.metadata.format, RecoveryFormat::Chunked);
         assert!(entry.verify_checksum().unwrap());
 
         // Test: list entry shows up
@@ -926,7 +851,7 @@ mod tests {
 
         let id = "test-read-chunked";
         storage
-            .save_chunked_recovery(id, chunks, None, None, None, 200, 206)
+            .save_recovery(id, chunks, None, None, None, 200, 206)
             .unwrap();
 
         // Read chunked content back
@@ -962,7 +887,7 @@ mod tests {
         let final_size = original_content.len() + 8; // Added 8 bytes prefix, same replacement length
 
         storage
-            .save_chunked_recovery(
+            .save_recovery(
                 id,
                 chunks,
                 Some(&original_path),
@@ -987,7 +912,7 @@ mod tests {
     fn test_chunked_recovery_delete() {
         let (storage, _temp) = create_test_storage();
 
-        // Create and save chunked recovery
+        // Create and save recovery
         let chunks = vec![
             RecoveryChunk::new(0, 0, b"A".to_vec()),
             RecoveryChunk::new(10, 5, b"BB".to_vec()),
@@ -996,7 +921,7 @@ mod tests {
 
         let id = "test-delete-chunked";
         storage
-            .save_chunked_recovery(id, chunks, None, None, None, 100, 95)
+            .save_recovery(id, chunks, None, None, None, 100, 95)
             .unwrap();
 
         // Verify files exist
@@ -1024,7 +949,7 @@ mod tests {
         let id = "test-checksum";
 
         storage
-            .save_chunked_recovery(id, chunks, None, None, None, 100, 112)
+            .save_recovery(id, chunks, None, None, None, 100, 112)
             .unwrap();
 
         // Load and verify checksum
@@ -1053,10 +978,10 @@ mod tests {
         fs::write(&orphan_chunk0, b"orphan chunk 0").unwrap();
         fs::write(&orphan_chunk1, b"orphan chunk 1").unwrap();
 
-        // Create a valid chunked entry
+        // Create a valid entry
         let chunks = vec![RecoveryChunk::new(0, 0, b"valid".to_vec())];
         storage
-            .save_chunked_recovery("valid", chunks, None, None, None, 100, 105)
+            .save_recovery("valid", chunks, None, None, None, 100, 105)
             .unwrap();
 
         // Cleanup orphans
@@ -1072,33 +997,35 @@ mod tests {
     }
 
     #[test]
-    fn test_mixed_full_and_chunked_entries() {
+    fn test_multiple_entries() {
         let (storage, _temp) = create_test_storage();
 
-        // Create a full format entry
+        // Create two entries with different original_file_size
+        // First: new buffer (original_file_size = 0)
+        let chunks1 = vec![RecoveryChunk::new(0, 0, b"new buffer content".to_vec())];
         storage
-            .save_recovery("full-entry", b"full content", None, Some("Full"), None)
+            .save_recovery("new-buffer", chunks1, None, Some("New"), None, 0, 18)
             .unwrap();
 
-        // Create a chunked format entry
-        let chunks = vec![RecoveryChunk::new(0, 0, b"chunk".to_vec())];
+        // Second: large file (original_file_size > 0)
+        let chunks2 = vec![RecoveryChunk::new(0, 0, b"chunk".to_vec())];
         storage
-            .save_chunked_recovery("chunked-entry", chunks, None, Some("Chunked"), None, 100, 105)
+            .save_recovery("large-file", chunks2, None, Some("Large"), None, 100, 105)
             .unwrap();
 
         // List should show both
         let entries = storage.list_entries().unwrap();
         assert_eq!(entries.len(), 2);
 
-        // Verify formats
-        let full_entry = entries.iter().find(|e| e.id == "full-entry").unwrap();
-        let chunked_entry = entries.iter().find(|e| e.id == "chunked-entry").unwrap();
+        // Verify original_file_size
+        let new_entry = entries.iter().find(|e| e.id == "new-buffer").unwrap();
+        let large_entry = entries.iter().find(|e| e.id == "large-file").unwrap();
 
-        assert_eq!(full_entry.metadata.format, RecoveryFormat::Full);
-        assert_eq!(chunked_entry.metadata.format, RecoveryFormat::Chunked);
+        assert_eq!(new_entry.metadata.original_file_size, 0);
+        assert_eq!(large_entry.metadata.original_file_size, 100);
 
         // Both should have valid checksums
-        assert!(full_entry.verify_checksum().unwrap());
-        assert!(chunked_entry.verify_checksum().unwrap());
+        assert!(new_entry.verify_checksum().unwrap());
+        assert!(large_entry.verify_checksum().unwrap());
     }
 }

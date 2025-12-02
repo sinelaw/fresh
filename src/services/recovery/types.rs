@@ -2,14 +2,14 @@
 //!
 //! This module defines the core data structures for the file recovery system.
 //!
-//! ## Recovery Formats
+//! ## Storage Format
 //!
-//! The system supports two recovery formats:
-//! - **Full**: Stores the entire buffer content (for small files)
-//! - **Chunked**: Stores only modified chunks with byte offsets (for large files)
+//! All recovery data uses a chunked format:
+//! - `{id}.meta.json` - Metadata with chunk index
+//! - `{id}.chunk.0`, `{id}.chunk.1`, ... - Binary chunk content
 //!
-//! The chunked format is essential for multi-gigabyte files where saving
-//! the entire content would be prohibitive.
+//! For small files or new buffers, there's typically a single chunk containing
+//! the full content. For large files, only modified regions are stored as chunks.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -17,21 +17,6 @@ use std::time::SystemTime;
 
 /// Maximum chunk size for chunked recovery (1 MB)
 pub const MAX_CHUNK_SIZE: usize = 1024 * 1024;
-
-/// Recovery format type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RecoveryFormat {
-    /// Full content stored in single file
-    Full,
-    /// Only modified chunks stored with positions
-    Chunked,
-}
-
-impl Default for RecoveryFormat {
-    fn default() -> Self {
-        Self::Full
-    }
-}
 
 /// Metadata for a single chunk (stored in JSON, without binary content)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,7 +135,7 @@ impl ChunkedRecoveryIndex {
 
 /// Metadata for a recovery file
 ///
-/// This is stored as JSON alongside the content file to track
+/// This is stored as JSON alongside the chunk files to track
 /// the original file path, timestamps, and content checksum.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryMetadata {
@@ -166,10 +151,10 @@ pub struct RecoveryMetadata {
     /// Unix timestamp when this recovery file was last updated
     pub updated_at: u64,
 
-    /// SHA-256 checksum of the content file for integrity verification
+    /// Composite checksum for integrity verification
     pub checksum: String,
 
-    /// Size of the content in bytes (for Full format) or total chunks size (for Chunked)
+    /// Total size of chunk content in bytes
     pub content_size: u64,
 
     /// Line count (if known)
@@ -181,55 +166,21 @@ pub struct RecoveryMetadata {
     /// Version of the recovery format (for future compatibility)
     pub format_version: u32,
 
-    /// Recovery format (Full or Chunked)
+    /// Number of chunks
     #[serde(default)]
-    pub format: RecoveryFormat,
+    pub chunk_count: usize,
 
-    /// For chunked format: number of chunks
+    /// Original file size (0 for new buffers, needed for reconstruction)
     #[serde(default)]
-    pub chunk_count: Option<usize>,
-
-    /// For chunked format: original file size (needed for reconstruction)
-    #[serde(default)]
-    pub original_file_size: Option<usize>,
+    pub original_file_size: usize,
 }
 
 impl RecoveryMetadata {
     /// Current format version
-    pub const FORMAT_VERSION: u32 = 1;
+    pub const FORMAT_VERSION: u32 = 2;
 
-    /// Create new metadata for a buffer (Full format)
+    /// Create new metadata
     pub fn new(
-        original_path: Option<PathBuf>,
-        buffer_name: Option<String>,
-        checksum: String,
-        content_size: u64,
-        line_count: Option<usize>,
-        original_mtime: Option<u64>,
-    ) -> Self {
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        Self {
-            original_path,
-            buffer_name,
-            created_at: now,
-            updated_at: now,
-            checksum,
-            content_size,
-            line_count,
-            original_mtime,
-            format_version: Self::FORMAT_VERSION,
-            format: RecoveryFormat::Full,
-            chunk_count: None,
-            original_file_size: None,
-        }
-    }
-
-    /// Create new metadata for chunked recovery (large files)
-    pub fn new_chunked(
         original_path: Option<PathBuf>,
         buffer_name: Option<String>,
         checksum: String,
@@ -254,14 +205,19 @@ impl RecoveryMetadata {
             line_count,
             original_mtime,
             format_version: Self::FORMAT_VERSION,
-            format: RecoveryFormat::Chunked,
-            chunk_count: Some(chunk_count),
-            original_file_size: Some(original_file_size),
+            chunk_count,
+            original_file_size,
         }
     }
 
-    /// Update the timestamp and checksum (for Full format)
-    pub fn update(&mut self, checksum: String, content_size: u64, line_count: Option<usize>) {
+    /// Update the timestamp and checksum
+    pub fn update(
+        &mut self,
+        checksum: String,
+        content_size: u64,
+        line_count: Option<usize>,
+        chunk_count: usize,
+    ) {
         self.updated_at = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -269,23 +225,7 @@ impl RecoveryMetadata {
         self.checksum = checksum;
         self.content_size = content_size;
         self.line_count = line_count;
-    }
-
-    /// Update for chunked format
-    pub fn update_chunked(
-        &mut self,
-        checksum: String,
-        content_size: u64,
-        line_count: Option<usize>,
-        chunk_count: usize,
-    ) {
-        self.update(checksum, content_size, line_count);
-        self.chunk_count = Some(chunk_count);
-    }
-
-    /// Check if this is a chunked recovery
-    pub fn is_chunked(&self) -> bool {
-        self.format == RecoveryFormat::Chunked
+        self.chunk_count = chunk_count;
     }
 
     /// Get a display name for this recovery entry
@@ -301,13 +241,13 @@ impl RecoveryMetadata {
 
     /// Get a format description for display
     pub fn format_description(&self) -> String {
-        match self.format {
-            RecoveryFormat::Full => format!("{} bytes", self.content_size),
-            RecoveryFormat::Chunked => {
-                let chunks = self.chunk_count.unwrap_or(0);
-                let orig = self.original_file_size.unwrap_or(0);
-                format!("{} chunks, {} bytes original", chunks, orig)
-            }
+        if self.original_file_size > 0 {
+            format!(
+                "{} chunks, {} bytes original",
+                self.chunk_count, self.original_file_size
+            )
+        } else {
+            format!("{} bytes", self.content_size)
         }
     }
 }
@@ -372,45 +312,29 @@ pub struct RecoveryEntry {
 }
 
 impl RecoveryEntry {
-    /// Load content from the recovery file
-    pub fn load_content(&self) -> std::io::Result<Vec<u8>> {
-        std::fs::read(&self.content_path)
-    }
-
     /// Verify the content checksum matches
     pub fn verify_checksum(&self) -> std::io::Result<bool> {
-        match self.metadata.format {
-            RecoveryFormat::Full => {
-                // For full format, checksum is computed over the entire content
-                let content = self.load_content()?;
-                let actual_checksum = compute_checksum(&content);
+        // Read the chunked index from metadata
+        let meta_content = std::fs::read_to_string(&self.metadata_path)?;
+
+        #[derive(serde::Deserialize)]
+        struct MetadataFile {
+            #[serde(default)]
+            chunked_index: Option<ChunkedRecoveryIndex>,
+        }
+
+        let meta_file: MetadataFile = serde_json::from_str(&meta_content)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        match meta_file.chunked_index {
+            Some(index) => {
+                let actual_checksum = index.compute_checksum();
                 Ok(actual_checksum == self.metadata.checksum)
             }
-            RecoveryFormat::Chunked => {
-                // For chunked format, checksum is computed from chunk index in metadata file
-                // Read the chunked index from metadata
-                let meta_content = std::fs::read_to_string(&self.metadata_path)?;
-
-                #[derive(serde::Deserialize)]
-                struct ChunkedMetadataFile {
-                    #[serde(default)]
-                    chunked_index: Option<ChunkedRecoveryIndex>,
-                }
-
-                let meta_file: ChunkedMetadataFile = serde_json::from_str(&meta_content)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-
-                match meta_file.chunked_index {
-                    Some(index) => {
-                        let actual_checksum = index.compute_checksum();
-                        Ok(actual_checksum == self.metadata.checksum)
-                    }
-                    None => Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Chunked recovery missing index in metadata",
-                    )),
-                }
-            }
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Recovery missing chunk index in metadata",
+            )),
         }
     }
 
@@ -549,10 +473,14 @@ mod tests {
             100,
             Some(10),
             None,
+            1,  // chunk_count
+            0,  // original_file_size
         );
         assert_eq!(meta.format_version, RecoveryMetadata::FORMAT_VERSION);
         assert!(meta.created_at > 0);
         assert_eq!(meta.created_at, meta.updated_at);
+        assert_eq!(meta.chunk_count, 1);
+        assert_eq!(meta.original_file_size, 0);
     }
 
     #[test]

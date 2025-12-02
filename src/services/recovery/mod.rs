@@ -16,18 +16,17 @@
 //! ```text
 //! ~/.local/share/fresh/recovery/
 //! ├── session.lock           # Session info (PID, start time)
-//! ├── {hash}.meta.json       # Recovery metadata (+ chunk index for large files)
-//! ├── {hash}.content         # Buffer content (Full format, small files)
-//! ├── {hash}.chunk.0         # Chunk 0 binary content (Chunked format, large files)
+//! ├── {hash}.meta.json       # Recovery metadata with chunk index
+//! ├── {hash}.chunk.0         # Chunk 0 binary content
 //! ├── {hash}.chunk.1         # Chunk 1 binary content
 //! └── ...
 //! ```
 //!
-//! ## Recovery Formats
+//! ## Storage Format
 //!
-//! - **Full**: For small files, stores entire buffer content in `.content` file
-//! - **Chunked**: For large files (>1MB), stores only modified chunks in separate
-//!   `.chunk.N` files with metadata/index in `.meta.json`
+//! All recovery data uses a chunked format:
+//! - For small files/new buffers: single chunk containing full content
+//! - For large files: only modified regions stored as chunks
 //!
 //! ## Usage
 //!
@@ -43,7 +42,8 @@
 //! recovery.start_session()?;
 //!
 //! // During editing (call periodically)
-//! recovery.save_buffer("id", &content, Some(&path), None)?;
+//! // For small files/new buffers:
+//! recovery.save_buffer("id", chunks, Some(&path), None, Some(10), 0, content_len)?;
 //!
 //! // On clean shutdown
 //! recovery.end_session()?;
@@ -55,8 +55,8 @@ pub mod types;
 pub use storage::RecoveryStorage;
 pub use types::{
     compute_checksum, compute_composite_checksum, generate_buffer_id, path_hash, ChunkMeta,
-    ChunkedRecoveryData, ChunkedRecoveryIndex, RecoveryChunk, RecoveryEntry, RecoveryFormat,
-    RecoveryMetadata, RecoveryResult, SessionInfo, MAX_CHUNK_SIZE,
+    ChunkedRecoveryData, ChunkedRecoveryIndex, RecoveryChunk, RecoveryEntry, RecoveryMetadata,
+    RecoveryResult, SessionInfo, MAX_CHUNK_SIZE,
 };
 
 use std::collections::HashMap;
@@ -226,38 +226,21 @@ impl RecoveryService {
 
     /// Save a buffer's content for recovery
     ///
-    /// For small files, saves full content.
-    /// For large files (is_large_file() == true), use save_buffer_chunked instead.
-    pub fn save_buffer(
-        &mut self,
-        buffer_id: &str,
-        content: &[u8],
-        original_path: Option<&Path>,
-        buffer_name: Option<&str>,
-        line_count: Option<usize>,
-    ) -> io::Result<()> {
-        if !self.config.enabled {
-            return Ok(());
-        }
-
-        self.storage
-            .save_recovery(buffer_id, content, original_path, buffer_name, line_count)?;
-        self.last_save_times
-            .insert(buffer_id.to_string(), Instant::now());
-
-        tracing::debug!(
-            "Saved recovery for buffer {} ({} bytes)",
-            buffer_id,
-            content.len()
-        );
-        Ok(())
-    }
-
-    /// Save chunked recovery for large files
+    /// All recovery uses the chunked format:
+    /// - For small files/new buffers: pass a single chunk containing full content
+    ///   with offset=0, original_len=0, original_file_size=0
+    /// - For large files: pass only the modified chunks with their offsets
     ///
-    /// This only saves the modified chunks, not the entire file content.
-    /// Essential for multi-gigabyte files.
-    pub fn save_buffer_chunked(
+    /// ## Parameters
+    ///
+    /// - `buffer_id`: Unique identifier for the buffer
+    /// - `chunks`: The content chunks to save
+    /// - `original_path`: Path to the original file (None for new buffers)
+    /// - `buffer_name`: Display name for the buffer
+    /// - `line_count`: Number of lines in the buffer
+    /// - `original_file_size`: Size of the original file (0 for new buffers)
+    /// - `final_size`: Total size after applying all modifications
+    pub fn save_buffer(
         &mut self,
         buffer_id: &str,
         chunks: Vec<RecoveryChunk>,
@@ -271,7 +254,7 @@ impl RecoveryService {
             return Ok(());
         }
 
-        self.storage.save_chunked_recovery(
+        self.storage.save_recovery(
             buffer_id,
             chunks,
             original_path,
@@ -284,9 +267,10 @@ impl RecoveryService {
             .insert(buffer_id.to_string(), Instant::now());
 
         tracing::debug!(
-            "Saved chunked recovery for buffer {} (original: {} bytes)",
+            "Saved recovery for buffer {} (original: {} bytes, final: {} bytes)",
             buffer_id,
-            original_file_size
+            original_file_size,
+            final_size
         );
         Ok(())
     }
@@ -311,8 +295,8 @@ impl RecoveryService {
 
     /// Load recovery content for a specific entry
     ///
-    /// For Full format entries, returns the content directly.
-    /// For Chunked format entries, requires the original file to reconstruct.
+    /// For entries with original_file_size > 0, requires the original file to reconstruct.
+    /// For new buffer entries (original_file_size == 0), the full content is in the chunks.
     pub fn load_recovery(&self, entry: &RecoveryEntry) -> io::Result<RecoveryResult> {
         // Verify checksum first
         if !entry.verify_checksum()? {
@@ -322,9 +306,9 @@ impl RecoveryService {
             });
         }
 
-        // Handle chunked vs full format
-        if entry.metadata.is_chunked() {
-            // For chunked recovery, we need the original file
+        // Check if we need the original file for reconstruction
+        if entry.metadata.original_file_size > 0 {
+            // Large file recovery - need original file to reconstruct
             if let Some(ref original_path) = entry.metadata.original_path {
                 if original_path.exists() {
                     let content = self
@@ -338,7 +322,7 @@ impl RecoveryService {
                     return Ok(RecoveryResult::Corrupted {
                         id: entry.id.clone(),
                         reason: format!(
-                            "Original file not found: {}. Chunked recovery requires the original file.",
+                            "Original file not found: {}. Recovery requires the original file.",
                             original_path.display()
                         ),
                     });
@@ -346,34 +330,39 @@ impl RecoveryService {
             } else {
                 return Ok(RecoveryResult::Corrupted {
                     id: entry.id.clone(),
-                    reason: "Chunked recovery without original file path".to_string(),
+                    reason: "Recovery entry requires original file but path is not set".to_string(),
                 });
             }
         }
 
-        // Full format - just load the content
-        let content = entry.load_content()?;
-        Ok(RecoveryResult::Recovered {
-            original_path: entry.metadata.original_path.clone(),
-            content,
-        })
+        // New buffer or small file - chunk contains full content
+        // Load the chunk data directly
+        let chunked_data = self.storage.read_chunked_content(&entry.id)?.ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "Chunk content not found")
+        })?;
+
+        // For original_file_size == 0, we expect exactly one chunk with offset=0
+        if chunked_data.chunks.len() == 1 && chunked_data.chunks[0].offset == 0 {
+            Ok(RecoveryResult::Recovered {
+                original_path: entry.metadata.original_path.clone(),
+                content: chunked_data.chunks[0].content.clone(),
+            })
+        } else {
+            Ok(RecoveryResult::Corrupted {
+                id: entry.id.clone(),
+                reason: "Invalid recovery format: expected single chunk for new buffer".to_string(),
+            })
+        }
     }
 
-    /// Load chunked recovery with a provided original file path
+    /// Load recovery with a provided original file path
     ///
     /// Use this when the original file has moved or you want to specify a different source.
-    pub fn load_chunked_recovery_with_original(
+    pub fn load_recovery_with_original(
         &self,
         entry: &RecoveryEntry,
         original_file: &Path,
     ) -> io::Result<RecoveryResult> {
-        if !entry.metadata.is_chunked() {
-            return Ok(RecoveryResult::Corrupted {
-                id: entry.id.clone(),
-                reason: "Entry is not in chunked format".to_string(),
-            });
-        }
-
         if !entry.verify_checksum()? {
             return Ok(RecoveryResult::Corrupted {
                 id: entry.id.clone(),
@@ -494,9 +483,10 @@ mod tests {
         let path = Path::new("/test/file.txt");
         let id = service.get_buffer_id(Some(path));
 
-        // Save recovery (recovery_pending would be true on the buffer)
+        // Save recovery - create a single chunk with full content (new buffer style)
+        let chunks = vec![RecoveryChunk::new(0, 0, content.to_vec())];
         service
-            .save_buffer(&id, content, Some(path), None, Some(1))
+            .save_buffer(&id, chunks, Some(path), None, Some(1), 0, content.len())
             .unwrap();
 
         // List recoverable
@@ -549,8 +539,9 @@ mod tests {
         assert!(!service.needs_auto_save("test", true));
 
         // save_buffer doesn't error when disabled
+        let chunks = vec![RecoveryChunk::new(0, 0, b"content".to_vec())];
         service
-            .save_buffer("test", b"content", None, None, None)
+            .save_buffer("test", chunks, None, None, None, 0, 7)
             .unwrap();
     }
 }

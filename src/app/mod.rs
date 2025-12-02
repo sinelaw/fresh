@@ -3315,7 +3315,7 @@ impl Editor {
                     let original_size = state.buffer.original_file_size().unwrap_or(0);
                     let final_size = state.buffer.total_bytes();
 
-                    self.recovery_service.save_buffer_chunked(
+                    self.recovery_service.save_buffer(
                         &recovery_id,
                         recovery_chunks,
                         path.as_deref(),
@@ -3331,7 +3331,7 @@ impl Editor {
                         final_size
                     );
                 } else {
-                    // For small files, save full content as before
+                    // For small files, save full content as a single chunk
                     let total_bytes = state.buffer.total_bytes();
                     let content = match state.buffer.get_text_range_mut(0, total_bytes) {
                         Ok(bytes) => bytes,
@@ -3341,12 +3341,17 @@ impl Editor {
                         }
                     };
 
+                    let chunks = vec![
+                        crate::services::recovery::types::RecoveryChunk::new(0, 0, content),
+                    ];
                     self.recovery_service.save_buffer(
                         &recovery_id,
-                        &content,
+                        chunks,
                         path.as_deref(),
                         None,
                         line_count,
+                        0,           // original_file_size = 0 for new/small files
+                        total_bytes, // final_size
                     )?;
                 }
 
