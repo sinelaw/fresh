@@ -3485,6 +3485,11 @@ impl Editor {
         self.prompt.is_some()
     }
 
+    /// Check if file explorer has focus
+    pub fn file_explorer_is_focused(&self) -> bool {
+        self.key_context == KeyContext::FileExplorer
+    }
+
     /// Get current prompt input (for display)
     pub fn prompt_input(&self) -> Option<&str> {
         self.prompt.as_ref().map(|p| p.input.as_str())

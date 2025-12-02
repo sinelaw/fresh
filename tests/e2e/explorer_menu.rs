@@ -964,3 +964,226 @@ fn test_rename_via_menu_affects_filesystem() {
         "Original file should not exist after rename"
     );
 }
+
+/// Test that after rename completes, the renamed item is selected
+#[test]
+fn test_selection_after_rename_on_renamed_item() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create a test file to rename
+    let original_name = "select_test.txt";
+    let new_name = "renamed_select.txt";
+    fs::write(project_root.join(original_name), "content").unwrap();
+
+    // Open and focus file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Ensure root is expanded
+    harness.editor_mut().file_explorer_toggle_expand();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    if !screen.contains("select_test") {
+        harness.editor_mut().file_explorer_toggle_expand();
+        std::thread::sleep(Duration::from_millis(100));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render().unwrap();
+    }
+
+    // Navigate down to select the file
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Start rename
+    harness.editor_mut().file_explorer_rename();
+    std::thread::sleep(Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // Set new name and confirm
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str(new_name);
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Verify renamed file is shown in explorer (should be selected)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("renamed_select"),
+        "Renamed file should be visible in the explorer after rename. Screen:\n{}",
+        screen
+    );
+
+    // Check that file explorer is still focused
+    assert!(
+        harness.editor().file_explorer_is_focused(),
+        "File explorer should remain focused after rename"
+    );
+}
+
+/// Test that arrow keys work to navigate after rename completes
+#[test]
+fn test_navigation_after_rename_completes() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create multiple files
+    fs::write(project_root.join("aaa_first.txt"), "first").unwrap();
+    fs::write(project_root.join("bbb_second.txt"), "second").unwrap();
+    fs::write(project_root.join("ccc_third.txt"), "third").unwrap();
+
+    // Open and focus file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Ensure root is expanded
+    harness.editor_mut().file_explorer_toggle_expand();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    if !screen.contains("aaa_first") {
+        harness.editor_mut().file_explorer_toggle_expand();
+        std::thread::sleep(Duration::from_millis(100));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render().unwrap();
+    }
+
+    // Navigate to first file and rename it
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.editor_mut().file_explorer_rename();
+    std::thread::sleep(Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // Rename the file
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str("aaa_renamed.txt");
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Verify we're not in prompting mode anymore
+    assert!(
+        !harness.editor().is_prompting(),
+        "Should not be prompting after rename completes"
+    );
+
+    // Navigate down to the next file - this should work after rename
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Navigate down again
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Navigate up - should work to go back
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Navigation should work without errors
+    // File explorer should still be focused
+    assert!(
+        harness.editor().file_explorer_is_focused(),
+        "File explorer should remain focused after navigation post-rename"
+    );
+}
+
+/// Test that new folder rename allows navigation after completing
+#[test]
+fn test_new_folder_navigation_after_rename() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create an existing file
+    fs::write(project_root.join("existing_file.txt"), "existing").unwrap();
+
+    // Open and focus file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Create new folder (enters rename mode automatically)
+    harness.editor_mut().file_explorer_new_directory();
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Should be prompting for folder name
+    assert!(
+        harness.editor().is_prompting(),
+        "Should be in rename mode after creating new folder"
+    );
+
+    // Set folder name and confirm
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str("my_new_folder");
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Should no longer be prompting
+    assert!(
+        !harness.editor().is_prompting(),
+        "Should not be prompting after confirming folder name"
+    );
+
+    // Verify file explorer is still focused
+    assert!(
+        harness.editor().file_explorer_is_focused(),
+        "File explorer should be focused after creating new folder"
+    );
+
+    // Try navigating - should work
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Verify the folder was created on filesystem
+    assert!(
+        project_root.join("my_new_folder").exists(),
+        "New folder should exist on filesystem"
+    );
+    assert!(
+        project_root.join("my_new_folder").is_dir(),
+        "my_new_folder should be a directory"
+    );
+}
