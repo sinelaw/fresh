@@ -379,7 +379,9 @@ impl HighlightEngine {
         theme: &Theme,
     ) -> Vec<HighlightSpan> {
         match self {
-            Self::TreeSitter(h) => h.highlight_viewport(buffer, viewport_start, viewport_end, theme),
+            Self::TreeSitter(h) => {
+                h.highlight_viewport(buffer, viewport_start, viewport_end, theme)
+            }
             Self::TextMate(h) => h.highlight_viewport(buffer, viewport_start, viewport_end, theme),
             Self::None => Vec::new(),
         }

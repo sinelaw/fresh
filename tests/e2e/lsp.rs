@@ -3604,9 +3604,7 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> std::io::Result<()> {
     config.lsp.insert(
         "rust".to_string(),
         fresh::services::lsp::client::LspServerConfig {
-            command: FakeLspServer::script_path()
-                .to_string_lossy()
-                .to_string(),
+            command: FakeLspServer::script_path().to_string_lossy().to_string(),
             args: vec![],
             enabled: true,
             auto_start: true, // Auto-start so it starts when we open the file

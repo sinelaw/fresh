@@ -85,8 +85,9 @@ impl deno_core::ModuleLoader for TypeScriptModuleLoader {
                 .to_file_path()
                 .map_err(|_| JsErrorBox::generic(format!("Invalid file URL: {}", specifier)))?;
 
-            let code = std::fs::read_to_string(&path)
-                .map_err(|e| JsErrorBox::generic(format!("Failed to read {}: {}", path.display(), e)))?;
+            let code = std::fs::read_to_string(&path).map_err(|e| {
+                JsErrorBox::generic(format!("Failed to read {}: {}", path.display(), e))
+            })?;
 
             // Check if we need to transpile TypeScript
             let (code, module_type) = if path.extension().and_then(|s| s.to_str()) == Some("ts") {
@@ -112,10 +113,7 @@ impl deno_core::ModuleLoader for TypeScriptModuleLoader {
 }
 
 /// Transpile TypeScript to JavaScript using deno_ast
-fn transpile_typescript(
-    source: &str,
-    specifier: &ModuleSpecifier,
-) -> Result<String, JsErrorBox> {
+fn transpile_typescript(source: &str, specifier: &ModuleSpecifier) -> Result<String, JsErrorBox> {
     use deno_ast::{EmitOptions, MediaType, ParseParams, TranspileOptions};
 
     let parsed = deno_ast::parse_module(ParseParams {
@@ -1231,9 +1229,7 @@ async fn op_fresh_spawn_background_process(
                 .insert(process_id, child);
             process_id
         } else {
-            return Err(JsErrorBox::generic(
-                "Runtime state not available",
-            ));
+            return Err(JsErrorBox::generic("Runtime state not available"));
         }
     };
 
@@ -1487,7 +1483,10 @@ fn op_fresh_get_buffer_info(state: &mut OpState, buffer_id: u32) -> Option<TsBuf
 /// Get diff vs last saved snapshot for a buffer
 #[op2]
 #[serde]
-fn op_fresh_get_buffer_saved_diff(state: &mut OpState, buffer_id: u32) -> Option<TsBufferSavedDiff> {
+fn op_fresh_get_buffer_saved_diff(
+    state: &mut OpState,
+    buffer_id: u32,
+) -> Option<TsBufferSavedDiff> {
     let runtime_state = state
         .try_borrow::<Rc<RefCell<TsRuntimeState>>>()?
         .borrow()
@@ -1682,9 +1681,9 @@ fn op_fresh_set_prompt_suggestions(
 #[op2(async)]
 #[string]
 async fn op_fresh_read_file(#[string] path: String) -> Result<String, JsErrorBox> {
-    tokio::fs::read_to_string(&path).await.map_err(|e| {
-        JsErrorBox::generic(format!("Failed to read file {}: {}", path, e))
-    })
+    tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| JsErrorBox::generic(format!("Failed to read file {}: {}", path, e)))
 }
 
 /// Write string content to a file, creating or overwriting
@@ -1698,9 +1697,9 @@ async fn op_fresh_write_file(
     #[string] path: String,
     #[string] content: String,
 ) -> Result<(), JsErrorBox> {
-    tokio::fs::write(&path, content).await.map_err(|e| {
-        JsErrorBox::generic(format!("Failed to write file {}: {}", path, e))
-    })
+    tokio::fs::write(&path, content)
+        .await
+        .map_err(|e| JsErrorBox::generic(format!("Failed to write file {}: {}", path, e)))
 }
 
 /// Check if a path exists (file, directory, or symlink)
@@ -1901,19 +1900,17 @@ fn op_fresh_read_dir(
         }
     };
 
-    let entries = std::fs::read_dir(&resolved_path).map_err(|e| {
-        JsErrorBox::generic(format!("Failed to read directory {}: {}", path, e))
-    })?;
+    let entries = std::fs::read_dir(&resolved_path)
+        .map_err(|e| JsErrorBox::generic(format!("Failed to read directory {}: {}", path, e)))?;
 
     let mut result = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|e| {
-            JsErrorBox::generic(format!("Failed to read directory entry: {}", e))
-        })?;
+        let entry = entry
+            .map_err(|e| JsErrorBox::generic(format!("Failed to read directory entry: {}", e)))?;
 
-        let metadata = entry.metadata().map_err(|e| {
-            JsErrorBox::generic(format!("Failed to get entry metadata: {}", e))
-        })?;
+        let metadata = entry
+            .metadata()
+            .map_err(|e| JsErrorBox::generic(format!("Failed to get entry metadata: {}", e)))?;
 
         result.push(DirEntry {
             name: entry.file_name().to_string_lossy().to_string(),
@@ -2325,9 +2322,7 @@ async fn op_fresh_send_lsp_request(
         {
             let mut pending = runtime_state.pending_responses.lock().unwrap();
             pending.remove(&request_id);
-            return Err(JsErrorBox::generic(
-                "Failed to send plugin LSP request",
-            ));
+            return Err(JsErrorBox::generic("Failed to send plugin LSP request"));
         }
 
         rx

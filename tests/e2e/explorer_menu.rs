@@ -343,9 +343,7 @@ fn test_explorer_f2_keybinding_renames() {
     harness.render().unwrap();
 
     // Press F2 to rename
-    harness
-        .send_key(KeyCode::F(2), KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     std::thread::sleep(Duration::from_millis(200));
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
@@ -694,15 +692,11 @@ fn test_rename_prompt_escape_aborts() {
     }
 
     // Navigate down to the first child (the file)
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Press F2 to start rename
-    harness
-        .send_key(KeyCode::F(2), KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     std::thread::sleep(Duration::from_millis(100));
     harness.render().unwrap();
 
@@ -771,15 +765,11 @@ fn test_rename_prompt_enter_accepts() {
     }
 
     // Navigate down to the first child (the file)
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Press F2 to start rename
-    harness
-        .send_key(KeyCode::F(2), KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     std::thread::sleep(Duration::from_millis(100));
     harness.render().unwrap();
 
@@ -923,9 +913,7 @@ fn test_rename_via_menu_affects_filesystem() {
     }
 
     // Navigate down to the first child (the file)
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Trigger rename directly (same as selecting from Explorer menu)
@@ -997,9 +985,7 @@ fn test_selection_after_rename_on_renamed_item() {
     }
 
     // Navigate down to select the file
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Start rename
@@ -1066,9 +1052,7 @@ fn test_navigation_after_rename_completes() {
     }
 
     // Navigate to first file and rename it
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     harness.editor_mut().file_explorer_rename();
@@ -1094,15 +1078,11 @@ fn test_navigation_after_rename_completes() {
     );
 
     // Navigate down to the next file - this should work after rename
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Navigate down again
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Navigate up - should work to go back
@@ -1169,9 +1149,7 @@ fn test_new_folder_navigation_after_rename() {
     );
 
     // Try navigating - should work
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();

@@ -298,7 +298,15 @@ pub fn action_to_events(
             // Process each cursor: delete selection (if any), then insert
             // By processing in reverse position order, later positions are handled first
             // so they don't affect earlier positions
-            for (cursor_id, selection, insert_position, line_start, only_spaces, char_after, deleted_text) in cursor_data
+            for (
+                cursor_id,
+                selection,
+                insert_position,
+                line_start,
+                only_spaces,
+                char_after,
+                deleted_text,
+            ) in cursor_data
             {
                 // First, delete the selection if there is one
                 if let (Some(range), Some(text)) = (selection, deleted_text) {
@@ -322,21 +330,22 @@ pub fn action_to_events(
                             // and we pressed Enter to get indent, then typed the closing delimiter
                             if is_closing_delimiter && only_spaces && insert_position > line_start {
                                 // Calculate correct indent
-                                let correct_indent = if let Some(language) = state.highlighter.language() {
-                                    state
-                                        .indent_calculator
-                                        .borrow_mut()
-                                        .calculate_dedent_for_delimiter(
-                                            &state.buffer,
-                                            insert_position,
-                                            ch,
-                                            language,
-                                            tab_size,
-                                        )
-                                        .unwrap_or(0)
-                                } else {
-                                    0
-                                };
+                                let correct_indent =
+                                    if let Some(language) = state.highlighter.language() {
+                                        state
+                                            .indent_calculator
+                                            .borrow_mut()
+                                            .calculate_dedent_for_delimiter(
+                                                &state.buffer,
+                                                insert_position,
+                                                ch,
+                                                language,
+                                                tab_size,
+                                            )
+                                            .unwrap_or(0)
+                                    } else {
+                                        0
+                                    };
 
                                 let current_indent = insert_position - line_start;
                                 if current_indent != correct_indent {

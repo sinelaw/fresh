@@ -241,9 +241,10 @@ impl GrammarRegistry {
 
         // Check user grammars first (higher priority)
         if let Some(scope) = self.user_extensions.get(ext) {
-            if let Some(syntax) = self.syntax_set.find_syntax_by_scope(
-                syntect::parsing::Scope::new(scope).ok()?,
-            ) {
+            if let Some(syntax) = self
+                .syntax_set
+                .find_syntax_by_scope(syntect::parsing::Scope::new(scope).ok()?)
+            {
                 return Some(syntax);
             }
         }

@@ -233,7 +233,8 @@ impl EditorState {
         self.buffer.insert(position, text);
 
         // Invalidate highlight cache for edited range
-        self.highlighter.invalidate_range(position..position + text.len());
+        self.highlighter
+            .invalidate_range(position..position + text.len());
 
         // Adjust all cursors after the edit
         self.cursors.adjust_for_edit(position, 0, text.len());

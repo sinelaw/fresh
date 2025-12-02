@@ -144,12 +144,7 @@ impl TextMateHighlighter {
     }
 
     /// Parse a region of the buffer and return cached spans
-    fn parse_region(
-        &self,
-        buffer: &Buffer,
-        start_byte: usize,
-        end_byte: usize,
-    ) -> Vec<CachedSpan> {
+    fn parse_region(&self, buffer: &Buffer, start_byte: usize, end_byte: usize) -> Vec<CachedSpan> {
         let mut spans = Vec::new();
         let mut state = ParseState::new(self.syntax);
 
@@ -158,7 +153,11 @@ impl TextMateHighlighter {
         let content_str = match std::str::from_utf8(&content) {
             Ok(s) => s,
             Err(_) => {
-                tracing::warn!("Buffer contains invalid UTF-8 in range {}..{}", start_byte, end_byte);
+                tracing::warn!(
+                    "Buffer contains invalid UTF-8 in range {}..{}",
+                    start_byte,
+                    end_byte
+                );
                 return spans;
             }
         };
@@ -288,9 +287,7 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
     }
 
     // Operators (including keyword.operator)
-    if scope_lower.starts_with("keyword.operator")
-        || scope_lower.starts_with("punctuation")
-    {
+    if scope_lower.starts_with("keyword.operator") || scope_lower.starts_with("punctuation") {
         return Some(HighlightCategory::Operator);
     }
 

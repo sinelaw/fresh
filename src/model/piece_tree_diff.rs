@@ -98,7 +98,8 @@ fn normalize_leaves(mut leaves: Vec<LeafData>) -> Vec<LeafData> {
     let mut current = leaves.remove(0);
 
     for leaf in leaves.into_iter() {
-        let contiguous = current.location == leaf.location && current.offset + current.bytes == leaf.offset;
+        let contiguous =
+            current.location == leaf.location && current.offset + current.bytes == leaf.offset;
         if contiguous {
             // Merge by extending bytes and line feeds if known
             current.bytes += leaf.bytes;

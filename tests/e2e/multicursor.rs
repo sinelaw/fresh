@@ -27,7 +27,10 @@ fn test_add_cursor_next_match_with_backward_selection() {
 
     // Verify cursor position
     let primary = harness.editor().active_state().cursors.primary();
-    assert_eq!(primary.position, 3, "Cursor should be at position 3 after first 'foo'");
+    assert_eq!(
+        primary.position, 3,
+        "Cursor should be at position 3 after first 'foo'"
+    );
 
     // Select backward with Shift+Left 3 times to select "foo"
     // This creates a backward selection: cursor at 0, anchor at 3
@@ -43,8 +46,15 @@ fn test_add_cursor_next_match_with_backward_selection() {
 
     // Verify backward selection: position=0 (cursor at start), anchor=3 (selection end)
     let primary = harness.editor().active_state().cursors.primary();
-    assert_eq!(primary.position, 0, "After Shift+Left, cursor should be at start of selection");
-    assert_eq!(primary.anchor, Some(3), "After Shift+Left, anchor should be at end of selection");
+    assert_eq!(
+        primary.position, 0,
+        "After Shift+Left, cursor should be at start of selection"
+    );
+    assert_eq!(
+        primary.anchor,
+        Some(3),
+        "After Shift+Left, anchor should be at end of selection"
+    );
 
     // Add cursor at next "foo" match
     harness.editor_mut().add_cursor_at_next_match();
@@ -59,7 +69,9 @@ fn test_add_cursor_next_match_with_backward_selection() {
     // The new cursor should also be at the start of its selection (8..11)
     // i.e., new cursor position should be 8, not 11
     for (id, cursor) in state.cursors.iter() {
-        let selection = cursor.selection_range().expect("Cursor should have selection");
+        let selection = cursor
+            .selection_range()
+            .expect("Cursor should have selection");
         let is_at_start = cursor.position == selection.start;
         let is_at_end = cursor.position == selection.end;
 
@@ -109,8 +121,15 @@ fn test_add_cursor_next_match_with_forward_selection() {
 
     // Verify forward selection: position=3 (cursor at end), anchor=0 (selection start)
     let primary = harness.editor().active_state().cursors.primary();
-    assert_eq!(primary.position, 3, "After Shift+Right, cursor should be at end of selection");
-    assert_eq!(primary.anchor, Some(0), "After Shift+Right, anchor should be at start of selection");
+    assert_eq!(
+        primary.position, 3,
+        "After Shift+Right, cursor should be at end of selection"
+    );
+    assert_eq!(
+        primary.anchor,
+        Some(0),
+        "After Shift+Right, anchor should be at start of selection"
+    );
 
     // Add cursor at next "foo" match
     harness.editor_mut().add_cursor_at_next_match();

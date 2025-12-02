@@ -537,7 +537,8 @@ impl Editor {
             .map(|state| state.view_mode == crate::state::ViewMode::Compose)
             .unwrap_or(false);
         let file_explorer_exists = self.file_explorer.is_some();
-        let file_explorer_focused = self.key_context == crate::input::keybindings::KeyContext::FileExplorer;
+        let file_explorer_focused =
+            self.key_context == crate::input::keybindings::KeyContext::FileExplorer;
         let mouse_capture = self.mouse_enabled;
         let show_hidden = self
             .file_explorer
@@ -551,7 +552,8 @@ impl Editor {
             .unwrap_or(false);
         let has_selection = self.has_active_selection();
 
-        self.menu_state.context
+        self.menu_state
+            .context
             .set(context_keys::LINE_NUMBERS, line_numbers)
             .set(context_keys::LINE_WRAP, line_wrap)
             .set(context_keys::COMPOSE_MODE, compose_mode)

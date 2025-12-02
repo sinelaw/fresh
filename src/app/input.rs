@@ -1164,13 +1164,16 @@ impl Editor {
 
                 // Update context before checking if action is enabled
                 use crate::view::ui::context_keys;
-                self.menu_state.context
+                self.menu_state
+                    .context
                     .set(context_keys::HAS_SELECTION, self.has_active_selection())
-                    .set(context_keys::FILE_EXPLORER_FOCUSED, self.key_context == crate::input::keybindings::KeyContext::FileExplorer);
+                    .set(
+                        context_keys::FILE_EXPLORER_FOCUSED,
+                        self.key_context == crate::input::keybindings::KeyContext::FileExplorer,
+                    );
 
-                if let Some((action_name, args)) = self
-                    .menu_state
-                    .get_highlighted_action(&all_menus)
+                if let Some((action_name, args)) =
+                    self.menu_state.get_highlighted_action(&all_menus)
                 {
                     // Close the menu
                     self.menu_state.close_menu();

@@ -519,8 +519,7 @@ impl Editor {
                     // Refresh the parent directory
                     if let Some(explorer) = &mut self.file_explorer {
                         if let Some(selected_id) = explorer.get_selected() {
-                            let parent_id =
-                                get_parent_node_id(explorer.tree(), selected_id, false);
+                            let parent_id = get_parent_node_id(explorer.tree(), selected_id, false);
                             let tree = explorer.tree_mut();
                             let _ = runtime.block_on(tree.refresh_node(parent_id));
                         }

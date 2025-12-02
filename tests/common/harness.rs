@@ -932,7 +932,10 @@ impl EditorTestHarness {
 
     /// Check if the current buffer has a highlighter set up
     pub fn has_highlighter(&self) -> bool {
-        !matches!(self.editor.active_state().highlighter, HighlightEngine::None)
+        !matches!(
+            self.editor.active_state().highlighter,
+            HighlightEngine::None
+        )
     }
 
     /// Get the shadow string (for property testing)

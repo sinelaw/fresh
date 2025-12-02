@@ -1010,14 +1010,18 @@ impl Config {
                         label: "New File".to_string(),
                         action: "file_explorer_new_file".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        when: Some(
+                            crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string(),
+                        ),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: "New Folder".to_string(),
                         action: "file_explorer_new_directory".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        when: Some(
+                            crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string(),
+                        ),
                         checkbox: None,
                     },
                     MenuItem::Separator { separator: true },
@@ -1025,21 +1029,27 @@ impl Config {
                         label: "Open".to_string(),
                         action: "file_explorer_open".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        when: Some(
+                            crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string(),
+                        ),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: "Rename".to_string(),
                         action: "file_explorer_rename".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        when: Some(
+                            crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string(),
+                        ),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: "Delete".to_string(),
                         action: "file_explorer_delete".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        when: Some(
+                            crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string(),
+                        ),
                         checkbox: None,
                     },
                     MenuItem::Separator { separator: true },
@@ -1047,7 +1057,9 @@ impl Config {
                         label: "Refresh".to_string(),
                         action: "file_explorer_refresh".to_string(),
                         args: HashMap::new(),
-                        when: Some(crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string()),
+                        when: Some(
+                            crate::view::ui::context_keys::FILE_EXPLORER_FOCUSED.to_string(),
+                        ),
                         checkbox: None,
                     },
                     MenuItem::Separator { separator: true },
@@ -1056,14 +1068,19 @@ impl Config {
                         action: "file_explorer_toggle_hidden".to_string(),
                         args: HashMap::new(),
                         when: Some(crate::view::ui::context_keys::FILE_EXPLORER.to_string()),
-                        checkbox: Some(crate::view::ui::context_keys::FILE_EXPLORER_SHOW_HIDDEN.to_string()),
+                        checkbox: Some(
+                            crate::view::ui::context_keys::FILE_EXPLORER_SHOW_HIDDEN.to_string(),
+                        ),
                     },
                     MenuItem::Action {
                         label: "Show Gitignored Files".to_string(),
                         action: "file_explorer_toggle_gitignored".to_string(),
                         args: HashMap::new(),
                         when: Some(crate::view::ui::context_keys::FILE_EXPLORER.to_string()),
-                        checkbox: Some(crate::view::ui::context_keys::FILE_EXPLORER_SHOW_GITIGNORED.to_string()),
+                        checkbox: Some(
+                            crate::view::ui::context_keys::FILE_EXPLORER_SHOW_GITIGNORED
+                                .to_string(),
+                        ),
                     },
                 ],
             },

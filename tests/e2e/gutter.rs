@@ -1109,7 +1109,9 @@ fn test_buffer_modified_newline_insert_only_marks_affected_lines() {
     // Go to end of line 2 and insert a newline (creating a new empty line)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // line 2
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     wait_for_async(&mut harness, 10);
 
@@ -1262,10 +1264,7 @@ fn test_buffer_modified_clears_after_paste_restores_content() {
 
     let screen_after_paste = harness.screen_to_string();
     let indicators_after_paste = get_indicator_lines(&screen_after_paste, "│");
-    println!(
-        "=== After pasting 'world' back ===\n{}",
-        screen_after_paste
-    );
+    println!("=== After pasting 'world' back ===\n{}", screen_after_paste);
     assert!(
         indicators_after_paste.is_empty(),
         "Indicators should clear when content is restored via paste, got {:?}",
