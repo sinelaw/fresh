@@ -64,6 +64,7 @@ dirs = "6.0"  # For XDG/platform-specific directory detection
 pulldown-cmark = "0.13"  # Markdown parsing for LSP hover docs
 arboard = "3.6"  # Cross-platform system clipboard access
 notify = "8.2.0"
+syntect = "5.2"  # TextMate grammar support for syntax highlighting
 # tree-sitter-markdown = "0.7.1"  # Disabled due to tree-sitter version conflict (uses 0.19.5 instead of 0.25.x)
 
 [dev-dependencies]

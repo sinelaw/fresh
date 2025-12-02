@@ -257,6 +257,30 @@ pub struct LanguageConfig {
     /// Whether to auto-indent
     #[serde(default = "default_true")]
     pub auto_indent: bool,
+
+    /// Preferred highlighter backend (auto, tree-sitter, or textmate)
+    #[serde(default)]
+    pub highlighter: HighlighterPreference,
+
+    /// Path to custom TextMate grammar file (optional)
+    /// If specified, this grammar will be used when highlighter is "textmate"
+    #[serde(default)]
+    pub textmate_grammar: Option<std::path::PathBuf>,
+}
+
+/// Preference for which syntax highlighting backend to use
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HighlighterPreference {
+    /// Use tree-sitter if available, fall back to TextMate
+    #[default]
+    Auto,
+    /// Force tree-sitter only (no highlighting if unavailable)
+    #[serde(rename = "tree-sitter")]
+    TreeSitter,
+    /// Force TextMate grammar (skip tree-sitter even if available)
+    #[serde(rename = "textmate")]
+    TextMate,
 }
 
 /// Menu bar configuration
@@ -410,6 +434,8 @@ impl Config {
                 grammar: "rust".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
             },
         );
 
@@ -420,6 +446,8 @@ impl Config {
                 grammar: "javascript".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
             },
         );
 
@@ -430,6 +458,8 @@ impl Config {
                 grammar: "typescript".to_string(),
                 comment_prefix: Some("//".to_string()),
                 auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
             },
         );
 
@@ -440,6 +470,8 @@ impl Config {
                 grammar: "python".to_string(),
                 comment_prefix: Some("#".to_string()),
                 auto_indent: true,
+                highlighter: HighlighterPreference::Auto,
+                textmate_grammar: None,
             },
         );
 

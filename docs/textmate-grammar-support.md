@@ -1,5 +1,16 @@
 # TextMate Grammar Support for Syntax Highlighting
 
+## Status
+
+**Phase 1 Complete** - Core infrastructure implemented:
+- `syntect` dependency added
+- `GrammarRegistry` for loading grammars (built-in + user grammars from `~/.config/fresh/grammars/`)
+- `TextMateHighlighter` with viewport-only parsing and caching
+- `HighlightEngine` unified abstraction over tree-sitter and TextMate backends
+- `HighlighterPreference` config option (auto/tree-sitter/textmate)
+
+**Not yet integrated**: The render system still uses the tree-sitter `Highlighter` directly. To fully enable TextMate highlighting, the render system needs to be updated to use `HighlightEngine` instead.
+
 ## Overview
 
 This document describes the design for adding TextMate grammar support to Fresh editor, enabling syntax highlighting for languages without built-in tree-sitter support. The design maintains compatibility with the existing tree-sitter approach and allows users to add grammars without rebuilding the application.
