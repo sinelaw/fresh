@@ -102,6 +102,10 @@ struct UiColors {
     menu_hover_bg: ColorDef,
     #[serde(default = "default_menu_hover_fg")]
     menu_hover_fg: ColorDef,
+    #[serde(default = "default_menu_disabled_fg")]
+    menu_disabled_fg: ColorDef,
+    #[serde(default = "default_menu_disabled_bg")]
+    menu_disabled_bg: ColorDef,
     status_bar_fg: ColorDef,
     status_bar_bg: ColorDef,
     prompt_fg: ColorDef,
@@ -183,6 +187,12 @@ fn default_menu_hover_bg() -> ColorDef {
 }
 fn default_menu_hover_fg() -> ColorDef {
     ColorDef::Rgb(255, 255, 255)
+}
+fn default_menu_disabled_fg() -> ColorDef {
+    ColorDef::Rgb(100, 100, 100) // Gray for disabled items
+}
+fn default_menu_disabled_bg() -> ColorDef {
+    ColorDef::Rgb(50, 50, 50) // Same as dropdown bg
 }
 fn default_inline_code_bg() -> ColorDef {
     ColorDef::Named("DarkGray".to_string())
@@ -278,6 +288,8 @@ pub struct Theme {
     pub menu_separator_fg: Color,
     pub menu_hover_bg: Color,
     pub menu_hover_fg: Color,
+    pub menu_disabled_fg: Color,
+    pub menu_disabled_bg: Color,
 
     pub status_bar_fg: Color,
     pub status_bar_bg: Color,
@@ -376,6 +388,8 @@ impl From<ThemeFile> for Theme {
             menu_separator_fg: file.ui.menu_separator_fg.into(),
             menu_hover_bg: file.ui.menu_hover_bg.into(),
             menu_hover_fg: file.ui.menu_hover_fg.into(),
+            menu_disabled_fg: file.ui.menu_disabled_fg.into(),
+            menu_disabled_bg: file.ui.menu_disabled_bg.into(),
             status_bar_fg: file.ui.status_bar_fg.into(),
             status_bar_bg: file.ui.status_bar_bg.into(),
             prompt_fg: file.ui.prompt_fg.into(),
@@ -491,6 +505,8 @@ impl Theme {
             menu_separator_fg: Color::Rgb(80, 80, 80),
             menu_hover_bg: Color::Rgb(55, 55, 55),
             menu_hover_fg: Color::Rgb(255, 255, 255),
+            menu_disabled_fg: Color::Rgb(100, 100, 100), // Gray for disabled items
+            menu_disabled_bg: Color::Rgb(50, 50, 50),
 
             status_bar_fg: Color::White,
             status_bar_bg: Color::Rgb(30, 30, 30), // Darker than DarkGray
@@ -595,6 +611,8 @@ impl Theme {
             menu_separator_fg: Color::Rgb(210, 210, 210),
             menu_hover_bg: Color::Rgb(230, 235, 240),
             menu_hover_fg: Color::Rgb(0, 0, 0),
+            menu_disabled_fg: Color::Rgb(160, 160, 160), // Gray for disabled items
+            menu_disabled_bg: Color::Rgb(248, 248, 248),
 
             status_bar_fg: Color::Black,
             status_bar_bg: Color::Rgb(220, 220, 220), // Light grey
@@ -699,6 +717,8 @@ impl Theme {
             menu_separator_fg: Color::White,
             menu_hover_bg: Color::Rgb(50, 50, 50),
             menu_hover_fg: Color::Yellow,
+            menu_disabled_fg: Color::DarkGray, // Low contrast gray for disabled
+            menu_disabled_bg: Color::Rgb(20, 20, 20),
 
             status_bar_fg: Color::White,
             status_bar_bg: Color::Rgb(20, 20, 20), // Darker for high contrast
@@ -827,6 +847,8 @@ impl Theme {
             menu_separator_fg: Color::Rgb(85, 85, 85),
             menu_hover_bg: Color::Rgb(0, 170, 0),
             menu_hover_fg: Color::Rgb(255, 255, 255),
+            menu_disabled_fg: Color::Rgb(85, 85, 85), // Dark gray for disabled
+            menu_disabled_bg: Color::Rgb(170, 170, 170),
 
             status_bar_fg: Color::Rgb(0, 0, 0),
             status_bar_bg: Color::Rgb(0, 170, 170), // Cyan status bar

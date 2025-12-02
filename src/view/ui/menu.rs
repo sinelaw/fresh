@@ -390,7 +390,12 @@ impl MenuRenderer {
                     checkbox,
                     ..
                 } => {
-                    let style = if is_highlighted {
+                    let style = if !enabled {
+                        // Disabled items use subdued theme colors
+                        Style::default()
+                            .fg(theme.menu_disabled_fg)
+                            .bg(theme.menu_disabled_bg)
+                    } else if is_highlighted {
                         Style::default()
                             .fg(theme.menu_highlight_fg)
                             .bg(theme.menu_highlight_bg)
@@ -434,12 +439,7 @@ impl MenuRenderer {
                         format!(" {}{:<label_width$} {}", checkbox_icon, label, keybinding)
                     };
 
-                    let mut final_style = style;
-                    if !enabled {
-                        final_style = final_style.add_modifier(Modifier::DIM);
-                    }
-
-                    Line::from(vec![Span::styled(text, final_style)])
+                    Line::from(vec![Span::styled(text, style)])
                 }
                 MenuItem::Separator { .. } => {
                     let separator = "─".repeat(content_width);
