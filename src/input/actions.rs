@@ -322,8 +322,7 @@ pub fn action_to_events(
                             // and we pressed Enter to get indent, then typed the closing delimiter
                             if is_closing_delimiter && only_spaces && insert_position > line_start {
                                 // Calculate correct indent
-                                let correct_indent = if let Some(highlighter) = &state.highlighter {
-                                    let language = highlighter.language();
+                                let correct_indent = if let Some(language) = state.highlighter.language() {
                                     state
                                         .indent_calculator
                                         .borrow_mut()
@@ -397,8 +396,7 @@ pub fn action_to_events(
                     && insert_position > line_start
                 {
                     // Calculate correct indent for the closing delimiter using tree-sitter
-                    let correct_indent = if let Some(highlighter) = &state.highlighter {
-                        let language = highlighter.language();
+                    let correct_indent = if let Some(language) = state.highlighter.language() {
                         state
                             .indent_calculator
                             .borrow_mut()
@@ -533,9 +531,8 @@ pub fn action_to_events(
                 let mut text = "\n".to_string();
 
                 if auto_indent {
-                    if let Some(highlighter) = &state.highlighter {
+                    if let Some(language) = state.highlighter.language() {
                         // Use tree-sitter-based indent when we have a highlighter
-                        let language = highlighter.language();
                         if let Some(indent_spaces) = state
                             .indent_calculator
                             .borrow_mut()

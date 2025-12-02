@@ -8,7 +8,9 @@ use crate::model::event::{
     PopupPositionData,
 };
 use crate::model::marker::MarkerList;
-use crate::primitives::highlighter::{Highlighter, Language};
+use crate::primitives::grammar_registry::GrammarRegistry;
+use crate::primitives::highlight_engine::HighlightEngine;
+use crate::primitives::highlighter::Language;
 use crate::primitives::indent::IndentCalculator;
 use crate::primitives::semantic_highlight::SemanticHighlighter;
 use crate::primitives::text_property::TextPropertyManager;
@@ -41,8 +43,8 @@ pub struct EditorState {
     /// The viewport
     pub viewport: Viewport,
 
-    /// Syntax highlighter (optional - only created if language is detected)
-    pub highlighter: Option<Highlighter>,
+    /// Syntax highlighter (tree-sitter or TextMate based on language)
+    pub highlighter: HighlightEngine,
 
     /// Auto-indent calculator for smart indentation (RefCell for interior mutability)
     pub indent_calculator: RefCell<IndentCalculator>,
@@ -116,7 +118,7 @@ impl EditorState {
             buffer: Buffer::new(large_file_threshold),
             cursors: Cursors::new(),
             viewport: Viewport::new(width, content_height),
-            highlighter: None, // No file path, so no syntax highlighting
+            highlighter: HighlightEngine::None, // No file path, so no syntax highlighting
             indent_calculator: RefCell::new(IndentCalculator::new()),
             overlays: OverlayManager::new(),
             marker_list: MarkerList::new(),
@@ -139,20 +141,17 @@ impl EditorState {
 
     /// Set the syntax highlighting language based on a filename or extension
     /// This allows virtual buffers to get highlighting even without a real file path
-    pub fn set_language_from_name(&mut self, name: &str) {
+    pub fn set_language_from_name(&mut self, name: &str, registry: &GrammarRegistry) {
         let path = std::path::Path::new(name);
+        self.highlighter = HighlightEngine::for_file(path, registry);
         if let Some(language) = Language::from_path(path) {
-            match Highlighter::new(language) {
-                Ok(highlighter) => {
-                    self.highlighter = Some(highlighter);
-                    self.semantic_highlighter.set_language(&language);
-                    tracing::debug!("Set highlighter for virtual buffer based on name: {}", name);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to create highlighter for {}: {}", name, e);
-                }
-            }
+            self.semantic_highlighter.set_language(&language);
         }
+        tracing::debug!(
+            "Set highlighter for virtual buffer based on name: {} (backend: {})",
+            name,
+            self.highlighter.backend_name()
+        );
     }
 
     /// Create an editor state from a file
@@ -161,23 +160,22 @@ impl EditorState {
         width: u16,
         height: u16,
         large_file_threshold: usize,
+        registry: &GrammarRegistry,
     ) -> std::io::Result<Self> {
         // Account for tab bar (1 line) and status bar (1 line)
         let content_height = height.saturating_sub(2);
         let buffer = Buffer::load_from_file(path, large_file_threshold)?;
 
-        // Try to create a highlighter based on file extension
-        let language = Language::from_path(path);
-        let highlighter = language.and_then(|lang| {
-            Highlighter::new(lang)
-                .map_err(|e| {
-                    tracing::warn!("Failed to create highlighter: {}", e);
-                    e
-                })
-                .ok()
-        });
+        // Create highlighter using HighlightEngine (tree-sitter preferred, TextMate fallback)
+        let highlighter = HighlightEngine::for_file(path, registry);
+        tracing::debug!(
+            "Created highlighter for {:?} (backend: {})",
+            path,
+            highlighter.backend_name()
+        );
 
         // Initialize semantic highlighter with language if available
+        let language = Language::from_path(path);
         let mut semantic_highlighter = SemanticHighlighter::new();
         if let Some(lang) = language {
             semantic_highlighter.set_language(&lang);
@@ -235,9 +233,7 @@ impl EditorState {
         self.buffer.insert(position, text);
 
         // Invalidate highlight cache for edited range
-        if let Some(highlighter) = &mut self.highlighter {
-            highlighter.invalidate_range(position..position + text.len());
-        }
+        self.highlighter.invalidate_range(position..position + text.len());
 
         // Adjust all cursors after the edit
         self.cursors.adjust_for_edit(position, 0, text.len());
@@ -283,9 +279,7 @@ impl EditorState {
         self.buffer.delete(range.clone());
 
         // Invalidate highlight cache for edited range
-        if let Some(highlighter) = &mut self.highlighter {
-            highlighter.invalidate_range(range.clone());
-        }
+        self.highlighter.invalidate_range(range.clone());
 
         // Adjust all cursors after the edit
         self.cursors.adjust_for_edit(range.start, len, 0);

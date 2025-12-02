@@ -51,6 +51,7 @@ pub mod layout {
         terminal_height.saturating_sub(TOTAL_RESERVED_ROWS)
     }
 }
+use fresh::primitives::highlight_engine::HighlightEngine;
 use fresh::services::fs::{BackendMetrics, FsBackend, LocalFsBackend, SlowFsBackend, SlowFsConfig};
 use fresh::{app::Editor, config::Config};
 use ratatui::{backend::TestBackend, Terminal};
@@ -931,7 +932,7 @@ impl EditorTestHarness {
 
     /// Check if the current buffer has a highlighter set up
     pub fn has_highlighter(&self) -> bool {
-        self.editor.active_state().highlighter.is_some()
+        !matches!(self.editor.active_state().highlighter, HighlightEngine::None)
     }
 
     /// Get the shadow string (for property testing)

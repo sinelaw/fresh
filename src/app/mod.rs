@@ -114,6 +114,9 @@ pub struct Editor {
     /// Configuration
     config: Config,
 
+    /// Grammar registry for TextMate syntax highlighting
+    grammar_registry: std::sync::Arc<crate::primitives::grammar_registry::GrammarRegistry>,
+
     /// Active theme
     theme: crate::view::theme::Theme,
 
@@ -430,6 +433,14 @@ impl Editor {
         // Load theme from config
         let theme = crate::view::theme::Theme::from_name(&config.theme);
 
+        // Load grammar registry for TextMate syntax highlighting
+        let grammar_registry =
+            Arc::new(crate::primitives::grammar_registry::GrammarRegistry::load());
+        tracing::info!(
+            "Loaded grammar registry with {} syntaxes",
+            grammar_registry.available_syntaxes().len()
+        );
+
         let keybindings = KeybindingResolver::new(&config);
 
         // Create an empty initial buffer
@@ -580,6 +591,7 @@ impl Editor {
             event_logs,
             next_buffer_id: 1,
             config,
+            grammar_registry,
             theme,
             ansi_background: None,
             ansi_background_path: None,
@@ -945,6 +957,7 @@ impl Editor {
                 self.terminal_width,
                 self.terminal_height,
                 self.config.editor.large_file_threshold_bytes as usize,
+                &self.grammar_registry,
             )?
         } else {
             // File doesn't exist - create empty buffer with the file path set
@@ -1097,7 +1110,7 @@ impl Editor {
         state.viewport.line_wrap_enabled = self.config.editor.line_wrap;
 
         // Set syntax highlighting based on buffer name (e.g., "*OURS*.c" will get C highlighting)
-        state.set_language_from_name(&name);
+        state.set_language_from_name(&name, &self.grammar_registry);
 
         self.buffers.insert(buffer_id, state);
         self.event_logs.insert(buffer_id, EventLog::new());
@@ -2608,6 +2621,7 @@ impl Editor {
             self.terminal_width,
             self.terminal_height,
             self.config.editor.large_file_threshold_bytes as usize,
+            &self.grammar_registry,
         )?;
 
         // Restore scroll position (clamped to valid range for new file size)

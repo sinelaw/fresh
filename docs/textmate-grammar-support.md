@@ -2,14 +2,16 @@
 
 ## Status
 
-**Phase 1 Complete** - Core infrastructure implemented:
+**Phase 2 Complete** - Full integration with render system:
 - `syntect` dependency added
 - `GrammarRegistry` for loading grammars (built-in + user grammars from `~/.config/fresh/grammars/`)
 - `TextMateHighlighter` with viewport-only parsing and caching
 - `HighlightEngine` unified abstraction over tree-sitter and TextMate backends
 - `HighlighterPreference` config option (auto/tree-sitter/textmate)
+- Render system integrated via `EditorState.highlighter` now using `HighlightEngine`
+- Auto-indent integration updated to work with `HighlightEngine.language()` method
 
-**Not yet integrated**: The render system still uses the tree-sitter `Highlighter` directly. To fully enable TextMate highlighting, the render system needs to be updated to use `HighlightEngine` instead.
+**Ready to use**: Files without tree-sitter support will automatically use TextMate grammars from syntect's built-in set. Users can add custom grammars to `~/.config/fresh/grammars/`.
 
 ## Overview
 

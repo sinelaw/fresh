@@ -1619,11 +1619,10 @@ impl SplitRenderer {
             .saturating_add(viewport_size)
             .min(state.buffer.len());
 
-        let highlight_spans = if let Some(highlighter) = &mut state.highlighter {
-            highlighter.highlight_viewport(&state.buffer, highlight_start, highlight_end, theme)
-        } else {
-            Vec::new()
-        };
+        let highlight_spans =
+            state
+                .highlighter
+                .highlight_viewport(&state.buffer, highlight_start, highlight_end, theme);
 
         // Update semantic highlighter color from theme
         state.semantic_highlighter.highlight_color = theme.semantic_highlight_bg;

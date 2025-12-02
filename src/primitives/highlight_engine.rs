@@ -425,6 +425,16 @@ impl HighlightEngine {
             Self::None => None,
         }
     }
+
+    /// Get the tree-sitter Language if this is a tree-sitter highlighter
+    /// Returns None for TextMate or no highlighting
+    pub fn language(&self) -> Option<&Language> {
+        match self {
+            Self::TreeSitter(h) => Some(h.language()),
+            Self::TextMate(_) => None,
+            Self::None => None,
+        }
+    }
 }
 
 impl Default for HighlightEngine {
