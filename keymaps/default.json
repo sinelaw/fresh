@@ -59,6 +59,13 @@
       "when": "global"
     },
     {
+      "key": "x",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "Explorer"},
+      "when": "global"
+    },
+    {
       "comment": "Normal context - Close tab",
       "key": "w",
       "modifiers": ["alt"],
@@ -1357,6 +1364,55 @@
       "key": "e",
       "modifiers": ["ctrl"],
       "action": "toggle_file_explorer",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "n",
+      "modifiers": [],
+      "action": "file_explorer_new_file",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "n",
+      "modifiers": ["shift"],
+      "action": "file_explorer_new_directory",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "F2",
+      "modifiers": [],
+      "action": "file_explorer_rename",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Delete",
+      "modifiers": [],
+      "action": "file_explorer_delete",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "d",
+      "modifiers": [],
+      "action": "file_explorer_delete",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "h",
+      "modifiers": [],
+      "action": "file_explorer_toggle_hidden",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "i",
+      "modifiers": [],
+      "action": "file_explorer_toggle_gitignored",
       "args": {},
       "when": "file_explorer"
     },

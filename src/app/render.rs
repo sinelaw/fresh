@@ -537,6 +537,16 @@ impl Editor {
                 .unwrap_or(false),
             file_explorer: self.file_explorer.is_some(),
             mouse_capture: self.mouse_enabled,
+            file_explorer_show_hidden: self
+                .file_explorer
+                .as_ref()
+                .map(|fe| fe.ignore_patterns().show_hidden())
+                .unwrap_or(false),
+            file_explorer_show_gitignored: self
+                .file_explorer
+                .as_ref()
+                .map(|fe| fe.ignore_patterns().show_gitignored())
+                .unwrap_or(false),
         };
 
         crate::view::ui::MenuRenderer::render(

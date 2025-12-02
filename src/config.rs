@@ -1002,6 +1002,71 @@ impl Config {
                     },
                 ],
             },
+            // Explorer menu (file explorer operations)
+            Menu {
+                label: "Explorer".to_string(),
+                items: vec![
+                    MenuItem::Action {
+                        label: "New File".to_string(),
+                        action: "file_explorer_new_file".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: "New Folder".to_string(),
+                        action: "file_explorer_new_directory".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: "Open".to_string(),
+                        action: "file_explorer_open".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: "Rename".to_string(),
+                        action: "file_explorer_rename".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: "Delete".to_string(),
+                        action: "file_explorer_delete".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: "Refresh".to_string(),
+                        action: "file_explorer_refresh".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: "Show Hidden Files".to_string(),
+                        action: "file_explorer_toggle_hidden".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some("file_explorer_show_hidden".to_string()),
+                    },
+                    MenuItem::Action {
+                        label: "Show Gitignored Files".to_string(),
+                        action: "file_explorer_toggle_gitignored".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: Some("file_explorer_show_gitignored".to_string()),
+                    },
+                ],
+            },
             // Help menu
             Menu {
                 label: "Help".to_string(),
