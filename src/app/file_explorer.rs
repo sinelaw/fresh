@@ -390,6 +390,7 @@ impl Editor {
 
                     if let Some(runtime) = &self.tokio_runtime {
                         let path_clone = dir_path.clone();
+                        let dirname_clone = dirname.clone();
                         let selected_id = selected_id;
                         let result =
                             runtime.block_on(async { tokio::fs::create_dir(&path_clone).await });
@@ -400,7 +401,18 @@ impl Editor {
                                     get_parent_node_id(explorer.tree(), selected_id, node.is_dir());
                                 let tree = explorer.tree_mut();
                                 let _ = runtime.block_on(tree.refresh_node(parent_id));
-                                self.set_status_message(format!("Created {}", dirname));
+                                self.set_status_message(format!("Created {}", dirname_clone));
+
+                                // Enter rename mode for the new folder
+                                let prompt = crate::view::prompt::Prompt::with_initial_text(
+                                    "Rename to: ".to_string(),
+                                    crate::view::prompt::PromptType::FileExplorerRename {
+                                        original_path: path_clone,
+                                        original_name: dirname_clone,
+                                    },
+                                    dirname,
+                                );
+                                self.prompt = Some(prompt);
                             }
                             Err(e) => {
                                 self.set_status_message(format!("Error creating directory: {}", e));
@@ -415,6 +427,12 @@ impl Editor {
     pub fn file_explorer_delete(&mut self) {
         if let Some(explorer) = &mut self.file_explorer {
             if let Some(selected_id) = explorer.get_selected() {
+                // Don't allow deleting the root directory
+                if selected_id == explorer.tree().root_id() {
+                    self.set_status_message("Cannot delete project root".to_string());
+                    return;
+                }
+
                 let node = explorer.tree().get_node(selected_id);
                 if let Some(node) = node {
                     let path = node.entry.path.clone();
@@ -447,40 +465,70 @@ impl Editor {
     }
 
     pub fn file_explorer_rename(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = &self.file_explorer {
             if let Some(selected_id) = explorer.get_selected() {
+                // Don't allow renaming the root directory
+                if selected_id == explorer.tree().root_id() {
+                    self.set_status_message("Cannot rename project root".to_string());
+                    return;
+                }
+
                 let node = explorer.tree().get_node(selected_id);
                 if let Some(node) = node {
                     let old_path = node.entry.path.clone();
                     let old_name = node.entry.name.clone();
 
-                    let new_name = format!("{}_renamed", old_name);
-                    let new_path = old_path
-                        .parent()
-                        .map(|p| p.join(&new_name))
-                        .unwrap_or_else(|| old_path.clone());
+                    // Create a prompt for the new name, pre-filled with the old name
+                    let prompt = crate::view::prompt::Prompt::with_initial_text(
+                        "Rename to: ".to_string(),
+                        crate::view::prompt::PromptType::FileExplorerRename {
+                            original_path: old_path,
+                            original_name: old_name.clone(),
+                        },
+                        old_name,
+                    );
+                    self.prompt = Some(prompt);
+                }
+            }
+        }
+    }
 
-                    if let Some(runtime) = &self.tokio_runtime {
-                        let result = runtime
-                            .block_on(async { tokio::fs::rename(&old_path, &new_path).await });
+    /// Perform the actual file explorer rename operation (called after prompt confirmation)
+    pub fn perform_file_explorer_rename(
+        &mut self,
+        original_path: std::path::PathBuf,
+        original_name: String,
+        new_name: String,
+    ) {
+        if new_name.is_empty() || new_name == original_name {
+            self.set_status_message("Rename cancelled".to_string());
+            return;
+        }
 
-                        match result {
-                            Ok(_) => {
-                                // For rename, always get the parent to refresh the directory listing
-                                let parent_id =
-                                    get_parent_node_id(explorer.tree(), selected_id, false);
-                                let tree = explorer.tree_mut();
-                                let _ = runtime.block_on(tree.refresh_node(parent_id));
-                                self.set_status_message(format!(
-                                    "Renamed {} to {}",
-                                    old_name, new_name
-                                ));
-                            }
-                            Err(e) => {
-                                self.set_status_message(format!("Error renaming: {}", e));
-                            }
+        let new_path = original_path
+            .parent()
+            .map(|p| p.join(&new_name))
+            .unwrap_or_else(|| original_path.clone());
+
+        if let Some(runtime) = &self.tokio_runtime {
+            let result =
+                runtime.block_on(async { tokio::fs::rename(&original_path, &new_path).await });
+
+            match result {
+                Ok(_) => {
+                    // Refresh the parent directory
+                    if let Some(explorer) = &mut self.file_explorer {
+                        if let Some(selected_id) = explorer.get_selected() {
+                            let parent_id =
+                                get_parent_node_id(explorer.tree(), selected_id, false);
+                            let tree = explorer.tree_mut();
+                            let _ = runtime.block_on(tree.refresh_node(parent_id));
                         }
                     }
+                    self.set_status_message(format!("Renamed {} to {}", original_name, new_name));
+                }
+                Err(e) => {
+                    self.set_status_message(format!("Error renaming: {}", e));
                 }
             }
         }

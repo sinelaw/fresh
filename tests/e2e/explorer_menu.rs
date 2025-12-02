@@ -569,3 +569,398 @@ fn test_explorer_ctrl_r_refresh() {
     let screen = harness.screen_to_string();
     println!("Screen after refresh:\n{}", screen);
 }
+
+/// Test that Explorer menu items are disabled (grayed out) when explorer is not focused
+#[test]
+fn test_explorer_menu_items_disabled_when_not_focused() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+
+    // File explorer is not open/focused initially
+    harness.render().unwrap();
+
+    // Open Explorer menu with Alt+X
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Try to execute "New File" action (first item) - should not work when explorer not focused
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Menu should close but no file should be created since explorer isn't focused
+    let project_root = harness.project_dir().unwrap();
+    let files: Vec<_> = fs::read_dir(&project_root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+
+    // Should have no files (action was disabled)
+    assert!(
+        files.is_empty(),
+        "No files should be created when explorer menu action is disabled. Found: {:?}",
+        files.iter().map(|f| f.file_name()).collect::<Vec<_>>()
+    );
+}
+
+/// Test that New Folder action creates a folder and enters rename mode
+#[test]
+fn test_new_folder_enters_rename_mode() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Open and focus file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Create new folder directly using the method
+    harness.editor_mut().file_explorer_new_directory();
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Should be in rename mode - prompt should appear
+    assert!(
+        harness.editor().is_prompting(),
+        "Should be in rename mode (prompting) after creating new folder"
+    );
+
+    // Verify a folder was created on the filesystem
+    let dirs: Vec<_> = fs::read_dir(&project_root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .collect();
+
+    assert!(
+        !dirs.is_empty(),
+        "A new folder should have been created on the filesystem"
+    );
+
+    // Cancel the rename (ESC) and verify folder still exists with default name
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.editor().is_prompting(),
+        "Should not be prompting after ESC"
+    );
+
+    // Folder should still exist
+    let dirs_after: Vec<_> = fs::read_dir(&project_root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .collect();
+
+    assert!(
+        !dirs_after.is_empty(),
+        "Folder should still exist after cancelling rename"
+    );
+}
+
+/// Test that rename prompt appears and ESC aborts the rename
+#[test]
+fn test_rename_prompt_escape_aborts() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create a test file to rename
+    let original_name = "original_file.txt";
+    fs::write(project_root.join(original_name), "content").unwrap();
+
+    // Open and focus file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Ensure root is expanded - toggle until file is visible
+    harness.editor_mut().file_explorer_toggle_expand();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    if !screen.contains("original_file") {
+        harness.editor_mut().file_explorer_toggle_expand();
+        std::thread::sleep(Duration::from_millis(100));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render().unwrap();
+    }
+
+    // Navigate down to the first child (the file)
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Press F2 to start rename
+    harness
+        .send_key(KeyCode::F(2), KeyModifiers::NONE)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // Should be in rename mode (prompting)
+    assert!(
+        harness.editor().is_prompting(),
+        "Should be prompting for rename after F2"
+    );
+
+    // Type a new name
+    harness.type_text("new_name.txt").unwrap();
+    harness.render().unwrap();
+
+    // Press ESC to abort
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Should no longer be prompting
+    assert!(
+        !harness.editor().is_prompting(),
+        "Should not be prompting after ESC"
+    );
+
+    // Original file should still exist with original name
+    assert!(
+        project_root.join(original_name).exists(),
+        "Original file should still exist after ESC abort"
+    );
+
+    // New name should NOT exist
+    assert!(
+        !project_root.join("new_name.txt").exists(),
+        "New name should not exist after ESC abort"
+    );
+}
+
+/// Test that rename prompt accepts new name on Enter and updates filesystem
+#[test]
+fn test_rename_prompt_enter_accepts() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create a test file to rename
+    let original_name = "file_to_rename.txt";
+    let new_name = "renamed_file.txt";
+    fs::write(project_root.join(original_name), "content").unwrap();
+
+    // Open and focus file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Ensure root is expanded - toggle until file is visible
+    harness.editor_mut().file_explorer_toggle_expand();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    if !screen.contains("file_to_rename") {
+        harness.editor_mut().file_explorer_toggle_expand();
+        std::thread::sleep(Duration::from_millis(100));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render().unwrap();
+    }
+
+    // Navigate down to the first child (the file)
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Press F2 to start rename
+    harness
+        .send_key(KeyCode::F(2), KeyModifiers::NONE)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // Should be in rename mode (prompting)
+    assert!(
+        harness.editor().is_prompting(),
+        "Should be prompting for rename after F2"
+    );
+
+    // Directly set the prompt input to the new name
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        assert!(
+            prompt.input.contains("file_to_rename"),
+            "Should be renaming file_to_rename.txt, but prompt shows: {}",
+            prompt.input
+        );
+        prompt.clear();
+        prompt.insert_str(new_name);
+    }
+    harness.render().unwrap();
+
+    // Press Enter to confirm
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Should no longer be prompting
+    assert!(
+        !harness.editor().is_prompting(),
+        "Should not be prompting after Enter"
+    );
+
+    // New name should exist on filesystem
+    assert!(
+        project_root.join(new_name).exists(),
+        "Renamed file should exist at new path: {:?}",
+        project_root.join(new_name)
+    );
+
+    // Original name should NOT exist
+    assert!(
+        !project_root.join(original_name).exists(),
+        "Original file should not exist after rename"
+    );
+}
+
+/// Test that new folder via menu creates folder and filesystem is updated
+#[test]
+fn test_new_folder_via_menu_affects_filesystem() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Open and focus file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Count initial directories
+    let initial_dirs: Vec<_> = fs::read_dir(&project_root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .collect();
+
+    // Open Explorer menu and select New Folder
+    harness
+        .send_key(KeyCode::Char('x'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Navigate to New Folder (second item)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Execute
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // If in rename mode, press ESC to finish (use default name)
+    if harness.editor().is_prompting() {
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render().unwrap();
+    }
+
+    // Count final directories
+    let final_dirs: Vec<_> = fs::read_dir(&project_root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .collect();
+
+    assert!(
+        final_dirs.len() > initial_dirs.len(),
+        "A new folder should have been created. Initial: {}, Final: {}",
+        initial_dirs.len(),
+        final_dirs.len()
+    );
+}
+
+/// Test that rename via menu triggers prompt and affects filesystem
+#[test]
+fn test_rename_via_menu_affects_filesystem() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create a test file
+    let original_name = "menu_rename_test.txt";
+    let new_name = "menu_renamed.txt";
+    fs::write(project_root.join(original_name), "test content").unwrap();
+
+    // Open and focus file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Ensure root is expanded - toggle until file is visible
+    harness.editor_mut().file_explorer_toggle_expand();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    if !screen.contains("menu_rename_test") {
+        harness.editor_mut().file_explorer_toggle_expand();
+        std::thread::sleep(Duration::from_millis(100));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render().unwrap();
+    }
+
+    // Navigate down to the first child (the file)
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Trigger rename directly (same as selecting from Explorer menu)
+    harness.editor_mut().file_explorer_rename();
+    std::thread::sleep(Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // Should be prompting for new name
+    assert!(
+        harness.editor().is_prompting(),
+        "Should be prompting for rename after triggering rename"
+    );
+
+    // Directly set the prompt input to the new name
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str(new_name);
+    }
+    harness.render().unwrap();
+
+    // Confirm with Enter
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Verify filesystem was updated
+    assert!(
+        project_root.join(new_name).exists(),
+        "Renamed file should exist"
+    );
+    assert!(
+        !project_root.join(original_name).exists(),
+        "Original file should not exist after rename"
+    );
+}

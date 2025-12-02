@@ -68,6 +68,12 @@ pub enum PromptType {
     },
     /// Confirm quitting with modified buffers
     ConfirmQuitWithModified,
+    /// File Explorer rename operation
+    /// Stores the original path and name for the file/directory being renamed
+    FileExplorerRename {
+        original_path: std::path::PathBuf,
+        original_name: String,
+    },
 }
 
 /// Prompt state for the minibuffer

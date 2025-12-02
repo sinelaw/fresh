@@ -1921,6 +1921,13 @@ impl Editor {
                                 overlay_handle,
                             );
                         }
+                        PromptType::FileExplorerRename {
+                            original_path,
+                            original_name,
+                        } => {
+                            // Perform file explorer rename with the new name from the prompt
+                            self.perform_file_explorer_rename(original_path, original_name, input);
+                        }
                         PromptType::StopLspServer => {
                             // Stop the selected LSP server
                             let language = input.trim();
