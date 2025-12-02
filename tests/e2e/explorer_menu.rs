@@ -1165,3 +1165,86 @@ fn test_new_folder_navigation_after_rename() {
         "my_new_folder should be a directory"
     );
 }
+
+/// Test that focus returns to file explorer after rename and navigation works to open another file
+#[test]
+fn test_focus_returns_after_rename() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // Create test files with content we can verify
+    fs::write(project_root.join("aaa_file.txt"), "content of aaa").unwrap();
+    fs::write(project_root.join("bbb_file.txt"), "content of bbb").unwrap();
+
+    // Open and focus file explorer
+    harness.editor_mut().focus_file_explorer();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Ensure root is expanded
+    harness.editor_mut().file_explorer_toggle_expand();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    if !screen.contains("aaa_file") {
+        harness.editor_mut().file_explorer_toggle_expand();
+        std::thread::sleep(Duration::from_millis(100));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render().unwrap();
+    }
+
+    // Navigate to aaa_file.txt
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Verify file explorer has focus before rename
+    assert!(
+        harness.editor().file_explorer_is_focused(),
+        "File explorer should be focused before rename"
+    );
+
+    // Start rename
+    harness.editor_mut().file_explorer_rename();
+    std::thread::sleep(Duration::from_millis(100));
+    harness.render().unwrap();
+
+    // Type new name and confirm
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        prompt.clear();
+        prompt.insert_str("aaa_renamed.txt");
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // CRITICAL: Verify file explorer still has focus after rename
+    assert!(
+        harness.editor().file_explorer_is_focused(),
+        "File explorer should still be focused after rename completes"
+    );
+
+    // CRITICAL: Navigate to bbb_file.txt using arrow keys and open it
+    // This tests that navigation works after rename
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Press Enter to open the file
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    // Verify the file was opened by checking the screen contains the file content
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("content of bbb"),
+        "Should have opened bbb_file.txt after navigating with arrow keys. Screen:\n{}",
+        screen
+    );
+}

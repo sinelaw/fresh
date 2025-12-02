@@ -516,13 +516,15 @@ impl Editor {
 
             match result {
                 Ok(_) => {
-                    // Refresh the parent directory
+                    // Refresh the parent directory and select the renamed item
                     if let Some(explorer) = &mut self.file_explorer {
                         if let Some(selected_id) = explorer.get_selected() {
                             let parent_id = get_parent_node_id(explorer.tree(), selected_id, false);
                             let tree = explorer.tree_mut();
                             let _ = runtime.block_on(tree.refresh_node(parent_id));
                         }
+                        // Navigate to the renamed file to restore selection
+                        explorer.navigate_to_path(&new_path);
                     }
                     self.set_status_message(format!("Renamed {} to {}", original_name, new_name));
                 }
