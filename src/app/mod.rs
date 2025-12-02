@@ -1956,6 +1956,9 @@ impl Editor {
         // (they are buffer-specific and don't make sense across buffers)
         self.cancel_search_prompt_if_active();
 
+        // Track the previous buffer for "Switch to Previous Tab" command
+        let previous = self.active_buffer;
+
         self.active_buffer = buffer_id;
 
         // Update split manager to show this buffer
@@ -1965,6 +1968,8 @@ impl Editor {
         let active_split = self.split_manager.active_split();
         if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
             view_state.add_buffer(buffer_id);
+            // Update the previous buffer tracker
+            view_state.previous_buffer = Some(previous);
         }
 
         // Ensure the newly active tab is visible
@@ -3737,6 +3742,7 @@ impl Editor {
                     | PromptType::SaveFileAs
                     | PromptType::StopLspServer
                     | PromptType::SelectTheme
+                    | PromptType::SwitchToTab
             ) {
                 // Use the selected suggestion if any
                 if let Some(selected_idx) = prompt.selected_suggestion {

@@ -344,6 +344,20 @@ pub fn get_all_commands() -> Vec<Command> {
             contexts: vec![KeyContext::Normal],
             source: CommandSource::Builtin,
         },
+        Command {
+            name: "Switch to Previous Tab".to_string(),
+            description: "Switch to the most recently used tab".to_string(),
+            action: Action::SwitchToPreviousTab,
+            contexts: vec![KeyContext::Normal],
+            source: CommandSource::Builtin,
+        },
+        Command {
+            name: "Switch to Tab by Name".to_string(),
+            description: "Switch to a tab by selecting from a list".to_string(),
+            action: Action::SwitchToTabByName,
+            contexts: vec![KeyContext::Normal],
+            source: CommandSource::Builtin,
+        },
         // Split operations
         Command {
             name: "Split Horizontal".to_string(),

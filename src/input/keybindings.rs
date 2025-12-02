@@ -305,9 +305,11 @@ pub enum Action {
     SetComposeWidth,
     SelectTheme,
 
-    // Buffer navigation
+    // Buffer/tab navigation
     NextBuffer,
     PrevBuffer,
+    SwitchToPreviousTab,
+    SwitchToTabByName,
 
     // Tab scrolling
     ScrollTabsLeft,
@@ -1508,6 +1510,8 @@ impl KeybindingResolver {
             Action::ScrollTabsLeft => "Scroll tabs left".to_string(),
             Action::ScrollTabsRight => "Scroll tabs right".to_string(),
             Action::SelectTheme => "Select theme".to_string(),
+            Action::SwitchToPreviousTab => "Switch to previous tab".to_string(),
+            Action::SwitchToTabByName => "Switch to tab by name".to_string(),
             Action::None => "No action".to_string(),
         }
     }

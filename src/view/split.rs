@@ -102,6 +102,9 @@ pub struct SplitViewState {
 
     /// Whether the layout needs to be rebuilt (buffer changed, transform changed, etc.)
     pub layout_dirty: bool,
+
+    /// Previously active buffer in this split (for "Switch to Previous Tab" command)
+    pub previous_buffer: Option<BufferId>,
 }
 
 impl SplitViewState {
@@ -119,6 +122,7 @@ impl SplitViewState {
             view_transform: None,
             layout: None,
             layout_dirty: true, // Start dirty so first operation builds layout
+            previous_buffer: None,
         }
     }
 
@@ -136,6 +140,7 @@ impl SplitViewState {
             view_transform: None,
             layout: None,
             layout_dirty: true, // Start dirty so first operation builds layout
+            previous_buffer: None,
         }
     }
 

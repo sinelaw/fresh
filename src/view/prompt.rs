@@ -74,6 +74,8 @@ pub enum PromptType {
         original_path: std::path::PathBuf,
         original_name: String,
     },
+    /// Switch to a tab by name (from the current split's open buffers)
+    SwitchToTab,
 }
 
 /// Prompt state for the minibuffer

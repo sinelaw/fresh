@@ -1590,6 +1590,8 @@ pub fn action_to_events(
         | Action::GotoLine
         | Action::NextBuffer
         | Action::PrevBuffer
+        | Action::SwitchToPreviousTab
+        | Action::SwitchToTabByName
         | Action::NavigateBack
         | Action::NavigateForward
         | Action::SplitHorizontal

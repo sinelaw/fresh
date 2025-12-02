@@ -1034,6 +1034,8 @@ impl Editor {
             Action::AddCursorBelow => self.add_cursor_below(),
             Action::NextBuffer => self.next_buffer(),
             Action::PrevBuffer => self.prev_buffer(),
+            Action::SwitchToPreviousTab => self.switch_to_previous_tab(),
+            Action::SwitchToTabByName => self.start_switch_to_tab_prompt(),
 
             // Tab scrolling
             Action::ScrollTabsLeft => {
@@ -1961,6 +1963,12 @@ impl Editor {
                         }
                         PromptType::SelectTheme => {
                             self.apply_theme(input.trim());
+                        }
+                        PromptType::SwitchToTab => {
+                            // input is the buffer id as a string
+                            if let Ok(id) = input.trim().parse::<usize>() {
+                                self.switch_to_tab(BufferId(id));
+                            }
                         }
                         PromptType::QueryReplaceConfirm => {
                             // This is handled by InsertChar, not PromptConfirm
@@ -3607,6 +3615,136 @@ impl Editor {
         if !theme_name.is_empty() {
             self.theme = crate::view::theme::Theme::from_name(theme_name);
             self.set_status_message(format!("Theme changed to '{}'", self.theme.name));
+        }
+    }
+
+    /// Switch to the previously active tab in the current split
+    fn switch_to_previous_tab(&mut self) {
+        let active_split = self.split_manager.active_split();
+        let previous_buffer = self
+            .split_view_states
+            .get(&active_split)
+            .and_then(|vs| vs.previous_buffer);
+
+        if let Some(prev_id) = previous_buffer {
+            // Verify the buffer is still open in this split
+            let is_valid = self
+                .split_view_states
+                .get(&active_split)
+                .is_some_and(|vs| vs.open_buffers.contains(&prev_id));
+
+            if is_valid && prev_id != self.active_buffer {
+                // Save current position before switching
+                self.position_history.commit_pending_movement();
+
+                let current_state = self.active_state();
+                let position = current_state.cursors.primary().position;
+                let anchor = current_state.cursors.primary().anchor;
+                self.position_history
+                    .record_movement(self.active_buffer, position, anchor);
+                self.position_history.commit_pending_movement();
+
+                self.set_active_buffer(prev_id);
+            } else if !is_valid {
+                self.set_status_message("Previous tab is no longer open".to_string());
+            }
+        } else {
+            self.set_status_message("No previous tab".to_string());
+        }
+    }
+
+    /// Start the switch-to-tab-by-name prompt with suggestions from open buffers
+    fn start_switch_to_tab_prompt(&mut self) {
+        let active_split = self.split_manager.active_split();
+        let open_buffers = if let Some(view_state) = self.split_view_states.get(&active_split) {
+            view_state.open_buffers.clone()
+        } else {
+            return;
+        };
+
+        if open_buffers.is_empty() {
+            self.set_status_message("No tabs open in current split".to_string());
+            return;
+        }
+
+        // Find the current buffer's index
+        let current_index = open_buffers
+            .iter()
+            .position(|&id| id == self.active_buffer)
+            .unwrap_or(0);
+
+        let suggestions: Vec<crate::input::commands::Suggestion> = open_buffers
+            .iter()
+            .map(|&buffer_id| {
+                let display_name = self
+                    .buffer_metadata
+                    .get(&buffer_id)
+                    .map(|m| m.display_name.clone())
+                    .unwrap_or_else(|| format!("Buffer {:?}", buffer_id));
+
+                let is_current = buffer_id == self.active_buffer;
+                let is_modified = self
+                    .buffers
+                    .get(&buffer_id)
+                    .is_some_and(|b| b.buffer.is_modified());
+
+                let description = match (is_current, is_modified) {
+                    (true, true) => Some("(current, modified)".to_string()),
+                    (true, false) => Some("(current)".to_string()),
+                    (false, true) => Some("(modified)".to_string()),
+                    (false, false) => None,
+                };
+
+                crate::input::commands::Suggestion {
+                    text: display_name,
+                    description,
+                    value: Some(buffer_id.0.to_string()),
+                    disabled: false,
+                    keybinding: None,
+                    source: None,
+                }
+            })
+            .collect();
+
+        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+            "Switch to tab: ".to_string(),
+            PromptType::SwitchToTab,
+            suggestions,
+        ));
+
+        if let Some(prompt) = self.prompt.as_mut() {
+            if !prompt.suggestions.is_empty() {
+                prompt.selected_suggestion = Some(current_index);
+            }
+        }
+    }
+
+    /// Switch to a tab by its BufferId
+    fn switch_to_tab(&mut self, buffer_id: BufferId) {
+        // Verify the buffer exists and is open in the current split
+        let active_split = self.split_manager.active_split();
+        let is_valid = self
+            .split_view_states
+            .get(&active_split)
+            .is_some_and(|vs| vs.open_buffers.contains(&buffer_id));
+
+        if !is_valid {
+            self.set_status_message("Tab not found in current split".to_string());
+            return;
+        }
+
+        if buffer_id != self.active_buffer {
+            // Save current position before switching
+            self.position_history.commit_pending_movement();
+
+            let current_state = self.active_state();
+            let position = current_state.cursors.primary().position;
+            let anchor = current_state.cursors.primary().anchor;
+            self.position_history
+                .record_movement(self.active_buffer, position, anchor);
+            self.position_history.commit_pending_movement();
+
+            self.set_active_buffer(buffer_id);
         }
     }
 }
