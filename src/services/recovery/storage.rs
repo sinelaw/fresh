@@ -572,14 +572,18 @@ impl RecoveryStorage {
     // Helper methods
     // ========================================================================
 
-    /// Perform an atomic write: write to temp file, fsync, rename
+    /// Perform an atomic write: write to temp file, then rename
+    ///
+    /// TODO: Migrate to async I/O to avoid blocking the main thread during recovery saves.
+    /// Currently we skip fsync for performance - this means editor crashes are safe (OS
+    /// page cache survives), but system crashes/power loss could leave corrupted recovery
+    /// files. Async I/O would let us have both safety and performance.
     fn atomic_write(&self, target: &Path, content: &[u8]) -> io::Result<()> {
         let temp_path = target.with_extension("tmp");
 
         // Write to temp file
         let mut file = File::create(&temp_path)?;
         file.write_all(content)?;
-        file.sync_all()?;
         drop(file);
 
         // Atomic rename
