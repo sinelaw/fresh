@@ -508,9 +508,11 @@ impl RecoveryStorage {
 
                 // Extract ID from various file types
                 let id = if name.ends_with(&format!(".{}", Self::META_EXT)) {
-                    name.trim_end_matches(&format!(".{}", Self::META_EXT)).to_string()
+                    name.trim_end_matches(&format!(".{}", Self::META_EXT))
+                        .to_string()
                 } else if name.ends_with(&format!(".{}", Self::CONTENT_EXT)) {
-                    name.trim_end_matches(&format!(".{}", Self::CONTENT_EXT)).to_string()
+                    name.trim_end_matches(&format!(".{}", Self::CONTENT_EXT))
+                        .to_string()
                 } else if name.contains(".chunk.") {
                     // Handle chunk files like "id.chunk.0"
                     name.split(".chunk.").next().unwrap_or("").to_string()
@@ -661,7 +663,6 @@ mod tests {
         assert_eq!(chunked_data.chunks[0].content, content);
 
         // Verify checksum
-        
     }
 
     #[test]
@@ -800,7 +801,6 @@ mod tests {
 
         // Load entry and verify
         let entry = storage.load_entry(id).unwrap().unwrap();
-        
 
         // Test: list entry shows up
         let entries = storage.list_entries().unwrap();
@@ -869,9 +869,7 @@ mod tests {
             .unwrap();
 
         // Reconstruct the file
-        let reconstructed = storage
-            .reconstruct_from_chunks(id, &original_path)
-            .unwrap();
+        let reconstructed = storage.reconstruct_from_chunks(id, &original_path).unwrap();
 
         // Expected: "PREFIX: Hello, this is the MODIFIED content of the file!"
         let expected = b"PREFIX: Hello, this is the MODIFIED content of the file!";
@@ -969,8 +967,6 @@ mod tests {
         assert_eq!(large_entry.metadata.original_file_size, 100);
 
         // Both should have valid checksums
-
-
     }
 
     // ========================================================================
@@ -1002,11 +998,16 @@ mod tests {
             Delete { offset: usize, len: usize },
         }
 
-
         /// Apply a modification to content, returning (new_content, RecoveryChunk)
-        fn apply_modification(content: &[u8], modification: &Modification) -> (Vec<u8>, RecoveryChunk) {
+        fn apply_modification(
+            content: &[u8],
+            modification: &Modification,
+        ) -> (Vec<u8>, RecoveryChunk) {
             match modification {
-                Modification::Insert { offset, content: new_bytes } => {
+                Modification::Insert {
+                    offset,
+                    content: new_bytes,
+                } => {
                     let offset = (*offset).min(content.len());
                     let mut new_content = content[..offset].to_vec();
                     new_content.extend_from_slice(new_bytes);
@@ -1043,10 +1044,13 @@ mod tests {
             buffer_size: usize,
         ) -> impl Strategy<Value = (String, Modification)> {
             if buffer_size == 0 {
-                Just(("beginning".to_string(), Modification::Insert {
-                    offset: 0,
-                    content: b"inserted".to_vec(),
-                }))
+                Just((
+                    "beginning".to_string(),
+                    Modification::Insert {
+                        offset: 0,
+                        content: b"inserted".to_vec(),
+                    },
+                ))
                 .boxed()
             } else {
                 let middle = buffer_size / 2;
@@ -1071,11 +1075,12 @@ mod tests {
                     .prop_map(|m| ("beginning".to_string(), m)),
                     // Middle: insert/replace/delete around middle
                     prop_oneof![
-                        prop::collection::vec(any::<u8>(), 1..16)
-                            .prop_map(move |content| Modification::Insert {
+                        prop::collection::vec(any::<u8>(), 1..16).prop_map(move |content| {
+                            Modification::Insert {
                                 offset: middle,
-                                content
-                            }),
+                                content,
+                            }
+                        }),
                         prop::collection::vec(any::<u8>(), 0..16).prop_map(move |content| {
                             Modification::Replace {
                                 offset: middle,
@@ -1091,8 +1096,12 @@ mod tests {
                     .prop_map(|m| ("middle".to_string(), m)),
                     // End: insert at end or modify last bytes
                     prop_oneof![
-                        prop::collection::vec(any::<u8>(), 1..16)
-                            .prop_map(move |content| Modification::Insert { offset: end, content }),
+                        prop::collection::vec(any::<u8>(), 1..16).prop_map(move |content| {
+                            Modification::Insert {
+                                offset: end,
+                                content,
+                            }
+                        }),
                         prop::collection::vec(any::<u8>(), 0..16).prop_map(move |content| {
                             Modification::Replace {
                                 offset: end.saturating_sub(1),
@@ -1616,7 +1625,9 @@ mod tests {
                     )
                     .unwrap();
 
-                let reconstructed = storage.reconstruct_from_chunks(&id, &original_path).unwrap();
+                let reconstructed = storage
+                    .reconstruct_from_chunks(&id, &original_path)
+                    .unwrap();
                 assert_eq!(
                     reconstructed, expected,
                     "Insert at position {} failed",
@@ -1652,7 +1663,9 @@ mod tests {
                     )
                     .unwrap();
 
-                let reconstructed = storage.reconstruct_from_chunks(&id, &original_path).unwrap();
+                let reconstructed = storage
+                    .reconstruct_from_chunks(&id, &original_path)
+                    .unwrap();
                 assert_eq!(
                     reconstructed, expected,
                     "Delete at position {} failed",
@@ -1667,7 +1680,9 @@ mod tests {
             let original = b"ABCDEFGH";
 
             for replace_pos in 0..original.len() {
-                let original_path = temp_dir.path().join(format!("original_{}.txt", replace_pos));
+                let original_path = temp_dir
+                    .path()
+                    .join(format!("original_{}.txt", replace_pos));
                 fs::write(&original_path, original).unwrap();
 
                 let replace_content = b"XY".to_vec();
@@ -1691,7 +1706,9 @@ mod tests {
                     )
                     .unwrap();
 
-                let reconstructed = storage.reconstruct_from_chunks(&id, &original_path).unwrap();
+                let reconstructed = storage
+                    .reconstruct_from_chunks(&id, &original_path)
+                    .unwrap();
                 assert_eq!(
                     reconstructed, expected,
                     "Replace at position {} failed",
@@ -1753,8 +1770,8 @@ mod tests {
             // Adjacent modifications: replace AA with X, then BB with Y
             // These should not overlap in the original positions
             let chunks = vec![
-                RecoveryChunk::new(0, 2, b"X".to_vec()),   // Replace AA with X
-                RecoveryChunk::new(2, 2, b"Y".to_vec()),   // Replace BB with Y
+                RecoveryChunk::new(0, 2, b"X".to_vec()), // Replace AA with X
+                RecoveryChunk::new(2, 2, b"Y".to_vec()), // Replace BB with Y
             ];
 
             // Original: AABBCCDD

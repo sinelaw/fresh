@@ -107,7 +107,6 @@ impl ChunkedRecoveryData {
     }
 }
 
-
 /// Metadata for a recovery file
 ///
 /// This is stored as JSON alongside the chunk files to track
@@ -334,10 +333,7 @@ pub enum RecoveryResult {
         chunks: Vec<RecoveryChunk>,
     },
     /// Original file was modified since recovery was saved
-    OriginalFileModified {
-        id: String,
-        original_path: PathBuf,
-    },
+    OriginalFileModified { id: String, original_path: PathBuf },
     /// Recovery file was corrupted
     Corrupted { id: String, reason: String },
     /// Recovery file not found
@@ -410,8 +406,8 @@ mod tests {
             100,
             Some(10),
             None,
-            1,  // chunk_count
-            0,  // original_file_size
+            1, // chunk_count
+            0, // original_file_size
         );
         assert_eq!(meta.format_version, RecoveryMetadata::FORMAT_VERSION);
         assert!(meta.created_at > 0);

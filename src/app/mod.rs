@@ -3235,10 +3235,7 @@ impl Editor {
                         // Mark as modified since it differs from disk
                         state.buffer.set_modified(true);
                         recovered_count += 1;
-                        tracing::info!(
-                            "Recovered buffer with chunks: {}",
-                            original_path.display()
-                        );
+                        tracing::info!("Recovered buffer with chunks: {}", original_path.display());
                     }
                 }
                 Ok(RecoveryResult::OriginalFileModified { id, original_path }) => {
@@ -3379,9 +3376,9 @@ impl Editor {
                         }
                     };
 
-                    let chunks = vec![
-                        crate::services::recovery::types::RecoveryChunk::new(0, 0, content),
-                    ];
+                    let chunks = vec![crate::services::recovery::types::RecoveryChunk::new(
+                        0, 0, content,
+                    )];
                     self.recovery_service.save_buffer(
                         &recovery_id,
                         chunks,

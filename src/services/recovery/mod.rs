@@ -322,9 +322,11 @@ impl RecoveryService {
 
                 // Load chunks and return them for direct application
                 let chunked_data =
-                    self.storage.read_chunked_content(&entry.id)?.ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::NotFound, "Chunk content not found")
-                    })?;
+                    self.storage
+                        .read_chunked_content(&entry.id)?
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::NotFound, "Chunk content not found")
+                        })?;
 
                 return Ok(RecoveryResult::RecoveredChunks {
                     original_path: original_path.clone(),
@@ -340,9 +342,10 @@ impl RecoveryService {
 
         // New buffer or small file - chunk contains full content
         // Load the chunk data directly
-        let chunked_data = self.storage.read_chunked_content(&entry.id)?.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "Chunk content not found")
-        })?;
+        let chunked_data = self
+            .storage
+            .read_chunked_content(&entry.id)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Chunk content not found"))?;
 
         // For original_file_size == 0, we expect exactly one chunk with offset=0
         if chunked_data.chunks.len() == 1 && chunked_data.chunks[0].offset == 0 {
