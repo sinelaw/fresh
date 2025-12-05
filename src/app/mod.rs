@@ -1079,6 +1079,71 @@ impl Editor {
         Ok(buffer_id)
     }
 
+    /// Navigate to a specific line and column in the active buffer.
+    ///
+    /// Line and column are 1-indexed (matching typical editor conventions).
+    /// If the line is out of bounds, navigates to the last line.
+    /// If the column is out of bounds, navigates to the end of the line.
+    pub fn goto_line_col(&mut self, line: usize, column: Option<usize>) {
+        if line == 0 {
+            return; // Line numbers are 1-indexed
+        }
+
+        let buffer_id = self.active_buffer;
+        let estimated_line_length = self.config.editor.estimated_line_length;
+
+        if let Some(state) = self.buffers.get(&buffer_id) {
+            let cursor_id = state.cursors.primary_id();
+            let old_position = state.cursors.primary().position;
+            let old_anchor = state.cursors.primary().anchor;
+            let old_sticky_column = state.cursors.primary().sticky_column;
+            let is_large_file = state.buffer.line_count().is_none();
+            let buffer_len = state.buffer.len();
+
+            // Convert 1-indexed line to 0-indexed
+            let target_line = line.saturating_sub(1);
+            // Column is also 1-indexed, convert to 0-indexed
+            let target_col = column.map(|c| c.saturating_sub(1)).unwrap_or(0);
+
+            let position = if is_large_file {
+                // Large file mode: estimate byte offset based on line number
+                let estimated_offset = target_line * estimated_line_length;
+                let clamped_offset = estimated_offset.min(buffer_len);
+
+                // Use LineIterator to find the actual line start at the estimated position
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    let iter = state
+                        .buffer
+                        .line_iterator(clamped_offset, estimated_line_length);
+                    let line_start = iter.current_position();
+                    // Add column offset, clamped to buffer length
+                    (line_start + target_col).min(buffer_len)
+                } else {
+                    clamped_offset
+                }
+            } else {
+                // Small file mode: use exact line position
+                let max_line = state.buffer.line_count().unwrap_or(1).saturating_sub(1);
+                let actual_line = target_line.min(max_line);
+                state.buffer.line_col_to_position(actual_line, target_col)
+            };
+
+            let event = crate::model::event::Event::MoveCursor {
+                cursor_id,
+                old_position,
+                new_position: position,
+                old_anchor,
+                new_anchor: None,
+                old_sticky_column,
+                new_sticky_column: target_col,
+            };
+
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                state.apply(&event);
+            }
+        }
+    }
+
     /// Create a new empty buffer
     pub fn new_buffer(&mut self) -> BufferId {
         // Save current position before switching to new buffer

@@ -298,6 +298,11 @@ impl ScriptControlMode {
         Ok(())
     }
 
+    /// Navigate to a specific line and column in the active buffer
+    pub fn goto_line_col(&mut self, line: usize, column: Option<usize>) {
+        self.editor.goto_line_col(line, column);
+    }
+
     /// Run the script control loop
     pub fn run(&mut self) -> io::Result<()> {
         let stdin = io::stdin();

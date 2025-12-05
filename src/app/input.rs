@@ -1607,98 +1607,18 @@ impl Editor {
                                 self.set_status_message(format!("Unknown command: {input}"));
                             }
                         }
-                        PromptType::GotoLine => {
-                            match input.trim().parse::<usize>() {
-                                Ok(line_num) if line_num > 0 => {
-                                    let target_line = line_num.saturating_sub(1);
-                                    let buffer_id = self.active_buffer;
-                                    let estimated_line_length =
-                                        self.config.editor.estimated_line_length;
-
-                                    if let Some(state) = self.buffers.get(&buffer_id) {
-                                        let cursor_id = state.cursors.primary_id();
-                                        let old_position = state.cursors.primary().position;
-                                        let old_anchor = state.cursors.primary().anchor;
-                                        let old_sticky_column =
-                                            state.cursors.primary().sticky_column;
-                                        let is_large_file = state.buffer.line_count().is_none();
-                                        let buffer_len = state.buffer.len();
-
-                                        let (position, status_message) = if is_large_file {
-                                            // Large file mode: estimate byte offset based on line number
-                                            let estimated_offset =
-                                                target_line * estimated_line_length;
-                                            let clamped_offset = estimated_offset.min(buffer_len);
-
-                                            // Use LineIterator to find the actual line start at the estimated position
-                                            let position = if let Some(state) =
-                                                self.buffers.get_mut(&buffer_id)
-                                            {
-                                                let iter = state.buffer.line_iterator(
-                                                    clamped_offset,
-                                                    estimated_line_length,
-                                                );
-                                                iter.current_position()
-                                            } else {
-                                                clamped_offset
-                                            };
-
-                                            let msg = format!(
-                                                "Jumped to estimated line {} (large file mode)",
-                                                line_num
-                                            );
-                                            (position, msg)
-                                        } else {
-                                            // Small file mode: use exact line position
-                                            let max_line = state
-                                                .buffer
-                                                .line_count()
-                                                .unwrap_or(1)
-                                                .saturating_sub(1);
-                                            let actual_line = target_line.min(max_line);
-                                            let position =
-                                                state.buffer.line_col_to_position(actual_line, 0);
-
-                                            let msg = if target_line > max_line {
-                                                format!(
-                                                    "Line {} doesn't exist, jumped to line {}",
-                                                    line_num,
-                                                    actual_line + 1
-                                                )
-                                            } else {
-                                                format!("Jumped to line {}", line_num)
-                                            };
-                                            (position, msg)
-                                        };
-
-                                        let event = crate::model::event::Event::MoveCursor {
-                                            cursor_id,
-                                            old_position,
-                                            new_position: position,
-                                            old_anchor,
-                                            new_anchor: None,
-                                            old_sticky_column,
-                                            new_sticky_column: 0,
-                                        };
-                                        if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                                            state.apply(&event);
-                                        }
-                                        self.set_status_message(status_message);
-                                    }
-                                }
-                                Ok(_) => {
-                                    self.set_status_message(
-                                        "Line number must be positive".to_string(),
-                                    );
-                                }
-                                Err(_) => {
-                                    self.set_status_message(format!(
-                                        "Invalid line number: {}",
-                                        input
-                                    ));
-                                }
+                        PromptType::GotoLine => match input.trim().parse::<usize>() {
+                            Ok(line_num) if line_num > 0 => {
+                                self.goto_line_col(line_num, None);
+                                self.set_status_message(format!("Jumped to line {}", line_num));
                             }
-                        }
+                            Ok(_) => {
+                                self.set_status_message("Line number must be positive".to_string());
+                            }
+                            Err(_) => {
+                                self.set_status_message(format!("Invalid line number: {}", input));
+                            }
+                        },
                         PromptType::SetBackgroundFile => {
                             if let Err(e) = self.load_ansi_background(&input) {
                                 self.set_status_message(format!(

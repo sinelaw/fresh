@@ -67,6 +67,109 @@ struct Args {
     no_session: bool,
 }
 
+/// Parsed file location from CLI argument in file:line:col format
+#[derive(Debug)]
+struct FileLocation {
+    path: PathBuf,
+    line: Option<usize>,
+    column: Option<usize>,
+}
+
+/// Parse a file path that may include line and column information.
+/// Supports formats:
+/// - file.txt
+/// - file.txt:10
+/// - file.txt:10:5
+/// - /path/to/file.txt:10:5
+///
+/// For Windows paths like C:\path\file.txt:10:5, we handle the drive letter
+/// prefix properly using std::path APIs.
+///
+/// If the full path exists as a file, it's used as-is (handles files with colons in name).
+fn parse_file_location(input: &str) -> FileLocation {
+    use std::path::{Component, Path};
+
+    let full_path = PathBuf::from(input);
+
+    // If the full path exists as a file, use it directly
+    // This handles edge cases like files named "foo:10"
+    if full_path.is_file() {
+        return FileLocation {
+            path: full_path,
+            line: None,
+            column: None,
+        };
+    }
+
+    // Check if the path has a Windows drive prefix using std::path
+    let has_prefix = Path::new(input)
+        .components()
+        .next()
+        .map(|c| matches!(c, Component::Prefix(_)))
+        .unwrap_or(false);
+
+    // Calculate where to start looking for :line:col
+    // For Windows paths with prefix (e.g., "C:"), skip past the drive letter and colon
+    let search_start = if has_prefix {
+        // Find the first colon (the drive letter separator) and skip it
+        input.find(':').map(|i| i + 1).unwrap_or(0)
+    } else {
+        0
+    };
+
+    // Find the last colon(s) that could be line:col
+    let suffix = &input[search_start..];
+
+    // Try to parse from the end: look for :col and :line patterns
+    // We work backwards to find numeric suffixes
+    let parts: Vec<&str> = suffix.rsplitn(3, ':').collect();
+
+    match parts.as_slice() {
+        // Could be "col", "line", "rest" or just parts of the path
+        [maybe_col, maybe_line, rest] => {
+            if let (Ok(line), Ok(col)) = (maybe_line.parse::<usize>(), maybe_col.parse::<usize>()) {
+                // Both parsed as numbers: file:line:col
+                let path_str = if has_prefix {
+                    format!("{}{}", &input[..search_start], rest)
+                } else {
+                    rest.to_string()
+                };
+                return FileLocation {
+                    path: PathBuf::from(path_str),
+                    line: Some(line),
+                    column: Some(col),
+                };
+            }
+            // Fall through - not valid line:col format
+        }
+        // Could be "line", "rest" or just parts of the path
+        [maybe_line, rest] => {
+            if let Ok(line) = maybe_line.parse::<usize>() {
+                // Parsed as number: file:line
+                let path_str = if has_prefix {
+                    format!("{}{}", &input[..search_start], rest)
+                } else {
+                    rest.to_string()
+                };
+                return FileLocation {
+                    path: PathBuf::from(path_str),
+                    line: Some(line),
+                    column: None,
+                };
+            }
+            // Fall through - not valid line format
+        }
+        _ => {}
+    }
+
+    // No valid line:col suffix found, treat the whole thing as a path
+    FileLocation {
+        path: full_path,
+        line: None,
+        column: None,
+    }
+}
+
 fn main() -> io::Result<()> {
     // Parse command-line arguments
     let args = Args::parse();
@@ -159,14 +262,20 @@ fn main() -> io::Result<()> {
     let size = terminal.size()?;
     tracing::info!("Terminal size: {}x{}", size.width, size.height);
 
+    // Parse the file argument, extracting any line:col suffix
+    let file_location = args
+        .file
+        .as_ref()
+        .map(|p| parse_file_location(p.to_string_lossy().as_ref()));
+
     // Determine if the provided path is a directory or file
-    let (working_dir, file_to_open, show_file_explorer) = if let Some(path) = &args.file {
-        if path.is_dir() {
+    let (working_dir, file_to_open, show_file_explorer) = if let Some(ref loc) = file_location {
+        if loc.path.is_dir() {
             // Path is a directory: use as working dir, don't open any file, show file explorer
-            (Some(path.clone()), None, true)
+            (Some(loc.path.clone()), None, true)
         } else {
             // Path is a file: use current dir as working dir, open the file, don't auto-show explorer
-            (None, Some(path.clone()), false)
+            (None, Some(loc.path.clone()), false)
         }
     } else {
         // No path provided: use current dir, no file, don't auto-show explorer
@@ -205,6 +314,13 @@ fn main() -> io::Result<()> {
     // Open file if provided (this takes precedence over session)
     if let Some(path) = &file_to_open {
         editor.open_file(path)?;
+
+        // Navigate to line:col if specified
+        if let Some(ref loc) = file_location {
+            if let Some(line) = loc.line {
+                editor.goto_line_col(line, loc.column);
+            }
+        }
     }
 
     // Show file explorer if directory was provided
@@ -253,18 +369,28 @@ fn main() -> io::Result<()> {
 
 /// Run the editor in script control mode
 fn run_script_control_mode(args: &Args) -> io::Result<()> {
+    // Parse the file argument, extracting any line:col suffix
+    let file_location = args
+        .file
+        .as_ref()
+        .map(|p| parse_file_location(p.to_string_lossy().as_ref()));
+
     // Create script control mode instance
-    let mut control = if let Some(path) = &args.file {
-        if path.is_dir() {
+    let mut control = if let Some(ref loc) = file_location {
+        if loc.path.is_dir() {
             ScriptControlMode::with_working_dir(
                 args.script_width,
                 args.script_height,
-                path.clone(),
+                loc.path.clone(),
             )?
         } else {
             let mut ctrl = ScriptControlMode::new(args.script_width, args.script_height)?;
             // Open the file if provided
-            ctrl.open_file(path)?;
+            ctrl.open_file(&loc.path)?;
+            // Navigate to line:col if specified
+            if let Some(line) = loc.line {
+                ctrl.goto_line_col(line, loc.column);
+            }
             ctrl
         }
     } else {
@@ -422,4 +548,138 @@ fn coalesce_mouse_moves(
         }
     }
     Ok((latest, None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_file_location_simple_path() {
+        let loc = parse_file_location("foo.txt");
+        assert_eq!(loc.path, PathBuf::from("foo.txt"));
+        assert_eq!(loc.line, None);
+        assert_eq!(loc.column, None);
+    }
+
+    #[test]
+    fn test_parse_file_location_with_line() {
+        let loc = parse_file_location("foo.txt:42");
+        assert_eq!(loc.path, PathBuf::from("foo.txt"));
+        assert_eq!(loc.line, Some(42));
+        assert_eq!(loc.column, None);
+    }
+
+    #[test]
+    fn test_parse_file_location_with_line_and_col() {
+        let loc = parse_file_location("foo.txt:42:10");
+        assert_eq!(loc.path, PathBuf::from("foo.txt"));
+        assert_eq!(loc.line, Some(42));
+        assert_eq!(loc.column, Some(10));
+    }
+
+    #[test]
+    fn test_parse_file_location_absolute_path() {
+        let loc = parse_file_location("/home/user/foo.txt:100:5");
+        assert_eq!(loc.path, PathBuf::from("/home/user/foo.txt"));
+        assert_eq!(loc.line, Some(100));
+        assert_eq!(loc.column, Some(5));
+    }
+
+    #[test]
+    fn test_parse_file_location_no_numbers_after_colon() {
+        // If the suffix isn't a number, treat the whole thing as a path
+        let loc = parse_file_location("foo:bar");
+        assert_eq!(loc.path, PathBuf::from("foo:bar"));
+        assert_eq!(loc.line, None);
+        assert_eq!(loc.column, None);
+    }
+
+    #[test]
+    fn test_parse_file_location_mixed_suffix() {
+        // If only one part is a number, depends on position
+        // "foo:10:bar" -> "bar" isn't a number, so no line:col parsing
+        let loc = parse_file_location("foo:10:bar");
+        assert_eq!(loc.path, PathBuf::from("foo:10:bar"));
+        assert_eq!(loc.line, None);
+        assert_eq!(loc.column, None);
+    }
+
+    #[test]
+    fn test_parse_file_location_line_only_not_col() {
+        // "foo:bar:10" -> "10" is col, "bar" isn't line, so no parsing
+        let loc = parse_file_location("foo:bar:10");
+        assert_eq!(loc.path, PathBuf::from("foo:bar:10"));
+        assert_eq!(loc.line, None);
+        assert_eq!(loc.column, None);
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Generate a valid Unix-style file path (no colons in path components)
+    fn unix_path_strategy() -> impl Strategy<Value = String> {
+        prop::collection::vec("[a-zA-Z0-9._-]+", 1..5).prop_map(|components| components.join("/"))
+    }
+
+    proptest! {
+        /// Property: If we construct "path:line:col", we should get back the path, line, and col
+        #[test]
+        fn roundtrip_line_col(
+            path in unix_path_strategy(),
+            line in 1usize..10000,
+            col in 1usize..1000
+        ) {
+            let input = format!("{}:{}:{}", path, line, col);
+            let loc = parse_file_location(&input);
+
+            prop_assert_eq!(loc.path, PathBuf::from(&path));
+            prop_assert_eq!(loc.line, Some(line));
+            prop_assert_eq!(loc.column, Some(col));
+        }
+
+        /// Property: If we construct "path:line", we should get back the path and line
+        #[test]
+        fn roundtrip_line_only(
+            path in unix_path_strategy(),
+            line in 1usize..10000
+        ) {
+            let input = format!("{}:{}", path, line);
+            let loc = parse_file_location(&input);
+
+            prop_assert_eq!(loc.path, PathBuf::from(&path));
+            prop_assert_eq!(loc.line, Some(line));
+            prop_assert_eq!(loc.column, None);
+        }
+
+        /// Property: A path without any colon-number suffix returns the full path
+        #[test]
+        fn path_without_numbers_unchanged(
+            path in unix_path_strategy()
+        ) {
+            let loc = parse_file_location(&path);
+
+            prop_assert_eq!(loc.path, PathBuf::from(&path));
+            prop_assert_eq!(loc.line, None);
+            prop_assert_eq!(loc.column, None);
+        }
+
+        /// Property: line and column should always be non-zero when present
+        /// (we parse as usize so 0 is valid, but the function doesn't filter)
+        #[test]
+        fn parsed_values_match_input(
+            path in unix_path_strategy(),
+            line in 0usize..10000,
+            col in 0usize..1000
+        ) {
+            let input = format!("{}:{}:{}", path, line, col);
+            let loc = parse_file_location(&input);
+
+            prop_assert_eq!(loc.line, Some(line));
+            prop_assert_eq!(loc.column, Some(col));
+        }
+    }
 }
