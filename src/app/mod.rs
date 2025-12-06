@@ -4078,9 +4078,10 @@ impl Editor {
                     tracing::error!("LSP error for {}: {}", language, error);
                     self.status_message = Some(format!("LSP error ({}): {}", language, error));
 
-                    // Open stderr log as read-only buffer if it exists
+                    // Open stderr log as read-only buffer if it exists and has content
                     if let Some(log_path) = stderr_log_path {
-                        if log_path.exists() {
+                        let has_content = log_path.metadata().map(|m| m.len() > 0).unwrap_or(false);
+                        if has_content {
                             tracing::info!("Opening LSP stderr log: {:?}", log_path);
                             match self.open_file(&log_path) {
                                 Ok(buffer_id) => {

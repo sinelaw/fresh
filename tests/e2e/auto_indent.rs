@@ -240,19 +240,43 @@ fn test_auto_indent_disabled_by_config() {
 /// Test TypeScript indent with interface
 #[test]
 fn test_typescript_interface_indent() {
+    use tracing_subscriber::EnvFilter;
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_test_writer()
+        .try_init();
+
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.ts");
     std::fs::write(&file_path, "").unwrap();
 
     let mut harness = harness_with_auto_indent();
     harness.open_file(&file_path).unwrap();
+    tracing::debug!(
+        "After open_file, buffer content: {:?}",
+        harness.get_buffer_content()
+    );
 
     // Type interface definition
     harness.type_text("interface User {").unwrap();
+    tracing::debug!(
+        "After type_text, buffer content: {:?}",
+        harness.get_buffer_content()
+    );
+
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    tracing::debug!(
+        "After Enter key, buffer content: {:?}",
+        harness.get_buffer_content()
+    );
+
     harness.render().unwrap();
+    tracing::debug!(
+        "After render, buffer content: {:?}",
+        harness.get_buffer_content()
+    );
 
     // Should have indent
     let content = harness.get_buffer_content().unwrap();
