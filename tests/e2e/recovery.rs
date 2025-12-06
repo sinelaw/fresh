@@ -802,6 +802,16 @@ fn test_large_file_auto_save_creates_small_recovery_file() {
 /// The fix: Track actual file size on disk, not just Stored pieces sum.
 #[test]
 fn test_recovery_after_save_with_size_change() {
+    // Install signal handler to dump thread backtraces on timeout/SIGINT
+    fresh::services::signal_handler::install_signal_handlers();
+
+    // Initialize tracing for debugging
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer().with_writer(std::io::stderr))
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("fresh=debug")))
+        .try_init();
+
     use fresh::services::recovery::RecoveryStorage;
     use std::fs;
     use tempfile::TempDir;

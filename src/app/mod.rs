@@ -3437,6 +3437,13 @@ impl Editor {
                     let original_size = state.buffer.original_file_size().unwrap_or(0);
                     let final_size = state.buffer.total_bytes();
 
+                    tracing::debug!(
+                        "auto_save_dirty_buffers: large file recovery - original_size={}, final_size={}, path={:?}",
+                        original_size,
+                        final_size,
+                        path
+                    );
+
                     self.recovery_service.save_buffer(
                         &recovery_id,
                         recovery_chunks,

@@ -349,6 +349,13 @@ impl RecoveryStorage {
         // Read original file
         let original_content = fs::read(original_file)?;
 
+        tracing::debug!(
+            "reconstruct_from_chunks: original_file={:?}, file_size_on_disk={}, expected_original_size={}",
+            original_file,
+            original_content.len(),
+            chunked_data.original_size
+        );
+
         // Verify original file size matches what we expected
         if original_content.len() != chunked_data.original_size {
             return Err(io::Error::new(

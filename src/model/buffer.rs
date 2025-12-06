@@ -308,6 +308,12 @@ impl TextBuffer {
         };
         let saved_root = piece_tree.root();
 
+        tracing::debug!(
+            "Buffer::load_from_file: loaded {} bytes, saved_file_size={}",
+            file_size,
+            file_size
+        );
+
         Ok(TextBuffer {
             piece_tree,
             saved_root,
@@ -423,7 +429,13 @@ impl TextBuffer {
         std::fs::rename(&temp_path, dest_path)?;
 
         // Update saved file size to match the file on disk
-        self.saved_file_size = Some(std::fs::metadata(dest_path)?.len() as usize);
+        let new_size = std::fs::metadata(dest_path)?.len() as usize;
+        tracing::debug!(
+            "Buffer::save: updating saved_file_size from {:?} to {}",
+            self.saved_file_size,
+            new_size
+        );
+        self.saved_file_size = Some(new_size);
 
         self.file_path = Some(dest_path.to_path_buf());
         self.mark_saved_snapshot();
