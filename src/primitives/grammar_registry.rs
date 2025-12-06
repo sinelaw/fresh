@@ -392,4 +392,32 @@ mod tests {
         // Both should point to the same data
         assert!(Arc::ptr_eq(&arc1, &arc2));
     }
+
+    #[test]
+    fn test_list_all_syntaxes() {
+        let registry = GrammarRegistry::load();
+        let syntax_set = registry.syntax_set();
+
+        let mut syntaxes: Vec<_> = syntax_set
+            .syntaxes()
+            .iter()
+            .map(|s| (s.name.as_str(), s.file_extensions.clone()))
+            .collect();
+        syntaxes.sort_by(|a, b| a.0.cmp(b.0));
+
+        println!("\n=== Available Syntaxes ({} total) ===", syntaxes.len());
+        for (name, exts) in &syntaxes {
+            println!("  {} -> {:?}", name, exts);
+        }
+
+        // Check TypeScript specifically
+        println!("\n=== TypeScript Check ===");
+        let ts_syntax = syntax_set.find_syntax_by_extension("ts");
+        let tsx_syntax = syntax_set.find_syntax_by_extension("tsx");
+        println!("  .ts  -> {:?}", ts_syntax.map(|s| &s.name));
+        println!("  .tsx -> {:?}", tsx_syntax.map(|s| &s.name));
+
+        // This test always passes - it's for dumping info
+        assert!(syntaxes.len() > 0);
+    }
 }

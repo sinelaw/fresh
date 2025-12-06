@@ -320,7 +320,7 @@ impl HighlightEngine {
         }
     }
 
-    /// Create a TextMate engine for a file
+    /// Create a TextMate engine for a file, falling back to tree-sitter if no TextMate grammar
     fn textmate_for_file(path: &Path, registry: &GrammarRegistry) -> Self {
         let syntax_set = registry.syntax_set_arc();
 
@@ -340,6 +340,18 @@ impl HighlightEngine {
                     index,
                     ts_language,
                 ));
+            }
+        }
+
+        // No TextMate grammar found - fall back to tree-sitter if available
+        // This handles languages like TypeScript that syntect doesn't include by default
+        if let Some(lang) = ts_language {
+            if let Ok(highlighter) = Highlighter::new(lang) {
+                tracing::debug!(
+                    "No TextMate grammar for {:?}, falling back to tree-sitter",
+                    path.extension()
+                );
+                return Self::TreeSitter(highlighter);
             }
         }
 
@@ -442,10 +454,10 @@ mod tests {
     fn test_textmate_backend_selection() {
         let registry = GrammarRegistry::load();
 
-        // All languages now use TextMate for highlighting by default
+        // Languages with TextMate grammars use TextMate for highlighting
         let engine = HighlightEngine::for_file(Path::new("test.rs"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
-        // But tree-sitter language should still be detected
+        // Tree-sitter language should still be detected for other features
         assert!(engine.language().is_some());
 
         let engine = HighlightEngine::for_file(Path::new("test.py"), &registry);
@@ -454,6 +466,15 @@ mod tests {
 
         let engine = HighlightEngine::for_file(Path::new("test.js"), &registry);
         assert_eq!(engine.backend_name(), "textmate");
+        assert!(engine.language().is_some());
+
+        // TypeScript falls back to tree-sitter (syntect doesn't include TS by default)
+        let engine = HighlightEngine::for_file(Path::new("test.ts"), &registry);
+        assert_eq!(engine.backend_name(), "tree-sitter");
+        assert!(engine.language().is_some());
+
+        let engine = HighlightEngine::for_file(Path::new("test.tsx"), &registry);
+        assert_eq!(engine.backend_name(), "tree-sitter");
         assert!(engine.language().is_some());
     }
 
