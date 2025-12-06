@@ -7,6 +7,7 @@
 //! - Scrollbar for long lists
 
 use super::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
+use super::status_bar::truncate_path;
 use crate::app::file_open::{
     format_modified, format_size, FileOpenSection, FileOpenState, SortMode,
 };
@@ -45,12 +46,36 @@ impl FileBrowserRenderer {
         // Clear the area behind the popup
         frame.render_widget(Clear, area);
 
+        // Truncate path for title if needed (leave space for borders and padding)
+        let max_title_len = (area.width as usize).saturating_sub(4); // 2 for borders, 2 for padding
+        let truncated_path = truncate_path(&state.current_dir, max_title_len);
+        let title = format!(" {} ", truncated_path.to_string_plain());
+
+        // Create styled title with highlighted [...] if truncated
+        let title_line = if truncated_path.truncated {
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    truncated_path.prefix.clone(),
+                    Style::default().fg(theme.popup_border_fg),
+                ),
+                Span::styled("/[...]", Style::default().fg(theme.menu_highlight_fg)),
+                Span::styled(
+                    truncated_path.suffix.clone(),
+                    Style::default().fg(theme.popup_border_fg),
+                ),
+                Span::raw(" "),
+            ])
+        } else {
+            Line::from(title)
+        };
+
         // Create the popup block with border
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.popup_border_fg))
             .style(Style::default().bg(theme.popup_bg))
-            .title(format!(" {} ", state.current_dir.display()));
+            .title(title_line);
 
         let inner_area = block.inner(area);
         frame.render_widget(block, area);

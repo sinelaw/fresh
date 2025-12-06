@@ -1,5 +1,7 @@
 //! Status bar and prompt/minibuffer rendering
 
+use std::path::Path;
+
 use crate::state::EditorState;
 use crate::view::prompt::Prompt;
 use ratatui::layout::Rect;
@@ -7,6 +9,142 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
+
+/// Result of truncating a path for display
+#[derive(Debug, Clone)]
+pub struct TruncatedPath {
+    /// The first component of the path (e.g., "/home" or "C:\")
+    pub prefix: String,
+    /// Whether truncation occurred (if true, display "[...]" between prefix and suffix)
+    pub truncated: bool,
+    /// The last components of the path (e.g., "project/src")
+    pub suffix: String,
+}
+
+impl TruncatedPath {
+    /// Get the full display string (without styling)
+    pub fn to_string_plain(&self) -> String {
+        if self.truncated {
+            format!("{}/[...]{}", self.prefix, self.suffix)
+        } else {
+            format!("{}{}", self.prefix, self.suffix)
+        }
+    }
+
+    /// Get the display length
+    pub fn display_len(&self) -> usize {
+        if self.truncated {
+            self.prefix.len() + "/[...]".len() + self.suffix.len()
+        } else {
+            self.prefix.len() + self.suffix.len()
+        }
+    }
+}
+
+/// Truncate a path for display, showing the first component, [...], and last components
+///
+/// For example, `/private/var/folders/p6/nlmq.../T/.tmpNYt4Fc/project/file.txt`
+/// becomes `/private/[...]/project/file.txt`
+///
+/// # Arguments
+/// * `path` - The path to truncate
+/// * `max_len` - Maximum length for the display string
+///
+/// # Returns
+/// A TruncatedPath struct with prefix, truncation indicator, and suffix
+pub fn truncate_path(path: &Path, max_len: usize) -> TruncatedPath {
+    let path_str = path.to_string_lossy();
+
+    // If path fits, return as-is
+    if path_str.len() <= max_len {
+        return TruncatedPath {
+            prefix: String::new(),
+            truncated: false,
+            suffix: path_str.to_string(),
+        };
+    }
+
+    let components: Vec<&str> = path_str.split('/').filter(|s| !s.is_empty()).collect();
+
+    if components.is_empty() {
+        return TruncatedPath {
+            prefix: "/".to_string(),
+            truncated: false,
+            suffix: String::new(),
+        };
+    }
+
+    // Always keep the root and first component as prefix
+    let prefix = if path_str.starts_with('/') {
+        format!("/{}", components.first().unwrap_or(&""))
+    } else {
+        components.first().unwrap_or(&"").to_string()
+    };
+
+    // The "[...]/" takes 6 characters
+    let ellipsis_len = "/[...]".len();
+
+    // Calculate how much space we have for the suffix
+    let available_for_suffix = max_len.saturating_sub(prefix.len() + ellipsis_len);
+
+    if available_for_suffix < 5 || components.len() <= 1 {
+        // Not enough space or only one component, just truncate the end
+        let truncated_path = if path_str.len() > max_len.saturating_sub(3) {
+            format!("{}...", &path_str[..max_len.saturating_sub(3)])
+        } else {
+            path_str.to_string()
+        };
+        return TruncatedPath {
+            prefix: String::new(),
+            truncated: false,
+            suffix: truncated_path,
+        };
+    }
+
+    // Build suffix from the last components that fit
+    let mut suffix_parts: Vec<&str> = Vec::new();
+    let mut suffix_len = 0;
+
+    for component in components.iter().skip(1).rev() {
+        let component_len = component.len() + 1; // +1 for the '/'
+        if suffix_len + component_len <= available_for_suffix {
+            suffix_parts.push(component);
+            suffix_len += component_len;
+        } else {
+            break;
+        }
+    }
+
+    suffix_parts.reverse();
+
+    // If we included all remaining components, no truncation needed
+    if suffix_parts.len() == components.len() - 1 {
+        return TruncatedPath {
+            prefix: String::new(),
+            truncated: false,
+            suffix: path_str.to_string(),
+        };
+    }
+
+    let suffix = if suffix_parts.is_empty() {
+        // Can't fit any suffix components, truncate the last component
+        let last = components.last().unwrap_or(&"");
+        let truncate_to = available_for_suffix.saturating_sub(4); // "/.." and some chars
+        if truncate_to > 0 && last.len() > truncate_to {
+            format!("/{}...", &last[..truncate_to])
+        } else {
+            format!("/{}", last)
+        }
+    } else {
+        format!("/{}", suffix_parts.join("/"))
+    };
+
+    TruncatedPath {
+        prefix,
+        truncated: true,
+        suffix,
+    }
+}
 
 /// Renders the status bar and prompt/minibuffer
 pub struct StatusBarRenderer;
@@ -106,6 +244,7 @@ impl StatusBarRenderer {
 
     /// Render the file open prompt with colorized path
     /// Shows: "Open: /path/to/current/dir/filename" where the directory part is dimmed
+    /// Long paths are truncated: "/private/[...]/project/" with [...] styled differently
     pub fn render_file_open_prompt(
         frame: &mut Frame,
         area: Rect,
@@ -117,20 +256,67 @@ impl StatusBarRenderer {
         let dir_style = Style::default()
             .fg(theme.help_separator_fg)
             .bg(theme.prompt_bg);
+        // Style for the [...] ellipsis - use a more visible color
+        let ellipsis_style = Style::default()
+            .fg(theme.menu_highlight_fg)
+            .bg(theme.prompt_bg);
 
         let mut spans = Vec::new();
 
         // "Open: " prefix
         spans.push(Span::styled("Open: ", base_style));
 
-        // Current directory path (dimmed)
+        // Calculate if we need to truncate
+        // Only truncate if full path + input exceeds 90% of available width
+        let prefix_len = 6; // "Open: "
         let dir_path = file_open_state.current_dir.to_string_lossy();
-        let dir_display = if dir_path.ends_with('/') || dir_path.ends_with('\\') {
-            dir_path.to_string()
+        let dir_path_len = dir_path.len() + 1; // +1 for trailing slash
+        let input_len = prompt.input.len();
+        let total_len = prefix_len + dir_path_len + input_len;
+        let threshold = (area.width as usize * 90) / 100;
+
+        // Truncate the path only if total length exceeds 90% of width
+        let truncated = if total_len > threshold {
+            // Calculate how much space we have for the path after truncation
+            let available_for_path = threshold
+                .saturating_sub(prefix_len)
+                .saturating_sub(input_len);
+            truncate_path(&file_open_state.current_dir, available_for_path)
         } else {
-            format!("{}/", dir_path)
+            // No truncation needed - return full path
+            TruncatedPath {
+                prefix: String::new(),
+                truncated: false,
+                suffix: dir_path.to_string(),
+            }
         };
-        spans.push(Span::styled(dir_display.clone(), dir_style));
+
+        // Build the directory display with separate spans for styling
+        let dir_display_len = if truncated.truncated {
+            // Prefix (dimmed)
+            spans.push(Span::styled(truncated.prefix.clone(), dir_style));
+            // Ellipsis "/[...]" (highlighted)
+            spans.push(Span::styled("/[...]", ellipsis_style));
+            // Suffix with trailing slash (dimmed)
+            let suffix_with_slash = if truncated.suffix.ends_with('/') {
+                truncated.suffix.clone()
+            } else {
+                format!("{}/", truncated.suffix)
+            };
+            let len = truncated.prefix.len() + "/[...]".len() + suffix_with_slash.len();
+            spans.push(Span::styled(suffix_with_slash, dir_style));
+            len
+        } else {
+            // No truncation - just show the path with trailing slash
+            let path_display = if truncated.suffix.ends_with('/') {
+                truncated.suffix.clone()
+            } else {
+                format!("{}/", truncated.suffix)
+            };
+            let len = path_display.len();
+            spans.push(Span::styled(path_display, dir_style));
+            len
+        };
 
         // User input (the filename part) - normal color
         spans.push(Span::styled(prompt.input.clone(), base_style));
@@ -142,8 +328,8 @@ impl StatusBarRenderer {
 
         // Set cursor position in the prompt
         // Cursor should be at: "Open: ".len() + dir_display.len() + cursor_pos
-        let prefix_len = 6 + dir_display.len(); // "Open: " = 6 chars
-        let cursor_x = (prefix_len + prompt.cursor_pos) as u16;
+        let cursor_offset = prefix_len + dir_display_len + prompt.cursor_pos;
+        let cursor_x = cursor_offset as u16;
         if cursor_x < area.width {
             frame.set_cursor_position((area.x + cursor_x, area.y));
         }
@@ -549,5 +735,96 @@ impl StatusBarRenderer {
 
         let options_line = Paragraph::new(Line::from(spans));
         frame.render_widget(options_line, area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_truncate_path_short_path() {
+        let path = PathBuf::from("/home/user/project");
+        let result = truncate_path(&path, 50);
+
+        assert!(!result.truncated);
+        assert_eq!(result.suffix, "/home/user/project");
+        assert!(result.prefix.is_empty());
+    }
+
+    #[test]
+    fn test_truncate_path_long_path() {
+        let path = PathBuf::from(
+            "/private/var/folders/p6/nlmq3k8146990kpkxl73mq340000gn/T/.tmpNYt4Fc/project_root",
+        );
+        let result = truncate_path(&path, 40);
+
+        assert!(result.truncated, "Path should be truncated");
+        assert_eq!(result.prefix, "/private");
+        assert!(
+            result.suffix.contains("project_root"),
+            "Suffix should contain project_root"
+        );
+    }
+
+    #[test]
+    fn test_truncate_path_preserves_last_components() {
+        let path = PathBuf::from("/a/b/c/d/e/f/g/h/i/j/project/src");
+        let result = truncate_path(&path, 30);
+
+        assert!(result.truncated);
+        // Should preserve the last components that fit
+        assert!(
+            result.suffix.contains("src"),
+            "Should preserve last component 'src', got: {}",
+            result.suffix
+        );
+    }
+
+    #[test]
+    fn test_truncate_path_display_len() {
+        let path = PathBuf::from("/private/var/folders/deep/nested/path/here");
+        let result = truncate_path(&path, 30);
+
+        // The display length should not exceed max_len (approximately)
+        let display = result.to_string_plain();
+        assert!(
+            display.len() <= 35, // Allow some slack for trailing slash
+            "Display should be truncated to around 30 chars, got {} chars: {}",
+            display.len(),
+            display
+        );
+    }
+
+    #[test]
+    fn test_truncate_path_root_only() {
+        let path = PathBuf::from("/");
+        let result = truncate_path(&path, 50);
+
+        assert!(!result.truncated);
+        assert_eq!(result.suffix, "/");
+    }
+
+    #[test]
+    fn test_truncated_path_to_string_plain() {
+        let truncated = TruncatedPath {
+            prefix: "/home".to_string(),
+            truncated: true,
+            suffix: "/project/src".to_string(),
+        };
+
+        assert_eq!(truncated.to_string_plain(), "/home/[...]/project/src");
+    }
+
+    #[test]
+    fn test_truncated_path_to_string_plain_no_truncation() {
+        let truncated = TruncatedPath {
+            prefix: String::new(),
+            truncated: false,
+            suffix: "/home/user/project".to_string(),
+        };
+
+        assert_eq!(truncated.to_string_plain(), "/home/user/project");
     }
 }

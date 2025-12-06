@@ -27,6 +27,6 @@ pub use file_explorer::FileExplorerRenderer;
 pub use menu::{context_keys, MenuContext, MenuRenderer, MenuState};
 pub use scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 pub use split_rendering::SplitRenderer;
-pub use status_bar::StatusBarRenderer;
+pub use status_bar::{truncate_path, StatusBarRenderer, TruncatedPath};
 pub use suggestions::SuggestionsRenderer;
 pub use tabs::TabsRenderer;

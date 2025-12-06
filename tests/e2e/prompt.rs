@@ -406,6 +406,71 @@ fn test_save_as_nested_path() {
     }
 }
 
+/// Test that long paths are truncated in the Open File prompt
+///
+/// When the path + input would exceed 90% of the prompt width, the path should be
+/// truncated to show: /first/[...]/last/components/
+#[test]
+fn test_open_file_prompt_truncates_long_paths() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use std::fs;
+
+    // Create a deeply nested directory structure to get a long path
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let mut nested_path = temp_dir.path().to_path_buf();
+
+    // Create a path that's definitely longer than 80 chars
+    // e.g., /tmp/.../very/deeply/nested/directory/structure/here
+    for name in &[
+        "very_long_directory_name",
+        "another_long_name",
+        "deeply",
+        "nested",
+        "path",
+        "structure",
+    ] {
+        nested_path = nested_path.join(name);
+    }
+    fs::create_dir_all(&nested_path).unwrap();
+
+    // Create a test file in the nested directory
+    fs::write(nested_path.join("test.txt"), "test content").unwrap();
+
+    // Create harness with the deeply nested working directory
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), nested_path)
+            .unwrap();
+
+    // Trigger Open File with Ctrl+O
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The prompt should show "Open:" and the truncated path
+    harness.assert_screen_contains("Open:");
+
+    // The path should be truncated with "[...]" indicator
+    // Since the path is very long, it should show something like:
+    // Open: /tmp/[...]/path/structure/
+    let screen = harness.screen_to_string();
+
+    // Verify the path is truncated (contains [...])
+    assert!(
+        screen.contains("[...]"),
+        "Long path should be truncated with [...]. Screen:\n{}",
+        screen
+    );
+
+    // The test.txt file should still be visible in the file browser
+    // (wait for directory to load)
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("test.txt");
+}
+
 /// Test that Open File prompt shows completions popup immediately when opened (issue #193)
 ///
 /// BUG: The suggestions dropdown/popup doesn't appear until the user types a few characters.
