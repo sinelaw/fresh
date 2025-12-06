@@ -4070,9 +4070,39 @@ impl Editor {
                     tracing::info!("LSP server initialized for language: {}", language);
                     self.status_message = Some(format!("LSP ({}) ready", language));
                 }
-                AsyncMessage::LspError { language, error } => {
+                AsyncMessage::LspError {
+                    language,
+                    error,
+                    stderr_log_path,
+                } => {
                     tracing::error!("LSP error for {}: {}", language, error);
                     self.status_message = Some(format!("LSP error ({}): {}", language, error));
+
+                    // Open stderr log as read-only buffer if it exists
+                    if let Some(log_path) = stderr_log_path {
+                        if log_path.exists() {
+                            tracing::info!("Opening LSP stderr log: {:?}", log_path);
+                            match self.open_file(&log_path) {
+                                Ok(buffer_id) => {
+                                    // Make the buffer read-only
+                                    if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                                        state.editing_disabled = true;
+                                    }
+                                    if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id)
+                                    {
+                                        metadata.read_only = true;
+                                    }
+                                    self.status_message = Some(format!(
+                                        "LSP error ({}): {} - See stderr log",
+                                        language, error
+                                    ));
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to open LSP stderr log: {}", e);
+                                }
+                            }
+                        }
+                    }
                 }
                 AsyncMessage::LspCompletion { request_id, items } => {
                     if let Err(e) = self.handle_completion_response(request_id, items) {

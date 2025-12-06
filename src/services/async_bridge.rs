@@ -30,7 +30,12 @@ pub enum AsyncMessage {
     LspInitialized { language: String },
 
     /// LSP server crashed or failed
-    LspError { language: String, error: String },
+    LspError {
+        language: String,
+        error: String,
+        /// Path to the stderr log file for this LSP session
+        stderr_log_path: Option<std::path::PathBuf>,
+    },
 
     /// LSP completion response
     LspCompletion {
@@ -426,6 +431,7 @@ mod tests {
             .send(AsyncMessage::LspError {
                 language: "rust".to_string(),
                 error: "Failed to initialize".to_string(),
+                stderr_log_path: None,
             })
             .unwrap();
 
@@ -433,9 +439,14 @@ mod tests {
         assert_eq!(messages.len(), 1);
 
         match &messages[0] {
-            AsyncMessage::LspError { language, error } => {
+            AsyncMessage::LspError {
+                language,
+                error,
+                stderr_log_path,
+            } => {
                 assert_eq!(language, "rust");
                 assert_eq!(error, "Failed to initialize");
+                assert!(stderr_log_path.is_none());
             }
             _ => panic!("Expected LspError message"),
         }

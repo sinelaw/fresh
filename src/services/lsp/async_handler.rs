@@ -1500,6 +1500,9 @@ struct LspTask {
 
     /// Language ID (for error reporting)
     language: String,
+
+    /// Path to stderr log file
+    stderr_log_path: std::path::PathBuf,
 }
 
 #[allow(dead_code)]
@@ -1511,15 +1514,25 @@ impl LspTask {
         language: String,
         async_tx: std_mpsc::Sender<AsyncMessage>,
         process_limits: &ProcessLimits,
+        stderr_log_path: std::path::PathBuf,
     ) -> Result<Self, String> {
         tracing::info!("Spawning async LSP server: {} {:?}", command, args);
         tracing::info!("Process limits: {:?}", process_limits);
+        tracing::info!("LSP stderr will be logged to: {:?}", stderr_log_path);
+
+        // Create stderr log file and redirect process stderr directly to it
+        let stderr_file = std::fs::File::create(&stderr_log_path).map_err(|e| {
+            format!(
+                "Failed to create LSP stderr log file {:?}: {}",
+                stderr_log_path, e
+            )
+        })?;
 
         let mut cmd = Command::new(command);
         cmd.args(args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::from(stderr_file))
             .kill_on_drop(true);
 
         // Apply resource limits to the process
@@ -1543,38 +1556,6 @@ impl LspTask {
                 .ok_or_else(|| "Failed to get stdout".to_string())?,
         );
 
-        // Spawn a task to read and log stderr from the LSP process
-        if let Some(stderr) = process.stderr.take() {
-            let language_clone = language.clone();
-            tokio::spawn(async move {
-                use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
-                let mut stderr_reader = TokioBufReader::new(stderr);
-                let mut line = String::new();
-                loop {
-                    line.clear();
-                    match stderr_reader.read_line(&mut line).await {
-                        Ok(0) => {
-                            tracing::info!(
-                                "LSP ({}) stderr closed (process may have exited)",
-                                language_clone
-                            );
-                            break;
-                        }
-                        Ok(_) => {
-                            let trimmed = line.trim();
-                            if !trimmed.is_empty() {
-                                tracing::warn!("LSP ({}) stderr: {}", language_clone, trimmed);
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("LSP ({}) stderr read error: {}", language_clone, e);
-                            break;
-                        }
-                    }
-                }
-            });
-        }
-
         Ok(Self {
             process,
             stdin,
@@ -1586,6 +1567,7 @@ impl LspTask {
             initialized: false,
             async_tx,
             language,
+            stderr_log_path,
         })
     }
 
@@ -1596,6 +1578,7 @@ impl LspTask {
         async_tx: std_mpsc::Sender<AsyncMessage>,
         language: String,
         server_response_tx: mpsc::Sender<JsonRpcResponse>,
+        stderr_log_path: std::path::PathBuf,
     ) {
         tokio::spawn(async move {
             tracing::info!("LSP stdout reader task started for {}", language);
@@ -1624,6 +1607,7 @@ impl LspTask {
                         let _ = async_tx.send(AsyncMessage::LspError {
                             language: language.clone(),
                             error: format!("Read error: {}", e),
+                            stderr_log_path: Some(stderr_log_path.clone()),
                         });
                         break;
                     }
@@ -1663,6 +1647,7 @@ impl LspTask {
             async_tx.clone(),
             language_clone.clone(),
             server_response_tx,
+            self.stderr_log_path,
         );
 
         // Sequential command processing loop with server response handling
@@ -2998,6 +2983,13 @@ impl LspHandle {
         let args = args.to_vec();
         let state = Arc::new(Mutex::new(LspClientState::Starting));
 
+        // Create stderr log path: /tmp/fresh-lsp-{language}-{pid}.log
+        let stderr_log_path = std::path::PathBuf::from(format!(
+            "/tmp/fresh-lsp-{}-{}.log",
+            language,
+            std::process::id()
+        ));
+
         // Send starting status
         let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
             language: language.clone(),
@@ -3005,6 +2997,7 @@ impl LspHandle {
         });
 
         let state_clone = state.clone();
+        let stderr_log_path_clone = stderr_log_path.clone();
         runtime.spawn(async move {
             match LspTask::spawn(
                 &command,
@@ -3012,6 +3005,7 @@ impl LspHandle {
                 language_clone.clone(),
                 async_tx.clone(),
                 &process_limits,
+                stderr_log_path_clone.clone(),
             )
             .await
             {
@@ -3033,6 +3027,7 @@ impl LspHandle {
                     let _ = async_tx.send(AsyncMessage::LspError {
                         language: language_clone,
                         error: e,
+                        stderr_log_path: Some(stderr_log_path_clone),
                     });
                 }
             }
