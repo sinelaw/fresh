@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc as std_mpsc, Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -1579,6 +1580,7 @@ impl LspTask {
         language: String,
         server_response_tx: mpsc::Sender<JsonRpcResponse>,
         stderr_log_path: std::path::PathBuf,
+        shutting_down: Arc<AtomicBool>,
     ) {
         tokio::spawn(async move {
             tracing::info!("LSP stdout reader task started for {}", language);
@@ -1599,16 +1601,24 @@ impl LspTask {
                         }
                     }
                     Err(e) => {
-                        tracing::error!("Error reading from LSP server: {}", e);
-                        let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
-                            language: language.clone(),
-                            status: LspServerStatus::Error,
-                        });
-                        let _ = async_tx.send(AsyncMessage::LspError {
-                            language: language.clone(),
-                            error: format!("Read error: {}", e),
-                            stderr_log_path: Some(stderr_log_path.clone()),
-                        });
+                        // Only report error if this wasn't an intentional shutdown
+                        if shutting_down.load(Ordering::SeqCst) {
+                            tracing::info!(
+                                "LSP stdout reader exiting due to graceful shutdown for {}",
+                                language
+                            );
+                        } else {
+                            tracing::error!("Error reading from LSP server: {}", e);
+                            let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
+                                language: language.clone(),
+                                status: LspServerStatus::Error,
+                            });
+                            let _ = async_tx.send(AsyncMessage::LspError {
+                                language: language.clone(),
+                                error: format!("Read error: {}", e),
+                                stderr_log_path: Some(stderr_log_path.clone()),
+                            });
+                        }
                         break;
                     }
                 }
@@ -1640,6 +1650,9 @@ impl LspTask {
         // Create channel for server-to-client request responses
         let (server_response_tx, mut server_response_rx) = mpsc::channel::<JsonRpcResponse>(100);
 
+        // Flag to indicate intentional shutdown (prevents spurious error messages)
+        let shutting_down = Arc::new(AtomicBool::new(false));
+
         // Spawn stdout reader task
         Self::spawn_stdout_reader(
             self.stdout,
@@ -1648,6 +1661,7 @@ impl LspTask {
             language_clone.clone(),
             server_response_tx,
             self.stderr_log_path,
+            shutting_down.clone(),
         );
 
         // Sequential command processing loop with server response handling
@@ -2001,6 +2015,8 @@ impl LspTask {
                         }
                         LspCommand::Shutdown => {
                             tracing::info!("Processing Shutdown command");
+                            // Set flag before shutdown to prevent spurious error messages
+                            shutting_down.store(true, Ordering::SeqCst);
                             let _ = state.handle_shutdown().await;
                             break;
                         }
