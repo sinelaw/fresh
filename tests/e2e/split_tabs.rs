@@ -375,3 +375,104 @@ fn test_debug_split_tabs_rendering() {
         screen
     );
 }
+
+/// Test workflow: type in buffer, open new split via command palette, open new buffer in that split,
+/// close the split, verify remaining split has both tabs and is focused/responsive
+#[test]
+fn test_close_split_preserves_tabs_and_focus() {
+    let temp_dir = TempDir::new().unwrap();
+    let file1 = temp_dir.path().join("first.txt");
+    let file2 = temp_dir.path().join("second.txt");
+    std::fs::write(&file1, "").unwrap();
+    std::fs::write(&file2, "").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    // Step 1: Open first file and type some text
+    harness.open_file(&file1).unwrap();
+    harness.render().unwrap();
+    harness.type_text("First buffer content").unwrap();
+    harness.render().unwrap();
+
+    // Verify the text appears on screen and tab shows filename
+    harness.assert_screen_contains("First buffer content");
+    harness.assert_screen_contains("first.txt");
+
+    // Step 2: Open a new horizontal split via command palette
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split horiz").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Verify we now have 2 splits (horizontal separator should appear)
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains('─'),
+        "Expected horizontal split separator. Screen:\n{}",
+        screen
+    );
+
+    // Step 3: Open second file in the new split (adds it to new split's tabs)
+    harness.open_file(&file2).unwrap();
+    harness.render().unwrap();
+
+    // Verify second file tab is visible
+    harness.assert_screen_contains("second.txt");
+
+    // Type something in the second buffer to distinguish it
+    harness.type_text("Second buffer content").unwrap();
+    harness.render().unwrap();
+
+    // Both files should be visible in tabs (one in each split, or both in current split)
+    let screen_with_two_splits = harness.screen_to_string();
+    eprintln!(
+        "Screen with two splits and two files:\n{}",
+        screen_with_two_splits
+    );
+
+    // Step 4: Close the current split (the one showing second.txt)
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("close split").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Step 5: Verify only 1 split remains
+    let screen_after_close = harness.screen_to_string();
+    eprintln!("Screen after closing split:\n{}", screen_after_close);
+
+    // The remaining split should contain BOTH tabs (first.txt and second.txt)
+    // When closing a split, its tabs should be merged into the remaining split
+    assert!(
+        screen_after_close.contains("first.txt"),
+        "Expected first.txt tab to be present in remaining split. Screen:\n{}",
+        screen_after_close
+    );
+    assert!(
+        screen_after_close.contains("second.txt"),
+        "Expected second.txt tab to be preserved from closed split. Screen:\n{}",
+        screen_after_close
+    );
+
+    // Verify that typing works in the remaining split (it's focused)
+    harness.type_text("XYZ").unwrap();
+    harness.render().unwrap();
+
+    // The typed characters should appear on screen
+    let final_screen = harness.screen_to_string();
+    eprintln!("Final screen after typing XYZ:\n{}", final_screen);
+    assert!(
+        final_screen.contains("XYZ"),
+        "Expected typed characters 'XYZ' to appear. The remaining split should be focused. Screen:\n{}",
+        final_screen
+    );
+}

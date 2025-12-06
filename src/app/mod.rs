@@ -1702,11 +1702,41 @@ impl Editor {
 
     /// Close the active split
     pub fn close_active_split(&mut self) {
-        let active_split = self.split_manager.active_split();
-        match self.split_manager.close_split(active_split) {
+        let closing_split = self.split_manager.active_split();
+
+        // Get the tabs from the split we're closing before we close it
+        let closing_split_tabs = self
+            .split_view_states
+            .get(&closing_split)
+            .map(|vs| vs.open_buffers.clone())
+            .unwrap_or_default();
+
+        match self.split_manager.close_split(closing_split) {
             Ok(_) => {
                 // Clean up the view state for the closed split
-                self.split_view_states.remove(&active_split);
+                self.split_view_states.remove(&closing_split);
+
+                // Get the new active split after closing
+                let new_active_split = self.split_manager.active_split();
+
+                // Transfer tabs from closed split to the new active split
+                if let Some(view_state) = self.split_view_states.get_mut(&new_active_split) {
+                    for buffer_id in closing_split_tabs {
+                        // Only add if not already in the split's tabs
+                        if !view_state.open_buffers.contains(&buffer_id) {
+                            view_state.open_buffers.push(buffer_id);
+                        }
+                    }
+                }
+
+                // Update active_buffer to match the new active split's buffer
+                if let Some(buffer_id) = self.split_manager.active_buffer_id() {
+                    self.active_buffer = buffer_id;
+                }
+
+                // Sync the view state to editor state
+                self.sync_split_view_state_to_editor_state();
+
                 self.set_status_message("Closed split".to_string());
             }
             Err(e) => {
