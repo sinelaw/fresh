@@ -448,26 +448,21 @@ impl Drop for LspManager {
     }
 }
 
-/// Helper function to detect language from file extension
-pub fn detect_language(path: &std::path::Path) -> Option<String> {
+/// Helper function to detect language from file extension using the config's languages section
+pub fn detect_language(
+    path: &std::path::Path,
+    languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
+) -> Option<String> {
     let extension = path.extension()?.to_str()?;
 
-    match extension {
-        "rs" => Some("rust".to_string()),
-        "js" | "jsx" | "mjs" | "cjs" => Some("javascript".to_string()),
-        "ts" | "tsx" => Some("typescript".to_string()),
-        "py" | "pyi" => Some("python".to_string()),
-        "json" => Some("json".to_string()),
-        "md" => Some("markdown".to_string()),
-        "toml" => Some("toml".to_string()),
-        "yaml" | "yml" => Some("yaml".to_string()),
-        "html" => Some("html".to_string()),
-        "css" => Some("css".to_string()),
-        "go" => Some("go".to_string()),
-        "c" | "h" => Some("c".to_string()),
-        "cpp" | "cc" | "cxx" | "hpp" | "hxx" => Some("cpp".to_string()),
-        _ => None,
+    // Search through configured languages for a matching extension
+    for (language_name, lang_config) in languages {
+        if lang_config.extensions.iter().any(|ext| ext == extension) {
+            return Some(language_name.clone());
+        }
     }
+
+    None
 }
 
 #[cfg(test)]
@@ -575,149 +570,76 @@ mod tests {
         assert_eq!(manager.handles.len(), 0);
     }
 
+    fn test_languages() -> std::collections::HashMap<String, crate::config::LanguageConfig> {
+        let mut languages = std::collections::HashMap::new();
+        languages.insert(
+            "rust".to_string(),
+            crate::config::LanguageConfig {
+                extensions: vec!["rs".to_string()],
+                grammar: "rust".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                highlighter: crate::config::HighlighterPreference::Auto,
+                textmate_grammar: None,
+            },
+        );
+        languages.insert(
+            "javascript".to_string(),
+            crate::config::LanguageConfig {
+                extensions: vec!["js".to_string(), "jsx".to_string()],
+                grammar: "javascript".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                highlighter: crate::config::HighlighterPreference::Auto,
+                textmate_grammar: None,
+            },
+        );
+        languages.insert(
+            "csharp".to_string(),
+            crate::config::LanguageConfig {
+                extensions: vec!["cs".to_string()],
+                grammar: "c_sharp".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                highlighter: crate::config::HighlighterPreference::Auto,
+                textmate_grammar: None,
+            },
+        );
+        languages
+    }
+
     #[test]
-    fn test_detect_language_rust() {
+    fn test_detect_language_from_config() {
+        let languages = test_languages();
+
+        // Test configured languages
         assert_eq!(
-            detect_language(Path::new("main.rs")),
+            detect_language(Path::new("main.rs"), &languages),
             Some("rust".to_string())
         );
         assert_eq!(
-            detect_language(Path::new("lib.rs")),
-            Some("rust".to_string())
-        );
-        assert_eq!(
-            detect_language(Path::new("/path/to/file.rs")),
-            Some("rust".to_string())
-        );
-    }
-
-    #[test]
-    fn test_detect_language_javascript() {
-        assert_eq!(
-            detect_language(Path::new("index.js")),
+            detect_language(Path::new("index.js"), &languages),
             Some("javascript".to_string())
         );
         assert_eq!(
-            detect_language(Path::new("App.jsx")),
+            detect_language(Path::new("App.jsx"), &languages),
             Some("javascript".to_string())
         );
         assert_eq!(
-            detect_language(Path::new("module.mjs")),
-            Some("javascript".to_string())
+            detect_language(Path::new("Program.cs"), &languages),
+            Some("csharp".to_string())
         );
-        assert_eq!(
-            detect_language(Path::new("config.cjs")),
-            Some("javascript".to_string())
-        );
-    }
 
-    #[test]
-    fn test_detect_language_typescript() {
-        assert_eq!(
-            detect_language(Path::new("index.ts")),
-            Some("typescript".to_string())
-        );
-        assert_eq!(
-            detect_language(Path::new("App.tsx")),
-            Some("typescript".to_string())
-        );
-    }
-
-    #[test]
-    fn test_detect_language_python() {
-        assert_eq!(
-            detect_language(Path::new("main.py")),
-            Some("python".to_string())
-        );
-        assert_eq!(
-            detect_language(Path::new("types.pyi")),
-            Some("python".to_string())
-        );
-    }
-
-    #[test]
-    fn test_detect_language_c_cpp() {
-        assert_eq!(detect_language(Path::new("main.c")), Some("c".to_string()));
-        assert_eq!(
-            detect_language(Path::new("header.h")),
-            Some("c".to_string())
-        );
-        assert_eq!(
-            detect_language(Path::new("main.cpp")),
-            Some("cpp".to_string())
-        );
-        assert_eq!(
-            detect_language(Path::new("main.cc")),
-            Some("cpp".to_string())
-        );
-        assert_eq!(
-            detect_language(Path::new("main.cxx")),
-            Some("cpp".to_string())
-        );
-        assert_eq!(
-            detect_language(Path::new("header.hpp")),
-            Some("cpp".to_string())
-        );
-        assert_eq!(
-            detect_language(Path::new("header.hxx")),
-            Some("cpp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_detect_language_markup() {
-        assert_eq!(
-            detect_language(Path::new("README.md")),
-            Some("markdown".to_string())
-        );
-        assert_eq!(
-            detect_language(Path::new("index.html")),
-            Some("html".to_string())
-        );
-        assert_eq!(
-            detect_language(Path::new("styles.css")),
-            Some("css".to_string())
-        );
-    }
-
-    #[test]
-    fn test_detect_language_config_files() {
-        assert_eq!(
-            detect_language(Path::new("Cargo.toml")),
-            Some("toml".to_string())
-        );
-        assert_eq!(
-            detect_language(Path::new("config.yaml")),
-            Some("yaml".to_string())
-        );
-        assert_eq!(
-            detect_language(Path::new("config.yml")),
-            Some("yaml".to_string())
-        );
-        assert_eq!(
-            detect_language(Path::new("package.json")),
-            Some("json".to_string())
-        );
-    }
-
-    #[test]
-    fn test_detect_language_go() {
-        assert_eq!(
-            detect_language(Path::new("main.go")),
-            Some("go".to_string())
-        );
-    }
-
-    #[test]
-    fn test_detect_language_unknown() {
-        assert_eq!(detect_language(Path::new("file.xyz")), None);
-        assert_eq!(detect_language(Path::new("file.unknown")), None);
-        assert_eq!(detect_language(Path::new("file")), None); // No extension
+        // Test unconfigured extensions return None
+        assert_eq!(detect_language(Path::new("main.py"), &languages), None);
+        assert_eq!(detect_language(Path::new("file.xyz"), &languages), None);
+        assert_eq!(detect_language(Path::new("file"), &languages), None);
     }
 
     #[test]
     fn test_detect_language_no_extension() {
-        assert_eq!(detect_language(Path::new("README")), None);
-        assert_eq!(detect_language(Path::new("Makefile")), None);
+        let languages = test_languages();
+        assert_eq!(detect_language(Path::new("README"), &languages), None);
+        assert_eq!(detect_language(Path::new("Makefile"), &languages), None);
     }
 }

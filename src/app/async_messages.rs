@@ -622,7 +622,7 @@ impl Editor {
             .iter()
             .filter_map(|(buf_id, meta)| {
                 meta.file_path().and_then(|path| {
-                    if crate::services::lsp::manager::detect_language(path)
+                    if crate::services::lsp::manager::detect_language(path, &self.config.languages)
                         == Some(language.to_string())
                     {
                         Some((*buf_id, path.clone()))
@@ -645,7 +645,10 @@ impl Editor {
                     .and_then(|u| u.as_str().parse::<lsp_types::Uri>().ok());
 
                 if let Some(uri) = uri {
-                    if let Some(lang_id) = crate::services::lsp::manager::detect_language(&path) {
+                    if let Some(lang_id) = crate::services::lsp::manager::detect_language(
+                        &path,
+                        &self.config.languages,
+                    ) {
                         if let Some(lsp) = self.lsp.as_mut() {
                             if let Some(handle) = lsp.get_or_spawn(&lang_id) {
                                 let _ = handle.did_open(uri, content, lang_id);

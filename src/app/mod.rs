@@ -1934,7 +1934,7 @@ impl Editor {
             None => return,
         };
 
-        let language = match crate::services::lsp::manager::detect_language(&path) {
+        let language = match detect_language(&path, &self.config.languages) {
             Some(lang) => lang,
             None => return,
         };
@@ -2890,7 +2890,7 @@ impl Editor {
         metadata: &mut BufferMetadata,
     ) {
         // Early return checks that don't need mutable lsp borrow
-        let Some(language) = detect_language(path) else {
+        let Some(language) = detect_language(path, &self.config.languages) else {
             tracing::debug!("No language detected for file: {}", path.display());
             return;
         };
@@ -3062,7 +3062,7 @@ impl Editor {
             if let Ok(uri) = url::Url::from_file_path(path) {
                 if let Ok(lsp_uri) = uri.as_str().parse::<lsp_types::Uri>() {
                     // Detect language for this file
-                    if let Some(language) = detect_language(path) {
+                    if let Some(language) = detect_language(path, &self.config.languages) {
                         // Get the new content
                         let content = self
                             .buffers
@@ -5252,7 +5252,7 @@ impl Editor {
         let file_path = metadata.and_then(|meta| meta.file_path());
 
         if let Some(path) = file_path {
-            if let Some(language) = crate::services::lsp::manager::detect_language(path) {
+            if let Some(language) = detect_language(path, &self.config.languages) {
                 if let Some(lsp) = self.lsp.as_mut() {
                     if let Some(handle) = lsp.get_or_spawn(&language) {
                         if let Err(e) = handle.cancel_request(request_id) {
@@ -5285,7 +5285,7 @@ impl Editor {
 
         if let (Some(uri), Some(path)) = (uri, file_path) {
             // Detect language from file extension
-            if let Some(language) = crate::services::lsp::manager::detect_language(path) {
+            if let Some(language) = detect_language(path, &self.config.languages) {
                 // Get LSP handle
                 if let Some(lsp) = self.lsp.as_mut() {
                     if let Some(handle) = lsp.get_or_spawn(&language) {
@@ -5333,7 +5333,7 @@ impl Editor {
 
         if let (Some(uri), Some(path)) = (uri, file_path) {
             // Detect language from file extension
-            if let Some(language) = crate::services::lsp::manager::detect_language(path) {
+            if let Some(language) = detect_language(path, &self.config.languages) {
                 // Get LSP handle
                 if let Some(lsp) = self.lsp.as_mut() {
                     if let Some(handle) = lsp.get_or_spawn(&language) {
@@ -5391,7 +5391,7 @@ impl Editor {
 
         if let (Some(uri), Some(path)) = (uri, file_path) {
             // Detect language from file extension
-            if let Some(language) = crate::services::lsp::manager::detect_language(path) {
+            if let Some(language) = detect_language(path, &self.config.languages) {
                 // Get LSP handle
                 if let Some(lsp) = self.lsp.as_mut() {
                     if let Some(handle) = lsp.get_or_spawn(&language) {
@@ -5650,7 +5650,7 @@ impl Editor {
 
         if let (Some(uri), Some(path)) = (uri, file_path) {
             // Detect language from file extension
-            if let Some(language) = crate::services::lsp::manager::detect_language(path) {
+            if let Some(language) = detect_language(path, &self.config.languages) {
                 // Get LSP handle
                 if let Some(lsp) = self.lsp.as_mut() {
                     if let Some(handle) = lsp.get_or_spawn(&language) {
@@ -5700,7 +5700,7 @@ impl Editor {
 
         if let (Some(uri), Some(path)) = (uri, file_path) {
             // Detect language from file extension
-            if let Some(language) = crate::services::lsp::manager::detect_language(path) {
+            if let Some(language) = detect_language(path, &self.config.languages) {
                 // Get LSP handle
                 if let Some(lsp) = self.lsp.as_mut() {
                     if let Some(handle) = lsp.get_or_spawn(&language) {
@@ -5878,7 +5878,7 @@ impl Editor {
 
         if let (Some(uri), Some(path)) = (uri, file_path) {
             // Detect language from file extension
-            if let Some(language) = crate::services::lsp::manager::detect_language(path) {
+            if let Some(language) = detect_language(path, &self.config.languages) {
                 // Get LSP handle
                 if let Some(lsp) = self.lsp.as_mut() {
                     if let Some(handle) = lsp.get_or_spawn(&language) {
@@ -6394,7 +6394,7 @@ impl Editor {
             }
         };
 
-        let language = match detect_language(path) {
+        let language = match detect_language(path, &self.config.languages) {
             Some(l) => l,
             None => {
                 tracing::debug!(
@@ -6524,7 +6524,7 @@ impl Editor {
 
         if let (Some(uri), Some(path)) = (uri, file_path) {
             // Detect language from file extension
-            if let Some(language) = crate::services::lsp::manager::detect_language(path) {
+            if let Some(language) = detect_language(path, &self.config.languages) {
                 // Get LSP handle
                 if let Some(lsp) = self.lsp.as_mut() {
                     if let Some(handle) = lsp.get_or_spawn(&language) {

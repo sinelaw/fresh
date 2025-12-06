@@ -566,25 +566,3 @@ impl Drop for LspManager {
         self.shutdown_all();
     }
 }
-
-/// Helper function to detect language from file extension
-pub fn detect_language(path: &std::path::Path) -> Option<String> {
-    let extension = path.extension()?.to_str()?;
-
-    match extension {
-        "rs" => Some("rust".to_string()),
-        "js" | "jsx" | "mjs" | "cjs" => Some("javascript".to_string()),
-        "ts" | "tsx" => Some("typescript".to_string()),
-        "py" | "pyi" => Some("python".to_string()),
-        "json" => Some("json".to_string()),
-        "md" => Some("markdown".to_string()),
-        "toml" => Some("toml".to_string()),
-        "yaml" | "yml" => Some("yaml".to_string()),
-        "html" => Some("html".to_string()),
-        "css" => Some("css".to_string()),
-        "go" => Some("go".to_string()),
-        "c" | "h" => Some("c".to_string()),
-        "cpp" | "cc" | "cxx" | "hpp" | "hxx" => Some("cpp".to_string()),
-        _ => None,
-    }
-}

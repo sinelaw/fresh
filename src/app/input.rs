@@ -854,8 +854,10 @@ impl Editor {
                 // Get the language for the current buffer
                 if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer) {
                     if let Some(path) = metadata.file_path() {
-                        if let Some(language) = crate::services::lsp::manager::detect_language(path)
-                        {
+                        if let Some(language) = crate::services::lsp::manager::detect_language(
+                            path,
+                            &self.config.languages,
+                        ) {
                             let restart_result = if let Some(lsp) = self.lsp.as_mut() {
                                 Some(lsp.manual_restart(&language))
                             } else {
@@ -871,8 +873,10 @@ impl Editor {
                                         .iter()
                                         .filter_map(|(buf_id, meta)| {
                                             if let Some(p) = meta.file_path() {
-                                                if crate::services::lsp::manager::detect_language(p)
-                                                    == Some(language.clone())
+                                                if crate::services::lsp::manager::detect_language(
+                                                    p,
+                                                    &self.config.languages,
+                                                ) == Some(language.clone())
                                                 {
                                                     Some((*buf_id, p.clone()))
                                                 } else {
@@ -898,6 +902,7 @@ impl Editor {
                                                 if let Some(lang_id) =
                                                     crate::services::lsp::manager::detect_language(
                                                         &buf_path,
+                                                        &self.config.languages,
                                                     )
                                                 {
                                                     if let Some(lsp) = self.lsp.as_mut() {

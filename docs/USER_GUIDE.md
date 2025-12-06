@@ -70,7 +70,36 @@ Fresh has native support for the Language Server Protocol (LSP), providing featu
 *   **Code completion:** Get intelligent code completion suggestions.
 *   **Go-to-definition:** Quickly jump to the definition of a symbol.
 
-You can configure LSP servers for your favorite languages in the `config.json` file.
+#### Configuring LSP for a New Language
+
+To add LSP support for a language, you need to configure two sections in your `~/.config/fresh/config.json`:
+
+1. **`languages`**: Define the file extensions for the language
+2. **`lsp`**: Configure the language server command
+
+For example, to add C# support:
+
+```json
+{
+  "languages": {
+    "csharp": {
+      "extensions": ["cs"],
+      "grammar": "c_sharp",
+      "comment_prefix": "//",
+      "auto_indent": true
+    }
+  },
+  "lsp": {
+    "csharp": {
+      "command": "/path/to/csharp-language-server",
+      "args": [],
+      "enabled": true
+    }
+  }
+}
+```
+
+The language name (e.g., `"csharp"`) must match in both sections. Fresh includes built-in language definitions for Rust, JavaScript, TypeScript, and Python, but you can add any language by configuring it in your config file.
 
 ## Plugins
 

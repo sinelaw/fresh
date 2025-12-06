@@ -946,7 +946,7 @@ impl Editor {
             }
         };
 
-        let file_language = match detect_language(path) {
+        let file_language = match detect_language(path, &self.config.languages) {
             Some(l) => l,
             None => {
                 tracing::debug!(
@@ -1140,7 +1140,7 @@ impl Editor {
             }
         };
 
-        let language = match detect_language(path) {
+        let language = match detect_language(path, &self.config.languages) {
             Some(l) => l,
             None => {
                 tracing::debug!("notify_lsp_change: no language detected for {:?}", path);
@@ -1374,7 +1374,7 @@ impl Editor {
             }
         };
 
-        let language = match detect_language(path) {
+        let language = match detect_language(path, &self.config.languages) {
             Some(l) => l,
             None => {
                 tracing::debug!("notify_lsp_save: no language detected for {:?}", path);
