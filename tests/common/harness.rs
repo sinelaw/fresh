@@ -55,6 +55,7 @@ pub mod layout {
         terminal_height.saturating_sub(TOTAL_RESERVED_ROWS)
     }
 }
+use fresh::config::DirectoryContext;
 use fresh::primitives::highlight_engine::HighlightEngine;
 use fresh::services::fs::{BackendMetrics, FsBackend, LocalFsBackend, SlowFsBackend, SlowFsConfig};
 use fresh::{app::Editor, config::Config};
@@ -135,13 +136,15 @@ impl EditorTestHarness {
     pub fn new(width: u16, height: u16) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
+        // Create DirectoryContext pointing to temp dirs for test isolation
+        let dir_context = DirectoryContext::for_testing(temp_dir.path());
 
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
         let mut config = Config::default();
         config.editor.auto_indent = false; // Disable for simpler testing
                                            // Use temp directory to avoid loading project plugins in tests
-        let editor = Editor::with_working_dir(config, width, height, Some(temp_path))?;
+        let editor = Editor::with_working_dir(config, width, height, Some(temp_path), dir_context)?;
 
         Ok(EditorTestHarness {
             editor,
@@ -163,11 +166,13 @@ impl EditorTestHarness {
     pub fn with_config(width: u16, height: u16, config: Config) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
+        // Create DirectoryContext pointing to temp dirs for test isolation
+        let dir_context = DirectoryContext::for_testing(temp_dir.path());
 
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
         // Use temp directory to avoid loading project plugins in tests
-        let editor = Editor::with_working_dir(config, width, height, Some(temp_path))?;
+        let editor = Editor::with_working_dir(config, width, height, Some(temp_path), dir_context)?;
 
         Ok(EditorTestHarness {
             editor,
@@ -202,6 +207,8 @@ impl EditorTestHarness {
         config: Config,
     ) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
+        // Create DirectoryContext pointing to temp dirs for test isolation
+        let dir_context = DirectoryContext::for_testing(temp_dir.path());
 
         // Create a subdirectory with a constant name for deterministic paths
         let project_root = temp_dir.path().join("project_root");
@@ -210,7 +217,8 @@ impl EditorTestHarness {
         // Create editor with explicit working directory (no global state modification!)
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
-        let editor = Editor::with_working_dir(config, width, height, Some(project_root))?;
+        let editor =
+            Editor::with_working_dir(config, width, height, Some(project_root), dir_context)?;
 
         Ok(EditorTestHarness {
             editor,
@@ -229,17 +237,23 @@ impl EditorTestHarness {
 
     /// Create with custom config and explicit working directory
     /// The working directory is used for LSP initialization and file operations
+    /// Note: Creates a temp dir for DirectoryContext to ensure test isolation
     pub fn with_config_and_working_dir(
         width: u16,
         height: u16,
         config: Config,
         working_dir: std::path::PathBuf,
     ) -> io::Result<Self> {
+        let temp_dir = TempDir::new()?;
+        // Create DirectoryContext pointing to temp dirs for test isolation
+        let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
 
         // Create editor - it will create its own tokio runtime for async operations
-        let mut editor = Editor::with_working_dir(config, width, height, Some(working_dir))?;
+        let mut editor =
+            Editor::with_working_dir(config, width, height, Some(working_dir), dir_context)?;
 
         // Process any pending plugin commands (e.g., command registrations from TypeScript plugins)
         editor.process_async_messages();
@@ -247,7 +261,7 @@ impl EditorTestHarness {
         Ok(EditorTestHarness {
             editor,
             terminal,
-            _temp_dir: None,
+            _temp_dir: Some(temp_dir),
             fs_metrics: None,
             _tokio_runtime: None,
             shadow_string: String::new(),
@@ -272,6 +286,8 @@ impl EditorTestHarness {
     pub fn with_slow_fs(width: u16, height: u16, slow_config: SlowFsConfig) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
+        // Create DirectoryContext pointing to temp dirs for test isolation
+        let dir_context = DirectoryContext::for_testing(temp_dir.path());
 
         // Create slow filesystem backend wrapping the local backend
         let local_backend = Arc::new(LocalFsBackend::new());
@@ -284,8 +300,14 @@ impl EditorTestHarness {
         let config = Config::default();
 
         // Create editor with custom filesystem backend
-        let editor =
-            Editor::with_fs_backend_for_test(config, width, height, Some(temp_path), fs_backend)?;
+        let editor = Editor::with_fs_backend_for_test(
+            config,
+            width,
+            height,
+            Some(temp_path),
+            fs_backend,
+            dir_context,
+        )?;
 
         Ok(EditorTestHarness {
             editor,
@@ -322,6 +344,22 @@ impl EditorTestHarness {
         self._temp_dir
             .as_ref()
             .map(|d| d.path().join("project_root"))
+    }
+
+    /// Get the recovery directory path for this test harness
+    /// The recovery directory is isolated per-test under the temp directory
+    pub fn recovery_dir(&self) -> Option<PathBuf> {
+        self._temp_dir
+            .as_ref()
+            .map(|d| d.path().join("data").join("recovery"))
+    }
+
+    /// Take ownership of the temp directory, preventing it from being cleaned up
+    /// when the harness is dropped. This is useful for tests that need to access
+    /// the recovery directory after dropping the harness.
+    /// Returns the TempDir which should be kept alive until the test ends.
+    pub fn take_temp_dir(&mut self) -> Option<TempDir> {
+        self._temp_dir.take()
     }
 
     /// Enable shadow buffer validation

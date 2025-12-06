@@ -48,7 +48,7 @@ use self::types::{
     Bookmark, CachedLayout, EventLineInfo, InteractiveReplaceState, LspMessageEntry,
     LspProgressInfo, MacroRecordingState, MouseState, SearchState, DEFAULT_BACKGROUND_FILE,
 };
-use crate::config::Config;
+use crate::config::{Config, DirectoryContext};
 use crate::input::actions::action_to_events as convert_action_to_events;
 use crate::input::buffer_mode::ModeRegistry;
 use crate::input::command_registry::CommandRegistry;
@@ -114,6 +114,9 @@ pub struct Editor {
 
     /// Configuration
     config: Config,
+
+    /// Directory context for editor state paths
+    dir_context: DirectoryContext,
 
     /// Grammar registry for TextMate syntax highlighting
     grammar_registry: std::sync::Arc<crate::primitives::grammar_registry::GrammarRegistry>,
@@ -382,9 +385,14 @@ pub struct Editor {
 
 impl Editor {
     /// Create a new editor with the given configuration and terminal dimensions
-    /// If working_dir is None, uses the current working directory
-    pub fn new(config: Config, width: u16, height: u16) -> io::Result<Self> {
-        Self::with_working_dir(config, width, height, None)
+    /// Uses system directories for state (recovery, sessions, etc.)
+    pub fn new(
+        config: Config,
+        width: u16,
+        height: u16,
+        dir_context: DirectoryContext,
+    ) -> io::Result<Self> {
+        Self::with_working_dir(config, width, height, None, dir_context)
     }
 
     /// Create a new editor with an explicit working directory
@@ -394,8 +402,9 @@ impl Editor {
         width: u16,
         height: u16,
         working_dir: Option<PathBuf>,
+        dir_context: DirectoryContext,
     ) -> io::Result<Self> {
-        Self::with_options(config, width, height, working_dir, None, true)
+        Self::with_options(config, width, height, working_dir, None, true, dir_context)
     }
 
     /// Create a new editor with plugins disabled
@@ -404,8 +413,9 @@ impl Editor {
         width: u16,
         height: u16,
         working_dir: Option<PathBuf>,
+        dir_context: DirectoryContext,
     ) -> io::Result<Self> {
-        Self::with_options(config, width, height, working_dir, None, false)
+        Self::with_options(config, width, height, working_dir, None, false, dir_context)
     }
 
     /// Create a new editor with a custom filesystem backend (for testing)
@@ -416,8 +426,17 @@ impl Editor {
         height: u16,
         working_dir: Option<PathBuf>,
         fs_backend: Arc<dyn FsBackend>,
+        dir_context: DirectoryContext,
     ) -> io::Result<Self> {
-        Self::with_options(config, width, height, working_dir, Some(fs_backend), true)
+        Self::with_options(
+            config,
+            width,
+            height,
+            working_dir,
+            Some(fs_backend),
+            true,
+            dir_context,
+        )
     }
 
     /// Create a new editor with custom options
@@ -430,6 +449,7 @@ impl Editor {
         working_dir: Option<PathBuf>,
         fs_backend: Option<Arc<dyn FsBackend>>,
         enable_plugins: bool,
+        dir_context: DirectoryContext,
     ) -> io::Result<Self> {
         tracing::info!("Editor::new called with width={}, height={}", width, height);
 
@@ -604,6 +624,7 @@ impl Editor {
             event_logs,
             next_buffer_id: 1,
             config,
+            dir_context: dir_context.clone(),
             grammar_registry,
             theme,
             ansi_background: None,
@@ -663,31 +684,23 @@ impl Editor {
             panel_ids: HashMap::new(),
             search_history: {
                 // Load search history from disk if available
-                match crate::input::input_history::get_search_history_path() {
-                    Ok(path) => crate::input::input_history::InputHistory::load_from_file(&path)
-                        .unwrap_or_else(|e| {
-                            tracing::warn!("Failed to load search history: {}", e);
-                            crate::input::input_history::InputHistory::new()
-                        }),
-                    Err(e) => {
-                        tracing::warn!("Could not determine search history path: {}", e);
+                let path = dir_context.search_history_path();
+                crate::input::input_history::InputHistory::load_from_file(&path).unwrap_or_else(
+                    |e| {
+                        tracing::warn!("Failed to load search history: {}", e);
                         crate::input::input_history::InputHistory::new()
-                    }
-                }
+                    },
+                )
             },
             replace_history: {
                 // Load replace history from disk if available
-                match crate::input::input_history::get_replace_history_path() {
-                    Ok(path) => crate::input::input_history::InputHistory::load_from_file(&path)
-                        .unwrap_or_else(|e| {
-                            tracing::warn!("Failed to load replace history: {}", e);
-                            crate::input::input_history::InputHistory::new()
-                        }),
-                    Err(e) => {
-                        tracing::warn!("Could not determine replace history path: {}", e);
+                let path = dir_context.replace_history_path();
+                crate::input::input_history::InputHistory::load_from_file(&path).unwrap_or_else(
+                    |e| {
+                        tracing::warn!("Failed to load replace history: {}", e);
                         crate::input::input_history::InputHistory::new()
-                    }
-                }
+                    },
+                )
             },
             lsp_progress: std::collections::HashMap::new(),
             lsp_server_statuses: std::collections::HashMap::new(),
@@ -721,10 +734,7 @@ impl Editor {
                     auto_save_interval_secs,
                     ..RecoveryConfig::default()
                 };
-                RecoveryService::with_config(recovery_config).unwrap_or_else(|e| {
-                    tracing::warn!("Failed to initialize recovery service: {}", e);
-                    RecoveryService::default()
-                })
+                RecoveryService::with_config_and_dir(recovery_config, dir_context.recovery_dir())
             },
             last_auto_save: std::time::Instant::now(),
             active_custom_contexts: HashSet::new(),
@@ -1961,22 +1971,13 @@ impl Editor {
 
     /// Dump the current configuration to the user's config file
     pub fn dump_config(&mut self) {
-        // Get the config directory path
-        let config_dir = match dirs::config_dir() {
-            Some(dir) => dir.join("fresh"),
-            None => {
-                self.set_status_message("Error: Could not determine config directory".to_string());
-                return;
-            }
-        };
-
         // Create the config directory if it doesn't exist
-        if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        if let Err(e) = std::fs::create_dir_all(&self.dir_context.config_dir) {
             self.set_status_message(format!("Error creating config directory: {}", e));
             return;
         }
 
-        let config_path = config_dir.join("config.json");
+        let config_path = self.dir_context.config_path();
 
         // Save the config
         match self.config.save_to_file(&config_path) {
@@ -6622,11 +6623,20 @@ fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    /// Create a test DirectoryContext with temp directories
+    fn test_dir_context() -> (DirectoryContext, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let dir_context = DirectoryContext::for_testing(temp_dir.path());
+        (dir_context, temp_dir)
+    }
 
     #[test]
     fn test_editor_new() {
         let config = Config::default();
-        let editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         assert_eq!(editor.buffers.len(), 1);
         assert!(!editor.should_quit());
@@ -6635,7 +6645,8 @@ mod tests {
     #[test]
     fn test_new_buffer() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         let id = editor.new_buffer();
         assert_eq!(editor.buffers.len(), 2);
@@ -6646,7 +6657,8 @@ mod tests {
     #[ignore]
     fn test_clipboard() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Manually set clipboard (using internal to avoid system clipboard in tests)
         editor.clipboard.set_internal("test".to_string());
@@ -6661,7 +6673,8 @@ mod tests {
     #[test]
     fn test_action_to_events_insert_char() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         let events = editor.action_to_events(Action::InsertChar('a'));
         assert!(events.is_some());
@@ -6681,7 +6694,8 @@ mod tests {
     #[test]
     fn test_action_to_events_move_right() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -6714,7 +6728,8 @@ mod tests {
     #[test]
     fn test_action_to_events_move_up_down() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert multi-line text
         let state = editor.active_state_mut();
@@ -6752,7 +6767,8 @@ mod tests {
     #[test]
     fn test_action_to_events_insert_newline() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         let events = editor.action_to_events(Action::InsertNewline);
         assert!(events.is_some());
@@ -6771,7 +6787,8 @@ mod tests {
     #[test]
     fn test_action_to_events_unimplemented() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // These actions should return None (not yet implemented)
         assert!(editor.action_to_events(Action::Save).is_none());
@@ -6782,7 +6799,8 @@ mod tests {
     #[test]
     fn test_action_to_events_delete_backward() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -6814,7 +6832,8 @@ mod tests {
     #[test]
     fn test_action_to_events_delete_forward() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -6857,7 +6876,8 @@ mod tests {
     #[test]
     fn test_action_to_events_select_right() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -6900,7 +6920,8 @@ mod tests {
     #[test]
     fn test_action_to_events_select_all() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert some text first
         let state = editor.active_state_mut();
@@ -6932,7 +6953,8 @@ mod tests {
     #[test]
     fn test_action_to_events_document_nav() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert multi-line text
         let state = editor.active_state_mut();
@@ -6970,7 +6992,8 @@ mod tests {
         use crate::model::event::CursorId;
 
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert some text first to have positions to place cursors
         {
@@ -7035,7 +7058,8 @@ mod tests {
     #[test]
     fn test_action_to_events_scroll() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Test ScrollUp
         let events = editor.action_to_events(Action::ScrollUp);
@@ -7065,7 +7089,8 @@ mod tests {
     #[test]
     fn test_action_to_events_none() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // None action should return None
         let events = editor.action_to_events(Action::None);
@@ -7242,7 +7267,8 @@ mod tests {
     #[test]
     fn test_goto_matching_bracket_forward() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert text with brackets
         let state = editor.active_state_mut();
@@ -7278,7 +7304,8 @@ mod tests {
     #[test]
     fn test_goto_matching_bracket_backward() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert text with brackets
         let state = editor.active_state_mut();
@@ -7309,7 +7336,8 @@ mod tests {
     #[test]
     fn test_goto_matching_bracket_nested() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert text with nested brackets
         let state = editor.active_state_mut();
@@ -7340,7 +7368,8 @@ mod tests {
     #[test]
     fn test_search_case_sensitive() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert text
         let state = editor.active_state_mut();
@@ -7380,7 +7409,8 @@ mod tests {
     #[test]
     fn test_search_whole_word() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert text
         let state = editor.active_state_mut();
@@ -7419,7 +7449,8 @@ mod tests {
     #[test]
     fn test_bookmarks() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Insert text
         let state = editor.active_state_mut();
@@ -7606,7 +7637,8 @@ mod tests {
         use crate::model::buffer::Buffer;
 
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Set buffer content: "fn foo(val: i32) {\n    val + 1\n}\n"
         // Line 0: positions 0-19 (includes newline)
@@ -7745,7 +7777,8 @@ mod tests {
         use crate::model::buffer::Buffer;
 
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Set buffer content: "fn foo(val: i32) {\n    val + 1\n}\n"
         // Line 0: positions 0-19 (includes newline)
@@ -7839,7 +7872,8 @@ mod tests {
         use crate::model::buffer::Buffer;
 
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
 
         // Initial content: "fn foo(val: i32) {\n    val + 1\n}\n"
         let initial = "fn foo(val: i32) {\n    val + 1\n}\n";
@@ -8007,7 +8041,8 @@ mod tests {
     #[test]
     fn test_ensure_active_tab_visible_static_offset() {
         let config = Config::default();
-        let mut editor = Editor::new(config, 80, 24).unwrap();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(config, 80, 24, dir_context).unwrap();
         let split_id = editor.split_manager.active_split();
 
         // Create three buffers with long names to force scrolling.

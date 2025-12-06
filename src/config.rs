@@ -1225,6 +1225,120 @@ impl std::fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
+/// Directory paths for editor state and configuration
+///
+/// This struct holds all directory paths that the editor needs.
+/// Only the top-level `main` function should use `dirs::*` to construct this;
+/// all other code should receive it by construction/parameter passing.
+///
+/// This design ensures:
+/// - Tests can use isolated temp directories
+/// - Parallel tests don't interfere with each other
+/// - No hidden global state dependencies
+#[derive(Debug, Clone)]
+pub struct DirectoryContext {
+    /// Data directory for persistent state (recovery, sessions, history)
+    /// e.g., ~/.local/share/fresh on Linux, ~/Library/Application Support/fresh on macOS
+    pub data_dir: std::path::PathBuf,
+
+    /// Config directory for user configuration
+    /// e.g., ~/.config/fresh on Linux, ~/Library/Application Support/fresh on macOS
+    pub config_dir: std::path::PathBuf,
+
+    /// User's home directory (for file open dialog shortcuts)
+    pub home_dir: Option<std::path::PathBuf>,
+
+    /// User's documents directory (for file open dialog shortcuts)
+    pub documents_dir: Option<std::path::PathBuf>,
+
+    /// User's downloads directory (for file open dialog shortcuts)
+    pub downloads_dir: Option<std::path::PathBuf>,
+}
+
+impl DirectoryContext {
+    /// Create a DirectoryContext from the system directories
+    /// This should ONLY be called from main()
+    pub fn from_system() -> std::io::Result<Self> {
+        let data_dir = dirs::data_dir()
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Could not determine data directory",
+                )
+            })?
+            .join("fresh");
+
+        let config_dir = dirs::config_dir()
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Could not determine config directory",
+                )
+            })?
+            .join("fresh");
+
+        Ok(Self {
+            data_dir,
+            config_dir,
+            home_dir: dirs::home_dir(),
+            documents_dir: dirs::document_dir(),
+            downloads_dir: dirs::download_dir(),
+        })
+    }
+
+    /// Create a DirectoryContext for testing with a temp directory
+    /// All paths point to subdirectories within the provided temp_dir
+    pub fn for_testing(temp_dir: &std::path::Path) -> Self {
+        Self {
+            data_dir: temp_dir.join("data"),
+            config_dir: temp_dir.join("config"),
+            home_dir: Some(temp_dir.join("home")),
+            documents_dir: Some(temp_dir.join("documents")),
+            downloads_dir: Some(temp_dir.join("downloads")),
+        }
+    }
+
+    /// Get the recovery directory path
+    pub fn recovery_dir(&self) -> std::path::PathBuf {
+        self.data_dir.join("recovery")
+    }
+
+    /// Get the sessions directory path
+    pub fn sessions_dir(&self) -> std::path::PathBuf {
+        self.data_dir.join("sessions")
+    }
+
+    /// Get the search history file path
+    pub fn search_history_path(&self) -> std::path::PathBuf {
+        self.data_dir.join("search_history.json")
+    }
+
+    /// Get the replace history file path
+    pub fn replace_history_path(&self) -> std::path::PathBuf {
+        self.data_dir.join("replace_history.json")
+    }
+
+    /// Get the config file path
+    pub fn config_path(&self) -> std::path::PathBuf {
+        self.config_dir.join("config.json")
+    }
+
+    /// Get the themes directory path
+    pub fn themes_dir(&self) -> std::path::PathBuf {
+        self.config_dir.join("themes")
+    }
+
+    /// Get the grammars directory path
+    pub fn grammars_dir(&self) -> std::path::PathBuf {
+        self.config_dir.join("grammars")
+    }
+
+    /// Get the plugins directory path
+    pub fn plugins_dir(&self) -> std::path::PathBuf {
+        self.config_dir.join("plugins")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -10,7 +10,8 @@ use crossterm::{
     ExecutableCommand,
 };
 use fresh::{
-    app::script_control::ScriptControlMode, app::Editor, config, services::signal_handler,
+    app::script_control::ScriptControlMode, app::Editor, config, config::DirectoryContext,
+    services::signal_handler,
 };
 use ratatui::Terminal;
 use std::{
@@ -282,11 +283,14 @@ fn main() -> io::Result<()> {
         (None, None, false)
     };
 
+    // Get directory context from system (data dir, config dir, etc.)
+    let dir_context = DirectoryContext::from_system()?;
+
     // Create editor with actual terminal size and working directory
     let mut editor = if args.no_plugins {
-        Editor::with_plugins_disabled(config, size.width, size.height, working_dir)?
+        Editor::with_plugins_disabled(config, size.width, size.height, working_dir, dir_context)?
     } else {
-        Editor::with_working_dir(config, size.width, size.height, working_dir)?
+        Editor::with_working_dir(config, size.width, size.height, working_dir, dir_context)?
     };
 
     // Enable event log streaming if requested
@@ -375,6 +379,9 @@ fn run_script_control_mode(args: &Args) -> io::Result<()> {
         .as_ref()
         .map(|p| parse_file_location(p.to_string_lossy().as_ref()));
 
+    // Get directory context from system
+    let dir_context = DirectoryContext::from_system()?;
+
     // Create script control mode instance
     let mut control = if let Some(ref loc) = file_location {
         if loc.path.is_dir() {
@@ -382,9 +389,11 @@ fn run_script_control_mode(args: &Args) -> io::Result<()> {
                 args.script_width,
                 args.script_height,
                 loc.path.clone(),
+                dir_context,
             )?
         } else {
-            let mut ctrl = ScriptControlMode::new(args.script_width, args.script_height)?;
+            let mut ctrl =
+                ScriptControlMode::new(args.script_width, args.script_height, dir_context)?;
             // Open the file if provided
             ctrl.open_file(&loc.path)?;
             // Navigate to line:col if specified
@@ -394,7 +403,7 @@ fn run_script_control_mode(args: &Args) -> io::Result<()> {
             ctrl
         }
     } else {
-        ScriptControlMode::new(args.script_width, args.script_height)?
+        ScriptControlMode::new(args.script_width, args.script_height, dir_context)?
     };
 
     control.run()

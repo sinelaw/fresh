@@ -748,8 +748,11 @@ fn test_large_file_auto_save_creates_small_recovery_file() {
     let saved = harness.editor_mut().auto_save_dirty_buffers().unwrap();
     assert!(saved > 0, "Should have saved at least one buffer");
 
-    // Check the recovery file size using the default storage
-    let storage = RecoveryStorage::new().unwrap();
+    // Check the recovery file size using the harness's recovery directory
+    let recovery_dir = harness
+        .recovery_dir()
+        .expect("harness should have recovery dir");
+    let storage = RecoveryStorage::with_dir(recovery_dir);
     let entries = storage.list_entries().unwrap();
 
     // Find our file's recovery entry
@@ -886,12 +889,18 @@ fn test_recovery_after_save_with_size_change() {
     let saved = harness.editor_mut().auto_save_dirty_buffers().unwrap();
     assert!(saved > 0, "Should have saved recovery for dirty buffer");
 
+    // Get recovery directory and take temp dir before dropping harness
+    let recovery_dir = harness
+        .recovery_dir()
+        .expect("harness should have recovery dir");
+    let _harness_temp = harness.take_temp_dir(); // Keep alive to prevent cleanup
+
     // Now simulate restart and recovery
     // The recovery should succeed because original_size should match current file
     drop(harness);
 
-    // Manually trigger recovery for this file
-    let storage = RecoveryStorage::new().unwrap();
+    // Manually trigger recovery for this file using harness's recovery directory
+    let storage = RecoveryStorage::with_dir(recovery_dir);
     let entries = storage.list_entries().unwrap();
 
     let our_entry = entries.iter().find(|e| {
@@ -1002,10 +1011,16 @@ fn test_recovery_insert_at_end_of_large_file() {
     let saved = harness.editor_mut().auto_save_dirty_buffers().unwrap();
     assert!(saved > 0, "Should have saved recovery");
 
+    // Get recovery directory and take temp dir before dropping harness
+    let recovery_dir = harness
+        .recovery_dir()
+        .expect("harness should have recovery dir");
+    let _harness_temp = harness.take_temp_dir(); // Keep alive to prevent cleanup
+
     // Now simulate restart and recovery - this is where the crash happens
     drop(harness);
 
-    let storage = RecoveryStorage::new().unwrap();
+    let storage = RecoveryStorage::with_dir(recovery_dir);
     let entries = storage.list_entries().unwrap();
 
     let our_entry = entries.iter().find(|e| {

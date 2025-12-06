@@ -3118,22 +3118,26 @@ impl Editor {
     /// Save search and replace histories to disk
     /// Called on shutdown to persist history across sessions
     pub fn save_histories(&self) {
+        // Ensure data directory exists
+        if let Err(e) = std::fs::create_dir_all(&self.dir_context.data_dir) {
+            tracing::warn!("Failed to create data directory: {}", e);
+            return;
+        }
+
         // Save search history
-        if let Ok(path) = crate::input::input_history::get_search_history_path() {
-            if let Err(e) = self.search_history.save_to_file(&path) {
-                tracing::warn!("Failed to save search history: {}", e);
-            } else {
-                tracing::debug!("Saved search history to {:?}", path);
-            }
+        let search_path = self.dir_context.search_history_path();
+        if let Err(e) = self.search_history.save_to_file(&search_path) {
+            tracing::warn!("Failed to save search history: {}", e);
+        } else {
+            tracing::debug!("Saved search history to {:?}", search_path);
         }
 
         // Save replace history
-        if let Ok(path) = crate::input::input_history::get_replace_history_path() {
-            if let Err(e) = self.replace_history.save_to_file(&path) {
-                tracing::warn!("Failed to save replace history: {}", e);
-            } else {
-                tracing::debug!("Saved replace history to {:?}", path);
-            }
+        let replace_path = self.dir_context.replace_history_path();
+        if let Err(e) = self.replace_history.save_to_file(&replace_path) {
+            tracing::warn!("Failed to save replace history: {}", e);
+        } else {
+            tracing::debug!("Saved replace history to {:?}", replace_path);
         }
     }
 

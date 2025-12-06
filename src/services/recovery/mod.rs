@@ -60,7 +60,7 @@ pub use types::{
 
 use std::collections::HashMap;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// Configuration for the recovery service
@@ -119,6 +119,27 @@ impl RecoveryService {
             last_save_times: HashMap::new(),
             session_started: false,
         })
+    }
+
+    /// Create a new recovery service with a custom storage directory
+    /// This is useful for testing with isolated temporary directories
+    pub fn with_storage_dir(storage_dir: PathBuf) -> Self {
+        Self {
+            storage: RecoveryStorage::with_dir(storage_dir),
+            config: RecoveryConfig::default(),
+            last_save_times: HashMap::new(),
+            session_started: false,
+        }
+    }
+
+    /// Create a new recovery service with custom config and storage directory
+    pub fn with_config_and_dir(config: RecoveryConfig, storage_dir: PathBuf) -> Self {
+        Self {
+            storage: RecoveryStorage::with_dir(storage_dir),
+            config,
+            last_save_times: HashMap::new(),
+            session_started: false,
+        }
     }
 
     /// Check if recovery is enabled

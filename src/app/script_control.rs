@@ -5,7 +5,10 @@
 //! with the editor programmatically and allows converting interactions to scriptable tests.
 
 use super::Editor;
-use crate::{config::Config, model::control_event::EventBroadcaster};
+use crate::{
+    config::{Config, DirectoryContext},
+    model::control_event::EventBroadcaster,
+};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{backend::TestBackend, Terminal};
 use serde::{Deserialize, Serialize};
@@ -256,11 +259,11 @@ pub struct ScriptControlMode {
 
 impl ScriptControlMode {
     /// Create a new script control mode instance
-    pub fn new(width: u16, height: u16) -> io::Result<Self> {
+    pub fn new(width: u16, height: u16, dir_context: DirectoryContext) -> io::Result<Self> {
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
         let config = Config::default();
-        let editor = Editor::new(config, width, height)?;
+        let editor = Editor::new(config, width, height, dir_context)?;
 
         Ok(Self {
             editor,
@@ -271,11 +274,17 @@ impl ScriptControlMode {
     }
 
     /// Create with a specific working directory
-    pub fn with_working_dir(width: u16, height: u16, working_dir: PathBuf) -> io::Result<Self> {
+    pub fn with_working_dir(
+        width: u16,
+        height: u16,
+        working_dir: PathBuf,
+        dir_context: DirectoryContext,
+    ) -> io::Result<Self> {
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
         let config = Config::default();
-        let editor = Editor::with_working_dir(config, width, height, Some(working_dir))?;
+        let editor =
+            Editor::with_working_dir(config, width, height, Some(working_dir), dir_context)?;
 
         Ok(Self {
             editor,

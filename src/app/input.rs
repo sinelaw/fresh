@@ -3666,22 +3666,14 @@ impl Editor {
 
     /// Save the current theme setting to the user's config file
     fn save_theme_to_config(&mut self) {
-        // Find the config path
-        let config_dir = if let Some(config) = dirs::config_dir() {
-            config.join("fresh")
-        } else {
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-        };
-
-        let config_path = config_dir.join("config.json");
-
         // Create the directory if it doesn't exist
-        if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        if let Err(e) = std::fs::create_dir_all(&self.dir_context.config_dir) {
             tracing::warn!("Failed to create config directory: {}", e);
             return;
         }
 
         // Save the config
+        let config_path = self.dir_context.config_path();
         if let Err(e) = self.config.save_to_file(&config_path) {
             tracing::warn!("Failed to save theme to config: {}", e);
         }
