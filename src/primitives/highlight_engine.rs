@@ -1,14 +1,20 @@
 //! Unified highlighting engine
 //!
 //! This module provides a unified abstraction over different highlighting backends:
-//! - Tree-sitter (built-in languages)
-//! - TextMate grammars (user-installed or syntect built-ins)
+//! - TextMate grammars via syntect (default for highlighting)
+//! - Tree-sitter (available via explicit preference, also used for non-highlighting features)
 //!
-//! # Backend Selection Priority
-//! 1. Tree-sitter (if built-in support exists) - faster, more accurate
-//! 2. User TextMate grammar (from ~/.config/fresh/grammars/)
-//! 3. Built-in syntect grammars
-//! 4. No highlighting
+//! # Backend Selection
+//! By default, syntect/TextMate is used for syntax highlighting because it provides
+//! broader language coverage. Tree-sitter language detection is still performed
+//! to support non-highlighting features like auto-indentation and semantic highlighting.
+//!
+//! # Non-Highlighting Features
+//! Even when using TextMate for highlighting, tree-sitter `Language` is detected
+//! and available via `.language()` for:
+//! - Auto-indentation (via IndentCalculator)
+//! - Semantic highlighting (variable scope tracking)
+//! - Other syntax-aware features
 
 use crate::model::buffer::Buffer;
 use crate::primitives::grammar_registry::GrammarRegistry;
@@ -22,12 +28,13 @@ use syntect::parsing::SyntaxSet;
 /// Preference for which highlighting backend to use
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HighlighterPreference {
-    /// Use tree-sitter if available, fall back to TextMate
+    /// Use TextMate/syntect for highlighting (default)
+    /// Tree-sitter language is still detected for other features (indentation, semantic highlighting)
     #[default]
     Auto,
-    /// Force tree-sitter only (no highlighting if unavailable)
+    /// Force tree-sitter for highlighting (useful for testing/comparison)
     TreeSitter,
-    /// Force TextMate grammar (skip tree-sitter even if available)
+    /// Explicitly use TextMate grammar (same as Auto)
     TextMate,
 }
 
@@ -50,6 +57,9 @@ pub struct TextMateEngine {
     syntax_index: usize,
     cache: Option<TextMateCache>,
     last_buffer_len: usize,
+    /// Tree-sitter language for non-highlighting features (indentation, semantic highlighting)
+    /// Even when using syntect for highlighting, we track the language for other features
+    ts_language: Option<Language>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,7 +85,28 @@ impl TextMateEngine {
             syntax_index,
             cache: None,
             last_buffer_len: 0,
+            ts_language: None,
         }
+    }
+
+    /// Create a new TextMate engine with a tree-sitter language for non-highlighting features
+    pub fn with_language(
+        syntax_set: Arc<SyntaxSet>,
+        syntax_index: usize,
+        ts_language: Option<Language>,
+    ) -> Self {
+        Self {
+            syntax_set,
+            syntax_index,
+            cache: None,
+            last_buffer_len: 0,
+            ts_language,
+        }
+    }
+
+    /// Get the tree-sitter language (for indentation, semantic highlighting, etc.)
+    pub fn language(&self) -> Option<&Language> {
+        self.ts_language.as_ref()
     }
 
     /// Highlight the visible viewport range
@@ -258,12 +289,10 @@ impl TextMateEngine {
 }
 
 impl HighlightEngine {
-    /// Create a highlighting engine for a file, choosing the best available backend
+    /// Create a highlighting engine for a file
     ///
-    /// Priority:
-    /// 1. Tree-sitter (if built-in support exists)
-    /// 2. TextMate grammar (from registry)
-    /// 3. No highlighting
+    /// Always uses syntect/TextMate for highlighting, but detects tree-sitter
+    /// language for other features (indentation, semantic highlighting).
     pub fn for_file(path: &Path, registry: &GrammarRegistry) -> Self {
         Self::for_file_with_preference(path, registry, HighlighterPreference::Auto)
     }
@@ -275,15 +304,9 @@ impl HighlightEngine {
         preference: HighlighterPreference,
     ) -> Self {
         match preference {
-            HighlighterPreference::Auto => {
-                // Try tree-sitter first
-                if let Some(lang) = Language::from_path(path) {
-                    if let Ok(highlighter) = Highlighter::new(lang) {
-                        return Self::TreeSitter(highlighter);
-                    }
-                }
-
-                // Fall back to TextMate
+            // Auto now defaults to TextMate for highlighting (syntect has broader coverage)
+            // but still detects tree-sitter language for indentation/semantic features
+            HighlighterPreference::Auto | HighlighterPreference::TextMate => {
                 Self::textmate_for_file(path, registry)
             }
             HighlighterPreference::TreeSitter => {
@@ -294,13 +317,15 @@ impl HighlightEngine {
                 }
                 Self::None
             }
-            HighlighterPreference::TextMate => Self::textmate_for_file(path, registry),
         }
     }
 
     /// Create a TextMate engine for a file
     fn textmate_for_file(path: &Path, registry: &GrammarRegistry) -> Self {
         let syntax_set = registry.syntax_set_arc();
+
+        // Detect tree-sitter language for non-highlighting features
+        let ts_language = Language::from_path(path);
 
         // Find syntax by file extension
         if let Some(syntax) = registry.find_syntax_for_file(path) {
@@ -310,7 +335,11 @@ impl HighlightEngine {
                 .iter()
                 .position(|s| s.name == syntax.name)
             {
-                return Self::TextMate(TextMateEngine::new(syntax_set, index));
+                return Self::TextMate(TextMateEngine::with_language(
+                    syntax_set,
+                    index,
+                    ts_language,
+                ));
             }
         }
 
@@ -375,12 +404,12 @@ impl HighlightEngine {
         }
     }
 
-    /// Get the tree-sitter Language if this is a tree-sitter highlighter
-    /// Returns None for TextMate or no highlighting
+    /// Get the tree-sitter Language for non-highlighting features
+    /// Returns the language even when using TextMate for highlighting
     pub fn language(&self) -> Option<&Language> {
         match self {
             Self::TreeSitter(h) => Some(h.language()),
-            Self::TextMate(_) => None,
+            Self::TextMate(h) => h.language(),
             Self::None => None,
         }
     }
@@ -410,34 +439,35 @@ mod tests {
     }
 
     #[test]
-    fn test_tree_sitter_backend_selection() {
+    fn test_textmate_backend_selection() {
         let registry = GrammarRegistry::load();
 
-        // Rust should use tree-sitter
+        // All languages now use TextMate for highlighting by default
         let engine = HighlightEngine::for_file(Path::new("test.rs"), &registry);
-        assert_eq!(engine.backend_name(), "tree-sitter");
+        assert_eq!(engine.backend_name(), "textmate");
+        // But tree-sitter language should still be detected
+        assert!(engine.language().is_some());
 
-        // Python should use tree-sitter
         let engine = HighlightEngine::for_file(Path::new("test.py"), &registry);
-        assert_eq!(engine.backend_name(), "tree-sitter");
+        assert_eq!(engine.backend_name(), "textmate");
+        assert!(engine.language().is_some());
 
-        // JavaScript should use tree-sitter
         let engine = HighlightEngine::for_file(Path::new("test.js"), &registry);
-        assert_eq!(engine.backend_name(), "tree-sitter");
+        assert_eq!(engine.backend_name(), "textmate");
+        assert!(engine.language().is_some());
     }
 
     #[test]
-    fn test_textmate_fallback() {
+    fn test_tree_sitter_explicit_preference() {
         let registry = GrammarRegistry::load();
 
-        // Force TextMate for a tree-sitter supported language
+        // Force tree-sitter for highlighting
         let engine = HighlightEngine::for_file_with_preference(
             Path::new("test.rs"),
             &registry,
-            HighlighterPreference::TextMate,
+            HighlighterPreference::TreeSitter,
         );
-        // Should fall back to TextMate (syntect has Rust grammar)
-        assert_eq!(engine.backend_name(), "textmate");
+        assert_eq!(engine.backend_name(), "tree-sitter");
     }
 
     #[test]
