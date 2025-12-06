@@ -356,13 +356,28 @@ fn is_process_running(pid: u32) -> bool {
     errno == libc::EPERM
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn is_process_running(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle == 0 {
+            return false;
+        }
+        let mut exit_code: u32 = 0;
+        let result = GetExitCodeProcess(handle, &mut exit_code);
+        CloseHandle(handle);
+        result != 0 && exit_code == STILL_ACTIVE as u32
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn is_process_running(_pid: u32) -> bool {
-    // On non-Unix platforms, we can't easily check if a process is running
-    // without platform-specific APIs. For safety in recovery scenarios,
-    // we assume the process is not running (which will prompt recovery).
-    // This is the safer default - it may offer unnecessary recovery prompts
-    // but won't lose data.
+    // On other platforms, assume not running (safer for recovery)
     false
 }
 

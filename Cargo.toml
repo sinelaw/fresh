@@ -77,6 +77,9 @@ insta = { version = "1.44", features = ["yaml"] }
 vt100 = "0.15"  # Virtual terminal emulator for testing real ANSI output
 ctor = "0.6.1"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
 [build-dependencies]
 serde_json = "1.0"
 
