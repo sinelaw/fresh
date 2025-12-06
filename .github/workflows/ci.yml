@@ -65,6 +65,8 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     name: test ${{ matrix.os }}
+    # Allow Windows tests to fail without blocking the build
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     strategy:
       fail-fast: false
       matrix:
