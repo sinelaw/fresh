@@ -1448,24 +1448,21 @@ globalThis.open_config_editor = async function(): Promise<void> {
   const entries = buildDisplayEntries();
   state.cachedContent = entries.map(e => e.text).join("");
 
-  // Create virtual buffer
-  const result = await editor.createVirtualBufferInSplit({
+  // Create virtual buffer in the current split as a new tab
+  const bufferId = await editor.createVirtualBuffer({
     name: "*Config Editor*",
     mode: "config-editor",
     read_only: true,
     entries: entries,
-    ratio: 0.6,
-    direction: "vertical",
-    panel_id: "config-editor",
     show_line_numbers: false,
     show_cursors: true,
     editing_disabled: true,
   });
 
-  if (result.buffer_id !== null) {
+  if (bufferId !== null) {
     state.isOpen = true;
-    state.bufferId = result.buffer_id;
-    state.splitId = result.split_id ?? null;
+    state.bufferId = bufferId;
+    state.splitId = state.sourceSplitId;  // We're using the same split
 
     // Activate the config-editor context to enable context-specific commands
     editor.setContext("config-editor", true);
@@ -1492,14 +1489,9 @@ globalThis.config_editor_close = function(): void {
   // Deactivate the config-editor context to hide context-specific commands
   editor.setContext("config-editor", false);
 
-  // Close split
-  if (state.splitId !== null) {
-    editor.closeSplit(state.splitId);
-  }
-
-  // Focus source
-  if (state.sourceSplitId !== null) {
-    editor.focusSplit(state.sourceSplitId);
+  // Close the config editor buffer (will auto-switch to previous buffer in split)
+  if (state.bufferId !== null) {
+    editor.closeBuffer(state.bufferId);
   }
 
   // Reset state
