@@ -1166,6 +1166,16 @@ fn test_buffer_modified_newline_insert_only_marks_affected_lines() {
 /// This tests that the diff compares actual content, not just tree structure
 #[test]
 fn test_buffer_modified_clears_after_manual_delete_restores_content() {
+    // Install signal handler to dump thread backtraces on timeout/SIGINT
+    fresh::services::signal_handler::install_signal_handlers();
+
+    // Initialize tracing for debugging
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer().with_writer(std::io::stderr))
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("fresh=debug")))
+        .try_init();
+
     let repo = GitTestRepo::new();
 
     // Create and commit a file

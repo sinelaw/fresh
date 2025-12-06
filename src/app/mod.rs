@@ -2294,6 +2294,11 @@ impl Editor {
 
         // Fire the hook to TypeScript plugins
         if let Some((hook_name, args)) = hook_args {
+            // Update the full plugin state snapshot BEFORE firing the hook
+            // This ensures the plugin can read up-to-date state (diff, cursors, viewport, etc.)
+            // Without this, there's a race condition where the async hook might read stale data
+            self.update_plugin_state_snapshot();
+
             if let Some(ref ts_manager) = self.ts_plugin_manager {
                 ts_manager.run_hook(hook_name, args);
             }
