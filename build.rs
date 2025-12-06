@@ -706,7 +706,7 @@ export {};
     fs::write("plugins/lib/fresh.d.ts", &output)?;
 
     // Generate markdown documentation
-    let markdown = generate_markdown_docs(&ops, &structs, &categories);
+    let markdown = generate_markdown_docs(&structs, &categories);
     fs::write("docs/plugin-api.md", markdown)?;
 
     println!(
@@ -720,7 +720,6 @@ export {};
 
 /// Generate markdown documentation from ops and structs
 fn generate_markdown_docs(
-    ops: &[OpInfo],
     structs: &[StructInfo],
     categories: &HashMap<&str, Vec<&OpInfo>>,
 ) -> String {
