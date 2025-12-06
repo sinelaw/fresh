@@ -2795,9 +2795,12 @@ impl TypeScriptRuntime {
         command_sender: std::sync::mpsc::Sender<PluginCommand>,
         pending_responses: PendingResponses,
     ) -> Result<Self> {
+        tracing::debug!("TypeScriptRuntime::with_state_and_responses: initializing V8 platform");
         // Initialize V8 platform before creating JsRuntime
         crate::v8_init::init();
+        tracing::debug!("TypeScriptRuntime::with_state_and_responses: V8 platform initialized");
 
+        tracing::debug!("TypeScriptRuntime::with_state_and_responses: creating runtime state");
         let event_handlers = Rc::new(RefCell::new(HashMap::new()));
         let runtime_state = Rc::new(RefCell::new(TsRuntimeState {
             state_snapshot,
@@ -2809,11 +2812,19 @@ impl TypeScriptRuntime {
             next_process_id: Rc::new(RefCell::new(1)),
         }));
 
+        tracing::debug!(
+            "TypeScriptRuntime::with_state_and_responses: creating JsRuntime with deno_core"
+        );
+        let js_runtime_start = std::time::Instant::now();
         let mut js_runtime = JsRuntime::new(RuntimeOptions {
             module_loader: Some(Rc::new(TypeScriptModuleLoader)),
             extensions: vec![fresh_runtime::init()],
             ..Default::default()
         });
+        tracing::debug!(
+            "TypeScriptRuntime::with_state_and_responses: JsRuntime created in {:?}",
+            js_runtime_start.elapsed()
+        );
 
         // Store the runtime state in the op state
         js_runtime.op_state().borrow_mut().put(runtime_state);
@@ -3145,6 +3156,10 @@ impl TypeScriptRuntime {
                 .to_string(),
             )
             .map_err(|e| anyhow!("Failed to initialize editor API: {}", e))?;
+
+        tracing::debug!(
+            "TypeScriptRuntime::with_state_and_responses: bootstrap script executed, runtime ready"
+        );
 
         Ok(Self {
             js_runtime,

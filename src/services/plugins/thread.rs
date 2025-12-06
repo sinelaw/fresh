@@ -145,6 +145,8 @@ pub struct PluginThreadHandle {
 impl PluginThreadHandle {
     /// Create a new plugin thread and return its handle
     pub fn spawn(commands: Arc<RwLock<CommandRegistry>>) -> Result<Self> {
+        tracing::debug!("PluginThreadHandle::spawn: starting plugin thread creation");
+
         // Create channel for plugin commands
         let (command_sender, command_receiver) = std::sync::mpsc::channel();
 
@@ -164,13 +166,18 @@ impl PluginThreadHandle {
         let thread_commands = Arc::clone(&commands);
 
         // Spawn the plugin thread
+        tracing::debug!("PluginThreadHandle::spawn: spawning OS thread for plugin runtime");
         let thread_handle = thread::spawn(move || {
+            tracing::debug!("Plugin thread: OS thread started, creating tokio runtime");
             // Create tokio runtime for the plugin thread
             let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
             {
-                Ok(rt) => rt,
+                Ok(rt) => {
+                    tracing::debug!("Plugin thread: tokio runtime created successfully");
+                    rt
+                }
                 Err(e) => {
                     tracing::error!("Failed to create plugin thread runtime: {}", e);
                     return;
@@ -178,12 +185,16 @@ impl PluginThreadHandle {
             };
 
             // Create TypeScript runtime with state
+            tracing::debug!("Plugin thread: creating TypeScript runtime (V8 initialization)");
             let runtime = match TypeScriptRuntime::with_state_and_responses(
                 Arc::clone(&thread_state_snapshot),
                 command_sender,
                 thread_pending_responses,
             ) {
-                Ok(rt) => rt,
+                Ok(rt) => {
+                    tracing::debug!("Plugin thread: TypeScript runtime created successfully");
+                    rt
+                }
                 Err(e) => {
                     tracing::error!("Failed to create TypeScript runtime: {}", e);
                     return;
@@ -194,16 +205,19 @@ impl PluginThreadHandle {
             let mut plugins: HashMap<String, TsPluginInfo> = HashMap::new();
 
             // Run the event loop with a LocalSet to allow concurrent task execution
+            tracing::debug!("Plugin thread: starting event loop with LocalSet");
             let local = tokio::task::LocalSet::new();
             local.block_on(&rt, async {
                 // Wrap runtime in RefCell for interior mutability during concurrent operations
                 let runtime = Rc::new(RefCell::new(runtime));
+                tracing::debug!("Plugin thread: entering plugin_thread_loop");
                 plugin_thread_loop(runtime, &mut plugins, &thread_commands, request_receiver).await;
             });
 
             tracing::info!("Plugin thread shutting down");
         });
 
+        tracing::debug!("PluginThreadHandle::spawn: OS thread spawned, returning handle");
         tracing::info!("Plugin thread spawned");
 
         Ok(Self {
@@ -640,25 +654,43 @@ async fn load_plugin_internal(
         .to_string();
 
     tracing::info!("Loading TypeScript plugin: {} from {:?}", plugin_name, path);
+    tracing::debug!(
+        "load_plugin_internal: starting module load for plugin '{}'",
+        plugin_name
+    );
 
     // Load and execute the module, passing plugin name for command registration
     let path_str = path
         .to_str()
         .ok_or_else(|| anyhow!("Invalid path encoding"))?;
 
+    let load_start = std::time::Instant::now();
     runtime
         .borrow_mut()
         .load_module_with_source(path_str, &plugin_name)
         .await?;
+    let load_elapsed = load_start.elapsed();
+
+    tracing::debug!(
+        "load_plugin_internal: plugin '{}' loaded successfully in {:?}",
+        plugin_name,
+        load_elapsed
+    );
 
     // Store plugin info
     plugins.insert(
         plugin_name.clone(),
         TsPluginInfo {
-            name: plugin_name,
+            name: plugin_name.clone(),
             path: path.to_path_buf(),
             enabled: true,
         },
+    );
+
+    tracing::debug!(
+        "load_plugin_internal: plugin '{}' registered, total plugins loaded: {}",
+        plugin_name,
+        plugins.len()
     );
 
     Ok(())
@@ -670,6 +702,10 @@ async fn load_plugins_from_dir_internal(
     plugins: &mut HashMap<String, TsPluginInfo>,
     dir: &Path,
 ) -> Vec<String> {
+    tracing::debug!(
+        "load_plugins_from_dir_internal: scanning directory {:?}",
+        dir
+    );
     let mut errors = Vec::new();
 
     if !dir.exists() {
@@ -684,6 +720,10 @@ async fn load_plugins_from_dir_internal(
                 let path = entry.path();
                 let ext = path.extension().and_then(|s| s.to_str());
                 if ext == Some("ts") || ext == Some("js") {
+                    tracing::debug!(
+                        "load_plugins_from_dir_internal: attempting to load {:?}",
+                        path
+                    );
                     if let Err(e) = load_plugin_internal(Rc::clone(&runtime), plugins, &path).await
                     {
                         let err = format!("Failed to load {:?}: {}", path, e);
@@ -692,6 +732,12 @@ async fn load_plugins_from_dir_internal(
                     }
                 }
             }
+
+            tracing::debug!(
+                "load_plugins_from_dir_internal: finished loading from {:?}, {} errors",
+                dir,
+                errors.len()
+            );
         }
         Err(e) => {
             let err = format!("Failed to read plugin directory: {}", e);
