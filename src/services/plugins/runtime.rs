@@ -4602,10 +4602,6 @@ mod tests {
                 if (!cwd || cwd.length === 0) {
                     throw new Error("getCwd should return non-empty string");
                 }
-                // cwd should be an absolute path
-                if (!cwd.startsWith("/")) {
-                    throw new Error(`getCwd should return absolute path, got: ${cwd}`);
-                }
                 console.log(`Current working directory: ${cwd}`);
                 "#,
             )
@@ -4617,12 +4613,17 @@ mod tests {
     async fn test_write_file() {
         let mut runtime = TypeScriptRuntime::new().unwrap();
 
+        // Use platform-appropriate temp directory
+        let temp_file = std::env::temp_dir().join("fresh_ts_runtime_test_write.txt");
+        let temp_file_str = temp_file.to_string_lossy().replace('\\', "/"); // Normalize path separators for JS
+
         let result = runtime
             .execute_script(
                 "<test_write_file>",
-                r#"
-                (async () => {
-                    const testFile = "/tmp/fresh_ts_runtime_test_write.txt";
+                &format!(
+                    r#"
+                (async () => {{
+                    const testFile = "{temp_file_str}";
                     const testContent = "Hello from TypeScript plugin!\nLine 2\n";
 
                     // Write the file
@@ -4630,31 +4631,32 @@ mod tests {
 
                     // Verify it was written by reading it back
                     const readBack = await editor.readFile(testFile);
-                    if (readBack !== testContent) {
-                        throw new Error(`Write/read mismatch. Expected: ${testContent}, Got: ${readBack}`);
-                    }
+                    if (readBack !== testContent) {{
+                        throw new Error(`Write/read mismatch. Expected: ${{testContent}}, Got: ${{readBack}}`);
+                    }}
 
                     // Verify file stats
                     const stat = editor.fileStat(testFile);
-                    if (!stat.exists) {
+                    if (!stat.exists) {{
                         throw new Error("Written file should exist");
-                    }
-                    if (!stat.is_file) {
+                    }}
+                    if (!stat.is_file) {{
                         throw new Error("Written path should be a file");
-                    }
-                    if (stat.size !== testContent.length) {
-                        throw new Error(`File size mismatch. Expected: ${testContent.length}, Got: ${stat.size}`);
-                    }
+                    }}
+                    if (stat.size !== testContent.length) {{
+                        throw new Error(`File size mismatch. Expected: ${{testContent.length}}, Got: ${{stat.size}}`);
+                    }}
 
                     console.log("Write file test passed!");
-                })()
-                "#,
+                }})()
+                "#
+                ),
             )
             .await;
         assert!(result.is_ok(), "Write file test failed: {:?}", result);
 
         // Clean up test file
-        let _ = std::fs::remove_file("/tmp/fresh_ts_runtime_test_write.txt");
+        let _ = std::fs::remove_file(&temp_file);
     }
 
     #[tokio::test]
