@@ -468,6 +468,10 @@ impl TextBuffer {
         let current_bytes = self.piece_tree.total_bytes();
 
         // For small/medium files, compare actual content line by line
+        // TODO: Optimize with two-phase diff algorithm:
+        //   Phase 1: Compare tree structure to find byte ranges where pieces differ
+        //   Phase 2: Only compare content bytes in those differing ranges
+        // This would be O(edit_size) instead of O(file_size) for small edits in large files.
         let max_bytes = saved_bytes.max(current_bytes);
         if max_bytes <= 10 * 1024 * 1024 {
             // 10MB threshold
