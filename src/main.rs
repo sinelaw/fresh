@@ -43,8 +43,8 @@ struct Args {
     config: Option<PathBuf>,
 
     /// Path to log file for editor diagnostics
-    #[arg(long, value_name = "PATH", default_value = "/tmp/editor.log")]
-    log_file: PathBuf,
+    #[arg(long, value_name = "PATH")]
+    log_file: Option<PathBuf>,
 
     /// Enable event logging to the specified file
     #[arg(long, value_name = "LOG_FILE")]
@@ -197,7 +197,10 @@ fn main() -> io::Result<()> {
 
     // Initialize tracing - log to a file to avoid interfering with terminal UI
     // Also create a separate warning log that captures WARN+ and notifies the editor
-    let warning_log_handle = tracing_setup::init_global(&args.log_file);
+    let log_file = args
+        .log_file
+        .unwrap_or_else(|| std::env::temp_dir().join("fresh.log"));
+    let warning_log_handle = tracing_setup::init_global(&log_file);
 
     tracing::info!("Editor starting");
 
