@@ -455,12 +455,14 @@ globalThis.diagnostics_goto = function(): void {
   if (props.length > 0) {
     const location = props[0].location as { file: string; line: number; column: number } | undefined;
     if (location) {
-      // Close panel first, then open file
       const file = location.file;
       const line = location.line;
       const col = location.column;
 
-      globalThis.diagnostics_close();
+      // Focus back on the source split and navigate to the location
+      if (state.sourceSplitId !== null) {
+        editor.focusSplit(state.sourceSplitId);
+      }
       editor.openFile(file, line, col);
       editor.setStatus(`Jumped to ${editor.pathBasename(file)}:${line}`);
       return;
