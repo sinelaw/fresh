@@ -146,6 +146,32 @@ interface CursorInfo {
   selection?: SelectionRange | null;
 }
 
+/** LSP diagnostic position */
+interface TsDiagnosticPosition {
+  line: number;
+  character: number;
+}
+
+/** LSP diagnostic range */
+interface TsDiagnosticRange {
+  start: TsDiagnosticPosition;
+  end: TsDiagnosticPosition;
+}
+
+/** LSP diagnostic item for TypeScript plugins */
+interface TsDiagnostic {
+  /** File URI (e.g., "file:///path/to/file.rs") */
+  uri: string;
+  /** Diagnostic severity: 1=Error, 2=Warning, 3=Info, 4=Hint */
+  severity: number;
+  /** Diagnostic message */
+  message: string;
+  /** Source of the diagnostic (e.g., "rust-analyzer") */
+  source?: string | null;
+  /** Location range in the file */
+  range: TsDiagnosticRange;
+}
+
 /** Viewport information */
 interface ViewportInfo {
   /** Byte offset of the top-left visible position */
@@ -350,6 +376,11 @@ interface EditorAPI {
   isProcessRunning(#[bigint] process_id: number): boolean;
   /** Get diff vs last saved snapshot for a buffer */
   getBufferSavedDiff(buffer_id: number): TsBufferSavedDiff | null;
+  /**
+   * Get all LSP diagnostics across all files
+   * @returns Array of Diagnostic objects with file URI, severity, message, and range
+   */
+  getAllDiagnostics(): TsDiagnostic[];
 
   // === Buffer Info Queries ===
   /**

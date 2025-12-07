@@ -148,6 +148,50 @@ interface CursorInfo {
 | `position` | Byte position of the cursor |
 | `selection` | Selection range if text is selected, null otherwise |
 
+### TsDiagnosticPosition
+
+LSP diagnostic position
+
+```typescript
+interface TsDiagnosticPosition {
+  line: number;
+  character: number;
+}
+```
+
+### TsDiagnosticRange
+
+LSP diagnostic range
+
+```typescript
+interface TsDiagnosticRange {
+  start: TsDiagnosticPosition;
+  end: TsDiagnosticPosition;
+}
+```
+
+### TsDiagnostic
+
+LSP diagnostic item for TypeScript plugins
+
+```typescript
+interface TsDiagnostic {
+  uri: string;
+  severity: number;
+  message: string;
+  source?: string | null;
+  range: TsDiagnosticRange;
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `uri` | File URI (e.g., "file:///path/to/file.rs") |
+| `severity` | Diagnostic severity: 1=Error, 2=Warning, 3=Info, 4=Hint |
+| `message` | Diagnostic message |
+| `source` | Source of the diagnostic (e.g., "rust-analyzer") |
+| `range` | Location range in the file |
+
 ### ViewportInfo
 
 Viewport information
@@ -485,6 +529,14 @@ getBufferSavedDiff(buffer_id: number): TsBufferSavedDiff | null
 | Name | Type | Description |
 |------|------|-------------|
 | `buffer_id` | `number` | - |
+
+#### `getAllDiagnostics`
+
+Get all LSP diagnostics across all files
+
+```typescript
+getAllDiagnostics(): TsDiagnostic[]
+```
 
 ### Buffer Info Queries
 

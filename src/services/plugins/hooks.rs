@@ -83,6 +83,8 @@ pub enum HookArgs {
         cursor_id: CursorId,
         old_position: usize,
         new_position: usize,
+        /// Line number at new position (1-indexed)
+        line: usize,
     },
 
     /// Buffer became active
@@ -90,6 +92,14 @@ pub enum HookArgs {
 
     /// Buffer was deactivated
     BufferDeactivated { buffer_id: BufferId },
+
+    /// LSP diagnostics were updated for a file
+    DiagnosticsUpdated {
+        /// The URI of the file that was updated
+        uri: String,
+        /// Number of diagnostics in the update
+        count: usize,
+    },
 
     /// Before a command/action is executed
     PreCommand { action: Action },
@@ -358,6 +368,12 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<String> {
         HookArgs::BufferDeactivated { buffer_id } => {
             serde_json::json!({ "buffer_id": buffer_id.0 })
         }
+        HookArgs::DiagnosticsUpdated { uri, count } => {
+            serde_json::json!({
+                "uri": uri,
+                "count": count,
+            })
+        }
         HookArgs::BufferClosed { buffer_id } => {
             serde_json::json!({ "buffer_id": buffer_id.0 })
         }
@@ -366,12 +382,14 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<String> {
             cursor_id,
             old_position,
             new_position,
+            line,
         } => {
             serde_json::json!({
                 "buffer_id": buffer_id.0,
                 "cursor_id": cursor_id.0,
                 "old_position": old_position,
                 "new_position": new_position,
+                "line": line,
             })
         }
         HookArgs::BeforeInsert {
@@ -747,6 +765,7 @@ mod tests {
                 cursor_id: CursorId(0),
                 old_position: 0,
                 new_position: 5,
+                line: 1,
             },
             HookArgs::BufferActivated {
                 buffer_id: BufferId(1),

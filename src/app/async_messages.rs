@@ -57,13 +57,15 @@ impl Editor {
 // =============================================================================
 
 impl Editor {
-    /// Handle LSP diagnostics (push model)
-    pub(super) fn handle_lsp_diagnostics(&mut self, uri: String, diagnostics: Vec<Diagnostic>) {
-        tracing::debug!(
-            "Processing {} LSP diagnostics for {}",
-            diagnostics.len(),
-            uri
-        );
+    /// Store and apply diagnostics, emit hook for plugins
+    fn store_and_apply_diagnostics(&mut self, uri: String, diagnostics: Vec<Diagnostic>) {
+        // Store diagnostics for later retrieval by plugins
+        if diagnostics.is_empty() {
+            self.stored_diagnostics.remove(&uri);
+        } else {
+            self.stored_diagnostics
+                .insert(uri.clone(), diagnostics.clone());
+        }
 
         if let Some(buffer_id) = self.apply_diagnostics_to_buffer(&uri, &diagnostics) {
             tracing::info!(
@@ -74,6 +76,25 @@ impl Editor {
         } else {
             tracing::debug!("No buffer found for diagnostic URI: {}", uri);
         }
+
+        // Emit diagnostics_updated hook for plugins
+        if let Some(ref ts_manager) = self.ts_plugin_manager {
+            let hook_args = crate::services::plugins::hooks::HookArgs::DiagnosticsUpdated {
+                uri,
+                count: diagnostics.len(),
+            };
+            ts_manager.run_hook("diagnostics_updated", hook_args);
+        }
+    }
+
+    /// Handle LSP diagnostics (push model)
+    pub(super) fn handle_lsp_diagnostics(&mut self, uri: String, diagnostics: Vec<Diagnostic>) {
+        tracing::debug!(
+            "Processing {} LSP diagnostics for {}",
+            diagnostics.len(),
+            uri
+        );
+        self.store_and_apply_diagnostics(uri, diagnostics);
     }
 
     /// Handle LSP pulled diagnostics (pull model - LSP 3.17+)
@@ -100,20 +121,12 @@ impl Editor {
             result_id
         );
 
-        if let Some(buffer_id) = self.apply_diagnostics_to_buffer(&uri, &diagnostics) {
-            tracing::info!(
-                "Applied {} pulled diagnostics to buffer {:?}",
-                diagnostics.len(),
-                buffer_id
-            );
-        } else {
-            tracing::debug!("No buffer found for pulled diagnostic URI: {}", uri);
-        }
-
         // Store result_id for incremental updates
         if let Some(result_id) = result_id {
-            self.diagnostic_result_ids.insert(uri, result_id);
+            self.diagnostic_result_ids.insert(uri.clone(), result_id);
         }
+
+        self.store_and_apply_diagnostics(uri, diagnostics);
     }
 }
 

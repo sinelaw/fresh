@@ -1504,6 +1504,35 @@ struct TsCursorInfo {
     selection: Option<TsSelectionRange>,
 }
 
+/// LSP diagnostic position
+#[derive(serde::Serialize)]
+struct TsDiagnosticPosition {
+    line: u32,
+    character: u32,
+}
+
+/// LSP diagnostic range
+#[derive(serde::Serialize)]
+struct TsDiagnosticRange {
+    start: TsDiagnosticPosition,
+    end: TsDiagnosticPosition,
+}
+
+/// LSP diagnostic item for TypeScript plugins
+#[derive(serde::Serialize)]
+struct TsDiagnostic {
+    /// File URI (e.g., "file:///path/to/file.rs")
+    uri: String,
+    /// Diagnostic severity: 1=Error, 2=Warning, 3=Info, 4=Hint
+    severity: u8,
+    /// Diagnostic message
+    message: String,
+    /// Source of the diagnostic (e.g., "rust-analyzer")
+    source: Option<String>,
+    /// Location range in the file
+    range: TsDiagnosticRange,
+}
+
 /// Viewport information
 #[derive(serde::Serialize)]
 struct TsViewportInfo {
@@ -1598,6 +1627,48 @@ fn op_fresh_list_buffers(state: &mut OpState) -> Vec<TsBufferInfo> {
                     length: info.length as u32,
                 })
                 .collect();
+        };
+    }
+    Vec::new()
+}
+
+/// Get all LSP diagnostics across all files
+/// @returns Array of Diagnostic objects with file URI, severity, message, and range
+#[op2]
+#[serde]
+fn op_fresh_get_all_diagnostics(state: &mut OpState) -> Vec<TsDiagnostic> {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        if let Ok(snapshot) = runtime_state.state_snapshot.read() {
+            let mut result = Vec::new();
+            for (uri, diagnostics) in &snapshot.diagnostics {
+                for diag in diagnostics {
+                    let severity = match diag.severity {
+                        Some(lsp_types::DiagnosticSeverity::ERROR) => 1,
+                        Some(lsp_types::DiagnosticSeverity::WARNING) => 2,
+                        Some(lsp_types::DiagnosticSeverity::INFORMATION) => 3,
+                        Some(lsp_types::DiagnosticSeverity::HINT) => 4,
+                        _ => 0,
+                    };
+                    result.push(TsDiagnostic {
+                        uri: uri.clone(),
+                        severity,
+                        message: diag.message.clone(),
+                        source: diag.source.clone(),
+                        range: TsDiagnosticRange {
+                            start: TsDiagnosticPosition {
+                                line: diag.range.start.line,
+                                character: diag.range.start.character,
+                            },
+                            end: TsDiagnosticPosition {
+                                line: diag.range.end.line,
+                                character: diag.range.end.character,
+                            },
+                        },
+                    });
+                }
+            }
+            return result;
         };
     }
     Vec::new()
@@ -2732,6 +2803,7 @@ extension!(
         op_fresh_is_process_running,
         op_fresh_get_buffer_info,
         op_fresh_list_buffers,
+        op_fresh_get_all_diagnostics,
         op_fresh_get_primary_cursor,
         op_fresh_get_all_cursors,
         op_fresh_get_viewport,
@@ -3020,6 +3092,9 @@ impl TypeScriptRuntime {
                     },
                     listBuffers() {
                         return core.ops.op_fresh_list_buffers();
+                    },
+                    getAllDiagnostics() {
+                        return core.ops.op_fresh_get_all_diagnostics();
                     },
                     getPrimaryCursor() {
                         return core.ops.op_fresh_get_primary_cursor();
@@ -5033,11 +5108,13 @@ mod tests {
             cursor_id: crate::model::event::CursorId(0),
             old_position: 10,
             new_position: 20,
+            line: 5,
         };
         let json = hook_args_to_json(&args).unwrap();
         assert!(json.contains("\"buffer_id\":1"));
         assert!(json.contains("\"old_position\":10"));
         assert!(json.contains("\"new_position\":20"));
+        assert!(json.contains("\"line\":5"));
 
         let args = HookArgs::EditorInitialized;
         let json = hook_args_to_json(&args).unwrap();

@@ -172,6 +172,9 @@ pub struct EditorStateSnapshot {
     pub clipboard: String,
     /// Editor's working directory (for file operations and spawning processes)
     pub working_dir: PathBuf,
+    /// LSP diagnostics per file URI
+    /// Maps file URI string to Vec of diagnostics for that file
+    pub diagnostics: HashMap<String, Vec<lsp_types::Diagnostic>>,
 }
 
 impl EditorStateSnapshot {
@@ -189,6 +192,7 @@ impl EditorStateSnapshot {
             selected_text: None,
             clipboard: String::new(),
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            diagnostics: HashMap::new(),
         }
     }
 }

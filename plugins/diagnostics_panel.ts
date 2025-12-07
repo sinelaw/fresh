@@ -1,280 +1,543 @@
-/// <reference path="../types/fresh.d.ts" />
+/// <reference path="./lib/fresh.d.ts" />
 
 /**
- * Diagnostics Panel Plugin (TypeScript)
+ * Diagnostics Panel Plugin
  *
- * Full diagnostics panel implementation with virtual buffer split view.
- * Provides LSP-like diagnostics display with severity icons and navigation.
+ * Interactive diagnostics panel showing LSP diagnostics with:
+ * - Real-time updates when diagnostics change
+ * - Filter by current file or show all files
+ * - Cursor navigation with highlighting
+ * - Enter to jump to diagnostic location
  */
 
-// Panel state
-let panelOpen = false;
-let diagnosticsBufferId: number | null = null;
-let sourceSplitId: number | null = null; // The split where source code is displayed
-let currentDiagnostics: DiagnosticItem[] = [];
-let selectedIndex = 0;
+// =============================================================================
+// Types and Interfaces
+// =============================================================================
 
-// Diagnostic item structure
-interface DiagnosticItem {
-  severity: "error" | "warning" | "info" | "hint";
-  message: string;
+interface DiagnosticLocation {
   file: string;
   line: number;
   column: number;
 }
 
-// Severity icons
-const severityIcons: Record<string, string> = {
-  error: "[E]",
-  warning: "[W]",
-  info: "[I]",
-  hint: "[H]",
+interface DiagnosticLineMapping {
+  panelLine: number;  // 1-based line in panel
+  location: DiagnosticLocation;
+}
+
+interface DiagnosticsState {
+  isOpen: boolean;
+  bufferId: number | null;
+  splitId: number | null;
+  sourceBufferId: number | null;
+  showAllFiles: boolean;
+  cachedContent: string;
+  // Maps panel line numbers to diagnostic locations for sync
+  lineMappings: DiagnosticLineMapping[];
+}
+
+// =============================================================================
+// State Management
+// =============================================================================
+
+const state: DiagnosticsState = {
+  isOpen: false,
+  bufferId: null,
+  splitId: null,
+  sourceBufferId: null,
+  showAllFiles: true,
+  cachedContent: "",
+  lineMappings: [],
 };
 
-// Define the diagnostics mode with keybindings
+// =============================================================================
+// Color Definitions
+// =============================================================================
+
+const colors = {
+  error: [255, 100, 100] as [number, number, number],
+  warning: [255, 200, 100] as [number, number, number],
+  info: [100, 200, 255] as [number, number, number],
+  hint: [150, 150, 150] as [number, number, number],
+  file: [180, 180, 255] as [number, number, number],
+  location: [150, 255, 150] as [number, number, number],
+  header: [255, 200, 100] as [number, number, number],
+  selected: [80, 80, 120] as [number, number, number],
+};
+
+// =============================================================================
+// Mode Definition
+// =============================================================================
+
 editor.defineMode(
   "diagnostics-list",
-  null, // no parent mode
+  "normal",
   [
     ["Return", "diagnostics_goto"],
-    ["n", "diagnostics_next"],
-    ["p", "diagnostics_prev"],
-    ["j", "diagnostics_next"],
-    ["k", "diagnostics_prev"],
+    ["Tab", "diagnostics_goto"],
+    ["a", "diagnostics_toggle_all"],
+    ["r", "diagnostics_refresh"],
     ["q", "diagnostics_close"],
     ["Escape", "diagnostics_close"],
   ],
-  true // read-only
+  true
 );
 
-// Format a diagnostic for display
-function formatDiagnostic(item: DiagnosticItem, index: number): string {
-  const icon = severityIcons[item.severity] || "[?]";
-  const marker = index === selectedIndex ? ">" : " ";
-  return `${marker} ${icon} ${item.file}:${item.line}:${item.column} - ${item.message}\n`;
+// =============================================================================
+// Helpers
+// =============================================================================
+
+function severityIcon(severity: number): string {
+  switch (severity) {
+    case 1: return "[E]";
+    case 2: return "[W]";
+    case 3: return "[I]";
+    case 4: return "[H]";
+    default: return "[?]";
+  }
 }
 
-// Build entries for the virtual buffer
+function uriToPath(uri: string): string {
+  if (uri.startsWith("file://")) {
+    return uri.slice(7);
+  }
+  return uri;
+}
+
+function getActiveFileUri(): string | null {
+  const bufferId = state.sourceBufferId ?? editor.getActiveBufferId();
+  const path = editor.getBufferPath(bufferId);
+  if (!path) return null;
+  return "file://" + path;
+}
+
+function entriesToContent(entries: TextPropertyEntry[]): string {
+  return entries.map(e => e.text).join("");
+}
+
+// =============================================================================
+// Panel Content Building
+// =============================================================================
+
 function buildPanelEntries(): TextPropertyEntry[] {
   const entries: TextPropertyEntry[] = [];
+  const diagnostics = editor.getAllDiagnostics();
 
-  // Header
+  // Clear and rebuild line mappings
+  state.lineMappings = [];
+
+  const activeUri = getActiveFileUri();
+  const filterUri = state.showAllFiles ? null : activeUri;
+
+  // Filter diagnostics
+  const filtered = filterUri
+    ? diagnostics.filter(d => d.uri === filterUri)
+    : diagnostics;
+
+  // Group by file
+  const byFile = new Map<string, TsDiagnostic[]>();
+  for (const diag of filtered) {
+    const existing = byFile.get(diag.uri) || [];
+    existing.push(diag);
+    byFile.set(diag.uri, existing);
+  }
+
+  // Sort files, with active file first if filtering
+  const files = Array.from(byFile.keys()).sort((a, b) => {
+    if (activeUri) {
+      if (a === activeUri) return -1;
+      if (b === activeUri) return 1;
+    }
+    return a.localeCompare(b);
+  });
+
+  // Header (line 1)
+  const filterLabel = state.showAllFiles ? "All Files" : "Current File";
   entries.push({
-    text: "═══ LSP Diagnostics ═══\n",
+    text: `Diagnostics (${filterLabel}):\n`,
     properties: { type: "header" },
   });
 
-  if (currentDiagnostics.length === 0) {
+  let currentPanelLine = 2; // Start after header
+
+  if (filtered.length === 0) {
     entries.push({
-      text: "  No diagnostics available\n",
+      text: "  No diagnostics\n",
       properties: { type: "empty" },
     });
+    currentPanelLine++;
   } else {
-    // Add each diagnostic
-    for (let i = 0; i < currentDiagnostics.length; i++) {
-      const diag = currentDiagnostics[i];
+    let diagIndex = 0;
+    for (const uri of files) {
+      const fileDiags = byFile.get(uri) || [];
+      const filePath = uriToPath(uri);
+      const fileName = editor.pathBasename(filePath);
+
+      // File header (blank line + filename)
       entries.push({
-        text: formatDiagnostic(diag, i),
-        properties: {
-          type: "diagnostic",
-          index: i,
-          severity: diag.severity,
-          location: {
-            file: diag.file,
-            line: diag.line,
-            column: diag.column,
-          },
-        },
+        text: `\n${fileName}:\n`,
+        properties: { type: "file-header", uri },
       });
+      currentPanelLine += 2; // blank line + file header
+
+      // Sort diagnostics by line, then severity
+      fileDiags.sort((a, b) => {
+        const lineDiff = a.range.start.line - b.range.start.line;
+        if (lineDiff !== 0) return lineDiff;
+        return a.severity - b.severity;
+      });
+
+      for (const diag of fileDiags) {
+        const icon = severityIcon(diag.severity);
+        const line = diag.range.start.line + 1;
+        const col = diag.range.start.character + 1;
+        const msg = diag.message.split("\n")[0]; // First line only
+
+        const location: DiagnosticLocation = {
+          file: filePath,
+          line: line,
+          column: col,
+        };
+
+        // Track mapping for cursor sync
+        state.lineMappings.push({
+          panelLine: currentPanelLine,
+          location: location,
+        });
+
+        entries.push({
+          text: `  ${icon} ${line}:${col} ${msg}\n`,
+          properties: {
+            type: "diagnostic",
+            index: diagIndex,
+            severity: diag.severity,
+            location: location,
+          },
+        });
+        diagIndex++;
+        currentPanelLine++;
+      }
     }
   }
 
-  // Footer with summary
-  const errorCount = currentDiagnostics.filter((d) => d.severity === "error").length;
-  const warningCount = currentDiagnostics.filter((d) => d.severity === "warning").length;
+  // Summary
+  const errorCount = filtered.filter(d => d.severity === 1).length;
+  const warningCount = filtered.filter(d => d.severity === 2).length;
+  const infoCount = filtered.filter(d => d.severity === 3).length;
+
   entries.push({
-    text: `───────────────────────\n`,
-    properties: { type: "separator" },
+    text: "\n",
+    properties: { type: "blank" },
   });
   entries.push({
-    text: `Total: ${errorCount} error(s), ${warningCount} warning(s)\n`,
-    properties: { type: "summary" },
+    text: `${errorCount}E ${warningCount}W ${infoCount}I | a: toggle filter | r: refresh | RET: goto | q: close\n`,
+    properties: { type: "footer" },
   });
 
   return entries;
 }
 
-// Update the panel content
-function updatePanelContent(): void {
-  if (diagnosticsBufferId !== null) {
-    const entries = buildPanelEntries();
-    editor.setVirtualBufferContent(diagnosticsBufferId, entries);
+// =============================================================================
+// Highlighting
+// =============================================================================
+
+function applyHighlighting(): void {
+  if (state.bufferId === null) return;
+
+  const bufferId = state.bufferId;
+  editor.clearNamespace(bufferId, "diag");
+
+  const content = state.cachedContent;
+  if (!content) return;
+
+  const lines = content.split("\n");
+  const cursorLine = editor.getCursorLine();
+
+  let byteOffset = 0;
+
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+    const line = lines[lineIdx];
+    const lineStart = byteOffset;
+    const lineEnd = byteOffset + line.length;
+    const isCurrentLine = (lineIdx + 1) === cursorLine;
+    const isDiagnosticLine = line.trim().startsWith("[");
+
+    // Highlight current line if it's a diagnostic line (entire line gets background)
+    if (isCurrentLine && isDiagnosticLine) {
+      editor.addOverlay(
+        bufferId, "diag", lineStart, lineEnd,
+        colors.selected[0], colors.selected[1], colors.selected[2],
+        true, true, false
+      );
+    }
+
+    // Header highlighting
+    if (line.startsWith("Diagnostics")) {
+      editor.addOverlay(
+        bufferId, "diag", lineStart, lineEnd,
+        colors.header[0], colors.header[1], colors.header[2],
+        true, true, false
+      );
+    }
+
+    // File header highlighting
+    if (line.endsWith(":") && !line.startsWith("Diagnostics") && !line.startsWith(" ")) {
+      editor.addOverlay(
+        bufferId, "diag", lineStart, lineEnd,
+        colors.file[0], colors.file[1], colors.file[2],
+        false, true, false
+      );
+    }
+
+    // Severity icon highlighting
+    const iconMatch = line.match(/^\s+\[([EWIH?])\]/);
+    if (iconMatch) {
+      const iconStart = lineStart + line.indexOf("[");
+      const iconEnd = iconStart + 3;
+
+      let color: [number, number, number];
+      switch (iconMatch[1]) {
+        case "E": color = colors.error; break;
+        case "W": color = colors.warning; break;
+        case "I": color = colors.info; break;
+        case "H": color = colors.hint; break;
+        default: color = colors.hint;
+      }
+
+      editor.addOverlay(
+        bufferId, "diag", iconStart, iconEnd,
+        color[0], color[1], color[2],
+        false, true, false
+      );
+
+      // Location highlighting (line:col after icon)
+      const locMatch = line.match(/\[.\]\s+(\d+:\d+)/);
+      if (locMatch && locMatch.index !== undefined) {
+        const locStart = lineStart + line.indexOf(locMatch[1]);
+        const locEnd = locStart + locMatch[1].length;
+        editor.addOverlay(
+          bufferId, "diag", locStart, locEnd,
+          colors.location[0], colors.location[1], colors.location[2],
+          false, false, false
+        );
+      }
+    }
+
+    byteOffset += line.length + 1;
   }
 }
 
-// Generate sample diagnostics for the current file
-function generateSampleDiagnostics(): DiagnosticItem[] {
-  const bufferId = editor.getActiveBufferId();
-  const filePath = editor.getBufferPath(bufferId);
+function updatePanel(): void {
+  if (state.bufferId === null) return;
 
-  // Return sample diagnostics
-  return [
-    {
-      severity: "error",
-      message: "unused import",
-      file: filePath || "unknown.rs",
-      line: 1,
-      column: 1,
-    },
-    {
-      severity: "warning",
-      message: "variable never used",
-      file: filePath || "unknown.rs",
-      line: 2,
-      column: 5,
-    },
-    {
-      severity: "info",
-      message: "consider using pattern matching",
-      file: filePath || "unknown.rs",
-      line: 3,
-      column: 10,
-    },
-  ];
+  const entries = buildPanelEntries();
+  state.cachedContent = entriesToContent(entries);
+  editor.setVirtualBufferContent(state.bufferId, entries);
+  applyHighlighting();
 }
 
-// Show diagnostics panel
-globalThis.show_diagnostics_panel = async function (): Promise<void> {
-  if (panelOpen) {
-    editor.setStatus("Diagnostics panel already open");
-    updatePanelContent();
+// =============================================================================
+// Commands
+// =============================================================================
+
+globalThis.show_diagnostics_panel = async function(): Promise<void> {
+  if (state.isOpen) {
+    updatePanel();
     return;
   }
 
-  // Save the current split ID before creating the diagnostics split
-  // This is where we'll open files when jumping to diagnostics
-  sourceSplitId = editor.getActiveSplitId();
+  state.splitId = editor.getActiveSplitId();
+  state.sourceBufferId = editor.getActiveBufferId();
 
-  // Generate sample diagnostics
-  currentDiagnostics = generateSampleDiagnostics();
-  selectedIndex = 0;
-
-  // Build panel entries
   const entries = buildPanelEntries();
+  state.cachedContent = entriesToContent(entries);
 
-  // Create virtual buffer in horizontal split
-  try {
-    diagnosticsBufferId = await editor.createVirtualBufferInSplit({
-      name: "*Diagnostics*",
-      mode: "diagnostics-list",
-      read_only: true,
-      entries: entries,
-      ratio: 0.7, // Original pane takes 70%, diagnostics takes 30%
-      panel_id: "diagnostics-panel",
-      show_line_numbers: false,
-      show_cursors: true,
-    });
+  const bufferId = await editor.createVirtualBufferInExistingSplit({
+    name: "*Diagnostics*",
+    mode: "diagnostics-list",
+    read_only: true,
+    entries: entries,
+    split_id: state.splitId,
+    show_line_numbers: false,
+    show_cursors: true,
+    editing_disabled: true,
+  });
 
-    panelOpen = true;
-    editor.setStatus(`Diagnostics: ${currentDiagnostics.length} item(s) - Press RET to jump, n/p to navigate, q to close`);
-    editor.debug(`Diagnostics panel opened with buffer ID ${diagnosticsBufferId}`);
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+  if (bufferId !== null) {
+    state.isOpen = true;
+    state.bufferId = bufferId;
+    applyHighlighting();
+
+    const diagnostics = editor.getAllDiagnostics();
+    editor.setStatus(`Diagnostics: ${diagnostics.length} items | a: toggle filter | RET: goto | q: close`);
+  } else {
+    state.splitId = null;
+    state.sourceBufferId = null;
     editor.setStatus("Failed to open diagnostics panel");
-    editor.debug(`ERROR: createVirtualBufferInSplit failed: ${errorMessage}`);
   }
 };
 
-// Hide diagnostics panel
-globalThis.hide_diagnostics_panel = function (): void {
-  if (!panelOpen) {
-    editor.setStatus("Diagnostics panel not open");
-    return;
+globalThis.diagnostics_close = function(): void {
+  if (!state.isOpen) return;
+
+  if (state.splitId !== null && state.sourceBufferId !== null) {
+    editor.setSplitBuffer(state.splitId, state.sourceBufferId);
   }
 
-  panelOpen = false;
-  diagnosticsBufferId = null;
-  sourceSplitId = null;
-  selectedIndex = 0;
-  currentDiagnostics = [];
+  if (state.bufferId !== null) {
+    editor.closeBuffer(state.bufferId);
+  }
+
+  state.isOpen = false;
+  state.bufferId = null;
+  state.splitId = null;
+  state.sourceBufferId = null;
+  state.cachedContent = "";
+
   editor.setStatus("Diagnostics panel closed");
 };
 
-// Toggle diagnostics panel
-globalThis.toggle_diagnostics_panel = function (): void {
-  if (panelOpen) {
-    globalThis.hide_diagnostics_panel();
+globalThis.diagnostics_goto = function(): void {
+  if (!state.isOpen || state.bufferId === null) return;
+
+  const props = editor.getTextPropertiesAtCursor(state.bufferId);
+
+  if (props.length > 0) {
+    const location = props[0].location as { file: string; line: number; column: number } | undefined;
+    if (location) {
+      // Close panel first, then open file
+      const file = location.file;
+      const line = location.line;
+      const col = location.column;
+
+      globalThis.diagnostics_close();
+      editor.openFile(file, line, col);
+      editor.setStatus(`Jumped to ${editor.pathBasename(file)}:${line}`);
+      return;
+    }
+  }
+
+  editor.setStatus("Move cursor to a diagnostic line");
+};
+
+globalThis.diagnostics_toggle_all = function(): void {
+  if (!state.isOpen) return;
+
+  state.showAllFiles = !state.showAllFiles;
+  updatePanel();
+
+  const label = state.showAllFiles ? "All Files" : "Current File";
+  editor.setStatus(`Showing: ${label}`);
+};
+
+globalThis.diagnostics_refresh = function(): void {
+  if (!state.isOpen) return;
+
+  updatePanel();
+  editor.setStatus("Diagnostics refreshed");
+};
+
+globalThis.toggle_diagnostics_panel = function(): void {
+  if (state.isOpen) {
+    globalThis.diagnostics_close();
   } else {
     globalThis.show_diagnostics_panel();
   }
 };
 
-// Show diagnostic count
-globalThis.show_diagnostics_count = function (): void {
-  const errorCount = currentDiagnostics.filter((d) => d.severity === "error").length;
-  const warningCount = currentDiagnostics.filter((d) => d.severity === "warning").length;
-  editor.setStatus(`Diagnostics: ${errorCount} errors, ${warningCount} warnings`);
-};
+// =============================================================================
+// Event Handlers
+// =============================================================================
 
-// Navigation: go to selected diagnostic
-globalThis.diagnostics_goto = function (): void {
-  if (currentDiagnostics.length === 0) {
-    editor.setStatus("No diagnostics to jump to");
+// Find the panel line that matches a source file location
+function findPanelLineForLocation(file: string, sourceLine: number): number | null {
+  // Find the first diagnostic on this source line for this file
+  for (const mapping of state.lineMappings) {
+    if (mapping.location.file === file && mapping.location.line === sourceLine) {
+      return mapping.panelLine;
+    }
+  }
+  return null;
+}
+
+// Convert a 1-based line number to byte offset in the cached content
+function lineToByteOffset(lineNumber: number): number {
+  const lines = state.cachedContent.split("\n");
+  let offset = 0;
+  for (let i = 0; i < lineNumber - 1 && i < lines.length; i++) {
+    offset += lines[i].length + 1; // +1 for newline
+  }
+  return offset;
+}
+
+// Sync the panel cursor to match a source location
+function syncPanelCursorToSourceLine(file: string, sourceLine: number): void {
+  if (state.bufferId === null) return;
+
+  const panelLine = findPanelLineForLocation(file, sourceLine);
+  if (panelLine !== null) {
+    // Convert panel line number to byte offset and move cursor
+    const byteOffset = lineToByteOffset(panelLine);
+    editor.setBufferCursor(state.bufferId, byteOffset);
+    applyHighlighting();
+  }
+}
+
+globalThis.on_diagnostics_cursor_moved = function(data: {
+  buffer_id: number;
+  cursor_id: number;
+  old_position: number;
+  new_position: number;
+  line: number;
+}): void {
+  if (!state.isOpen || state.bufferId === null) return;
+
+  // If cursor moved in the diagnostics panel, just update highlighting
+  if (data.buffer_id === state.bufferId) {
+    applyHighlighting();
     return;
   }
 
-  if (sourceSplitId === null) {
-    editor.setStatus("Source split not available");
-    return;
-  }
-
-  const bufferId = editor.getActiveBufferId();
-  const props = editor.getTextPropertiesAtCursor(bufferId);
-
-  if (props.length > 0) {
-    const location = props[0].location as { file: string; line: number; column: number } | undefined;
-    if (location) {
-      // Open file in the source split, not the diagnostics split
-      editor.openFileInSplit(sourceSplitId, location.file, location.line, location.column || 0);
-      editor.setStatus(`Jumped to ${location.file}:${location.line}`);
-    } else {
-      editor.setStatus("No location info for this diagnostic");
-    }
-  } else {
-    // Fallback: use selectedIndex
-    const diag = currentDiagnostics[selectedIndex];
-    if (diag) {
-      // Open file in the source split, not the diagnostics split
-      editor.openFileInSplit(sourceSplitId, diag.file, diag.line, diag.column);
-      editor.setStatus(`Jumped to ${diag.file}:${diag.line}`);
+  // If cursor moved in the source buffer, sync the panel cursor
+  if (data.buffer_id === state.sourceBufferId) {
+    const path = editor.getBufferPath(data.buffer_id);
+    if (path) {
+      // Use the line number from the hook (1-indexed)
+      syncPanelCursorToSourceLine(path, data.line);
     }
   }
 };
 
-// Navigation: next diagnostic
-globalThis.diagnostics_next = function (): void {
-  if (currentDiagnostics.length === 0) return;
-
-  selectedIndex = (selectedIndex + 1) % currentDiagnostics.length;
-  updatePanelContent();
-  editor.setStatus(`Diagnostic ${selectedIndex + 1}/${currentDiagnostics.length}`);
+globalThis.on_diagnostics_updated = function(_data: {
+  uri: string;
+  count: number;
+}): void {
+  if (!state.isOpen) return;
+  updatePanel();
 };
 
-// Navigation: previous diagnostic
-globalThis.diagnostics_prev = function (): void {
-  if (currentDiagnostics.length === 0) return;
+globalThis.on_diagnostics_buffer_activated = function(data: {
+  buffer_id: number;
+}): void {
+  if (!state.isOpen) return;
+  if (data.buffer_id === state.bufferId) return;
 
-  selectedIndex = selectedIndex > 0 ? selectedIndex - 1 : currentDiagnostics.length - 1;
-  updatePanelContent();
-  editor.setStatus(`Diagnostic ${selectedIndex + 1}/${currentDiagnostics.length}`);
+  // When filtering by current file, update when buffer changes
+  if (!state.showAllFiles) {
+    state.sourceBufferId = data.buffer_id;
+    updatePanel();
+  }
 };
 
-// Close the diagnostics panel
-globalThis.diagnostics_close = function (): void {
-  globalThis.hide_diagnostics_panel();
-};
+// Register event handlers
+editor.on("cursor_moved", "on_diagnostics_cursor_moved");
+editor.on("diagnostics_updated", "on_diagnostics_updated");
+editor.on("buffer_activated", "on_diagnostics_buffer_activated");
 
-// Register commands
+// =============================================================================
+// Command Registration
+// =============================================================================
+
 editor.registerCommand(
   "Show Diagnostics Panel",
   "Open the diagnostics panel",
@@ -283,26 +546,15 @@ editor.registerCommand(
 );
 
 editor.registerCommand(
-  "Hide Diagnostics Panel",
-  "Close the diagnostics panel",
-  "hide_diagnostics_panel",
-  "normal"
-);
-
-editor.registerCommand(
   "Toggle Diagnostics Panel",
-  "Toggle diagnostics panel visibility",
+  "Toggle the diagnostics panel",
   "toggle_diagnostics_panel",
   "normal"
 );
 
-editor.registerCommand(
-  "Diagnostics Count",
-  "Show count of current diagnostics",
-  "show_diagnostics_count",
-  "normal"
-);
+// =============================================================================
+// Initialization
+// =============================================================================
 
-// Plugin initialization
-editor.setStatus("Diagnostics Panel plugin loaded (TypeScript)");
-editor.debug("Diagnostics Panel plugin initialized - 4 commands registered");
+editor.setStatus("Diagnostics Panel plugin loaded");
+editor.debug("Diagnostics Panel plugin initialized");

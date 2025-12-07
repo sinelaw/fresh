@@ -313,6 +313,10 @@ pub struct Editor {
     /// Maps URI string to last result_id received from server
     diagnostic_result_ids: HashMap<String, String>,
 
+    /// Stored LSP diagnostics per URI
+    /// Maps file URI string to Vec of diagnostics for that file
+    stored_diagnostics: HashMap<String, Vec<lsp_types::Diagnostic>>,
+
     /// Event broadcaster for control events (observable by external systems)
     event_broadcaster: crate::model::control_event::EventBroadcaster,
 
@@ -717,6 +721,7 @@ impl Editor {
             lsp_window_messages: Vec::new(),
             lsp_log_messages: Vec::new(),
             diagnostic_result_ids: HashMap::new(),
+            stored_diagnostics: HashMap::new(),
             event_broadcaster: crate::model::control_event::EventBroadcaster::default(),
             bookmarks: HashMap::new(),
             search_case_sensitive: true,
@@ -855,6 +860,12 @@ impl Editor {
     /// Get the LSP status string (displayed in status bar)
     pub fn get_lsp_status(&self) -> &str {
         &self.lsp_status
+    }
+
+    /// Get stored LSP diagnostics (for testing and external access)
+    /// Returns a reference to the diagnostics map keyed by file URI
+    pub fn get_stored_diagnostics(&self) -> &HashMap<String, Vec<lsp_types::Diagnostic>> {
+        &self.stored_diagnostics
     }
 
     /// Configure LSP server for a specific language
@@ -2163,6 +2174,12 @@ impl Editor {
 
         // Sync file explorer to the new active file (if visible and applicable)
         self.sync_file_explorer_to_active_file();
+
+        // Emit buffer_activated hook for plugins
+        if let Some(ref ts_manager) = self.ts_plugin_manager {
+            let hook_args = crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id };
+            ts_manager.run_hook("buffer_activated", hook_args);
+        }
     }
 
     /// Get the currently active buffer state
@@ -4550,6 +4567,9 @@ impl Editor {
 
             // Update working directory (for spawning processes in correct directory)
             snapshot.working_dir = self.working_dir.clone();
+
+            // Update LSP diagnostics
+            snapshot.diagnostics = self.stored_diagnostics.clone();
         }
     }
 

@@ -78,6 +78,8 @@ impl EventHooks for Event {
                 cursor_id: *cursor_id,
                 old_position: *old_position,
                 new_position: *new_position,
+                // Line placeholder - will be filled by caller with buffer access
+                line: 0,
             }),
             _ => None,
         }
@@ -113,7 +115,19 @@ pub fn apply_event_with_hooks(
     state.apply(event);
 
     // Run "after" hooks
-    if let Some(after_args) = event.after_hook(buffer_id) {
+    if let Some(mut after_args) = event.after_hook(buffer_id) {
+        // Fill in line number for CursorMoved events
+        if let HookArgs::CursorMoved {
+            new_position,
+            ref mut line,
+            ..
+        } = after_args
+        {
+            // Compute 1-indexed line number from byte position
+            // get_line_number returns 0-indexed, so add 1
+            *line = state.buffer.get_line_number(new_position) + 1;
+        }
+
         let registry = hook_registry.read().unwrap();
         let hook_name = match &after_args {
             HookArgs::AfterInsert { .. } => "after-insert",

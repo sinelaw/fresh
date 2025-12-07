@@ -3823,7 +3823,7 @@ mod tests {
 
         // Immediately call initialize - this is what get_or_spawn() does
         // Before the fix, this would fail with "Cannot initialize: client is in state Starting"
-        let result = handle.initialize(None);
+        let result = handle.initialize(None, None);
 
         assert!(
             result.is_ok(),
@@ -3871,7 +3871,7 @@ mod tests {
         .unwrap();
 
         // This is the critical test: initialize must succeed from Starting state
-        let init_result = handle.initialize(None);
+        let init_result = handle.initialize(None, None);
         assert!(
             init_result.is_ok(),
             "initialize() failed from Starting state: {:?}",

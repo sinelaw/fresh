@@ -775,6 +775,7 @@ fn test_lsp_waiting_indicator() -> std::io::Result<()> {
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 
@@ -947,6 +948,7 @@ fn test_lsp_completion_canceled_on_cursor_move() -> std::io::Result<()> {
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 
@@ -1011,6 +1013,7 @@ fn test_lsp_cursor_animation() -> std::io::Result<()> {
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 
@@ -1076,6 +1079,7 @@ fn test_lsp_completion_canceled_on_text_edit() -> std::io::Result<()> {
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 
@@ -1660,6 +1664,7 @@ fn test_lsp_diagnostics_non_blocking() -> std::io::Result<()> {
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 
@@ -1816,6 +1821,7 @@ fn test_rust_analyzer_rename_real_scenario() -> std::io::Result<()> {
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 
@@ -2423,6 +2429,7 @@ fn test_lsp_progress_status_display() -> std::io::Result<()> {
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 
@@ -2582,6 +2589,7 @@ fn test_lsp_crash_detection_and_restart() -> std::io::Result<()> {
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 
@@ -2877,6 +2885,7 @@ fn test_pull_diagnostics_auto_trigger_after_open() -> std::io::Result<()> {
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 
@@ -2954,6 +2963,7 @@ fn test_pull_diagnostics_result_id_tracking() -> std::io::Result<()> {
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 
@@ -3164,6 +3174,7 @@ done
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 
@@ -3609,6 +3620,7 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> std::io::Result<()> {
             enabled: true,
             auto_start: true, // Auto-start so it starts when we open the file
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 

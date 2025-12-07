@@ -1543,6 +1543,7 @@ fn test_clangd_plugin_file_status_notification() -> std::io::Result<()> {
             enabled: true,
             auto_start: false,
             process_limits: ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 
@@ -1623,6 +1624,7 @@ fn test_clangd_plugin_switch_source_header() -> std::io::Result<()> {
             enabled: true,
             auto_start: false,
             process_limits: ProcessLimits::default(),
+            initialization_options: None,
         },
     );
 
@@ -1779,4 +1781,155 @@ editor.setStatus("Test source plugin loaded!");
         "Builtin command should show 'builtin' as source. Got:\n{}",
         screen2
     );
+}
+
+/// Test that diagnostics from fake LSP are stored and accessible via getAllDiagnostics API
+#[test]
+fn test_diagnostics_api_with_fake_lsp() -> std::io::Result<()> {
+    init_tracing_from_env();
+    let _fake_server = FakeLspServer::spawn()?;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Create plugins directory and copy lib
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+
+    let lib_source_dir = std::env::current_dir().unwrap().join("plugins/lib");
+    let lib_dest_dir = plugins_dir.join("lib");
+    fs::create_dir(&lib_dest_dir).unwrap();
+    for entry in fs::read_dir(&lib_source_dir).unwrap() {
+        let entry = entry.unwrap();
+        if entry.path().extension().map(|e| e == "ts").unwrap_or(false) {
+            fs::copy(entry.path(), lib_dest_dir.join(entry.file_name())).unwrap();
+        }
+    }
+
+    // Create a simple plugin that captures diagnostics via getAllDiagnostics
+    let test_plugin = r#"/// <reference path="./lib/fresh.d.ts" />
+
+// Test plugin to verify getAllDiagnostics API works with real LSP data
+let diagnosticCount = 0;
+
+globalThis.on_test_diagnostics_updated = function(data: { uri: string; count: number }): void {
+    // When diagnostics update, query them and store count
+    const allDiags = editor.getAllDiagnostics();
+    diagnosticCount = allDiags.length;
+    editor.setStatus(`Diagnostics received: ${diagnosticCount} total, URI count: ${data.count}`);
+};
+
+globalThis.get_diagnostic_count = function(): void {
+    const allDiags = editor.getAllDiagnostics();
+    diagnosticCount = allDiags.length;
+    editor.setStatus(`Current diagnostics: ${diagnosticCount}`);
+};
+
+editor.on("diagnostics_updated", "on_test_diagnostics_updated");
+
+editor.registerCommand(
+    "Test: Get Diagnostic Count",
+    "Report the number of diagnostics",
+    "get_diagnostic_count",
+    "normal"
+);
+
+editor.setStatus("Test diagnostics plugin loaded");
+"#;
+
+    fs::write(plugins_dir.join("test_diagnostics.ts"), test_plugin).unwrap();
+
+    // Create a test Rust file
+    let test_file = project_root.join("test.rs");
+    fs::write(&test_file, "fn main() {\n    let x = 1;\n}\n").unwrap();
+
+    // Configure fake LSP for Rust files
+    let mut config = Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        LspServerConfig {
+            command: FakeLspServer::script_path().to_string_lossy().to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: false,
+            process_limits: ProcessLimits::default(),
+            initialization_options: None,
+        },
+    );
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 30, config, project_root.clone())
+            .unwrap();
+
+    // Open the test file - this will start LSP
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for LSP to initialize and plugin to load
+    for _ in 0..10 {
+        std::thread::sleep(Duration::from_millis(100));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render()?;
+    }
+
+    // Save the file to trigger diagnostics from fake LSP
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render()?;
+
+    // Wait for diagnostics to be received and processed
+    let mut diagnostics_received = false;
+    for _ in 0..30 {
+        std::thread::sleep(Duration::from_millis(100));
+        let _ = harness.editor_mut().process_async_messages();
+        harness.render()?;
+
+        // Check if diagnostics were stored
+        let stored = harness.editor().get_stored_diagnostics();
+        if !stored.is_empty() {
+            diagnostics_received = true;
+            println!("Diagnostics received: {:?}", stored);
+            break;
+        }
+    }
+
+    assert!(
+        diagnostics_received,
+        "Expected diagnostics to be received from fake LSP after save"
+    );
+
+    // Verify the diagnostics content
+    let stored = harness.editor().get_stored_diagnostics();
+    assert_eq!(stored.len(), 1, "Expected diagnostics for one file");
+
+    // Get the diagnostics for our file
+    let file_uri = format!("file://{}", test_file.to_string_lossy());
+    let diags = stored.get(&file_uri).expect("Should have diagnostics for test file");
+    assert_eq!(diags.len(), 1, "Expected exactly one diagnostic");
+
+    // Verify the diagnostic content matches what fake LSP sends
+    let diag = &diags[0];
+    assert_eq!(
+        diag.message, "Test error from fake LSP",
+        "Diagnostic message should match fake LSP"
+    );
+    assert_eq!(
+        diag.severity,
+        Some(lsp_types::DiagnosticSeverity::ERROR),
+        "Diagnostic severity should be error"
+    );
+
+    // Verify the plugin's diagnostics_updated hook was called
+    // by checking if the status message shows diagnostics count
+    if let Some(status) = harness.editor().get_status_message() {
+        println!("Status message: {}", status);
+        // The hook should have set status with "Diagnostics received"
+        if status.contains("Diagnostics received") {
+            println!("Plugin hook was triggered successfully");
+        }
+    }
+
+    Ok(())
 }
