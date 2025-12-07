@@ -35,8 +35,6 @@ interface DiagnosticsState {
   cachedContent: string;
   // Maps panel line numbers to diagnostic locations for sync
   lineMappings: DiagnosticLineMapping[];
-  // Whether the panel itself is focused (freezes source buffer tracking)
-  panelFocused: boolean;
   // Current cursor line in the panel (1-indexed)
   panelCursorLine: number;
 }
@@ -54,7 +52,6 @@ const state: DiagnosticsState = {
   showAllFiles: false,  // Default to filtering by current file
   cachedContent: "",
   lineMappings: [],
-  panelFocused: false,
   panelCursorLine: 1,
 };
 
@@ -402,7 +399,6 @@ globalThis.show_diagnostics_panel = async function(): Promise<void> {
 
   state.sourceSplitId = editor.getActiveSplitId();
   state.sourceBufferId = editor.getActiveBufferId();
-  state.panelFocused = false;
 
   const entries = buildPanelEntries();
   state.cachedContent = entriesToContent(entries);
@@ -425,7 +421,6 @@ globalThis.show_diagnostics_panel = async function(): Promise<void> {
     state.isOpen = true;
     state.bufferId = result.buffer_id;
     state.splitId = result.split_id ?? null;
-    state.panelFocused = true;  // Panel starts focused
     applyHighlighting();
 
     const diagnostics = editor.getAllDiagnostics();
@@ -453,7 +448,6 @@ globalThis.diagnostics_close = function(): void {
   state.sourceSplitId = null;
   state.sourceBufferId = null;
   state.cachedContent = "";
-  state.panelFocused = false;
 
   // Try to close the split first
   let splitClosed = false;
@@ -584,14 +578,11 @@ globalThis.on_diagnostics_cursor_moved = function(data: {
     return;
   }
 
-  // If cursor moved in any non-panel buffer and panel is not focused, sync the panel cursor
-  // This handles F8/Shift+F8 jumps from any buffer
-  if (!state.panelFocused) {
-    const path = editor.getBufferPath(data.buffer_id);
-    if (path) {
-      // Use the line number from the hook (1-indexed)
-      syncPanelCursorToSourceLine(path, data.line);
-    }
+  // Cursor moved in a non-panel buffer - sync the panel cursor to match
+  // This handles F8/Shift+F8 jumps and normal cursor movement in source buffers
+  const path = editor.getBufferPath(data.buffer_id);
+  if (path) {
+    syncPanelCursorToSourceLine(path, data.line);
   }
 };
 
@@ -608,18 +599,12 @@ globalThis.on_diagnostics_buffer_activated = function(data: {
 }): void {
   if (!state.isOpen) return;
 
-  // If the diagnostics panel became active, mark as focused (freeze source buffer)
+  // If the diagnostics panel itself became active, don't update source tracking
   if (data.buffer_id === state.bufferId) {
-    state.panelFocused = true;
     return;
   }
 
-  // If we're focusing a different buffer and were in the panel, mark as unfocused
-  if (state.panelFocused) {
-    state.panelFocused = false;
-  }
-
-  // Update source buffer and refresh the panel to show diagnostics for the new buffer
+  // A different buffer became active - update source buffer and refresh the panel
   state.sourceBufferId = data.buffer_id;
   updatePanel();
 };
