@@ -23,8 +23,8 @@ crossterm = { version = "0.29.0", features = ["osc52"] }
 ratatui = "0.29.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-chrono = "0.4"
-clap = { version = "4.5", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] } # Disable default features to remove wasm-bind, clock, etc.
+clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] } # Disable `color` and `suggestions` to reduce binary size.
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
@@ -32,17 +32,18 @@ tree-sitter = "0.25.10"
 tree-sitter-highlight = "0.25.10"
 tree-sitter-rust = "0.24.0"
 
-lsp-types = "0.97"
+lsp-types = { version = "0.97", default-features = false } # Disable default features for consistency; this crate has few anyway.
 url = "2.5"
-tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "io-util", "sync", "process", "time", "macros", "fs"] }
+tokio = { version = "1.48" } # Feature list removed; will be determined by deno_core's minimal requirements.
 async-trait = "0.1"
 lru = "0.16"
-ignore = "0.4"
+ignore = { version = "0.4", default-features = false } # Disable multithreading via `crossbeam` for potentially smaller builds.
 regex = "1.12"
 libc = "0.2"
-nix = { version = "0.30", features = ["signal", "pthread", "resource"] }
-deno_core = "0.371.0"  # TypeScript plugin runtime (stable version)
-deno_ast = { version = "0.51.0", features = ["transpiling"] }  # TypeScript transpilation
+libloading = "0.8"  # Dynamic library loading for optional GPM support
+nix = { version = "0.30", features = ["signal", "pthread", "resource", "poll", "fs"] }
+deno_core = { version = "0.371.0", default-features = false }  # EXPERIMENT: Disable defaults to remove heavy ICU i18n data and other utilities.
+deno_ast = { version = "0.51.0", default-features = false, features = ["transpiling"] }  # EXPERIMENT: Slim down SWC toolchain, keeping only transpiling.
 deno_error = "0.7"  # Error types for deno_core ops (matches deno_core's dependency)
 tree-sitter-python = "0.25.0"
 tree-sitter-javascript = "0.25.0"
@@ -59,14 +60,14 @@ tree-sitter-php = "0.24.2"
 tree-sitter-ruby = "0.23.1"
 tree-sitter-bash = "0.25.0"
 tree-sitter-lua = "0.2.0"
-anyhow = "1.0.100"
+anyhow = { version = "1.0.100", default-features = false } # Be explicit about requiring `std`, which is pulled in elsewhere.
 dirs = "6.0"  # For XDG/platform-specific directory detection
-pulldown-cmark = "0.13"  # Markdown parsing for LSP hover docs
+pulldown-cmark = { version = "0.13", default-features = false }  # Disable `html` feature which is unused in a TUI app.
 sha2 = "0.10"  # SHA-256 checksums for recovery file integrity
-arboard = "3.6"  # Cross-platform system clipboard access
-notify = "8.2.0"
+arboard = { version = "3.6", default-features = false }  # Disable `image` support for clipboard, which is unneeded for a text editor.
+notify = { version = "8.2.0" }
 schemars = "0.8"  # JSON Schema generation for config editor
-syntect = "5.2"  # TextMate grammar support for syntax highlighting
+syntect = "5.2"
 # tree-sitter-markdown = "0.7.1"  # Disabled due to tree-sitter version conflict (uses 0.19.5 instead of 0.25.x)
 
 [dev-dependencies]
