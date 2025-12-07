@@ -584,8 +584,9 @@ globalThis.on_diagnostics_cursor_moved = function(data: {
     return;
   }
 
-  // If cursor moved in the source buffer and panel is not focused, sync the panel cursor
-  if (data.buffer_id === state.sourceBufferId && !state.panelFocused) {
+  // If cursor moved in any non-panel buffer and panel is not focused, sync the panel cursor
+  // This handles F8/Shift+F8 jumps from any buffer
+  if (!state.panelFocused) {
     const path = editor.getBufferPath(data.buffer_id);
     if (path) {
       // Use the line number from the hook (1-indexed)
