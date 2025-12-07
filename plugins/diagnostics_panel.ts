@@ -432,10 +432,11 @@ globalThis.diagnostics_close = function(): void {
   // If split couldn't be closed (only split), switch buffer back to source
   if (!splitClosed && splitId !== null && sourceBufferId !== null) {
     editor.setSplitBuffer(splitId, sourceBufferId);
-    // Close the diagnostics buffer
-    if (bufferId !== null) {
-      editor.closeBuffer(bufferId);
-    }
+  }
+
+  // Always delete the virtual buffer completely (removes from all splits)
+  if (bufferId !== null) {
+    editor.closeBuffer(bufferId);
   }
 
   // Focus back on the source split
