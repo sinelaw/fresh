@@ -74,6 +74,22 @@ const colors = {
 };
 
 // =============================================================================
+// Keybindings
+// =============================================================================
+
+const keybindings = {
+  goto: "Enter",
+  gotoAlt: "Tab",
+  toggleAll: "a",
+  refresh: "r",
+  close: "q",
+  closeAlt: "Escape",
+  // These are global keybindings, not part of the mode
+  nextDiag: "F8",
+  prevDiag: "Shift+F8",
+};
+
+// =============================================================================
 // Mode Definition
 // =============================================================================
 
@@ -82,11 +98,11 @@ editor.defineMode(
   "normal",
   [
     ["Return", "diagnostics_goto"],
-    ["Tab", "diagnostics_goto"],
-    ["a", "diagnostics_toggle_all"],
-    ["r", "diagnostics_refresh"],
-    ["q", "diagnostics_close"],
-    ["Escape", "diagnostics_close"],
+    [keybindings.gotoAlt, "diagnostics_goto"],
+    [keybindings.toggleAll, "diagnostics_toggle_all"],
+    [keybindings.refresh, "diagnostics_refresh"],
+    [keybindings.close, "diagnostics_close"],
+    [keybindings.closeAlt, "diagnostics_close"],
   ],
   true
 );
@@ -163,8 +179,9 @@ function buildPanelEntries(): TextPropertyEntry[] {
   });
 
   // Help line (line 1)
+  const helpText = `${keybindings.goto}:goto  ${keybindings.close}:close  ${keybindings.toggleAll}:toggle all  ${keybindings.refresh}:refresh  ${keybindings.nextDiag}/${keybindings.prevDiag}:next/prev\n`;
   entries.push({
-    text: "Enter:goto  q:close  a:toggle all  r:refresh  F8/Shift+F8:next/prev\n",
+    text: helpText,
     properties: { type: "help" },
   });
 
