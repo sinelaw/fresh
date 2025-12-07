@@ -37,6 +37,8 @@ interface DiagnosticsState {
   lineMappings: DiagnosticLineMapping[];
   // Whether the panel itself is focused (freezes source buffer tracking)
   panelFocused: boolean;
+  // Current cursor line in the panel (1-indexed)
+  panelCursorLine: number;
 }
 
 // =============================================================================
@@ -53,6 +55,7 @@ const state: DiagnosticsState = {
   cachedContent: "",
   lineMappings: [],
   panelFocused: false,
+  panelCursorLine: 1,
 };
 
 // =============================================================================
@@ -153,7 +156,10 @@ function buildPanelEntries(): TextPropertyEntry[] {
       if (a === activeUri) return -1;
       if (b === activeUri) return 1;
     }
-    return a.localeCompare(b);
+    // Simple string comparison (localeCompare has ICU issues in Deno)
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
   });
 
   // Header (line 1)
@@ -264,7 +270,7 @@ function applyHighlighting(): void {
   if (!content) return;
 
   const lines = content.split("\n");
-  const cursorLine = editor.getCursorLine();
+  const cursorLine = state.panelCursorLine;
 
   let byteOffset = 0;
 
@@ -521,6 +527,7 @@ function syncPanelCursorToSourceLine(file: string, sourceLine: number): void {
   if (panelLine !== null) {
     // Convert panel line number to byte offset and move cursor
     const byteOffset = lineToByteOffset(panelLine);
+    state.panelCursorLine = panelLine;
     editor.setBufferCursor(state.bufferId, byteOffset);
     applyHighlighting();
   }
@@ -535,8 +542,9 @@ globalThis.on_diagnostics_cursor_moved = function(data: {
 }): void {
   if (!state.isOpen || state.bufferId === null) return;
 
-  // If cursor moved in the diagnostics panel, just update highlighting
+  // If cursor moved in the diagnostics panel, update the tracked line and highlighting
   if (data.buffer_id === state.bufferId) {
+    state.panelCursorLine = data.line;
     applyHighlighting();
     return;
   }
