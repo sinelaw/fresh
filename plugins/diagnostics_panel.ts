@@ -162,7 +162,13 @@ function buildPanelEntries(): TextPropertyEntry[] {
     return 0;
   });
 
-  // Header (line 1)
+  // Help line (line 1)
+  entries.push({
+    text: "Enter:goto  q:close  a:toggle all  r:refresh  F8/Shift+F8:next/prev\n",
+    properties: { type: "help" },
+  });
+
+  // Header (line 2)
   let filterLabel: string;
   if (state.showAllFiles) {
     filterLabel = "All Files";
@@ -177,7 +183,7 @@ function buildPanelEntries(): TextPropertyEntry[] {
     properties: { type: "header" },
   });
 
-  let currentPanelLine = 2; // Start after header
+  let currentPanelLine = 3; // Start after help + header
 
   if (filtered.length === 0) {
     entries.push({
@@ -287,6 +293,15 @@ function applyHighlighting(): void {
         bufferId, "diag", lineStart, lineEnd,
         colors.selected[0], colors.selected[1], colors.selected[2],
         true, true, false
+      );
+    }
+
+    // Help line highlighting (dimmed)
+    if (line.startsWith("Enter:")) {
+      editor.addOverlay(
+        bufferId, "diag", lineStart, lineEnd,
+        colors.hint[0], colors.hint[1], colors.hint[2],
+        false, true, false
       );
     }
 
