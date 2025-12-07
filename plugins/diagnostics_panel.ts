@@ -29,11 +29,14 @@ interface DiagnosticsState {
   isOpen: boolean;
   bufferId: number | null;
   splitId: number | null;
+  sourceSplitId: number | null;  // The split that was active when panel opened
   sourceBufferId: number | null;
   showAllFiles: boolean;
   cachedContent: string;
   // Maps panel line numbers to diagnostic locations for sync
   lineMappings: DiagnosticLineMapping[];
+  // Whether the panel itself is focused (freezes source buffer tracking)
+  panelFocused: boolean;
 }
 
 // =============================================================================
@@ -44,10 +47,12 @@ const state: DiagnosticsState = {
   isOpen: false,
   bufferId: null,
   splitId: null,
+  sourceSplitId: null,
   sourceBufferId: null,
-  showAllFiles: true,
+  showAllFiles: false,  // Default to filtering by current file
   cachedContent: "",
   lineMappings: [],
+  panelFocused: false,
 };
 
 // =============================================================================
@@ -152,7 +157,15 @@ function buildPanelEntries(): TextPropertyEntry[] {
   });
 
   // Header (line 1)
-  const filterLabel = state.showAllFiles ? "All Files" : "Current File";
+  let filterLabel: string;
+  if (state.showAllFiles) {
+    filterLabel = "All Files";
+  } else if (activeUri) {
+    const fileName = editor.pathBasename(uriToPath(activeUri));
+    filterLabel = fileName;
+  } else {
+    filterLabel = "Current File";
+  }
   entries.push({
     text: `Diagnostics (${filterLabel}):\n`,
     properties: { type: "header" },
@@ -342,36 +355,45 @@ function updatePanel(): void {
 
 globalThis.show_diagnostics_panel = async function(): Promise<void> {
   if (state.isOpen) {
-    updatePanel();
+    // If already open, just focus the panel
+    if (state.splitId !== null) {
+      editor.focusSplit(state.splitId);
+    }
     return;
   }
 
-  state.splitId = editor.getActiveSplitId();
+  state.sourceSplitId = editor.getActiveSplitId();
   state.sourceBufferId = editor.getActiveBufferId();
+  state.panelFocused = false;
 
   const entries = buildPanelEntries();
   state.cachedContent = entriesToContent(entries);
 
-  const bufferId = await editor.createVirtualBufferInExistingSplit({
+  // Create a horizontal split below the current buffer
+  const result = await editor.createVirtualBufferInSplit({
     name: "*Diagnostics*",
     mode: "diagnostics-list",
     read_only: true,
     entries: entries,
-    split_id: state.splitId,
+    ratio: 0.7,  // Source keeps 70%, panel takes 30%
+    direction: "horizontal",  // Split below
+    panel_id: "diagnostics",  // Enable idempotent updates
     show_line_numbers: false,
     show_cursors: true,
     editing_disabled: true,
   });
 
-  if (bufferId !== null) {
+  if (result.buffer_id !== null) {
     state.isOpen = true;
-    state.bufferId = bufferId;
+    state.bufferId = result.buffer_id;
+    state.splitId = result.split_id ?? null;
+    state.panelFocused = true;  // Panel starts focused
     applyHighlighting();
 
     const diagnostics = editor.getAllDiagnostics();
     editor.setStatus(`Diagnostics: ${diagnostics.length} items | a: toggle filter | RET: goto | q: close`);
   } else {
-    state.splitId = null;
+    state.sourceSplitId = null;
     state.sourceBufferId = null;
     editor.setStatus("Failed to open diagnostics panel");
   }
@@ -380,19 +402,40 @@ globalThis.show_diagnostics_panel = async function(): Promise<void> {
 globalThis.diagnostics_close = function(): void {
   if (!state.isOpen) return;
 
-  if (state.splitId !== null && state.sourceBufferId !== null) {
-    editor.setSplitBuffer(state.splitId, state.sourceBufferId);
-  }
+  // Capture values before clearing state
+  const splitId = state.splitId;
+  const sourceSplitId = state.sourceSplitId;
+  const sourceBufferId = state.sourceBufferId;
+  const bufferId = state.bufferId;
 
-  if (state.bufferId !== null) {
-    editor.closeBuffer(state.bufferId);
-  }
-
+  // Clear state FIRST to prevent event handlers from trying to update
   state.isOpen = false;
   state.bufferId = null;
   state.splitId = null;
+  state.sourceSplitId = null;
   state.sourceBufferId = null;
   state.cachedContent = "";
+  state.panelFocused = false;
+
+  // Try to close the split first
+  let splitClosed = false;
+  if (splitId !== null) {
+    splitClosed = editor.closeSplit(splitId);
+  }
+
+  // If split couldn't be closed (only split), switch buffer back to source
+  if (!splitClosed && splitId !== null && sourceBufferId !== null) {
+    editor.setSplitBuffer(splitId, sourceBufferId);
+    // Close the diagnostics buffer
+    if (bufferId !== null) {
+      editor.closeBuffer(bufferId);
+    }
+  }
+
+  // Focus back on the source split
+  if (sourceSplitId !== null) {
+    editor.focusSplit(sourceSplitId);
+  }
 
   editor.setStatus("Diagnostics panel closed");
 };
@@ -498,8 +541,8 @@ globalThis.on_diagnostics_cursor_moved = function(data: {
     return;
   }
 
-  // If cursor moved in the source buffer, sync the panel cursor
-  if (data.buffer_id === state.sourceBufferId) {
+  // If cursor moved in the source buffer and panel is not focused, sync the panel cursor
+  if (data.buffer_id === state.sourceBufferId && !state.panelFocused) {
     const path = editor.getBufferPath(data.buffer_id);
     if (path) {
       // Use the line number from the hook (1-indexed)
@@ -520,13 +563,21 @@ globalThis.on_diagnostics_buffer_activated = function(data: {
   buffer_id: number;
 }): void {
   if (!state.isOpen) return;
-  if (data.buffer_id === state.bufferId) return;
 
-  // When filtering by current file, update when buffer changes
-  if (!state.showAllFiles) {
-    state.sourceBufferId = data.buffer_id;
-    updatePanel();
+  // If the diagnostics panel became active, mark as focused (freeze source buffer)
+  if (data.buffer_id === state.bufferId) {
+    state.panelFocused = true;
+    return;
   }
+
+  // If we're focusing a different buffer and were in the panel, mark as unfocused
+  if (state.panelFocused) {
+    state.panelFocused = false;
+  }
+
+  // Update source buffer and refresh the panel to show diagnostics for the new buffer
+  state.sourceBufferId = data.buffer_id;
+  updatePanel();
 };
 
 // Register event handlers
