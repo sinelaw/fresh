@@ -783,7 +783,12 @@ impl EditorState {
 
             if cursor_pos >= line_start && cursor_pos <= line_end {
                 let offset_in_line = cursor_pos - line_start;
-                Ok(line.content[offset_in_line..].to_string())
+                // Use get() to safely handle potential non-char-boundary offsets
+                Ok(line
+                    .content
+                    .get(offset_in_line..)
+                    .unwrap_or("")
+                    .to_string())
             } else {
                 Ok(String::new())
             }
