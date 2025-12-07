@@ -21,6 +21,7 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
+use fresh::services::tracing_setup;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 /// A high-performance terminal text editor
@@ -195,19 +196,8 @@ fn main() -> io::Result<()> {
     }
 
     // Initialize tracing - log to a file to avoid interfering with terminal UI
-    // Fall back to no logging if the log file can't be created
-    if let Ok(log_file) = std::fs::File::create(&args.log_file) {
-        tracing_subscriber::registry()
-            .with(fmt::layer().with_writer(std::sync::Arc::new(log_file)))
-            .with(
-                EnvFilter::from_default_env()
-                    .add_directive(tracing::Level::DEBUG.into())
-                    // Suppress noisy SWC debug logs
-                    .add_directive("swc_ecma_transforms_base=info".parse().unwrap())
-                    .add_directive("swc_common=info".parse().unwrap()),
-            )
-            .init();
-    }
+    // Also create a separate warning log that captures WARN+ and notifies the editor
+    let warning_log_handle = tracing_setup::init_global(&args.log_file);
 
     tracing::info!("Editor starting");
 
@@ -331,6 +321,11 @@ fn main() -> io::Result<()> {
     if let Some(log_path) = &args.event_log {
         tracing::trace!("Event logging enabled: {}", log_path.display());
         editor.enable_event_streaming(log_path)?;
+    }
+
+    // Set up warning log monitoring (to open warning log when warnings occur)
+    if let Some(handle) = warning_log_handle {
+        editor.set_warning_log(handle.receiver, handle.path);
     }
 
     // Try to restore previous session (unless --no-session flag is set or a file was specified)
@@ -466,6 +461,11 @@ fn run_event_loop(
             needs_render = true;
         }
 
+        // Check for warnings and open warning log if any occurred
+        if editor.check_warning_log() {
+            needs_render = true;
+        }
+
         // Periodic auto-save for recovery
         if let Err(e) = editor.auto_save_dirty_buffers() {
             tracing::debug!("Auto-save error: {}", e);
@@ -551,6 +551,11 @@ fn run_event_loop(
 
     loop {
         if editor.process_async_messages() {
+            needs_render = true;
+        }
+
+        // Check for warnings and open warning log if any occurred
+        if editor.check_warning_log() {
             needs_render = true;
         }
 

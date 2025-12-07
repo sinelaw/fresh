@@ -389,6 +389,9 @@ pub struct Editor {
     /// Active custom contexts for command visibility
     /// Plugin-defined contexts like "config-editor" that control command availability
     active_custom_contexts: HashSet<String>,
+
+    /// Warning log receiver and path (for opening warning log when warnings occur)
+    warning_log: Option<(std::sync::mpsc::Receiver<()>, PathBuf)>,
 }
 
 impl Editor {
@@ -745,6 +748,7 @@ impl Editor {
             },
             last_auto_save: std::time::Instant::now(),
             active_custom_contexts: HashSet::new(),
+            warning_log: None,
         })
     }
 
@@ -893,6 +897,42 @@ impl Editor {
         if let Some(event_log) = self.event_logs.get_mut(&self.active_buffer) {
             event_log.log_keystroke(key_code, modifiers);
         }
+    }
+
+    /// Set up warning log monitoring
+    ///
+    /// When warnings/errors are logged, they will be written to the specified path
+    /// and the editor will be notified via the receiver.
+    pub fn set_warning_log(&mut self, receiver: std::sync::mpsc::Receiver<()>, path: PathBuf) {
+        self.warning_log = Some((receiver, path));
+    }
+
+    /// Check for and handle any new warnings in the warning log
+    ///
+    /// If warnings have been logged since last check, opens the warning log file
+    /// as a buffer so the user can see them. Returns true if warnings were found.
+    pub fn check_warning_log(&mut self) -> bool {
+        let Some((receiver, path)) = &self.warning_log else {
+            return false;
+        };
+
+        // Non-blocking check for any warnings
+        let mut has_warnings = false;
+        while receiver.try_recv().is_ok() {
+            has_warnings = true;
+        }
+
+        if has_warnings {
+            // Open the warning log file
+            let path = path.clone();
+            if let Err(e) = self.open_file(&path) {
+                tracing::error!("Failed to open warning log: {}", e);
+            } else {
+                self.set_status_message("Warnings detected - see log".to_string());
+            }
+        }
+
+        has_warnings
     }
 
     /// Load an ANSI background image from a user-provided path
