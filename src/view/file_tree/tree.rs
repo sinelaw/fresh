@@ -310,6 +310,38 @@ impl FileTree {
         self.nodes.len()
     }
 
+    /// Re-sort children of all expanded directories using the provided comparator
+    pub fn sort_all_nodes<F>(&mut self, cmp: F)
+    where
+        F: Fn(&FsEntry, &FsEntry) -> std::cmp::Ordering,
+    {
+        let expanded_dirs: Vec<NodeId> = self
+            .nodes
+            .values()
+            .filter(|n| n.is_expanded())
+            .map(|n| n.id)
+            .collect();
+
+        for dir_id in expanded_dirs {
+            let children_with_entries: Vec<(NodeId, FsEntry)> =
+                if let Some(node) = self.nodes.get(&dir_id) {
+                    node.children
+                        .iter()
+                        .filter_map(|&id| self.nodes.get(&id).map(|n| (id, n.entry.clone())))
+                        .collect()
+                } else {
+                    continue;
+                };
+
+            let mut sorted = children_with_entries;
+            sorted.sort_by(|(_, a), (_, b)| cmp(a, b));
+
+            if let Some(node) = self.nodes.get_mut(&dir_id) {
+                node.children = sorted.into_iter().map(|(id, _)| id).collect();
+            }
+        }
+    }
+
     /// Expand all directories along a path and return the final node ID
     ///
     /// This is useful for revealing a specific file in the tree, even if its
