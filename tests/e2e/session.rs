@@ -948,6 +948,85 @@ fn test_session_cursor_visible_in_splits_after_restore() {
     }
 }
 
+/// Test that session restores files when active buffer was a plugin buffer (no file path)
+///
+/// This reproduces a bug where if the active buffer at session save was a plugin buffer
+/// (like the config editor), the real files wouldn't be restored because `active_file_index`
+/// would be invalid.
+#[test]
+fn test_session_restores_files_when_plugin_buffer_was_active() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file1 = project_dir.join("real_file.txt");
+    std::fs::write(&file1, "Real file content that should be restored").unwrap();
+
+    // First session: open a real file, then create a scratch buffer (simulates plugin buffer)
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Open a real file
+        harness.open_file(&file1).unwrap();
+        harness.assert_buffer_content("Real file content that should be restored");
+
+        // Create a scratch buffer (similar to plugin buffer - no file path)
+        // This simulates opening the config editor or other plugin buffer
+        harness.editor_mut().new_buffer();
+        harness.render().unwrap();
+
+        // The scratch buffer should now be active (empty content)
+        harness.assert_buffer_content("");
+
+        // Save session - active buffer is scratch (no file path)
+        harness.editor_mut().save_session().unwrap();
+
+        // Verify session was saved with the real file in open_files
+        let session = harness.editor().capture_session();
+        let split_state = session.split_states.values().next().unwrap();
+        assert!(
+            !split_state.open_files.is_empty(),
+            "open_files should contain the real file even when scratch buffer is active"
+        );
+        assert!(
+            split_state
+                .open_files
+                .iter()
+                .any(|p| p.to_string_lossy().contains("real_file.txt")),
+            "real_file.txt should be in open_files: {:?}",
+            split_state.open_files
+        );
+    }
+
+    // Second session: restore and verify the real file is restored
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+
+        // Before restore, should have empty buffer (default state)
+        harness.assert_buffer_content("");
+
+        // Restore session
+        let restored = harness.editor_mut().try_restore_session().unwrap();
+        assert!(restored, "Session should have been restored");
+
+        // The real file should be restorable - open it to verify it's in the buffer list
+        harness.open_file(&file1).unwrap();
+        harness.assert_buffer_content("Real file content that should be restored");
+    }
+}
+
 /// Test that session saves and restores split layout
 #[test]
 fn test_session_restores_splits() {

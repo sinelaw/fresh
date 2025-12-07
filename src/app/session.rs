@@ -274,8 +274,8 @@ impl Editor {
         }
 
         // 5. Open files from the session and build buffer mappings
-        // This is done by collecting all unique file paths from the split layout
-        let file_paths = collect_file_paths(&session.split_layout);
+        // Collect all unique file paths from split_states (which tracks all open files per split)
+        let file_paths = collect_file_paths_from_states(&session.split_states);
         tracing::debug!(
             "Session has {} files to restore: {:?}",
             file_paths.len(),
@@ -322,10 +322,19 @@ impl Editor {
         // Set the active split based on the saved active_split_id
         if let Some(&new_active_split) = split_id_map.get(&session.active_split_id) {
             self.split_manager.set_active_split(new_active_split);
-            // Also update active_buffer based on what's in that split
-            if let Some(view_state) = self.split_view_states.get(&new_active_split) {
-                if let Some(&buffer_id) = view_state.open_buffers.first() {
-                    self.active_buffer = buffer_id;
+            // Also update active_buffer based on the active_file_index for that split
+            if let Some(split_state) = session.split_states.get(&session.active_split_id) {
+                if let Some(view_state) = self.split_view_states.get(&new_active_split) {
+                    // Use active_file_index to find the correct buffer
+                    let active_buffer = split_state
+                        .open_files
+                        .get(split_state.active_file_index)
+                        .and_then(|rel_path| path_to_buffer.get(rel_path))
+                        .copied()
+                        .or_else(|| view_state.open_buffers.first().copied());
+                    if let Some(buffer_id) = active_buffer {
+                        self.active_buffer = buffer_id;
+                    }
                 }
             }
         }
@@ -653,13 +662,19 @@ fn serialize_split_view_state(
         })
         .collect();
 
-    // Find active file index based on the active_buffer
+    // Find active file index - we need to find the index in open_files, not open_buffers
+    // This is because open_files filters out plugin buffers that don't have file paths
     let active_file_index = active_buffer
         .and_then(|active_id| {
-            view_state
-                .open_buffers
-                .iter()
-                .position(|&id| id == active_id)
+            // Get the file path of the active buffer
+            buffer_metadata
+                .get(&active_id)
+                .and_then(|meta| meta.file_path())
+                .and_then(|abs_path| abs_path.strip_prefix(working_dir).ok())
+        })
+        .and_then(|active_rel_path| {
+            // Find position of this path in open_files
+            open_files.iter().position(|p| p.as_path() == active_rel_path)
         })
         .unwrap_or(0);
 
@@ -741,26 +756,19 @@ fn serialize_bookmarks(
         .collect()
 }
 
-fn collect_file_paths(node: &SerializedSplitNode) -> Vec<PathBuf> {
+/// Collect all unique file paths from split_states
+fn collect_file_paths_from_states(
+    split_states: &HashMap<usize, SerializedSplitViewState>,
+) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    collect_file_paths_recursive(node, &mut paths);
-    paths
-}
-
-fn collect_file_paths_recursive(node: &SerializedSplitNode, paths: &mut Vec<PathBuf>) {
-    match node {
-        SerializedSplitNode::Leaf { file_path, .. } => {
-            if let Some(path) = file_path {
-                if !paths.contains(path) {
-                    paths.push(path.clone());
-                }
+    for state in split_states.values() {
+        for path in &state.open_files {
+            if !paths.contains(path) {
+                paths.push(path.clone());
             }
         }
-        SerializedSplitNode::Split { first, second, .. } => {
-            collect_file_paths_recursive(first, paths);
-            collect_file_paths_recursive(second, paths);
-        }
     }
+    paths
 }
 
 /// Get list of expanded directories from a FileTreeView
