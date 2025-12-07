@@ -2340,9 +2340,8 @@ impl LspTask {
                             error.message, error.code
                         ))
                     } else {
-                        response
-                            .result
-                            .ok_or_else(|| "No result in response".to_string())
+                        // null is a valid result for many LSP methods
+                        Ok(response.result.unwrap_or(serde_json::Value::Null))
                     };
                     let _ = tx.send(result);
                 }
@@ -2644,9 +2643,8 @@ async fn handle_message_dispatch(
                     ))
                 } else {
                     tracing::trace!("LSP response success for request id={}", response.id);
-                    response
-                        .result
-                        .ok_or_else(|| "No result in response".to_string())
+                    // null is a valid result for many LSP methods (e.g., inlay hints with no hints)
+                    Ok(response.result.unwrap_or(serde_json::Value::Null))
                 };
                 let _ = tx.send(result);
             } else {
