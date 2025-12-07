@@ -491,11 +491,13 @@ impl StatusBarRenderer {
 
             let mut spans = vec![];
 
-            // Truncate left status if it's too long
-            let displayed_left = if left_status.len() > left_max_width {
+            // Truncate left status if it's too long (use char count, not bytes)
+            let left_char_count = left_status.chars().count();
+            let displayed_left = if left_char_count > left_max_width {
                 let truncate_at = left_max_width.saturating_sub(3); // -3 for "..."
                 if truncate_at > 0 {
-                    format!("{}...", &left_status[..truncate_at])
+                    let truncated: String = left_status.chars().take(truncate_at).collect();
+                    format!("{}...", truncated)
                 } else {
                     String::from("...")
                 }
@@ -510,7 +512,7 @@ impl StatusBarRenderer {
                     .bg(theme.status_bar_bg),
             ));
 
-            let displayed_left_len = displayed_left.len();
+            let displayed_left_len = displayed_left.chars().count();
 
             // Add spacing to push command palette indicator to the right
             if displayed_left_len + cmd_palette_width < available_width {
@@ -564,10 +566,12 @@ impl StatusBarRenderer {
         } else {
             // Terminal too narrow or no command palette indicator - fill entire width with left status
             let mut spans = vec![];
-            let displayed_left = if left_status.len() > available_width {
+            let left_char_count = left_status.chars().count();
+            let displayed_left = if left_char_count > available_width {
                 let truncate_at = available_width.saturating_sub(3);
                 if truncate_at > 0 {
-                    format!("{}...", &left_status[..truncate_at])
+                    let truncated: String = left_status.chars().take(truncate_at).collect();
+                    format!("{}...", truncated)
                 } else {
                     left_status.chars().take(available_width).collect()
                 }
