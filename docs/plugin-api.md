@@ -583,6 +583,17 @@ applyTheme(theme_name: string): void
 |------|------|-------------|
 | `theme_name` | `string` | Name of the theme to apply (e.g., "dark", "light", "my-custom-theme") |
 
+#### `reloadConfig`
+
+Reload configuration from file
+After a plugin saves config changes to the config file, call this to reload
+the editor's in-memory configuration. This ensures the editor and plugins
+stay in sync with the saved config.
+
+```typescript
+reloadConfig(): void
+```
+
 #### `setClipboard`
 
 Copy text to the system clipboard
