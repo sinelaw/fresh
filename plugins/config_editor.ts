@@ -748,6 +748,8 @@ async function saveConfig(): Promise<boolean> {
     await editor.writeFile(state.configPath, content);
     state.originalConfig = deepClone(state.workingConfig);
     state.hasChanges = false;
+    // Tell the editor to reload config from file so it stays in sync
+    editor.reloadConfig();
     return true;
   } catch (e) {
     editor.setStatus(`Failed to save: ${e}`);
@@ -1720,6 +1722,41 @@ editor.registerCommand(
   "config_editor_show_help",
   "normal,config-editor"
 );
+
+// =============================================================================
+// Config Change Handler
+// =============================================================================
+
+/**
+ * Handle external config changes (e.g., when LSP stop modifies the config)
+ * Reloads the config in the editor UI if it's currently open
+ */
+globalThis.onConfigChanged = async function(data: { path: string }): Promise<void> {
+  // Only react if the config editor is currently open
+  if (!state.isOpen) return;
+
+  // Reload config from disk
+  const newConfig = await loadConfig();
+
+  // Check if the external change conflicts with unsaved local changes
+  if (state.hasChanges) {
+    // Keep local changes but warn user
+    editor.setStatus("Config changed externally - local changes preserved");
+    editor.debug("Config changed externally but editor has unsaved changes");
+    return;
+  }
+
+  // Update state with new config
+  state.originalConfig = newConfig;
+  state.workingConfig = deepClone(newConfig);
+  state.hasChanges = false;
+
+  // Refresh the display
+  updateDisplay();
+  editor.setStatus("Config reloaded (changed externally)");
+};
+
+editor.on("config_changed", "onConfigChanged");
 
 // =============================================================================
 // Plugin Initialization

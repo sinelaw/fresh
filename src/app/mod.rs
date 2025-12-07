@@ -2029,6 +2029,45 @@ impl Editor {
         }
     }
 
+    /// Save the current configuration to file (without opening it)
+    ///
+    /// Returns Ok(()) on success, or an error message on failure
+    pub fn save_config(&self) -> Result<(), String> {
+        // Create the config directory if it doesn't exist
+        std::fs::create_dir_all(&self.dir_context.config_dir)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+
+        let config_path = self.dir_context.config_path();
+        self.config
+            .save_to_file(&config_path)
+            .map_err(|e| format!("Failed to save config: {}", e))
+    }
+
+    /// Reload configuration from the config file
+    ///
+    /// This reloads the config from disk and emits a config_changed event
+    /// so plugins can update their state accordingly.
+    pub fn reload_config(&mut self) {
+        let config_path = self.dir_context.config_path();
+        match Config::load_from_file(&config_path) {
+            Ok(new_config) => {
+                self.config = new_config;
+                // Emit event so plugins know config changed
+                self.emit_event(
+                    "config_changed",
+                    serde_json::json!({
+                        "path": config_path.to_string_lossy(),
+                    }),
+                );
+                tracing::info!("Configuration reloaded from {}", config_path.display());
+            }
+            Err(e) => {
+                tracing::warn!("Failed to reload config: {}", e);
+                self.set_status_message(format!("Failed to reload config: {}", e));
+            }
+        }
+    }
+
     /// Calculate the effective width available for tabs.
     ///
     /// When the file explorer is visible, tabs only get a portion of the terminal width
@@ -4680,6 +4719,9 @@ impl Editor {
             }
             PluginCommand::ApplyTheme { theme_name } => {
                 self.apply_theme(&theme_name);
+            }
+            PluginCommand::ReloadConfig => {
+                self.reload_config();
             }
             PluginCommand::StartPrompt { label, prompt_type } => {
                 self.handle_start_prompt(label, prompt_type);

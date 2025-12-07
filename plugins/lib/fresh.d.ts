@@ -404,6 +404,14 @@ interface EditorAPI {
    */
   applyTheme(theme_name: string): void;
   /**
+   * Reload configuration from file
+   *
+   * After a plugin saves config changes to the config file, call this to reload
+   * the editor's in-memory configuration. This ensures the editor and plugins
+   * stay in sync with the saved config.
+   */
+  reloadConfig(): void;
+  /**
    * Copy text to the system clipboard
    *
    * Copies the provided text to both the internal and system clipboard.

@@ -245,6 +245,10 @@ pub enum PluginCommand {
     /// Apply a theme by name
     ApplyTheme { theme_name: String },
 
+    /// Reload configuration from file
+    /// After a plugin saves config changes, it should call this to reload the config
+    ReloadConfig,
+
     /// Register a custom command
     RegisterCommand { command: Command },
 

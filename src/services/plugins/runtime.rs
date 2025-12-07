@@ -196,6 +196,20 @@ fn op_fresh_apply_theme(state: &mut OpState, #[string] theme_name: String) {
     tracing::info!("TypeScript plugin apply_theme: {}", theme_name);
 }
 
+/// Reload configuration from file
+///
+/// After a plugin saves config changes to the config file, call this to reload
+/// the editor's in-memory configuration. This ensures the editor and plugins
+/// stay in sync with the saved config.
+#[op2(fast)]
+fn op_fresh_reload_config(state: &mut OpState) {
+    if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
+        let runtime_state = runtime_state.borrow();
+        let _ = runtime_state.command_sender.send(PluginCommand::ReloadConfig);
+    }
+    tracing::debug!("TypeScript plugin: reloading config");
+}
+
 /// Log a debug message to the editor's trace output
 ///
 /// Messages appear in stderr when running with RUST_LOG=debug.
@@ -2673,6 +2687,7 @@ extension!(
     ops = [
         op_fresh_set_status,
         op_fresh_apply_theme,
+        op_fresh_reload_config,
         op_fresh_debug,
         op_fresh_set_clipboard,
         op_fresh_get_active_buffer_id,
@@ -2849,6 +2864,11 @@ impl TypeScriptRuntime {
                     // Theme operations
                     applyTheme(themeName) {
                         return core.ops.op_fresh_apply_theme(themeName);
+                    },
+
+                    // Config operations
+                    reloadConfig() {
+                        core.ops.op_fresh_reload_config();
                     },
 
                     // Clipboard

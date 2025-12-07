@@ -1882,8 +1882,29 @@ impl Editor {
                             if !language.is_empty() {
                                 if let Some(lsp) = &mut self.lsp {
                                     if lsp.shutdown_server(language) {
+                                        // Update config to disable auto-start for this language
+                                        if let Some(lsp_config) =
+                                            self.config.lsp.get_mut(language)
+                                        {
+                                            lsp_config.auto_start = false;
+                                            if let Err(e) = self.save_config() {
+                                                tracing::warn!(
+                                                    "Failed to save config after disabling LSP auto-start: {}",
+                                                    e
+                                                );
+                                            } else {
+                                                // Emit config_changed event so plugins can react
+                                                let config_path = self.dir_context.config_path();
+                                                self.emit_event(
+                                                    "config_changed",
+                                                    serde_json::json!({
+                                                        "path": config_path.to_string_lossy(),
+                                                    }),
+                                                );
+                                            }
+                                        }
                                         self.set_status_message(format!(
-                                            "LSP server for '{}' stopped (use 'Restart LSP Server' to re-enable)",
+                                            "LSP server for '{}' stopped (auto-start disabled)",
                                             language
                                         ));
                                     } else {
