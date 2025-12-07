@@ -674,7 +674,9 @@ fn serialize_split_view_state(
         })
         .and_then(|active_rel_path| {
             // Find position of this path in open_files
-            open_files.iter().position(|p| p.as_path() == active_rel_path)
+            open_files
+                .iter()
+                .position(|p| p.as_path() == active_rel_path)
         })
         .unwrap_or(0);
 

@@ -91,7 +91,10 @@ mod tests {
             tracing::warn!("Test warning message");
         });
 
-        let result = test.warning_handle.receiver.recv_timeout(Duration::from_secs(1));
+        let result = test
+            .warning_handle
+            .receiver
+            .recv_timeout(Duration::from_secs(1));
         assert!(result.is_ok(), "Should receive notification for WARN");
 
         let contents = std::fs::read_to_string(&path).expect("Failed to read log");
@@ -111,14 +114,14 @@ mod tests {
             tracing::error!("Test error message");
         });
 
-        let result = test.warning_handle.receiver.recv_timeout(Duration::from_secs(1));
+        let result = test
+            .warning_handle
+            .receiver
+            .recv_timeout(Duration::from_secs(1));
         assert!(result.is_ok(), "Should receive notification for ERROR");
 
         let contents = std::fs::read_to_string(&path).expect("Failed to read log");
-        assert!(
-            contents.contains("ERROR"),
-            "Log should contain ERROR level"
-        );
+        assert!(contents.contains("ERROR"), "Log should contain ERROR level");
         assert!(
             contents.contains("Test error message"),
             "Log should contain message"
@@ -134,7 +137,10 @@ mod tests {
             tracing::info!("Test info message");
         });
 
-        let result = test.warning_handle.receiver.recv_timeout(Duration::from_millis(100));
+        let result = test
+            .warning_handle
+            .receiver
+            .recv_timeout(Duration::from_millis(100));
         assert!(result.is_err(), "Should NOT receive notification for INFO");
 
         let contents = std::fs::read_to_string(&path).unwrap_or_default();
@@ -152,11 +158,11 @@ mod tests {
             tracing::debug!("Test debug message");
         });
 
-        let result = test.warning_handle.receiver.recv_timeout(Duration::from_millis(100));
-        assert!(
-            result.is_err(),
-            "Should NOT receive notification for DEBUG"
-        );
+        let result = test
+            .warning_handle
+            .receiver
+            .recv_timeout(Duration::from_millis(100));
+        assert!(result.is_err(), "Should NOT receive notification for DEBUG");
     }
 
     #[test]
@@ -171,7 +177,10 @@ mod tests {
         });
 
         for i in 0..3 {
-            let result = test.warning_handle.receiver.recv_timeout(Duration::from_secs(1));
+            let result = test
+                .warning_handle
+                .receiver
+                .recv_timeout(Duration::from_secs(1));
             assert!(result.is_ok(), "Should receive notification {}", i + 1);
         }
 

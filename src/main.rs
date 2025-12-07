@@ -11,6 +11,7 @@ use crossterm::{
 };
 #[cfg(target_os = "linux")]
 use fresh::services::gpm::{gpm_to_crossterm, GpmClient};
+use fresh::services::tracing_setup;
 use fresh::{
     app::script_control::ScriptControlMode, app::Editor, config, config::DirectoryContext,
     services::signal_handler,
@@ -21,7 +22,6 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
-use fresh::services::tracing_setup;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 /// A high-performance terminal text editor

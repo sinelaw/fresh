@@ -205,7 +205,9 @@ fn op_fresh_apply_theme(state: &mut OpState, #[string] theme_name: String) {
 fn op_fresh_reload_config(state: &mut OpState) {
     if let Some(runtime_state) = state.try_borrow::<Rc<RefCell<TsRuntimeState>>>() {
         let runtime_state = runtime_state.borrow();
-        let _ = runtime_state.command_sender.send(PluginCommand::ReloadConfig);
+        let _ = runtime_state
+            .command_sender
+            .send(PluginCommand::ReloadConfig);
     }
     tracing::debug!("TypeScript plugin: reloading config");
 }

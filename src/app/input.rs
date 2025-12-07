@@ -1883,8 +1883,7 @@ impl Editor {
                                 if let Some(lsp) = &mut self.lsp {
                                     if lsp.shutdown_server(language) {
                                         // Update config to disable auto-start for this language
-                                        if let Some(lsp_config) =
-                                            self.config.lsp.get_mut(language)
+                                        if let Some(lsp_config) = self.config.lsp.get_mut(language)
                                         {
                                             lsp_config.auto_start = false;
                                             if let Err(e) = self.save_config() {
