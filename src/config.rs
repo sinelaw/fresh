@@ -569,6 +569,7 @@ impl Config {
                 enabled: true,
                 auto_start: false,
                 process_limits: crate::services::process_limits::ProcessLimits::default(),
+                initialization_options: None,
             },
         );
 
@@ -581,16 +582,19 @@ impl Config {
                 enabled: true,
                 auto_start: false,
                 process_limits: crate::services::process_limits::ProcessLimits::default(),
+                initialization_options: None,
             },
         );
 
         // typescript-language-server (installed via npm)
+        // Alternative: use "deno lsp" with initialization_options: {"enable": true}
         let ts_lsp = LspServerConfig {
             command: "typescript-language-server".to_string(),
             args: vec!["--stdio".to_string()],
             enabled: true,
             auto_start: false,
             process_limits: crate::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
         };
         lsp.insert("javascript".to_string(), ts_lsp.clone());
         lsp.insert("typescript".to_string(), ts_lsp);
@@ -604,6 +608,7 @@ impl Config {
                 enabled: true,
                 auto_start: false,
                 process_limits: crate::services::process_limits::ProcessLimits::default(),
+                initialization_options: None,
             },
         );
 
@@ -616,6 +621,7 @@ impl Config {
                 enabled: true,
                 auto_start: false,
                 process_limits: crate::services::process_limits::ProcessLimits::default(),
+                initialization_options: None,
             },
         );
 
@@ -628,6 +634,7 @@ impl Config {
                 enabled: true,
                 auto_start: false,
                 process_limits: crate::services::process_limits::ProcessLimits::default(),
+                initialization_options: None,
             },
         );
         lsp.insert(
@@ -638,6 +645,7 @@ impl Config {
                 enabled: true,
                 auto_start: false,
                 process_limits: crate::services::process_limits::ProcessLimits::default(),
+                initialization_options: None,
             },
         );
 
@@ -650,6 +658,7 @@ impl Config {
                 enabled: true,
                 auto_start: false,
                 process_limits: crate::services::process_limits::ProcessLimits::default(),
+                initialization_options: None,
             },
         );
 
@@ -662,6 +671,7 @@ impl Config {
                 enabled: true,
                 auto_start: false,
                 process_limits: crate::services::process_limits::ProcessLimits::default(),
+                initialization_options: None,
             },
         );
 

@@ -217,6 +217,7 @@ enum LspCommand {
     /// Initialize the server
     Initialize {
         root_uri: Option<Uri>,
+        initialization_options: Option<Value>,
         response: oneshot::Sender<Result<InitializeResult, String>>,
     },
 
@@ -511,11 +512,13 @@ impl LspState {
     async fn handle_initialize_sequential(
         &mut self,
         root_uri: Option<Uri>,
+        initialization_options: Option<Value>,
         pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
     ) -> Result<InitializeResult, String> {
         tracing::info!(
-            "Initializing async LSP server with root_uri: {:?}",
-            root_uri
+            "Initializing async LSP server with root_uri: {:?}, initialization_options: {:?}",
+            root_uri,
+            initialization_options
         );
 
         let workspace_folders = root_uri.as_ref().map(|uri| {
@@ -535,6 +538,7 @@ impl LspState {
             process_id: Some(std::process::id()),
             capabilities: create_client_capabilities(),
             workspace_folders,
+            initialization_options,
             ..Default::default()
         };
 
@@ -1679,7 +1683,7 @@ impl LspTask {
                 Some(cmd) = command_rx.recv() => {
                     tracing::trace!("LspTask received command: {:?}", cmd);
                     match cmd {
-                        LspCommand::Initialize { root_uri, response } => {
+                        LspCommand::Initialize { root_uri, initialization_options, response } => {
                             // Send initializing status
                             let _ = async_tx.send(AsyncMessage::LspStatusUpdate {
                                 language: language_clone.clone(),
@@ -1687,7 +1691,7 @@ impl LspTask {
                             });
                             tracing::info!("Processing Initialize command");
                             let result =
-                                state.handle_initialize_sequential(root_uri, &pending).await;
+                                state.handle_initialize_sequential(root_uri, initialization_options, &pending).await;
                             let success = result.is_ok();
                             let _ = response.send(result);
 
@@ -2037,11 +2041,13 @@ impl LspTask {
     async fn handle_initialize_sequential(
         &mut self,
         root_uri: Option<Uri>,
+        initialization_options: Option<Value>,
         pending: &Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
     ) -> Result<InitializeResult, String> {
         tracing::info!(
-            "Initializing async LSP server with root_uri: {:?}",
-            root_uri
+            "Initializing async LSP server with root_uri: {:?}, initialization_options: {:?}",
+            root_uri,
+            initialization_options
         );
 
         let workspace_folders = root_uri.as_ref().map(|uri| {
@@ -2061,6 +2067,7 @@ impl LspTask {
             process_id: Some(std::process::id()),
             capabilities: create_client_capabilities(),
             workspace_folders,
+            initialization_options,
             ..Default::default()
         };
 
@@ -3061,7 +3068,14 @@ impl LspHandle {
     /// This sends the initialize request asynchronously. The server will be ready
     /// when `is_initialized()` returns true. Other methods that require initialization
     /// will fail gracefully until then.
-    pub fn initialize(&self, root_uri: Option<Uri>) -> Result<(), String> {
+    ///
+    /// The `initialization_options` are passed to the server during initialization.
+    /// Some servers like Deno require specific options (e.g., `{"enable": true}`).
+    pub fn initialize(
+        &self,
+        root_uri: Option<Uri>,
+        initialization_options: Option<Value>,
+    ) -> Result<(), String> {
         // Validate state transition
         {
             let mut state = self.state.lock().unwrap();
@@ -3083,6 +3097,7 @@ impl LspHandle {
         self.command_tx
             .try_send(LspCommand::Initialize {
                 root_uri,
+                initialization_options,
                 response: tx,
             })
             .map_err(|_| "Failed to send initialize command".to_string())?;

@@ -196,7 +196,9 @@ impl LspManager {
             Ok(handle) => {
                 // Initialize the handle (non-blocking)
                 // The handle will become ready asynchronously
-                if let Err(e) = handle.initialize(self.root_uri.clone()) {
+                if let Err(e) =
+                    handle.initialize(self.root_uri.clone(), config.initialization_options.clone())
+                {
                     tracing::error!("Failed to send initialize command for {}: {}", language, e);
                     return None;
                 }
@@ -493,6 +495,7 @@ mod tests {
             args: vec![],
             process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
             auto_start: false,
+            initialization_options: None,
         };
 
         manager.set_language_config("rust".to_string(), config);
@@ -515,6 +518,7 @@ mod tests {
                 args: vec![],
                 process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
                 auto_start: false,
+                initialization_options: None,
             },
         );
 
@@ -553,6 +557,7 @@ mod tests {
                 args: vec![],
                 process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
                 auto_start: false,
+                initialization_options: None,
             },
         );
 

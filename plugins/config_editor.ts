@@ -19,7 +19,7 @@
 /**
  * Field types supported by the config editor
  */
-type FieldType = "boolean" | "number" | "string" | "enum" | "array" | "object";
+type FieldType = "boolean" | "number" | "string" | "enum" | "array" | "object" | "json";
 
 /**
  * Schema definition for a config field (internal representation)
@@ -194,6 +194,20 @@ function convertJsonSchemaToFieldSchema(
   // Handle anyOf/oneOf (union types - pick the most specific object variant)
   const unionSchemas = jsonSchema.anyOf || jsonSchema.oneOf;
   if (unionSchemas && unionSchemas.length > 0) {
+    // Special case: anyOf: [{}, {"type": "null"}] is schemars' pattern for Option<serde_json::Value>
+    // This means "any JSON value or null" - treat as a JSON object field
+    const isAnyJsonValue = unionSchemas.length === 2 &&
+      unionSchemas.some(v => Object.keys(v).length === 0) &&
+      unionSchemas.some(v => v.type === "null");
+
+    if (isAnyJsonValue) {
+      return {
+        type: "json" as FieldType,
+        description: jsonSchema.description || propertyName || "",
+        optional: true,
+      };
+    }
+
     // Find the most useful variant - prefer objects with properties over primitives
     let bestSchema: JsonSchema | null = null;
     let bestScore = -1;
@@ -668,6 +682,16 @@ function formatValue(value: unknown, schema: FieldSchema, isSection: boolean = f
       return "[]";
     case "object":
       return "{...}";
+    case "json":
+      // Format JSON value compactly
+      if (typeof value === "object") {
+        const str = JSON.stringify(value);
+        if (str.length > 40) {
+          return str.substring(0, 37) + "...";
+        }
+        return str;
+      }
+      return JSON.stringify(value);
     default:
       return String(value);
   }
@@ -686,6 +710,7 @@ function getDefaultValue(schema: FieldSchema): unknown {
     case "string": return "";
     case "array": return [];
     case "object": return {};
+    case "json": return null;
     case "enum": return schema.enumOptions?.[0] ?? "";
     default: return null;
   }
@@ -1280,6 +1305,26 @@ function editStringField(field: ConfigField): void {
   }
 }
 
+/**
+ * Edit a JSON field (show input prompt for raw JSON)
+ */
+function editJsonField(field: ConfigField): void {
+  const currentValue = field.value !== undefined && field.value !== null
+    ? JSON.stringify(field.value)
+    : "";
+
+  editor.startPrompt(`${field.name} (JSON): `, `config-json-${field.path}`);
+
+  // Show current value as suggestion
+  if (currentValue) {
+    editor.setPromptSuggestions([{
+      text: currentValue,
+      description: "(current value)",
+      value: currentValue,
+    }]);
+  }
+}
+
 // =============================================================================
 // Prompt Handlers
 // =============================================================================
@@ -1376,6 +1421,40 @@ globalThis.onConfigStringPromptConfirmed = function(args: {
 };
 
 /**
+ * Handle JSON input prompt confirmation
+ */
+globalThis.onConfigJsonPromptConfirmed = function(args: {
+  prompt_type: string;
+  selected_index: number | null;
+  input: string;
+}): boolean {
+  if (!args.prompt_type.startsWith("config-json-")) return true;
+
+  const path = args.prompt_type.replace("config-json-", "");
+  const field = state.visibleFields.find(f => f.path === path);
+
+  if (field && args.input) {
+    try {
+      const parsed = JSON.parse(args.input);
+      setNestedValue(state.workingConfig, path, parsed);
+      state.hasChanges = !deepEqual(state.workingConfig, state.originalConfig);
+      updateDisplay();
+      editor.setStatus(`${field.name}: ${JSON.stringify(parsed)}`);
+    } catch (e) {
+      editor.setStatus(`Invalid JSON: ${e}`);
+    }
+  } else if (field && !args.input) {
+    // Empty input - set to null
+    setNestedValue(state.workingConfig, path, null);
+    state.hasChanges = !deepEqual(state.workingConfig, state.originalConfig);
+    updateDisplay();
+    editor.setStatus(`${field.name}: null`);
+  }
+
+  return true;
+};
+
+/**
  * Handle prompt cancellation
  */
 globalThis.onConfigPromptCancelled = function(args: { prompt_type: string }): boolean {
@@ -1388,6 +1467,7 @@ globalThis.onConfigPromptCancelled = function(args: { prompt_type: string }): bo
 editor.on("prompt_confirmed", "onConfigEnumPromptConfirmed");
 editor.on("prompt_confirmed", "onConfigNumberPromptConfirmed");
 editor.on("prompt_confirmed", "onConfigStringPromptConfirmed");
+editor.on("prompt_confirmed", "onConfigJsonPromptConfirmed");
 editor.on("prompt_cancelled", "onConfigPromptCancelled");
 
 // =============================================================================
@@ -1536,6 +1616,9 @@ globalThis.config_editor_edit_field = function(): void {
       break;
     case "string":
       editStringField(field);
+      break;
+    case "json":
+      editJsonField(field);
       break;
     case "array":
     case "object":

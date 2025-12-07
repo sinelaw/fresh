@@ -326,6 +326,15 @@
           "type": "boolean",
           "description": "Whether the server is enabled"
         },
+        "initialization_options": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Initialization options sent during LSP initialize request.\nSome language servers (like Deno) require specific options here.\nFor example, Deno requires `{\"enable\": true}` to enable completions."
+        },
         "process_limits": {
           "$ref": "#/$defs/ProcessLimits",
           "description": "Process resource limits (memory and CPU)"

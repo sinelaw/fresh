@@ -471,6 +471,12 @@ pub struct LspServerConfig {
     /// Process resource limits (memory and CPU)
     #[serde(default)]
     pub process_limits: ProcessLimits,
+
+    /// Initialization options sent during LSP initialize request.
+    /// Some language servers (like Deno) require specific options here.
+    /// For example, Deno requires `{"enable": true}` to enable completions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initialization_options: Option<serde_json::Value>,
 }
 
 fn default_true() -> bool {
