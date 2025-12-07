@@ -265,8 +265,8 @@ globalThis.onBufferModifiedBufferClosed = function (args: {
 editor.on("after_file_open", "onBufferModifiedAfterFileOpen");
 editor.on("buffer_activated", "onBufferModifiedBufferActivated");
 editor.on("after_file_save", "onBufferModifiedAfterSave");
-editor.on("after-insert", "onBufferModifiedAfterInsert");
-editor.on("after-delete", "onBufferModifiedAfterDelete");
+editor.on("after_insert", "onBufferModifiedAfterInsert");
+editor.on("after_delete", "onBufferModifiedAfterDelete");
 editor.on("buffer_closed", "onBufferModifiedBufferClosed");
 
 // Initialize for the current buffer

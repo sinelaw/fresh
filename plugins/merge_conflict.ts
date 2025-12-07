@@ -1760,7 +1760,7 @@ globalThis.onMergeAfterFileOpen = async function(data: { buffer_id: number; path
 // =============================================================================
 
 editor.on("buffer_activated", "onMergeBufferActivated");
-editor.on("after-file-open", "onMergeAfterFileOpen");
+editor.on("after_file_open", "onMergeAfterFileOpen");
 
 // =============================================================================
 // Command Registration - Dynamic based on merge mode state

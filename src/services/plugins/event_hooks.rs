@@ -97,8 +97,8 @@ pub fn apply_event_with_hooks(
     if let Some(before_args) = event.before_hook(buffer_id) {
         let registry = hook_registry.read().unwrap();
         let hook_name = match &before_args {
-            HookArgs::BeforeInsert { .. } => "before-insert",
-            HookArgs::BeforeDelete { .. } => "before-delete",
+            HookArgs::BeforeInsert { .. } => "before_insert",
+            HookArgs::BeforeDelete { .. } => "before_delete",
             _ => "",
         };
 
@@ -130,9 +130,9 @@ pub fn apply_event_with_hooks(
 
         let registry = hook_registry.read().unwrap();
         let hook_name = match &after_args {
-            HookArgs::AfterInsert { .. } => "after-insert",
-            HookArgs::AfterDelete { .. } => "after-delete",
-            HookArgs::CursorMoved { .. } => "cursor-moved",
+            HookArgs::AfterInsert { .. } => "after_insert",
+            HookArgs::AfterDelete { .. } => "after_delete",
+            HookArgs::CursorMoved { .. } => "cursor_moved",
             _ => "",
         };
 
@@ -210,7 +210,7 @@ mod tests {
         // Register a hook that cancels the operation
         {
             let mut registry = hook_registry.write().unwrap();
-            registry.add_hook("before-insert", Box::new(|_| false)); // Return false to cancel
+            registry.add_hook("before_insert", Box::new(|_| false)); // Return false to cancel
         }
 
         let event = Event::Insert {
@@ -239,7 +239,7 @@ mod tests {
         // Register a hook that allows the operation
         {
             let mut registry = hook_registry.write().unwrap();
-            registry.add_hook("before-insert", Box::new(|_| true)); // Return true to allow
+            registry.add_hook("before_insert", Box::new(|_| true)); // Return true to allow
         }
 
         let event = Event::Insert {

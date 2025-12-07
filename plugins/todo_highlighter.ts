@@ -133,8 +133,8 @@ globalThis.onBufferClosed = function(data: { buffer_id: number }): void {
 
 // Register hooks
 editor.on("lines_changed", "onLinesChanged");
-editor.on("after-insert", "onAfterInsert");
-editor.on("after-delete", "onAfterDelete");
+editor.on("after_insert", "onAfterInsert");
+editor.on("after_delete", "onAfterDelete");
 editor.on("buffer_closed", "onBufferClosed");
 
 // Plugin commands

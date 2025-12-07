@@ -2354,7 +2354,7 @@ impl Editor {
                 }
 
                 Some((
-                    "after-insert",
+                    "after_insert",
                     crate::services::plugins::hooks::HookArgs::AfterInsert {
                         buffer_id,
                         position: *position,
@@ -2403,7 +2403,7 @@ impl Editor {
                 }
 
                 Some((
-                    "after-delete",
+                    "after_delete",
                     crate::services::plugins::hooks::HookArgs::AfterDelete {
                         buffer_id,
                         range: range.clone(),
@@ -2429,6 +2429,25 @@ impl Editor {
                     self.trigger_plugin_hooks_for_event(e, sub_line_info);
                 }
                 None
+            }
+            Event::MoveCursor {
+                cursor_id,
+                old_position,
+                new_position,
+                ..
+            } => {
+                // Get the line number for the new position (1-indexed for plugins)
+                let line = self.active_state().buffer.get_line_number(*new_position) + 1;
+                Some((
+                    "cursor_moved",
+                    crate::services::plugins::hooks::HookArgs::CursorMoved {
+                        buffer_id,
+                        cursor_id: *cursor_id,
+                        old_position: *old_position,
+                        new_position: *new_position,
+                        line,
+                    },
+                ))
             }
             _ => None,
         };

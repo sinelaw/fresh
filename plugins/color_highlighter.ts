@@ -243,8 +243,8 @@ globalThis.onColorBufferClosed = function(data: { buffer_id: number }): void {
 // Register hooks
 editor.on("render_start", "onColorRenderStart");
 editor.on("lines_changed", "onColorLinesChanged");
-editor.on("after-insert", "onColorAfterInsert");
-editor.on("after-delete", "onColorAfterDelete");
+editor.on("after_insert", "onColorAfterInsert");
+editor.on("after_delete", "onColorAfterDelete");
 editor.on("buffer_closed", "onColorBufferClosed");
 
 // Plugin commands
