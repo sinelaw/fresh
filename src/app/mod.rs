@@ -194,6 +194,14 @@ pub struct Editor {
     /// Whether mouse capture is enabled
     mouse_enabled: bool,
 
+    /// Mouse cursor position (for GPM software cursor rendering)
+    /// When GPM is active, we need to draw our own cursor since GPM can't
+    /// draw on the alternate screen buffer used by TUI applications.
+    mouse_cursor_position: Option<(u16, u16)>,
+
+    /// Whether GPM is being used for mouse input (requires software cursor)
+    gpm_active: bool,
+
     /// Current keybinding context
     key_context: KeyContext,
 
@@ -650,6 +658,8 @@ impl Editor {
             file_explorer_visible: false,
             file_explorer_width_percent: file_explorer_width,
             mouse_enabled: true,
+            mouse_cursor_position: None,
+            gpm_active: false,
             key_context: KeyContext::Normal,
             menu_state: crate::view::ui::MenuState::new(),
             working_dir,
@@ -1923,6 +1933,15 @@ impl Editor {
     /// Check if mouse capture is enabled
     pub fn is_mouse_enabled(&self) -> bool {
         self.mouse_enabled
+    }
+
+    /// Set GPM active flag (enables software mouse cursor rendering)
+    ///
+    /// When GPM is used for mouse input on Linux consoles, we need to draw
+    /// our own mouse cursor because GPM can't draw on the alternate screen
+    /// buffer used by TUI applications.
+    pub fn set_gpm_active(&mut self, active: bool) {
+        self.gpm_active = active;
     }
 
     /// Toggle inlay hints visibility

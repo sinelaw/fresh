@@ -9,6 +9,8 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
+#[cfg(target_os = "linux")]
+use fresh::services::gpm::{gpm_to_crossterm, GpmClient};
 use fresh::{
     app::script_control::ScriptControlMode, app::Editor, config, config::DirectoryContext,
     services::signal_handler,
@@ -252,9 +254,28 @@ fn main() -> io::Result<()> {
     let _ = stdout().execute(PushKeyboardEnhancementFlags(keyboard_flags));
     tracing::info!("Enabled keyboard enhancement flags: {:?}", keyboard_flags);
 
-    // Enable mouse support
-    let _ = crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture);
-    tracing::info!("Enabled mouse capture");
+    // Try to connect to GPM for mouse support in Linux console
+    // Do this BEFORE enabling crossterm mouse capture, since GPM and xterm mouse
+    // protocols don't mix well
+    #[cfg(target_os = "linux")]
+    let gpm_client = match GpmClient::connect() {
+        Ok(client) => client,
+        Err(e) => {
+            tracing::warn!("Failed to connect to GPM: {}", e);
+            None
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let gpm_client: Option<()> = None;
+
+    // Enable mouse support via crossterm (xterm mouse protocol)
+    // Only do this if GPM is NOT connected, since on Linux console GPM handles mouse
+    if gpm_client.is_none() {
+        let _ = crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture);
+        tracing::info!("Enabled crossterm mouse capture");
+    } else {
+        tracing::info!("Using GPM for mouse capture, skipping crossterm mouse protocol");
+    }
 
     // Enable blinking block cursor for the primary cursor in active split
     let _ = stdout().execute(SetCursorStyle::BlinkingBlock);
@@ -298,6 +319,13 @@ fn main() -> io::Result<()> {
     } else {
         Editor::with_working_dir(config, size.width, size.height, working_dir, dir_context)?
     };
+
+    // Enable GPM software cursor if GPM is active
+    // (GPM can't draw its cursor on the alternate screen buffer used by TUI apps)
+    #[cfg(target_os = "linux")]
+    if gpm_client.is_some() {
+        editor.set_gpm_active(true);
+    }
 
     // Enable event log streaming if requested
     if let Some(log_path) = &args.event_log {
@@ -360,6 +388,9 @@ fn main() -> io::Result<()> {
     }
 
     // Run the editor
+    #[cfg(target_os = "linux")]
+    let result = run_event_loop(&mut editor, &mut terminal, session_enabled, gpm_client);
+    #[cfg(not(target_os = "linux"))]
     let result = run_event_loop(&mut editor, &mut terminal, session_enabled);
 
     // End recovery session (clean shutdown)
@@ -416,10 +447,12 @@ fn run_script_control_mode(args: &Args) -> io::Result<()> {
 }
 
 /// Main event loop
+#[cfg(target_os = "linux")]
 fn run_event_loop(
     editor: &mut Editor,
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     session_enabled: bool,
+    gpm_client: Option<GpmClient>,
 ) -> io::Result<()> {
     use std::time::Instant;
 
@@ -457,20 +490,18 @@ fn run_event_loop(
             needs_render = false;
         }
 
-        // Get next event
+        // Get next event - check GPM first if available, then crossterm
         let event = if let Some(e) = pending_event.take() {
             Some(e)
         } else {
-            let timeout = if pending_event.is_some() || needs_render {
+            let timeout = if needs_render {
                 FRAME_DURATION.saturating_sub(last_render.elapsed())
             } else {
                 Duration::from_millis(50)
             };
-            if event_poll(timeout)? {
-                Some(event_read()?)
-            } else {
-                None
-            }
+
+            // Poll for events from GPM and/or crossterm
+            poll_with_gpm(gpm_client.as_ref(), timeout)?
         };
 
         let Some(event) = event else { continue };
@@ -502,6 +533,179 @@ fn run_event_loop(
     }
 
     Ok(())
+}
+
+/// Main event loop (non-Linux version without GPM)
+#[cfg(not(target_os = "linux"))]
+fn run_event_loop(
+    editor: &mut Editor,
+    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    session_enabled: bool,
+) -> io::Result<()> {
+    use std::time::Instant;
+
+    const FRAME_DURATION: Duration = Duration::from_millis(16); // 60fps
+    let mut last_render = Instant::now();
+    let mut needs_render = true;
+    let mut pending_event: Option<CrosstermEvent> = None;
+
+    loop {
+        if editor.process_async_messages() {
+            needs_render = true;
+        }
+
+        if let Err(e) = editor.auto_save_dirty_buffers() {
+            tracing::debug!("Auto-save error: {}", e);
+        }
+
+        if editor.should_quit() {
+            if session_enabled {
+                if let Err(e) = editor.save_session() {
+                    tracing::warn!("Failed to save session: {}", e);
+                } else {
+                    tracing::debug!("Session saved successfully");
+                }
+            }
+            break;
+        }
+
+        if needs_render && last_render.elapsed() >= FRAME_DURATION {
+            terminal.draw(|frame| editor.render(frame))?;
+            last_render = Instant::now();
+            needs_render = false;
+        }
+
+        let event = if let Some(e) = pending_event.take() {
+            Some(e)
+        } else {
+            let timeout = if needs_render {
+                FRAME_DURATION.saturating_sub(last_render.elapsed())
+            } else {
+                Duration::from_millis(50)
+            };
+
+            if event_poll(timeout)? {
+                Some(event_read()?)
+            } else {
+                None
+            }
+        };
+
+        let Some(event) = event else { continue };
+
+        let (event, next) = coalesce_mouse_moves(event)?;
+        pending_event = next;
+
+        match event {
+            CrosstermEvent::Key(key_event) => {
+                if key_event.kind == KeyEventKind::Press {
+                    handle_key_event(editor, key_event)?;
+                    needs_render = true;
+                }
+            }
+            CrosstermEvent::Mouse(mouse_event) => {
+                if handle_mouse_event(editor, mouse_event)? {
+                    needs_render = true;
+                }
+            }
+            CrosstermEvent::Resize(w, h) => {
+                editor.resize(w, h);
+                needs_render = true;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+/// Poll for events from both GPM and crossterm (Linux with libgpm available)
+#[cfg(target_os = "linux")]
+fn poll_with_gpm(
+    gpm_client: Option<&GpmClient>,
+    timeout: Duration,
+) -> io::Result<Option<CrosstermEvent>> {
+    use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+    use std::os::unix::io::{AsRawFd, BorrowedFd};
+
+    // If no GPM client, just use crossterm polling
+    let Some(gpm) = gpm_client else {
+        return if event_poll(timeout)? {
+            Ok(Some(event_read()?))
+        } else {
+            Ok(None)
+        };
+    };
+
+    // Set up poll for both stdin (crossterm) and GPM fd
+    let stdin_fd = std::io::stdin().as_raw_fd();
+    let gpm_fd = gpm.fd();
+    tracing::trace!("GPM poll: stdin_fd={}, gpm_fd={}", stdin_fd, gpm_fd);
+
+    // SAFETY: We're borrowing the fds for the duration of the poll call
+    let stdin_borrowed = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
+    let gpm_borrowed = unsafe { BorrowedFd::borrow_raw(gpm_fd) };
+
+    let mut poll_fds = [
+        PollFd::new(stdin_borrowed, PollFlags::POLLIN),
+        PollFd::new(gpm_borrowed, PollFlags::POLLIN),
+    ];
+
+    // Convert timeout to milliseconds, clamping to u16::MAX (about 65 seconds)
+    let timeout_ms = timeout.as_millis().min(u16::MAX as u128) as u16;
+    let poll_timeout = PollTimeout::from(timeout_ms);
+    let ready = poll(&mut poll_fds, poll_timeout)?;
+
+    if ready == 0 {
+        return Ok(None);
+    }
+
+    let stdin_revents = poll_fds[0].revents();
+    let gpm_revents = poll_fds[1].revents();
+    tracing::trace!(
+        "GPM poll: ready={}, stdin_revents={:?}, gpm_revents={:?}",
+        ready,
+        stdin_revents,
+        gpm_revents
+    );
+
+    // Check GPM first (mouse events are typically less frequent)
+    if gpm_revents.map_or(false, |r| r.contains(PollFlags::POLLIN)) {
+        tracing::trace!("GPM poll: GPM fd has data, reading event...");
+        match gpm.read_event() {
+            Ok(Some(gpm_event)) => {
+                tracing::trace!(
+                    "GPM event received: x={}, y={}, buttons={}, type=0x{:x}",
+                    gpm_event.x,
+                    gpm_event.y,
+                    gpm_event.buttons.0,
+                    gpm_event.event_type
+                );
+                if let Some(mouse_event) = gpm_to_crossterm(&gpm_event) {
+                    tracing::trace!("GPM event converted to crossterm: {:?}", mouse_event);
+                    return Ok(Some(CrosstermEvent::Mouse(mouse_event)));
+                } else {
+                    tracing::debug!("GPM event could not be converted to crossterm event");
+                }
+            }
+            Ok(None) => {
+                tracing::trace!("GPM poll: read_event returned None");
+            }
+            Err(e) => {
+                tracing::warn!("GPM poll: read_event error: {}", e);
+            }
+        }
+    }
+
+    // Check stdin (crossterm events)
+    if stdin_revents.map_or(false, |r| r.contains(PollFlags::POLLIN)) {
+        // Use crossterm's read since it handles escape sequence parsing
+        if event_poll(Duration::ZERO)? {
+            return Ok(Some(event_read()?));
+        }
+    }
+
+    Ok(None)
 }
 
 /// Handle a keyboard event

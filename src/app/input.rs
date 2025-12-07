@@ -2186,6 +2186,14 @@ impl Editor {
         let col = mouse_event.column;
         let row = mouse_event.row;
 
+        // Update mouse cursor position for software cursor rendering (used by GPM)
+        // When GPM is active, we always need to re-render to update the cursor position
+        let cursor_moved = self.mouse_cursor_position != Some((col, row));
+        self.mouse_cursor_position = Some((col, row));
+        if self.gpm_active && cursor_moved {
+            needs_render = true;
+        }
+
         tracing::debug!(
             "handle_mouse: kind={:?}, col={}, row={}",
             mouse_event.kind,
@@ -2246,8 +2254,9 @@ impl Editor {
                 }
 
                 // Only re-render if hover target actually changed
+                // (preserve needs_render if already set, e.g., for GPM cursor updates)
                 let hover_changed = self.update_hover_target(col, row);
-                needs_render = hover_changed;
+                needs_render = needs_render || hover_changed;
             }
             MouseEventKind::ScrollUp => {
                 // Check if file browser is active and should handle scroll

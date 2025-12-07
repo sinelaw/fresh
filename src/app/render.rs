@@ -576,6 +576,26 @@ impl Editor {
             &self.theme,
             self.mouse_state.hover_target.as_ref(),
         );
+
+        // Render software mouse cursor when GPM is active
+        // GPM can't draw its cursor on the alternate screen buffer used by TUI apps,
+        // so we draw our own cursor at the tracked mouse position.
+        // This must happen LAST in the render flow so we can read the already-rendered
+        // cell content and invert it.
+        if self.gpm_active {
+            if let Some((col, row)) = self.mouse_cursor_position {
+                use ratatui::style::Modifier;
+
+                // Only render if within screen bounds
+                if col < size.width && row < size.height {
+                    // Get the cell at this position and add REVERSED modifier to invert colors
+                    let buf = frame.buffer_mut();
+                    if let Some(cell) = buf.cell_mut((col, row)) {
+                        cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
+                    }
+                }
+            }
+        }
     }
 
     /// Render hover highlights for interactive elements (separators, scrollbars)
