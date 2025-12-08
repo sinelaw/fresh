@@ -873,7 +873,9 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+// Property tests use Unix-style path generation strategy, skip on Windows
+// where path parsing differs (drive letters like C: conflict with :line:col parsing)
+#[cfg(all(test, not(windows)))]
 mod proptests {
     use super::*;
     use proptest::prelude::*;

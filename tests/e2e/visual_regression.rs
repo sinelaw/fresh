@@ -20,6 +20,7 @@ use std::fs;
 /// - Split view: NO
 /// - Command palette: CLOSED
 #[test]
+#[cfg_attr(windows, ignore)] // Visual regression tests require consistent terminal rendering
 fn visual_comprehensive_a() {
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
     let project_dir = harness.project_dir().unwrap();

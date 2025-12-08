@@ -411,6 +411,7 @@ fn test_save_as_nested_path() {
 /// When the path + input would exceed 90% of the prompt width, the path should be
 /// truncated to show: /first/[...]/last/components/
 #[test]
+#[cfg_attr(windows, ignore)] // Path truncation format differs on Windows
 fn test_open_file_prompt_truncates_long_paths() {
     use crossterm::event::{KeyCode, KeyModifiers};
     use std::fs;

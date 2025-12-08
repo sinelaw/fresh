@@ -826,6 +826,7 @@ fn test_file_browser_click_updates_prompt() {
 
 /// Test that opening file browser with a buffer in a subdir shows correct prompt path
 #[test]
+#[cfg_attr(windows, ignore)] // Uses Unix-style path separators in assertions
 fn test_file_browser_prompt_shows_buffer_directory() {
     // Use wide terminal because macOS temp paths can be very long
     let mut harness = EditorTestHarness::with_temp_project(160, 24).unwrap();

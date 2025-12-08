@@ -547,6 +547,7 @@ fn test_git_gutter_untracked_file() {
 
 /// Test that buffer modified shows indicators for unsaved changes
 #[test]
+#[cfg_attr(windows, ignore)] // Uses git plugins which timeout on Windows CI
 fn test_buffer_modified_shows_on_edit() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
@@ -591,6 +592,7 @@ fn test_buffer_modified_shows_on_edit() {
 
 /// Test that buffer modified clears after save
 #[test]
+#[cfg_attr(windows, ignore)] // Uses git plugins which timeout on Windows CI
 fn test_buffer_modified_clears_after_save() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();

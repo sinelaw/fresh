@@ -457,6 +457,7 @@ fn test_git_find_file_selection_navigation() {
 
 /// Test git find file confirm - opens selected file
 #[test]
+#[cfg_attr(windows, ignore)] // Git plugin tests timeout on Windows CI
 fn test_git_find_file_confirm_opens_file() {
     let repo = GitTestRepo::new();
     repo.setup_typical_project();

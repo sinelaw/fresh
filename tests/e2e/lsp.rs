@@ -3051,6 +3051,7 @@ fn test_pull_diagnostics_result_id_tracking() -> std::io::Result<()> {
 /// 2. The find_references plugin receives the results
 /// 3. The references panel opens without hanging
 #[test]
+#[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
 fn test_lsp_find_references() -> std::io::Result<()> {
     use std::time::Duration;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};

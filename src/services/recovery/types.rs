@@ -440,17 +440,17 @@ mod tests {
 
     #[test]
     fn test_is_process_running_self() {
-        // Our own process should be running (on Unix)
-        #[cfg(unix)]
+        // Our own process should be running (on Unix and Windows)
+        #[cfg(any(unix, windows))]
         assert!(is_process_running(std::process::id()));
-        // On non-Unix, is_process_running always returns false
-        #[cfg(not(unix))]
+        // On other platforms, is_process_running always returns false
+        #[cfg(not(any(unix, windows)))]
         assert!(!is_process_running(std::process::id()));
     }
 
     #[test]
     fn test_is_process_running_invalid() {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             // Test with a PID that definitely doesn't exist
             // Find a PID that's not running by searching high PIDs
@@ -462,9 +462,9 @@ mod tests {
                 assert!(!is_process_running(test_pid));
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
-            // On non-Unix platforms, is_process_running always returns false
+            // On other platforms, is_process_running always returns false
             assert!(!is_process_running(1));
             assert!(!is_process_running(999999999));
         }

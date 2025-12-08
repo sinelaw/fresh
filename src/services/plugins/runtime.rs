@@ -4803,6 +4803,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(unix)]
     async fn test_path_is_absolute() {
         let mut runtime = TypeScriptRuntime::new().unwrap();
 
@@ -4810,7 +4811,7 @@ mod tests {
             .execute_script(
                 "<test_path_is_absolute>",
                 r#"
-                // Test absolute paths
+                // Test absolute paths (Unix)
                 if (!editor.pathIsAbsolute("/home/user")) {
                     throw new Error("/home/user should be absolute");
                 }
@@ -4819,6 +4820,47 @@ mod tests {
                 }
 
                 // Test relative paths
+                if (editor.pathIsAbsolute("src/main.rs")) {
+                    throw new Error("src/main.rs should not be absolute");
+                }
+                if (editor.pathIsAbsolute(".")) {
+                    throw new Error(". should not be absolute");
+                }
+                if (editor.pathIsAbsolute("..")) {
+                    throw new Error(".. should not be absolute");
+                }
+
+                console.log("Path is absolute test passed!");
+                "#,
+            )
+            .await;
+        assert!(result.is_ok(), "Path is absolute test failed: {:?}", result);
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_path_is_absolute() {
+        let mut runtime = TypeScriptRuntime::new().unwrap();
+
+        let result = runtime
+            .execute_script(
+                "<test_path_is_absolute>",
+                r#"
+                // Test absolute paths (Windows)
+                if (!editor.pathIsAbsolute("C:\\Users\\test")) {
+                    throw new Error("C:\\Users\\test should be absolute");
+                }
+                if (!editor.pathIsAbsolute("C:/Users/test")) {
+                    throw new Error("C:/Users/test should be absolute");
+                }
+                if (!editor.pathIsAbsolute("D:\\")) {
+                    throw new Error("D:\\ should be absolute");
+                }
+
+                // Test relative paths
+                if (editor.pathIsAbsolute("src\\main.rs")) {
+                    throw new Error("src\\main.rs should not be absolute");
+                }
                 if (editor.pathIsAbsolute("src/main.rs")) {
                     throw new Error("src/main.rs should not be absolute");
                 }

@@ -649,6 +649,7 @@ fn test_todo_highlighter_updates_on_delete() {
 /// Test diagnostics panel plugin loads and creates a virtual buffer split
 /// This verifies the full implementation with LSP-like diagnostics display
 #[test]
+#[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
 fn test_diagnostics_panel_plugin_loads() {
     use crate::common::fake_lsp::FakeLspServer;
 
@@ -1595,6 +1596,7 @@ fn test_clangd_plugin_file_status_notification() -> std::io::Result<()> {
 
 /// Ensure the clangd plugin uses editor.sendLspRequest successfully
 #[test]
+#[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
 fn test_clangd_plugin_switch_source_header() -> std::io::Result<()> {
     init_tracing_from_env();
     let _fake_server = FakeLspServer::spawn()?;
@@ -1798,6 +1800,7 @@ editor.setStatus("Test source plugin loaded!");
 
 /// Test that diagnostics from fake LSP are stored and accessible via getAllDiagnostics API
 #[test]
+#[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
 fn test_diagnostics_api_with_fake_lsp() -> std::io::Result<()> {
     init_tracing_from_env();
     let _fake_server = FakeLspServer::spawn()?;
