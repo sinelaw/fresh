@@ -956,6 +956,39 @@ pub fn get_all_commands() -> Vec<Command> {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
         },
+        // Terminal commands
+        Command {
+            name: "Open Terminal".to_string(),
+            description: "Open a new terminal in the current split".to_string(),
+            action: Action::OpenTerminal,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
+            name: "Close Terminal".to_string(),
+            description: "Close the current terminal".to_string(),
+            action: Action::CloseTerminal,
+            contexts: vec![KeyContext::Normal, KeyContext::Terminal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
+            name: "Focus Terminal".to_string(),
+            description: "Switch to terminal input mode".to_string(),
+            action: Action::FocusTerminal,
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
+        Command {
+            name: "Exit Terminal Mode".to_string(),
+            description: "Exit terminal input mode and return to editor".to_string(),
+            action: Action::TerminalEscape,
+            contexts: vec![KeyContext::Terminal],
+            custom_contexts: vec![],
+            source: CommandSource::Builtin,
+        },
     ]
 }
 
