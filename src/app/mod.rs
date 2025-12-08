@@ -2177,7 +2177,8 @@ impl Editor {
 
         // Emit buffer_activated hook for plugins
         if let Some(ref ts_manager) = self.ts_plugin_manager {
-            let hook_args = crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id };
+            let hook_args =
+                crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id };
             ts_manager.run_hook("buffer_activated", hook_args);
         }
     }

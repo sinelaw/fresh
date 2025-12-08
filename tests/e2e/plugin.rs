@@ -1906,7 +1906,9 @@ editor.setStatus("Test diagnostics plugin loaded");
 
     // Get the diagnostics for our file
     let file_uri = format!("file://{}", test_file.to_string_lossy());
-    let diags = stored.get(&file_uri).expect("Should have diagnostics for test file");
+    let diags = stored
+        .get(&file_uri)
+        .expect("Should have diagnostics for test file");
     assert_eq!(diags.len(), 1, "Expected exactly one diagnostic");
 
     // Verify the diagnostic content matches what fake LSP sends
