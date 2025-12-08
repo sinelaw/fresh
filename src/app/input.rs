@@ -1450,6 +1450,28 @@ impl Editor {
                     self.set_status_message("Plugin manager not available".to_string());
                 }
             }
+            Action::OpenTerminal => {
+                self.open_terminal();
+            }
+            Action::CloseTerminal => {
+                self.close_terminal();
+            }
+            Action::FocusTerminal => {
+                // If viewing a terminal buffer, switch to terminal mode
+                if self.is_terminal_buffer(self.active_buffer) {
+                    self.terminal_mode = true;
+                    self.key_context = KeyContext::Terminal;
+                    self.set_status_message("Terminal mode enabled".to_string());
+                }
+            }
+            Action::TerminalEscape => {
+                // Exit terminal mode back to editor
+                if self.terminal_mode {
+                    self.terminal_mode = false;
+                    self.key_context = KeyContext::Normal;
+                    self.set_status_message("Terminal mode disabled".to_string());
+                }
+            }
             Action::PromptConfirm => {
                 // Handle prompt confirmation (same logic as in handle_key)
                 if let Some((input, prompt_type, selected_index)) = self.confirm_prompt() {

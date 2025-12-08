@@ -10,8 +10,8 @@
 //! - Input routed to PTY when terminal buffer is focused
 
 mod manager;
-mod pty;
-mod term;
+pub mod pty;
+pub mod term;
 
 pub use manager::{TerminalId, TerminalManager};
-pub use term::TerminalState;
+pub use term::{TerminalCell, TerminalState};

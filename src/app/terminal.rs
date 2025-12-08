@@ -1,0 +1,284 @@
+//! Terminal integration for the Editor
+//!
+//! This module provides methods for the Editor to interact with the terminal system:
+//! - Opening new terminal sessions
+//! - Closing terminals
+//! - Rendering terminal content
+//! - Handling terminal input
+
+use super::{BufferId, BufferMetadata, Editor};
+use crate::model::buffer::TextBuffer;
+use crate::services::terminal::TerminalId;
+use crate::state::EditorState;
+
+impl Editor {
+    /// Open a new terminal in the current split
+    pub fn open_terminal(&mut self) {
+        // Get the current split dimensions for the terminal size
+        let (cols, rows) = self.get_terminal_dimensions();
+
+        // Set up async bridge for terminal manager if not already done
+        if let Some(ref bridge) = self.async_bridge {
+            self.terminal_manager.set_async_bridge(bridge.clone());
+        }
+
+        // Spawn terminal
+        match self
+            .terminal_manager
+            .spawn(cols, rows, Some(self.working_dir.clone()))
+        {
+            Ok(terminal_id) => {
+                // Create a buffer for this terminal
+                let buffer_id = self.create_terminal_buffer(terminal_id);
+
+                // Switch to the terminal buffer
+                self.set_active_buffer(buffer_id);
+
+                // Enable terminal mode
+                self.terminal_mode = true;
+                self.key_context = crate::input::keybindings::KeyContext::Terminal;
+
+                self.set_status_message(format!("Terminal {} opened", terminal_id));
+                tracing::info!("Opened terminal {:?} with buffer {:?}", terminal_id, buffer_id);
+            }
+            Err(e) => {
+                self.set_status_message(format!("Failed to open terminal: {}", e));
+                tracing::error!("Failed to open terminal: {}", e);
+            }
+        }
+    }
+
+    /// Create a buffer for a terminal session
+    fn create_terminal_buffer(&mut self, terminal_id: TerminalId) -> BufferId {
+        let buffer_id = BufferId(self.next_buffer_id);
+        self.next_buffer_id += 1;
+
+        // Get config values
+        let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
+
+        // Create an empty text buffer (terminal content is rendered separately)
+        let buffer = TextBuffer::new(large_file_threshold);
+
+        // Create editor state for the buffer
+        let state = EditorState::new(
+            self.terminal_width,
+            self.terminal_height,
+            large_file_threshold,
+        );
+        self.buffers.insert(buffer_id, state);
+
+        // Create terminal-specific metadata
+        let metadata = BufferMetadata::virtual_buffer(
+            format!("*Terminal {}*", terminal_id.0),
+            "terminal".to_string(),
+            false, // Not read-only - we accept input
+        );
+        self.buffer_metadata.insert(buffer_id, metadata);
+
+        // Map buffer to terminal
+        self.terminal_buffers.insert(buffer_id, terminal_id);
+
+        // Initialize event log for undo/redo (though terminals don't really use it)
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+
+        // Set up split view state
+        let active_split = self.split_manager.active_split();
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.open_buffers.push(buffer_id);
+        }
+
+        buffer_id
+    }
+
+    /// Close the current terminal (if viewing a terminal buffer)
+    pub fn close_terminal(&mut self) {
+        let buffer_id = self.active_buffer;
+
+        if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
+            // Close the terminal
+            self.terminal_manager.close(terminal_id);
+            self.terminal_buffers.remove(&buffer_id);
+
+            // Exit terminal mode
+            self.terminal_mode = false;
+            self.key_context = crate::input::keybindings::KeyContext::Normal;
+
+            // Close the buffer
+            let _ = self.close_buffer(buffer_id);
+
+            self.set_status_message(format!("Terminal {} closed", terminal_id));
+        } else {
+            self.set_status_message("Not viewing a terminal buffer".to_string());
+        }
+    }
+
+    /// Check if a buffer is a terminal buffer
+    pub fn is_terminal_buffer(&self, buffer_id: BufferId) -> bool {
+        self.terminal_buffers.contains_key(&buffer_id)
+    }
+
+    /// Get the terminal ID for a buffer (if it's a terminal buffer)
+    pub fn get_terminal_id(&self, buffer_id: BufferId) -> Option<TerminalId> {
+        self.terminal_buffers.get(&buffer_id).copied()
+    }
+
+    /// Get the terminal state for the active buffer (if it's a terminal buffer)
+    pub fn get_active_terminal_state(
+        &self,
+    ) -> Option<std::sync::MutexGuard<'_, crate::services::terminal::TerminalState>> {
+        let terminal_id = self.terminal_buffers.get(&self.active_buffer)?;
+        let handle = self.terminal_manager.get(*terminal_id)?;
+        handle.state.lock().ok()
+    }
+
+    /// Send input to the active terminal
+    pub fn send_terminal_input(&mut self, data: &[u8]) {
+        if let Some(&terminal_id) = self.terminal_buffers.get(&self.active_buffer) {
+            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                handle.write(data);
+            }
+        }
+    }
+
+    /// Send a key event to the active terminal
+    pub fn send_terminal_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) {
+        if let Some(bytes) = crate::services::terminal::pty::key_to_pty_bytes(code, modifiers) {
+            self.send_terminal_input(&bytes);
+        }
+    }
+
+    /// Get terminal dimensions based on split size
+    fn get_terminal_dimensions(&self) -> (u16, u16) {
+        // Use the visible area of the current split
+        // Subtract 1 for status bar, tab bar, etc.
+        let cols = self.terminal_width.saturating_sub(2).max(40);
+        let rows = self.terminal_height.saturating_sub(4).max(10);
+        (cols, rows)
+    }
+
+    /// Resize terminal to match split dimensions
+    pub fn resize_terminal(&mut self, buffer_id: BufferId, cols: u16, rows: u16) {
+        if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
+            if let Some(handle) = self.terminal_manager.get_mut(terminal_id) {
+                handle.resize(cols, rows);
+            }
+        }
+    }
+
+    /// Handle terminal input when in terminal mode
+    pub fn handle_terminal_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> bool {
+        // Check for escape sequence to exit terminal mode
+        // Ctrl+\ (backslash) is a common escape from terminal mode
+        if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+            if let crossterm::event::KeyCode::Char('\\') = code {
+                // Exit terminal mode
+                self.terminal_mode = false;
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+                self.set_status_message("Terminal mode disabled".to_string());
+                return true;
+            }
+        }
+
+        // Send the key to the terminal
+        self.send_terminal_key(code, modifiers);
+        true
+    }
+
+    /// Get terminal content for rendering
+    pub fn get_terminal_content(
+        &self,
+        buffer_id: BufferId,
+    ) -> Option<Vec<Vec<crate::services::terminal::TerminalCell>>> {
+        let terminal_id = self.terminal_buffers.get(&buffer_id)?;
+        let handle = self.terminal_manager.get(*terminal_id)?;
+        let state = handle.state.lock().ok()?;
+
+        let (_, rows) = state.size();
+        let mut content = Vec::with_capacity(rows as usize);
+
+        for row in 0..rows {
+            content.push(state.get_line(row));
+        }
+
+        Some(content)
+    }
+}
+
+/// Terminal rendering utilities
+pub mod render {
+    use crate::services::terminal::TerminalCell;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::style::{Color, Modifier, Style};
+
+    /// Render terminal content to a ratatui buffer
+    pub fn render_terminal_content(
+        content: &[Vec<TerminalCell>],
+        cursor_pos: (u16, u16),
+        cursor_visible: bool,
+        area: Rect,
+        buf: &mut Buffer,
+    ) {
+        for (row_idx, row) in content.iter().enumerate() {
+            if row_idx as u16 >= area.height {
+                break;
+            }
+
+            let y = area.y + row_idx as u16;
+
+            for (col_idx, cell) in row.iter().enumerate() {
+                if col_idx as u16 >= area.width {
+                    break;
+                }
+
+                let x = area.x + col_idx as u16;
+
+                // Build style from cell attributes
+                let mut style = Style::default();
+
+                // Set foreground color
+                if let Some((r, g, b)) = cell.fg {
+                    style = style.fg(Color::Rgb(r, g, b));
+                }
+
+                // Set background color
+                if let Some((r, g, b)) = cell.bg {
+                    style = style.bg(Color::Rgb(r, g, b));
+                }
+
+                // Apply modifiers
+                if cell.bold {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                if cell.italic {
+                    style = style.add_modifier(Modifier::ITALIC);
+                }
+                if cell.underline {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                if cell.inverse {
+                    style = style.add_modifier(Modifier::REVERSED);
+                }
+
+                // Check if this is the cursor position
+                if cursor_visible
+                    && row_idx as u16 == cursor_pos.1
+                    && col_idx as u16 == cursor_pos.0
+                {
+                    style = style.add_modifier(Modifier::REVERSED);
+                }
+
+                buf.set_string(x, y, cell.c.to_string(), style);
+            }
+        }
+    }
+}

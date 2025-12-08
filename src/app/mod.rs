@@ -8,6 +8,7 @@ mod plugin_commands;
 mod render;
 pub mod script_control;
 pub mod session;
+mod terminal;
 pub mod types;
 
 use std::path::Component;
