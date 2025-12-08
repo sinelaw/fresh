@@ -66,7 +66,7 @@ pulldown-cmark = { version = "0.13", default-features = false }  # Disable `html
 sha2 = "0.10"  # SHA-256 checksums for recovery file integrity
 arboard = { version = "3.6", default-features = false }  # Disable `image` support for clipboard, which is unneeded for a text editor.
 notify = { version = "8.2.0" }
-schemars = "0.8"  # JSON Schema generation for config editor
+schemars = "1.1"  # JSON Schema generation for config editor
 syntect = "5.2"
 # tree-sitter-markdown = "0.7.1"  # Disabled due to tree-sitter version conflict (uses 0.19.5 instead of 0.25.x)
 
