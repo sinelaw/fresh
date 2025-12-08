@@ -40,7 +40,7 @@ lru = "0.16"
 ignore = { version = "0.4", default-features = false } # Disable multithreading via `crossbeam` for potentially smaller builds.
 regex = "1.12"
 libc = "0.2"
-libloading = "0.8"  # Dynamic library loading for optional GPM support
+libloading = "0.9"  # Dynamic library loading for optional GPM support
 nix = { version = "0.30", features = ["signal", "pthread", "resource", "poll", "fs"] }
 deno_core = { version = "0.371.0", default-features = false, features = ["v8_use_custom_libcxx"] }  # Disable ICU data but keep custom libcxx for cross-compilation.
 deno_ast = { version = "0.51.0", default-features = false, features = ["transpiling"] }  # EXPERIMENT: Slim down SWC toolchain, keeping only transpiling.
